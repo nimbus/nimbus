@@ -32,11 +32,11 @@ pub(super) fn stop_machine(
         stop_errors.push(error.to_string());
     }
 
-    if let Some(pid) = read_pid(&paths.krunkit_pid_path)?
+    if let Some(pid) = read_pid(&paths.vmm_pid_path)?
         && pid_is_alive(pid)
     {
         stop_errors.push(format!(
-            "provider stop completed but krunkit is still alive at pid {pid}"
+            "provider stop completed but the machine VMM is still alive at pid {pid}"
         ));
     }
     if !config.provider.uses_provider_networking()
@@ -74,27 +74,28 @@ fn stop_provider_machine(
     timeout: Duration,
 ) -> Result<(), Error> {
     match config.provider {
-        // vfkit shares krunkit's host-side teardown (same pidfiles, sockets, and
-        // restful Stop/HardStop endpoint) until its dedicated runtime paths land.
-        MachineProvider::Krunkit | MachineProvider::Vfkit => stop_krunkit_machine(paths, timeout),
+        // Both managed applehv backends (krunkit, vfkit) tear down identically
+        // through the same provider-neutral pidfile, restful control endpoint,
+        // and runtime sockets, driven by the Stop/HardStop protocol below.
+        MachineProvider::Krunkit | MachineProvider::Vfkit => stop_vmm_machine(paths, timeout),
         MachineProvider::Wsl2 => Err(Error::InvalidInput(
             "the WSL2 machine provider is not available on this host yet".to_owned(),
         )),
     }
 }
 
-fn stop_krunkit_machine(paths: &MachinePaths, timeout: Duration) -> Result<(), Error> {
-    let Some(pid) = read_pid(&paths.krunkit_pid_path)? else {
+fn stop_vmm_machine(paths: &MachinePaths, timeout: Duration) -> Result<(), Error> {
+    let Some(pid) = read_pid(&paths.vmm_pid_path)? else {
         return Ok(());
     };
     if !pid_is_alive(pid) {
         return Ok(());
     }
 
-    if let Err(error) = request_krunkit_state_change(&paths.krunkit_endpoint_path, "Stop") {
+    if let Err(error) = request_vmm_state_change(&paths.vmm_endpoint_path, "Stop") {
         force_stop_pid(pid, HARD_STOP_WAIT_TIMEOUT).map_err(|kill_error| {
             Error::Internal(format!(
-                "{error}; failed to recover by force-stopping krunkit pid {pid}: {kill_error}"
+                "{error}; failed to recover by force-stopping the machine VMM pid {pid}: {kill_error}"
             ))
         })?;
         return Ok(());
@@ -103,10 +104,10 @@ fn stop_krunkit_machine(paths: &MachinePaths, timeout: Duration) -> Result<(), E
         return Ok(());
     }
 
-    if let Err(error) = request_krunkit_state_change(&paths.krunkit_endpoint_path, "HardStop") {
+    if let Err(error) = request_vmm_state_change(&paths.vmm_endpoint_path, "HardStop") {
         force_stop_pid(pid, HARD_STOP_WAIT_TIMEOUT).map_err(|kill_error| {
             Error::Internal(format!(
-                "{error}; failed to recover by force-stopping krunkit pid {pid}: {kill_error}"
+                "{error}; failed to recover by force-stopping the machine VMM pid {pid}: {kill_error}"
             ))
         })?;
         return Ok(());
@@ -129,7 +130,7 @@ pub(super) fn refresh_machine_state(
         return Ok(());
     }
 
-    let krunkit_alive = read_pid(&paths.krunkit_pid_path)?
+    let vmm_alive = read_pid(&paths.vmm_pid_path)?
         .map(pid_is_alive)
         .unwrap_or(false);
     let gvproxy_alive = read_pid(&paths.gvproxy_pid_path)?
@@ -139,7 +140,7 @@ pub(super) fn refresh_machine_state(
         .map(pid_is_alive)
         .unwrap_or(false);
 
-    if krunkit_alive
+    if vmm_alive
         && gvproxy_alive
         && (state.lifecycle == MachineLifecycle::Starting || api_forward_alive)
     {
@@ -152,7 +153,7 @@ pub(super) fn refresh_machine_state(
     state.lifecycle = MachineLifecycle::Failed;
     state.manager = MachineManagerState::Stale;
     state.last_error = Some(format!(
-        "machine runtime is stale: krunkit_alive={krunkit_alive} gvproxy_alive={gvproxy_alive} api_forward_alive={api_forward_alive}"
+        "machine runtime is stale: vmm_alive={vmm_alive} gvproxy_alive={gvproxy_alive} api_forward_alive={api_forward_alive}"
     ));
     super::write_json_file(&paths.state_path, state)
 }
@@ -162,14 +163,14 @@ pub(super) fn handle_start_machine_error(
     config: &MachineConfigRecord,
     state: &mut MachineStateRecord,
     error: Error,
-    mut krunkit_child: Option<&mut Child>,
+    mut vmm_child: Option<&mut Child>,
     mut gvproxy_child: Option<&mut Child>,
     mut api_forward_child: Option<&mut Child>,
 ) -> Result<(), Error> {
     if let Some(child) = api_forward_child.as_mut() {
         let _ = cleanup_process(child);
     }
-    if let Some(child) = krunkit_child.as_mut() {
+    if let Some(child) = vmm_child.as_mut() {
         let _ = cleanup_process(child);
     }
     if let Some(child) = gvproxy_child.as_mut() {
@@ -249,7 +250,7 @@ fn finalize_interrupted_start(
     Err(Error::Cancelled)
 }
 
-pub(super) fn request_krunkit_state_change(endpoint_path: &Path, state: &str) -> Result<(), Error> {
+pub(super) fn request_vmm_state_change(endpoint_path: &Path, state: &str) -> Result<(), Error> {
     if !endpoint_path.exists() {
         return Ok(());
     }
@@ -257,7 +258,7 @@ pub(super) fn request_krunkit_state_change(endpoint_path: &Path, state: &str) ->
     let body = format!("{{\"state\":\"{state}\"}}");
     let mut stream = UnixStream::connect(endpoint_path).map_err(|error| {
         Error::Internal(format!(
-            "failed to connect to krunkit control socket {}: {error}",
+            "failed to connect to machine VMM control socket {}: {error}",
             endpoint_path.display()
         ))
     })?;
@@ -265,7 +266,7 @@ pub(super) fn request_krunkit_state_change(endpoint_path: &Path, state: &str) ->
         .set_read_timeout(Some(Duration::from_secs(2)))
         .map_err(|error| {
             Error::Internal(format!(
-                "failed to configure krunkit control socket timeout {}: {error}",
+                "failed to configure machine VMM control socket timeout {}: {error}",
                 endpoint_path.display()
             ))
         })?;
@@ -280,14 +281,14 @@ pub(super) fn request_krunkit_state_change(endpoint_path: &Path, state: &str) ->
         )
         .map_err(|error| {
             Error::Internal(format!(
-                "failed to send krunkit state-change request {}: {error}",
+                "failed to send machine VMM state-change request {}: {error}",
                 endpoint_path.display()
             ))
         })?;
     let mut response = String::new();
     stream.read_to_string(&mut response).map_err(|error| {
         Error::Internal(format!(
-            "failed to read krunkit state-change response {}: {error}",
+            "failed to read machine VMM state-change response {}: {error}",
             endpoint_path.display()
         ))
     })?;
@@ -295,7 +296,7 @@ pub(super) fn request_krunkit_state_change(endpoint_path: &Path, state: &str) ->
         return Ok(());
     }
     Err(Error::Internal(format!(
-        "krunkit {state} request did not return 200 OK: {}",
+        "machine VMM {state} request did not return 200 OK: {}",
         response.lines().next().unwrap_or("<empty-response>")
     )))
 }
@@ -385,17 +386,17 @@ pub(super) fn cleanup_runtime_artifacts(paths: &MachinePaths) -> Result<(), Erro
         &paths.api_socket_path,
         &paths.gvproxy_socket_path,
         &paths.krunkit_gvproxy_socket_path(),
-        &paths.krunkit_endpoint_path,
+        &paths.vmm_endpoint_path,
         &paths.api_forward_pid_path,
         &paths.gvproxy_pid_path,
-        &paths.krunkit_pid_path,
+        &paths.vmm_pid_path,
     ] {
         remove_file_if_exists(path)?;
     }
     for path in [
         &paths.api_forward_log_path,
         &paths.machine_log_path,
-        &paths.krunkit_log_path,
+        &paths.vmm_log_path,
         &paths.gvproxy_log_path,
     ] {
         truncate_file(path)?;

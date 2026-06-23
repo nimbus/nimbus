@@ -64,7 +64,7 @@ pub(super) fn known_helper_candidates(helper_name: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-fn bundled_helper_candidates(helper_name: &str) -> Vec<PathBuf> {
+pub(super) fn bundled_helper_candidates(helper_name: &str) -> Vec<PathBuf> {
     let Ok(current_exe) = std::env::current_exe() else {
         return Vec::new();
     };

@@ -100,7 +100,7 @@ impl MachineLaunchPlan {
             MachineBootstrapMode::Ignition => None,
         };
         let ssh_port = allocate_machine_ssh_port(&config.roots, &config.name, state)?;
-        let rest_uri = format!("unix://{}", paths.krunkit_endpoint_path.display());
+        let rest_uri = format!("unix://{}", paths.vmm_endpoint_path.display());
         let runtime = MachineRuntimeState {
             helper_binaries: helper_binaries.clone(),
             image_path: image_path.clone(),
@@ -171,7 +171,7 @@ fn build_gvproxy_args(
 
 pub(super) fn build_virtio_vsock_listen_arg(port: u32, socket_path: &Path) -> String {
     // Match Podman's vfkit/libkrun contract: the host owns these Unix sockets
-    // and krunkit must connect the guest-side vsock device to that listener.
+    // and the VMM must connect the guest-side vsock device to that listener.
     format!(
         "virtio-vsock,port={port},socketURL={},listen",
         socket_path.display()

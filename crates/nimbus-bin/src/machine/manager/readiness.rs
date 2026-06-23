@@ -27,7 +27,7 @@ use super::{
 pub(super) fn wait_for_machine_api_ready(
     paths: &MachinePaths,
     timeout: Duration,
-    krunkit_child: &mut Child,
+    vmm_child: &mut Child,
     gvproxy_child: &mut Child,
     api_forward_child: &mut Child,
     startup_signals: &StartupSignalMonitor,
@@ -36,11 +36,11 @@ pub(super) fn wait_for_machine_api_ready(
     let client = MachineApiClient::new(paths.api_socket_path.clone());
     loop {
         startup_signals.check()?;
-        if let Some(status) = krunkit_child.try_wait().map_err(|error| {
-            Error::Internal(format!("failed to poll krunkit process state: {error}"))
+        if let Some(status) = vmm_child.try_wait().map_err(|error| {
+            Error::Internal(format!("failed to poll machine VMM process state: {error}"))
         })? {
             return Err(Error::Internal(format!(
-                "krunkit exited before machine API readiness with status {status}"
+                "the machine VMM exited before machine API readiness with status {status}"
             )));
         }
         if let Some(status) = gvproxy_child.try_wait().map_err(|error| {
@@ -136,19 +136,19 @@ pub(super) fn pre_start_networking(
 
 pub(super) fn start_vm(
     launch_plan: &MachineLaunchPlan,
-    krunkit_child: &mut Option<Child>,
+    vmm_child: &mut Option<Child>,
 ) -> Result<(), Error> {
     // The provider was already gated to a supported VMM backend when the launch
     // plan was built, so booting is provider-agnostic: spawn the resolved VMM
     // command the backend assembled.
-    *krunkit_child = Some(launch_plan.vmm_command.spawn()?);
+    *vmm_child = Some(launch_plan.vmm_command.spawn()?);
     Ok(())
 }
 
 pub(super) fn wait_for_machine_ready(
     config: &MachineConfigRecord,
     ready_listener: &UnixListener,
-    krunkit_child: &mut Option<Child>,
+    vmm_child: &mut Option<Child>,
     gvproxy_child: &mut Option<Child>,
     startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
@@ -157,7 +157,7 @@ pub(super) fn wait_for_machine_ready(
             wait_for_ready(
                 ready_listener,
                 resolve_ready_wait_timeout(),
-                required_child(krunkit_child, "krunkit")?,
+                required_child(vmm_child, "machine VMM")?,
                 required_child(gvproxy_child, "gvproxy")?,
                 startup_signals,
             )
@@ -185,7 +185,7 @@ pub(super) fn post_start_networking(
 pub(super) fn conduct_readiness_check(
     config: &MachineConfigRecord,
     ssh_port: u16,
-    krunkit_child: &mut Option<Child>,
+    vmm_child: &mut Option<Child>,
     gvproxy_child: &mut Option<Child>,
     startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
@@ -195,7 +195,7 @@ pub(super) fn conduct_readiness_check(
         config,
         ssh_port,
         resolve_ssh_ready_wait_timeout(),
-        required_child(krunkit_child, "krunkit")?,
+        required_child(vmm_child, "krunkit")?,
         required_child(gvproxy_child, "gvproxy")?,
         startup_signals,
     )
@@ -280,18 +280,18 @@ pub(super) fn required_child<'a>(
 fn wait_for_ready(
     listener: &UnixListener,
     timeout: Duration,
-    krunkit_child: &mut Child,
+    vmm_child: &mut Child,
     gvproxy_child: &mut Child,
     startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
     let deadline = Instant::now() + timeout;
     loop {
         startup_signals.check()?;
-        if let Some(status) = krunkit_child.try_wait().map_err(|error| {
-            Error::Internal(format!("failed to poll krunkit process state: {error}"))
+        if let Some(status) = vmm_child.try_wait().map_err(|error| {
+            Error::Internal(format!("failed to poll machine VMM process state: {error}"))
         })? {
             return Err(Error::Internal(format!(
-                "krunkit exited before machine readiness with status {status}"
+                "the machine VMM exited before machine readiness with status {status}"
             )));
         }
         if let Some(status) = gvproxy_child.try_wait().map_err(|error| {
@@ -330,7 +330,7 @@ pub(super) fn wait_for_ssh_ready(
     config: &MachineConfigRecord,
     ssh_port: u16,
     timeout: Duration,
-    krunkit_child: &mut Child,
+    vmm_child: &mut Child,
     gvproxy_child: &mut Child,
     startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
@@ -341,11 +341,11 @@ pub(super) fn wait_for_ssh_ready(
     let mut last_probe_error: Option<String>;
     loop {
         startup_signals.check()?;
-        if let Some(status) = krunkit_child.try_wait().map_err(|error| {
-            Error::Internal(format!("failed to poll krunkit process state: {error}"))
+        if let Some(status) = vmm_child.try_wait().map_err(|error| {
+            Error::Internal(format!("failed to poll machine VMM process state: {error}"))
         })? {
             return Err(Error::Internal(format!(
-                "krunkit exited before SSH readiness with status {status}"
+                "the machine VMM exited before SSH readiness with status {status}"
             )));
         }
         if let Some(status) = gvproxy_child.try_wait().map_err(|error| {

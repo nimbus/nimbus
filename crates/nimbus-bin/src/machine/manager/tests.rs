@@ -34,7 +34,7 @@ use super::readiness::{
 use super::ssh::remote_shell_command;
 use super::stop::{
     annotate_machine_start_error, cleanup_process, force_stop_pid, handle_start_machine_error,
-    request_krunkit_state_change, send_signal, wait_for_pid_exit,
+    request_vmm_state_change, send_signal, wait_for_pid_exit,
 };
 use super::vmm::{KrunkitVmmBackend, MachineVmmBackend};
 use super::*;

@@ -15,8 +15,7 @@ fn ensure_machine_can_start_rejects_external_krunkit_pid_collision() {
         .expect("machine directories should exist");
 
     let (krunkit_pid, krunkit_reaper) = spawn_reaped_process("exec sleep 30");
-    fs::write(&paths.krunkit_pid_path, krunkit_pid.to_string())
-        .expect("krunkit pidfile should write");
+    fs::write(&paths.vmm_pid_path, krunkit_pid.to_string()).expect("krunkit pidfile should write");
 
     let state = MachineStateRecord::initialized();
     let error = ensure_machine_can_start(&paths, &config, &state)
@@ -28,8 +27,8 @@ fn ensure_machine_can_start_rejects_external_krunkit_pid_collision() {
         "external collision must surface as Conflict: {rendered}"
     );
     assert!(
-        rendered.contains(&format!("krunkit pid {krunkit_pid}")),
-        "error should name the live krunkit owner: {rendered}"
+        rendered.contains(&format!("machine-vmm pid {krunkit_pid}")),
+        "error should name the live machine VMM owner: {rendered}"
     );
     assert!(
         rendered.contains("NIMBUS_MACHINE_RUNTIME_ROOT"),
@@ -98,7 +97,7 @@ fn ensure_machine_can_start_ignores_stale_pid_files_with_no_live_process() {
     krunkit_reaper
         .join()
         .expect("krunkit reaper should observe immediate exit");
-    fs::write(&paths.krunkit_pid_path, krunkit_pid.to_string())
+    fs::write(&paths.vmm_pid_path, krunkit_pid.to_string())
         .expect("stale krunkit pidfile should write");
 
     let state = MachineStateRecord::initialized();

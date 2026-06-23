@@ -18,7 +18,7 @@ fn launch_plan_reuses_recorded_managed_ssh_port_when_available() {
         efi_variable_store_path: paths.efi_variable_store_path.clone(),
         machine_image_source: describe_machine_image_source(&config.guest.image_source),
         ssh_port: 20022,
-        rest_uri: format!("unix://{}", paths.krunkit_endpoint_path.display()),
+        rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
         ready_vsock_port: READY_VSOCK_PORT,
     });
 
@@ -55,7 +55,7 @@ fn launch_plan_reassigns_recorded_ssh_port_when_it_is_busy() {
         efi_variable_store_path: paths.efi_variable_store_path.clone(),
         machine_image_source: describe_machine_image_source(&config.guest.image_source),
         ssh_port: busy_port,
-        rest_uri: format!("unix://{}", paths.krunkit_endpoint_path.display()),
+        rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
         ready_vsock_port: READY_VSOCK_PORT,
     });
 
@@ -118,7 +118,7 @@ fn refresh_machine_state_marks_missing_pids_as_stale() {
         efi_variable_store_path: paths.efi_variable_store_path.clone(),
         machine_image_source: "docker://quay.io/podman/machine-os@sha256:test".to_owned(),
         ssh_port: 2222,
-        rest_uri: format!("unix://{}", paths.krunkit_endpoint_path.display()),
+        rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
         ready_vsock_port: READY_VSOCK_PORT,
     });
 
@@ -130,6 +130,6 @@ fn refresh_machine_state_marks_missing_pids_as_stale() {
         state
             .last_error
             .expect("stale error should be present")
-            .contains("krunkit_alive=false")
+            .contains("vmm_alive=false")
     );
 }

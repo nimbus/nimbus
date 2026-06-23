@@ -64,8 +64,8 @@ fn machine_paths_use_short_runtime_root_and_typed_socket_layout() {
         PathBuf::from("/tmp/nimbus/default-api.sock")
     );
     assert_eq!(
-        paths.krunkit_log_path,
-        PathBuf::from("/tmp/nimbus/default-krunkit.log")
+        paths.vmm_log_path,
+        PathBuf::from("/tmp/nimbus/default-vmm.log")
     );
     assert_eq!(
         layout.lock_path("default"),

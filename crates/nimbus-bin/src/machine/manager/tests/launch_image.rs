@@ -60,7 +60,7 @@ fn converge_machine_image_contract_rebuilds_boot_artifacts_when_recorded_image_d
         efi_variable_store_path: paths.efi_variable_store_path.clone(),
         machine_image_source: "docker://quay.io/podman/machine-os@sha256:old-digest".to_owned(),
         ssh_port: 20022,
-        rest_uri: format!("unix://{}", paths.krunkit_endpoint_path.display()),
+        rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
         ready_vsock_port: READY_VSOCK_PORT,
     });
 

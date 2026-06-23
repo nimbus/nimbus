@@ -37,6 +37,7 @@ use super::{
 };
 
 const DEFAULT_KRUNKIT_BINARY: &str = "krunkit";
+const DEFAULT_VFKIT_BINARY: &str = "vfkit";
 const DEFAULT_GVPROXY_BINARY: &str = "gvproxy";
 const DEFAULT_MACHINE_MAC_ADDRESS: &str = "5a:94:ef:e4:0c:ee";
 const READY_VSOCK_PORT: u32 = 1025;
@@ -54,6 +55,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const MACHINE_PORT_MIN: u16 = 10000;
 const MACHINE_PORT_MAX: u16 = 65535;
 const KRUNKIT_ENV: &str = "NIMBUS_MACHINE_KRUNKIT";
+const VFKIT_ENV: &str = "NIMBUS_MACHINE_VFKIT";
 const GVPROXY_ENV: &str = "NIMBUS_MACHINE_GVPROXY";
 const HELPER_BINARY_DIR_ENV: &str = "NIMBUS_MACHINE_HELPER_BINARY_DIR";
 const HTTP_IMAGE_TIMEOUT: Duration = Duration::from_secs(300);
@@ -241,15 +243,15 @@ pub(super) fn start_machine(
         );
     }
 
-    let mut krunkit_child = None;
+    let mut vmm_child = None;
     emit_machine_progress("Booting virtual machine");
-    if let Err(error) = start_vm(&launch_plan, &mut krunkit_child) {
+    if let Err(error) = start_vm(&launch_plan, &mut vmm_child) {
         return handle_start_machine_error(
             paths,
             config,
             state,
             error,
-            krunkit_child.as_mut(),
+            vmm_child.as_mut(),
             gvproxy_child.as_mut(),
             api_forward_child.as_mut(),
         );
@@ -258,7 +260,7 @@ pub(super) fn start_machine(
     if let Err(error) = wait_for_machine_ready(
         config,
         &ready_listener,
-        &mut krunkit_child,
+        &mut vmm_child,
         &mut gvproxy_child,
         &startup_signals,
     ) {
@@ -267,7 +269,7 @@ pub(super) fn start_machine(
             config,
             state,
             error,
-            krunkit_child.as_mut(),
+            vmm_child.as_mut(),
             gvproxy_child.as_mut(),
             api_forward_child.as_mut(),
         );
@@ -276,7 +278,7 @@ pub(super) fn start_machine(
     if let Err(error) = conduct_readiness_check(
         config,
         launch_plan.runtime().ssh_port,
-        &mut krunkit_child,
+        &mut vmm_child,
         &mut gvproxy_child,
         &startup_signals,
     ) {
@@ -285,7 +287,7 @@ pub(super) fn start_machine(
             config,
             state,
             error,
-            krunkit_child.as_mut(),
+            vmm_child.as_mut(),
             gvproxy_child.as_mut(),
             api_forward_child.as_mut(),
         );
@@ -302,7 +304,7 @@ pub(super) fn start_machine(
             config,
             state,
             error,
-            krunkit_child.as_mut(),
+            vmm_child.as_mut(),
             gvproxy_child.as_mut(),
             api_forward_child.as_mut(),
         );
@@ -311,7 +313,7 @@ pub(super) fn start_machine(
         paths,
         config,
         launch_plan.runtime().ssh_port,
-        &mut krunkit_child,
+        &mut vmm_child,
         &mut gvproxy_child,
         &mut api_forward_child,
         &startup_signals,
@@ -321,7 +323,7 @@ pub(super) fn start_machine(
             config,
             state,
             error,
-            krunkit_child.as_mut(),
+            vmm_child.as_mut(),
             gvproxy_child.as_mut(),
             api_forward_child.as_mut(),
         );
@@ -384,12 +386,12 @@ fn ensure_machine_can_start(
 }
 
 fn ensure_no_external_machine_collision(paths: &MachinePaths) -> Result<(), Error> {
-    let krunkit_owner = self::stop::read_pid_if_alive(&paths.krunkit_pid_path)?;
+    let vmm_owner = self::stop::read_pid_if_alive(&paths.vmm_pid_path)?;
     let gvproxy_owner = self::stop::read_pid_if_alive(&paths.gvproxy_pid_path)?;
     let api_forward_owner = self::stop::read_pid_if_alive(&paths.api_forward_pid_path)?;
-    let owners: Vec<(&str, i32, &Path)> = krunkit_owner
+    let owners: Vec<(&str, i32, &Path)> = vmm_owner
         .into_iter()
-        .map(|pid| ("krunkit", pid, paths.krunkit_pid_path.as_path()))
+        .map(|pid| ("machine-vmm", pid, paths.vmm_pid_path.as_path()))
         .chain(
             gvproxy_owner
                 .into_iter()
@@ -437,7 +439,7 @@ fn ensure_guest_machine_api_ready(
     paths: &MachinePaths,
     config: &MachineConfigRecord,
     ssh_port: u16,
-    krunkit_child: &mut Option<Child>,
+    vmm_child: &mut Option<Child>,
     gvproxy_child: &mut Option<Child>,
     api_forward_child: &mut Option<Child>,
     startup_signals: &StartupSignalMonitor,
@@ -446,7 +448,7 @@ fn ensure_guest_machine_api_ready(
         paths,
         config,
         ssh_port,
-        krunkit_child,
+        vmm_child,
         gvproxy_child,
         api_forward_child,
         startup_signals,

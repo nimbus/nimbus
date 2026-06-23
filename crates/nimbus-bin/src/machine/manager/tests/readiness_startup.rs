@@ -166,17 +166,17 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
         &paths.ignition_socket_path,
         &paths.api_socket_path,
         &paths.gvproxy_socket_path,
-        &paths.krunkit_endpoint_path,
+        &paths.vmm_endpoint_path,
         &paths.api_forward_pid_path,
         &paths.gvproxy_pid_path,
-        &paths.krunkit_pid_path,
+        &paths.vmm_pid_path,
     ] {
         fs::write(path, b"artifact").expect("runtime artifact should write");
     }
     for path in [
         &paths.api_forward_log_path,
         &paths.machine_log_path,
-        &paths.krunkit_log_path,
+        &paths.vmm_log_path,
         &paths.gvproxy_log_path,
     ] {
         fs::write(path, b"non-empty").expect("log artifact should write");
@@ -213,7 +213,7 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
         efi_variable_store_path: paths.efi_variable_store_path.clone(),
         machine_image_source: describe_machine_image_source(&config.guest.image_source),
         ssh_port: 20022,
-        rest_uri: format!("unix://{}", paths.krunkit_endpoint_path.display()),
+        rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
         ready_vsock_port: READY_VSOCK_PORT,
     });
 
@@ -257,10 +257,10 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
         &paths.ignition_socket_path,
         &paths.api_socket_path,
         &paths.gvproxy_socket_path,
-        &paths.krunkit_endpoint_path,
+        &paths.vmm_endpoint_path,
         &paths.api_forward_pid_path,
         &paths.gvproxy_pid_path,
-        &paths.krunkit_pid_path,
+        &paths.vmm_pid_path,
     ] {
         assert!(
             !path.exists(),
@@ -271,7 +271,7 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
     for path in [
         &paths.api_forward_log_path,
         &paths.machine_log_path,
-        &paths.krunkit_log_path,
+        &paths.vmm_log_path,
         &paths.gvproxy_log_path,
     ] {
         assert_eq!(

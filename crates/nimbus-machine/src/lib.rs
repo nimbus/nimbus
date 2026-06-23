@@ -139,15 +139,15 @@ impl MachineRootLayout {
             ready_socket_path: runtime_dir.join(format!("{name}.sock")),
             ignition_socket_path: runtime_dir.join(format!("{name}-ignition.sock")),
             gvproxy_socket_path: runtime_dir.join(format!("{name}-gvproxy.sock")),
-            krunkit_endpoint_path: runtime_dir.join(format!("{name}-krunkit.sock")),
+            vmm_endpoint_path: runtime_dir.join(format!("{name}-vmm.sock")),
             efi_variable_store_path: data_dir.join("efi-variable-store"),
             api_forward_pid_path: runtime_dir.join(format!("{name}-api-forward.pid")),
             gvproxy_pid_path: runtime_dir.join(format!("{name}-gvproxy.pid")),
-            krunkit_pid_path: runtime_dir.join(format!("{name}-krunkit.pid")),
+            vmm_pid_path: runtime_dir.join(format!("{name}-vmm.pid")),
             api_forward_log_path: runtime_dir.join(format!("{name}-api-forward.log")),
             machine_log_path: runtime_dir.join(format!("{name}.log")),
             gvproxy_log_path: runtime_dir.join(format!("{name}-gvproxy.log")),
-            krunkit_log_path: runtime_dir.join(format!("{name}-krunkit.log")),
+            vmm_log_path: runtime_dir.join(format!("{name}-vmm.log")),
         }
     }
 }
@@ -522,15 +522,22 @@ pub struct MachinePaths {
     pub ready_socket_path: PathBuf,
     pub ignition_socket_path: PathBuf,
     pub gvproxy_socket_path: PathBuf,
-    pub krunkit_endpoint_path: PathBuf,
+    /// Restful control endpoint for the active VMM (krunkit/vfkit `--restful-uri`).
+    /// One VMM runs per machine, so this is a single provider-neutral slot.
+    pub vmm_endpoint_path: PathBuf,
     pub efi_variable_store_path: PathBuf,
     pub api_forward_pid_path: PathBuf,
     pub gvproxy_pid_path: PathBuf,
-    pub krunkit_pid_path: PathBuf,
+    /// Pidfile for the active VMM process (krunkit/vfkit `--pidfile`). The
+    /// readiness/stop lifecycle reads this slot regardless of provider.
+    pub vmm_pid_path: PathBuf,
     pub api_forward_log_path: PathBuf,
     pub machine_log_path: PathBuf,
     pub gvproxy_log_path: PathBuf,
-    pub krunkit_log_path: PathBuf,
+    /// Diagnostic log for the active VMM. krunkit writes it via `--log-file`;
+    /// vfkit has no such flag and leaves it empty (the guest console log lives in
+    /// [`machine_log_path`](Self::machine_log_path) for both).
+    pub vmm_log_path: PathBuf,
 }
 
 impl MachinePaths {

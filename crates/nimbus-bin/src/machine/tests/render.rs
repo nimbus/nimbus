@@ -616,7 +616,7 @@ fn machine_list_prioritizes_active_and_default_machines() {
             MachineLifecycle::Starting | MachineLifecycle::Running
         ) {
             let current_pid = std::process::id().to_string();
-            fs::write(&paths.krunkit_pid_path, &current_pid).expect("krunkit pidfile should write");
+            fs::write(&paths.vmm_pid_path, &current_pid).expect("krunkit pidfile should write");
             fs::write(&paths.gvproxy_pid_path, &current_pid).expect("gvproxy pidfile should write");
             fs::write(&paths.api_forward_pid_path, &current_pid)
                 .expect("machine-api forward pidfile should write");
