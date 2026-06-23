@@ -75,14 +75,19 @@ const OCI_ANNOTATION_MACHINE_ATTESTATION_REPOSITORY: &str =
 const OCI_ANNOTATION_MACHINE_NIMBUS_VERSION: &str = "io.nimbus.machine.nimbus.version";
 pub(super) const MACHINE_API_FORWARD_TRANSPORT: &str = "gvproxy-ssh-forwarded-unix-socket";
 pub(super) const MACHINE_API_FORWARD_USER: &str = "root";
-// macOS helper-binary search order for `krunkit` and `gvproxy`.
+// The known (Homebrew/Podman) fallback tier of the macOS helper-binary search
+// for `krunkit` and `gvproxy`. This is *not* the whole search order:
+// `resolve_helper_binary` consults the per-helper env override and the bundled
+// `libexec` copies first, and only falls through to these directories when
+// neither resolves.
 //
-// The Homebrew prefix `bin` directories rank first: that is where the Nimbus
-// cask's *declared* `krunkit` dependency (and its own `gvproxy` dependency)
-// land. Preferring them keeps the managed, version-pinned helpers authoritative
-// so an incidental `podman` install can never silently shadow the dependency
-// the cask actually declares. The Podman `libexec` directories remain as
-// fallbacks for hosts that only ship Podman's bundled helpers.
+// Within this tier the Homebrew prefix `bin` directories rank first: that is
+// where the Nimbus cask's *declared* `krunkit` dependency (and its own
+// `gvproxy` dependency) land. Preferring them keeps the managed, version-pinned
+// helpers authoritative so an incidental `podman` install can never silently
+// shadow the dependency the cask actually declares. The Podman `libexec`
+// directories remain below them for hosts that only ship Podman's bundled
+// helpers.
 const PODMAN_DARWIN_HELPER_DIRECTORIES: &[&str] = &[
     "/opt/homebrew/bin",
     "/usr/local/bin",

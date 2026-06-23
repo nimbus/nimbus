@@ -452,6 +452,21 @@ impl MachineProvider {
     pub fn oci_artifact_disk_type(self) -> &'static str {
         self.capabilities().oci_artifact_disk_type
     }
+
+    /// The canonical "this provider has no backend on this host yet" error.
+    ///
+    /// Both the start path (`vmm_backend`) and the stop path
+    /// (`stop_provider_machine`) reject not-yet-implemented providers, and both
+    /// must reject with the *same* message so selection stays a deliberate,
+    /// fail-closed opt-in rather than a silent no-op. Owning the text here keeps
+    /// the two gates from drifting apart. The provider name is upper-cased so the
+    /// message reads as a proper noun (e.g. `WSL2`).
+    pub fn unavailable_error(self) -> Error {
+        Error::InvalidInput(format!(
+            "the {} machine provider is not available on this host yet",
+            self.as_str().to_ascii_uppercase()
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -67,10 +67,14 @@ pub(super) trait MachineVmmBackend {
     }
 
     /// The gvproxy listen-mode arguments that pair with this VMM's net device.
-    /// Both macOS micro-VM monitors share the unixgram listen contract; only the
-    /// on-VMM net-device syntax in [`build_launch_command`](Self::build_launch_command)
-    /// differs.
-    fn gvproxy_listen_args(&self, socket_path: &Path) -> Vec<String>;
+    /// Both macOS micro-VM monitors share the unixgram listen contract (gvproxy
+    /// `-listen-vfkit unixgram://…`); only the on-VMM net-device syntax in
+    /// [`build_launch_command`](Self::build_launch_command) differs, so the
+    /// default suits every applehv backend. A future backend with a different
+    /// host transport overrides this.
+    fn gvproxy_listen_args(&self, socket_path: &Path) -> Vec<String> {
+        gvproxy_unixgram_listen_args(socket_path)
+    }
 
     /// Construct the VMM launch command line for the already-resolved binary.
     fn build_launch_command(
@@ -89,9 +93,7 @@ pub(super) fn vmm_backend(provider: MachineProvider) -> Result<Box<dyn MachineVm
     match provider {
         MachineProvider::Krunkit => Ok(Box::new(KrunkitVmmBackend)),
         MachineProvider::Vfkit => Ok(Box::new(VfkitVmmBackend)),
-        MachineProvider::Wsl2 => Err(Error::InvalidInput(
-            "the WSL2 machine provider is not available on this host yet".to_owned(),
-        )),
+        MachineProvider::Wsl2 => Err(provider.unavailable_error()),
     }
 }
 
@@ -194,10 +196,6 @@ impl MachineVmmBackend for KrunkitVmmBackend {
         )
     }
 
-    fn gvproxy_listen_args(&self, socket_path: &Path) -> Vec<String> {
-        gvproxy_unixgram_listen_args(socket_path)
-    }
-
     fn build_launch_command(
         &self,
         vmm_binary: &Path,
@@ -226,9 +224,9 @@ impl MachineVmmBackend for KrunkitVmmBackend {
             program: vmm_binary.to_path_buf(),
             args,
             // krunkit already writes its diagnostic output to `--log-file`
-            // (set above to vmm_log_path); redirecting its stderr into the same
-            // file would duplicate every line, so leave capture off.
-            stderr_log_path: None,
+            // (set above to vmm_log_path); redirecting its stdout+stderr into the
+            // same file would duplicate every line, so leave capture off.
+            capture_log_path: None,
         })
     }
 }
@@ -259,10 +257,6 @@ impl MachineVmmBackend for VfkitVmmBackend {
         )
     }
 
-    fn gvproxy_listen_args(&self, socket_path: &Path) -> Vec<String> {
-        gvproxy_unixgram_listen_args(socket_path)
-    }
-
     fn build_launch_command(
         &self,
         vmm_binary: &Path,
@@ -289,7 +283,7 @@ impl MachineVmmBackend for VfkitVmmBackend {
             // console comes up would otherwise leave nothing to triage. Capture
             // its stdout+stderr into vmm_log_path so failed-boot diagnostics are
             // recoverable.
-            stderr_log_path: Some(paths.vmm_log_path.clone()),
+            capture_log_path: Some(paths.vmm_log_path.clone()),
         })
     }
 }

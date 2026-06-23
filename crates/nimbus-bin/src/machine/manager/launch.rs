@@ -37,20 +37,20 @@ pub(super) struct MachineCommandLine {
     /// Where to capture the child's stdout+stderr for failed-boot triage.
     ///
     /// A VMM that writes its own diagnostic log (krunkit via `--log-file`)
-    /// leaves this `None` so its stderr is not also redirected into the same
+    /// leaves this `None` so its streams are not also redirected into the same
     /// file and duplicated. A VMM with no diagnostic-log flag (vfkit) sets this
     /// to its [`vmm_log_path`](MachinePaths::vmm_log_path) so a boot that dies
-    /// before the guest console comes up still leaves captured stderr to triage.
+    /// before the guest console comes up still leaves captured output to triage.
     /// `None` discards both streams (`/dev/null`), matching the gvproxy helper,
     /// which logs through its own `-log-file`.
-    pub(super) stderr_log_path: Option<PathBuf>,
+    pub(super) capture_log_path: Option<PathBuf>,
 }
 
 impl MachineCommandLine {
     pub(super) fn spawn(&self) -> Result<Child, Error> {
         let mut command = Command::new(&self.program);
         command.args(&self.args).stdin(Stdio::null());
-        match self.stderr_log_path.as_deref() {
+        match self.capture_log_path.as_deref() {
             // The VMM has no diagnostic log of its own, so capture its
             // stdout+stderr into the provider's vmm_log_path. Append (never
             // truncate) so an earlier failed boot's output is not clobbered by a
@@ -63,13 +63,13 @@ impl MachineCommandLine {
                     .open(log_path)
                     .map_err(|error| {
                         Error::Internal(format!(
-                            "failed to open VMM log {} for stderr capture: {error}",
+                            "failed to open VMM log {} for stdout+stderr capture: {error}",
                             log_path.display()
                         ))
                     })?;
                 let stderr = stdout.try_clone().map_err(|error| {
                     Error::Internal(format!(
-                        "failed to clone VMM log {} for stderr capture: {error}",
+                        "failed to clone VMM log {} for stdout+stderr capture: {error}",
                         log_path.display()
                     ))
                 })?;
@@ -161,8 +161,8 @@ impl MachineLaunchPlan {
         let gvproxy_command = backend.requires_gvproxy().then(|| MachineCommandLine {
             program: helper_binaries.gvproxy.clone(),
             args: build_gvproxy_args(backend.as_ref(), paths, ssh_port),
-            // gvproxy writes its own `-log-file`; no stderr capture needed.
-            stderr_log_path: None,
+            // gvproxy writes its own `-log-file`; no stdout+stderr capture needed.
+            capture_log_path: None,
         });
 
         let vmm_command = backend.build_launch_command(

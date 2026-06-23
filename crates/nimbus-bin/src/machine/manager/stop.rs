@@ -78,9 +78,7 @@ pub(super) fn stop_provider_machine(
         // through the same provider-neutral pidfile, restful control endpoint,
         // and runtime sockets, driven by the Stop/HardStop protocol below.
         MachineProvider::Krunkit | MachineProvider::Vfkit => stop_vmm_machine(paths, timeout),
-        MachineProvider::Wsl2 => Err(Error::InvalidInput(
-            "the WSL2 machine provider is not available on this host yet".to_owned(),
-        )),
+        MachineProvider::Wsl2 => Err(config.provider.unavailable_error()),
     }
 }
 

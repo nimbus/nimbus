@@ -268,11 +268,11 @@ fn vfkit_launch_plan_captures_stderr_to_vmm_log_while_krunkit_keeps_log_file() {
     let vfkit = build_sample_launch_command(&VfkitVmmBackend, &image_path, &paths, &config);
 
     // krunkit writes its own diagnostic log via `--log-file <vmm_log_path>`, so
-    // the spawn path must NOT also redirect its stderr into that same file —
-    // doing so would duplicate every line. Its capture slot stays empty.
+    // the spawn path must NOT also redirect its stdout+stderr into that same
+    // file — doing so would duplicate every line. Its capture slot stays empty.
     assert_eq!(
-        krunkit.stderr_log_path, None,
-        "krunkit already logs via --log-file; stderr must not be redirected and double-logged"
+        krunkit.capture_log_path, None,
+        "krunkit already logs via --log-file; output must not be redirected and double-logged"
     );
     assert!(
         krunkit
@@ -287,9 +287,9 @@ fn vfkit_launch_plan_captures_stderr_to_vmm_log_while_krunkit_keeps_log_file() {
     // failed boot's stderr can be captured. Its capture slot must point at the
     // same vmm_log_path so triage works, and it must NOT carry a --log-file arg.
     assert_eq!(
-        vfkit.stderr_log_path,
+        vfkit.capture_log_path,
         Some(paths.vmm_log_path.clone()),
-        "vfkit has no --log-file, so its launch plan must capture stderr to vmm_log_path"
+        "vfkit has no --log-file, so its launch plan must capture output to vmm_log_path"
     );
     assert!(
         !vfkit.args.iter().any(|arg| arg == "--log-file"),
@@ -308,7 +308,7 @@ fn vfkit_launch_plan_captures_stderr_to_vmm_log_while_krunkit_keeps_log_file() {
     let captured = MachineCommandLine {
         program: PathBuf::from("/bin/sh"),
         args: vec!["-c".to_owned(), "echo vfkit-boot-failure 1>&2".to_owned()],
-        stderr_log_path: Some(paths.vmm_log_path.clone()),
+        capture_log_path: Some(paths.vmm_log_path.clone()),
     };
     let mut child = captured.spawn().expect("captured command should spawn");
     child.wait().expect("captured command should exit");
@@ -357,6 +357,38 @@ fn stop_provider_machine_routes_managed_applehv_providers_and_rejects_wsl2() {
     assert!(
         error.to_string().contains("WSL2"),
         "WSL2 stop error should name the unavailable provider: {error}"
+    );
+}
+
+#[test]
+fn vmm_backend_routes_managed_applehv_providers_and_rejects_wsl2() {
+    // `vmm_backend` is the single provider gate on the start path:
+    // `MachineLaunchPlan::build` calls it before any VMM or gvproxy process is
+    // spawned. It is the start-side mirror of `stop_provider_machine`. Both
+    // managed applehv providers must resolve to a backend that reports its own
+    // provider; WSL2 — whose backend is not wired on this host — must fail closed
+    // with the same InvalidInput error the stop path uses, so an unsupported
+    // provider can never partially start a machine.
+    for provider in [MachineProvider::Krunkit, MachineProvider::Vfkit] {
+        let backend = vmm_backend(provider)
+            .unwrap_or_else(|error| panic!("{provider:?} must resolve a VMM backend: {error}"));
+        assert_eq!(
+            backend.provider(),
+            provider,
+            "resolved backend must serve the requested provider"
+        );
+    }
+
+    let error = vmm_backend(MachineProvider::Wsl2)
+        .err()
+        .expect("the unavailable WSL2 provider must fail closed before any process spawns");
+    assert!(
+        matches!(error, Error::InvalidInput(_)),
+        "WSL2 start must surface as InvalidInput, got: {error}"
+    );
+    assert!(
+        error.to_string().contains("WSL2"),
+        "WSL2 start error should name the unavailable provider: {error}"
     );
 }
 
