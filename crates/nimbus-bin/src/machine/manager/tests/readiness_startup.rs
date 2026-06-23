@@ -95,12 +95,14 @@ fn wait_for_ssh_ready_accepts_listening_port_without_identity_probe() {
     let mut gvproxy_child = MachineCommandLine {
         program: PathBuf::from("/bin/sh"),
         args: vec!["-c".to_owned(), "sleep 30".to_owned()],
+        stderr_log_path: None,
     }
     .spawn()
     .expect("gvproxy probe child should spawn");
     let mut krunkit_child = MachineCommandLine {
         program: PathBuf::from("/bin/sh"),
         args: vec!["-c".to_owned(), "sleep 30".to_owned()],
+        stderr_log_path: None,
     }
     .spawn()
     .expect("krunkit probe child should spawn");
@@ -131,6 +133,7 @@ fn wait_for_path_returns_cancelled_when_startup_signal_is_set() {
     let mut child = MachineCommandLine {
         program: PathBuf::from("/bin/sh"),
         args: vec!["-c".to_owned(), "sleep 30".to_owned()],
+        stderr_log_path: None,
     }
     .spawn()
     .expect("probe child should spawn");
@@ -185,18 +188,21 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
     let mut krunkit_child = MachineCommandLine {
         program: PathBuf::from("/bin/sh"),
         args: vec!["-c".to_owned(), "sleep 30".to_owned()],
+        stderr_log_path: None,
     }
     .spawn()
     .expect("krunkit child should spawn");
     let mut gvproxy_child = MachineCommandLine {
         program: PathBuf::from("/bin/sh"),
         args: vec!["-c".to_owned(), "sleep 30".to_owned()],
+        stderr_log_path: None,
     }
     .spawn()
     .expect("gvproxy child should spawn");
     let mut api_forward_child = MachineCommandLine {
         program: PathBuf::from("/bin/sh"),
         args: vec!["-c".to_owned(), "sleep 30".to_owned()],
+        stderr_log_path: None,
     }
     .spawn()
     .expect("machine API forward child should spawn");

@@ -147,6 +147,7 @@ fn machine_command_spawn_detaches_helpers_into_new_session() {
     let command = MachineCommandLine {
         program: PathBuf::from("/bin/sh"),
         args: vec!["-c".to_owned(), "sleep 30".to_owned()],
+        stderr_log_path: None,
     };
     let mut child = command.spawn().expect("helper process should spawn");
     let child_pid = child.id() as i32;

@@ -22,7 +22,17 @@ env:
   # Bundled and brew may differ by a patch — keep the bundled pins
   # version-controlled and authoritative.
   GVPROXY_VERSION: v0.8.9
+  # SHA-256 of the gvproxy-darwin asset for GVPROXY_VERSION, cross-checked
+  # against the upstream `sha256sums` release asset. Bump together with the
+  # version pin above; the bundle step fails closed on any mismatch so a
+  # tampered or swapped binary never reaches the install network path.
+  GVPROXY_DARWIN_SHA256: c6f7b4bc7f21bf810b5cf54e04d979b014c5d96472a03a9e97fe62a00940067c
   VFKIT_VERSION: v0.6.3
+  # SHA-256 of the codesigned vfkit asset for VFKIT_VERSION (crc-org publishes
+  # no checksums file, so this is captured from the released binary). Bump
+  # together with the version pin above; the bundle step fails closed on any
+  # mismatch.
+  VFKIT_DARWIN_SHA256: 19d0695d40d996ec38529a22b73cdaa84ff67ba15f4b44927292e7fe885cee0e
   # Dedicated machine-os source ref used by the release graph. Nimbus stages
   # the bootc artifact as soon as the Linux arm64 binary exists, then dispatches
   # the machine-os repository to publish from its own package context after all
@@ -355,6 +365,11 @@ jobs:
           curl --fail -sSL --retry 5 \
             -o dist/libexec/gvproxy \
             "https://github.com/containers/gvisor-tap-vsock/releases/download/${GVPROXY_VERSION}/gvproxy-darwin"
+          # Verify before trusting: a helper that travels on the install network
+          # path must match the audited pin exactly. `shasum -c` exits non-zero
+          # on mismatch, failing the step closed before the binary is made
+          # executable or packaged.
+          echo "${GVPROXY_DARWIN_SHA256}  dist/libexec/gvproxy" | shasum -a 256 -c -
           chmod 0755 dist/libexec/gvproxy
           # vfkit is the opt-in macOS VMM backend (NIMBUS_MACHINE_PROVIDER=vfkit).
           # The default backend stays krunkit; vfkit is bundled so the seam works
@@ -365,6 +380,9 @@ jobs:
           curl --fail -sSL --retry 5 \
             -o dist/libexec/vfkit \
             "https://github.com/crc-org/vfkit/releases/download/${VFKIT_VERSION}/vfkit"
+          # Same fail-closed integrity gate as gvproxy above; a mismatch here
+          # also guards against silently shipping the unsigned vfkit asset.
+          echo "${VFKIT_DARWIN_SHA256}  dist/libexec/vfkit" | shasum -a 256 -c -
           chmod 0755 dist/libexec/vfkit
 
       - name: Package archive (unix)
@@ -1135,9 +1153,31 @@ jobs:
           TAG="${{ github.ref_name }}"
           VERSION="${TAG#v}"
 
-          SHA_DARWIN_ARM64=$(grep darwin_arm64 artifacts/checksums-sha256.txt | awk '{print $1}')
-          SHA_LINUX_ARM64=$(grep linux_arm64 artifacts/checksums-sha256.txt | awk '{print $1}')
-          SHA_LINUX_X86_64=$(grep linux_x86_64 artifacts/checksums-sha256.txt | awk '{print $1}')
+          # Resolve each asset's checksum by EXACT filename match on the second
+          # column, not a substring grep. A loose `grep darwin_arm64` could also
+          # match an unrelated asset that merely contains the token (an adapter
+          # build, a signature file) and splice a wrong — or multi-line — value
+          # into the cask's sha256 field. `sha_for_asset` emits only the hash;
+          # `require_sha256` then asserts it is a single 64-hex digest in the main
+          # shell, so a zero-match or multi-match fails the release closed (an
+          # `exit` inside the `$(...)` substitution would only leave the subshell).
+          sha_for_asset() {
+            awk -v name="$1" '$2 == name { print $1 }' artifacts/checksums-sha256.txt
+          }
+          require_sha256() {
+            if [[ ! "$2" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "::error::$1 did not resolve to a single SHA-256 in checksums-sha256.txt (got: '$2')" >&2
+              exit 1
+            fi
+          }
+
+          SHA_DARWIN_ARM64=$(sha_for_asset nimbus_darwin_arm64.tar.gz)
+          SHA_LINUX_ARM64=$(sha_for_asset nimbus_linux_arm64.tar.gz)
+          SHA_LINUX_X86_64=$(sha_for_asset nimbus_linux_x86_64.tar.gz)
+
+          require_sha256 nimbus_darwin_arm64.tar.gz "${SHA_DARWIN_ARM64}"
+          require_sha256 nimbus_linux_arm64.tar.gz "${SHA_LINUX_ARM64}"
+          require_sha256 nimbus_linux_x86_64.tar.gz "${SHA_LINUX_X86_64}"
 
           cat > /tmp/nimbus.rb << CASKEOF
           cask "nimbus" do

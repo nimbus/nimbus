@@ -982,6 +982,45 @@ ensure_workdir() {
   fi
 }
 
+# The machine helpers the macOS archive bundles inside its libexec/. These
+# travel under Nimbus provenance and the runtime resolves them bundled-first
+# (see resolve_macos_bundled_helper). Linux archives carry no libexec, so the
+# bundled set is empty there.
+macos_bundled_helper_names() {
+  printf '%s\n' "gvproxy" "vfkit"
+}
+
+# Succeed when every helper the install promises to bundle is already present in
+# the prefix's libexec. On non-macOS platforms there are no bundled helpers, so
+# the reconcile is vacuously satisfied. This predicate lets the same-version
+# fast path stay network-free while still healing a partial helper set.
+bundled_helpers_present() {
+  [ "$PLATFORM" = "darwin" ] || return 0
+  # Intentional word-splitting over the fixed, space-free helper names so the
+  # loop runs in this shell (a `while`-over-pipe would swallow `return`).
+  # shellcheck disable=SC2046
+  for helper_name in $(macos_bundled_helper_names); do
+    [ -x "${NIMBUS_PREFIX}/libexec/${helper_name}" ] || return 1
+  done
+  return 0
+}
+
+# Install every bundled helper carried in <extracted_dir>/libexec into the
+# install prefix. macOS ships a self-contained libexec (gvproxy, vfkit); Linux
+# archives carry none, so this is a no-op there. Idempotent: re-installing an
+# existing helper refreshes it from the pinned, integrity-verified archive.
+install_bundled_helpers() {
+  extracted_dir="$1"
+  [ -d "${extracted_dir}/libexec" ] || return 0
+  maybe_sudo install -d "${NIMBUS_PREFIX}/libexec"
+  for helper in "${extracted_dir}"/libexec/*; do
+    [ -e "$helper" ] || continue
+    helper_name="$(basename "$helper")"
+    maybe_sudo install -m 0755 "$helper" "${NIMBUS_PREFIX}/libexec/${helper_name}"
+    say_info "Installed bundled helper ${helper_name} to ${NIMBUS_PREFIX}/libexec/${helper_name}"
+  done
+}
+
 download_and_install_nimbus() {
   if [ -n "$DRY_RUN" ]; then
     say_info "[dry-run] Would download and install nimbus $NIMBUS_VERSION to ${NIMBUS_PREFIX}/bin/nimbus"
@@ -998,11 +1037,21 @@ download_and_install_nimbus() {
   say_info "Downloading checksums for nimbus ${NIMBUS_VERSION}..."
   download_to_file "$checksums_url" "$tmpdir/checksums-sha256.txt"
 
-  # Check if same version already installed
+  # The binary version gates whether we rewrite ${NIMBUS_PREFIX}/bin/nimbus, but
+  # the bundled machine helpers are reconciled independently. When nimbus is
+  # already current AND every promised helper is present, this is a network-free
+  # no-op. When the binary is current but a helper is missing (an install that
+  # predates the helper, or one later removed), reconcile just the helpers from
+  # the pinned, integrity-verified archive rather than forcing a full reinstall.
   installed_version="$(get_installed_nimbus_version)"
+  reconcile_helpers_only=
   if [ "$installed_version" = "$NIMBUS_VERSION" ]; then
-    say_info "nimbus $NIMBUS_VERSION is already installed — skipping"
-    return 0
+    if bundled_helpers_present; then
+      say_info "nimbus $NIMBUS_VERSION is already installed — skipping"
+      return 0
+    fi
+    say_info "nimbus $NIMBUS_VERSION is current; reconciling missing bundled helpers"
+    reconcile_helpers_only=1
   elif [ -n "$installed_version" ]; then
     say_info "Upgrading nimbus from $installed_version to $NIMBUS_VERSION"
   fi
@@ -1022,24 +1071,18 @@ download_and_install_nimbus() {
   say_info "Extracting and installing..."
   tar -xzf "$tmpdir/$asset_name" -C "$tmpdir"
 
-  maybe_sudo install -d "${NIMBUS_PREFIX}/bin"
-  maybe_sudo install -m 0755 "$tmpdir/nimbus" "${NIMBUS_PREFIX}/bin/nimbus"
-
-  say_info "Installed nimbus to ${NIMBUS_PREFIX}/bin/nimbus"
-
-  # Install bundled machine helpers when the archive carries them. macOS ships a
-  # self-contained libexec (gvproxy, and later vfkit); Linux archives carry no
-  # libexec, so this loop is a no-op there. The runtime resolves these
-  # bundled-first via ${NIMBUS_PREFIX}/libexec/<helper>.
-  if [ -d "$tmpdir/libexec" ]; then
-    maybe_sudo install -d "${NIMBUS_PREFIX}/libexec"
-    for helper in "$tmpdir"/libexec/*; do
-      [ -e "$helper" ] || continue
-      helper_name="$(basename "$helper")"
-      maybe_sudo install -m 0755 "$helper" "${NIMBUS_PREFIX}/libexec/${helper_name}"
-      say_info "Installed bundled helper ${helper_name} to ${NIMBUS_PREFIX}/libexec/${helper_name}"
-    done
+  # Skip rewriting the binary when only the helper set needs healing; the
+  # on-disk nimbus is already the requested version.
+  if [ -z "$reconcile_helpers_only" ]; then
+    maybe_sudo install -d "${NIMBUS_PREFIX}/bin"
+    maybe_sudo install -m 0755 "$tmpdir/nimbus" "${NIMBUS_PREFIX}/bin/nimbus"
+    say_info "Installed nimbus to ${NIMBUS_PREFIX}/bin/nimbus"
   fi
+
+  # macOS ships a self-contained libexec (gvproxy, vfkit); Linux archives carry
+  # none, so this is a no-op there. The runtime resolves these bundled-first via
+  # ${NIMBUS_PREFIX}/libexec/<helper>.
+  install_bundled_helpers "$tmpdir"
 }
 
 download_and_install_bun_jsc_adapter_linux() {

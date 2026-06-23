@@ -2,6 +2,7 @@
 use std::fs;
 #[cfg(test)]
 use std::path::Path;
+#[cfg(test)]
 use std::path::PathBuf;
 
 use nimbus::Error;
@@ -225,22 +226,28 @@ const DEFAULT_MACHINE_DISK_GIB: u32 = 20;
 const CURRENT_MACHINE_CONFIG_VERSION: u32 = nimbus_machine::CURRENT_MACHINE_CONFIG_VERSION;
 const CURRENT_MACHINE_STATE_VERSION: u32 = nimbus_machine::CURRENT_MACHINE_STATE_VERSION;
 
+/// macOS default host->guest volume mounts, expressed in the same
+/// `<source>:<target>` grammar that every user-supplied `--volume` passes
+/// through. Keeping the defaults as grammar strings (rather than pre-built
+/// `MachineVolume` literals) forces them through [`MachineVolume::parse`] in
+/// [`default_machine_volumes`], so a default can never silently drift away from
+/// the validated grammar.
+const DEFAULT_MACOS_MACHINE_VOLUME_SPECS: &[&str] = &[
+    "/Users:/Users",
+    "/private:/private",
+    "/var/folders:/var/folders",
+];
+
 fn default_machine_volumes() -> Vec<MachineVolume> {
     if cfg!(target_os = "macos") {
-        vec![
-            MachineVolume {
-                source: PathBuf::from("/Users"),
-                target: PathBuf::from("/Users"),
-            },
-            MachineVolume {
-                source: PathBuf::from("/private"),
-                target: PathBuf::from("/private"),
-            },
-            MachineVolume {
-                source: PathBuf::from("/var/folders"),
-                target: PathBuf::from("/var/folders"),
-            },
-        ]
+        DEFAULT_MACOS_MACHINE_VOLUME_SPECS
+            .iter()
+            .map(|spec| {
+                MachineVolume::parse(spec).unwrap_or_else(|error| {
+                    panic!("default machine volume spec {spec:?} must parse-validate: {error}")
+                })
+            })
+            .collect()
     } else {
         Vec::new()
     }

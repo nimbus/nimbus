@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use fs2::FileExt;
 use nimbus::Error;
@@ -317,23 +317,50 @@ pub(super) fn remove_file_if_exists(path: &Path) -> Result<(), Error> {
     }
 }
 
+/// The machine's per-boot socket and pid files.
+///
+/// These are the runtime endpoints a fresh launch must never inherit from a
+/// previous run: the readiness/ignition/API control sockets, the gvproxy
+/// datagram sockets, the VMM REST endpoint, and the three helper pid files. A
+/// stop removes them outright; a full teardown removes them alongside the
+/// [logs](machine_runtime_log_paths). Returned owned because
+/// [`krunkit_gvproxy_socket_path`](MachinePaths::krunkit_gvproxy_socket_path)
+/// derives its path rather than storing one, so a borrow would dangle.
+pub(super) fn machine_runtime_socket_and_pid_paths(paths: &MachinePaths) -> Vec<PathBuf> {
+    vec![
+        paths.ready_socket_path.clone(),
+        paths.ignition_socket_path.clone(),
+        paths.api_socket_path.clone(),
+        paths.gvproxy_socket_path.clone(),
+        paths.krunkit_gvproxy_socket_path(),
+        paths.vmm_endpoint_path.clone(),
+        paths.api_forward_pid_path.clone(),
+        paths.gvproxy_pid_path.clone(),
+        paths.vmm_pid_path.clone(),
+    ]
+}
+
+/// The machine's runtime log files.
+///
+/// A stop truncates these in place (preserving the inode so an open `tail`
+/// keeps following), while a full teardown removes them. Kept beside
+/// [`machine_runtime_socket_and_pid_paths`](machine_runtime_socket_and_pid_paths)
+/// so the two cleanup callers share one definition of "what the runtime owns".
+pub(super) fn machine_runtime_log_paths(paths: &MachinePaths) -> Vec<PathBuf> {
+    vec![
+        paths.api_forward_log_path.clone(),
+        paths.machine_log_path.clone(),
+        paths.vmm_log_path.clone(),
+        paths.gvproxy_log_path.clone(),
+    ]
+}
+
 pub(super) fn remove_machine_runtime_artifacts(paths: &MachinePaths) -> Result<(), Error> {
-    for path in [
-        &paths.api_socket_path,
-        &paths.ready_socket_path,
-        &paths.ignition_socket_path,
-        &paths.gvproxy_socket_path,
-        &paths.krunkit_gvproxy_socket_path(),
-        &paths.vmm_endpoint_path,
-        &paths.api_forward_pid_path,
-        &paths.gvproxy_pid_path,
-        &paths.vmm_pid_path,
-        &paths.api_forward_log_path,
-        &paths.machine_log_path,
-        &paths.gvproxy_log_path,
-        &paths.vmm_log_path,
-    ] {
-        remove_file_if_exists(path)?;
+    for path in machine_runtime_socket_and_pid_paths(paths)
+        .into_iter()
+        .chain(machine_runtime_log_paths(paths))
+    {
+        remove_file_if_exists(&path)?;
     }
     Ok(())
 }

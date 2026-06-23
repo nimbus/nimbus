@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn stop_machine_uses_graceful_krunkit_stop_before_cleaning_up_helpers() {
+fn stop_machine_uses_graceful_vmm_stop_before_cleaning_up_helpers() {
     let _guard = machine_lifecycle_test_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -14,9 +14,9 @@ fn stop_machine_uses_graceful_krunkit_stop_before_cleaning_up_helpers() {
         .ensure_directories()
         .expect("machine directories should exist");
 
-    let (krunkit_pid, krunkit_reaper) = spawn_reaped_process("exec sleep 30");
+    let (vmm_pid, vmm_reaper) = spawn_reaped_process("exec sleep 30");
     let (gvproxy_pid, gvproxy_reaper) = spawn_reaped_process("exec sleep 30");
-    fs::write(&paths.vmm_pid_path, krunkit_pid.to_string()).expect("krunkit pid should write");
+    fs::write(&paths.vmm_pid_path, vmm_pid.to_string()).expect("machine VMM pid should write");
     fs::write(&paths.gvproxy_pid_path, gvproxy_pid.to_string()).expect("gvproxy pid should write");
 
     let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -38,7 +38,7 @@ fn stop_machine_uses_graceful_krunkit_stop_before_cleaning_up_helpers() {
             .lock()
             .expect("request log should lock")
             .push(state.to_owned());
-        let _ = send_signal(krunkit_pid, SIGKILL);
+        let _ = send_signal(vmm_pid, SIGKILL);
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             .expect("response should write");
@@ -78,18 +78,18 @@ fn stop_machine_uses_graceful_krunkit_stop_before_cleaning_up_helpers() {
     assert_eq!(state.manager, MachineManagerState::HelpersResolved);
     assert_eq!(state.last_error, None);
     assert!(
-        wait_for_pid_exit(krunkit_pid, Duration::from_secs(2))
-            .expect("krunkit pid should become not alive"),
-        "krunkit process should exit during graceful provider stop"
+        wait_for_pid_exit(vmm_pid, Duration::from_secs(2))
+            .expect("machine VMM pid should become not alive"),
+        "machine VMM process should exit during graceful provider stop"
     );
     assert!(
         wait_for_pid_exit(gvproxy_pid, Duration::from_secs(2))
             .expect("gvproxy pid should become not alive"),
         "gvproxy process should be stopped during cleanup"
     );
-    krunkit_reaper
+    vmm_reaper
         .join()
-        .expect("krunkit reaper should observe process exit");
+        .expect("machine VMM reaper should observe process exit");
     gvproxy_reaper
         .join()
         .expect("gvproxy reaper should observe process exit");

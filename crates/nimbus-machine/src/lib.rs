@@ -536,8 +536,10 @@ pub struct MachinePaths {
     pub api_forward_log_path: PathBuf,
     pub machine_log_path: PathBuf,
     pub gvproxy_log_path: PathBuf,
-    /// Diagnostic log for the active VMM. krunkit writes it via `--log-file`;
-    /// vfkit has no such flag and leaves it empty (the guest console log lives in
+    /// Diagnostic log for the active VMM. krunkit writes it via `--log-file`.
+    /// vfkit has no such flag, so the spawn path instead captures vfkit's
+    /// stdout+stderr into this same file, keeping failed-boot triage uniform
+    /// across providers (the guest console log still lives in
     /// [`machine_log_path`](Self::machine_log_path) for both).
     pub vmm_log_path: PathBuf,
 }

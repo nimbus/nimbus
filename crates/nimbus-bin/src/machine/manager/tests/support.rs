@@ -66,6 +66,7 @@ pub(super) fn spawn_reaped_process(command: &str) -> (i32, thread::JoinHandle<()
     let mut child = MachineCommandLine {
         program: PathBuf::from("/bin/sh"),
         args: vec!["-c".to_owned(), command.to_owned()],
+        stderr_log_path: None,
     }
     .spawn()
     .expect("managed process should spawn");

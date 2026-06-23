@@ -68,7 +68,7 @@ pub(super) fn stop_machine(
     Ok(())
 }
 
-fn stop_provider_machine(
+pub(super) fn stop_provider_machine(
     paths: &MachinePaths,
     config: &MachineConfigRecord,
     timeout: Duration,
@@ -380,26 +380,15 @@ pub(super) fn cleanup_process(child: &mut Child) -> Result<(), Error> {
 }
 
 pub(super) fn cleanup_runtime_artifacts(paths: &MachinePaths) -> Result<(), Error> {
-    for path in [
-        &paths.ready_socket_path,
-        &paths.ignition_socket_path,
-        &paths.api_socket_path,
-        &paths.gvproxy_socket_path,
-        &paths.krunkit_gvproxy_socket_path(),
-        &paths.vmm_endpoint_path,
-        &paths.api_forward_pid_path,
-        &paths.gvproxy_pid_path,
-        &paths.vmm_pid_path,
-    ] {
-        remove_file_if_exists(path)?;
+    // Share one definition of "the runtime's artifacts" with the full teardown
+    // in `files::remove_machine_runtime_artifacts`. A stop removes the sockets
+    // and pid files but only truncates the logs, so a restart starts from clean
+    // endpoints while the previous boot's diagnostics remain tailable.
+    for path in super::super::files::machine_runtime_socket_and_pid_paths(paths) {
+        remove_file_if_exists(&path)?;
     }
-    for path in [
-        &paths.api_forward_log_path,
-        &paths.machine_log_path,
-        &paths.vmm_log_path,
-        &paths.gvproxy_log_path,
-    ] {
-        truncate_file(path)?;
+    for path in super::super::files::machine_runtime_log_paths(paths) {
+        truncate_file(&path)?;
     }
     Ok(())
 }

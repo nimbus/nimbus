@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn ensure_machine_can_start_rejects_external_krunkit_pid_collision() {
+fn ensure_machine_can_start_rejects_external_vmm_pid_collision() {
     let _guard = machine_lifecycle_test_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -14,12 +14,12 @@ fn ensure_machine_can_start_rejects_external_krunkit_pid_collision() {
         .ensure_directories()
         .expect("machine directories should exist");
 
-    let (krunkit_pid, krunkit_reaper) = spawn_reaped_process("exec sleep 30");
-    fs::write(&paths.vmm_pid_path, krunkit_pid.to_string()).expect("krunkit pidfile should write");
+    let (vmm_pid, vmm_reaper) = spawn_reaped_process("exec sleep 30");
+    fs::write(&paths.vmm_pid_path, vmm_pid.to_string()).expect("machine VMM pidfile should write");
 
     let state = MachineStateRecord::initialized();
     let error = ensure_machine_can_start(&paths, &config, &state)
-        .expect_err("an external krunkit owner should block start");
+        .expect_err("an external machine VMM owner should block start");
 
     let rendered = error.to_string();
     assert!(
@@ -27,7 +27,7 @@ fn ensure_machine_can_start_rejects_external_krunkit_pid_collision() {
         "external collision must surface as Conflict: {rendered}"
     );
     assert!(
-        rendered.contains(&format!("machine-vmm pid {krunkit_pid}")),
+        rendered.contains(&format!("machine-vmm pid {vmm_pid}")),
         "error should name the live machine VMM owner: {rendered}"
     );
     assert!(
@@ -35,10 +35,10 @@ fn ensure_machine_can_start_rejects_external_krunkit_pid_collision() {
         "error should explain the runtime-root escape hatch: {rendered}"
     );
 
-    force_stop_pid(krunkit_pid, Duration::from_secs(2)).expect("force stop should succeed");
-    krunkit_reaper
+    force_stop_pid(vmm_pid, Duration::from_secs(2)).expect("force stop should succeed");
+    vmm_reaper
         .join()
-        .expect("krunkit reaper should observe process exit");
+        .expect("machine VMM reaper should observe process exit");
 }
 
 #[test]
@@ -93,12 +93,12 @@ fn ensure_machine_can_start_ignores_stale_pid_files_with_no_live_process() {
         .ensure_directories()
         .expect("machine directories should exist");
 
-    let (krunkit_pid, krunkit_reaper) = spawn_reaped_process("exit 0");
-    krunkit_reaper
+    let (vmm_pid, vmm_reaper) = spawn_reaped_process("exit 0");
+    vmm_reaper
         .join()
-        .expect("krunkit reaper should observe immediate exit");
-    fs::write(&paths.vmm_pid_path, krunkit_pid.to_string())
-        .expect("stale krunkit pidfile should write");
+        .expect("machine VMM reaper should observe immediate exit");
+    fs::write(&paths.vmm_pid_path, vmm_pid.to_string())
+        .expect("stale machine VMM pidfile should write");
 
     let state = MachineStateRecord::initialized();
     ensure_machine_can_start(&paths, &config, &state)

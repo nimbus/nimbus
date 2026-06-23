@@ -10,8 +10,10 @@
 //! krunkit (libkrun) and vfkit (Apple Virtualization.framework) are the two
 //! implemented macOS backends. Both drive the same Nimbus-managed `applehv`
 //! guest over EFI and attach gvproxy through a unixgram socket; they differ only
-//! in the block- and net-device grammar and in whether the VMM exposes its own
-//! diagnostic `--log-file`. wsl2 resolves to an explicit "not available yet"
+//! in the block- and net-device grammar and in diagnostics: krunkit writes its
+//! own `--log-file`, while vfkit (no such flag) has the spawn path capture its
+//! stdout+stderr into `vmm_log_path` instead, so failed-boot triage works for
+//! both. wsl2 resolves to an explicit "not available yet"
 //! error so selection stays a deliberate, fail-closed opt-in rather than silent
 //! auto-detection.
 
@@ -223,6 +225,10 @@ impl MachineVmmBackend for KrunkitVmmBackend {
         Ok(MachineCommandLine {
             program: vmm_binary.to_path_buf(),
             args,
+            // krunkit already writes its diagnostic output to `--log-file`
+            // (set above to vmm_log_path); redirecting its stderr into the same
+            // file would duplicate every line, so leave capture off.
+            stderr_log_path: None,
         })
     }
 }
@@ -279,6 +285,11 @@ impl MachineVmmBackend for VfkitVmmBackend {
         Ok(MachineCommandLine {
             program: vmm_binary.to_path_buf(),
             args,
+            // vfkit has no `--log-file`, so a boot that dies before the guest
+            // console comes up would otherwise leave nothing to triage. Capture
+            // its stdout+stderr into vmm_log_path so failed-boot diagnostics are
+            // recoverable.
+            stderr_log_path: Some(paths.vmm_log_path.clone()),
         })
     }
 }

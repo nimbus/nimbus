@@ -258,6 +258,109 @@ fn vfkit_build_launch_command_uses_virtualization_framework_device_grammar() {
 }
 
 #[test]
+fn vfkit_launch_plan_captures_stderr_to_vmm_log_while_krunkit_keeps_log_file() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.raw");
+    let config = sample_config(&image_path);
+    let paths = config.roots.paths("default");
+
+    let krunkit = build_sample_launch_command(&KrunkitVmmBackend, &image_path, &paths, &config);
+    let vfkit = build_sample_launch_command(&VfkitVmmBackend, &image_path, &paths, &config);
+
+    // krunkit writes its own diagnostic log via `--log-file <vmm_log_path>`, so
+    // the spawn path must NOT also redirect its stderr into that same file —
+    // doing so would duplicate every line. Its capture slot stays empty.
+    assert_eq!(
+        krunkit.stderr_log_path, None,
+        "krunkit already logs via --log-file; stderr must not be redirected and double-logged"
+    );
+    assert!(
+        krunkit
+            .args
+            .windows(2)
+            .any(|pair| pair[0] == "--log-file"
+                && pair[1] == paths.vmm_log_path.display().to_string()),
+        "krunkit must keep its own --log-file pointed at vmm_log_path"
+    );
+
+    // vfkit has no `--log-file` flag, so the spawn path is the only place a
+    // failed boot's stderr can be captured. Its capture slot must point at the
+    // same vmm_log_path so triage works, and it must NOT carry a --log-file arg.
+    assert_eq!(
+        vfkit.stderr_log_path,
+        Some(paths.vmm_log_path.clone()),
+        "vfkit has no --log-file, so its launch plan must capture stderr to vmm_log_path"
+    );
+    assert!(
+        !vfkit.args.iter().any(|arg| arg == "--log-file"),
+        "vfkit has no --log-file flag to emit"
+    );
+
+    // Prove the capture is real end-to-end through the production spawn path:
+    // run a vfkit-shaped command that writes to stderr and confirm the bytes
+    // land in vmm_log_path. The krunkit-shaped sibling (no capture) leaves no
+    // such file, so its stderr is not duplicated into vmm_log_path. Production
+    // calls `ensure_directories` before the launch plan spawns, so create the
+    // runtime dir here too.
+    paths
+        .ensure_directories()
+        .expect("machine directories should exist");
+    let captured = MachineCommandLine {
+        program: PathBuf::from("/bin/sh"),
+        args: vec!["-c".to_owned(), "echo vfkit-boot-failure 1>&2".to_owned()],
+        stderr_log_path: Some(paths.vmm_log_path.clone()),
+    };
+    let mut child = captured.spawn().expect("captured command should spawn");
+    child.wait().expect("captured command should exit");
+
+    let logged = fs::read_to_string(&paths.vmm_log_path)
+        .expect("captured stderr should have been written to vmm_log_path");
+    assert!(
+        logged.contains("vfkit-boot-failure"),
+        "vfkit stderr must be captured to vmm_log_path for failed-boot triage, got: {logged:?}"
+    );
+}
+
+#[test]
+fn stop_provider_machine_routes_managed_applehv_providers_and_rejects_wsl2() {
+    // `stop_provider_machine` is the provider dispatch in front of teardown. It
+    // is the stop-side mirror of `uses_managed_applehv_guest`: both krunkit and
+    // vfkit must reach the one shared VMM stop path, which is a clean no-op when
+    // no VMM pidfile exists (nothing is running). WSL2 — whose guest plumbing is
+    // not wired on this host — must fail closed with InvalidInput rather than
+    // silently report a successful stop it never performed.
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.raw");
+    let mut config = sample_config(&image_path);
+    let paths = config.roots.paths("default");
+    paths
+        .ensure_directories()
+        .expect("machine directories should exist");
+
+    // No pidfile is written, so the managed applehv stop path has nothing to
+    // signal and must succeed without error for both backends. A regression that
+    // routed vfkit anywhere but the shared VMM stop path would surface here.
+    for provider in [MachineProvider::Krunkit, MachineProvider::Vfkit] {
+        config.provider = provider;
+        stop_provider_machine(&paths, &config, Duration::from_millis(50)).unwrap_or_else(|error| {
+            panic!("{provider:?} stop should no-op when no VMM is running: {error}")
+        });
+    }
+
+    config.provider = MachineProvider::Wsl2;
+    let error = stop_provider_machine(&paths, &config, Duration::from_millis(50))
+        .expect_err("the unavailable WSL2 provider must fail closed, not silently no-op");
+    assert!(
+        matches!(error, Error::InvalidInput(_)),
+        "WSL2 stop must surface as InvalidInput, got: {error}"
+    );
+    assert!(
+        error.to_string().contains("WSL2"),
+        "WSL2 stop error should name the unavailable provider: {error}"
+    );
+}
+
+#[test]
 fn applehv_backends_emit_one_virtiofs_device_per_user_volume() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let image_path = temp_dir.path().join("disk.raw");

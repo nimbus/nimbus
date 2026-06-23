@@ -359,6 +359,57 @@ else
   fail "Bun/JSC installer verifies manifest, evidence, exports, and native loader policy"
 fi
 
+# --- macOS bundled-helper resolver parity -----------------------------------
+
+echo ""
+echo "Checking macOS bundled-helper resolver parity..."
+
+# install.sh (download/install path) and verify-install.sh (post-install audit)
+# each carry a standalone copy of the bundled-first macOS helper resolver,
+# because both ship as single-file distributions (curl | sh, standalone verify)
+# and cannot source a shared library. This guard fails closed if the two copies
+# ever probe a different ordered sequence of resolution stages -- a drift that
+# would silently desync where Nimbus locates its pinned gvproxy/vfkit between
+# install time and verification time. It reduces each resolver body to a
+# canonical stage signature that ignores POSIX-vs-bash surface syntax
+# (`[ -x ]` vs `[[ -x ]]`, `${NIMBUS_PREFIX}` vs `${install_prefix}`) and
+# compares only the resolution-order semantics both copies must share.
+resolution_signature() {
+  awk -v fn="$2" '
+    $0 == (fn "() {") { inbody = 1; next }
+    inbody && $0 == "}" { inbody = 0; next }
+    !inbody { next }
+    {
+      if (index($0, "-x ") && index($0, "/libexec/${helper_name}") && !index($0, "real_dir") && !s1) { printf "S1:prefix-libexec "; s1 = 1 }
+      if (index($0, "-x ") && index($0, "real_dir}/libexec/${helper_name}") && !s2) { printf "S2:beside-binary "; s2 = 1 }
+      if (index($0, "/usr/local/bin/${helper_name}") && !s3) { printf "S3:brew-usrlocal "; s3 = 1 }
+      if (index($0, "command -v \"${helper_name}\"") && !s4) { printf "S4:path "; s4 = 1 }
+    }
+  ' "$1"
+}
+
+expected_resolver_signature="S1:prefix-libexec S2:beside-binary S3:brew-usrlocal S4:path "
+install_resolver_signature="$(resolution_signature "${repo_root}/scripts/install.sh" resolve_macos_bundled_helper)"
+verify_resolver_signature="$(resolution_signature "${repo_root}/scripts/verify-install.sh" resolve_macos_bundled_helper_path)"
+
+if [[ "${install_resolver_signature}" == "${expected_resolver_signature}" ]]; then
+  pass "install.sh resolve_macos_bundled_helper probes the canonical stage order"
+else
+  fail "install.sh resolve_macos_bundled_helper stage order drifted (got '${install_resolver_signature}')"
+fi
+
+if [[ "${verify_resolver_signature}" == "${expected_resolver_signature}" ]]; then
+  pass "verify-install.sh resolve_macos_bundled_helper_path probes the canonical stage order"
+else
+  fail "verify-install.sh resolve_macos_bundled_helper_path stage order drifted (got '${verify_resolver_signature}')"
+fi
+
+if [[ "${install_resolver_signature}" == "${verify_resolver_signature}" ]]; then
+  pass "install.sh and verify-install.sh macOS helper resolvers stay in lockstep"
+else
+  fail "install.sh and verify-install.sh macOS helper resolvers desynced"
+fi
+
 # --- Mocked platform checks --------------------------------------------------
 
 echo ""

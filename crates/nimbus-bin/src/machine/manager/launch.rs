@@ -34,16 +34,56 @@ pub(super) struct MachineLaunchPlan {
 pub(super) struct MachineCommandLine {
     pub(super) program: PathBuf,
     pub(super) args: Vec<String>,
+    /// Where to capture the child's stdout+stderr for failed-boot triage.
+    ///
+    /// A VMM that writes its own diagnostic log (krunkit via `--log-file`)
+    /// leaves this `None` so its stderr is not also redirected into the same
+    /// file and duplicated. A VMM with no diagnostic-log flag (vfkit) sets this
+    /// to its [`vmm_log_path`](MachinePaths::vmm_log_path) so a boot that dies
+    /// before the guest console comes up still leaves captured stderr to triage.
+    /// `None` discards both streams (`/dev/null`), matching the gvproxy helper,
+    /// which logs through its own `-log-file`.
+    pub(super) stderr_log_path: Option<PathBuf>,
 }
 
 impl MachineCommandLine {
     pub(super) fn spawn(&self) -> Result<Child, Error> {
         let mut command = Command::new(&self.program);
-        command
-            .args(&self.args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        command.args(&self.args).stdin(Stdio::null());
+        match self.stderr_log_path.as_deref() {
+            // The VMM has no diagnostic log of its own, so capture its
+            // stdout+stderr into the provider's vmm_log_path. Append (never
+            // truncate) so an earlier failed boot's output is not clobbered by a
+            // restart, and clone the handle so both streams land in one file
+            // without interleaving a separately-opened descriptor.
+            Some(log_path) => {
+                let stdout = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log_path)
+                    .map_err(|error| {
+                        Error::Internal(format!(
+                            "failed to open VMM log {} for stderr capture: {error}",
+                            log_path.display()
+                        ))
+                    })?;
+                let stderr = stdout.try_clone().map_err(|error| {
+                    Error::Internal(format!(
+                        "failed to clone VMM log {} for stderr capture: {error}",
+                        log_path.display()
+                    ))
+                })?;
+                command
+                    .stdout(Stdio::from(stdout))
+                    .stderr(Stdio::from(stderr));
+            }
+            // No capture file: the helper writes its own log (krunkit
+            // `--log-file`, gvproxy `-log-file`), so discard both streams rather
+            // than double-logging the same output into a second sink.
+            None => {
+                command.stdout(Stdio::null()).stderr(Stdio::null());
+            }
+        }
         #[cfg(unix)]
         // SAFETY: `pre_exec` runs in the child process after fork and before
         // exec. The closure only invokes `setsid`, an async-signal-safe libc
@@ -121,6 +161,8 @@ impl MachineLaunchPlan {
         let gvproxy_command = backend.requires_gvproxy().then(|| MachineCommandLine {
             program: helper_binaries.gvproxy.clone(),
             args: build_gvproxy_args(backend.as_ref(), paths, ssh_port),
+            // gvproxy writes its own `-log-file`; no stderr capture needed.
+            stderr_log_path: None,
         });
 
         let vmm_command = backend.build_launch_command(
