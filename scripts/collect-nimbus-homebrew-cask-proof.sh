@@ -308,6 +308,7 @@ fi
 if [[ -z "${home_dir}" ]]; then
   home_dir="${output_dir}/home"
 fi
+runtime_root_is_temp=0
 if [[ -z "${runtime_root}" ]]; then
   # gvproxy binds a unixgram control socket at
   # "${runtime_root}/default-gvproxy.sock". macOS caps sockaddr_un.sun_path at
@@ -319,6 +320,9 @@ if [[ -z "${runtime_root}" ]]; then
   runtime_tmp_base="/private/tmp"
   [[ -d "${runtime_tmp_base}" ]] || runtime_tmp_base="/tmp"
   runtime_root="$(mktemp -d "${runtime_tmp_base}/nimbus-homebrew-runtime.XXXXXX")"
+  # Script-created: cleanup() reclaims it on exit. A user-supplied
+  # --runtime-root is left untouched.
+  runtime_root_is_temp=1
 fi
 
 mkdir -p "${home_dir}" "${runtime_root}"
@@ -378,6 +382,13 @@ cleanup() {
         "${output_dir}/cleanup-brew-untap.txt" \
         "${brew_bin}" untap "${tap_name}"
     fi
+  fi
+
+  # Reclaim the auto-created runtime root (gvproxy sockets + machine runtime
+  # state) now that the machine is stopped. Only remove what this script
+  # created; a user-supplied --runtime-root is the caller's to manage.
+  if [[ "${runtime_root_is_temp:-0}" -eq 1 ]]; then
+    rm -rf "${runtime_root}"
   fi
 
   exit "${status}"
