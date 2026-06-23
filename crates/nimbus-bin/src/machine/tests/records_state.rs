@@ -483,7 +483,7 @@ fn machine_set_rejects_running_machine() {
 }
 
 #[test]
-fn load_machine_config_rejects_older_schema_versions_with_clear_error() {
+fn load_machine_config_rejects_older_schema_version_preserving_a_backup() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
@@ -529,15 +529,48 @@ fn load_machine_config_rejects_older_schema_versions_with_clear_error() {
     let error = load_machine_config_if_exists(&paths.config_path)
         .expect_err("older config version should fail");
 
+    let rendered = error.to_string();
     assert!(
-        error
-            .to_string()
-            .contains("uses unsupported schema version")
+        rendered.contains("unsupported older schema version"),
+        "unexpected error: {rendered}"
+    );
+    // The strict loader must stay non-destructive: it must not prescribe a
+    // `nimbus machine rm` that would discard the operator's declared intent,
+    // and it must point at the preserved copy instead.
+    assert!(
+        !rendered.contains("nimbus machine rm"),
+        "must not prescribe a destructive rm: {rendered}"
+    );
+    assert!(
+        rendered.contains("preserved"),
+        "must mention the preserved copy: {rendered}"
+    );
+
+    // The rejected config is copied aside (never moved): the original stays put
+    // and a byte-for-byte backup appears beside it under the named path.
+    let original = fs::read(&paths.config_path).expect("original config should remain in place");
+    let file_name = paths
+        .config_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("config path should have a file name");
+    let backup_path = paths.config_path.with_file_name(format!(
+        "{file_name}.v{}.bak",
+        CURRENT_MACHINE_CONFIG_VERSION - 1
+    ));
+    assert!(
+        rendered.contains(&backup_path.display().to_string()),
+        "error should name the backup path: {rendered}"
+    );
+    let preserved = fs::read(&backup_path).expect("backup copy should exist");
+    assert_eq!(
+        preserved, original,
+        "backup must be a byte-for-byte copy of the rejected config"
     );
 }
 
 #[test]
-fn load_machine_config_rejects_newer_schema_version_with_clear_error() {
+fn load_machine_config_rejects_newer_schema_version_preserving_a_backup() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
@@ -583,11 +616,42 @@ fn load_machine_config_rejects_newer_schema_version_with_clear_error() {
     let error = load_machine_config_if_exists(&paths.config_path)
         .expect_err("newer config version should fail");
 
-    assert!(error.to_string().contains("uses newer schema version"));
+    let rendered = error.to_string();
     assert!(
-        error
-            .to_string()
-            .contains(&(CURRENT_MACHINE_CONFIG_VERSION + 1).to_string())
+        rendered.contains("newer nimbus build"),
+        "unexpected error: {rendered}"
+    );
+    assert!(
+        rendered.contains(&(CURRENT_MACHINE_CONFIG_VERSION + 1).to_string()),
+        "should name the newer schema version: {rendered}"
+    );
+    assert!(
+        rendered.contains("Upgrade nimbus"),
+        "should offer the non-destructive upgrade path: {rendered}"
+    );
+    assert!(
+        !rendered.contains("nimbus machine rm"),
+        "must not prescribe a destructive rm: {rendered}"
+    );
+    assert!(
+        rendered.contains("preserved"),
+        "must mention the preserved copy: {rendered}"
+    );
+
+    let original = fs::read(&paths.config_path).expect("original config should remain in place");
+    let file_name = paths
+        .config_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("config path should have a file name");
+    let backup_path = paths.config_path.with_file_name(format!(
+        "{file_name}.v{}.bak",
+        CURRENT_MACHINE_CONFIG_VERSION + 1
+    ));
+    let preserved = fs::read(&backup_path).expect("backup copy should exist");
+    assert_eq!(
+        preserved, original,
+        "backup must be a byte-for-byte copy of the rejected config"
     );
 }
 

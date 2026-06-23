@@ -121,6 +121,39 @@ where
     })
 }
 
+/// Copy a schema-mismatched machine config beside the original before the
+/// loader rejects it, so recreating the machine never forces the operator to
+/// reconstruct their declared settings from memory.
+///
+/// The config loader is deliberately strict: unlike the state loader it never
+/// rebuilds config from defaults, because the config record carries operator
+/// intent -- provider, image source, resource sizing, volumes -- that exists
+/// nowhere else and cannot be reconstructed. Preserving a copy keeps that
+/// strictness non-destructive: the rejected configuration stays on disk for
+/// reference even after the operator clears and recreates the machine.
+///
+/// Best-effort by design -- a failed backup write must not mask the
+/// schema-mismatch error, so failure yields `None` and the caller omits the
+/// "preserved" hint rather than surfacing a less useful error.
+fn preserve_rejected_config(path: &Path, bytes: &[u8], version: u32) -> Option<PathBuf> {
+    let file_name = path.file_name()?.to_str()?;
+    let backup_path = path.with_file_name(format!("{file_name}.v{version}.bak"));
+    fs::write(&backup_path, bytes).ok()?;
+    Some(backup_path)
+}
+
+/// Render the trailing "preserved at ..." clause for a rejected-config error,
+/// or an empty string when the backup could not be written.
+fn preserved_config_hint(backup: Option<&PathBuf>) -> String {
+    match backup {
+        Some(path) => format!(
+            " Your previous configuration was preserved at {}.",
+            path.display()
+        ),
+        None => String::new(),
+    }
+}
+
 pub(super) fn load_machine_config_if_exists(
     path: &Path,
 ) -> Result<Option<MachineConfigRecord>, Error> {
@@ -134,19 +167,23 @@ pub(super) fn load_machine_config_if_exists(
             parse_machine_record::<MachineConfigRecord>(path, &bytes, "machine config").map(Some)
         }
         newer if newer > super::CURRENT_MACHINE_CONFIG_VERSION => {
+            let hint =
+                preserved_config_hint(preserve_rejected_config(path, &bytes, newer).as_ref());
+            let current = super::CURRENT_MACHINE_CONFIG_VERSION;
             Err(Error::InvalidInput(format!(
-                "machine config at {} uses newer schema version {}; this nimbus build supports version {}. Upgrade nimbus or recreate the machine.",
+                "machine config at {} was written by a newer nimbus build (schema version {newer}; this build supports version {current}).{hint} Upgrade nimbus to load it, or recreate the machine to regenerate the config at the current schema version.",
                 path.display(),
-                newer,
-                super::CURRENT_MACHINE_CONFIG_VERSION
             )))
         }
-        older => Err(Error::InvalidInput(format!(
-            "machine config at {} uses unsupported schema version {}; this nimbus build supports version {}. Recreate the machine with `nimbus machine rm` then `nimbus machine init`.",
-            path.display(),
-            older,
-            super::CURRENT_MACHINE_CONFIG_VERSION
-        ))),
+        older => {
+            let hint =
+                preserved_config_hint(preserve_rejected_config(path, &bytes, older).as_ref());
+            let current = super::CURRENT_MACHINE_CONFIG_VERSION;
+            Err(Error::InvalidInput(format!(
+                "machine config at {} uses an unsupported older schema version {older}; this build supports version {current}.{hint} Recreate the machine to regenerate the config at the current schema version; the preserved copy keeps your declared settings to re-apply.",
+                path.display(),
+            )))
+        }
     }
 }
 
