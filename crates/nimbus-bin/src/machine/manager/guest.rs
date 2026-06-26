@@ -208,12 +208,12 @@ pub(super) fn validate_machine_bootstrap_contract(
 }
 
 pub(super) fn requires_host_guest_nimbus_sync(config: &MachineConfigRecord) -> bool {
-    config.provider == super::super::MachineProvider::Krunkit
+    config.provider.uses_managed_applehv_guest()
         && super::super::uses_host_managed_machine_image_contract(config)
 }
 
 pub(super) fn requires_bootc_machine_config(config: &MachineConfigRecord) -> bool {
-    config.provider == super::super::MachineProvider::Krunkit
+    config.provider.uses_managed_applehv_guest()
         && machine_bootstrap_mode(config) == MachineBootstrapMode::BootcMachineConfig
 }
 
@@ -221,14 +221,12 @@ pub(super) fn ensure_guest_machine_api_ready(
     paths: &MachinePaths,
     config: &MachineConfigRecord,
     ssh_port: u16,
-    krunkit_child: &mut Option<Child>,
+    vmm_child: &mut Option<Child>,
     gvproxy_child: &mut Option<Child>,
     api_forward_child: &mut Option<Child>,
     startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
-    if config.provider != super::super::MachineProvider::Krunkit
-        || config.guest.ssh_identity_path.is_none()
-    {
+    if !config.provider.uses_managed_applehv_guest() || config.guest.ssh_identity_path.is_none() {
         return Ok(());
     }
 
@@ -240,7 +238,7 @@ pub(super) fn ensure_guest_machine_api_ready(
     wait_for_machine_api_ready(
         paths,
         resolve_machine_api_ready_wait_timeout(),
-        required_child(krunkit_child, "krunkit")?,
+        required_child(vmm_child, "machine VMM")?,
         required_child(gvproxy_child, "gvproxy")?,
         required_child(api_forward_child, "machine API forward")?,
         startup_signals,

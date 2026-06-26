@@ -10,6 +10,7 @@ use tempfile::TempDir;
 mod forwarded_api;
 mod os_image;
 mod parse_help;
+mod provider_selection;
 mod records_state;
 mod render;
 mod startup_failures;

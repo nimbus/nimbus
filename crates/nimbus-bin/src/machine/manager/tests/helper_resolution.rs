@@ -6,11 +6,16 @@ fn helper_resolution_honors_environment_overrides() {
     let krunkit_path = temp_dir.path().join("krunkit");
     let gvproxy_path = temp_dir.path().join("gvproxy");
     let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
-    let resolved =
-        resolve_machine_helper_binaries().expect("helper binaries should resolve via env");
 
-    assert_eq!(resolved.krunkit, krunkit_path);
-    assert_eq!(resolved.gvproxy, gvproxy_path);
+    // VMM binary resolution is owned by the per-provider backend; gvproxy
+    // resolution is the shared helper path. Both honor their env overrides.
+    let resolved_vmm = KrunkitVmmBackend
+        .resolve_vmm_binary()
+        .expect("krunkit binary should resolve via env");
+    let resolved_gvproxy = resolve_gvproxy_binary().expect("gvproxy should resolve via env");
+
+    assert_eq!(resolved_vmm, krunkit_path);
+    assert_eq!(resolved_gvproxy, gvproxy_path);
 }
 
 #[test]
@@ -80,16 +85,39 @@ fn known_helper_candidates_mirror_podman_darwin_defaults() {
     assert_eq!(
         known_helper_candidates("gvproxy"),
         vec![
-            PathBuf::from("/usr/local/opt/podman/libexec/podman/gvproxy"),
-            PathBuf::from("/opt/homebrew/opt/podman/libexec/podman/gvproxy"),
             PathBuf::from("/opt/homebrew/bin/gvproxy"),
             PathBuf::from("/usr/local/bin/gvproxy"),
+            PathBuf::from("/usr/local/opt/podman/libexec/podman/gvproxy"),
+            PathBuf::from("/opt/homebrew/opt/podman/libexec/podman/gvproxy"),
             PathBuf::from("/opt/homebrew/libexec/podman/gvproxy"),
             PathBuf::from("/usr/local/libexec/podman/gvproxy"),
             PathBuf::from("/usr/local/lib/podman/gvproxy"),
             PathBuf::from("/usr/libexec/podman/gvproxy"),
             PathBuf::from("/usr/lib/podman/gvproxy"),
         ]
+    );
+}
+
+#[test]
+fn homebrew_managed_helpers_outrank_podman_libexec() {
+    // The Nimbus cask declares its `krunkit` (and therefore `gvproxy`)
+    // dependency into the Homebrew prefix `bin`. That declared, version-pinned
+    // helper must win over a `gvproxy` an unrelated `podman` install happens to
+    // ship in its `libexec`, otherwise the cask's managed dependency is silently
+    // shadowed and the resolved helper depends on whatever else is installed.
+    let candidates = known_helper_candidates("gvproxy");
+    let homebrew_bin = candidates
+        .iter()
+        .position(|path| path == &PathBuf::from("/opt/homebrew/bin/gvproxy"))
+        .expect("Homebrew prefix bin must be a known candidate");
+    let podman_libexec = candidates
+        .iter()
+        .position(|path| path == &PathBuf::from("/opt/homebrew/opt/podman/libexec/podman/gvproxy"))
+        .expect("Podman libexec must remain a fallback candidate");
+
+    assert!(
+        homebrew_bin < podman_libexec,
+        "Homebrew-managed gvproxy ({homebrew_bin}) must outrank Podman libexec ({podman_libexec})"
     );
 }
 
@@ -119,6 +147,7 @@ fn machine_command_spawn_detaches_helpers_into_new_session() {
     let command = MachineCommandLine {
         program: PathBuf::from("/bin/sh"),
         args: vec!["-c".to_owned(), "sleep 30".to_owned()],
+        capture_log_path: None,
     };
     let mut child = command.spawn().expect("helper process should spawn");
     let child_pid = child.id() as i32;

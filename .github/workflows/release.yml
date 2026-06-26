@@ -14,10 +14,25 @@ env:
   # Git's long-path support for large Deno-family dependency submodules.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  # Mirror Podman's macOS packaging model: ship a pinned upstream gvproxy
-  # binary inside the darwin archive instead of publishing gvproxy as a
-  # separate Nimbus release asset or depending on Podman at runtime.
-  GVPROXY_VERSION: v0.8.8
+  # Mirror Podman's macOS packaging model: ship pinned upstream machine
+  # helpers inside the darwin archive so the no-brew install is self-contained
+  # and the on-the-network-path binaries stay under Nimbus provenance control.
+  # These bundled artifacts are the AUTHORITATIVE fallback, resolved first;
+  # the krunkit Homebrew chain may also provide gvproxy and that is expected.
+  # Bundled and brew may differ by a patch — keep the bundled pins
+  # version-controlled and authoritative.
+  GVPROXY_VERSION: v0.8.9
+  # SHA-256 of the gvproxy-darwin asset for GVPROXY_VERSION, cross-checked
+  # against the upstream `sha256sums` release asset. Bump together with the
+  # version pin above; the bundle step fails closed on any mismatch so a
+  # tampered or swapped binary never reaches the install network path.
+  GVPROXY_DARWIN_SHA256: c6f7b4bc7f21bf810b5cf54e04d979b014c5d96472a03a9e97fe62a00940067c
+  VFKIT_VERSION: v0.6.3
+  # SHA-256 of the codesigned vfkit asset for VFKIT_VERSION (crc-org publishes
+  # no checksums file, so this is captured from the released binary). Bump
+  # together with the version pin above; the bundle step fails closed on any
+  # mismatch.
+  VFKIT_DARWIN_SHA256: 19d0695d40d996ec38529a22b73cdaa84ff67ba15f4b44927292e7fe885cee0e
   # Dedicated machine-os source ref used by the release graph. Nimbus stages
   # the bootc artifact as soon as the Linux arm64 binary exists, then dispatches
   # the machine-os repository to publish from its own package context after all
@@ -340,14 +355,35 @@ jobs:
           compression-level: 0
           if-no-files-found: ignore
 
-      - name: Bundle macOS machine helper
+      - name: Bundle macOS machine helpers
         if: matrix.os == 'darwin'
         run: |
+          # Self-contained, Nimbus-pinned machine helpers for the no-brew
+          # install path (Podman's packaging model). Resolved bundled-first at
+          # runtime; the krunkit Homebrew chain may also provide gvproxy.
           mkdir -p dist/libexec
           curl --fail -sSL --retry 5 \
             -o dist/libexec/gvproxy \
             "https://github.com/containers/gvisor-tap-vsock/releases/download/${GVPROXY_VERSION}/gvproxy-darwin"
+          # Verify before trusting: a helper that travels on the install network
+          # path must match the audited pin exactly. `shasum -c` exits non-zero
+          # on mismatch, failing the step closed before the binary is made
+          # executable or packaged.
+          echo "${GVPROXY_DARWIN_SHA256}  dist/libexec/gvproxy" | shasum -a 256 -c -
           chmod 0755 dist/libexec/gvproxy
+          # vfkit is the opt-in macOS VMM backend (NIMBUS_MACHINE_PROVIDER=vfkit).
+          # The default backend stays krunkit; vfkit is bundled so the seam works
+          # without a brew install. crc-org publishes a codesigned + notarized
+          # `vfkit` asset that already carries com.apple.security.virtualization,
+          # so the signed binary travels intact through packaging (no Nimbus
+          # re-sign step strips it). The unsigned asset is deliberately not used.
+          curl --fail -sSL --retry 5 \
+            -o dist/libexec/vfkit \
+            "https://github.com/crc-org/vfkit/releases/download/${VFKIT_VERSION}/vfkit"
+          # Same fail-closed integrity gate as gvproxy above; a mismatch here
+          # also guards against silently shipping the unsigned vfkit asset.
+          echo "${VFKIT_DARWIN_SHA256}  dist/libexec/vfkit" | shasum -a 256 -c -
+          chmod 0755 dist/libexec/vfkit
 
       - name: Package archive (unix)
         if: matrix.archive == 'tar.gz'
@@ -356,10 +392,12 @@ jobs:
           cp target/release/nimbus dist/nimbus
           cp README.md LICENSE dist/
           if [[ "${{ matrix.os }}" == "darwin" ]]; then
+            # darwin carries the bundled libexec machine helpers (gvproxy and
+            # vfkit) so the no-brew archive is self-contained.
             tar czf nimbus_${{ matrix.os }}_${{ matrix.arch }}.tar.gz \
               -C dist nimbus libexec README.md LICENSE
           else
-          tar czf nimbus_${{ matrix.os }}_${{ matrix.arch }}.tar.gz \
+            tar czf nimbus_${{ matrix.os }}_${{ matrix.arch }}.tar.gz \
               -C dist nimbus README.md LICENSE
           fi
 
@@ -1115,9 +1153,31 @@ jobs:
           TAG="${{ github.ref_name }}"
           VERSION="${TAG#v}"
 
-          SHA_DARWIN_ARM64=$(grep darwin_arm64 artifacts/checksums-sha256.txt | awk '{print $1}')
-          SHA_LINUX_ARM64=$(grep linux_arm64 artifacts/checksums-sha256.txt | awk '{print $1}')
-          SHA_LINUX_X86_64=$(grep linux_x86_64 artifacts/checksums-sha256.txt | awk '{print $1}')
+          # Resolve each asset's checksum by EXACT filename match on the second
+          # column, not a substring grep. A loose `grep darwin_arm64` could also
+          # match an unrelated asset that merely contains the token (an adapter
+          # build, a signature file) and splice a wrong — or multi-line — value
+          # into the cask's sha256 field. `sha_for_asset` emits only the hash;
+          # `require_sha256` then asserts it is a single 64-hex digest in the main
+          # shell, so a zero-match or multi-match fails the release closed (an
+          # `exit` inside the `$(...)` substitution would only leave the subshell).
+          sha_for_asset() {
+            awk -v name="$1" '$2 == name { print $1 }' artifacts/checksums-sha256.txt
+          }
+          require_sha256() {
+            if [[ ! "$2" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "::error::$1 did not resolve to a single SHA-256 in checksums-sha256.txt (got: '$2')" >&2
+              exit 1
+            fi
+          }
+
+          SHA_DARWIN_ARM64=$(sha_for_asset nimbus_darwin_arm64.tar.gz)
+          SHA_LINUX_ARM64=$(sha_for_asset nimbus_linux_arm64.tar.gz)
+          SHA_LINUX_X86_64=$(sha_for_asset nimbus_linux_x86_64.tar.gz)
+
+          require_sha256 nimbus_darwin_arm64.tar.gz "${SHA_DARWIN_ARM64}"
+          require_sha256 nimbus_linux_arm64.tar.gz "${SHA_LINUX_ARM64}"
+          require_sha256 nimbus_linux_x86_64.tar.gz "${SHA_LINUX_X86_64}"
 
           cat > /tmp/nimbus.rb << CASKEOF
           cask "nimbus" do
@@ -1135,7 +1195,10 @@ jobs:
             on_macos do
               depends_on arch: :arm64
               depends_on macos: :sonoma
-              depends_on formula: "slp/krunkit/krunkit"
+              # No depends_on formula here: krunkit lives in a third-party tap,
+              # and Homebrew 6.0 tap-trust is non-transitive, so a nimbus/tap cask
+              # can never pre-trust libkrun/krun. The krunkit microVM chain is
+              # optional and documented in caveats instead.
 
               on_arm do
                 url "https://github.com/nimbus/nimbus/releases/download/v#{version}/nimbus_darwin_arm64.tar.gz"
@@ -1160,16 +1223,29 @@ jobs:
               end
             end
 
-            caveats do
-              "Nimbus has been installed!"
-              ""
-              "Quick start:"
-              "  nimbus --help              # Show all commands"
-              "  nimbus machine init        # Record the default macOS machine contract"
-              "  nimbus start               # Start the server"
-              ""
-              "Documentation: https://github.com/nimbus/nimbus"
-            end
+            caveats <<~EOS
+              Nimbus is installed. Quick start:
+                nimbus --help              # Show all commands
+                nimbus start               # Start the server
+
+              Optional macOS microVM dev flow ('nimbus machine'):
+              it needs the krunkit chain (krunkit + gvproxy + libkrun) from the
+              libkrun/krun tap. Homebrew 6.0 requires you to trust a third-party
+              tap before installing from it (trust is per-tap, so this cask cannot
+              do it for you):
+
+                brew tap libkrun/krun
+                brew trust --tap libkrun/krun
+                brew install libkrun/krun/krunkit
+
+              The 'nimbus' server itself runs fine without this chain.
+
+              A pinned vfkit (Apple Virtualization.framework) ships bundled in
+              this cask as an opt-in machine backend; enable it with
+              NIMBUS_MACHINE_PROVIDER=vfkit. The default backend stays krunkit.
+
+              Documentation: https://github.com/nimbus/nimbus
+            EOS
           end
 
           CASKEOF

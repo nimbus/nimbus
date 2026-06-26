@@ -616,7 +616,7 @@ fn machine_list_prioritizes_active_and_default_machines() {
             MachineLifecycle::Starting | MachineLifecycle::Running
         ) {
             let current_pid = std::process::id().to_string();
-            fs::write(&paths.krunkit_pid_path, &current_pid).expect("krunkit pidfile should write");
+            fs::write(&paths.vmm_pid_path, &current_pid).expect("machine VMM pidfile should write");
             fs::write(&paths.gvproxy_pid_path, &current_pid).expect("gvproxy pidfile should write");
             fs::write(&paths.api_forward_pid_path, &current_pid)
                 .expect("machine-api forward pidfile should write");
@@ -757,4 +757,106 @@ fn machine_inspect_yaml_output_serializes_full_config_and_state() {
     assert!(rendered.contains("name: default"));
     assert!(rendered.contains("provider: krunkit"));
     assert!(rendered.contains("lifecycle: stopped"));
+}
+
+#[test]
+fn machine_render_surfaces_vfkit_provider_in_status_inspect_and_list() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let layout = MachineRootLayout::test_sibling_roots(
+        temp_dir.path().join("config"),
+        temp_dir.path().join("state"),
+        temp_dir.path().join("runtime"),
+    );
+    let paths = layout.paths("team-vfkit");
+    let config = MachineConfigRecord {
+        version: CURRENT_MACHINE_CONFIG_VERSION,
+        name: "team-vfkit".to_owned(),
+        provider: MachineProvider::Vfkit,
+        guest: MachineGuestConfig {
+            image_source: MachineImageSource::parse(&default_machine_image())
+                .expect("default image should parse"),
+            provisioning: MachineGuestProvisioning::Ignition,
+            ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
+            ssh_identity_path: None,
+            ignition_file_path: None,
+            efi_variable_store_path: None,
+        },
+        resources: MachineResources {
+            cpus: 4,
+            memory_mib: 4096,
+            disk_gib: 40,
+        },
+        volumes: Vec::new(),
+        roots: layout,
+    };
+    let state = MachineStateRecord {
+        version: CURRENT_MACHINE_STATE_VERSION,
+        lifecycle: MachineLifecycle::Running,
+        manager: MachineManagerState::Ready,
+        runtime: None,
+        last_error: None,
+    };
+
+    // Status table: the opt-in provider is surfaced in the human summary.
+    let table = render_machine_status_view(
+        MachineCommandResult::Status,
+        &paths,
+        Some(&config),
+        Some(&state),
+        MachineStatusOutputFormat::Table,
+        false,
+        false,
+    )
+    .expect("vfkit status table should render");
+    assert!(table.contains("vfkit"));
+
+    // Status JSON: the kebab-case provider serialization is `vfkit`.
+    let status_json = render_machine_status_view(
+        MachineCommandResult::Status,
+        &paths,
+        Some(&config),
+        Some(&state),
+        MachineStatusOutputFormat::Json,
+        false,
+        false,
+    )
+    .expect("vfkit status JSON should render");
+    let status: serde_json::Value =
+        serde_json::from_str(&status_json).expect("status JSON should parse");
+    assert_eq!(status["provider"], "vfkit");
+
+    // Inspect YAML + JSON both carry the vfkit provider.
+    let inspect_yaml =
+        render_machine_inspect_view(&config, &state, MachineInspectOutputFormat::Yaml)
+            .expect("vfkit inspect yaml should render");
+    assert!(inspect_yaml.contains("provider: vfkit"));
+
+    let inspect_json =
+        render_machine_inspect_view(&config, &state, MachineInspectOutputFormat::Json)
+            .expect("vfkit inspect json should render");
+    let inspect: serde_json::Value =
+        serde_json::from_str(&inspect_json).expect("inspect JSON should parse");
+    assert_eq!(inspect["config"]["provider"], "vfkit");
+
+    // List view: the provider column renders the vfkit entry.
+    let list = render_machine_list_view(
+        &[MachineListEntryView {
+            name: "team-vfkit".to_owned(),
+            is_default: false,
+            lifecycle: MachineLifecycle::Running,
+            provider: MachineProvider::Vfkit,
+            cpus: 4,
+            memory_mib: 4096,
+            disk_gib: 40,
+        }],
+        &MachineListCommand {
+            format: Some(MachineListOutputFormat::Json),
+            quiet: false,
+            no_heading: false,
+        },
+    )
+    .expect("vfkit list JSON should render");
+    let list_json: serde_json::Value =
+        serde_json::from_str(&list).expect("machine list JSON should parse");
+    assert_eq!(list_json[0]["provider"], "vfkit");
 }

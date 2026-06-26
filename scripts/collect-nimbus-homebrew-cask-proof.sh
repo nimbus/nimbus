@@ -10,9 +10,17 @@ usage: collect-nimbus-homebrew-cask-proof.sh [options]
 
 Collect real-host proof for the supported macOS Homebrew/cask install surface
 without touching the user's shipped `nimbus` cask token or default machine
-roots. The collector packages a local release binary plus bundled `gvproxy`
-into a temporary proof cask, installs it under an isolated token, and then
-exercises the packaged `nimbus machine ...` path against isolated machine roots.
+roots. The collector packages a local release binary together with the bundled,
+pinned `gvproxy` and `vfkit` helpers into a temporary proof cask that mirrors the
+shipped `nimbus` cask (no `depends_on formula` for the third-party libkrun/krun
+tap, matching the non-transitive Homebrew 6.0 tap-trust model), installs it under
+an isolated token, and then exercises the packaged `nimbus machine ...` path
+against isolated machine roots. It proves that `gvproxy` resolves bundled-first
+from the cask's staged `libexec/gvproxy` inside the Caskroom rather than from a
+separately installed Homebrew helper, so the release archive is self-contained.
+The opt-in `vfkit` backend helper travels through the same libexec/Caskroom path;
+this proof checks that packaging travel (the real vfkit VM boot is a manual,
+hardware-only step because GitHub macOS runners lack Virtualization.framework).
 
 options:
   --machine <name>               Machine name (default: default)
@@ -25,11 +33,15 @@ options:
                                  (default: <repo>/target/release/nimbus)
   --guest-binary <path>          Optional Linux guest nimbus override to sync
                                  into the VM instead of the tagged release asset
-  --gvproxy <path>               gvproxy binary to bundle
-                                 (default: <brew-prefix>/opt/podman/libexec/podman/gvproxy)
   --brew <path>                  Brew binary path (default: brew)
   --brew-prefix <path>           Homebrew prefix to target
                                  (default: /opt/homebrew)
+  --gvproxy <path>               gvproxy helper to bundle into the proof cask's
+                                 libexec (default: <brew-prefix>/bin/gvproxy)
+  --vfkit <path>                 vfkit helper to bundle into the proof cask's
+                                 libexec (default: <brew-prefix>/bin/vfkit, or a
+                                 synthesized packaging stub when vfkit is absent;
+                                 the opt-in backend is not booted in this proof)
   --readlink <path>              readlink binary path (default: readlink)
   --ssh-keygen <path>            ssh-keygen binary path (default: ssh-keygen)
   --tap <name>                   Local tap to create (default: local/nimbus-proof)
@@ -138,15 +150,41 @@ assert_file_empty() {
   fi
 }
 
+assert_file_nonempty() {
+  local label="$1"
+  local file_path="$2"
+
+  if [[ -s "${file_path}" ]]; then
+    print_line "${label}" "ok file=${file_path}"
+  else
+    print_line "${label}" "failed file=${file_path}"
+    return 1
+  fi
+}
+
+assert_file_not_contains() {
+  local label="$1"
+  local file_path="$2"
+  local pattern="$3"
+
+  if grep -Eq "${pattern}" "${file_path}"; then
+    print_line "${label}" "failed file=${file_path} pattern=${pattern}"
+    return 1
+  else
+    print_line "${label}" "ok file=${file_path} pattern=${pattern}"
+  fi
+}
+
 machine_name="default"
 output_dir=""
 home_dir=""
 runtime_root=""
 host_binary="${repo_root}/target/release/nimbus"
 guest_binary=""
-gvproxy_binary=""
 brew_bin="brew"
 brew_prefix="/opt/homebrew"
+gvproxy_source=""
+vfkit_source=""
 readlink_bin="readlink"
 ssh_keygen_bin="ssh-keygen"
 tap_name="local/nimbus-proof"
@@ -179,16 +217,20 @@ while [[ $# -gt 0 ]]; do
       guest_binary="${2:?missing guest binary path}"
       shift 2
       ;;
-    --gvproxy)
-      gvproxy_binary="${2:?missing gvproxy path}"
-      shift 2
-      ;;
     --brew)
       brew_bin="${2:?missing brew path}"
       shift 2
       ;;
     --brew-prefix)
       brew_prefix="${2:?missing brew prefix}"
+      shift 2
+      ;;
+    --gvproxy)
+      gvproxy_source="${2:?missing gvproxy path}"
+      shift 2
+      ;;
+    --vfkit)
+      vfkit_source="${2:?missing vfkit path}"
       shift 2
       ;;
     --readlink)
@@ -234,18 +276,56 @@ summary_file="${output_dir}/summary.txt"
 : > "${summary_file}"
 brew_prefix="${brew_prefix%/}"
 
+if [[ -z "${gvproxy_source}" ]]; then
+  gvproxy_source="${brew_prefix}/bin/gvproxy"
+fi
+
+# vfkit is the opt-in macOS VMM backend. It is not booted in this proof (CI
+# macOS runners lack Virtualization.framework), so we only prove it travels
+# bundled-first into the cask's libexec like gvproxy. Prefer an explicit
+# --vfkit, then a real brew-installed vfkit, else synthesize a packaging stub
+# so the travel assertions stay unconditional rather than silently skipping.
+vfkit_source_is_stub=0
+if [[ -z "${vfkit_source}" ]]; then
+  if [[ -x "${brew_prefix}/bin/vfkit" ]]; then
+    vfkit_source="${brew_prefix}/bin/vfkit"
+  else
+    vfkit_source="${output_dir}/vfkit-packaging-stub"
+    vfkit_source_is_stub=1
+    cat > "${vfkit_source}" <<'STUB'
+#!/usr/bin/env bash
+# Synthesized vfkit packaging stub. The cask proof exercises bundled-first
+# helper travel into the Caskroom libexec, not a vfkit VM boot (which requires
+# Virtualization.framework on real hardware). The shipped release archive
+# carries the real codesigned + notarized crc-org vfkit instead.
+echo "nimbus vfkit packaging stub" >&2
+exit 0
+STUB
+    chmod 0755 "${vfkit_source}"
+  fi
+fi
+
 if [[ -z "${home_dir}" ]]; then
   home_dir="${output_dir}/home"
 fi
+runtime_root_is_temp=0
 if [[ -z "${runtime_root}" ]]; then
-  runtime_root="${output_dir}/runtime"
+  # gvproxy binds a unixgram control socket at
+  # "${runtime_root}/default-gvproxy.sock". macOS caps sockaddr_un.sun_path at
+  # 104 bytes, and the default macOS $TMPDIR ("/var/folders/.../T/...") is long
+  # enough that "${output_dir}/runtime/default-gvproxy.sock" overflows it, so
+  # `machine start` fails with gvproxy exiting before its socket appears. Anchor
+  # the runtime root at a short, stable base so the socket path always fits,
+  # independent of where the (text-only) output artifacts live.
+  runtime_tmp_base="/private/tmp"
+  [[ -d "${runtime_tmp_base}" ]] || runtime_tmp_base="/tmp"
+  runtime_root="$(mktemp -d "${runtime_tmp_base}/nimbus-homebrew-runtime.XXXXXX")"
+  # Script-created: cleanup() reclaims it on exit. A user-supplied
+  # --runtime-root is left untouched.
+  runtime_root_is_temp=1
 fi
 
 mkdir -p "${home_dir}" "${runtime_root}"
-
-if [[ -z "${gvproxy_binary}" ]]; then
-  gvproxy_binary="${brew_prefix}/opt/podman/libexec/podman/gvproxy"
-fi
 
 machine_stopped=0
 
@@ -304,6 +384,13 @@ cleanup() {
     fi
   fi
 
+  # Reclaim the auto-created runtime root (gvproxy sockets + machine runtime
+  # state) now that the machine is stopped. Only remove what this script
+  # created; a user-supplied --runtime-root is the caller's to manage.
+  if [[ "${runtime_root_is_temp:-0}" -eq 1 ]]; then
+    rm -rf "${runtime_root}"
+  fi
+
   exit "${status}"
 }
 
@@ -319,8 +406,13 @@ if [[ -n "${guest_binary}" && ! -x "${guest_binary}" ]]; then
   exit 64
 fi
 
-if [[ ! -x "${gvproxy_binary}" ]]; then
-  echo "gvproxy binary is not executable at ${gvproxy_binary}; install Podman or pass --gvproxy" >&2
+if [[ ! -x "${gvproxy_source}" ]]; then
+  echo "gvproxy helper to bundle is not executable at ${gvproxy_source}; install the krunkit Homebrew chain first (brew install libkrun/krun/krunkit) or pass --gvproxy <path>" >&2
+  exit 64
+fi
+
+if [[ ! -x "${vfkit_source}" ]]; then
+  echo "vfkit helper to bundle is not executable at ${vfkit_source}; pass --vfkit <path> or install vfkit (brew install vfkit)" >&2
   exit 64
 fi
 
@@ -355,8 +447,10 @@ cask_rendered="${output_dir}/${cask_token}.rb"
 ssh_identity="${output_dir}/machine-key"
 stripped_path="${brew_prefix}/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 installed_binary="${brew_prefix}/bin/${cask_token}"
-expected_gvproxy="${brew_prefix}/Caskroom/${cask_token}/${host_version}/libexec/gvproxy"
-expected_symlink="${brew_prefix}/Caskroom/${cask_token}/${host_version}/nimbus"
+caskroom_root="${brew_prefix}/Caskroom/${cask_token}/${host_version}"
+expected_gvproxy="${caskroom_root}/libexec/gvproxy"
+expected_vfkit="${caskroom_root}/libexec/vfkit"
+expected_symlink="${caskroom_root}/nimbus"
 
 print_line "output.dir" "${output_dir}"
 print_line "machine.name" "${machine_name}"
@@ -364,7 +458,14 @@ print_line "home.dir" "${home_dir}"
 print_line "runtime.root" "${runtime_root}"
 print_line "host.binary" "${host_binary}"
 print_line "guest.binary.override" "${guest_binary:-<none>}"
-print_line "gvproxy.binary" "${gvproxy_binary}"
+print_line "gvproxy.expected" "${expected_gvproxy} (bundled in cask libexec)"
+print_line "gvproxy.source" "${gvproxy_source}"
+print_line "vfkit.expected" "${expected_vfkit} (bundled in cask libexec; opt-in backend)"
+if [[ "${vfkit_source_is_stub}" -eq 1 ]]; then
+  print_line "vfkit.source" "${vfkit_source} (synthesized packaging stub; real boot is manual)"
+else
+  print_line "vfkit.source" "${vfkit_source}"
+fi
 print_line "brew.bin" "${brew_bin}"
 print_line "brew.prefix" "${brew_prefix}"
 print_line "tap.name" "${tap_name}"
@@ -375,8 +476,11 @@ print_line "installed.binary" "${installed_binary}"
 rm -rf "${bundle_root}"
 mkdir -p "${bundle_contents}/libexec"
 cp "${host_binary}" "${bundle_contents}/nimbus"
-cp "${gvproxy_binary}" "${bundle_contents}/libexec/gvproxy"
-chmod 0755 "${bundle_contents}/nimbus" "${bundle_contents}/libexec/gvproxy"
+chmod 0755 "${bundle_contents}/nimbus"
+cp "${gvproxy_source}" "${bundle_contents}/libexec/gvproxy"
+chmod 0755 "${bundle_contents}/libexec/gvproxy"
+cp "${vfkit_source}" "${bundle_contents}/libexec/vfkit"
+chmod 0755 "${bundle_contents}/libexec/vfkit"
 if [[ -f "${repo_root}/README.md" ]]; then
   cp "${repo_root}/README.md" "${bundle_contents}/README.md"
 fi
@@ -456,7 +560,10 @@ cask "${cask_token}" do
 
   depends_on arch: :arm64
   depends_on macos: :sonoma
-  depends_on formula: "slp/krunkit/krunkit"
+  # Mirrors the shipped cask: no cross-tap depends_on formula. gvproxy and the
+  # opt-in vfkit backend are bundled into the staged archive's libexec and
+  # resolved bundled-first from the Caskroom, verified below via the
+  # staged-helper and machine-status resolution assertions.
 
   url "file://${archive_path}"
   sha256 "${archive_sha}"
@@ -485,10 +592,16 @@ capture_command \
   "${readlink_bin}" "${installed_binary}"
 
 capture_command \
-  "capture.path_gvproxy" \
-  "${output_dir}/path-gvproxy-command.txt" \
-  "${output_dir}/path-gvproxy.txt" \
-  env PATH="${stripped_path}" /bin/sh -lc 'command -v gvproxy 2>/dev/null || true'
+  "capture.staged_gvproxy" \
+  "${output_dir}/staged-gvproxy-command.txt" \
+  "${output_dir}/staged-gvproxy.txt" \
+  /bin/sh -lc 'ls -l "$1" 2>/dev/null || true' _ "${expected_gvproxy}"
+
+capture_command \
+  "capture.staged_vfkit" \
+  "${output_dir}/staged-vfkit-command.txt" \
+  "${output_dir}/staged-vfkit.txt" \
+  /bin/sh -lc 'ls -l "$1" 2>/dev/null || true' _ "${expected_vfkit}"
 
 rm -f "${ssh_identity}" "${ssh_identity}.pub"
 capture_command \
@@ -627,23 +740,68 @@ assert_file_contains \
   '^libexec/gvproxy$'
 
 assert_file_contains \
+  "assert.archive_manifest_has_vfkit" \
+  "${archive_manifest}" \
+  '^libexec/vfkit$'
+
+assert_file_contains \
   "assert.cask_symlink" \
   "${output_dir}/cask-symlink.txt" \
   "${expected_symlink}"
 
-assert_file_empty \
-  "assert.path_gvproxy_empty" \
-  "${output_dir}/path-gvproxy.txt"
+# gvproxy is bundled into the cask, so Homebrew must stage it into the Caskroom
+# libexec where the bundled-first helper resolution finds it.
+assert_file_nonempty \
+  "assert.staged_gvproxy_present" \
+  "${output_dir}/staged-gvproxy.txt"
+
+assert_file_contains \
+  "assert.staged_gvproxy_is_caskroom_libexec" \
+  "${output_dir}/staged-gvproxy.txt" \
+  "${expected_gvproxy}"
+
+# vfkit (the opt-in backend) is bundled into the same archive libexec, so
+# Homebrew must stage it into the Caskroom alongside gvproxy. This proves
+# packaging travel only; the real vfkit VM boot is a manual hardware step.
+assert_file_nonempty \
+  "assert.staged_vfkit_present" \
+  "${output_dir}/staged-vfkit.txt"
+
+assert_file_contains \
+  "assert.staged_vfkit_is_caskroom_libexec" \
+  "${output_dir}/staged-vfkit.txt" \
+  "${expected_vfkit}"
 
 assert_file_contains \
   "assert.host_version" \
   "${output_dir}/host-nimbus-version.txt" \
   "^nimbus ${host_version}"
 
+# The guest's reported version depends on which Linux nimbus the VM actually
+# runs, not on the host build:
+#
+#   * With `--guest-binary`, `machine start` syncs that host-matched Linux guest
+#     into the VM, so the guest must report the same version as the host.
+#   * Without it, the VM runs the nimbus baked into the pinned machine-os image.
+#     `machine start` declares that embedded version ("embeds nimbus vX.Y.Z");
+#     the guest must report exactly it. Asserting the host version here would be
+#     wrong whenever the machine-os pin trails the host release.
+if [[ -n "${guest_binary}" ]]; then
+  expected_guest_version="${host_version}"
+else
+  expected_guest_version="$(sed -n 's/.*embeds nimbus v\([0-9][0-9A-Za-z.+-]*\).*/\1/p' \
+    "${output_dir}/machine-start.txt" | head -n1)"
+  if [[ -z "${expected_guest_version}" ]]; then
+    echo "failed to determine machine-os embedded nimbus version from ${output_dir}/machine-start.txt" >&2
+    exit 64
+  fi
+fi
+print_line "guest.version.expected" "${expected_guest_version}"
+
 assert_file_contains \
   "assert.guest_version" \
   "${output_dir}/guest-nimbus-version.txt" \
-  "^nimbus ${host_version}"
+  "^nimbus ${expected_guest_version}"
 
 assert_file_contains \
   "assert.guest_proof_health" \
@@ -666,7 +824,7 @@ assert_file_contains \
   'reachable: true'
 
 assert_file_contains \
-  "assert.packaged_gvproxy" \
+  "assert.gvproxy_from_bundled_libexec" \
   "${output_dir}/machine-status-running.txt" \
   "${expected_gvproxy}"
 

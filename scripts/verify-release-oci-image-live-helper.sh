@@ -133,6 +133,7 @@ create_release_fixture() {
 
   mkdir -p \
     "${dir}" \
+    "${layout}/darwin" \
     "${layout}/darwin/libexec" \
     "${layout}/linux-x86_64" \
     "${layout}/linux-arm64" \
@@ -141,13 +142,18 @@ create_release_fixture() {
   printf '#!/bin/sh\nprintf "nimbus 9.9.9\\n"\n' >"${layout}/darwin/nimbus"
   printf '#!/bin/sh\nprintf "nimbus 9.9.9\\n"\n' >"${layout}/linux-x86_64/nimbus"
   printf '#!/bin/sh\nprintf "nimbus 9.9.9\\n"\n' >"${layout}/linux-arm64/nimbus"
-  printf '#!/bin/sh\nprintf "gvproxy fixture\\n"\n' >"${layout}/darwin/libexec/gvproxy"
   printf 'windows fixture\n' >"${layout}/windows/nimbus.exe"
+  # The shipped darwin archive bundles the pinned VMM helpers under libexec, and
+  # verify-release-archive-layout.sh hard-requires both; mirror them here so the
+  # live OCI fixture matches the real release layout.
+  printf '#!/bin/sh\nprintf "gvproxy fixture\\n"\n' >"${layout}/darwin/libexec/gvproxy"
+  printf '#!/bin/sh\nprintf "vfkit fixture\\n"\n' >"${layout}/darwin/libexec/vfkit"
   chmod 0755 \
     "${layout}/darwin/nimbus" \
+    "${layout}/darwin/libexec/gvproxy" \
+    "${layout}/darwin/libexec/vfkit" \
     "${layout}/linux-x86_64/nimbus" \
-    "${layout}/linux-arm64/nimbus" \
-    "${layout}/darwin/libexec/gvproxy"
+    "${layout}/linux-arm64/nimbus"
 
   for platform in darwin linux-x86_64 linux-arm64 windows; do
     printf 'Nimbus release fixture\n' >"${layout}/${platform}/README.md"

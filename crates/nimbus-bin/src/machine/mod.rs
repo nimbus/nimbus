@@ -2,9 +2,9 @@
 use std::fs;
 #[cfg(test)]
 use std::path::Path;
+#[cfg(test)]
 use std::path::PathBuf;
 
-#[cfg(test)]
 use nimbus::Error;
 
 #[cfg(unix)]
@@ -89,6 +89,7 @@ use self::record::{MachineGuestConfig, MachineResources};
 use self::render::*;
 
 const DEFAULT_MACHINE_NAME: &str = "default";
+const MACHINE_PROVIDER_ENV: &str = "NIMBUS_MACHINE_PROVIDER";
 const DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY: &str = "ghcr.io/nimbus/machine-os";
 const DEFAULT_NIMBUS_MACHINE_IMAGE_TAG: &str = "v0.1.30";
 const DEFAULT_NIMBUS_MACHINE_IMAGE_DIGEST: &str =
@@ -105,15 +106,50 @@ fn default_machine_image() -> String {
 
 fn default_machine_image_for_provider(provider: MachineProvider) -> String {
     match provider {
-        MachineProvider::Krunkit if cfg!(target_os = "macos") => format!(
+        // Both macOS micro-VM monitors boot the pinned, digest-addressed
+        // `applehv` machine-os image.
+        provider if provider.uses_managed_applehv_guest() && cfg!(target_os = "macos") => format!(
             "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}@{DEFAULT_NIMBUS_MACHINE_IMAGE_DIGEST}",
             DEFAULT_NIMBUS_MACHINE_IMAGE_TAG
         ),
-        MachineProvider::Krunkit | MachineProvider::Wsl2 => format!(
+        MachineProvider::Krunkit | MachineProvider::Vfkit | MachineProvider::Wsl2 => format!(
             "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}",
             current_machine_release_tag()
         ),
     }
+}
+
+/// Resolve the machine VMM provider. Precedence: an explicit selection (CLI flag
+/// or persisted config) wins; otherwise the `NIMBUS_MACHINE_PROVIDER` environment
+/// variable; otherwise the static default, krunkit. There is no auto-detection or
+/// capability sniffing — vfkit and any future backend are strictly opt-in.
+fn resolve_machine_provider(explicit: Option<MachineProvider>) -> Result<MachineProvider, Error> {
+    resolve_machine_provider_from(
+        explicit,
+        std::env::var(MACHINE_PROVIDER_ENV).ok().as_deref(),
+    )
+}
+
+/// Pure provider-precedence resolution, separated from environment access so it
+/// is testable without mutating process state.
+fn resolve_machine_provider_from(
+    explicit: Option<MachineProvider>,
+    env_value: Option<&str>,
+) -> Result<MachineProvider, Error> {
+    if let Some(provider) = explicit {
+        return Ok(provider);
+    }
+    if let Some(raw) = env_value {
+        let token = raw.trim();
+        if !token.is_empty() {
+            return MachineProvider::from_token(token).ok_or_else(|| {
+                Error::InvalidInput(format!(
+                    "{MACHINE_PROVIDER_ENV} is set to '{raw}', which is not a known machine provider; expected one of: krunkit, vfkit, wsl2"
+                ))
+            });
+        }
+    }
+    Ok(MachineProvider::Krunkit)
 }
 
 fn machine_image_reference_repository(reference: &str) -> String {
@@ -163,7 +199,7 @@ fn uses_podman_machine_image_source(source: &MachineImageSource) -> bool {
 }
 
 fn uses_host_managed_machine_image_contract(config: &MachineConfigRecord) -> bool {
-    if !(cfg!(target_os = "macos") && config.provider == MachineProvider::Krunkit) {
+    if !(cfg!(target_os = "macos") && config.provider.uses_managed_applehv_guest()) {
         return false;
     }
 
@@ -190,22 +226,28 @@ const DEFAULT_MACHINE_DISK_GIB: u32 = 20;
 const CURRENT_MACHINE_CONFIG_VERSION: u32 = nimbus_machine::CURRENT_MACHINE_CONFIG_VERSION;
 const CURRENT_MACHINE_STATE_VERSION: u32 = nimbus_machine::CURRENT_MACHINE_STATE_VERSION;
 
+/// macOS default host->guest volume mounts, expressed in the same
+/// `<source>:<target>` grammar that every user-supplied `--volume` passes
+/// through. Keeping the defaults as grammar strings (rather than pre-built
+/// `MachineVolume` literals) forces them through [`MachineVolume::parse`] in
+/// [`default_machine_volumes`], so a default can never silently drift away from
+/// the validated grammar.
+const DEFAULT_MACOS_MACHINE_VOLUME_SPECS: &[&str] = &[
+    "/Users:/Users",
+    "/private:/private",
+    "/var/folders:/var/folders",
+];
+
 fn default_machine_volumes() -> Vec<MachineVolume> {
     if cfg!(target_os = "macos") {
-        vec![
-            MachineVolume {
-                source: PathBuf::from("/Users"),
-                target: PathBuf::from("/Users"),
-            },
-            MachineVolume {
-                source: PathBuf::from("/private"),
-                target: PathBuf::from("/private"),
-            },
-            MachineVolume {
-                source: PathBuf::from("/var/folders"),
-                target: PathBuf::from("/var/folders"),
-            },
-        ]
+        DEFAULT_MACOS_MACHINE_VOLUME_SPECS
+            .iter()
+            .map(|spec| {
+                MachineVolume::parse(spec).unwrap_or_else(|error| {
+                    panic!("default machine volume spec {spec:?} must parse-validate: {error}")
+                })
+            })
+            .collect()
     } else {
         Vec::new()
     }

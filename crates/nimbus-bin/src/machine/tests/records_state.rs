@@ -64,8 +64,8 @@ fn machine_paths_use_short_runtime_root_and_typed_socket_layout() {
         PathBuf::from("/tmp/nimbus/default-api.sock")
     );
     assert_eq!(
-        paths.krunkit_log_path,
-        PathBuf::from("/tmp/nimbus/default-krunkit.log")
+        paths.vmm_log_path,
+        PathBuf::from("/tmp/nimbus/default-vmm.log")
     );
     assert_eq!(
         layout.lock_path("default"),
@@ -483,7 +483,7 @@ fn machine_set_rejects_running_machine() {
 }
 
 #[test]
-fn load_machine_config_rejects_older_schema_versions_with_clear_error() {
+fn load_machine_config_rejects_older_schema_version_preserving_a_backup() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
@@ -529,15 +529,48 @@ fn load_machine_config_rejects_older_schema_versions_with_clear_error() {
     let error = load_machine_config_if_exists(&paths.config_path)
         .expect_err("older config version should fail");
 
+    let rendered = error.to_string();
     assert!(
-        error
-            .to_string()
-            .contains("uses unsupported schema version")
+        rendered.contains("unsupported older schema version"),
+        "unexpected error: {rendered}"
+    );
+    // The strict loader must stay non-destructive: it must not prescribe a
+    // `nimbus machine rm` that would discard the operator's declared intent,
+    // and it must point at the preserved copy instead.
+    assert!(
+        !rendered.contains("nimbus machine rm"),
+        "must not prescribe a destructive rm: {rendered}"
+    );
+    assert!(
+        rendered.contains("preserved"),
+        "must mention the preserved copy: {rendered}"
+    );
+
+    // The rejected config is copied aside (never moved): the original stays put
+    // and a byte-for-byte backup appears beside it under the named path.
+    let original = fs::read(&paths.config_path).expect("original config should remain in place");
+    let file_name = paths
+        .config_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("config path should have a file name");
+    let backup_path = paths.config_path.with_file_name(format!(
+        "{file_name}.v{}.bak",
+        CURRENT_MACHINE_CONFIG_VERSION - 1
+    ));
+    assert!(
+        rendered.contains(&backup_path.display().to_string()),
+        "error should name the backup path: {rendered}"
+    );
+    let preserved = fs::read(&backup_path).expect("backup copy should exist");
+    assert_eq!(
+        preserved, original,
+        "backup must be a byte-for-byte copy of the rejected config"
     );
 }
 
 #[test]
-fn load_machine_config_rejects_newer_schema_version_with_clear_error() {
+fn load_machine_config_rejects_newer_schema_version_preserving_a_backup() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let layout = MachineRootLayout::test_sibling_roots(
         temp_dir.path().join("config"),
@@ -583,11 +616,42 @@ fn load_machine_config_rejects_newer_schema_version_with_clear_error() {
     let error = load_machine_config_if_exists(&paths.config_path)
         .expect_err("newer config version should fail");
 
-    assert!(error.to_string().contains("uses newer schema version"));
+    let rendered = error.to_string();
     assert!(
-        error
-            .to_string()
-            .contains(&(CURRENT_MACHINE_CONFIG_VERSION + 1).to_string())
+        rendered.contains("newer nimbus build"),
+        "unexpected error: {rendered}"
+    );
+    assert!(
+        rendered.contains(&(CURRENT_MACHINE_CONFIG_VERSION + 1).to_string()),
+        "should name the newer schema version: {rendered}"
+    );
+    assert!(
+        rendered.contains("Upgrade nimbus"),
+        "should offer the non-destructive upgrade path: {rendered}"
+    );
+    assert!(
+        !rendered.contains("nimbus machine rm"),
+        "must not prescribe a destructive rm: {rendered}"
+    );
+    assert!(
+        rendered.contains("preserved"),
+        "must mention the preserved copy: {rendered}"
+    );
+
+    let original = fs::read(&paths.config_path).expect("original config should remain in place");
+    let file_name = paths
+        .config_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("config path should have a file name");
+    let backup_path = paths.config_path.with_file_name(format!(
+        "{file_name}.v{}.bak",
+        CURRENT_MACHINE_CONFIG_VERSION + 1
+    ));
+    let preserved = fs::read(&backup_path).expect("backup copy should exist");
+    assert_eq!(
+        preserved, original,
+        "backup must be a byte-for-byte copy of the rejected config"
     );
 }
 
@@ -630,6 +694,90 @@ fn load_machine_state_rebuilds_older_schema_versions_with_explicit_error() {
             .as_deref()
             .is_some_and(|message| message.contains("unsupported schema version"))
     );
+    assert_eq!(rewritten.version, CURRENT_MACHINE_STATE_VERSION);
+    assert_eq!(rewritten, state);
+}
+
+#[test]
+fn load_machine_state_rebuilds_pre_rename_helper_record_instead_of_erroring() {
+    // Regression guard for the `krunkit` -> `vmm` runtime-helper rename. A
+    // machine started before the rename persisted its runtime helper under the
+    // old `krunkit` field and recorded a live `running` lifecycle. That on-disk
+    // record carries the current state-schema version but no longer matches the
+    // current `MachineHelperBinaryPaths` shape (now `vmm`). Reading it must NOT
+    // surface as corruption or strand the machine: the loader rebuilds the
+    // unparseable record into a clean Stopped/Stale state so a subsequent
+    // refresh/stop treats the machine as stale instead of trusting a
+    // half-understood record. This self-heal is exactly why the rename needed no
+    // schema-version bump.
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let layout = MachineRootLayout::test_sibling_roots(
+        temp_dir.path().join("config"),
+        temp_dir.path().join("state"),
+        temp_dir.path().join("runtime"),
+    );
+    let paths = layout.paths(DEFAULT_MACHINE_NAME);
+    fs::create_dir_all(&paths.state_dir).expect("state dir should exist");
+
+    // A realistic pre-rename `status.json`: a running machine whose runtime
+    // helper slot is the old `krunkit` field, which no longer exists on the
+    // current `MachineHelperBinaryPaths` (now `vmm`). It is stamped with the
+    // current schema version, so it routes through the current-version arm and
+    // fails the struct parse on the missing `vmm` field.
+    let pre_rename_state = serde_json::json!({
+        "version": CURRENT_MACHINE_STATE_VERSION,
+        "lifecycle": "running",
+        "manager": "ready",
+        "runtime": {
+            "helper_binaries": {
+                "krunkit": "/opt/homebrew/bin/krunkit",
+                "gvproxy": "/opt/homebrew/bin/gvproxy",
+            },
+            "image_path": "/tmp/nimbus/data/default/images/default.raw",
+            "efi_variable_store_path": "/tmp/nimbus/data/default/efi-vars",
+            "machine_image_source": "oci:nimbus/machine-os:latest",
+            "ssh_port": 49213,
+            "rest_uri": "unix:///tmp/nimbus/default-krunkit.sock",
+            "ready_vsock_port": 1025,
+        },
+        "last_error": null,
+    });
+    fs::write(
+        &paths.state_path,
+        serde_json::to_vec_pretty(&pre_rename_state).expect("pre-rename state should serialize"),
+    )
+    .expect("pre-rename state should write");
+
+    let state = load_machine_state_if_exists(&paths.state_path)
+        .expect("state load should succeed by rebuilding the pre-rename record")
+        .expect("rebuilt state should exist");
+    let rewritten = read_json_file_if_exists::<MachineStateRecord>(&paths.state_path)
+        .expect("rewritten state should read")
+        .expect("rewritten state should exist");
+
+    // The record is rebuilt to the current schema, not parsed: a `running`
+    // lifecycle collapses to Stopped/Stale with no runtime so the lifecycle no
+    // longer points at helper processes from the old runtime-file scheme.
+    assert_eq!(state.version, CURRENT_MACHINE_STATE_VERSION);
+    assert_eq!(state.lifecycle, MachineLifecycle::Stopped);
+    assert_eq!(state.manager, MachineManagerState::Stale);
+    assert!(
+        state.runtime.is_none(),
+        "a rebuilt pre-rename record must drop the stale runtime pointer"
+    );
+
+    // The reason proves the rebuild fired on the specific renamed field rather
+    // than generic corruption: serde reports the now-required `vmm` helper slot
+    // as missing.
+    let reason = state
+        .last_error
+        .as_deref()
+        .expect("rebuilt pre-rename record must record why it was rebuilt");
+    assert!(
+        reason.contains("vmm"),
+        "pre-rename rebuild reason should name the missing `vmm` helper field, got: {reason:?}"
+    );
+
     assert_eq!(rewritten.version, CURRENT_MACHINE_STATE_VERSION);
     assert_eq!(rewritten, state);
 }

@@ -31,7 +31,7 @@ brew_prefix="${tmp_dir}/brew-prefix"
 tap_root="${tmp_dir}/taps"
 state_dir="${tmp_dir}/state"
 host_binary="${bin_dir}/host-nimbus"
-gvproxy_binary="${bin_dir}/gvproxy"
+gvproxy_binary="${brew_prefix}/bin/gvproxy"
 brew_bin="${bin_dir}/brew"
 ssh_keygen_bin="${bin_dir}/ssh-keygen"
 curl_bin="${bin_dir}/curl"
@@ -61,8 +61,15 @@ api_socket="${runtime_root%/}/${machine_name}-api.sock"
 api_pid="${runtime_root%/}/${machine_name}-api.pid"
 identity_record="${runtime_root%/}/${machine_name}.identity"
 
-brew_prefix="$(cd "$(dirname "$0")/.." && pwd)"
-gvproxy_path="${brew_prefix}/Caskroom/nimbus-dev/${host_version}/libexec/gvproxy"
+# Resolve our own staged location through the cask symlink so the bundled-first
+# gvproxy (staged into the Caskroom libexec) is what we report, mirroring the
+# real binary's canonicalized current-exe helper resolution.
+self_path="$0"
+if [[ -L "${self_path}" ]]; then
+  self_path="$(readlink "${self_path}")"
+fi
+staged_dir="$(cd "$(dirname "${self_path}")" && pwd)"
+gvproxy_path="${staged_dir}/libexec/gvproxy"
 
 if [[ "${1:-}" == "--version" ]]; then
   printf 'nimbus %s\n' "${host_version}"
@@ -99,6 +106,12 @@ case "${subcommand}" in
     ;;
   start)
     mkdir -p "$(dirname "${machine_log}")"
+    # Mirror the real binary, which announces the nimbus version embedded in the
+    # pinned machine-os image. The proof script parses this line to learn which
+    # guest version to expect when no --guest-binary override is supplied. The
+    # stub models the guest as reporting the host version, so the embedded
+    # version it announces here must match.
+    printf "info: machine image 'docker://ghcr.io/nimbus/machine-os:v9.9.9' embeds nimbus v%s\n" "${host_version}"
     cat > "${machine_log}" <<OUT
 booting ${machine_name}
 guest nimbus ${host_version}
@@ -529,7 +542,6 @@ PATH="${bin_dir}:${PATH}" bash "${repo_root}/scripts/collect-nimbus-homebrew-cas
   --home "${home_dir}" \
   --runtime-root "${runtime_root}" \
   --host-binary "${host_binary}" \
-  --gvproxy "${gvproxy_binary}" \
   --brew "${brew_bin}" \
   --brew-prefix "${brew_prefix}" \
   --readlink "$(command -v readlink)" \
@@ -542,6 +554,8 @@ guest_proof_dir="${output_dir}/guest-proof"
 for expected_file in \
   "${summary_file}" \
   "${output_dir}/cask-symlink.txt" \
+  "${output_dir}/staged-gvproxy.txt" \
+  "${output_dir}/staged-vfkit.txt" \
   "${output_dir}/machine-status-running.txt" \
   "${output_dir}/guest-nimbus-version.txt" \
   "${guest_proof_dir}/guest-machine-api-health.txt" \
@@ -573,7 +587,17 @@ grep -Fq "${brew_prefix}/Caskroom/nimbus-dev/${host_version}/nimbus" "${output_d
 }
 
 grep -Fq "${brew_prefix}/Caskroom/nimbus-dev/${host_version}/libexec/gvproxy" "${output_dir}/machine-status-running.txt" || {
-  echo "expected machine status to report packaged gvproxy path" >&2
+  echo "expected machine status to report the bundled Caskroom libexec gvproxy path" >&2
+  exit 1
+}
+
+grep -Fq "${brew_prefix}/Caskroom/nimbus-dev/${host_version}/libexec/gvproxy" "${output_dir}/staged-gvproxy.txt" || {
+  echo "expected staged gvproxy proof to show the bundled Caskroom libexec helper" >&2
+  exit 1
+}
+
+grep -Fq "${brew_prefix}/Caskroom/nimbus-dev/${host_version}/libexec/vfkit" "${output_dir}/staged-vfkit.txt" || {
+  echo "expected staged vfkit proof to show the bundled Caskroom libexec helper" >&2
   exit 1
 }
 
@@ -592,4 +616,4 @@ grep -Fq '"protocol_version":"v1alpha2"' "${guest_proof_dir}/guest-machine-api-c
   exit 1
 }
 
-echo "verified: nimbus homebrew cask proof helper captures the packaged macOS release-asset contract deterministically"
+echo "verified: nimbus homebrew cask proof helper captures the packaged macOS release-asset contract with bundled-first gvproxy and vfkit helpers deterministically"

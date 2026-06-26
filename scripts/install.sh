@@ -32,6 +32,13 @@ ARCH=""
 DISTRO_ID=""
 DISTRO_VERSION=""
 
+# Single per-run scratch directory. Every download stages into a subdirectory
+# of this root so one EXIT trap (registered once by ensure_workdir) cleans up
+# everything. Do not set a per-function `trap ... EXIT`: POSIX sh keeps only one
+# EXIT trap, so a second download would clobber the first one's cleanup and leak
+# the earlier directory.
+NIMBUS_WORKDIR=""
+
 # Keep these constants aligned with scripts/bun-jsc-adapter-contract.sh and
 # crates/nimbus-runtime/src/backends/bun_jsc/manifest.rs.
 BUN_JSC_ADAPTER_SCHEMA_VERSION=1
@@ -337,12 +344,6 @@ check_macos_version() {
 
   if [ "$macos_major" -lt 14 ]; then
     err "macOS 14 (Sonoma) or later required — found macOS $macos_version"
-  fi
-}
-
-check_homebrew() {
-  if ! check_cmd brew; then
-    err "Homebrew is required on macOS — install from https://brew.sh"
   fi
 }
 
@@ -831,15 +832,7 @@ print_install_plan() {
 
   say ""
   say "Versions:"
-  if [ "$PLATFORM" = "darwin" ]; then
-    if [ -n "$NIMBUS_VERSION" ]; then
-      say "  nimbus:      current Homebrew cask (ignoring requested pin ${NIMBUS_VERSION})"
-    else
-      say "  nimbus:      current Homebrew cask"
-    fi
-  else
-    say "  nimbus:      ${NIMBUS_VERSION:-latest}"
-  fi
+  say "  nimbus:      ${NIMBUS_VERSION:-latest}"
   if [ "$PLATFORM" = "linux" ]; then
     say "  nimbus-libkrun: ${NIMBUS_LIBKRUN_VERSION:-latest}"
     say "  nimbus-crun: ${NIMBUS_CRUN_VERSION:-latest}"
@@ -858,9 +851,25 @@ print_install_plan() {
       say "  nimbus-bun-jsc-adapter: /usr/libexec/nimbus/runtime/bun-jsc/current"
     fi
   elif [ "$PLATFORM" = "darwin" ]; then
-    say "  nimbus:      \$(brew --prefix)/bin/nimbus (via Homebrew cask)"
-    say "  gvproxy:     \$(brew --prefix)/Caskroom/nimbus/<version>/libexec/gvproxy"
-    say "  krunkit:     \$(brew --prefix)/bin/krunkit (via Homebrew formula dependency)"
+    say "  nimbus:      ${NIMBUS_PREFIX}/bin/nimbus"
+    say "  gvproxy:     ${NIMBUS_PREFIX}/libexec/gvproxy (bundled, pinned)"
+    say "  vfkit:       ${NIMBUS_PREFIX}/libexec/vfkit (bundled, pinned; opt-in NIMBUS_MACHINE_PROVIDER=vfkit)"
+    say "  krunkit:     \$(brew --prefix)/bin/krunkit (default backend, via Homebrew libkrun/krun tap)"
+    say "  libkrun:     \$(brew --prefix)/lib (optional, krunkit Homebrew dependency)"
+  fi
+
+  if [ "$PLATFORM" = "darwin" ] && [ -z "$SKIP_DEPS" ]; then
+    say ""
+    say "Optional macOS microVM dependencies (only needed for 'nimbus machine'):"
+    if check_cmd brew; then
+      say "  Homebrew install: brew install libkrun/krun/krunkit (krunkit + gvproxy + libkrun)"
+    else
+      say "  Homebrew not found — 'nimbus' runs without it; install Homebrew (https://brew.sh)"
+      say "  then 'brew install libkrun/krun/krunkit' to enable the 'nimbus machine' dev flow"
+    fi
+    say "  vfkit backend (opt-in): NIMBUS_MACHINE_PROVIDER=vfkit uses the bundled"
+    say "  ${NIMBUS_PREFIX}/libexec/vfkit; 'brew install vfkit' is only needed if you"
+    say "  prefer the Homebrew copy. The default backend stays krunkit."
   fi
 
   if [ "$PLATFORM" = "linux" ] && [ -z "$SKIP_DEPS" ]; then
@@ -880,20 +889,18 @@ print_install_plan() {
     esac
   fi
 
-  if [ "$PLATFORM" = "linux" ]; then
-    say ""
-    say "Supply-chain verification:"
-    say "  checksum:     enforced"
-    if check_cmd gh; then
-      say "  attestation:  GitHub provenance verification enabled for nimbus"
-    elif [ -n "$REQUIRE_ATTESTATIONS" ]; then
-      say "  attestation:  required, but gh CLI is missing"
-    else
-      say "  attestation:  best-effort (install gh or set NIMBUS_REQUIRE_ATTESTATIONS=1 to fail closed)"
-    fi
-    if [ -n "$INSTALL_BUN_JSC_ADAPTER" ]; then
-      say "  bun/jsc:      optional adapter checksum, manifest, SBOM/SLSA, export, and dlopen-safety checks enforced"
-    fi
+  say ""
+  say "Supply-chain verification:"
+  say "  checksum:     enforced"
+  if check_cmd gh; then
+    say "  attestation:  GitHub provenance verification enabled for nimbus"
+  elif [ -n "$REQUIRE_ATTESTATIONS" ]; then
+    say "  attestation:  required, but gh CLI is missing"
+  else
+    say "  attestation:  best-effort (install gh or set NIMBUS_REQUIRE_ATTESTATIONS=1 to fail closed)"
+  fi
+  if [ "$PLATFORM" = "linux" ] && [ -n "$INSTALL_BUN_JSC_ADAPTER" ]; then
+    say "  bun/jsc:      optional adapter checksum, manifest, SBOM/SLSA, export, and dlopen-safety checks enforced"
   fi
 
   say ""
@@ -904,20 +911,14 @@ warn_ignored_args_for_platform() {
     return 0
   fi
 
-  if [ -n "$NIMBUS_VERSION" ]; then
-    say_warn "--version is currently ignored on macOS — Homebrew installs the published nimbus cask version"
-  fi
   if [ -n "$NIMBUS_CRUN_VERSION" ]; then
-    say_warn "--crun-version is ignored on macOS"
+    say_warn "--crun-version is ignored on macOS (nimbus-crun is a Linux-only dependency)"
   fi
   if [ -n "$NIMBUS_LIBKRUN_VERSION" ]; then
-    say_warn "--libkrun-version is ignored on macOS"
-  fi
-  if [ "$NIMBUS_PREFIX" != "/usr/local" ]; then
-    say_warn "--prefix is ignored on macOS — Homebrew manages the install prefix"
+    say_warn "--libkrun-version is ignored on macOS — libkrun ships via the krunkit Homebrew formula"
   fi
   if [ -n "$INSTALL_BUN_JSC_ADAPTER" ]; then
-    say_warn "--with-bun-jsc is not installed by the macOS Homebrew cask yet — use the nimbus-bun-jsc-adapter release asset or package lane for the same tag"
+    say_warn "--with-bun-jsc is not installed by the macOS path yet — use the nimbus-bun-jsc-adapter release asset or package lane for the same tag"
   fi
 }
 
@@ -970,7 +971,57 @@ install_system_deps() {
   esac
 }
 
-download_and_install_nimbus_linux() {
+# Create the per-run scratch root (once) and register the single EXIT trap that
+# removes it. Idempotent: later calls reuse the existing directory. Each download
+# allocates its own `download.XXXXXX` subdirectory underneath, so cleanup of the
+# root removes every download's staging area without per-function traps.
+ensure_workdir() {
+  if [ -z "$NIMBUS_WORKDIR" ]; then
+    NIMBUS_WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-install.XXXXXX")"
+    trap 'rm -rf "$NIMBUS_WORKDIR"' EXIT
+  fi
+}
+
+# The machine helpers the macOS archive bundles inside its libexec/. These
+# travel under Nimbus provenance and the runtime resolves them bundled-first
+# (see resolve_macos_bundled_helper). Linux archives carry no libexec, so the
+# bundled set is empty there.
+macos_bundled_helper_names() {
+  printf '%s\n' "gvproxy" "vfkit"
+}
+
+# Succeed when every helper the install promises to bundle is already present in
+# the prefix's libexec. On non-macOS platforms there are no bundled helpers, so
+# the reconcile is vacuously satisfied. This predicate lets the same-version
+# fast path stay network-free while still healing a partial helper set.
+bundled_helpers_present() {
+  [ "$PLATFORM" = "darwin" ] || return 0
+  # Intentional word-splitting over the fixed, space-free helper names so the
+  # loop runs in this shell (a `while`-over-pipe would swallow `return`).
+  # shellcheck disable=SC2046
+  for helper_name in $(macos_bundled_helper_names); do
+    [ -x "${NIMBUS_PREFIX}/libexec/${helper_name}" ] || return 1
+  done
+  return 0
+}
+
+# Install every bundled helper carried in <extracted_dir>/libexec into the
+# install prefix. macOS ships a self-contained libexec (gvproxy, vfkit); Linux
+# archives carry none, so this is a no-op there. Idempotent: re-installing an
+# existing helper refreshes it from the pinned, integrity-verified archive.
+install_bundled_helpers() {
+  extracted_dir="$1"
+  [ -d "${extracted_dir}/libexec" ] || return 0
+  maybe_sudo install -d "${NIMBUS_PREFIX}/libexec"
+  for helper in "${extracted_dir}"/libexec/*; do
+    [ -e "$helper" ] || continue
+    helper_name="$(basename "$helper")"
+    maybe_sudo install -m 0755 "$helper" "${NIMBUS_PREFIX}/libexec/${helper_name}"
+    say_info "Installed bundled helper ${helper_name} to ${NIMBUS_PREFIX}/libexec/${helper_name}"
+  done
+}
+
+download_and_install_nimbus() {
   if [ -n "$DRY_RUN" ]; then
     say_info "[dry-run] Would download and install nimbus $NIMBUS_VERSION to ${NIMBUS_PREFIX}/bin/nimbus"
     return 0
@@ -980,20 +1031,30 @@ download_and_install_nimbus_linux() {
   download_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/${asset_name}"
   checksums_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/checksums-sha256.txt"
 
-  tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
-
-  say_info "Downloading checksums for nimbus ${NIMBUS_VERSION}..."
-  download_to_file "$checksums_url" "$tmpdir/checksums-sha256.txt"
-
-  # Check if same version already installed
+  # The binary version gates whether we rewrite ${NIMBUS_PREFIX}/bin/nimbus, but
+  # the bundled machine helpers are reconciled independently. When nimbus is
+  # already current AND every promised helper is present, this is a network-free
+  # no-op. When the binary is current but a helper is missing (an install that
+  # predates the helper, or one later removed), reconcile just the helpers from
+  # the pinned, integrity-verified archive rather than forcing a full reinstall.
   installed_version="$(get_installed_nimbus_version)"
+  reconcile_helpers_only=
   if [ "$installed_version" = "$NIMBUS_VERSION" ]; then
-    say_info "nimbus $NIMBUS_VERSION is already installed — skipping"
-    return 0
+    if bundled_helpers_present; then
+      say_info "nimbus $NIMBUS_VERSION is already installed — skipping"
+      return 0
+    fi
+    say_info "nimbus $NIMBUS_VERSION is current; reconciling missing bundled helpers"
+    reconcile_helpers_only=1
   elif [ -n "$installed_version" ]; then
     say_info "Upgrading nimbus from $installed_version to $NIMBUS_VERSION"
   fi
+
+  ensure_workdir
+  tmpdir="$(mktemp -d "${NIMBUS_WORKDIR}/download.XXXXXX")"
+
+  say_info "Downloading checksums for nimbus ${NIMBUS_VERSION}..."
+  download_to_file "$checksums_url" "$tmpdir/checksums-sha256.txt"
 
   say_info "Downloading nimbus ${NIMBUS_VERSION}..."
   download_to_file "$download_url" "$tmpdir/$asset_name"
@@ -1010,10 +1071,30 @@ download_and_install_nimbus_linux() {
   say_info "Extracting and installing..."
   tar -xzf "$tmpdir/$asset_name" -C "$tmpdir"
 
-  maybe_sudo install -d "${NIMBUS_PREFIX}/bin"
-  maybe_sudo install -m 0755 "$tmpdir/nimbus" "${NIMBUS_PREFIX}/bin/nimbus"
+  # Skip rewriting the binary when only the helper set needs healing; the
+  # on-disk nimbus is already the requested version.
+  if [ -z "$reconcile_helpers_only" ]; then
+    maybe_sudo install -d "${NIMBUS_PREFIX}/bin"
+    maybe_sudo install -m 0755 "$tmpdir/nimbus" "${NIMBUS_PREFIX}/bin/nimbus"
+    say_info "Installed nimbus to ${NIMBUS_PREFIX}/bin/nimbus"
+  fi
 
-  say_info "Installed nimbus to ${NIMBUS_PREFIX}/bin/nimbus"
+  # macOS ships a self-contained libexec (gvproxy, vfkit); Linux archives carry
+  # none, so this is a no-op there. The runtime resolves these bundled-first via
+  # ${NIMBUS_PREFIX}/libexec/<helper>.
+  install_bundled_helpers "$tmpdir"
+
+  # Hard post-condition (macOS): every helper the install promises to bundle must
+  # now be present and executable. install_bundled_helpers only copies what the
+  # archive's libexec actually contains, and the helpers-only reconcile path
+  # above returns success even when it copied nothing, so a truncated or
+  # malformed archive could otherwise leave the install "successful" with
+  # vfkit/gvproxy missing — the machine path would then fail opaquely at first
+  # boot. Fail loudly here instead. Vacuously true on Linux (no bundled helpers),
+  # and past the dry-run guard so it only fires on a real install.
+  if ! bundled_helpers_present; then
+    err "bundled machine helpers are missing from ${NIMBUS_PREFIX}/libexec after install; the downloaded archive appears incomplete — re-run the installer, and if it persists report it at https://github.com/nimbus/nimbus/issues"
+  fi
 }
 
 download_and_install_bun_jsc_adapter_linux() {
@@ -1035,8 +1116,8 @@ download_and_install_bun_jsc_adapter_linux() {
   release_checksums_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/checksums-sha256.txt"
   require_bun_jsc_adapter_verifier_tools
 
-  tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
+  ensure_workdir
+  tmpdir="$(mktemp -d "${NIMBUS_WORKDIR}/download.XXXXXX")"
 
   say_info "Downloading Bun/JSC adapter checksums for nimbus ${NIMBUS_VERSION}..."
   if download_to_file "$adapter_checksums_url" "$tmpdir/adapter-checksums-sha256.txt" 2>/dev/null; then
@@ -1122,8 +1203,8 @@ download_and_install_libkrun() {
   download_url="${NIMBUS_LIBKRUN_RELEASES_DOWNLOAD}/${NIMBUS_LIBKRUN_VERSION}/${asset_name}"
   checksums_url="${NIMBUS_LIBKRUN_RELEASES_DOWNLOAD}/${NIMBUS_LIBKRUN_VERSION}/checksums.txt"
 
-  tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
+  ensure_workdir
+  tmpdir="$(mktemp -d "${NIMBUS_WORKDIR}/download.XXXXXX")"
 
   say_info "Downloading checksums for nimbus-libkrun ${NIMBUS_LIBKRUN_VERSION}..."
   download_to_file "$checksums_url" "$tmpdir/checksums.txt"
@@ -1165,8 +1246,8 @@ download_and_install_crun() {
   download_url="${NIMBUS_CRUN_RELEASES_DOWNLOAD}/${NIMBUS_CRUN_VERSION}/${asset_name}"
   checksums_url="${NIMBUS_CRUN_RELEASES_DOWNLOAD}/${NIMBUS_CRUN_VERSION}/checksums.txt"
 
-  tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
+  ensure_workdir
+  tmpdir="$(mktemp -d "${NIMBUS_WORKDIR}/download.XXXXXX")"
 
   say_info "Downloading checksums for nimbus-crun ${NIMBUS_CRUN_VERSION}..."
   download_to_file "$checksums_url" "$tmpdir/checksums.txt"
@@ -1206,7 +1287,7 @@ install_linux() {
   resolve_nimbus_version
   resolve_libkrun_version
   resolve_crun_version
-  download_and_install_nimbus_linux
+  download_and_install_nimbus
   download_and_install_bun_jsc_adapter_linux
   download_and_install_libkrun
   download_and_install_crun
@@ -1230,29 +1311,109 @@ print_getting_started_linux() {
 
 # --- macOS installation -----------------------------------------------------
 
-install_or_upgrade_homebrew_cask() {
-  if [ -n "$DRY_RUN" ]; then
-    say_info "[dry-run] Would install or upgrade nimbus/tap/nimbus via Homebrew"
+# The macOS `nimbus machine` dev flow boots a Linux outer VM through the krunkit
+# microVM chain (krunkit VMM + gvproxy network helper + libkrun). That chain is
+# published by the official libkrun/krun Homebrew tap. We install it as an
+# OPTIONAL fast-path: when Homebrew is present we tap + trust + install it, and
+# when it is absent we print guidance and continue. The nimbus binary itself is
+# already installed directly (curl|sh, like Linux) and the server runs without
+# the machine flow, so a missing Homebrew is never a hard failure on macOS.
+install_macos_microvm_deps() {
+  if [ -n "$SKIP_DEPS" ]; then
+    say_info "Skipping macOS microVM dependency installation (--skip-deps)"
+    say_info "Install the krunkit chain later with: brew install libkrun/krun/krunkit"
     return 0
   fi
 
-  say_info "Tapping nimbus/tap..."
-  brew tap nimbus/tap 2>/dev/null || true
-  brew tap slp/krunkit 2>/dev/null || true
-
-  if brew list --cask nimbus >/dev/null 2>&1; then
-    say_info "Upgrading nimbus cask..."
-    brew upgrade --cask nimbus
-  else
-    say_info "Installing nimbus cask..."
-    brew install --cask nimbus/tap/nimbus
+  if ! check_cmd brew; then
+    say_warn "Homebrew not found — skipping the optional macOS microVM dependency chain"
+    say_warn "The 'nimbus' server is installed and runs without it."
+    say_warn "The 'nimbus machine' dev flow needs krunkit, gvproxy, and libkrun."
+    say_warn "Install Homebrew (https://brew.sh), then run: brew install libkrun/krun/krunkit"
+    return 0
   fi
+
+  if [ -n "$DRY_RUN" ]; then
+    say_info "[dry-run] Would install the macOS microVM chain via Homebrew: krunkit + gvproxy + libkrun (brew install libkrun/krun/krunkit)"
+    return 0
+  fi
+
+  say_info "Tapping libkrun/krun..."
+  brew tap libkrun/krun 2>/dev/null || true
+
+  # Homebrew 6.0 won't load formulae from third-party taps until they are
+  # explicitly trusted (HOMEBREW_REQUIRE_TAP_TRUST, default true since 6.0). An
+  # untrusted tap is a hard error (UntrustedTapError) with no interactive
+  # prompt. `brew trust` is idempotent and records to trust.json whether or not
+  # the tap is yet tapped. One trust of libkrun/krun covers the whole microVM
+  # chain: krunkit -> libkrun + gvproxy -> virglrenderer/libepoxy/libkrunfw.
+  say_info "Trusting the libkrun/krun tap (Homebrew 6.0 tap-trust gate)..."
+  brew trust --tap libkrun/krun || true
+
+  # The whole microVM chain is an optional fast-path. Under `set -eu` an install
+  # failure (network blip, tap trust declined, Rosetta/arch mismatch) would
+  # otherwise abort the entire installer even though `nimbus` itself is already
+  # installed and runs without it. Degrade to a warning and continue.
+  say_info "Installing the macOS microVM chain (krunkit + gvproxy + libkrun)..."
+  if brew install libkrun/krun/krunkit; then
+    say_info "Installed the macOS microVM chain via Homebrew"
+  else
+    say_warn "Could not install the krunkit chain via Homebrew (exit $?)"
+    say_warn "The 'nimbus' server is installed and runs without it."
+    say_warn "Retry later with: brew install libkrun/krun/krunkit"
+  fi
+  return 0
+}
+
+# Fail fast when the install prefix is not writable and we have no way to gain
+# privilege, instead of letting the first `maybe_sudo install` abort mid-run
+# with a bare "need sudo to install to system paths" after the user has already
+# waited on a download. What governs success is the *writability* of the prefix,
+# not whether we are root: a user-owned --prefix (e.g. $HOME/.local) needs no
+# sudo at all, while the default /usr/local typically does. The leaf prefix
+# directories may not exist yet, so probe the deepest existing ancestor.
+preflight_prefix_access() {
+  [ -n "$DRY_RUN" ] && return 0
+
+  probe="$NIMBUS_PREFIX"
+  while [ -n "$probe" ] && [ ! -e "$probe" ]; do
+    parent="$(dirname "$probe")"
+    # Stop if dirname stops making progress (reached "/" or ".").
+    [ "$parent" = "$probe" ] && break
+    probe="$parent"
+  done
+  [ -n "$probe" ] || probe="/"
+
+  # A writable prefix needs no elevation, whatever the uid.
+  if [ -w "$probe" ]; then
+    return 0
+  fi
+
+  # Already root: the install writes succeed without sudo.
+  if [ "$(id -u)" -eq 0 ]; then
+    return 0
+  fi
+
+  # Non-root: sudo can still carry the install, but only if it will not block on
+  # a password we cannot answer. An interactive terminal can satisfy a prompt;
+  # otherwise require passwordless sudo (`sudo -n`) so a piped `curl | sh` does
+  # not hang or fail deep inside the install. This mirrors maybe_sudo's runtime
+  # choice, just surfaced up front with an actionable message.
+  if check_cmd sudo; then
+    if is_interactive || sudo -n true 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  err "cannot write to ${NIMBUS_PREFIX} (needed for ${NIMBUS_PREFIX}/bin and ${NIMBUS_PREFIX}/libexec) and cannot elevate. Re-run with sudo (e.g. 'curl ... | sudo sh'), run as root, or set --prefix to a writable location such as \$HOME/.local."
 }
 
 install_macos() {
   check_macos_version
-  check_homebrew
-  install_or_upgrade_homebrew_cask
+  preflight_prefix_access
+  resolve_nimbus_version
+  download_and_install_nimbus
+  install_macos_microvm_deps
   verify_installation
   print_getting_started_macos
 }
@@ -1330,21 +1491,60 @@ uninstall_linux() {
 uninstall_macos() {
   say_info "Uninstalling nimbus from macOS..."
 
+  # macOS has two install channels that land the binary in different prefixes:
+  #   curl | sh   -> ${NIMBUS_PREFIX}/bin/nimbus    (default /usr/local/bin)
+  #   brew install -> $(brew --prefix)/bin/nimbus   (Homebrew-managed symlink)
+  # This script only owns the curl|sh copy. If the Homebrew cask is installed we
+  # defer to `brew uninstall` so Homebrew's receipts and the optional krunkit
+  # dependency chain stay consistent instead of leaving a dangling symlink.
+  cask_installed=""
+  if check_cmd brew && brew list --cask nimbus >/dev/null 2>&1; then
+    cask_installed=1
+  fi
+
   if [ -n "$DRY_RUN" ]; then
-    say_info "[dry-run] Would run: brew uninstall --cask nimbus"
+    say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/bin/nimbus"
+    # shellcheck disable=SC2046
+    for helper_name in $(macos_bundled_helper_names); do
+      say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/libexec/${helper_name}"
+    done
+    if [ -n "$cask_installed" ]; then
+      say_info "[dry-run] Detected the 'nimbus' Homebrew cask — defer to: brew uninstall --cask nimbus"
+    fi
     return 0
   fi
 
-  if brew list --cask nimbus >/dev/null 2>&1; then
-    brew uninstall --cask nimbus
-    say_info "Uninstalled nimbus cask"
+  if [ -n "$cask_installed" ]; then
+    say_info "nimbus is also installed via the Homebrew cask."
+    say_info "Remove that copy with: brew uninstall --cask nimbus"
+  fi
+
+  if [ -f "${NIMBUS_PREFIX}/bin/nimbus" ]; then
+    maybe_sudo rm -f "${NIMBUS_PREFIX}/bin/nimbus"
+    say_info "Removed ${NIMBUS_PREFIX}/bin/nimbus"
+  elif [ -n "$cask_installed" ]; then
+    say_info "No curl|sh-installed binary at ${NIMBUS_PREFIX}/bin/nimbus (cask copy left to Homebrew)"
   else
-    say_info "nimbus cask is not installed"
+    say_info "nimbus binary not found at ${NIMBUS_PREFIX}/bin/nimbus"
+  fi
+
+  # Remove only the direct-install helpers this script owns. The Homebrew
+  # krunkit/libkrun chain remains Homebrew-owned and is reported below.
+  # shellcheck disable=SC2046
+  for helper_name in $(macos_bundled_helper_names); do
+    helper_path="${NIMBUS_PREFIX}/libexec/${helper_name}"
+    if [ -f "$helper_path" ] || [ -L "$helper_path" ]; then
+      maybe_sudo rm -f "$helper_path"
+      say_info "Removed ${helper_path}"
+    fi
+  done
+  if [ -d "${NIMBUS_PREFIX}/libexec" ]; then
+    maybe_sudo rmdir "${NIMBUS_PREFIX}/libexec" 2>/dev/null || true
   fi
 
   say ""
-  say "Note: krunkit (installed as a dependency) was not removed."
-  say "Run 'brew autoremove' or 'brew uninstall krunkit' if no longer needed."
+  say "The macOS microVM chain (krunkit, gvproxy, libkrun) was not removed."
+  say "Run 'brew uninstall libkrun/krun/krunkit' (and 'brew autoremove') if no longer needed."
 }
 
 # --- Verification -----------------------------------------------------------
@@ -1567,45 +1767,77 @@ verify_linux_inline() {
   inline_check_bun_jsc_adapter
 }
 
-resolve_macos_gvproxy_path() {
+# Resolve a bundled-first macOS machine helper. Mirrors the Rust runtime
+# resolver (bundled_helper_candidates_for_executable in machine/manager/helpers.rs):
+# the Nimbus-pinned helper shipped in the archive's libexec/ is AUTHORITATIVE
+# and resolved first, then the Homebrew prefix and PATH as fallbacks.
+resolve_macos_bundled_helper() {
+  helper_name="$1"
+
+  # 1) Bundled in the install prefix's libexec (direct no-brew install path).
+  if [ -x "${NIMBUS_PREFIX}/libexec/${helper_name}" ]; then
+    printf '%s\n' "${NIMBUS_PREFIX}/libexec/${helper_name}"
+    return 0
+  fi
+
+  # 2) Bundled beside the resolved nimbus binary (e.g. Homebrew Caskroom, where
+  #    libexec sits next to the real binary the bin symlink points at).
   nimbus_path="$(command -v nimbus 2>/dev/null || true)"
-  if [ -z "$nimbus_path" ]; then
-    return 1
-  fi
-
-  real_path="$(readlink "$nimbus_path" 2>/dev/null || echo "$nimbus_path")"
-  if [ "${real_path#/}" = "$real_path" ]; then
-    real_path="$(cd "$(dirname "$nimbus_path")" && cd "$(dirname "$real_path")" && pwd)/$(basename "$real_path")"
-  fi
-
-  case "$real_path" in
-    *Caskroom*)
-      printf '%s\n' "$(dirname "$real_path")/libexec/gvproxy"
+  if [ -n "$nimbus_path" ]; then
+    real_path="$(readlink "$nimbus_path" 2>/dev/null || echo "$nimbus_path")"
+    if [ "${real_path#/}" = "$real_path" ]; then
+      real_path="$(cd "$(dirname "$nimbus_path")" && cd "$(dirname "$real_path")" && pwd)/$(basename "$real_path")"
+    fi
+    real_dir="$(dirname "$real_path")"
+    if [ -x "${real_dir}/libexec/${helper_name}" ]; then
+      printf '%s\n' "${real_dir}/libexec/${helper_name}"
       return 0
-      ;;
-  esac
+    fi
+  fi
 
+  # 3) Homebrew prefix / standard bin fallbacks, then PATH.
   brew_prefix="$(brew --prefix 2>/dev/null || echo "/opt/homebrew")"
-  for candidate in "${brew_prefix}/bin/gvproxy" "/usr/local/bin/gvproxy"; do
+  for candidate in "${brew_prefix}/bin/${helper_name}" "/usr/local/bin/${helper_name}"; do
     if [ -x "$candidate" ]; then
       printf '%s\n' "$candidate"
       return 0
     fi
   done
 
+  if helper_path="$(command -v "${helper_name}" 2>/dev/null)"; then
+    printf '%s\n' "$helper_path"
+    return 0
+  fi
+
   return 1
+}
+
+resolve_macos_gvproxy_path() {
+  resolve_macos_bundled_helper "gvproxy"
+}
+
+resolve_macos_vfkit_path() {
+  resolve_macos_bundled_helper "vfkit"
 }
 
 verify_macos_inline() {
   inline_check_command "nimbus" "nimbus" required
-  inline_check_command "krunkit" "krunkit" required
+  inline_check_command "krunkit" "krunkit" recommended
   inline_check_macos_bun_jsc_adapter
 
   if gvproxy_path="$(resolve_macos_gvproxy_path)"; then
     inline_print_line "gvproxy" "present path=$gvproxy_path"
   else
-    inline_print_line "gvproxy" "missing"
-    inline_mark_failure
+    inline_print_line "gvproxy" "missing (expected bundled at ${NIMBUS_PREFIX}/libexec/gvproxy)"
+    inline_mark_warning
+  fi
+
+  # vfkit is the opt-in backend (NIMBUS_MACHINE_PROVIDER=vfkit); the default
+  # stays krunkit, so a missing vfkit is informational rather than a warning.
+  if vfkit_path="$(resolve_macos_vfkit_path)"; then
+    inline_print_line "vfkit" "present path=$vfkit_path (opt-in: NIMBUS_MACHINE_PROVIDER=vfkit)"
+  else
+    inline_print_line "vfkit" "absent (opt-in backend; bundled at ${NIMBUS_PREFIX}/libexec/vfkit when shipped)"
   fi
 }
 
@@ -1651,13 +1883,12 @@ Usage:
 
 Options:
   --version <tag>       Pin nimbus version (e.g., v0.1.14)
-                        Linux only; macOS installs the current Homebrew cask
   --crun-version <tag>  Pin nimbus-crun version (Linux only)
   --libkrun-version <tag>
                         Pin nimbus-libkrun version (Linux only)
   --with-bun-jsc        Install optional in-process Bun/JSC adapter when a
                         matching release asset exists (Linux x86_64 today)
-  --prefix <path>       Install prefix (default: /usr/local, Linux only)
+  --prefix <path>       Install prefix (default: /usr/local)
   --skip-deps           Skip system dependency installation
   --dry-run             Print what would happen without executing
   --uninstall           Remove nimbus, nimbus-libkrun, and nimbus-crun
@@ -1771,8 +2002,12 @@ main() {
   fi
 
   if [ -n "$DRY_RUN" ]; then
+    # Resolve the nimbus version on every platform so the plan shows the real
+    # tag instead of "latest". resolve_nimbus_version short-circuits when the
+    # version was passed explicitly, so a forced --version stays network-free.
+    # The libkrun/crun helper components are Linux-only.
+    resolve_nimbus_version
     if [ "$PLATFORM" = "linux" ]; then
-      resolve_nimbus_version
       resolve_libkrun_version
       resolve_crun_version
     fi

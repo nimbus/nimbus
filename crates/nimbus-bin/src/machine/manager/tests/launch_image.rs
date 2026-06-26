@@ -53,14 +53,14 @@ fn converge_machine_image_contract_rebuilds_boot_artifacts_when_recorded_image_d
     let mut state = MachineStateRecord::initialized();
     state.runtime = Some(MachineRuntimeState {
         helper_binaries: MachineHelperBinaryPaths {
-            krunkit: PathBuf::from("/opt/homebrew/bin/krunkit"),
+            vmm: PathBuf::from("/opt/homebrew/bin/krunkit"),
             gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
         },
         image_path: paths.materialized_image_path.clone(),
         efi_variable_store_path: paths.efi_variable_store_path.clone(),
         machine_image_source: "docker://quay.io/podman/machine-os@sha256:old-digest".to_owned(),
         ssh_port: 20022,
-        rest_uri: format!("unix://{}", paths.krunkit_endpoint_path.display()),
+        rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
         ready_vsock_port: READY_VSOCK_PORT,
     });
 
@@ -120,24 +120,24 @@ fn launch_plan_requires_bootable_local_disk_image() {
     let plan = MachineLaunchPlan::build(&paths, &config, &state).expect("launch plan should build");
 
     assert!(
-        plan.krunkit_command
+        plan.vmm_command
             .args
             .iter()
             .any(|arg| arg.contains("virtio-blk,path="))
     );
     assert!(
-        plan.krunkit_command
+        plan.vmm_command
             .args
             .iter()
             .any(|arg| arg.contains("virtio-net,type=unixgram"))
     );
-    assert!(plan.krunkit_command.args.iter().any(|arg| {
+    assert!(plan.vmm_command.args.iter().any(|arg| {
         arg == &format!(
             "virtio-vsock,port=1025,socketURL={},listen",
             paths.ready_socket_path.display()
         )
     }));
-    assert!(plan.krunkit_command.args.iter().any(|arg| {
+    assert!(plan.vmm_command.args.iter().any(|arg| {
         arg == &format!(
             "virtio-vsock,port=1024,socketURL={},listen",
             paths.ignition_socket_path.display()
@@ -146,6 +146,8 @@ fn launch_plan_requires_bootable_local_disk_image() {
     assert!(
         !plan
             .gvproxy_command
+            .as_ref()
+            .expect("krunkit requires a gvproxy command")
             .args
             .iter()
             .any(|arg| arg == "-forward-sock")
@@ -186,19 +188,19 @@ fn launch_plan_bootc_machine_config_attaches_bundle_without_ignition() {
     );
     assert_eq!(plan.ignition_file_path, None);
     assert!(paths.guest_config_bundle_dir.join("machine.json").is_file());
-    assert!(plan.krunkit_command.args.iter().any(|arg| {
+    assert!(plan.vmm_command.args.iter().any(|arg| {
         arg == &format!(
             "virtio-vsock,port=1025,socketURL={},listen",
             paths.ready_socket_path.display()
         )
     }));
-    assert!(!plan.krunkit_command.args.iter().any(|arg| {
+    assert!(!plan.vmm_command.args.iter().any(|arg| {
         arg == &format!(
             "virtio-vsock,port=1024,socketURL={},listen",
             paths.ignition_socket_path.display()
         )
     }));
-    assert!(plan.krunkit_command.args.iter().any(|arg| {
+    assert!(plan.vmm_command.args.iter().any(|arg| {
         arg == &format!(
             "virtio-fs,sharedDir={},mountTag=nimbus-machine-config",
             paths.guest_config_bundle_dir.display()
@@ -228,12 +230,20 @@ fn launch_plan_keeps_gvproxy_network_only_and_builds_separate_machine_api_forwar
     let state = MachineStateRecord::initialized();
     let plan = MachineLaunchPlan::build(&paths, &config, &state).expect("launch plan should build");
 
-    assert!(!plan.gvproxy_command.args.iter().any(|arg| {
-        matches!(
-            arg.as_str(),
-            "-forward-sock" | "-forward-dest" | "-forward-user" | "-forward-identity"
-        )
-    }));
+    assert!(
+        !plan
+            .gvproxy_command
+            .as_ref()
+            .expect("krunkit requires a gvproxy command")
+            .args
+            .iter()
+            .any(|arg| {
+                matches!(
+                    arg.as_str(),
+                    "-forward-sock" | "-forward-dest" | "-forward-user" | "-forward-identity"
+                )
+            })
+    );
     let forward = build_machine_api_forward_command(&paths, &config, 20022)
         .expect("machine API forward command should build");
     let forward_args = forward
@@ -344,7 +354,7 @@ fn registry_image_reference_reuses_materialized_disk_when_present() {
 
     assert_eq!(plan.runtime.image_path, paths.materialized_image_path);
     assert!(
-        plan.krunkit_command
+        plan.vmm_command
             .args
             .iter()
             .any(|arg| arg.contains(&format!(

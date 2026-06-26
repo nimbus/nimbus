@@ -14,7 +14,35 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_MACHINE_RUNTIME_ROOT: &str = "/tmp/nimbus";
 pub const MACHINE_RUNTIME_ROOT_ENV: &str = "NIMBUS_MACHINE_RUNTIME_ROOT";
-pub const CURRENT_MACHINE_CONFIG_VERSION: u32 = 3;
+// The machine config schema (`config.json`) is at its first version. Like the
+// state schema it starts at 1 pre-launch -- there is no shipped older version to
+// account for, so the dev-era 1 -> 2 -> 3 history collapses to a single
+// canonical v1. Unlike the state schema, the config loader is *strict*: a
+// version mismatch is a hard error, never a silent rebuild. config.json is the
+// operator's declared configuration (provider, resources, image source,
+// volumes) -- durable user data -- so rebuilding it from defaults would
+// silently invent intent that exists nowhere else. To keep that strictness
+// non-destructive, the loader first copies the rejected file aside to a
+// `config.json.v{N}.bak` sibling and then directs the operator to recreate the
+// machine, so their declared settings survive for reference instead of being
+// destroyed by the recovery. That asymmetry with `CURRENT_MACHINE_STATE_VERSION`
+// (rebuildable runtime data) is deliberate; do not make config self-heal. The
+// first post-launch schema change bumps to 2.
+pub const CURRENT_MACHINE_CONFIG_VERSION: u32 = 1;
+// The machine state schema (`status.json`) is at its first version. The
+// `krunkit` -> `vmm` runtime-helper rename -- one provider-neutral VMM slot per
+// machine, with the matching `*-krunkit.{pid,sock}` -> `*-vmm.*` runtime-file
+// scheme -- was made directly as a pre-launch breaking change, not a migration.
+// A `status.json` written before the rename simply lacks the now-required
+// `runtime.helper_binaries.vmm` field; the loader rebuilds that unparseable
+// record into a clean Stopped/Stale state (see
+// `files::load_machine_state_if_exists`) rather than stranding the machine, so
+// the rename needs no version bump. State is rebuildable runtime data, not
+// durable user data. The version gate (probe + newer/older rebuild arms) stays
+// so the first post-launch schema change can bump to 2 and route pre-existing
+// files through the rebuild arm with an explicit "schema evolved" reason;
+// pre-launch there is no shipped older version to account for, so the schema
+// starts at 1.
 pub const CURRENT_MACHINE_STATE_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,15 +167,15 @@ impl MachineRootLayout {
             ready_socket_path: runtime_dir.join(format!("{name}.sock")),
             ignition_socket_path: runtime_dir.join(format!("{name}-ignition.sock")),
             gvproxy_socket_path: runtime_dir.join(format!("{name}-gvproxy.sock")),
-            krunkit_endpoint_path: runtime_dir.join(format!("{name}-krunkit.sock")),
+            vmm_endpoint_path: runtime_dir.join(format!("{name}-vmm.sock")),
             efi_variable_store_path: data_dir.join("efi-variable-store"),
             api_forward_pid_path: runtime_dir.join(format!("{name}-api-forward.pid")),
             gvproxy_pid_path: runtime_dir.join(format!("{name}-gvproxy.pid")),
-            krunkit_pid_path: runtime_dir.join(format!("{name}-krunkit.pid")),
+            vmm_pid_path: runtime_dir.join(format!("{name}-vmm.pid")),
             api_forward_log_path: runtime_dir.join(format!("{name}-api-forward.log")),
             machine_log_path: runtime_dir.join(format!("{name}.log")),
             gvproxy_log_path: runtime_dir.join(format!("{name}-gvproxy.log")),
-            krunkit_log_path: runtime_dir.join(format!("{name}-krunkit.log")),
+            vmm_log_path: runtime_dir.join(format!("{name}-vmm.log")),
         }
     }
 }
@@ -327,6 +355,7 @@ impl MachineStateRecord {
 #[serde(rename_all = "kebab-case")]
 pub enum MachineProvider {
     Krunkit,
+    Vfkit,
     Wsl2,
 }
 
@@ -360,6 +389,19 @@ const KRUNKIT_PROVIDER_CAPABILITIES: MachineProviderCapabilities = MachineProvid
     oci_artifact_disk_type: "applehv",
 };
 
+// vfkit is the second macOS VMM. Like krunkit it boots the Nimbus-managed
+// `applehv` disk over EFI, bootstraps via an Ignition vsock, and relies on an
+// external gvproxy userspace network stack — so its capabilities mirror
+// krunkit's. The two differ only in the VMM binary and the on-VMM net-device
+// syntax, both of which are owned by the per-provider `MachineVmmBackend`.
+const VFKIT_PROVIDER_CAPABILITIES: MachineProviderCapabilities = MachineProviderCapabilities {
+    uses_provider_networking: false,
+    requires_exclusive_active: true,
+    image_format: MachineImageFormat::Raw,
+    bootstrap_mode: MachineBootstrapMode::Ignition,
+    oci_artifact_disk_type: "applehv",
+};
+
 const WSL2_PROVIDER_CAPABILITIES: MachineProviderCapabilities = MachineProviderCapabilities {
     uses_provider_networking: true,
     requires_exclusive_active: false,
@@ -372,13 +414,35 @@ impl MachineProvider {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Krunkit => "krunkit",
+            Self::Vfkit => "vfkit",
             Self::Wsl2 => "wsl2",
         }
+    }
+
+    /// Parse a provider selection token (config field or `NIMBUS_MACHINE_PROVIDER`
+    /// value). Matching is case-insensitive and ignores surrounding whitespace.
+    /// Returns `None` for unknown tokens so callers can surface a clear error.
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "krunkit" => Some(Self::Krunkit),
+            "vfkit" => Some(Self::Vfkit),
+            "wsl2" => Some(Self::Wsl2),
+            _ => None,
+        }
+    }
+
+    /// Whether this provider runs the Nimbus-managed macOS `applehv` guest that
+    /// needs host↔guest binary sync and a forwarded machine API over SSH. Both
+    /// macOS microVM backends (krunkit and vfkit) qualify; WSL2 owns its own
+    /// guest plumbing.
+    pub fn uses_managed_applehv_guest(self) -> bool {
+        matches!(self, Self::Krunkit | Self::Vfkit)
     }
 
     pub fn capabilities(self) -> MachineProviderCapabilities {
         match self {
             Self::Krunkit => KRUNKIT_PROVIDER_CAPABILITIES,
+            Self::Vfkit => VFKIT_PROVIDER_CAPABILITIES,
             Self::Wsl2 => WSL2_PROVIDER_CAPABILITIES,
         }
     }
@@ -401,6 +465,21 @@ impl MachineProvider {
 
     pub fn oci_artifact_disk_type(self) -> &'static str {
         self.capabilities().oci_artifact_disk_type
+    }
+
+    /// The canonical "this provider has no backend on this host yet" error.
+    ///
+    /// Both the start path (`vmm_backend`) and the stop path
+    /// (`stop_provider_machine`) reject not-yet-implemented providers, and both
+    /// must reject with the *same* message so selection stays a deliberate,
+    /// fail-closed opt-in rather than a silent no-op. Owning the text here keeps
+    /// the two gates from drifting apart. The provider name is upper-cased so the
+    /// message reads as a proper noun (e.g. `WSL2`).
+    pub fn unavailable_error(self) -> Error {
+        Error::InvalidInput(format!(
+            "the {} machine provider is not available on this host yet",
+            self.as_str().to_ascii_uppercase()
+        ))
     }
 }
 
@@ -464,7 +543,9 @@ pub struct MachineRuntimeState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MachineHelperBinaryPaths {
-    pub krunkit: PathBuf,
+    /// The resolved VMM binary for the machine's provider (krunkit or vfkit).
+    /// One VMM runs per machine, so this is a single provider-neutral slot.
+    pub vmm: PathBuf,
     pub gvproxy: PathBuf,
 }
 
@@ -486,15 +567,24 @@ pub struct MachinePaths {
     pub ready_socket_path: PathBuf,
     pub ignition_socket_path: PathBuf,
     pub gvproxy_socket_path: PathBuf,
-    pub krunkit_endpoint_path: PathBuf,
+    /// Restful control endpoint for the active VMM (krunkit/vfkit `--restful-uri`).
+    /// One VMM runs per machine, so this is a single provider-neutral slot.
+    pub vmm_endpoint_path: PathBuf,
     pub efi_variable_store_path: PathBuf,
     pub api_forward_pid_path: PathBuf,
     pub gvproxy_pid_path: PathBuf,
-    pub krunkit_pid_path: PathBuf,
+    /// Pidfile for the active VMM process (krunkit/vfkit `--pidfile`). The
+    /// readiness/stop lifecycle reads this slot regardless of provider.
+    pub vmm_pid_path: PathBuf,
     pub api_forward_log_path: PathBuf,
     pub machine_log_path: PathBuf,
     pub gvproxy_log_path: PathBuf,
-    pub krunkit_log_path: PathBuf,
+    /// Diagnostic log for the active VMM. krunkit writes it via `--log-file`.
+    /// vfkit has no such flag, so the spawn path instead captures vfkit's
+    /// stdout+stderr into this same file, keeping failed-boot triage uniform
+    /// across providers (the guest console log still lives in
+    /// [`machine_log_path`](Self::machine_log_path) for both).
+    pub vmm_log_path: PathBuf,
 }
 
 impl MachinePaths {

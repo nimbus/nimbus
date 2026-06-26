@@ -13,6 +13,25 @@ fn krunkit_provider_capabilities_match_podman_aligned_contract() {
         MachineBootstrapMode::Ignition
     );
     assert_eq!(MachineProvider::Krunkit.oci_artifact_disk_type(), "applehv");
+
+    // vfkit is an applehv sibling of krunkit: it must report the identical
+    // podman-aligned capability contract so the shared launch/bootstrap path
+    // treats both managed applehv guests the same way.
+    assert!(!MachineProvider::Vfkit.uses_provider_networking());
+    assert!(MachineProvider::Vfkit.requires_exclusive_active());
+    assert_eq!(
+        MachineProvider::Vfkit.image_format(),
+        MachineImageFormat::Raw
+    );
+    assert_eq!(
+        MachineProvider::Vfkit.bootstrap_mode(),
+        MachineBootstrapMode::Ignition
+    );
+    assert_eq!(MachineProvider::Vfkit.oci_artifact_disk_type(), "applehv");
+    assert!(MachineProvider::Vfkit.uses_managed_applehv_guest());
+    assert!(MachineProvider::Krunkit.uses_managed_applehv_guest());
+    assert!(!MachineProvider::Wsl2.uses_managed_applehv_guest());
+
     assert!(MachineProvider::Wsl2.uses_provider_networking());
     assert!(!MachineProvider::Wsl2.requires_exclusive_active());
     assert_eq!(
@@ -24,6 +43,432 @@ fn krunkit_provider_capabilities_match_podman_aligned_contract() {
         MachineBootstrapMode::ShellScript
     );
     assert_eq!(MachineProvider::Wsl2.oci_artifact_disk_type(), "wsl");
+}
+
+#[test]
+fn krunkit_backend_pairs_gvproxy_unixgram_listen_mode() {
+    let backend = KrunkitVmmBackend;
+    assert_eq!(backend.provider(), MachineProvider::Krunkit);
+    // krunkit drives host networking through gvproxy.
+    assert!(backend.requires_gvproxy());
+
+    // The host side listens on a unixgram socket and the krunkit
+    // `virtio-net,type=unixgram` device dials it. gvproxy's `-listen-vfkit`
+    // mode speaks exactly that wire format, so the listen arguments must pair
+    // the flag with a `unixgram://` URL pointing at the shared socket.
+    let socket = PathBuf::from("/tmp/nimbus-machine/gvproxy.sock");
+    assert_eq!(
+        backend.gvproxy_listen_args(&socket),
+        vec![
+            "-listen-vfkit".to_owned(),
+            format!("unixgram://{}", socket.display()),
+        ]
+    );
+}
+
+#[test]
+fn vfkit_backend_pairs_gvproxy_unixgram_listen_mode() {
+    let backend = VfkitVmmBackend;
+    assert_eq!(backend.provider(), MachineProvider::Vfkit);
+    // vfkit, like krunkit, drives host networking through gvproxy.
+    assert!(backend.requires_gvproxy());
+
+    // vfkit's `virtio-net,unixSocketPath=` device dials gvproxy's `-listen-vfkit`
+    // unixgram listener. The host listen contract is identical to krunkit (krunkit
+    // reuses vfkit's transport), so the listen arguments must pair the flag with a
+    // `unixgram://` URL at the shared socket; only the on-VMM net-device grammar in
+    // `build_launch_command` differs between the two backends.
+    let socket = PathBuf::from("/tmp/nimbus-machine/gvproxy.sock");
+    assert_eq!(
+        backend.gvproxy_listen_args(&socket),
+        vec![
+            "-listen-vfkit".to_owned(),
+            format!("unixgram://{}", socket.display()),
+        ]
+    );
+}
+
+#[test]
+fn vfkit_backend_resolves_binary_from_env_override() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let vfkit_path = temp_dir.path().join("vfkit");
+    // The env guard installs the vfkit stub and points NIMBUS_MACHINE_VFKIT at it,
+    // so resolution must honor the per-VMM override ahead of the bundled/known
+    // helper directories.
+    let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+
+    let resolved = VfkitVmmBackend
+        .resolve_vmm_binary()
+        .expect("vfkit binary should resolve via NIMBUS_MACHINE_VFKIT");
+
+    assert_eq!(resolved, vfkit_path);
+}
+
+/// Build a VMM launch command for `backend` against the deterministic sample
+/// config so the per-VMM device grammar can be asserted without booting a VM.
+/// `build_launch_command` only formats paths, so no filesystem state is needed.
+fn build_sample_launch_command(
+    backend: &dyn MachineVmmBackend,
+    image_path: &Path,
+    paths: &MachinePaths,
+    config: &MachineConfigRecord,
+) -> MachineCommandLine {
+    let efi_variable_store_path = paths.efi_variable_store_path.clone();
+    let rest_uri = format!("unix://{}", paths.vmm_endpoint_path.display());
+    let ctx = VmmLaunchContext {
+        paths,
+        config,
+        image_path,
+        efi_variable_store_path: &efi_variable_store_path,
+        rest_uri: &rest_uri,
+        bootstrap_mode: MachineBootstrapMode::Ignition,
+        machine_config_bundle_dir: None,
+    };
+    backend
+        .build_launch_command(Path::new("/opt/test/vmm"), &ctx)
+        .expect("launch command should build")
+}
+
+#[test]
+fn krunkit_build_launch_command_uses_libkrun_device_grammar() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.raw");
+    let config = sample_config(&image_path);
+    let paths = config.roots.paths("default");
+    let command = build_sample_launch_command(&KrunkitVmmBackend, &image_path, &paths, &config);
+
+    // Shared base args: CPU/memory sizing, the restful control endpoint, and the
+    // pidfile slot the readiness/stop lifecycle watches.
+    assert!(
+        command
+            .args
+            .windows(2)
+            .any(|pair| pair[0] == "--cpus" && pair[1] == "2")
+    );
+    assert!(
+        command
+            .args
+            .windows(2)
+            .any(|pair| pair[0] == "--memory" && pair[1] == "2048")
+    );
+    assert!(
+        command
+            .args
+            .windows(2)
+            .any(|pair| pair[0] == "--pidfile"
+                && pair[1] == paths.vmm_pid_path.display().to_string())
+    );
+
+    // krunkit exposes its own diagnostic --log-file; vfkit does not.
+    assert!(
+        command
+            .args
+            .windows(2)
+            .any(|pair| pair[0] == "--log-file"
+                && pair[1] == paths.vmm_log_path.display().to_string())
+    );
+
+    // krunkit's block device carries the raw format, and its net device is the
+    // libkrun unixgram grammar with offloading + vfkitMagic.
+    assert!(
+        command
+            .args
+            .iter()
+            .any(|arg| arg == &format!("virtio-blk,path={},format=raw", image_path.display()))
+    );
+    assert!(command.args.iter().any(|arg| arg
+        == &format!(
+            "virtio-net,type=unixgram,path={},mac={},offloading=on,vfkitMagic=on",
+            paths.gvproxy_socket_path.display(),
+            DEFAULT_MACHINE_MAC_ADDRESS
+        )));
+
+    // Shared applehv devices: machine-ready + Ignition vsock listeners.
+    assert!(command.args.iter().any(
+        |arg| arg == &build_virtio_vsock_listen_arg(READY_VSOCK_PORT, &paths.ready_socket_path)
+    ));
+    assert!(
+        command
+            .args
+            .iter()
+            .any(|arg| arg == &build_virtio_vsock_listen_arg(1024, &paths.ignition_socket_path))
+    );
+}
+
+#[test]
+fn vfkit_build_launch_command_uses_virtualization_framework_device_grammar() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.raw");
+    let config = sample_config(&image_path);
+    let paths = config.roots.paths("default");
+    let command = build_sample_launch_command(&VfkitVmmBackend, &image_path, &paths, &config);
+
+    // vfkit shares the base args (sizing, restful URI, pidfile) with krunkit.
+    assert!(
+        command
+            .args
+            .windows(2)
+            .any(|pair| pair[0] == "--cpus" && pair[1] == "2")
+    );
+    assert!(
+        command
+            .args
+            .windows(2)
+            .any(|pair| pair[0] == "--restful-uri"
+                && pair[1] == format!("unix://{}", paths.vmm_endpoint_path.display()))
+    );
+
+    // vfkit has no --log-file flag; the guest console still lands in the shared
+    // serial log device below.
+    assert!(!command.args.iter().any(|arg| arg == "--log-file"));
+
+    // vfkit's block device omits `format=`, and its net device uses
+    // `unixSocketPath=` rather than the libkrun `type=unixgram` grammar.
+    assert!(
+        command
+            .args
+            .iter()
+            .any(|arg| arg == &format!("virtio-blk,path={}", image_path.display()))
+    );
+    assert!(!command.args.iter().any(|arg| arg.contains("format=raw")));
+    assert!(command.args.iter().any(|arg| arg
+        == &format!(
+            "virtio-net,unixSocketPath={},mac={}",
+            paths.gvproxy_socket_path.display(),
+            DEFAULT_MACHINE_MAC_ADDRESS
+        )));
+    assert!(!command.args.iter().any(|arg| arg.contains("type=unixgram")));
+
+    // Shared applehv devices are wired identically to krunkit: the serial console
+    // log plus the machine-ready and Ignition vsock listeners.
+    assert!(command.args.iter().any(|arg| arg
+        == &format!(
+            "virtio-serial,logFilePath={}",
+            paths.machine_log_path.display()
+        )));
+    assert!(command.args.iter().any(
+        |arg| arg == &build_virtio_vsock_listen_arg(READY_VSOCK_PORT, &paths.ready_socket_path)
+    ));
+    assert!(
+        command
+            .args
+            .iter()
+            .any(|arg| arg == &build_virtio_vsock_listen_arg(1024, &paths.ignition_socket_path))
+    );
+}
+
+#[test]
+fn vfkit_launch_plan_captures_stderr_to_vmm_log_while_krunkit_keeps_log_file() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.raw");
+    let config = sample_config(&image_path);
+    let paths = config.roots.paths("default");
+
+    let krunkit = build_sample_launch_command(&KrunkitVmmBackend, &image_path, &paths, &config);
+    let vfkit = build_sample_launch_command(&VfkitVmmBackend, &image_path, &paths, &config);
+
+    // krunkit writes its own diagnostic log via `--log-file <vmm_log_path>`, so
+    // the spawn path must NOT also redirect its stdout+stderr into that same
+    // file — doing so would duplicate every line. Its capture slot stays empty.
+    assert_eq!(
+        krunkit.capture_log_path, None,
+        "krunkit already logs via --log-file; output must not be redirected and double-logged"
+    );
+    assert!(
+        krunkit
+            .args
+            .windows(2)
+            .any(|pair| pair[0] == "--log-file"
+                && pair[1] == paths.vmm_log_path.display().to_string()),
+        "krunkit must keep its own --log-file pointed at vmm_log_path"
+    );
+
+    // vfkit has no `--log-file` flag, so the spawn path is the only place a
+    // failed boot's stderr can be captured. Its capture slot must point at the
+    // same vmm_log_path so triage works, and it must NOT carry a --log-file arg.
+    assert_eq!(
+        vfkit.capture_log_path,
+        Some(paths.vmm_log_path.clone()),
+        "vfkit has no --log-file, so its launch plan must capture output to vmm_log_path"
+    );
+    assert!(
+        !vfkit.args.iter().any(|arg| arg == "--log-file"),
+        "vfkit has no --log-file flag to emit"
+    );
+
+    // Prove the capture is real end-to-end through the production spawn path:
+    // run a vfkit-shaped command that writes to stderr and confirm the bytes
+    // land in vmm_log_path. The krunkit-shaped sibling (no capture) leaves no
+    // such file, so its stderr is not duplicated into vmm_log_path. Production
+    // calls `ensure_directories` before the launch plan spawns, so create the
+    // runtime dir here too.
+    paths
+        .ensure_directories()
+        .expect("machine directories should exist");
+    let captured = MachineCommandLine {
+        program: PathBuf::from("/bin/sh"),
+        args: vec!["-c".to_owned(), "echo vfkit-boot-failure 1>&2".to_owned()],
+        capture_log_path: Some(paths.vmm_log_path.clone()),
+    };
+    let mut child = captured.spawn().expect("captured command should spawn");
+    child.wait().expect("captured command should exit");
+
+    let logged = fs::read_to_string(&paths.vmm_log_path)
+        .expect("captured stderr should have been written to vmm_log_path");
+    assert!(
+        logged.contains("vfkit-boot-failure"),
+        "vfkit stderr must be captured to vmm_log_path for failed-boot triage, got: {logged:?}"
+    );
+}
+
+#[test]
+fn stop_provider_machine_routes_managed_applehv_providers_and_rejects_wsl2() {
+    // `stop_provider_machine` is the provider dispatch in front of teardown. It
+    // is the stop-side mirror of `uses_managed_applehv_guest`: both krunkit and
+    // vfkit must reach the one shared VMM stop path, which is a clean no-op when
+    // no VMM pidfile exists (nothing is running). WSL2 — whose guest plumbing is
+    // not wired on this host — must fail closed with InvalidInput rather than
+    // silently report a successful stop it never performed.
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.raw");
+    let mut config = sample_config(&image_path);
+    let paths = config.roots.paths("default");
+    paths
+        .ensure_directories()
+        .expect("machine directories should exist");
+
+    // No pidfile is written, so the managed applehv stop path has nothing to
+    // signal and must succeed without error for both backends. A regression that
+    // routed vfkit anywhere but the shared VMM stop path would surface here.
+    for provider in [MachineProvider::Krunkit, MachineProvider::Vfkit] {
+        config.provider = provider;
+        stop_provider_machine(&paths, &config, Duration::from_millis(50)).unwrap_or_else(|error| {
+            panic!("{provider:?} stop should no-op when no VMM is running: {error}")
+        });
+    }
+
+    config.provider = MachineProvider::Wsl2;
+    let error = stop_provider_machine(&paths, &config, Duration::from_millis(50))
+        .expect_err("the unavailable WSL2 provider must fail closed, not silently no-op");
+    assert!(
+        matches!(error, Error::InvalidInput(_)),
+        "WSL2 stop must surface as InvalidInput, got: {error}"
+    );
+    assert!(
+        error.to_string().contains("WSL2"),
+        "WSL2 stop error should name the unavailable provider: {error}"
+    );
+}
+
+#[test]
+fn vmm_backend_routes_managed_applehv_providers_and_rejects_wsl2() {
+    // `vmm_backend` is the single provider gate on the start path:
+    // `MachineLaunchPlan::build` calls it before any VMM or gvproxy process is
+    // spawned. It is the start-side mirror of `stop_provider_machine`. Both
+    // managed applehv providers must resolve to a backend that reports its own
+    // provider; WSL2 — whose backend is not wired on this host — must fail closed
+    // with the same InvalidInput error the stop path uses, so an unsupported
+    // provider can never partially start a machine.
+    for provider in [MachineProvider::Krunkit, MachineProvider::Vfkit] {
+        let backend = vmm_backend(provider)
+            .unwrap_or_else(|error| panic!("{provider:?} must resolve a VMM backend: {error}"));
+        assert_eq!(
+            backend.provider(),
+            provider,
+            "resolved backend must serve the requested provider"
+        );
+    }
+
+    let error = vmm_backend(MachineProvider::Wsl2)
+        .err()
+        .expect("the unavailable WSL2 provider must fail closed before any process spawns");
+    assert!(
+        matches!(error, Error::InvalidInput(_)),
+        "WSL2 start must surface as InvalidInput, got: {error}"
+    );
+    assert!(
+        error.to_string().contains("WSL2"),
+        "WSL2 start error should name the unavailable provider: {error}"
+    );
+}
+
+#[test]
+fn applehv_backends_emit_one_virtiofs_device_per_user_volume() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.raw");
+    let mut config = sample_config(&image_path);
+    // The macOS default host-share set: each entry must surface as its own
+    // virtio-fs device in the launch command, not be collapsed, reordered into a
+    // single mount, or dropped. Distinct sources + distinct targets so each
+    // device string (and its digest-derived mount tag) is unique.
+    config.volumes = vec![
+        MachineVolume {
+            source: PathBuf::from("/Users"),
+            target: PathBuf::from("/Users"),
+        },
+        MachineVolume {
+            source: PathBuf::from("/private"),
+            target: PathBuf::from("/private"),
+        },
+        MachineVolume {
+            source: PathBuf::from("/var/folders"),
+            target: PathBuf::from("/var/folders"),
+        },
+    ];
+    let paths = config.roots.paths("default");
+
+    // Both applehv backends route user volumes through the shared
+    // `push_shared_applehv_devices` path, so the host-dir mount emission must be
+    // byte-identical across krunkit and vfkit — neither backend's block/net
+    // grammar may perturb the virtio-fs devices.
+    for backend in [
+        &KrunkitVmmBackend as &dyn MachineVmmBackend,
+        &VfkitVmmBackend as &dyn MachineVmmBackend,
+    ] {
+        let provider = backend.provider();
+        let command = build_sample_launch_command(backend, &image_path, &paths, &config);
+
+        for volume in &config.volumes {
+            // The guest mounts each share by the digest-derived tag of its
+            // target, so the expected device is computed from the production
+            // formatter rather than a hardcoded digest.
+            let expected = build_virtiofs_arg(&volume.source, &mount_tag(&volume.target));
+            let occurrences = command.args.iter().filter(|arg| *arg == &expected).count();
+            assert_eq!(
+                occurrences,
+                1,
+                "{provider:?} backend should emit exactly one virtio-fs device for {} (expected `{expected}`)",
+                volume.source.display(),
+            );
+        }
+
+        // `build_sample_launch_command` passes no machine-config bundle, so every
+        // virtio-fs device originates from a user volume: the count must equal the
+        // number of volumes exactly, proving none are coalesced or duplicated.
+        let virtiofs_device_count = command
+            .args
+            .iter()
+            .filter(|arg| arg.starts_with("virtio-fs,sharedDir="))
+            .count();
+        assert_eq!(
+            virtiofs_device_count,
+            config.volumes.len(),
+            "{provider:?} backend should emit one virtio-fs device per user volume",
+        );
+
+        // Each virtio-fs device must be introduced by its own `--device` flag, so
+        // the volumes contribute one `--device`/`virtio-fs,…` pair apiece.
+        let device_flagged_virtiofs = command
+            .args
+            .windows(2)
+            .filter(|pair| pair[0] == "--device" && pair[1].starts_with("virtio-fs,sharedDir="))
+            .count();
+        assert_eq!(
+            device_flagged_virtiofs,
+            config.volumes.len(),
+            "{provider:?} backend should precede every virtio-fs device with its own --device flag",
+        );
+    }
 }
 
 #[test]

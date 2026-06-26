@@ -717,7 +717,7 @@ fn guest_binary_status_view(
     state: Option<&MachineStateRecord>,
 ) -> Option<MachineGuestBinaryStatusView> {
     let config = config?;
-    if config.provider != MachineProvider::Krunkit
+    if !config.provider.uses_managed_applehv_guest()
         || !uses_host_managed_machine_image_contract(config)
     {
         return None;

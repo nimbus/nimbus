@@ -15,15 +15,17 @@ use tempfile::TempDir;
 
 use super::guest::{ensure_guest_nimbus_socket_shell_script, guest_nimbus_archive_name};
 use super::helpers::{
-    bundled_helper_candidates_for_executable, known_helper_candidates, resolve_helper_binary,
-    resolve_machine_helper_binaries, write_helper_stub,
+    bundled_helper_candidates_for_executable, known_helper_candidates, resolve_gvproxy_binary,
+    resolve_helper_binary, write_helper_stub,
 };
 use super::image::{
     attestation_repositories_for_reference, build_digest_reference,
     current_machine_oci_architectures, machine_artifact_metadata_from_annotations,
     materialize_cached_disk, resolve_bootable_image_path,
 };
-use super::launch::{MachineCommandLine, MachineLaunchPlan, build_virtio_vsock_listen_arg};
+use super::launch::{
+    MachineCommandLine, MachineLaunchPlan, build_virtio_vsock_listen_arg, build_virtiofs_arg,
+};
 use super::ports::{
     load_machine_port_allocation_state, managed_machine_port_range_contains,
     with_port_allocation_lock, write_machine_port_allocation_state,
@@ -34,7 +36,10 @@ use super::readiness::{
 use super::ssh::remote_shell_command;
 use super::stop::{
     annotate_machine_start_error, cleanup_process, force_stop_pid, handle_start_machine_error,
-    request_krunkit_state_change, send_signal, wait_for_pid_exit,
+    request_vmm_state_change, send_signal, stop_provider_machine, wait_for_pid_exit,
+};
+use super::vmm::{
+    KrunkitVmmBackend, MachineVmmBackend, VfkitVmmBackend, VmmLaunchContext, vmm_backend,
 };
 use super::*;
 use crate::machine::bootstrap::GUEST_NIMBUS_SOCKET;

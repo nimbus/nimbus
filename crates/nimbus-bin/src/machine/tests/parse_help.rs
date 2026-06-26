@@ -37,6 +37,59 @@ fn parses_machine_init_defaults_to_version_pinned_release_image() {
 }
 
 #[test]
+fn default_machine_volume_specs_flow_through_machine_volume_parse() {
+    // Every default spec must satisfy the same `MachineVolume::parse` grammar
+    // that user-supplied `--volume` arguments pass through. This is the
+    // invariant that keeps defaults from drifting away from validated input.
+    for spec in DEFAULT_MACOS_MACHINE_VOLUME_SPECS {
+        let parsed = MachineVolume::parse(spec)
+            .unwrap_or_else(|error| panic!("default volume spec {spec:?} must validate: {error}"));
+        let (raw_source, raw_target) = spec
+            .split_once(':')
+            .expect("default volume spec must contain a source:target separator");
+        assert_eq!(parsed.source, PathBuf::from(raw_source));
+        assert_eq!(parsed.target, PathBuf::from(raw_target));
+    }
+
+    // `default_machine_volumes()` collects the parsed specs on macOS and yields
+    // nothing on other targets; either way it must succeed without panicking.
+    let volumes = default_machine_volumes();
+    if cfg!(target_os = "macos") {
+        assert_eq!(volumes.len(), DEFAULT_MACOS_MACHINE_VOLUME_SPECS.len());
+        assert!(
+            volumes
+                .iter()
+                .all(|volume| { volume.source.is_absolute() && volume.target.is_absolute() })
+        );
+    } else {
+        assert!(volumes.is_empty());
+    }
+}
+
+#[test]
+fn deliberately_malformed_default_volume_spec_is_rejected_by_shared_parser() {
+    // Guards the routing itself: if a future edit dropped the absolute-path
+    // separator from a default spec, the shared parser that
+    // `default_machine_volumes()` now uses would reject it rather than admit an
+    // unvalidated default. Each variant exercises a distinct grammar failure.
+    let malformed = [
+        ("Users:/Users", "source path must be absolute"),
+        ("/Users:Users", "target path must be absolute"),
+        ("/Users", "expected <source>:<target>"),
+        ("/Users:", "expected non-empty"),
+        (":/Users", "expected non-empty"),
+    ];
+    for (spec, expected) in malformed {
+        let error = MachineVolume::parse(spec)
+            .expect_err("malformed default-shaped spec must be rejected by the shared parser");
+        assert!(
+            error.to_string().contains(expected),
+            "spec {spec:?} should report {expected:?}, got {error}"
+        );
+    }
+}
+
+#[test]
 fn parses_machine_init_with_resource_overrides() {
     let cli = RootCli::parse_from([
         "nimbus",

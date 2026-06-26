@@ -7,21 +7,25 @@ use std::process::{Child, Command, Stdio};
 use nimbus::Error;
 
 use super::super::bootstrap::resolve_ignition_file;
-use super::super::guest_config::{GUEST_MACHINE_CONFIG_MOUNT_TAG, render_machine_config_bundle};
+use super::super::guest_config::render_machine_config_bundle;
 use super::super::{
     MachineBootstrapMode, MachineConfigRecord, MachinePaths, MachineStateRecord, MachineVolume,
     describe_machine_image_source, machine_bootstrap_mode,
 };
-use super::helpers::resolve_machine_helper_binaries;
+use super::helpers::resolve_gvproxy_binary;
 use super::image::resolve_bootable_image_path;
 use super::ports::allocate_machine_ssh_port;
-use super::{DEFAULT_MACHINE_MAC_ADDRESS, MachineRuntimeState, READY_VSOCK_PORT, mount_tag};
+use super::vmm::{MachineVmmBackend, VmmLaunchContext, vmm_backend};
+use super::{MachineHelperBinaryPaths, MachineRuntimeState, READY_VSOCK_PORT, mount_tag};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct MachineLaunchPlan {
     pub(super) runtime: MachineRuntimeState,
-    pub(super) gvproxy_command: MachineCommandLine,
-    pub(super) krunkit_command: MachineCommandLine,
+    /// The gvproxy user-mode network helper command, present only for providers
+    /// whose backend [`requires_gvproxy`](MachineVmmBackend::requires_gvproxy).
+    /// Provider-managed networking backends leave this `None`.
+    pub(super) gvproxy_command: Option<MachineCommandLine>,
+    pub(super) vmm_command: MachineCommandLine,
     pub(super) ignition_file_path: Option<PathBuf>,
     pub(super) machine_config_bundle_dir: Option<PathBuf>,
 }
@@ -30,16 +34,56 @@ pub(super) struct MachineLaunchPlan {
 pub(super) struct MachineCommandLine {
     pub(super) program: PathBuf,
     pub(super) args: Vec<String>,
+    /// Where to capture the child's stdout+stderr for failed-boot triage.
+    ///
+    /// A VMM that writes its own diagnostic log (krunkit via `--log-file`)
+    /// leaves this `None` so its streams are not also redirected into the same
+    /// file and duplicated. A VMM with no diagnostic-log flag (vfkit) sets this
+    /// to its [`vmm_log_path`](MachinePaths::vmm_log_path) so a boot that dies
+    /// before the guest console comes up still leaves captured output to triage.
+    /// `None` discards both streams (`/dev/null`), matching the gvproxy helper,
+    /// which logs through its own `-log-file`.
+    pub(super) capture_log_path: Option<PathBuf>,
 }
 
 impl MachineCommandLine {
     pub(super) fn spawn(&self) -> Result<Child, Error> {
         let mut command = Command::new(&self.program);
-        command
-            .args(&self.args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        command.args(&self.args).stdin(Stdio::null());
+        match self.capture_log_path.as_deref() {
+            // The VMM has no diagnostic log of its own, so capture its
+            // stdout+stderr into the provider's vmm_log_path. Append (never
+            // truncate) so an earlier failed boot's output is not clobbered by a
+            // restart, and clone the handle so both streams land in one file
+            // without interleaving a separately-opened descriptor.
+            Some(log_path) => {
+                let stdout = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log_path)
+                    .map_err(|error| {
+                        Error::Internal(format!(
+                            "failed to open VMM log {} for stdout+stderr capture: {error}",
+                            log_path.display()
+                        ))
+                    })?;
+                let stderr = stdout.try_clone().map_err(|error| {
+                    Error::Internal(format!(
+                        "failed to clone VMM log {} for stdout+stderr capture: {error}",
+                        log_path.display()
+                    ))
+                })?;
+                command
+                    .stdout(Stdio::from(stdout))
+                    .stderr(Stdio::from(stderr));
+            }
+            // No capture file: the helper writes its own log (krunkit
+            // `--log-file`, gvproxy `-log-file`), so discard both streams rather
+            // than double-logging the same output into a second sink.
+            None => {
+                command.stdout(Stdio::null()).stderr(Stdio::null());
+            }
+        }
         #[cfg(unix)]
         // SAFETY: `pre_exec` runs in the child process after fork and before
         // exec. The closure only invokes `setsid`, an async-signal-safe libc
@@ -72,7 +116,11 @@ impl MachineLaunchPlan {
         config: &MachineConfigRecord,
         state: &MachineStateRecord,
     ) -> Result<Self, Error> {
-        let helper_binaries = resolve_machine_helper_binaries()?;
+        let backend = vmm_backend(config.provider)?;
+        let helper_binaries = MachineHelperBinaryPaths {
+            vmm: backend.resolve_vmm_binary()?,
+            gvproxy: resolve_gvproxy_binary()?,
+        };
         let image_path =
             resolve_bootable_image_path(paths, &config.guest.image_source, config.provider)?;
         let bootstrap_mode = machine_bootstrap_mode(config);
@@ -92,7 +140,7 @@ impl MachineLaunchPlan {
             MachineBootstrapMode::Ignition => None,
         };
         let ssh_port = allocate_machine_ssh_port(&config.roots, &config.name, state)?;
-        let rest_uri = format!("unix://{}", paths.krunkit_endpoint_path.display());
+        let rest_uri = format!("unix://{}", paths.vmm_endpoint_path.display());
         let runtime = MachineRuntimeState {
             helper_binaries: helper_binaries.clone(),
             image_path: image_path.clone(),
@@ -107,79 +155,33 @@ impl MachineLaunchPlan {
             ready_vsock_port: READY_VSOCK_PORT,
         };
 
-        let gvproxy_command = MachineCommandLine {
+        // The backend owns whether host networking flows through gvproxy. Only
+        // build (and later spawn) the helper when it does; provider-managed
+        // networking backends run without it.
+        let gvproxy_command = backend.requires_gvproxy().then(|| MachineCommandLine {
             program: helper_binaries.gvproxy.clone(),
-            args: build_gvproxy_args(paths, ssh_port),
-        };
+            args: build_gvproxy_args(backend.as_ref(), paths, ssh_port),
+            // gvproxy writes its own `-log-file`; no stdout+stderr capture needed.
+            capture_log_path: None,
+        });
 
-        let mut krunkit_args = vec![
-            "--cpus".to_owned(),
-            config.resources.cpus.to_string(),
-            "--memory".to_owned(),
-            config.resources.memory_mib.to_string(),
-            "--bootloader".to_owned(),
-            format!(
-                "efi,variable-store={},create",
-                runtime.efi_variable_store_path.display()
-            ),
-            "--restful-uri".to_owned(),
-            rest_uri,
-            "--pidfile".to_owned(),
-            paths.krunkit_pid_path.display().to_string(),
-            "--log-file".to_owned(),
-            paths.krunkit_log_path.display().to_string(),
-            "--device".to_owned(),
-            format!("virtio-blk,path={},format=raw", image_path.display()),
-            "--device".to_owned(),
-            format!(
-                "virtio-net,type=unixgram,path={},mac={},offloading=on,vfkitMagic=on",
-                paths.gvproxy_socket_path.display(),
-                DEFAULT_MACHINE_MAC_ADDRESS
-            ),
-            "--device".to_owned(),
-            format!(
-                "virtio-serial,logFilePath={}",
-                paths.machine_log_path.display()
-            ),
-        ];
-        if matches!(
-            bootstrap_mode,
-            MachineBootstrapMode::Ignition | MachineBootstrapMode::BootcMachineConfig
-        ) {
-            krunkit_args.extend([
-                "--device".to_owned(),
-                build_virtio_vsock_listen_arg(READY_VSOCK_PORT, &paths.ready_socket_path),
-            ]);
-        }
-        if bootstrap_mode == MachineBootstrapMode::Ignition {
-            krunkit_args.extend([
-                "--device".to_owned(),
-                build_virtio_vsock_listen_arg(1024, &paths.ignition_socket_path),
-            ]);
-        }
-        if let Some(bundle_dir) = machine_config_bundle_dir.as_ref() {
-            krunkit_args.extend([
-                "--device".to_owned(),
-                build_virtiofs_arg(bundle_dir, GUEST_MACHINE_CONFIG_MOUNT_TAG),
-            ]);
-        }
-        krunkit_args.extend(
-            config
-                .volumes
-                .iter()
-                .flat_map(build_virtiofs_args)
-                .collect::<Vec<_>>(),
-        );
-
-        let krunkit_command = MachineCommandLine {
-            program: helper_binaries.krunkit.clone(),
-            args: krunkit_args,
-        };
+        let vmm_command = backend.build_launch_command(
+            &helper_binaries.vmm,
+            &VmmLaunchContext {
+                paths,
+                config,
+                image_path: &image_path,
+                efi_variable_store_path: &runtime.efi_variable_store_path,
+                rest_uri: &rest_uri,
+                bootstrap_mode,
+                machine_config_bundle_dir: machine_config_bundle_dir.as_deref(),
+            },
+        )?;
 
         Ok(Self {
             runtime,
             gvproxy_command,
-            krunkit_command,
+            vmm_command,
             ignition_file_path,
             machine_config_bundle_dir,
         })
@@ -190,35 +192,41 @@ impl MachineLaunchPlan {
     }
 }
 
-fn build_gvproxy_args(paths: &MachinePaths, ssh_port: u16) -> Vec<String> {
-    vec![
-        "-listen-vfkit".to_owned(),
-        format!("unixgram://{}", paths.gvproxy_socket_path.display()),
+fn build_gvproxy_args(
+    backend: &dyn MachineVmmBackend,
+    paths: &MachinePaths,
+    ssh_port: u16,
+) -> Vec<String> {
+    // The backend owns the listen-mode ↔ VMM attachment pairing; the pid/log/ssh
+    // forwarding flags are shared across every gvproxy-backed provider.
+    let mut args = backend.gvproxy_listen_args(&paths.gvproxy_socket_path);
+    args.extend([
         "-pid-file".to_owned(),
         paths.gvproxy_pid_path.display().to_string(),
         "-log-file".to_owned(),
         paths.gvproxy_log_path.display().to_string(),
         "-ssh-port".to_owned(),
         ssh_port.to_string(),
-    ]
+    ]);
+    args
 }
 
 pub(super) fn build_virtio_vsock_listen_arg(port: u32, socket_path: &Path) -> String {
     // Match Podman's vfkit/libkrun contract: the host owns these Unix sockets
-    // and krunkit must connect the guest-side vsock device to that listener.
+    // and the VMM must connect the guest-side vsock device to that listener.
     format!(
         "virtio-vsock,port={port},socketURL={},listen",
         socket_path.display()
     )
 }
 
-fn build_virtiofs_args(volume: &MachineVolume) -> Vec<String> {
+pub(super) fn build_virtiofs_args(volume: &MachineVolume) -> Vec<String> {
     vec![
         "--device".to_owned(),
         build_virtiofs_arg(&volume.source, &mount_tag(&volume.target)),
     ]
 }
 
-fn build_virtiofs_arg(source: &Path, tag: &str) -> String {
+pub(super) fn build_virtiofs_arg(source: &Path, tag: &str) -> String {
     format!("virtio-fs,sharedDir={},mountTag={}", source.display(), tag)
 }

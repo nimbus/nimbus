@@ -446,6 +446,69 @@ fn machine_os_upgrade_handles_digest_pinned_supported_streams() {
 }
 
 #[test]
+fn vfkit_matches_krunkit_for_host_managed_applehv_paths() {
+    // vfkit drives the same Nimbus-managed applehv guest as krunkit, so it must
+    // take the identical host-managed-image contract and OS-upgrade-plan paths.
+    // Before `uses_managed_applehv_guest` unified the predicate, vfkit fell
+    // through to the Linux tag-parse branch and mis-derived its upgrade plan from
+    // the digest-pinned reference. This locks the two providers to one behavior.
+    let config_for = |provider| MachineConfigRecord {
+        version: CURRENT_MACHINE_CONFIG_VERSION,
+        name: DEFAULT_MACHINE_NAME.to_owned(),
+        provider,
+        guest: MachineGuestConfig {
+            image_source: MachineImageSource::OciReference {
+                reference: supported_stream_digest_image_for_upgrade_test(),
+            },
+            provisioning: if cfg!(target_os = "macos") {
+                MachineGuestProvisioning::BootcMachineConfig
+            } else {
+                MachineGuestProvisioning::Ignition
+            },
+            ssh_user: if cfg!(target_os = "macos") {
+                DEFAULT_BOOTC_MACHINE_SSH_USER.to_owned()
+            } else {
+                DEFAULT_MACHINE_SSH_USER.to_owned()
+            },
+            ssh_identity_path: None,
+            ignition_file_path: None,
+            efi_variable_store_path: None,
+        },
+        resources: MachineResources {
+            cpus: DEFAULT_MACHINE_CPUS,
+            memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+            disk_gib: DEFAULT_MACHINE_DISK_GIB,
+        },
+        volumes: Vec::new(),
+        roots: MachineRootLayout::test_sibling_roots(
+            PathBuf::from("/tmp/config"),
+            PathBuf::from("/tmp/state"),
+            PathBuf::from("/tmp/runtime"),
+        ),
+    };
+
+    let krunkit = config_for(MachineProvider::Krunkit);
+    let vfkit = config_for(MachineProvider::Vfkit);
+
+    assert_eq!(
+        uses_host_managed_machine_image_contract(&vfkit),
+        uses_host_managed_machine_image_contract(&krunkit),
+        "vfkit must honor the host-managed image contract identically to krunkit"
+    );
+
+    if cfg!(target_os = "macos") {
+        let krunkit_plan =
+            plan_machine_os_upgrade(&krunkit).expect("krunkit upgrade plan should resolve");
+        let vfkit_plan =
+            plan_machine_os_upgrade(&vfkit).expect("vfkit upgrade plan should resolve");
+        assert_eq!(
+            vfkit_plan, krunkit_plan,
+            "vfkit must derive the same digest-pinned upgrade plan as krunkit"
+        );
+    }
+}
+
+#[test]
 fn machine_image_source_parse_supports_published_local_and_url_sources() {
     assert_eq!(
         MachineImageSource::parse("ghcr.io/nimbus/machine-os:test")

@@ -548,7 +548,7 @@ mod tests {
             },
             runtime: Some(nimbus_machine::MachineRuntimeState {
                 helper_binaries: nimbus_machine::MachineHelperBinaryPaths {
-                    krunkit: paths.runtime_dir.join("krunkit"),
+                    vmm: paths.runtime_dir.join("krunkit"),
                     gvproxy: paths.runtime_dir.join("gvproxy"),
                 },
                 image_path: paths.materialized_image_path,

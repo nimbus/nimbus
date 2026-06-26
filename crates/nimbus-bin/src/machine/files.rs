@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use fs2::FileExt;
 use nimbus::Error;
@@ -121,6 +121,39 @@ where
     })
 }
 
+/// Copy a schema-mismatched machine config beside the original before the
+/// loader rejects it, so recreating the machine never forces the operator to
+/// reconstruct their declared settings from memory.
+///
+/// The config loader is deliberately strict: unlike the state loader it never
+/// rebuilds config from defaults, because the config record carries operator
+/// intent -- provider, image source, resource sizing, volumes -- that exists
+/// nowhere else and cannot be reconstructed. Preserving a copy keeps that
+/// strictness non-destructive: the rejected configuration stays on disk for
+/// reference even after the operator clears and recreates the machine.
+///
+/// Best-effort by design -- a failed backup write must not mask the
+/// schema-mismatch error, so failure yields `None` and the caller omits the
+/// "preserved" hint rather than surfacing a less useful error.
+fn preserve_rejected_config(path: &Path, bytes: &[u8], version: u32) -> Option<PathBuf> {
+    let file_name = path.file_name()?.to_str()?;
+    let backup_path = path.with_file_name(format!("{file_name}.v{version}.bak"));
+    fs::write(&backup_path, bytes).ok()?;
+    Some(backup_path)
+}
+
+/// Render the trailing "preserved at ..." clause for a rejected-config error,
+/// or an empty string when the backup could not be written.
+fn preserved_config_hint(backup: Option<&PathBuf>) -> String {
+    match backup {
+        Some(path) => format!(
+            " Your previous configuration was preserved at {}.",
+            path.display()
+        ),
+        None => String::new(),
+    }
+}
+
 pub(super) fn load_machine_config_if_exists(
     path: &Path,
 ) -> Result<Option<MachineConfigRecord>, Error> {
@@ -134,19 +167,23 @@ pub(super) fn load_machine_config_if_exists(
             parse_machine_record::<MachineConfigRecord>(path, &bytes, "machine config").map(Some)
         }
         newer if newer > super::CURRENT_MACHINE_CONFIG_VERSION => {
+            let hint =
+                preserved_config_hint(preserve_rejected_config(path, &bytes, newer).as_ref());
+            let current = super::CURRENT_MACHINE_CONFIG_VERSION;
             Err(Error::InvalidInput(format!(
-                "machine config at {} uses newer schema version {}; this nimbus build supports version {}. Upgrade nimbus or recreate the machine.",
+                "machine config at {} was written by a newer nimbus build (schema version {newer}; this build supports version {current}).{hint} Upgrade nimbus to load it, or recreate the machine to regenerate the config at the current schema version.",
                 path.display(),
-                newer,
-                super::CURRENT_MACHINE_CONFIG_VERSION
             )))
         }
-        older => Err(Error::InvalidInput(format!(
-            "machine config at {} uses unsupported schema version {}; this nimbus build supports version {}. Recreate the machine with `nimbus machine rm` then `nimbus machine init`.",
-            path.display(),
-            older,
-            super::CURRENT_MACHINE_CONFIG_VERSION
-        ))),
+        older => {
+            let hint =
+                preserved_config_hint(preserve_rejected_config(path, &bytes, older).as_ref());
+            let current = super::CURRENT_MACHINE_CONFIG_VERSION;
+            Err(Error::InvalidInput(format!(
+                "machine config at {} uses an unsupported older schema version {older}; this build supports version {current}.{hint} Recreate the machine to regenerate the config at the current schema version; the preserved copy keeps your declared settings to re-apply.",
+                path.display(),
+            )))
+        }
     }
 }
 
@@ -317,23 +354,50 @@ pub(super) fn remove_file_if_exists(path: &Path) -> Result<(), Error> {
     }
 }
 
+/// The machine's per-boot socket and pid files.
+///
+/// These are the runtime endpoints a fresh launch must never inherit from a
+/// previous run: the readiness/ignition/API control sockets, the gvproxy
+/// datagram sockets, the VMM REST endpoint, and the three helper pid files. A
+/// stop removes them outright; a full teardown removes them alongside the
+/// [logs](machine_runtime_log_paths). Returned owned because
+/// [`krunkit_gvproxy_socket_path`](MachinePaths::krunkit_gvproxy_socket_path)
+/// derives its path rather than storing one, so a borrow would dangle.
+pub(super) fn machine_runtime_socket_and_pid_paths(paths: &MachinePaths) -> Vec<PathBuf> {
+    vec![
+        paths.ready_socket_path.clone(),
+        paths.ignition_socket_path.clone(),
+        paths.api_socket_path.clone(),
+        paths.gvproxy_socket_path.clone(),
+        paths.krunkit_gvproxy_socket_path(),
+        paths.vmm_endpoint_path.clone(),
+        paths.api_forward_pid_path.clone(),
+        paths.gvproxy_pid_path.clone(),
+        paths.vmm_pid_path.clone(),
+    ]
+}
+
+/// The machine's runtime log files.
+///
+/// A stop truncates these in place (preserving the inode so an open `tail`
+/// keeps following), while a full teardown removes them. Kept beside
+/// [`machine_runtime_socket_and_pid_paths`](machine_runtime_socket_and_pid_paths)
+/// so the two cleanup callers share one definition of "what the runtime owns".
+pub(super) fn machine_runtime_log_paths(paths: &MachinePaths) -> Vec<PathBuf> {
+    vec![
+        paths.api_forward_log_path.clone(),
+        paths.machine_log_path.clone(),
+        paths.vmm_log_path.clone(),
+        paths.gvproxy_log_path.clone(),
+    ]
+}
+
 pub(super) fn remove_machine_runtime_artifacts(paths: &MachinePaths) -> Result<(), Error> {
-    for path in [
-        &paths.api_socket_path,
-        &paths.ready_socket_path,
-        &paths.ignition_socket_path,
-        &paths.gvproxy_socket_path,
-        &paths.krunkit_gvproxy_socket_path(),
-        &paths.krunkit_endpoint_path,
-        &paths.api_forward_pid_path,
-        &paths.gvproxy_pid_path,
-        &paths.krunkit_pid_path,
-        &paths.api_forward_log_path,
-        &paths.machine_log_path,
-        &paths.gvproxy_log_path,
-        &paths.krunkit_log_path,
-    ] {
-        remove_file_if_exists(path)?;
+    for path in machine_runtime_socket_and_pid_paths(paths)
+        .into_iter()
+        .chain(machine_runtime_log_paths(paths))
+    {
+        remove_file_if_exists(&path)?;
     }
     Ok(())
 }
