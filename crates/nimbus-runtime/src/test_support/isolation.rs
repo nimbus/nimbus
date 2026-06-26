@@ -149,20 +149,37 @@ pub(crate) fn run_v8_crash_control_in_subprocess(case: IsolatedRuntimeTestCase, 
             .output()
             .expect("crash-control subprocess should launch");
             let _ = std::fs::remove_dir_all(&tmp_dir);
-            // SIGTRAP=5 (V8 fatal `Unknown external reference` on snapshot deserialize),
-            // SIGABRT=6 (libc++ `vector.h:415` abort, the OOB direction), SIGBUS=10
-            // (wrong-object deref direction), SIGSEGV=11 (defensive). Any is the control
-            // crashing as required.
-            if matches!(output.status.signal(), Some(5 | 6 | 10 | 11)) {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // A control must crash for the RIGHT reason. The shared-RO-heap/cage crashes have a
+            // known signature family; require it so a crash for an UNRELATED reason (a panic in
+            // setup, an OOM) cannot read as "bug reproduced".
+            let has_cage_signature = [
+                "vector.h:415",
+                "Hardening",
+                "Unknown external reference",
+                "DeserializeStringTable",
+                "ReadReadOnlyHeapRef",
+                "SharedHeapDeserializer",
+            ]
+            .iter()
+            .any(|sig| stdout.contains(sig) || stderr.contains(sig));
+            // SIGABRT=6 / SIGTRAP=5 emit a message (vector.h:415 / Unknown external reference):
+            // require the cage signature. SIGBUS=10 / SIGSEGV=11 are the wrong-object-deref cage
+            // crashes and abort SILENTLY (no message), so the signal itself is the signature.
+            let is_cage_crash = match output.status.signal() {
+                Some(5) | Some(6) => has_cage_signature,
+                Some(10) | Some(11) => true,
+                _ => false,
+            };
+            if is_cage_crash {
                 return;
             }
             last_observation = format!(
-                "attempt {attempt}/{}: status {} (signal {:?})\nstdout:\n{}\nstderr:\n{}",
+                "attempt {attempt}/{}: status {} (signal {:?}, cage_signature={has_cage_signature})\nstdout:\n{stdout}\nstderr:\n{stderr}",
                 max_attempts.max(1),
                 output.status,
                 output.status.signal(),
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
             );
         }
         panic!(

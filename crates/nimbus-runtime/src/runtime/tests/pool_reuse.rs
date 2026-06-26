@@ -1425,10 +1425,14 @@ fn weblean_installed_first_then_nodefull_does_not_abort() {
 /// here: silent RO-object aliasing — a follow-up must RUN representative JS in
 /// WebLean isolates built against NodeFull's RO heap to rule out wrong-object reads.)
 #[test]
-#[ignore = "RARE-FLAKY manual diagnostic (~1-2% crash): the hand-rolled in-test anchor does not \
-            serialize the concurrent refill as cleanly as production enable_and_arm; the production \
-            anchor over the same refill (anchor_regression_iii) is solid (24/24) and is the wired \
-            gate. Manual repro only, not a CI parent."]
+#[ignore = "MANUAL-ANCHOR diagnostic, demoted from the cage lane. Measured 400/400 clean in \
+            isolation (NOT a steady rate), but it crashed ONCE under cage-lane LOAD with vector.h:415 \
+            — a load-triggered window race: the hand-rolled anchor here neither blocks-until-installed \
+            NOR arms the floor, so under scheduling jitter a refill build can install a smaller heap \
+            before NodeFull. The PRODUCTION-anchor twin over the same refill (anchor_regression_iii, \
+            install_nodefull_anchor: blocks on install + arms the floor) measured 400/400 clean and is \
+            the wired gate. So this is a test-only artifact of the hand-rolled anchor, not a \
+            production race. Manual repro only."]
 fn nodefull_anchor_first_then_cross_profile_refill_does_not_abort() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = std::sync::Arc::new(tempdir.path().join("bundle.mjs"));
