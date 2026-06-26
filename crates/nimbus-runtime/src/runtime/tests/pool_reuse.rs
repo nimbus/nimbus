@@ -7657,3 +7657,59 @@ async fn fresh_realm_installs_bootstrap_and_uses_bound_host_bridge() {
         "fresh-realm test should not schedule ready jobs"
     );
 }
+
+// ============================================================================================
+// deno_core::shared_ro_heap_serialize_lock GATE TESTS (v2.8.3-nimbus.81).
+// The fork patch acquires this lock inside InnerIsolateState::drop. These exercise the REAL
+// Drop path (not just the type) for the two properties the patch turns on.
+// ============================================================================================
+
+/// SELF-DEADLOCK: the isolate Drop re-acquires the serialize lock. In production, construction.rs
+/// holds that lock across the whole construction body, so a failed construction dropping its
+/// partial runtime re-enters the lock on the SAME thread. A non-reentrant lock would self-deadlock
+/// teardown. This holds the lock, builds a runtime (which re-acquires it), then drops the runtime
+/// (whose isolate Drop re-acquires it) — all on one thread with the lock held throughout.
+#[test]
+fn ro_heap_serialize_lock_isolate_drop_while_held_does_not_self_deadlock() {
+    let _outer = deno_core::shared_ro_heap_serialize_lock().lock();
+    let owner = NimbusRuntime::with_policy(
+        std::sync::Arc::new(RecordingHost::default()),
+        std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::application_node22())),
+    );
+    let snap = owner.bootstrap_snapshot().expect("nodefull snapshot builds");
+    let bundle = RuntimeBundle::virtual_anchor();
+    // create_runtime_from_snapshot re-acquires the lock (construction.rs) while _outer is held.
+    let runtime = owner
+        .create_runtime_from_snapshot(&bundle, snap)
+        .expect("nodefull runtime builds while the serialize lock is held (reentrant create)");
+    // The isolate Drop re-acquires the lock while _outer is STILL held. Non-reentrant => deadlock.
+    drop(runtime);
+    // Reaching here proves the in-Drop re-acquire did not self-deadlock against the held lock.
+}
+
+/// PANIC-IN-DROP: a panic that unwinds through a held serialize lock AND a live isolate must tear
+/// down cleanly. The in-Drop `.lock()` is a parking_lot ReentrantMutex (NON-poisoning), so it
+/// cannot panic on poison; a panicking destructor mid-unwind would otherwise abort the process.
+/// This drives the real Drop path DURING unwind and confirms the panic is CAUGHT, not aborted.
+#[test]
+fn ro_heap_serialize_lock_isolate_drop_during_unwind_does_not_abort() {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _outer = deno_core::shared_ro_heap_serialize_lock().lock();
+        let owner = NimbusRuntime::with_policy(
+            std::sync::Arc::new(RecordingHost::default()),
+            std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::application_node22())),
+        );
+        let snap = owner.bootstrap_snapshot().expect("nodefull snapshot builds");
+        let bundle = RuntimeBundle::virtual_anchor();
+        let _runtime = owner
+            .create_runtime_from_snapshot(&bundle, snap)
+            .expect("nodefull runtime builds");
+        // Unwinding from here drops _runtime (isolate Drop re-acquires the lock mid-unwind), then
+        // _outer. If that in-Drop acquire panicked, the double-panic would abort the process.
+        panic!("simulated mid-construction failure while holding the RO-heap serialize lock");
+    }));
+    assert!(
+        result.is_err(),
+        "panic must unwind and tear the isolate down cleanly, not abort the process"
+    );
+}
