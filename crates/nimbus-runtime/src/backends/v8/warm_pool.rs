@@ -10,8 +10,7 @@ use crate::runtime_capabilities::RuntimePermissionProfile;
 use super::RuntimeReuseLifecycleState;
 use super::{
     RuntimeReuseLifecycle, WarmPoolMemoryPressureEviction, WarmRuntimeBoundaryMaintenance,
-    WarmRuntimeCondemnationReason, WarmRuntimeRetentionDecision,
-    embedder::JsRuntime,
+    WarmRuntimeCondemnationReason, WarmRuntimeRetentionDecision, embedder::JsRuntime,
     prepare_warm_runtime_for_retention, retained_entry_eviction_count_for_pressure,
     startup::V8RuntimeConstructionMode,
 };

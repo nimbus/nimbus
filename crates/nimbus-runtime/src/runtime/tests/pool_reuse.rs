@@ -7674,9 +7674,13 @@ fn ro_heap_serialize_lock_isolate_drop_while_held_does_not_self_deadlock() {
     let _outer = deno_core::shared_ro_heap_serialize_lock().lock();
     let owner = NimbusRuntime::with_policy(
         std::sync::Arc::new(RecordingHost::default()),
-        std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::application_node22())),
+        std::sync::Arc::new(RuntimePolicy::new(
+            crate::RuntimeLimits::application_node22(),
+        )),
     );
-    let snap = owner.bootstrap_snapshot().expect("nodefull snapshot builds");
+    let snap = owner
+        .bootstrap_snapshot()
+        .expect("nodefull snapshot builds");
     let bundle = RuntimeBundle::virtual_anchor();
     // create_runtime_from_snapshot re-acquires the lock (construction.rs) while _outer is held.
     let runtime = owner
@@ -7697,9 +7701,13 @@ fn ro_heap_serialize_lock_isolate_drop_during_unwind_does_not_abort() {
         let _outer = deno_core::shared_ro_heap_serialize_lock().lock();
         let owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
-            std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::application_node22())),
+            std::sync::Arc::new(RuntimePolicy::new(
+                crate::RuntimeLimits::application_node22(),
+            )),
         );
-        let snap = owner.bootstrap_snapshot().expect("nodefull snapshot builds");
+        let snap = owner
+            .bootstrap_snapshot()
+            .expect("nodefull snapshot builds");
         let bundle = RuntimeBundle::virtual_anchor();
         let _runtime = owner
             .create_runtime_from_snapshot(&bundle, snap)

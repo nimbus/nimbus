@@ -187,11 +187,10 @@ impl RuntimeBootstrapExtensionRegistry {
         // uses — so this registry cannot drift from what production installs. (The prior
         // reconstruction gated on is_node() alone and falsely reported WebStandard as "lean"
         // after the cage fix added fetch/net/websocket to its snapshot.)
-        let mut labels = Self::selected_bootstrap_entries(
-            target,
-            NodeBootstrapExtensionSlot::label,
-            || web_standard_runtime_bootstrap_extension().name,
-        );
+        let mut labels =
+            Self::selected_bootstrap_entries(target, NodeBootstrapExtensionSlot::label, || {
+                web_standard_runtime_bootstrap_extension().name
+            });
         labels.push("nimbus_runtime");
         labels.push("nimbus_runtime_test");
         if service_extension_enabled {
@@ -383,8 +382,16 @@ mod tests {
             ]
         );
         // The web-standard profile must NOT carry Node-only host-access internals.
-        for node_only in ["napi", "http", "io", "fs", "os", "process", "node", "node_runtime_bootstrap"]
-        {
+        for node_only in [
+            "napi",
+            "http",
+            "io",
+            "fs",
+            "os",
+            "process",
+            "node",
+            "node_runtime_bootstrap",
+        ] {
             assert!(
                 !labels.contains(&node_only),
                 "WebStandard snapshot must not carry Node-only `{node_only}`; got {labels:?}"
