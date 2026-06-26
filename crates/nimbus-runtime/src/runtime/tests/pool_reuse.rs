@@ -928,11 +928,14 @@ fn cross_thread_coliveness_without_concurrent_creation_does_not_abort() {
             let snapshot = owner
                 .bootstrap_snapshot()
                 .expect("cached nodefull startup snapshot");
-            let _nodefull = owner
+            let mut nodefull = owner
                 .create_runtime_from_snapshot(&bundle, snapshot)
                 .expect("nodefull isolate should build from snapshot");
+            nodefull
+                .execute_script("ck", BUILTIN_SMOKE_JS)
+                .expect("parked nodefull isolate must EXECUTE JS, not merely construct");
             a_ready_tx.send(()).expect("signal nodefull alive");
-            // Park: keep _nodefull alive+idle (NOT creating) until released.
+            // Park: keep nodefull alive+idle (NOT creating) until released.
             a_release_rx.recv().expect("park nodefull until release");
         });
     });
@@ -949,9 +952,12 @@ fn cross_thread_coliveness_without_concurrent_creation_does_not_abort() {
         );
         let bundle = RuntimeBundle::new(&*bundle_path);
         for _ in 0..10 {
-            let _weblean = owner
+            let mut weblean = owner
                 .create_runtime(&bundle, None, false)
                 .expect("weblean isolate should build unsnapshotted while nodefull is alive");
+            weblean
+                .execute_script("ck", BUILTIN_SMOKE_JS)
+                .expect("weblean isolate must EXECUTE JS, not merely construct");
         }
     });
 
@@ -1005,9 +1011,12 @@ fn coliveness_at_scale_without_concurrent_cross_profile_creation_does_not_abort(
                     let snapshot = owner
                         .bootstrap_snapshot()
                         .expect("cached nodefull startup snapshot");
-                    let _nodefull = owner
+                    let mut nodefull = owner
                         .create_runtime_from_snapshot(&bundle, snapshot)
                         .expect("nodefull isolate should build from snapshot");
+                    nodefull
+                        .execute_script("ck", BUILTIN_SMOKE_JS)
+                        .expect("parked nodefull isolate must EXECUTE JS, not merely construct");
                     ready_tx.send(()).expect("signal nodefull alive");
                     // Park alive+idle until released.
                     let _guard = release_rx.lock().expect("release lock");
@@ -1033,9 +1042,12 @@ fn coliveness_at_scale_without_concurrent_cross_profile_creation_does_not_abort(
         );
         let bundle = RuntimeBundle::new(&*bundle_path);
         for _ in 0..10 {
-            let _weblean = owner
+            let mut weblean = owner
                 .create_runtime(&bundle, None, false)
                 .expect("weblean should build while eight nodefull isolates are alive");
+            weblean
+                .execute_script("ck", BUILTIN_SMOKE_JS)
+                .expect("weblean isolate must EXECUTE JS, not merely construct");
         }
     });
 
@@ -1166,7 +1178,7 @@ fn concurrent_cross_profile_creation_without_drops_does_not_abort() {
     }
 }
 
-/// EXPERIMENT #1(a) (grouped concurrent fill — PROVISIONAL): build ALL NodeFull
+/// DIAGNOSTIC (grouped concurrent fill — provisional): build ALL NodeFull
 /// isolates concurrently (parked), barrier, THEN build ALL WebLean isolates
 /// concurrently (parked). Cross-profile builds NEVER interleave; within each group
 /// builds are concurrent. A pass shows ONLY that initial-fill ordering avoids the
@@ -1231,7 +1243,7 @@ fn grouped_concurrent_fill_does_not_abort() {
                         std::sync::Arc::new(RuntimePolicy::new(limits)),
                     );
                     let bundle = RuntimeBundle::new(&*bp);
-                    let _iso = if is_node {
+                    let mut iso = if is_node {
                         let snap = owner
                             .bootstrap_snapshot()
                             .expect("cached nodefull snapshot");
@@ -1243,6 +1255,8 @@ fn grouped_concurrent_fill_does_not_abort() {
                             .create_runtime(&bundle, None, false)
                             .expect("weblean isolate should build")
                     };
+                    iso.execute_script("ck", BUILTIN_SMOKE_JS)
+                        .expect("grouped isolate must EXECUTE JS, not merely construct");
                     ready_tx.send(()).expect("ready signal");
                     let _g = release_rx.lock().expect("release lock");
                     let _ = _g.recv();
@@ -1263,7 +1277,7 @@ fn grouped_concurrent_fill_does_not_abort() {
     }
 }
 
-/// EXPERIMENT #1(b) (cross-profile REFILL — THE DECIDER): build a settled mixed
+/// DIAGNOSTIC (cross-profile REFILL): build a settled mixed
 /// pool (both profiles resident on parked slot-threads), then repeatedly flip ONE
 /// slot to the OPPOSITE profile (drop its isolate, build the other profile) while
 /// the other SLOTS-1 isolates stay resident. This is warm-pool steady state:
@@ -1481,7 +1495,7 @@ fn weblean_installed_first_then_nodefull_does_not_abort() {
     handle.join().expect("weblean thread should not panic");
 }
 
-/// FIX HYPOTHESIS B (predict SAFE): install the shared read-only heap ONCE from the
+/// FIX (anchor installed first): install the shared read-only heap ONCE from the
 /// LARGEST-RO-footprint profile (NodeFull) via a resident "anchor" isolate BEFORE
 /// any other profile builds, then run the EXACT cross-profile refill regime that
 /// crashed 5/12 (`cross_profile_refill_*`). If the anchor makes it SAFE, the fix is
@@ -1773,6 +1787,8 @@ fn baseline_snapshotted_weblean_ro_intrinsics_correct() {
 #[test]
 #[ignore = "cage-isolated CRASH CONTROL: run via isol_gate_snapshotted_weblean_crashes"]
 fn gate_snapshotted_weblean_against_nodefull_anchor_ro_intrinsics_correct() {
+    // NOT on the audit_build_weblean_on_nodefull_anchor helper: this is a CRASH CONTROL that
+    // builds SNAPSHOTTED WebStandard (the helper builds unsnapshotted) and ABORTS — no check.
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = std::sync::Arc::new(tempdir.path().join("bundle.mjs"));
     std::fs::write(
@@ -1844,7 +1860,7 @@ fn gate_snapshotted_weblean_against_nodefull_anchor_ro_intrinsics_correct() {
         let snap = owner
             .bootstrap_snapshot()
             .expect("cached web standard snapshot");
-        // NOTE (gate result 2026-06-24): this deserialize SIGBUSes against the
+        // This snapshotted-WebStandard deserialize SIGBUSes against the
         // NodeFull anchor RO heap — WebLean's snapshot RO refs are in-bounds but
         // resolve to wrong/incompatible objects. The RO heaps are NOT a clean
         // prefix-superset, so the anchor fix is dead for snapshotted WebLean.
@@ -1874,77 +1890,9 @@ fn gate_snapshotted_weblean_against_nodefull_anchor_ro_intrinsics_correct() {
 #[test]
 #[ignore = "cage-isolated: run via isol_reachable_fix"]
 fn reachable_fix_unsnapshotted_weblean_against_nodefull_anchor_ro_intrinsics_correct() {
-    let tempdir = tempdir().expect("tempdir should build");
-    let bundle_path = std::sync::Arc::new(tempdir.path().join("bundle.mjs"));
-    std::fs::write(
-        &*bundle_path,
-        "globalThis.__nimbusInvoke = function () { return { ok: true }; };\nexport {};\n",
-    )
-    .expect("bundle should write");
-
-    {
-        let warmup_rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("warmup runtime should build");
-        warmup_rt.block_on(async {
-            for limits in [
-                crate::RuntimeLimits::application_node22(),
-                crate::RuntimeLimits::default(),
-            ] {
-                let w = NimbusRuntime::with_policy(
-                    std::sync::Arc::new(RecordingHost::default()),
-                    std::sync::Arc::new(RuntimePolicy::new(limits)),
-                );
-                w.bootstrap_snapshot()
-                    .expect("startup snapshot should build");
-            }
-        });
-    }
-
-    // ANCHOR: NodeFull installs the superset RO heap first and stays resident.
-    let (aready_tx, aready_rx) = std::sync::mpsc::channel::<()>();
-    let (arelease_tx, arelease_rx) = std::sync::mpsc::channel::<()>();
-    let abp = std::sync::Arc::clone(&bundle_path);
-    let anchor = std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("anchor runtime should build");
-        rt.block_on(async move {
-            let owner = NimbusRuntime::with_policy(
-                std::sync::Arc::new(RecordingHost::default()),
-                std::sync::Arc::new(RuntimePolicy::new(
-                    crate::RuntimeLimits::application_node22(),
-                )),
-            );
-            let bundle = RuntimeBundle::new(&*abp);
-            let snap = owner
-                .bootstrap_snapshot()
-                .expect("cached nodefull snapshot");
-            let _anchor_node = owner
-                .create_runtime_from_snapshot(&bundle, snap)
-                .expect("anchor nodefull installs superset RO heap");
-            aready_tx.send(()).expect("signal anchor installed");
-            arelease_rx.recv().expect("park anchor until release");
-        });
-    });
-    aready_rx.recv().expect("wait anchor installed");
-
-    // UNSNAPSHOTTED WebLean (code-cache path) against the NodeFull RO heap + checks.
-    let main_rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("main runtime should build");
-    main_rt.block_on(async {
-        let owner = NimbusRuntime::with_policy(
-            std::sync::Arc::new(RecordingHost::default()),
-            std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
-        );
-        let bundle = RuntimeBundle::new(&*bundle_path);
-        let mut web = owner
-            .create_runtime(&bundle, None, false)
-            .expect("unsnapshotted weblean builds against nodefull RO heap");
+    // Shares the audit_build_weblean_on_nodefull_anchor scaffold (warmup + NodeFull anchor +
+    // unsnapshotted WebStandard build); only the RO-intrinsic assertion is test-specific.
+    audit_build_weblean_on_nodefull_anchor(|web| {
         let result = web.execute_script("ro_intrinsic_checks", RO_INTRINSIC_CHECKS_JS);
         assert!(
             result.is_ok(),
@@ -1952,9 +1900,6 @@ fn reachable_fix_unsnapshotted_weblean_against_nodefull_anchor_ro_intrinsics_cor
             result.err()
         );
     });
-
-    arelease_tx.send(()).expect("release anchor");
-    anchor.join().expect("anchor thread should not panic");
 }
 
 /// PROVE-DON'T-ASSUME (anchor pinning, Step 2a — PART 1, the half-truth). On ONE long-lived
@@ -2516,6 +2461,8 @@ fn audit3_unsnapshotted_weblean_negative_capability_isolated() {
 #[test]
 #[ignore = "cage-isolated: run via isol_audit1_web_api"]
 fn audit1_unsnapshotted_weblean_web_api_correct() {
+    // Scaffold matches audit_build_weblean_on_nodefull_anchor, but the check is ASYNC
+    // (run_event_loop drain between scripts) and the helper's check is sync — left inline.
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = std::sync::Arc::new(tempdir.path().join("bundle.mjs"));
     std::fs::write(
@@ -2997,6 +2944,8 @@ fn anchor_nodefull_build_host_call_count() {
 #[test]
 #[ignore = "cage-isolated: run via isol_audit1b_fetch_deny"]
 fn audit1b_weblean_fetch_present_and_deny_by_default() {
+    // Scaffold matches audit_build_weblean_on_nodefull_anchor, but the check is ASYNC (fetch +
+    // run_event_loop) and the helper's check is sync — left inline.
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = std::sync::Arc::new(tempdir.path().join("bundle.mjs"));
     std::fs::write(
