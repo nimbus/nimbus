@@ -98,6 +98,69 @@ isolated_pool_reuse_tests! {
     fix: isol_grouped_fill => grouped_concurrent_fill_does_not_abort,
     fix: isol_nodefull_anchor_first
         => nodefull_anchor_first_then_cross_profile_refill_does_not_abort,
+    fix: isol_arm_blocks_until_installed
+        => anchor_arm_blocks_until_installed_window_unreachable_via_create,
+}
+
+/// PROVE-DON'T-ASSUME (the floor-panic question): is the in-process floor-panic a
+/// test-parallelism artifact, or a REAL arm-before-install gap in the production startup? An
+/// injected install delay makes the ANCHOR_ENABLED..ANCHOR_INSTALLED window deterministic.
+/// (1) A DIRECT isolate build during the window (the only way to hit it, BYPASSING create) is
+/// caught by the floor — confirming the floor is the working alarm. (2) `enable_and_arm` (what
+/// `V8RuntimeBackendFactory::create` calls) BLOCKS for the full install and returns only with
+/// ANCHOR_INSTALLED=true — so the window is UNREACHABLE via the production path. Together: the
+/// floor-panic is a parallel test building through a non-create path during another test's
+/// install, NOT a production startup gap. (If arm did NOT block, this asserts and the fix has a
+/// real ordering bug.)
+#[test]
+#[ignore = "mutates anchor globals + install delay; run via isol_arm_blocks_until_installed"]
+fn anchor_arm_blocks_until_installed_window_unreachable_via_create() {
+    use crate::runtime::driver::anchor;
+    use std::time::Instant;
+
+    anchor::set_anchor_install_delay_ms_for_test(700);
+
+    // Arm via the PRODUCTION path on a background thread; it must block ~700ms on install.
+    let armer = std::thread::spawn(|| {
+        let t0 = Instant::now();
+        anchor::enable_and_arm_nodefull_anchor();
+        t0.elapsed()
+    });
+
+    // Wait until we are inside the window: ANCHOR_ENABLED set, ANCHOR_INSTALLED not yet.
+    while !anchor::anchor_enabled_for_test() {
+        std::thread::yield_now();
+    }
+    assert!(
+        !anchor::anchor_installed_for_test(),
+        "with a 700ms install delay we must observe the open window (enabled, not installed)"
+    );
+
+    // (1) The floor MUST catch a DIRECT isolate build during the window (bypassing create()).
+    let floor_fired = std::panic::catch_unwind(|| {
+        let owner = NimbusRuntime::with_policy(
+            std::sync::Arc::new(RecordingHost::default()),
+            std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+        );
+        let _ = owner.bootstrap_snapshot();
+    })
+    .is_err();
+    assert!(
+        floor_fired,
+        "the floor must catch an isolate built during the install window (the alarm works)"
+    );
+
+    // (2) The production arming path BLOCKED for the full install and returned installed.
+    let arm_elapsed = armer.join().expect("armer thread should not panic");
+    assert!(
+        anchor::anchor_installed_for_test(),
+        "enable_and_arm must return only after ANCHOR_INSTALLED is true"
+    );
+    assert!(
+        arm_elapsed.as_millis() >= 700,
+        "enable_and_arm/create must BLOCK for the full install (took {arm_elapsed:?}); a shorter \
+         time would mean an arm-before-install startup gap, NOT a test-only race"
+    );
 }
 
 fn fresh_realm_trace<'a>(
@@ -1077,7 +1140,7 @@ fn cross_profile_refill_into_resident_mixed_pool_does_not_abort() {
     }
 
     // Phase 1: build a settled mixed pool (alternating profiles), all resident.
-    let mut slot_is_node = vec![false; SLOTS];
+    let mut slot_is_node = [false; SLOTS];
     for i in 0..SLOTS {
         slot_is_node[i] = i % 2 == 0;
         cmd_txs[i]
@@ -1319,7 +1382,7 @@ fn nodefull_anchor_first_then_cross_profile_refill_does_not_abort() {
         handles.push(handle);
     }
 
-    let mut slot_is_node = vec![false; SLOTS];
+    let mut slot_is_node = [false; SLOTS];
     for i in 0..SLOTS {
         slot_is_node[i] = i % 2 == 0;
         cmd_txs[i]
@@ -2030,12 +2093,9 @@ fn capture_weblean_primordial_shape() {
         std::fs::write(&out, shape).expect("write shape file");
     });
 
-    if anchor.is_some() {
+    if let Some(anchor) = anchor {
         arelease_tx.send(()).expect("release anchor");
-        anchor
-            .unwrap()
-            .join()
-            .expect("anchor thread should not panic");
+        anchor.join().expect("anchor thread should not panic");
     }
 }
 
@@ -2541,7 +2601,7 @@ fn anchor_regression_iii_cross_profile_refill_green() {
         done_rxs.push(done_rx);
         handles.push(handle);
     }
-    let mut slot_is_node = vec![false; SLOTS];
+    let mut slot_is_node = [false; SLOTS];
     for i in 0..SLOTS {
         slot_is_node[i] = i % 2 == 0;
         cmd_txs[i]

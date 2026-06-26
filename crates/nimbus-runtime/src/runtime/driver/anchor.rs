@@ -31,6 +31,8 @@
 //! cost of sharing a cage, and it goes away when the cage is no longer shared.
 
 use std::cell::Cell;
+#[cfg(test)]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
@@ -64,6 +66,22 @@ thread_local! {
     static IN_ANCHOR_BUILD: Cell<bool> = const { Cell::new(false) };
 }
 
+/// Test-only: an artificial delay inserted into the anchor build (after `ANCHOR_ENABLED`,
+/// before `ANCHOR_INSTALLED`) so a test can WIDEN the install window deterministically and
+/// prove whether the production arming path blocks until install completes.
+#[cfg(test)]
+static ANCHOR_INSTALL_DELAY_MS: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+pub(crate) fn set_anchor_install_delay_ms_for_test(ms: u64) {
+    ANCHOR_INSTALL_DELAY_MS.store(ms, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn anchor_enabled_for_test() -> bool {
+    ANCHOR_ENABLED.load(Ordering::SeqCst)
+}
+
 /// Install the NodeFull RO-heap anchor. Idempotent. Call ONCE at process init, BEFORE the
 /// pool serves any request, so the cage's shared RO heap is NodeFull's superset — making a
 /// WebStandard-first install structurally unreachable. Spawns the anchor isolate on a thread
@@ -84,6 +102,15 @@ pub(crate) fn install_nodefull_anchor(host: Arc<dyn HostBridge>) {
                     .expect("anchor tokio runtime should build");
                 rt.block_on(async move {
                     IN_ANCHOR_BUILD.with(|c| c.set(true));
+                    // Test-only: widen the ANCHOR_ENABLED..ANCHOR_INSTALLED window so a test
+                    // can deterministically prove the arming path blocks until install.
+                    #[cfg(test)]
+                    {
+                        let ms = ANCHOR_INSTALL_DELAY_MS.load(Ordering::SeqCst);
+                        if ms > 0 {
+                            std::thread::sleep(std::time::Duration::from_millis(ms));
+                        }
+                    }
                     let owner = NimbusRuntime::with_policy(
                         host,
                         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
