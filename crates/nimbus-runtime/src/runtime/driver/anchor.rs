@@ -142,7 +142,8 @@ pub(crate) fn install_nodefull_anchor(host: Arc<dyn HostBridge>) {
 }
 
 /// Production entry: arm the NodeFull RO-heap anchor with an internal fail-loud host. Call at
-/// process/worker startup (e.g. from `V8RuntimeBackend::create`) BEFORE the pool exists or
+/// process/worker startup (the production caller is `V8RuntimeBackendFactory::create` in
+/// `backends/v8/mod.rs`) BEFORE the pool exists or
 /// serves. Blocks until the anchor's superset RO heap is installed, so pool fill / serving
 /// cannot race the install.
 pub(crate) fn enable_and_arm_nodefull_anchor() {
