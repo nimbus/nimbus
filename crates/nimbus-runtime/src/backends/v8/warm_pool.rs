@@ -693,6 +693,27 @@ mod tests {
             Some(&tenant_a),
             V8RuntimeConstructionMode::Unsnapshotted,
         );
+        let snapshotted_key = RuntimePoolPartitionKey::for_invocation(
+            &base_owner,
+            &base_bundle,
+            Some(&tenant_a),
+            V8RuntimeConstructionMode::StartupSnapshot,
+        );
+
+        // Production-logic half (kept, not dropped): the cage fix builds non-Node profiles
+        // UNSNAPSHOTTED — they must never deserialize the shared RO heap — so WebStandard's
+        // production-SELECTED construction mode IS Unsnapshotted. The original case asserted the
+        // opposite implicitly (base_key's selected mode != Unsnapshotted), which was a real,
+        // now-stale fact; assert the current production reality explicitly so a regression in the
+        // selection is still caught here.
+        assert_eq!(
+            V8RuntimeConstructionMode::for_compatibility_target(
+                base_owner.policy().limits().compatibility_target
+            ),
+            V8RuntimeConstructionMode::Unsnapshotted,
+            "WebStandard must select Unsnapshotted (cage fix: non-Node never deserializes the \
+             shared RO heap)"
+        );
 
         let cases = [
             ("tenant", base_key.clone(), {
@@ -707,7 +728,10 @@ mod tests {
             ("script", script_base_key, script_alt_key),
             ("permission_profile", base_key.clone(), restricted_key),
             ("exact_service_grants", db_key, cache_key),
-            ("construction_mode", base_key, unsnapshotted_key),
+            // Capability half: the partition key incorporates construction_mode, so two runtimes
+            // built with DIFFERENT modes never share a recycled context. Not tautological — this
+            // drops to equal (and fails) if the key ever stops keying on mode.
+            ("construction_mode", snapshotted_key, unsnapshotted_key),
         ];
 
         for (dimension, left, right) in cases {
