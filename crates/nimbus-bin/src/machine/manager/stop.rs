@@ -90,27 +90,33 @@ fn stop_vmm_machine(paths: &MachinePaths, timeout: Duration) -> Result<(), Error
         return Ok(());
     }
 
-    if let Err(error) = request_vmm_state_change(&paths.vmm_endpoint_path, "Stop") {
-        let request_error = error.to_string();
-        force_stop_pid(pid, HARD_STOP_WAIT_TIMEOUT).map_err(|kill_error| {
-            Error::Internal(format!(
-                "{request_error}; failed to recover by force-stopping the machine VMM pid {pid}: {kill_error}"
-            ))
-        })?;
-        return Ok(());
+    match request_vmm_state_change(&paths.vmm_endpoint_path, "Stop") {
+        Ok(()) => {}
+        Err(error) => {
+            let request_error = error.to_string();
+            force_stop_pid(pid, HARD_STOP_WAIT_TIMEOUT).map_err(|kill_error| {
+                Error::Internal(format!(
+                    "{request_error}; failed to recover by force-stopping the machine VMM pid {pid}: {kill_error}"
+                ))
+            })?;
+            return Ok(());
+        }
     }
     if wait_for_pid_exit(pid, timeout)? {
         return Ok(());
     }
 
-    if let Err(error) = request_vmm_state_change(&paths.vmm_endpoint_path, "HardStop") {
-        let request_error = error.to_string();
-        force_stop_pid(pid, HARD_STOP_WAIT_TIMEOUT).map_err(|kill_error| {
-            Error::Internal(format!(
-                "{request_error}; failed to recover by force-stopping the machine VMM pid {pid}: {kill_error}"
-            ))
-        })?;
-        return Ok(());
+    match request_vmm_state_change(&paths.vmm_endpoint_path, "HardStop") {
+        Ok(()) => {}
+        Err(error) => {
+            let request_error = error.to_string();
+            force_stop_pid(pid, HARD_STOP_WAIT_TIMEOUT).map_err(|kill_error| {
+                Error::Internal(format!(
+                    "{request_error}; failed to recover by force-stopping the machine VMM pid {pid}: {kill_error}"
+                ))
+            })?;
+            return Ok(());
+        }
     }
     if wait_for_pid_exit(pid, HARD_STOP_WAIT_TIMEOUT)? {
         return Ok(());
