@@ -1,3 +1,17 @@
+//! Pool-reuse + cross-profile shared-RO-heap cage oracle.
+//!
+//! STRUCTURE (the forensic narrative lives in the memory file, not here):
+//! - Every cage-building test is `#[ignore]`'d and runs ONLY via its `isol_*` parent in a
+//!   fresh-cage subprocess, wired in the `isolated_pool_reuse_tests!` block. The cage ships in
+//!   the prebuilt rusty_v8 regardless of the cargo feature, so an in-process run would crash
+//!   the shared binary.
+//! - CONTROLS (`crash(N): ...`) abort BY DESIGN; the harness asserts they die with a cage
+//!   signature (vector.h:415 / Unknown external reference / SIGBUS). They do NOT run JS — they
+//!   abort during construction, before JS would run.
+//! - FIXES (`fix: ...`) must SUCCEED; build-only fixes also execute `BUILTIN_SMOKE_JS` to
+//!   assert the isolate runs, not merely constructs.
+//! - Run the cage lane with `make test-rust-runtime-cage` (filter `isol_`, feature-on).
+
 use std::rc::Rc;
 
 use deno_core::{JsRuntime, PollEventLoopOptions};
@@ -439,9 +453,12 @@ fn concurrent_snapshot_isolate_creation_does_not_abort() {
                         let snapshot = runtime_owner
                             .bootstrap_snapshot()
                             .expect("cached startup snapshot");
-                        let _runtime = runtime_owner
+                        let mut runtime = runtime_owner
                             .create_runtime_from_snapshot(&bundle, snapshot)
                             .expect("isolate should build from snapshot under concurrency");
+                        runtime
+                            .execute_script("ck", BUILTIN_SMOKE_JS)
+                            .expect("built isolate must EXECUTE JS, not merely construct");
                     }
                 });
             })
@@ -708,6 +725,8 @@ fn concurrent_both_profile_snapshot_creation_does_not_abort() {
                         let snapshot = runtime_owner
                             .bootstrap_snapshot()
                             .expect("cached startup snapshot");
+                        // CRASH CONTROL: this concurrent cross-profile build aborts before JS
+                        // would run — deliberately NO smoke JS (per the controls-vs-fix rule).
                         let _runtime = runtime_owner
                             .create_runtime_from_snapshot(&bundle, snapshot)
                             .expect("isolate should build from snapshot under concurrency");
@@ -853,13 +872,19 @@ fn serial_cross_profile_creation_does_not_abort() {
                 let snapshot = runtime_owner
                     .bootstrap_snapshot()
                     .expect("cached nodefull startup snapshot");
-                let _runtime = runtime_owner
+                let mut runtime = runtime_owner
                     .create_runtime_from_snapshot(&bundle, snapshot)
                     .expect("nodefull isolate should build from snapshot");
+                runtime
+                    .execute_script("ck", BUILTIN_SMOKE_JS)
+                    .expect("built nodefull isolate must EXECUTE JS, not merely construct");
             } else {
-                let _runtime = runtime_owner
+                let mut runtime = runtime_owner
                     .create_runtime(&bundle, None, false)
                     .expect("weblean isolate should build unsnapshotted");
+                runtime
+                    .execute_script("ck", BUILTIN_SMOKE_JS)
+                    .expect("built weblean isolate must EXECUTE JS, not merely construct");
             }
         }
     });
@@ -1619,6 +1644,19 @@ fn nodefull_anchor_first_then_cross_profile_refill_does_not_abort() {
 
 /// Correctness probe for RO-heap-resident objects: exercises interned property-name
 /// strings, well-known symbols, prototype/map identity, builtins, and Node-leak
+/// Profile-AGNOSTIC builtin smoke test (Array/String/JSON/Object — present on every V8
+/// profile). THROWS (→ execute_script Err) if any ECMAScript builtin is broken. Lets a
+/// build-only "does_not_abort" fix test assert the isolate EXECUTES correctly, not merely
+/// that construction didn't crash. (Crash controls abort before JS would run, so they do NOT
+/// use this.)
+const BUILTIN_SMOKE_JS: &str = r#"(() => {
+  if ([1, 2, 3].map(x => x * 2).join(',') !== '2,4,6') throw new Error('Array');
+  if ('AB'.toLowerCase() !== 'ab') throw new Error('String');
+  if (JSON.stringify({ a: 1 }) !== '{"a":1}') throw new Error('JSON');
+  if (Object.keys({ x: 1, y: 2 }).length !== 2) throw new Error('Object');
+  'ok'
+})()"#;
+
 /// sentinels. THROWS (→ execute_script Err) on ANY mismatch; returns 0 on full pass.
 /// Used to detect SILENT cross-profile primordial aliasing — a snapshotted WebLean
 /// isolate resolving an in-bounds-but-WRONG RO object against the NodeFull anchor.
