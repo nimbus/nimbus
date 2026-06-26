@@ -15,7 +15,6 @@ type ResidualLazySources = &'static [(&'static str, &'static str)];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum V8RuntimeConstructionMode {
-    #[allow(dead_code)] // Used only in test helpers
     Unsnapshotted,
     StartupSnapshot,
 }
@@ -26,7 +25,18 @@ impl V8RuntimeConstructionMode {
             target != RuntimeCompatibilityTarget::BunJsc,
             "Bun/JSC must not enter the V8 construction-mode selector"
         );
-        Self::StartupSnapshot
+        // Option A: only NodeFull keeps a startup snapshot. The NodeFull RO-heap anchor
+        // installs NodeFull's superset RO heap into the shared cage FIRST, so a WebStandard
+        // SNAPSHOT would deserialize against it and crash (Unknown external reference / SIGBUS
+        // — confirmed: with the anchor armed, a snapshotted WebStandard build aborts; with it
+        // disabled it passes). Non-Node V8 targets are therefore built UNSNAPSHOTTED and ride
+        // the anchor's superset RO builtins (proven correct by
+        // reachable_fix_unsnapshotted_weblean_against_nodefull_anchor_ro_intrinsics_correct).
+        if target.is_node() {
+            Self::StartupSnapshot
+        } else {
+            Self::Unsnapshotted
+        }
     }
 
     pub(crate) fn as_str(self) -> &'static str {
