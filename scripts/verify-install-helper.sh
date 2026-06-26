@@ -532,6 +532,65 @@ else
   fail "macOS mocked dry-run exits successfully"
 fi
 
+# The current-version fast path must not touch the network when every bundled
+# helper is already present. This keeps repeated installs useful in offline or
+# flaky-network environments and proves the helper-presence predicate is checked
+# before any checksum/archive download.
+macos_fast_path_prefix="${output_dir}/macos-fast-path-prefix"
+macos_fast_path_download_log="${output_dir}/macos-fast-path-downloads.log"
+if sh -c '
+    . "$1"
+    NIMBUS_VERSION="v0.1.14"
+    NIMBUS_PREFIX="$2"
+    PLATFORM="darwin"
+    ARCH="arm64"
+    DRY_RUN=""
+    DOWNLOAD_LOG="$3"
+    mkdir -p "${NIMBUS_PREFIX}/libexec"
+    printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/gvproxy"
+    printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/vfkit"
+    chmod +x "${NIMBUS_PREFIX}/libexec/gvproxy" "${NIMBUS_PREFIX}/libexec/vfkit"
+    get_installed_nimbus_version() { printf "%s\n" "${NIMBUS_VERSION}"; }
+    download_to_file() {
+      printf "%s\n" "$1" >> "${DOWNLOAD_LOG}"
+      return 99
+    }
+    download_and_install_nimbus
+  ' sh "${testable_install_sh}" "${macos_fast_path_prefix}" "${macos_fast_path_download_log}" \
+    > "${output_dir}/macos-fast-path.txt" 2>&1; then
+  if [ ! -s "${macos_fast_path_download_log}" ] && \
+      grep -q "already installed" "${output_dir}/macos-fast-path.txt"; then
+    pass "macOS current install with bundled helpers skips without network"
+  else
+    fail "macOS current install with bundled helpers skips without network"
+  fi
+else
+  fail "macOS current install with bundled helpers exits successfully"
+fi
+
+macos_uninstall_prefix="${output_dir}/macos-uninstall-prefix"
+if sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    DRY_RUN=""
+    mkdir -p "${NIMBUS_PREFIX}/bin" "${NIMBUS_PREFIX}/libexec"
+    printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/bin/nimbus"
+    printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/gvproxy"
+    printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/vfkit"
+    chmod +x "${NIMBUS_PREFIX}/bin/nimbus" "${NIMBUS_PREFIX}/libexec/gvproxy" "${NIMBUS_PREFIX}/libexec/vfkit"
+    check_cmd() { return 1; }
+    maybe_sudo() { "$@"; }
+    uninstall_macos
+    [ ! -e "${NIMBUS_PREFIX}/bin/nimbus" ] &&
+      [ ! -e "${NIMBUS_PREFIX}/libexec/gvproxy" ] &&
+      [ ! -e "${NIMBUS_PREFIX}/libexec/vfkit" ]
+  ' sh "${testable_install_sh}" "${macos_uninstall_prefix}" \
+    > "${output_dir}/macos-uninstall.txt" 2>&1; then
+  pass "macOS uninstall removes direct-install bundled helpers"
+else
+  fail "macOS uninstall removes direct-install bundled helpers"
+fi
+
 # --- Dry run output ---------------------------------------------------------
 
 echo ""

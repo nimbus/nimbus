@@ -1031,12 +1031,6 @@ download_and_install_nimbus() {
   download_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/${asset_name}"
   checksums_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/checksums-sha256.txt"
 
-  ensure_workdir
-  tmpdir="$(mktemp -d "${NIMBUS_WORKDIR}/download.XXXXXX")"
-
-  say_info "Downloading checksums for nimbus ${NIMBUS_VERSION}..."
-  download_to_file "$checksums_url" "$tmpdir/checksums-sha256.txt"
-
   # The binary version gates whether we rewrite ${NIMBUS_PREFIX}/bin/nimbus, but
   # the bundled machine helpers are reconciled independently. When nimbus is
   # already current AND every promised helper is present, this is a network-free
@@ -1055,6 +1049,12 @@ download_and_install_nimbus() {
   elif [ -n "$installed_version" ]; then
     say_info "Upgrading nimbus from $installed_version to $NIMBUS_VERSION"
   fi
+
+  ensure_workdir
+  tmpdir="$(mktemp -d "${NIMBUS_WORKDIR}/download.XXXXXX")"
+
+  say_info "Downloading checksums for nimbus ${NIMBUS_VERSION}..."
+  download_to_file "$checksums_url" "$tmpdir/checksums-sha256.txt"
 
   say_info "Downloading nimbus ${NIMBUS_VERSION}..."
   download_to_file "$download_url" "$tmpdir/$asset_name"
@@ -1504,6 +1504,10 @@ uninstall_macos() {
 
   if [ -n "$DRY_RUN" ]; then
     say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/bin/nimbus"
+    # shellcheck disable=SC2046
+    for helper_name in $(macos_bundled_helper_names); do
+      say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/libexec/${helper_name}"
+    done
     if [ -n "$cask_installed" ]; then
       say_info "[dry-run] Detected the 'nimbus' Homebrew cask — defer to: brew uninstall --cask nimbus"
     fi
@@ -1522,6 +1526,20 @@ uninstall_macos() {
     say_info "No curl|sh-installed binary at ${NIMBUS_PREFIX}/bin/nimbus (cask copy left to Homebrew)"
   else
     say_info "nimbus binary not found at ${NIMBUS_PREFIX}/bin/nimbus"
+  fi
+
+  # Remove only the direct-install helpers this script owns. The Homebrew
+  # krunkit/libkrun chain remains Homebrew-owned and is reported below.
+  # shellcheck disable=SC2046
+  for helper_name in $(macos_bundled_helper_names); do
+    helper_path="${NIMBUS_PREFIX}/libexec/${helper_name}"
+    if [ -f "$helper_path" ] || [ -L "$helper_path" ]; then
+      maybe_sudo rm -f "$helper_path"
+      say_info "Removed ${helper_path}"
+    fi
+  done
+  if [ -d "${NIMBUS_PREFIX}/libexec" ]; then
+    maybe_sudo rmdir "${NIMBUS_PREFIX}/libexec" 2>/dev/null || true
   fi
 
   say ""
