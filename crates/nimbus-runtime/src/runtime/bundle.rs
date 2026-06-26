@@ -187,6 +187,16 @@ impl RuntimeBundle {
         )
     }
 
+    /// A path-shaped bundle for the startup RO-heap anchor. The anchor CONSTRUCTS a NodeFull
+    /// isolate (to install the shared cage read-only heap) but NEVER evaluates its
+    /// entrypoint, and construction only touches the entrypoint's parent directory, not the
+    /// file. So no file is written: the entrypoint lives under the system temp dir (which
+    /// exists on every platform) but is never read. This keeps the anchor off the
+    /// startup-path dependency on a *writable* filesystem.
+    pub(crate) fn virtual_anchor() -> Self {
+        Self::new(std::env::temp_dir().join("nimbus-nodefull-anchor.virtual.mjs"))
+    }
+
     pub fn with_expected_sha256(
         entrypoint: impl AsRef<Path>,
         expected_sha256: impl AsRef<str>,

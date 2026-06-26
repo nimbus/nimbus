@@ -98,6 +98,14 @@ pub(crate) fn create_v8_startup_snapshot(
     compatibility_target: RuntimeCompatibilityTarget,
     service_extension_enabled: bool,
 ) -> Result<V8StartupSnapshot> {
+    // Anchor floor (Option A): the SnapshotCreator below ALSO aliases the cage's shared RO
+    // heap (see the lock comment), so a snapshot BUILD can be the first cage installer just
+    // like a deserialize. Guard it with the same fail-closed floor as
+    // create_runtime_with_bootstrap_state so a snapshot build before the NodeFull anchor
+    // installs is caught, rather than silently installing a non-superset heap first. No-op
+    // unless the anchor system is in use; the anchor's OWN snapshot build is exempt via the
+    // IN_ANCHOR_BUILD thread-local.
+    crate::runtime::driver::anchor::assert_anchor_floor();
     // Serialize snapshot BUILD against cold isolate CREATION and DISPOSAL on the
     // one process-global re-entrant lock owned by deno_core: the SnapshotCreator
     // here and every restored isolate alias the default IsolateGroup's read-only

@@ -1546,6 +1546,152 @@ fn reachable_fix_unsnapshotted_weblean_against_nodefull_anchor_ro_intrinsics_cor
     anchor.join().expect("anchor thread should not panic");
 }
 
+/// PROVE-DON'T-ASSUME (anchor pinning, Step 2a — PART 1, the half-truth). On ONE long-lived
+/// thread: (A) NodeFull snapshot installs the SUPERSET RO heap, then is DROPPED; (B)
+/// UNSNAPSHOTTED WebStandard builds; (C) NodeFull snapshot builds again. PASSES — the cage RO
+/// heap survives ISOLATE disposal *while the installing thread stays alive*. This fact is
+/// REAL but MISLEADING for the anchor design: the production anchor runs on a SEPARATE thread,
+/// so the relevant question is whether the install survives that thread's EXIT — answered by
+/// `disposed_anchor_thread_exit_makes_crash_return` (it does NOT). Kept as the explicit
+/// counter-evidence so a future maintainer does not re-derive "dispose is safe" from this
+/// same-thread observation alone.
+#[test]
+#[ignore = "subprocess/--exact: V8-sensitive cross-profile builds; isolate from sibling tests"]
+fn anchor_ro_heap_persists_past_isolate_disposal_same_thread() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        "globalThis.__nimbusInvoke = function () { return { ok: true }; };\nexport {};\n",
+    )
+    .expect("bundle should write");
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime should build");
+    rt.block_on(async {
+        let bundle = RuntimeBundle::new(&bundle_path);
+        // (A) NodeFull snapshot installs the superset RO heap, then is dropped.
+        {
+            let owner = NimbusRuntime::with_policy(
+                std::sync::Arc::new(RecordingHost::default()),
+                std::sync::Arc::new(RuntimePolicy::new(
+                    crate::RuntimeLimits::application_node22(),
+                )),
+            );
+            let snap = owner.bootstrap_snapshot().expect("nodefull snapshot A");
+            let a = owner
+                .create_runtime_from_snapshot(&bundle, snap)
+                .expect("nodefull A installs the superset RO heap");
+            drop(a);
+        }
+        // (B) UNSNAPSHOTTED WebStandard builds on the same still-alive thread.
+        {
+            let owner = NimbusRuntime::with_policy(
+                std::sync::Arc::new(RecordingHost::default()),
+                std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+            );
+            let b = owner
+                .create_runtime(&bundle, None, false)
+                .expect("unsnapshotted weblean B builds");
+            drop(b);
+        }
+        // (C) NodeFull snapshot again: builds (heap survived isolate disposal on this thread).
+        let owner = NimbusRuntime::with_policy(
+            std::sync::Arc::new(RecordingHost::default()),
+            std::sync::Arc::new(RuntimePolicy::new(
+                crate::RuntimeLimits::application_node22(),
+            )),
+        );
+        let snap = owner.bootstrap_snapshot().expect("nodefull snapshot C");
+        let mut c = owner
+            .create_runtime_from_snapshot(&bundle, snap)
+            .expect("nodefull C builds (RO heap survived isolate disposal on this thread)");
+        let source = format!("globalThis.__isNodeProfile = true;\n{RO_INTRINSIC_CHECKS_JS}");
+        let result = c.execute_script("ro_intrinsic_checks", source);
+        assert!(
+            result.is_ok(),
+            "post-drop NodeFull read WRONG intrinsics: {:?}",
+            result.err()
+        );
+    });
+}
+
+/// PROVE-DON'T-ASSUME (anchor pinning, Step 2a — PART 2, the DECIDER). Replicates the REAL
+/// anchor: build NodeFull on a DEDICATED thread that then EXITS (dispose + join — exactly a
+/// dispose-after-install anchor), then build cross-profile isolates on a DIFFERENT thread. The
+/// cage RO-heap install does NOT survive the installing thread's exit, so a later WebStandard
+/// re-installs the default SMALLER heap and the final NodeFull snapshot OOBs (`vector.h:415`)
+/// and ABORTS. This is the proof that the pin is LOAD-BEARING: the anchor MUST keep its
+/// isolate + thread resident. (Contrast the same-thread test, which passes.) Wired as a CRASH
+/// CONTROL — the parent asserts this child dies by signal. If this ever STOPS crashing,
+/// dispose-after-install just became safe and the parked anchor can be reclaimed.
+#[test]
+#[ignore = "CRASH CONTROL: aborts by SIGABRT/SIGBUS by design; run only via the crash harness"]
+fn disposed_anchor_thread_exit_makes_crash_return() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = std::sync::Arc::new(tempdir.path().join("bundle.mjs"));
+    std::fs::write(
+        &*bundle_path,
+        "globalThis.__nimbusInvoke = function () { return { ok: true }; };\nexport {};\n",
+    )
+    .expect("bundle should write");
+
+    // (A) NodeFull built + DISPOSED on a dedicated thread that then EXITS (join).
+    let abp = std::sync::Arc::clone(&bundle_path);
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("anchor runtime should build");
+        rt.block_on(async move {
+            let owner = NimbusRuntime::with_policy(
+                std::sync::Arc::new(RecordingHost::default()),
+                std::sync::Arc::new(RuntimePolicy::new(
+                    crate::RuntimeLimits::application_node22(),
+                )),
+            );
+            let snap = owner.bootstrap_snapshot().expect("nodefull snapshot");
+            let a = owner
+                .create_runtime_from_snapshot(&RuntimeBundle::new(&*abp), snap)
+                .expect("nodefull installs the superset RO heap");
+            drop(a);
+        });
+    })
+    .join()
+    .expect("anchor thread joins (install + dispose + EXIT)");
+
+    // (B,C) cross-profile builds on a DIFFERENT thread: WebStandard re-installs the smaller
+    // heap, then NodeFull snapshot OOB-aborts the process.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("main runtime should build");
+    rt.block_on(async {
+        let bundle = RuntimeBundle::new(&*bundle_path);
+        let web_owner = NimbusRuntime::with_policy(
+            std::sync::Arc::new(RecordingHost::default()),
+            std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+        );
+        let _web = web_owner
+            .create_runtime(&bundle, None, false)
+            .expect("weblean builds (installs smaller heap after anchor thread exit)");
+        let node_owner = NimbusRuntime::with_policy(
+            std::sync::Arc::new(RecordingHost::default()),
+            std::sync::Arc::new(RuntimePolicy::new(
+                crate::RuntimeLimits::application_node22(),
+            )),
+        );
+        let snap = node_owner
+            .bootstrap_snapshot()
+            .expect("nodefull snapshot 2");
+        let _node = node_owner
+            .create_runtime_from_snapshot(&bundle, snap)
+            .expect("unreachable: nodefull OOB-aborts against the smaller heap");
+    });
+}
+
 /// OPTION C SAFETY GATE (both-code-cache): build BOTH profiles UNSNAPSHOTTED
 /// (`create_runtime(None)`) concurrently in the warmed-no-drops regime that crashes
 /// 16/16 WITH snapshots. With no snapshot in the cage, neither profile calls
@@ -1689,6 +1835,7 @@ const PRIMORDIAL_SHAPE_JS: &str = r#"(() => {
 /// vanilla default RO heap. Run twice + diff the two files: IDENTICAL = no Node bleed,
 /// ANY diff = (A) dead.
 #[test]
+#[ignore = "env-gated DEV TOOL (NIMBUS_SHAPE_*), not a regression assertion; run manually"]
 fn capture_weblean_primordial_shape() {
     let anchored = std::env::var("NIMBUS_SHAPE_ANCHORED")
         .map(|v| v == "1")
@@ -2051,6 +2198,7 @@ fn audit1_unsnapshotted_weblean_web_api_correct() {
 /// (neither has it)? NIMBUS_PROBE_SNAPSHOT=1 builds snapshotted, else unsnapshotted;
 /// NIMBUS_PROBE_NODE=1 builds NodeFull, else WebStandard. Throws the present web-API set.
 #[test]
+#[ignore = "env-gated DEV TOOL (NIMBUS_PROBE_*), not a regression assertion; run manually"]
 fn web_api_presence_probe() {
     let snapshot = std::env::var("NIMBUS_PROBE_SNAPSHOT")
         .map(|v| v == "1")
@@ -2373,10 +2521,10 @@ fn anchor_armed_and_gated_at_v8_backend_creation() {
 }
 
 /// ANCHOR (item A) — is the NodeFull bootstrap HOST-CALL-FREE during construction? Build a
-/// NodeFull isolate (the anchor's exact build) with a host that COUNTS calls. If the count is
-/// 0, the anchor's no-op host is never reached during build (guaranteed host-call-free, not
-/// merely relying on ii/iii). If >0, we rely on ii/iii proving the null return is harmless —
-/// either is acceptable; this makes it KNOWN, not assumed. Reports the count.
+/// NodeFull isolate (the anchor's exact build) with a host that COUNTS calls. The count MUST
+/// be 0: the production anchor's `AnchorNoopHost` fails LOUD (panics) if invoked, so a
+/// host-call during construction would crash startup. This test makes the host-call-free
+/// property a hard, asserted invariant rather than a measured observation.
 #[test]
 fn anchor_nodefull_build_host_call_count() {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -2416,10 +2564,12 @@ fn anchor_nodefull_build_host_call_count() {
     });
     let calls = BUILD_HOST_CALLS.load(Ordering::SeqCst);
     eprintln!("ANCHOR-A: NodeFull bootstrap host calls during construction = {calls}");
-    // The build must succeed (above); the count is the diagnostic for item A.
-    assert!(
-        calls == 0 || calls > 0,
-        "diagnostic only: NodeFull build host-call count = {calls}"
+    // The anchor's production host (AnchorNoopHost) fails LOUD if invoked, so the
+    // host-call-free property is now load-bearing, not merely measured: assert it.
+    assert_eq!(
+        calls, 0,
+        "NodeFull anchor construction made {calls} host call(s); the anchor's fail-loud \
+         host would PANIC in production. Construction must stay host-call-free."
     );
 }
 
