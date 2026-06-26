@@ -104,6 +104,46 @@ isolated_pool_reuse_tests! {
         => direct_path_webstandard_snapshotted_crashes_against_production_anchor,
     fix: isol_direct_path_ws_unsnapshotted
         => direct_path_webstandard_unsnapshotted_no_crash_after_fix,
+    // --- pre-existing pool_reuse cage tests, isolated (Item 1) ---
+    fix: isol_pooled_runtime_invocations_keep_module_state_fresh => pooled_runtime_invocations_keep_module_state_fresh,
+    fix: isol_pooled_runtime_invocations_reset_auth_and_host_call_session_state => pooled_runtime_invocations_reset_auth_and_host_call_session_state,
+    fix: isol_warm_pooled_runtime_rebinds_host_bridge_per_invocation => warm_pooled_runtime_rebinds_host_bridge_per_invocation,
+    fix: isol_warm_context_recycle_reuses_runtime_with_fresh_realm_module_state => warm_context_recycle_reuses_runtime_with_fresh_realm_module_state,
+    fix: isol_fresh_realm_driver_destroys_realm_after_success_and_error => fresh_realm_driver_destroys_realm_after_success_and_error,
+    fix: isol_node_full_fresh_realm_replays_extension_js_before_bundle_load => node_full_fresh_realm_replays_extension_js_before_bundle_load,
+    fix: isol_node_full_fresh_realm_lease_returns_clean_and_rejects_cross_tenant => node_full_fresh_realm_lease_returns_clean_and_rejects_cross_tenant,
+    fix: isol_node_full_fresh_realm_lease_enforces_target_authority_and_metadata => node_full_fresh_realm_lease_enforces_target_authority_and_metadata,
+    fix: isol_node_full_fresh_realm_lease_rejects_cross_bundle_reuse => node_full_fresh_realm_lease_rejects_cross_bundle_reuse,
+    fix: isol_node_full_fresh_realm_lease_preserves_translator_mode_boundary_per_target => node_full_fresh_realm_lease_preserves_translator_mode_boundary_per_target,
+    fix: isol_node_full_fresh_realm_lease_requires_exact_service_authority_on_retained_substrate => node_full_fresh_realm_lease_requires_exact_service_authority_on_retained_substrate,
+    fix: isol_node_full_fresh_realm_lease_applies_side_channel_hardening_per_realm => node_full_fresh_realm_lease_applies_side_channel_hardening_per_realm,
+    fix: isol_node_full_fresh_realm_lease_denies_inspector_and_repl_in_production => node_full_fresh_realm_lease_denies_inspector_and_repl_in_production,
+    fix: isol_node_full_fresh_realm_lease_matches_startup_snapshot_for_node_fixture => node_full_fresh_realm_lease_matches_startup_snapshot_for_node_fixture,
+    fix: isol_node_full_fresh_realm_lease_denies_query_host_effects_before_dispatch => node_full_fresh_realm_lease_denies_query_host_effects_before_dispatch,
+    fix: isol_node_full_fresh_realm_lease_resets_opstate_auth_host_session_and_globals => node_full_fresh_realm_lease_resets_opstate_auth_host_session_and_globals,
+    fix: isol_node_full_fresh_realm_lease_condemns_dirty_invocation_before_reuse => node_full_fresh_realm_lease_condemns_dirty_invocation_before_reuse,
+    fix: isol_node_full_fresh_realm_lease_condemns_rejected_wait_until_before_reuse => node_full_fresh_realm_lease_condemns_rejected_wait_until_before_reuse,
+    fix: isol_node_full_fresh_realm_lease_condemns_stalled_wait_until_before_reuse => node_full_fresh_realm_lease_condemns_stalled_wait_until_before_reuse,
+    fix: isol_node_full_fresh_realm_lease_abandons_uncertain_cleanup_before_reuse => node_full_fresh_realm_lease_abandons_uncertain_cleanup_before_reuse,
+    fix: isol_node_full_fresh_realm_lease_condemns_execution_timeout_before_reuse => node_full_fresh_realm_lease_condemns_execution_timeout_before_reuse,
+    fix: isol_node_full_fresh_realm_lease_condemns_external_cancellation_before_reuse => node_full_fresh_realm_lease_condemns_external_cancellation_before_reuse,
+    fix: isol_node_full_fresh_realm_lease_condemns_heap_limit_before_reuse => node_full_fresh_realm_lease_condemns_heap_limit_before_reuse,
+    fix: isol_node_full_fresh_realm_lease_drops_untracked_timer_host_work => node_full_fresh_realm_lease_drops_untracked_timer_host_work,
+    fix: isol_node_full_fresh_realm_lease_denies_process_and_worker_resource_surfaces_cleanly => node_full_fresh_realm_lease_denies_process_and_worker_resource_surfaces_cleanly,
+    fix: isol_node_full_fresh_realm_lease_rejects_direct_core_host_op_forgery => node_full_fresh_realm_lease_rejects_direct_core_host_op_forgery,
+    fix: isol_node_full_fresh_realm_lease_condemns_live_deno_resource_table_entries => node_full_fresh_realm_lease_condemns_live_deno_resource_table_entries,
+    fix: isol_node_full_fresh_realm_lease_resets_env_path_and_load_env_file_state => node_full_fresh_realm_lease_resets_env_path_and_load_env_file_state,
+    fix: isol_node_full_fresh_realm_lease_resets_arraybuffer_and_structured_clone_state => node_full_fresh_realm_lease_resets_arraybuffer_and_structured_clone_state,
+    fix: isol_node_full_fresh_realm_lease_resets_shared_worker_env_helper_state => node_full_fresh_realm_lease_resets_shared_worker_env_helper_state,
+    fix: isol_node_full_fresh_realm_lease_rebuilds_dynamic_module_map_per_realm => node_full_fresh_realm_lease_rebuilds_dynamic_module_map_per_realm,
+    fix: isol_node_full_fresh_realm_lease_code_cache_reloads_changed_dependency_source => node_full_fresh_realm_lease_code_cache_reloads_changed_dependency_source,
+    fix: isol_node_full_fresh_realm_lease_host_pressure_eviction_preserves_authority_partition => node_full_fresh_realm_lease_host_pressure_eviction_preserves_authority_partition,
+    fix: isol_warm_context_recycle_preserves_tenant_affinity_for_unscoped_bundle => warm_context_recycle_preserves_tenant_affinity_for_unscoped_bundle,
+    fix: isol_warm_context_recycle_preserves_function_affinity_for_unscoped_bundle => warm_context_recycle_preserves_function_affinity_for_unscoped_bundle,
+    fix: isol_warm_context_recycle_preserves_script_affinity_for_distinct_bundle_entries => warm_context_recycle_preserves_script_affinity_for_distinct_bundle_entries,
+    fix: isol_reused_runtime_refreshes_invocation_cancellation_state_before_next_invoke => reused_runtime_refreshes_invocation_cancellation_state_before_next_invoke,
+    fix: isol_reused_runtime_uses_bound_host_call_session_before_next_invoke => reused_runtime_uses_bound_host_call_session_before_next_invoke,
+    fix: isol_fresh_realm_installs_bootstrap_and_uses_bound_host_bridge => fresh_realm_installs_bootstrap_and_uses_bound_host_bridge,
 }
 
 /// PROVE-DON'T-ASSUME (the floor-panic question): is the in-process floor-panic a
@@ -3030,6 +3070,7 @@ fn regex_like_permission(msg: &str) -> bool {
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn pooled_runtime_invocations_keep_module_state_fresh() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
@@ -3079,6 +3120,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn pooled_runtime_invocations_reset_auth_and_host_call_session_state() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
@@ -3191,6 +3233,7 @@ impl HostBridge for TaggedAsyncDbGetHost {
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn warm_pooled_runtime_rebinds_host_bridge_per_invocation() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
@@ -3251,6 +3294,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn warm_context_recycle_reuses_runtime_with_fresh_realm_module_state() {
     let tempdir = tempdir().expect("tempdir should build");
     let dep_path = tempdir.path().join("dep.mjs");
@@ -3367,6 +3411,7 @@ globalThis.__nimbusInvoke = async function (request) {
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn fresh_realm_driver_destroys_realm_after_success_and_error() {
     let destroy_probe =
         super::super::realm_lifecycle::test_probe::start_fresh_realm_destroy_probe();
@@ -3454,6 +3499,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_replays_extension_js_before_bundle_load() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -3543,6 +3589,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_returns_clean_and_rejects_cross_tenant() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -3710,6 +3757,7 @@ globalThis.__nimbusInvoke = () => ({ mainRealmFallback: true });
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_enforces_target_authority_and_metadata() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -3870,6 +3918,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_rejects_cross_bundle_reuse() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -3984,6 +4033,7 @@ export {{}};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_preserves_translator_mode_boundary_per_target() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -4146,6 +4196,7 @@ fn node22_policy_with_native_service_grant(service_name: &str) -> Arc<RuntimePol
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_requires_exact_service_authority_on_retained_substrate() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -4328,6 +4379,7 @@ fn assert_coarsened_timer_samples(samples: &Value, label: &str) {
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_applies_side_channel_hardening_per_realm() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -4451,6 +4503,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_denies_inspector_and_repl_in_production() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -4536,6 +4589,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_matches_startup_snapshot_for_node_fixture() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -4633,6 +4687,7 @@ module.exports = { marker: "commonjs-default" };
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_denies_query_host_effects_before_dispatch() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -4719,6 +4774,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_resets_opstate_auth_host_session_and_globals() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -4814,6 +4870,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_condemns_dirty_invocation_before_reuse() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -4909,6 +4966,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_condemns_rejected_wait_until_before_reuse() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -5013,6 +5071,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_condemns_stalled_wait_until_before_reuse() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -5098,6 +5157,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_abandons_uncertain_cleanup_before_reuse() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -5206,6 +5266,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_condemns_execution_timeout_before_reuse() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -5293,6 +5354,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_condemns_external_cancellation_before_reuse() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -5383,6 +5445,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_condemns_heap_limit_before_reuse() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -5470,6 +5533,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_drops_untracked_timer_host_work() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -5564,6 +5628,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_denies_process_and_worker_resource_surfaces_cleanly() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -5726,6 +5791,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_rejects_direct_core_host_op_forgery() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -5849,6 +5915,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_condemns_live_deno_resource_table_entries() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -5934,6 +6001,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_resets_env_path_and_load_env_file_state() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -6102,6 +6170,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_resets_arraybuffer_and_structured_clone_state() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -6218,6 +6287,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_resets_shared_worker_env_helper_state() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -6331,6 +6401,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_rebuilds_dynamic_module_map_per_realm() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -6452,6 +6523,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_code_cache_reloads_changed_dependency_source() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -6763,6 +6835,7 @@ async fn invoke_node_full_fresh_realm_with_driver(
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_host_pressure_eviction_preserves_authority_partition() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
@@ -6980,6 +7053,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn warm_context_recycle_preserves_tenant_affinity_for_unscoped_bundle() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
@@ -7051,6 +7125,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn warm_context_recycle_preserves_function_affinity_for_unscoped_bundle() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
@@ -7124,6 +7199,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn warm_context_recycle_preserves_script_affinity_for_distinct_bundle_entries() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_a_path = tempdir.path().join("bundle-a.mjs");
@@ -7225,6 +7301,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn reused_runtime_refreshes_invocation_cancellation_state_before_next_invoke() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
@@ -7340,6 +7417,7 @@ export {};
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn reused_runtime_uses_bound_host_call_session_before_next_invoke() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
@@ -7434,6 +7512,7 @@ async fn reused_runtime_uses_bound_host_call_session_before_next_invoke() {
 }
 
 #[tokio::test]
+#[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn fresh_realm_installs_bootstrap_and_uses_bound_host_bridge() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
