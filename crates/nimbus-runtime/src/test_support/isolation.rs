@@ -114,6 +114,72 @@ pub(crate) fn run_v8_sensitive_runtime_test_in_subprocess(case: IsolatedRuntimeT
     );
 }
 
+/// Run a CRASH-CONTROL test (one that aborts BY DESIGN) in a fresh subprocess and assert the
+/// child died BY SIGNAL (SIGABRT/SIGBUS/SIGSEGV — the cross-profile RO-heap crash). This is
+/// the inverse of `run_v8_sensitive_runtime_test_in_subprocess`: a control that EXITS NORMALLY
+/// (success OR a plain test failure) fails the parent — that means either the guarded crash
+/// REGRESSED (bug returned) or the control was defanged. Either way the oracle must go RED.
+/// `max_attempts` handles racy controls (a concurrent race that crashes ~99% per run): retry
+/// up to N times and pass on the first signal-death; a deterministic control uses a small N.
+#[cfg(feature = "v8-pointer-compression")]
+pub(crate) fn run_v8_crash_control_in_subprocess(case: IsolatedRuntimeTestCase, max_attempts: u32) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+
+        let _guard = acquire_runtime_suite_lock_blocking();
+        let _subprocess_guard = acquire_runtime_suite_subprocess_lock();
+        let mut last_observation = String::new();
+        for attempt in 1..=max_attempts.max(1) {
+            let tmp_dir = create_runtime_subprocess_tmp_dir(case);
+            let output = std::process::Command::new(
+                std::env::current_exe().expect("current test binary path should resolve"),
+            )
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .env("RUST_TEST_THREADS", "1")
+            .env("TMPDIR", &tmp_dir)
+            .env("TEMP", &tmp_dir)
+            .env("TMP", &tmp_dir)
+            .env_remove("NODE_OPTIONS")
+            .env_remove("NODE_TLS_REJECT_UNAUTHORIZED")
+            .arg("--ignored")
+            .arg("--exact")
+            .arg(case.subprocess_test_name())
+            .arg("--nocapture")
+            .output()
+            .expect("crash-control subprocess should launch");
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            // SIGABRT=6 (libc++ `vector.h:415` abort, the OOB direction), SIGBUS=10
+            // (wrong-object deref direction), SIGSEGV=11 (defensive). Any is the control
+            // crashing as required.
+            if matches!(output.status.signal(), Some(6 | 10 | 11)) {
+                return;
+            }
+            last_observation = format!(
+                "attempt {attempt}/{}: status {} (signal {:?})\nstdout:\n{}\nstderr:\n{}",
+                max_attempts.max(1),
+                output.status,
+                output.status.signal(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+        panic!(
+            "{} — the crash control did NOT abort by signal across {} attempt(s). Either the \
+             guarded cross-profile RO-heap crash REGRESSED (the bug returned and should crash) \
+             or the control was defanged. A control that can pass without crashing is the \
+             vacuous oracle this guards against.\n{last_observation}",
+            case.failure_context("crash control must abort by SIGABRT/SIGBUS"),
+            max_attempts.max(1),
+        );
+    }
+    // Signal-death assertion is Unix-only; the cage feature ships only on Unix targets.
+    #[cfg(not(unix))]
+    {
+        let _ = (case, max_attempts);
+    }
+}
+
 fn create_runtime_subprocess_tmp_dir(case: IsolatedRuntimeTestCase) -> PathBuf {
     let mut dir = std::env::temp_dir();
     let timestamp = SystemTime::now()

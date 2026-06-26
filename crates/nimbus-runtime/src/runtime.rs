@@ -86,6 +86,8 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    #[cfg(feature = "v8-pointer-compression")]
+    use crate::test_support::run_v8_crash_control_in_subprocess;
     use crate::test_support::{
         IsolatedRuntimeTestCase, acquire_runtime_suite_lock, acquire_snapshot_reset_test_lock,
         cooperative_context_recycle_runtime_test_limits,

@@ -135,6 +135,16 @@ test: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
 test-rust-runtime:
 	$(SINGLE_FLIGHT) --key cargo-test-runtime-ci -- cargo test -p nimbus-runtime -- --skip runtime::tests::node_compat::
 
+# Run the cage (pointer-compression) crash-oracle lane. The cross-profile shared-RO-heap
+# crash only reproduces under --features v8-pointer-compression (the single shared cage),
+# which is exactly how release binaries ship; the default test-rust-runtime lane is feature-off
+# and therefore CANNOT exercise it. This lane runs the subprocess-isolated `isol_*` parents
+# (filter `isol_`): each spawns a fresh-cage child, so the crash-by-design controls assert the
+# bug still aborts by signal (non-vacuous) and the fix tests assert success, without aborting
+# or poisoning the shared test binary.
+test-rust-runtime-cage:
+	$(SINGLE_FLIGHT) --key cargo-test-runtime-cage-ci -- cargo test -p nimbus-runtime --features v8-pointer-compression --lib isol_
+
 # Run the CI workspace Rust test bucket. CW2: when NIMBUS_NEXTEST_PARTITION is
 # set to `N/M`, the partition is forwarded as `--partition hash:N/M` so the
 # job can be sharded across the CI matrix. The single-flight key includes the

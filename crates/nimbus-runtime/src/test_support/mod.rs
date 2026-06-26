@@ -2,6 +2,8 @@ mod isolation;
 mod profiles;
 mod repro;
 
+#[cfg(feature = "v8-pointer-compression")]
+pub(crate) use self::isolation::run_v8_crash_control_in_subprocess;
 pub(crate) use self::isolation::{
     acquire_runtime_suite_lock, acquire_runtime_suite_lock_blocking,
     acquire_snapshot_reset_test_lock, run_v8_sensitive_runtime_test_in_subprocess,
