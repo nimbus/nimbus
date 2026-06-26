@@ -5,6 +5,7 @@ mod payloads;
 mod source;
 mod state;
 mod transpile;
+mod web_standard_runtime;
 
 pub(crate) use self::extensions::{execution_extensions, snapshot_extensions};
 pub(crate) use self::ops::worker_threads_state_extension;

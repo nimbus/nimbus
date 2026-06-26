@@ -38,6 +38,10 @@ pub(crate) struct V8RuntimeBackendFactory;
 
 impl RuntimeBackendFactory for V8RuntimeBackendFactory {
     fn create(&self) -> Box<dyn RuntimeBackend> {
+        // Force NodeFull-first: arm + BLOCK on the NodeFull RO-heap anchor before this
+        // backend's pool exists or serves, so the cage RO heap is NodeFull's superset and a
+        // WebStandard-first install is unreachable (Option A crash fix).
+        crate::runtime::driver::anchor::enable_and_arm_nodefull_anchor();
         Box::new(V8RuntimeBackend {
             v8_runtime_pool: V8WorkerRuntimePool::new(),
         })

@@ -16,6 +16,7 @@ use super::node22_runtime::node22_runtime_bootstrap_extension;
 #[cfg(test)]
 use super::ops::runtime_test_extension;
 use super::ops::{runtime_extension, service_extension};
+use super::web_standard_runtime::web_standard_runtime_bootstrap_extension;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NodeBootstrapExtensionSlot {
@@ -104,15 +105,18 @@ impl RuntimeBootstrapExtensionRegistry {
         target: RuntimeCompatibilityTarget,
         service_extension_enabled: bool,
     ) -> Vec<Extension> {
+        let node = target.is_node();
+        install_rustls_default_provider_once();
         let mut extensions = Vec::new();
-        if target.is_node() {
-            install_rustls_default_provider_once();
-            extensions.extend(
-                NODE_BOOTSTRAP_EXTENSION_SLOTS
-                    .iter()
-                    .copied()
-                    .map(NodeBootstrapExtensionSlot::snapshot_extension),
-            );
+        // Web standards on ALL V8 targets (preserve slot order so deps stay satisfied);
+        // Node-only slots gated on is_node.
+        for slot in NODE_BOOTSTRAP_EXTENSION_SLOTS.iter().copied() {
+            if node || slot.is_web_standard() {
+                extensions.push(slot.snapshot_extension());
+            }
+        }
+        if !node {
+            extensions.push(web_standard_runtime_bootstrap_extension());
         }
         extensions.push(runtime_extension());
         #[cfg(test)]
@@ -129,20 +133,28 @@ impl RuntimeBootstrapExtensionRegistry {
         loader_hook_registry: Option<LoaderHookRegistry>,
         limits: &RuntimeLimits,
     ) -> Vec<Extension> {
+        let node = target.is_node();
+        install_rustls_default_provider_once();
+        // Context is consumed only by Node-only slots; web-standard slots ignore it.
+        let context = NodeExecutionExtensionContext {
+            path_policy,
+            loader_hook_registry,
+            limits,
+            fs: MaybeArc::new(deno_fs::RealFs),
+        };
         let mut extensions = Vec::new();
-        if target.is_node() {
-            install_rustls_default_provider_once();
-            let context = NodeExecutionExtensionContext {
-                path_policy,
-                loader_hook_registry,
-                limits,
-                fs: MaybeArc::new(deno_fs::RealFs),
-            };
-            extensions.extend(
-                NODE_BOOTSTRAP_EXTENSION_SLOTS
-                    .iter()
-                    .map(|slot| slot.execution_extension(&context)),
-            );
+        // Web standards on ALL V8 targets (preserve slot order so deps stay satisfied);
+        // Node-only slots gated on is_node. Egress capability for fetch/WebSocket stays
+        // gated at call time by deno_permissions (presence != capability).
+        for slot in NODE_BOOTSTRAP_EXTENSION_SLOTS.iter().copied() {
+            if node || slot.is_web_standard() {
+                extensions.push(slot.execution_extension(&context));
+            }
+        }
+        // Non-Node V8 targets wire the web globals (TextEncoder/URL/Streams/WebCrypto/Fetch)
+        // via the WebStandard bootstrap entry point; Node targets get them from node22.
+        if !node {
+            extensions.push(web_standard_runtime_bootstrap_extension());
         }
         extensions.push(runtime_extension());
         #[cfg(test)]
@@ -235,6 +247,32 @@ impl NodeBootstrapExtensionSlot {
             ),
             Self::NodeRuntimeBootstrap => node22_runtime_bootstrap_extension(),
         }
+    }
+
+    /// W3C/WHATWG STANDARDS extensions (Encoding/TextEncoder, URL, Streams, WebCrypto,
+    /// Fetch, WebSocket) — present on ALL V8 targets, not just Node. These are not
+    /// Node-specific; gating them on `is_node()` left `WebStandardIsolate` with no
+    /// web-standard APIs (confirmed bug). PRESENCE only — egress-bearing surfaces
+    /// (fetch/WebSocket) come up present and are gated at call time by the EXISTING
+    /// deno_permissions path (deny-by-default), identical to Node. Deps are self-contained
+    /// (webidl <- web <- crypto/fetch/websocket; fetch deps = [webidl, web], no net/tls).
+    fn is_web_standard(self) -> bool {
+        matches!(
+            self,
+            // Telemetry is not itself a web standard, but the shared global-scope module
+            // (98_global_scope_shared.js) loads ext:deno_telemetry/{telemetry,util}.ts, so it
+            // is required for any V8 target that evaluates that scope. Net+Tls are fetch's
+            // transport (deno_fetch/22_http_client.js loads ext:deno_net/02_tls.js); fetch is
+            // present-and-deny-by-default, so the transport is permission-gated, not granted.
+            Self::Telemetry
+                | Self::WebIdl
+                | Self::Web
+                | Self::Crypto
+                | Self::Fetch
+                | Self::WebSocket
+                | Self::Net
+                | Self::Tls
+        )
     }
 
     #[cfg(test)]

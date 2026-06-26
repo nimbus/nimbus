@@ -1,8 +1,7 @@
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock};
 
-use crate::error::{NimbusRuntimeError, Result};
+use crate::error::Result;
 use crate::limits::RuntimeCompatibilityTarget;
 use crate::runtime::bootstrap::{
     extension_transpiler_for_target, install_bootstrap, snapshot_extensions,
@@ -95,18 +94,17 @@ impl V8StartupSnapshot {
 
 #[cfg(test)]
 static V8_BOOTSTRAP_SNAPSHOT_BUILDS: AtomicUsize = AtomicUsize::new(0);
-static V8_STARTUP_SNAPSHOT_BUILD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
 pub(crate) fn create_v8_startup_snapshot(
     compatibility_target: RuntimeCompatibilityTarget,
     service_extension_enabled: bool,
 ) -> Result<V8StartupSnapshot> {
-    let _snapshot_build_guard = V8_STARTUP_SNAPSHOT_BUILD_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .map_err(|_| {
-            NimbusRuntimeError::Contract("V8 startup snapshot build lock was poisoned".to_string())
-        })?;
+    // Serialize snapshot BUILD against cold isolate CREATION and DISPOSAL on the
+    // one process-global re-entrant lock owned by deno_core: the SnapshotCreator
+    // here and every restored isolate alias the default IsolateGroup's read-only
+    // heap on a single (shared) cage, and build/create/dispose are its only
+    // unguarded writers. Re-entrant, so the build's own isolate disposal (via
+    // create_blob) nesting under this guard does not self-deadlock.
+    let _shared_heap_guard = deno_core::shared_ro_heap_serialize_lock().lock();
 
     #[cfg(test)]
     V8_BOOTSTRAP_SNAPSHOT_BUILDS.fetch_add(1, Ordering::Relaxed);

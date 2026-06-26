@@ -106,6 +106,21 @@ impl NimbusRuntime {
         use_locker: bool,
         worker_bootstrap_state: InstalledRuntimeWorkerBootstrapState,
     ) -> Result<JsRuntime> {
+        // Serialize cold isolate CREATION (snapshot restore deserializers in
+        // Isolate::Init) against snapshot BUILD and isolate DISPOSAL on one
+        // process-global re-entrant lock owned by deno_core. On a single (shared)
+        // pointer-compression cage every isolate aliases the group's shared
+        // read-only heap; create/build/dispose are its only unguarded writers and
+        // must be mutually exclusive across threads (else `shared_heap_object_cache
+        // ->at()` OOB / vector abort). Held across the whole body since
+        // bootstrap/snapshot-restore also touch the shared RO heap. Re-entrant so a
+        // failed construction dropping a partial runtime (deno Drop) doesn't
+        // self-deadlock. A multi-cage build (private RO heap per isolate) can drop
+        // this lock entirely.
+        // Anchor floor (Option A): fail closed if any isolate is built before the NodeFull
+        // RO-heap anchor is installed. No-op unless the anchor system is in use.
+        super::anchor::assert_anchor_floor();
+        let _shared_heap_guard = deno_core::shared_ro_heap_serialize_lock().lock();
         let mut runtime = JsRuntime::new(self.runtime_options(
             bundle,
             startup_snapshot,

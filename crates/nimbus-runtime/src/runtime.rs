@@ -19,7 +19,7 @@ use crate::watchdog::WatchdogTimer;
 pub(crate) mod bootstrap;
 pub(crate) mod bundle;
 mod cooperative;
-mod driver;
+pub(crate) mod driver;
 mod facade;
 mod helpers;
 mod invocation;
