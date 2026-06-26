@@ -149,10 +149,11 @@ pub(crate) fn run_v8_crash_control_in_subprocess(case: IsolatedRuntimeTestCase, 
             .output()
             .expect("crash-control subprocess should launch");
             let _ = std::fs::remove_dir_all(&tmp_dir);
+            // SIGTRAP=5 (V8 fatal `Unknown external reference` on snapshot deserialize),
             // SIGABRT=6 (libc++ `vector.h:415` abort, the OOB direction), SIGBUS=10
             // (wrong-object deref direction), SIGSEGV=11 (defensive). Any is the control
             // crashing as required.
-            if matches!(output.status.signal(), Some(6 | 10 | 11)) {
+            if matches!(output.status.signal(), Some(5 | 6 | 10 | 11)) {
                 return;
             }
             last_observation = format!(

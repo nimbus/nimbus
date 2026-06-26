@@ -230,11 +230,24 @@ impl NimbusRuntime {
         let runtime = match v8_runtime_pool.as_deref_mut() {
             Some(pool) => pool.take_runtime_for_invocation(self, &bundle, Some(&context))?,
             None => {
-                let snapshot = self.bootstrap_snapshot()?;
-                ReusableV8Runtime::fresh(
-                    self.create_runtime_from_snapshot(&bundle, snapshot)?,
-                    V8RuntimeConstructionMode::StartupSnapshot,
-                )
+                // Honor for_compatibility_target like the pool does (warm_pool::take_runtime).
+                // Hardcoding StartupSnapshot here built non-Node profiles SNAPSHOTTED, which
+                // deserialize against the NodeFull anchor's RO heap and abort (Unknown external
+                // reference / SIGBUS) — the same hole the pool fix closed. WebStandard must be
+                // built UNSNAPSHOTTED on this direct path too.
+                let mode = V8RuntimeConstructionMode::for_compatibility_target(
+                    self.policy.limits().compatibility_target,
+                );
+                let runtime = match mode {
+                    V8RuntimeConstructionMode::StartupSnapshot => {
+                        let snapshot = self.bootstrap_snapshot()?;
+                        self.create_runtime_from_snapshot(&bundle, snapshot)?
+                    }
+                    V8RuntimeConstructionMode::Unsnapshotted => {
+                        self.create_runtime(&bundle, None, false)?
+                    }
+                };
+                ReusableV8Runtime::fresh(runtime, mode)
             }
         };
         let mut driver =

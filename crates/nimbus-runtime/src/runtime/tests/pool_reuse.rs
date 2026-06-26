@@ -102,6 +102,10 @@ isolated_pool_reuse_tests! {
         => anchor_arm_blocks_until_installed_window_unreachable_via_create,
     fix: isol_floor_pre_arm
         => anchor_floor_pre_arm_build_records_whether_floor_fires,
+    crash(2): isol_direct_path_ws_snapshotted_crashes
+        => direct_path_webstandard_snapshotted_crashes_against_production_anchor,
+    fix: isol_direct_path_ws_unsnapshotted
+        => direct_path_webstandard_unsnapshotted_no_crash_after_fix,
 }
 
 /// PROVE-DON'T-ASSUME (the floor-panic question): is the in-process floor-panic a
@@ -207,6 +211,116 @@ fn anchor_floor_pre_arm_build_records_whether_floor_fires() {
     assert!(
         built_ok,
         "floor FIRED on a pre-arm build — it catches pre-arm reorders after all"
+    );
+}
+
+/// DEMONSTRATION (the construction-mode hazard B surfaced): the direct invocation path
+/// `invoke_bundle_unmanaged(None)` (invocation.rs:233, reached by `RuntimeExecutor::invoke`)
+/// hardcodes `V8RuntimeConstructionMode::StartupSnapshot` and builds `self`'s profile
+/// SNAPSHOTTED — BYPASSING `for_compatibility_target` (the ab6b1c477 pool fix). So a WebStandard
+/// runtime invoked through the direct path builds WebStandard SNAPSHOTTED, which deserializes
+/// against the NodeFull anchor's superset RO heap and aborts (SIGBUS) — exactly what
+/// `gate_snapshotted_weblean_*` proves, but now via the PRODUCTION anchor (`enable_and_arm`,
+/// what V8RuntimeBackendFactory::create calls). This reproduces the None-branch's build calls
+/// with the production anchor armed: it MUST crash, proving ab6b1c477 is incomplete (the direct
+/// path is a second WebStandard-snapshotted crash path). Wired as a CRASH CONTROL.
+#[test]
+#[ignore = "CRASH CONTROL: direct-path WebStandard-snapshotted build aborts vs the production anchor"]
+fn direct_path_webstandard_snapshotted_crashes_against_production_anchor() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        "globalThis.__nimbusInvoke = function () { return { ok: true }; };\nexport {};\n",
+    )
+    .expect("bundle should write");
+
+    // PRODUCTION anchor: NodeFull installed first, exactly as V8RuntimeBackendFactory::create.
+    crate::runtime::driver::anchor::enable_and_arm_nodefull_anchor();
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime should build");
+    rt.block_on(async {
+        // Exactly what invoke_bundle_unmanaged(None) does for a WebStandard `self`: SNAPSHOTTED.
+        let owner = NimbusRuntime::with_policy(
+            std::sync::Arc::new(RecordingHost::default()),
+            std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+        );
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let snap = owner
+            .bootstrap_snapshot()
+            .expect("webstandard snapshot builds");
+        let _rt = owner
+            .create_runtime_from_snapshot(&bundle, snap)
+            .expect("unreachable: WebStandard snapshot SIGBUSes against the NodeFull anchor");
+    });
+}
+
+/// FIX VERIFICATION: after invocation.rs's None branch honors for_compatibility_target, a
+/// WebStandard runtime invoked through the ACTUAL direct path (`invoke_bundle_unmanaged(None)`,
+/// what `RuntimeExecutor::invoke` / the server blocking path calls) builds UNSNAPSHOTTED and
+/// runs cleanly against the production anchor — no crash. Counterpart to the crash-control above.
+#[tokio::test]
+#[ignore = "own process (arms anchor): verifies the fixed direct-None path is unsnapshotted"]
+async fn direct_path_webstandard_unsnapshotted_no_crash_after_fix() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        "globalThis.__nimbusInvoke = function () { return { ok: true }; };\nexport {};\n",
+    )
+    .expect("bundle should write");
+
+    // Production anchor (NodeFull installed first), then invoke WebStandard via the direct path.
+    crate::runtime::driver::anchor::enable_and_arm_nodefull_anchor();
+
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "messages:list".to_string(),
+        args: serde_json::Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: None,
+        services: Default::default(),
+    };
+    let runtime_owner = NimbusRuntime::with_policy(
+        std::sync::Arc::new(RecordingHost::default()),
+        std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+    );
+    let watchdog = WatchdogTimer::new();
+    let mut permit = SharedInvocationPermit::new(runtime_owner.policy(), None, None, false, None);
+    permit
+        .acquire_initial(std::time::Instant::now())
+        .await
+        .expect("permit should admit invocation");
+    let context = RuntimeInvocationContext::top_level(&request);
+
+    let result = runtime_owner
+        .invoke_bundle_unmanaged(
+            None,
+            RuntimeInvocationExecution {
+                watchdog: watchdog.clone(),
+                bundle: bundle.clone(),
+                request: request.clone(),
+                context: context.clone(),
+                execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
+                    runtime_owner.policy().as_ref(),
+                    &request,
+                    &context,
+                ),
+                external_cancellation: None,
+                response_ready_tx: None,
+                permit: permit.clone(),
+            },
+        )
+        .await;
+    assert!(
+        result.is_ok(),
+        "direct-path WebStandard must build UNSNAPSHOTTED (no crash) after the fix: {:?}",
+        result.err()
     );
 }
 
