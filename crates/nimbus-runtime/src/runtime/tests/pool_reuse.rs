@@ -100,6 +100,8 @@ isolated_pool_reuse_tests! {
         => nodefull_anchor_first_then_cross_profile_refill_does_not_abort,
     fix: isol_arm_blocks_until_installed
         => anchor_arm_blocks_until_installed_window_unreachable_via_create,
+    fix: isol_floor_pre_arm
+        => anchor_floor_pre_arm_build_records_whether_floor_fires,
 }
 
 /// PROVE-DON'T-ASSUME (the floor-panic question): is the in-process floor-panic a
@@ -160,6 +162,51 @@ fn anchor_arm_blocks_until_installed_window_unreachable_via_create() {
         arm_elapsed.as_millis() >= 700,
         "enable_and_arm/create must BLOCK for the full install (took {arm_elapsed:?}); a shorter \
          time would mean an arm-before-install startup gap, NOT a test-only race"
+    );
+}
+
+/// PROVE-DON'T-ASSUME (what does the floor actually guard?). The floor's DOC claims it catches
+/// "an isolate built before the anchor installs — a regression catch for a future init reorder."
+/// But `assert_anchor_floor` is gated on `ANCHOR_ENABLED`, which is only set INSIDE
+/// `install_nodefull_anchor`. So a build that happens BEFORE the anchor is ever armed (the real
+/// "someone reordered init / added a build path before create() arms" case) has
+/// ANCHOR_ENABLED=false and the floor is DORMANT. This test builds an isolate in a fresh process
+/// with the anchor NEVER armed and records whether the floor fires. Result decides the fix:
+/// dormant => the floor only guards the install window (proven test-only) and is WEAKER than its
+/// doc claims (strengthen it to catch pre-arm builds, or document it window-only); fires => it is
+/// the real pre-arm ordering guard.
+#[test]
+#[ignore = "own process: asserts floor behavior on a pre-arm build; run via isol_floor_pre_arm"]
+fn anchor_floor_pre_arm_build_records_whether_floor_fires() {
+    use crate::runtime::driver::anchor;
+
+    assert!(
+        !anchor::anchor_enabled_for_test(),
+        "precondition: fresh process, anchor never armed (ANCHOR_ENABLED must be false)"
+    );
+
+    // Build an isolate directly with the anchor NEVER armed. bootstrap_snapshot ->
+    // create_v8_startup_snapshot -> assert_anchor_floor is the floor check on this path.
+    let built_ok = std::panic::catch_unwind(|| {
+        let owner = NimbusRuntime::with_policy(
+            std::sync::Arc::new(RecordingHost::default()),
+            std::sync::Arc::new(RuntimePolicy::new(
+                crate::RuntimeLimits::application_node22(),
+            )),
+        );
+        owner
+            .bootstrap_snapshot()
+            .expect("snapshot builds when the anchor is not armed");
+    })
+    .is_ok();
+
+    // PROVEN BEHAVIOR: the floor is DORMANT before arming. A pre-arm build does NOT trip it
+    // (ANCHOR_ENABLED is false), so the floor as built guards ONLY the install window, not a
+    // real pre-arm init reorder. (If this ever fails, the floor started firing pre-arm —
+    // re-evaluate the strengthen-vs-document decision.)
+    assert!(
+        built_ok,
+        "floor FIRED on a pre-arm build — it catches pre-arm reorders after all"
     );
 }
 
