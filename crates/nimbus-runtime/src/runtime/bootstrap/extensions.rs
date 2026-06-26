@@ -101,23 +101,46 @@ pub(crate) fn execution_extensions(
 }
 
 impl RuntimeBootstrapExtensionRegistry {
+    /// Single source of truth for WHICH bootstrap slots a target receives and IN WHAT ORDER:
+    /// every web-standard slot on all V8 targets, Node-only slots on Node targets, then (for
+    /// non-Node targets) the WebStandard bootstrap entry point. Parameterized by how to render
+    /// each entry, so the snapshot path, the execution path, and the test label registry share
+    /// ONE gating + ordering and cannot drift on which extensions a profile carries — the exact
+    /// property the cross-profile cage fix turns on. The per-path tail (`nimbus_runtime`, the
+    /// test marker, optional `service`) differs per caller and is appended by each.
+    fn selected_bootstrap_entries<T>(
+        target: RuntimeCompatibilityTarget,
+        mut render_slot: impl FnMut(NodeBootstrapExtensionSlot) -> T,
+        render_web_standard_bootstrap: impl FnOnce() -> T,
+    ) -> Vec<T> {
+        let node = target.is_node();
+        let mut entries = Vec::new();
+        // Web standards on ALL V8 targets (preserve slot order so deps stay satisfied);
+        // Node-only slots gated on is_node. Egress capability for fetch/WebSocket stays gated at
+        // call time by deno_permissions (presence != capability).
+        for slot in NODE_BOOTSTRAP_EXTENSION_SLOTS.iter().copied() {
+            if node || slot.is_web_standard() {
+                entries.push(render_slot(slot));
+            }
+        }
+        // Non-Node V8 targets wire the web globals via the WebStandard bootstrap entry point;
+        // Node targets get them from the node22 bootstrap slot above.
+        if !node {
+            entries.push(render_web_standard_bootstrap());
+        }
+        entries
+    }
+
     fn snapshot_extensions(
         target: RuntimeCompatibilityTarget,
         service_extension_enabled: bool,
     ) -> Vec<Extension> {
-        let node = target.is_node();
         install_rustls_default_provider_once();
-        let mut extensions = Vec::new();
-        // Web standards on ALL V8 targets (preserve slot order so deps stay satisfied);
-        // Node-only slots gated on is_node.
-        for slot in NODE_BOOTSTRAP_EXTENSION_SLOTS.iter().copied() {
-            if node || slot.is_web_standard() {
-                extensions.push(slot.snapshot_extension());
-            }
-        }
-        if !node {
-            extensions.push(web_standard_runtime_bootstrap_extension());
-        }
+        let mut extensions = Self::selected_bootstrap_entries(
+            target,
+            NodeBootstrapExtensionSlot::snapshot_extension,
+            web_standard_runtime_bootstrap_extension,
+        );
         extensions.push(runtime_extension());
         #[cfg(test)]
         extensions.push(runtime_test_extension());
@@ -133,7 +156,6 @@ impl RuntimeBootstrapExtensionRegistry {
         loader_hook_registry: Option<LoaderHookRegistry>,
         limits: &RuntimeLimits,
     ) -> Vec<Extension> {
-        let node = target.is_node();
         install_rustls_default_provider_once();
         // Context is consumed only by Node-only slots; web-standard slots ignore it.
         let context = NodeExecutionExtensionContext {
@@ -142,20 +164,11 @@ impl RuntimeBootstrapExtensionRegistry {
             limits,
             fs: MaybeArc::new(deno_fs::RealFs),
         };
-        let mut extensions = Vec::new();
-        // Web standards on ALL V8 targets (preserve slot order so deps stay satisfied);
-        // Node-only slots gated on is_node. Egress capability for fetch/WebSocket stays
-        // gated at call time by deno_permissions (presence != capability).
-        for slot in NODE_BOOTSTRAP_EXTENSION_SLOTS.iter().copied() {
-            if node || slot.is_web_standard() {
-                extensions.push(slot.execution_extension(&context));
-            }
-        }
-        // Non-Node V8 targets wire the web globals (TextEncoder/URL/Streams/WebCrypto/Fetch)
-        // via the WebStandard bootstrap entry point; Node targets get them from node22.
-        if !node {
-            extensions.push(web_standard_runtime_bootstrap_extension());
-        }
+        let mut extensions = Self::selected_bootstrap_entries(
+            target,
+            |slot| slot.execution_extension(&context),
+            web_standard_runtime_bootstrap_extension,
+        );
         extensions.push(runtime_extension());
         #[cfg(test)]
         extensions.push(runtime_test_extension());
@@ -166,18 +179,24 @@ impl RuntimeBootstrapExtensionRegistry {
     }
 
     #[cfg(test)]
-    fn snapshot_extension_labels(target: RuntimeCompatibilityTarget) -> Vec<&'static str> {
-        let mut labels = Vec::new();
-        if target.is_node() {
-            labels.extend(
-                NODE_BOOTSTRAP_EXTENSION_SLOTS
-                    .iter()
-                    .copied()
-                    .map(NodeBootstrapExtensionSlot::label),
-            );
-        }
+    fn snapshot_extension_labels(
+        target: RuntimeCompatibilityTarget,
+        service_extension_enabled: bool,
+    ) -> Vec<&'static str> {
+        // Shares selected_bootstrap_entries — the SAME gating + ordering snapshot_extensions()
+        // uses — so this registry cannot drift from what production installs. (The prior
+        // reconstruction gated on is_node() alone and falsely reported WebStandard as "lean"
+        // after the cage fix added fetch/net/websocket to its snapshot.)
+        let mut labels = Self::selected_bootstrap_entries(
+            target,
+            NodeBootstrapExtensionSlot::label,
+            || web_standard_runtime_bootstrap_extension().name,
+        );
         labels.push("nimbus_runtime");
         labels.push("nimbus_runtime_test");
+        if service_extension_enabled {
+            labels.push(service_extension().name);
+        }
         labels
     }
 }
@@ -336,19 +355,48 @@ mod tests {
     }
 
     #[test]
-    fn web_standard_snapshot_registry_is_lean_runtime_only() {
-        assert_eq!(
-            RuntimeBootstrapExtensionRegistry::snapshot_extension_labels(
-                RuntimeCompatibilityTarget::WebStandardIsolate
-            ),
-            vec!["nimbus_runtime", "nimbus_runtime_test"]
+    fn web_standard_snapshot_registry_carries_web_extensions_not_node_internals() {
+        let labels = RuntimeBootstrapExtensionRegistry::snapshot_extension_labels(
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            false,
         );
+        // WebStandard's snapshot is NOT "lean": it carries the full web-standard slot set
+        // (including the egress-capable fetch/websocket/net/tls), the WebStandard bootstrap, and
+        // the nimbus runtime tail — exactly what snapshot_extensions() installs. Presence is
+        // required; egress CAPABILITY stays gated at call time by deno_permissions
+        // (deny-by-default). Asserting the real set keeps the security signal honest (the prior
+        // assertion claimed "lean runtime only", which became false and silently stayed green).
+        assert_eq!(
+            labels,
+            vec![
+                "telemetry",
+                "webidl",
+                "web",
+                "crypto",
+                "fetch",
+                "websocket",
+                "net",
+                "tls",
+                "nimbus_web_standard_runtime_bootstrap_ext",
+                "nimbus_runtime",
+                "nimbus_runtime_test",
+            ]
+        );
+        // The web-standard profile must NOT carry Node-only host-access internals.
+        for node_only in ["napi", "http", "io", "fs", "os", "process", "node", "node_runtime_bootstrap"]
+        {
+            assert!(
+                !labels.contains(&node_only),
+                "WebStandard snapshot must not carry Node-only `{node_only}`; got {labels:?}"
+            );
+        }
     }
 
     #[test]
     fn node_snapshot_registry_extends_ordered_node_slots() {
         let labels = RuntimeBootstrapExtensionRegistry::snapshot_extension_labels(
             RuntimeCompatibilityTarget::Node22,
+            false,
         );
         assert_eq!(
             &labels[..NODE_BOOTSTRAP_EXTENSION_SLOTS.len()],

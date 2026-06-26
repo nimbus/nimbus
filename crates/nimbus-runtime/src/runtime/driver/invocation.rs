@@ -230,23 +230,16 @@ impl NimbusRuntime {
         let runtime = match v8_runtime_pool.as_deref_mut() {
             Some(pool) => pool.take_runtime_for_invocation(self, &bundle, Some(&context))?,
             None => {
-                // Honor for_compatibility_target like the pool does (warm_pool::take_runtime).
-                // Hardcoding StartupSnapshot here built non-Node profiles SNAPSHOTTED, which
-                // deserialize against the NodeFull anchor's RO heap and abort (Unknown external
-                // reference / SIGBUS) — the same hole the pool fix closed. WebStandard must be
-                // built UNSNAPSHOTTED on this direct path too.
+                // Pool-less direct path: route through the SAME mode->construction mapping the
+                // warm pool uses (`NimbusRuntime::create_runtime_for_mode`) so non-Node profiles
+                // are built UNSNAPSHOTTED here too. Hardcoding StartupSnapshot here was the second
+                // cross-profile cage-crash hole (efd891a8a): a snapshotted WebStandard deserializes
+                // against the NodeFull anchor's RO heap and aborts. `use_locker = false` matches
+                // the prior create_runtime_from_snapshot behavior on this path.
                 let mode = V8RuntimeConstructionMode::for_compatibility_target(
                     self.policy.limits().compatibility_target,
                 );
-                let runtime = match mode {
-                    V8RuntimeConstructionMode::StartupSnapshot => {
-                        let snapshot = self.bootstrap_snapshot()?;
-                        self.create_runtime_from_snapshot(&bundle, snapshot)?
-                    }
-                    V8RuntimeConstructionMode::Unsnapshotted => {
-                        self.create_runtime(&bundle, None, false)?
-                    }
-                };
+                let runtime = self.create_runtime_for_mode(&bundle, false, mode)?;
                 ReusableV8Runtime::fresh(runtime, mode)
             }
         };

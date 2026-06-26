@@ -99,6 +99,25 @@ impl NimbusRuntime {
         )
     }
 
+    /// The SINGLE source of truth mapping a `V8RuntimeConstructionMode` to whether a startup
+    /// snapshot is deserialized: `StartupSnapshot` rides `bootstrap_snapshot`, `Unsnapshotted`
+    /// builds with no snapshot. Every construction path that selects a mode — the warm pool AND
+    /// the pool-less direct invocation path — routes through here, so the mapping cannot drift. A
+    /// divergent copy on the direct path that hardcoded the snapshot mode was the second
+    /// cross-profile cage-crash hole (efd891a8a).
+    pub(crate) fn create_runtime_for_mode(
+        &self,
+        bundle: &RuntimeBundle,
+        use_locker: bool,
+        construction_mode: V8RuntimeConstructionMode,
+    ) -> Result<JsRuntime> {
+        let startup_snapshot = match construction_mode {
+            V8RuntimeConstructionMode::StartupSnapshot => Some(self.bootstrap_snapshot()?),
+            V8RuntimeConstructionMode::Unsnapshotted => None::<&V8StartupSnapshot>,
+        };
+        self.create_runtime(bundle, startup_snapshot, use_locker)
+    }
+
     fn create_runtime_with_bootstrap_state(
         &self,
         bundle: &RuntimeBundle,

@@ -9,6 +9,31 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::IsolatedRuntimeTestCase;
 
+/// Hand-declared `flock(2)` advisory whole-file locking. The crate avoids a `libc`/`rustix`
+/// dependency, so the syscall and its flag constants (identical across the Unix targets we run
+/// on) are declared ONCE here and wrapped in safe helpers, rather than repeated at each of the
+/// four lock/unlock sites below.
+#[cfg(unix)]
+mod file_lock {
+    const LOCK_EX: i32 = 2; // exclusive lock
+    const LOCK_UN: i32 = 8; // release lock
+
+    unsafe extern "C" {
+        fn flock(fd: i32, operation: i32) -> i32;
+    }
+
+    /// Acquire an exclusive advisory lock on `fd`, blocking until held. Returns the raw
+    /// `flock(2)` status (0 on success).
+    pub(super) fn lock_exclusive(fd: i32) -> i32 {
+        unsafe { flock(fd, LOCK_EX) }
+    }
+
+    /// Release the advisory lock on `fd`; best-effort (a failing unlock on teardown is ignored).
+    pub(super) fn unlock(fd: i32) {
+        let _ = unsafe { flock(fd, LOCK_UN) };
+    }
+}
+
 pub(crate) struct RuntimeSuiteLockGuard {
     _permit: OwnedSemaphorePermit,
 }
@@ -51,12 +76,6 @@ pub(crate) struct RuntimeSuiteSubprocessLockGuard {
 fn acquire_runtime_suite_subprocess_lock() -> RuntimeSuiteSubprocessLockGuard {
     #[cfg(unix)]
     {
-        const LOCK_EX: i32 = 2;
-
-        unsafe extern "C" {
-            fn flock(fd: i32, operation: i32) -> i32;
-        }
-
         // The isolated runtime tests spawn nested test binaries. Keep those
         // subprocess runs serialized across the host so coverage and other
         // multi-binary lanes do not overlap locker-sensitive V8 state.
@@ -68,7 +87,7 @@ fn acquire_runtime_suite_subprocess_lock() -> RuntimeSuiteSubprocessLockGuard {
             .write(true)
             .open(path)
             .expect("runtime subprocess suite lockfile should open");
-        let status = unsafe { flock(file.as_raw_fd(), LOCK_EX) };
+        let status = file_lock::lock_exclusive(file.as_raw_fd());
         assert_eq!(
             status, 0,
             "runtime subprocess suite lock should acquire successfully"
@@ -164,12 +183,23 @@ pub(crate) fn run_v8_crash_control_in_subprocess(case: IsolatedRuntimeTestCase, 
             ]
             .iter()
             .any(|sig| stdout.contains(sig) || stderr.contains(sig));
-            // SIGABRT=6 / SIGTRAP=5 emit a message (vector.h:415 / Unknown external reference):
-            // require the cage signature. SIGBUS=10 / SIGSEGV=11 are the wrong-object-deref cage
-            // crashes and abort SILENTLY (no message), so the signal itself is the signature.
+            // Cage crashes die by signal; which signal depends on BOTH the crash direction and
+            // the OS. SIGABRT/SIGTRAP carry a message (vector.h:415 / "Unknown external
+            // reference"), so require the cage signature; SIGBUS/SIGSEGV are the wrong-object
+            // dereferences and abort SILENTLY, so the signal itself is the signature. SIGBUS is 7
+            // on Linux but 10 on Darwin/BSD, and this lane runs on both (macOS dev plus the
+            // ubuntu-24.04 `rust-runtime-ptrcomp-check` CI job), so resolve it per target instead
+            // of hardcoding the macOS value (which would silently never match a Linux SIGBUS).
+            const SIGTRAP: i32 = 5;
+            const SIGABRT: i32 = 6;
+            const SIGSEGV: i32 = 11;
+            #[cfg(target_os = "linux")]
+            const SIGBUS: i32 = 7;
+            #[cfg(not(target_os = "linux"))]
+            const SIGBUS: i32 = 10;
             let is_cage_crash = match output.status.signal() {
-                Some(5) | Some(6) => has_cage_signature,
-                Some(10) | Some(11) => true,
+                Some(s) if s == SIGTRAP || s == SIGABRT => has_cage_signature,
+                Some(s) if s == SIGBUS || s == SIGSEGV => true,
                 _ => false,
             };
             if is_cage_crash {
@@ -241,12 +271,6 @@ pub(crate) fn acquire_snapshot_reset_test_lock() -> SnapshotResetTestLockGuard {
 
     #[cfg(unix)]
     {
-        const LOCK_EX: i32 = 2;
-
-        unsafe extern "C" {
-            fn flock(fd: i32, operation: i32) -> i32;
-        }
-
         let path = std::env::temp_dir().join("nimbus-runtime-snapshot-reset-test.lock");
         let file = OpenOptions::new()
             .create(true)
@@ -255,7 +279,7 @@ pub(crate) fn acquire_snapshot_reset_test_lock() -> SnapshotResetTestLockGuard {
             .write(true)
             .open(path)
             .expect("snapshot reset test lockfile should open");
-        let status = unsafe { flock(file.as_raw_fd(), LOCK_EX) };
+        let status = file_lock::lock_exclusive(file.as_raw_fd());
         assert_eq!(
             status, 0,
             "snapshot reset test lock should acquire successfully"
@@ -277,25 +301,13 @@ pub(crate) fn acquire_snapshot_reset_test_lock() -> SnapshotResetTestLockGuard {
 #[cfg(unix)]
 impl Drop for SnapshotResetTestLockGuard {
     fn drop(&mut self) {
-        const LOCK_UN: i32 = 8;
-
-        unsafe extern "C" {
-            fn flock(fd: i32, operation: i32) -> i32;
-        }
-
-        let _ = unsafe { flock(self.file.as_raw_fd(), LOCK_UN) };
+        file_lock::unlock(self.file.as_raw_fd());
     }
 }
 
 #[cfg(unix)]
 impl Drop for RuntimeSuiteSubprocessLockGuard {
     fn drop(&mut self) {
-        const LOCK_UN: i32 = 8;
-
-        unsafe extern "C" {
-            fn flock(fd: i32, operation: i32) -> i32;
-        }
-
-        let _ = unsafe { flock(self.file.as_raw_fd(), LOCK_UN) };
+        file_lock::unlock(self.file.as_raw_fd());
     }
 }

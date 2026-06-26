@@ -31,8 +31,6 @@
 //! cost of sharing a cage, and it goes away when the cage is no longer shared.
 
 use std::cell::Cell;
-#[cfg(test)]
-use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
@@ -66,22 +64,6 @@ thread_local! {
     static IN_ANCHOR_BUILD: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Test-only: an artificial delay inserted into the anchor build (after `ANCHOR_ENABLED`,
-/// before `ANCHOR_INSTALLED`) so a test can WIDEN the install window deterministically and
-/// prove whether the production arming path blocks until install completes.
-#[cfg(test)]
-static ANCHOR_INSTALL_DELAY_MS: AtomicU64 = AtomicU64::new(0);
-
-#[cfg(test)]
-pub(crate) fn set_anchor_install_delay_ms_for_test(ms: u64) {
-    ANCHOR_INSTALL_DELAY_MS.store(ms, Ordering::SeqCst);
-}
-
-#[cfg(test)]
-pub(crate) fn anchor_enabled_for_test() -> bool {
-    ANCHOR_ENABLED.load(Ordering::SeqCst)
-}
-
 /// Install the NodeFull RO-heap anchor. Idempotent. Call ONCE at process init, BEFORE the
 /// pool serves any request, so the cage's shared RO heap is NodeFull's superset — making a
 /// WebStandard-first install structurally unreachable. Spawns the anchor isolate on a thread
@@ -106,7 +88,7 @@ pub(crate) fn install_nodefull_anchor(host: Arc<dyn HostBridge>) {
                     // can deterministically prove the arming path blocks until install.
                     #[cfg(test)]
                     {
-                        let ms = ANCHOR_INSTALL_DELAY_MS.load(Ordering::SeqCst);
+                        let ms = test_hooks::ANCHOR_INSTALL_DELAY_MS.load(Ordering::SeqCst);
                         if ms > 0 {
                             std::thread::sleep(std::time::Duration::from_millis(ms));
                         }
@@ -135,9 +117,13 @@ pub(crate) fn install_nodefull_anchor(host: Arc<dyn HostBridge>) {
                 });
             })
             .expect("anchor thread should spawn");
-        ready_rx
-            .recv()
-            .expect("anchor should install before serving");
+        ready_rx.recv().expect(
+            "NodeFull RO-heap anchor build FAILED: the anchor thread panicked before signalling \
+             ready and dropped the channel, so the superset RO heap was never installed. The \
+             process is intentionally wedged here rather than serving — building any isolate now \
+             would risk the cross-profile cage crash this anchor prevents. This is fail-closed, \
+             NOT a deadlock; the anchor thread's panic is logged above with the root cause.",
+        );
     });
 }
 
@@ -168,15 +154,47 @@ pub(crate) fn assert_anchor_floor() {
     }
 }
 
+// The test-only seams are re-exported so call sites still read as `anchor::<hook>`; the `use`
+// precedes the module so `#[cfg(test)] mod test_hooks` stays the file's last item (satisfies
+// clippy::items_after_test_module).
 #[cfg(test)]
-pub(crate) fn anchor_installed_for_test() -> bool {
-    ANCHOR_INSTALLED.load(Ordering::SeqCst)
-}
+pub(crate) use test_hooks::{
+    anchor_enabled_for_test, anchor_installed_for_test, arm_floor_without_install_for_test,
+    set_anchor_install_delay_ms_for_test,
+};
 
-/// Test-only: arm the floor (ANCHOR_ENABLED) WITHOUT installing the anchor, to prove the
-/// fail-closed assertion actually fires on a non-anchor build. Process-global; use only in
-/// a process-isolated (`--exact` / subprocess) test.
+/// Test-only seams into the process-global anchor state. The anchor's correctness rests on
+/// process-global `OnceLock`/atomics that cannot be dependency-injected, so the tests that prove
+/// its install protocol (blocks-until-installed, floor-fires, dormant-pre-arm) need a few hooks
+/// into that state. They are grouped here, compile out of production entirely, and re-exported
+/// above so call sites still read as `anchor::<hook>`.
 #[cfg(test)]
-pub(crate) fn arm_floor_without_install_for_test() {
-    ANCHOR_ENABLED.store(true, Ordering::SeqCst);
+mod test_hooks {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::{ANCHOR_ENABLED, ANCHOR_INSTALLED};
+
+    /// Artificial delay inserted into the anchor build (after `ANCHOR_ENABLED`, before
+    /// `ANCHOR_INSTALLED`) so a test can WIDEN the install window deterministically and prove the
+    /// production arming path blocks until install completes. Read by `install_nodefull_anchor`.
+    pub(super) static ANCHOR_INSTALL_DELAY_MS: AtomicU64 = AtomicU64::new(0);
+
+    pub(crate) fn set_anchor_install_delay_ms_for_test(ms: u64) {
+        ANCHOR_INSTALL_DELAY_MS.store(ms, Ordering::SeqCst);
+    }
+
+    pub(crate) fn anchor_enabled_for_test() -> bool {
+        ANCHOR_ENABLED.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn anchor_installed_for_test() -> bool {
+        ANCHOR_INSTALLED.load(Ordering::SeqCst)
+    }
+
+    /// Arm the floor (`ANCHOR_ENABLED`) WITHOUT installing the anchor, to prove the fail-closed
+    /// assertion actually fires on a non-anchor build. Process-global; use only in a
+    /// process-isolated (`--exact` / subprocess) test.
+    pub(crate) fn arm_floor_without_install_for_test() {
+        ANCHOR_ENABLED.store(true, Ordering::SeqCst);
+    }
 }
