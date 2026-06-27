@@ -44,6 +44,32 @@ impl EgressRequest {
         Self::from_fetch_url_with_context(method, url, false, None, None, None)
     }
 
+    pub fn from_wasm_http_url(
+        method: impl Into<String>,
+        url: &str,
+    ) -> std::result::Result<Self, EgressRequestError> {
+        Self::from_wasm_http_url_with_context(method, url, None, None, None)
+    }
+
+    pub fn from_wasm_http_url_with_context(
+        method: impl Into<String>,
+        url: &str,
+        tenant_label: Option<String>,
+        session_id: Option<String>,
+        invocation_id: Option<u64>,
+    ) -> std::result::Result<Self, EgressRequestError> {
+        let mut request = Self::from_fetch_url_with_context(
+            method,
+            url,
+            false,
+            tenant_label,
+            session_id,
+            invocation_id,
+        )?;
+        request.substrate = EgressSubstrate::Wasm;
+        Ok(request)
+    }
+
     pub(crate) fn from_fetch_url_with_context(
         method: impl Into<String>,
         url: &str,
@@ -204,6 +230,52 @@ pub fn authorize_fetch_egress(
 }
 
 #[derive(Clone)]
+pub struct WasmHttpClientEgressGatewayBinding {
+    gateway: Arc<dyn EgressGateway>,
+    tenant_label: Option<String>,
+    session_id: Option<String>,
+    invocation_id: Option<u64>,
+}
+
+impl WasmHttpClientEgressGatewayBinding {
+    pub fn new(gateway: Arc<dyn EgressGateway>) -> Self {
+        Self {
+            gateway,
+            tenant_label: None,
+            session_id: None,
+            invocation_id: None,
+        }
+    }
+
+    pub fn with_context(
+        mut self,
+        tenant_label: Option<String>,
+        session_id: Option<String>,
+        invocation_id: Option<u64>,
+    ) -> Self {
+        self.tenant_label = tenant_label;
+        self.session_id = session_id;
+        self.invocation_id = invocation_id;
+        self
+    }
+
+    pub fn authorize_http_client_request(
+        &self,
+        method: impl Into<String>,
+        url: &str,
+    ) -> std::result::Result<EgressAuthorization, EgressRequestError> {
+        let request = EgressRequest::from_wasm_http_url_with_context(
+            method,
+            url,
+            self.tenant_label.clone(),
+            self.session_id.clone(),
+            self.invocation_id,
+        )?;
+        Ok(self.gateway.authorize(&request))
+    }
+}
+
+#[derive(Clone)]
 pub(crate) enum RuntimeEgressGatewayBinding {
     CoarsePermissions,
     Gateway(Arc<dyn EgressGateway>),
@@ -228,6 +300,26 @@ mod tests {
     use super::*;
     use serde_json::Value;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[derive(Default)]
+    struct RecordingRuleGateway {
+        seen: Mutex<Vec<EgressRequest>>,
+    }
+
+    impl EgressGateway for RecordingRuleGateway {
+        fn authorize(&self, request: &EgressRequest) -> EgressAuthorization {
+            self.seen
+                .lock()
+                .expect("recording gateway lock should not be poisoned")
+                .push(request.clone());
+            if request.host == "api.example.test" {
+                EgressAuthorization::allow("allowed by identical policy rule")
+                    .with_matched_rule("api")
+            } else {
+                EgressAuthorization::deny("blocked by test gateway")
+            }
+        }
+    }
 
     #[test]
     fn fetch_egress_request_canonicalizes_authority_and_default_port() {
@@ -258,6 +350,25 @@ mod tests {
         let error = EgressRequest::from_fetch_url("GET", "https://token@example.com").unwrap_err();
 
         assert!(error.to_string().contains("must not contain userinfo"));
+    }
+
+    #[test]
+    fn wasm_egress_http_client_request_uses_wasm_substrate() {
+        let request = EgressRequest::from_wasm_http_url(
+            "POST",
+            "https://api.example.test/v1/messages?token=secret",
+        )
+        .unwrap();
+
+        assert_eq!(request.substrate, EgressSubstrate::Wasm);
+        assert_eq!(request.protocol, EgressProtocol::Https);
+        assert_eq!(request.method.as_deref(), Some("POST"));
+        assert_eq!(request.host, "api.example.test");
+        assert_eq!(request.port, 443);
+        assert_eq!(
+            request.path_and_query.as_deref(),
+            Some("/v1/messages?token=secret")
+        );
     }
 
     #[test]
@@ -303,6 +414,78 @@ mod tests {
             .lock()
             .expect("spy gateway lock should not be poisoned");
         assert_eq!(seen.as_slice(), std::slice::from_ref(&request));
+    }
+
+    #[test]
+    fn wasm_egress_http_client_binding_consults_egress_gateway() {
+        let gateway = Arc::new(RecordingRuleGateway::default());
+        let binding = WasmHttpClientEgressGatewayBinding::new(gateway.clone()).with_context(
+            Some("tenant-a".to_string()),
+            Some("session-a".to_string()),
+            Some(42),
+        );
+
+        let authorization = binding
+            .authorize_http_client_request("GET", "https://api.example.test/v1/messages")
+            .expect("wasm http-client URL should parse");
+
+        assert!(authorization.is_allowed());
+        assert_eq!(authorization.matched_rule(), Some("api"));
+        let seen = gateway
+            .seen
+            .lock()
+            .expect("recording gateway lock should not be poisoned");
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].substrate, EgressSubstrate::Wasm);
+        assert_eq!(seen[0].tenant_label.as_deref(), Some("tenant-a"));
+        assert_eq!(seen[0].session_id.as_deref(), Some("session-a"));
+        assert_eq!(seen[0].invocation_id, Some(42));
+    }
+
+    #[test]
+    fn wasm_egress_deny_fails_closed() {
+        let gateway = Arc::new(RecordingRuleGateway::default());
+        let binding = WasmHttpClientEgressGatewayBinding::new(gateway);
+
+        let authorization = binding
+            .authorize_http_client_request("GET", "https://blocked.example.test/v1/messages")
+            .expect("wasm http-client URL should parse");
+
+        assert!(!authorization.is_allowed());
+        assert!(
+            authorization.reason().contains("blocked by test gateway"),
+            "deny wasm requests should fail closed with the gateway reason: {}",
+            authorization.reason()
+        );
+    }
+
+    #[test]
+    fn three_substrate_consistency_for_identical_egress_request() {
+        let gateway = RecordingRuleGateway::default();
+        let isolate =
+            EgressRequest::from_fetch_url("GET", "https://api.example.test/v1/messages").unwrap();
+        let wasm = EgressRequest::from_wasm_http_url("GET", "https://api.example.test/v1/messages")
+            .unwrap();
+        let container = EgressRequest {
+            substrate: EgressSubstrate::Container,
+            ..EgressRequest::from_fetch_url("GET", "https://api.example.test/v1/messages").unwrap()
+        };
+
+        let isolate_authorization = gateway.authorize(&isolate);
+        let wasm_authorization = gateway.authorize(&wasm);
+        let container_authorization = gateway.authorize(&container);
+
+        assert!(isolate_authorization.is_allowed());
+        assert!(wasm_authorization.is_allowed());
+        assert!(container_authorization.is_allowed());
+        assert_eq!(
+            isolate_authorization.matched_rule(),
+            wasm_authorization.matched_rule()
+        );
+        assert_eq!(
+            wasm_authorization.matched_rule(),
+            container_authorization.matched_rule()
+        );
     }
 
     #[test]
