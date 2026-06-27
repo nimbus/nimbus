@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use nimbus_core::Error;
-use nimbus_storage::{KvEntry, KvMutation, KvPut, RedbTenantKvStore, TenantKvStore};
+use nimbus_storage::{KvBatchOp, KvEntry, KvMutation, KvPut, RedbTenantKvStore, TenantKvStore};
 
 use crate::KvError;
 
@@ -150,6 +150,46 @@ impl NimbusKvStore {
     pub fn delete(&self, key: &[u8]) -> Result<bool, KvError> {
         let deleted = self.inner.engine.kv_delete(key)?;
         self.cache_remove(key);
+        Ok(deleted)
+    }
+
+    pub fn flush_all(&self, now_ms: i64) -> Result<usize, KvError> {
+        const BATCH_LIMIT: usize = 256;
+
+        let mut cursor = None;
+        let mut deleted = 0_usize;
+        loop {
+            let outcome = self.inner.engine.kv_sweep_expired(now_ms, BATCH_LIMIT)?;
+            deleted += outcome.deleted;
+            if outcome.deleted == 0 && outcome.stale_index_entries == 0 {
+                break;
+            }
+        }
+
+        loop {
+            let page = self
+                .inner
+                .engine
+                .kv_scan(b"", cursor.as_deref(), BATCH_LIMIT, now_ms)?;
+            if page.entries.is_empty() {
+                break;
+            }
+
+            let ops = page
+                .entries
+                .iter()
+                .map(|entry| KvBatchOp::Delete(entry.key.clone()))
+                .collect::<Vec<_>>();
+            deleted += self.inner.engine.kv_apply_batch(&ops)?.deletes;
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+
+        if self.cache_enabled() {
+            self.cache_lock()?.clear();
+        }
         Ok(deleted)
     }
 

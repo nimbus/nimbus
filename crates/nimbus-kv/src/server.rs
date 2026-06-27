@@ -409,6 +409,8 @@ fn execute_command(
         "GET" => get_command(&command.args, store),
         "SET" => set_command(&command.args, store),
         "DEL" => del_command(&command.args, store),
+        "FLUSHALL" => flushall_command(&command.args, store),
+        "FUNCTION" => function_command(&command.args),
         "EXPIRE" => expire_command(&command.args, store),
         "TTL" => ttl_command(&command.args, store),
         "INCR" => incr_command(&command.args, store),
@@ -482,6 +484,42 @@ fn del_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
         }
     }
     command_response(Response::Integer(deleted))
+}
+
+fn flushall_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
+    let response = match args {
+        [_] => match store.flush_all(now_ms()) {
+            Ok(_) => Response::SimpleString("OK".to_owned()),
+            Err(error) => storage_error(error),
+        },
+        [_, option]
+            if option.eq_ignore_ascii_case(b"SYNC") || option.eq_ignore_ascii_case(b"ASYNC") =>
+        {
+            match store.flush_all(now_ms()) {
+                Ok(_) => Response::SimpleString("OK".to_owned()),
+                Err(error) => storage_error(error),
+            }
+        }
+        _ => Response::Error("ERR wrong number of arguments for 'FLUSHALL'".to_owned()),
+    };
+    command_response(response)
+}
+
+fn function_command(args: &[Vec<u8>]) -> CommandOutcome {
+    let response = match args {
+        [_, subcommand] if subcommand.eq_ignore_ascii_case(b"FLUSH") => {
+            Response::SimpleString("OK".to_owned())
+        }
+        [_, subcommand, option]
+            if subcommand.eq_ignore_ascii_case(b"FLUSH")
+                && (option.eq_ignore_ascii_case(b"SYNC")
+                    || option.eq_ignore_ascii_case(b"ASYNC")) =>
+        {
+            Response::SimpleString("OK".to_owned())
+        }
+        _ => Response::Error("ERR unsupported FUNCTION subcommand".to_owned()),
+    };
+    command_response(response)
 }
 
 fn expire_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {

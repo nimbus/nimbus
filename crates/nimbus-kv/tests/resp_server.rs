@@ -180,7 +180,34 @@ async fn resp_get_set_del_expire_ttl_incr_round_trip() {
             .arg("counter")
             .query(&mut connection)
             .expect("DEL should succeed");
-        (set, get, incr, expire, ttl, del)
+        let reset_set: String = redis::cmd("SET")
+            .arg("reset")
+            .arg("value")
+            .query(&mut connection)
+            .expect("SET before FLUSHALL should succeed");
+        let function_flush: String = redis::cmd("FUNCTION")
+            .arg("FLUSH")
+            .query(&mut connection)
+            .expect("FUNCTION FLUSH should acknowledge empty function registry");
+        let flushall: String = redis::cmd("FLUSHALL")
+            .query(&mut connection)
+            .expect("FLUSHALL should clear the tenant keyspace");
+        let reset_after_flush: Option<String> = redis::cmd("GET")
+            .arg("reset")
+            .query(&mut connection)
+            .expect("GET after FLUSHALL should succeed");
+        (
+            set,
+            get,
+            incr,
+            expire,
+            ttl,
+            del,
+            reset_set,
+            function_flush,
+            flushall,
+            reset_after_flush,
+        )
     })
     .await
     .expect("blocking redis client task joins");
@@ -191,5 +218,9 @@ async fn resp_get_set_del_expire_ttl_incr_round_trip() {
     assert_eq!(result.3, 1);
     assert!(result.4 > 0, "TTL should be positive, got {}", result.4);
     assert_eq!(result.5, 1);
+    assert_eq!(result.6, "OK");
+    assert_eq!(result.7, "OK");
+    assert_eq!(result.8, "OK");
+    assert_eq!(result.9, None);
     server.abort();
 }
