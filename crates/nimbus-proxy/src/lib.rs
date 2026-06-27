@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::error::Error as StdError;
 use std::fmt;
 use std::io::{self, Read, Write};
@@ -10,7 +11,10 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use nimbus_core::TenantId;
-use nimbus_egress::{CompiledEgressPolicy, EgressPolicy, EgressProtocol, EgressRequest};
+use nimbus_egress::{
+    CompiledEgressPolicy, EgressCredentialInjection, EgressDlpRule, EgressPolicy, EgressProtocol,
+    EgressRequest, EgressRule,
+};
 use url::Url;
 
 const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
@@ -58,6 +62,32 @@ impl PolicyGeneration {
 pub struct EgressProxyReadiness {
     pub ready: bool,
     pub policy_generation: Option<PolicyGeneration>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CredentialSecretStore {
+    entries: BTreeMap<String, String>,
+}
+
+impl CredentialSecretStore {
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    pub fn from_entries(
+        entries: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
+        Self {
+            entries: entries
+                .into_iter()
+                .map(|(key, value)| (key.into(), value.into()))
+                .collect(),
+        }
+    }
+
+    fn get(&self, credential_ref: &str) -> Option<&str> {
+        self.entries.get(credential_ref).map(String::as_str)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -197,6 +227,7 @@ pub struct EgressProxyConfig {
     pub io_timeout: Duration,
     pub max_connections: usize,
     pub dns_cache: DnsCacheConfig,
+    pub credential_store: CredentialSecretStore,
     resolver: Resolver,
 }
 
@@ -209,6 +240,7 @@ impl EgressProxyConfig {
             io_timeout: DEFAULT_IO_TIMEOUT,
             max_connections: DEFAULT_MAX_CONNECTIONS,
             dns_cache: DnsCacheConfig::default(),
+            credential_store: CredentialSecretStore::empty(),
             resolver: Arc::new(resolve_socket_addrs),
         }
     }
@@ -221,6 +253,7 @@ impl EgressProxyConfig {
             io_timeout: DEFAULT_IO_TIMEOUT,
             max_connections: DEFAULT_MAX_CONNECTIONS,
             dns_cache: DnsCacheConfig::default(),
+            credential_store: CredentialSecretStore::empty(),
             resolver: Arc::new(resolve_socket_addrs),
         }
     }
@@ -243,6 +276,11 @@ impl EgressProxyConfig {
 
     pub fn with_dns_cache_config(mut self, dns_cache: DnsCacheConfig) -> Self {
         self.dns_cache = dns_cache;
+        self
+    }
+
+    pub fn with_credential_store(mut self, credential_store: CredentialSecretStore) -> Self {
+        self.credential_store = credential_store;
         self
     }
 
@@ -300,6 +338,7 @@ impl EgressProxy {
             policy_state: Arc::clone(&policy_state),
             resolver: config.resolver,
             dns_cache: config.dns_cache,
+            credential_store: config.credential_store,
             connect_timeout: config.connect_timeout,
             io_timeout: config.io_timeout,
             connection_limiter: ConnectionLimiter::new(config.max_connections),
@@ -369,6 +408,7 @@ struct ProxyWorker {
     policy_state: Arc<RwLock<EgressProxyPolicyState>>,
     resolver: Resolver,
     dns_cache: DnsCacheConfig,
+    credential_store: CredentialSecretStore,
     connect_timeout: Duration,
     io_timeout: Duration,
     connection_limiter: ConnectionLimiter,
@@ -392,6 +432,7 @@ impl ProxyWorker {
                     let policy_state = Arc::clone(&self.policy_state);
                     let resolver = Arc::clone(&self.resolver);
                     let dns_cache = self.dns_cache.clone();
+                    let credential_store = self.credential_store.clone();
                     let connect_timeout = self.connect_timeout;
                     let io_timeout = self.io_timeout;
                     thread::spawn(move || {
@@ -401,6 +442,7 @@ impl ProxyWorker {
                             policy_state,
                             resolver,
                             dns_cache,
+                            credential_store,
                             connect_timeout,
                             io_timeout,
                         );
@@ -473,6 +515,48 @@ struct ParsedProxyRequest {
     body_offset: usize,
 }
 
+struct PreparedProxyRequest {
+    header_lines: Vec<String>,
+    inspected_body: Option<Vec<u8>>,
+    decision_log: EgressDecisionLog,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EgressDecisionLog {
+    destination: String,
+    credential_identity: Option<String>,
+}
+
+impl EgressDecisionLog {
+    fn for_request(parsed: &ParsedProxyRequest, credential_identity: Option<String>) -> Self {
+        Self {
+            destination: redact_query_values(&format!(
+                "{}://{}:{}{}",
+                match parsed.egress_request.protocol {
+                    EgressProtocol::Http => "http",
+                    EgressProtocol::Https => "https",
+                    EgressProtocol::Tcp => "tcp",
+                },
+                parsed.upstream_host,
+                parsed.upstream_port,
+                match &parsed.mode {
+                    ProxyRequestMode::ForwardHttp { origin_form } => origin_form.as_str(),
+                    ProxyRequestMode::ConnectTunnel => "",
+                }
+            )),
+            credential_identity,
+        }
+    }
+
+    pub fn destination(&self) -> &str {
+        &self.destination
+    }
+
+    pub fn credential_identity(&self) -> Option<&str> {
+        self.credential_identity.as_deref()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ProxyRequestMode {
     ForwardHttp { origin_form: String },
@@ -484,6 +568,7 @@ fn handle_client(
     policy_state: Arc<RwLock<EgressProxyPolicyState>>,
     resolver: Resolver,
     dns_cache: DnsCacheConfig,
+    credential_store: CredentialSecretStore,
     connect_timeout: Duration,
     io_timeout: Duration,
 ) -> io::Result<()> {
@@ -554,6 +639,18 @@ fn handle_client(
             HttpProxyResponse::forbidden(authorization.reason()),
         );
     }
+    let prepared = match prepare_proxy_request_enforcement(
+        &mut client,
+        &mut buffer,
+        &parsed,
+        &active_policy.policy,
+        authorization.matched_rule(),
+        &credential_store,
+    ) {
+        Ok(prepared) => prepared,
+        Err(response) => return write_http_response(&mut client, response),
+    };
+    let _decision_log = prepared.decision_log.clone();
 
     let mut upstream = TcpStream::connect_timeout(&upstream_addr, connect_timeout)?;
     upstream.set_nonblocking(false)?;
@@ -561,8 +658,14 @@ fn handle_client(
     upstream.set_write_timeout(Some(io_timeout))?;
     match &parsed.mode {
         ProxyRequestMode::ForwardHttp { .. } => {
-            let request = render_upstream_request(&parsed);
+            let request = render_upstream_request(&parsed, &prepared.header_lines);
             upstream.write_all(request.as_bytes())?;
+            if let Some(body) = prepared.inspected_body {
+                upstream.write_all(&body)?;
+                let _ = upstream.shutdown(Shutdown::Write);
+                io::copy(&mut upstream, &mut client)?;
+                return Ok(());
+            }
             // Flush the body bytes that arrived co-buffered with the headers,
             // then relay both directions: the rest of the client request body
             // streams to upstream while the response streams back. Without the
@@ -702,12 +805,196 @@ fn parse_proxy_request(
     })
 }
 
-fn render_upstream_request(parsed: &ParsedProxyRequest) -> String {
+fn prepare_proxy_request_enforcement(
+    client: &mut TcpStream,
+    buffer: &mut Vec<u8>,
+    parsed: &ParsedProxyRequest,
+    policy: &CompiledEgressPolicy,
+    matched_rule: Option<&str>,
+    credential_store: &CredentialSecretStore,
+) -> std::result::Result<PreparedProxyRequest, HttpProxyResponse> {
+    let Some(rule) = matched_rule.and_then(|name| {
+        policy
+            .policy()
+            .rules()
+            .iter()
+            .find(|rule| rule.name == name)
+    }) else {
+        return Ok(PreparedProxyRequest {
+            header_lines: parsed.header_lines.clone(),
+            inspected_body: None,
+            decision_log: EgressDecisionLog::for_request(parsed, None),
+        });
+    };
+    let mut header_lines = parsed.header_lines.clone();
+    let credential_identity =
+        apply_credential_injection(rule, &mut header_lines, parsed, credential_store)?;
+    let inspected_body = enforce_dlp_rules(client, buffer, parsed, &rule.dlp)?;
+    let decision_log = EgressDecisionLog::for_request(parsed, credential_identity.clone());
+    Ok(PreparedProxyRequest {
+        header_lines,
+        inspected_body,
+        decision_log,
+    })
+}
+
+fn apply_credential_injection(
+    rule: &EgressRule,
+    header_lines: &mut Vec<String>,
+    parsed: &ParsedProxyRequest,
+    credential_store: &CredentialSecretStore,
+) -> std::result::Result<Option<String>, HttpProxyResponse> {
+    deny_unapproved_credential_headers(header_lines, rule.credential.as_ref())?;
+    let Some(credential) = &rule.credential else {
+        return Ok(None);
+    };
+    if matches!(parsed.mode, ProxyRequestMode::ConnectTunnel) {
+        return Err(HttpProxyResponse::forbidden(
+            "credential injection is unavailable for CONNECT tunnels",
+        ));
+    }
+    if header_lines
+        .iter()
+        .any(|line| header_name_matches(line, &credential.header_name))
+    {
+        if credential.allow_caller_header {
+            return Ok(Some(credential.credential_ref.clone()));
+        }
+        return Err(HttpProxyResponse::forbidden(
+            "credential-bearing caller header denied by egress policy",
+        ));
+    }
+    let Some(secret) = credential_store.get(&credential.credential_ref) else {
+        return Err(HttpProxyResponse::forbidden(
+            "credential injection failed closed: credential material is unavailable",
+        ));
+    };
+    header_lines.push(format!(
+        "{}: {}{}",
+        credential.header_name,
+        credential.value_prefix.as_deref().unwrap_or_default(),
+        secret
+    ));
+    Ok(Some(credential.credential_ref.clone()))
+}
+
+fn deny_unapproved_credential_headers(
+    header_lines: &[String],
+    credential: Option<&EgressCredentialInjection>,
+) -> std::result::Result<(), HttpProxyResponse> {
+    for line in header_lines {
+        let Some((name, _)) = line.split_once(':') else {
+            continue;
+        };
+        let name = name.trim();
+        let approved = credential.is_some_and(|credential| {
+            credential.allow_caller_header && name.eq_ignore_ascii_case(&credential.header_name)
+        });
+        if !approved
+            && (name.eq_ignore_ascii_case("authorization")
+                || name.eq_ignore_ascii_case("proxy-authorization")
+                || name.eq_ignore_ascii_case("cookie"))
+        {
+            return Err(HttpProxyResponse::forbidden(
+                "credential-bearing caller header denied by egress policy",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn enforce_dlp_rules(
+    client: &mut TcpStream,
+    buffer: &mut Vec<u8>,
+    parsed: &ParsedProxyRequest,
+    dlp_rules: &[EgressDlpRule],
+) -> std::result::Result<Option<Vec<u8>>, HttpProxyResponse> {
+    if dlp_rules.is_empty() {
+        return Ok(None);
+    }
+    if matches!(parsed.mode, ProxyRequestMode::ConnectTunnel) {
+        return Err(HttpProxyResponse::forbidden(
+            "DLP inspection input unavailable for CONNECT tunnels",
+        ));
+    }
+    let content_length = content_length(&parsed.header_lines).ok_or_else(|| {
+        HttpProxyResponse::forbidden("DLP inspection input unavailable: missing Content-Length")
+    })??;
+    if dlp_rules
+        .iter()
+        .any(|rule| content_length > rule.max_inspection_bytes)
+    {
+        return Err(HttpProxyResponse::forbidden(
+            "DLP inspection input truncated by max_inspection_bytes",
+        ));
+    }
+    let body = read_exact_request_body(client, buffer, parsed.body_offset, content_length)?;
+    for rule in dlp_rules {
+        if contains_bytes(&body, rule.pattern.as_bytes()) {
+            return Err(HttpProxyResponse::forbidden(&format!(
+                "DLP rule `{}` blocked request body",
+                rule.name
+            )));
+        }
+    }
+    Ok(Some(body))
+}
+
+fn content_length(
+    header_lines: &[String],
+) -> Option<std::result::Result<usize, HttpProxyResponse>> {
+    header_lines.iter().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim().eq_ignore_ascii_case("content-length").then(|| {
+            value.trim().parse::<usize>().map_err(|_| {
+                HttpProxyResponse::bad_request("Content-Length must be a non-negative integer")
+            })
+        })
+    })
+}
+
+fn read_exact_request_body(
+    client: &mut TcpStream,
+    buffer: &mut Vec<u8>,
+    body_offset: usize,
+    content_length: usize,
+) -> std::result::Result<Vec<u8>, HttpProxyResponse> {
+    while buffer.len().saturating_sub(body_offset) < content_length {
+        let mut chunk = [0_u8; 1024];
+        let read = client.read(&mut chunk).map_err(|_| {
+            HttpProxyResponse::forbidden("DLP inspection input unavailable while reading body")
+        })?;
+        if read == 0 {
+            return Err(HttpProxyResponse::forbidden(
+                "DLP inspection input unavailable: client closed early",
+            ));
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+    }
+    let mut body = buffer[body_offset..].to_vec();
+    body.truncate(content_length);
+    Ok(body)
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+}
+
+fn header_name_matches(line: &str, header_name: &str) -> bool {
+    line.split_once(':')
+        .map(|(name, _)| name.trim().eq_ignore_ascii_case(header_name))
+        .unwrap_or(false)
+}
+
+fn render_upstream_request(parsed: &ParsedProxyRequest, header_lines: &[String]) -> String {
     let ProxyRequestMode::ForwardHttp { origin_form } = &parsed.mode else {
         return String::new();
     };
     let mut rendered = format!("{} {} {}\r\n", parsed.method, origin_form, parsed.version);
-    for line in &parsed.header_lines {
+    for line in header_lines {
         rendered.push_str(line);
         rendered.push_str("\r\n");
     }
@@ -797,6 +1084,48 @@ fn origin_form(url: &Url) -> String {
         Some(query) => format!("{}?{query}", url.path()),
         None => url.path().to_owned(),
     }
+}
+
+pub fn redact_egress_decision_log_value(name: &str, value: &str) -> String {
+    if name.eq_ignore_ascii_case("authorization")
+        || name.eq_ignore_ascii_case("proxy-authorization")
+        || name.eq_ignore_ascii_case("cookie")
+        || value.to_ascii_lowercase().contains("bearer ")
+    {
+        return "<redacted>".to_string();
+    }
+    if let Ok(mut url) = Url::parse(value) {
+        if !url.username().is_empty() || url.password().is_some() {
+            let _ = url.set_username("<redacted>");
+            let _ = url.set_password(None);
+        }
+        if url.query().is_some() {
+            let query = url
+                .query_pairs()
+                .map(|(key, _)| format!("{key}=<redacted>"))
+                .collect::<Vec<_>>()
+                .join("&");
+            url.set_query(Some(&query));
+        }
+        return url.to_string();
+    }
+    redact_query_values(value)
+}
+
+fn redact_query_values(value: &str) -> String {
+    let Some((prefix, query)) = value.split_once('?') else {
+        return value.to_owned();
+    };
+    let redacted = query
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let key = pair.split_once('=').map(|(key, _)| key).unwrap_or(pair);
+            format!("{key}=<redacted>")
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("{prefix}?{redacted}")
 }
 
 fn find_header_end(buffer: &[u8]) -> Option<usize> {
@@ -923,7 +1252,9 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
+    use nimbus_egress::{
+        EgressCredentialInjection, EgressDlpRule, EgressPolicy, EgressProtocol, EgressRule,
+    };
 
     #[test]
     fn egress_proxy_allows_matching_http_request() {
@@ -1411,11 +1742,17 @@ mod tests {
     }
 
     fn start_test_proxy(policy: CompiledEgressPolicy) -> EgressProxy {
+        start_test_proxy_with_store(policy, CredentialSecretStore::empty())
+    }
+
+    fn start_test_proxy_with_store(
+        policy: CompiledEgressPolicy,
+        credential_store: CredentialSecretStore,
+    ) -> EgressProxy {
         let resolver = Arc::new(|host: &str, port: u16| {
             let ip = match host {
-                "allowed.test" | "first.test" | "second.test" | "metadata.test" => {
-                    [127, 0, 0, 1].into()
-                }
+                "allowed.test" | "denied.test" | "first.test" | "second.test" | "metadata.test"
+                | "redirect.test" => [127, 0, 0, 1].into(),
                 _ => return Err(io::Error::other(format!("unexpected host {host}"))),
             };
             Ok(vec![SocketAddr::new(ip, port)])
@@ -1423,6 +1760,7 @@ mod tests {
         EgressProxy::start(
             EgressProxyConfig::new(policy)
                 .with_timeouts(Duration::from_secs(5), Duration::from_secs(5))
+                .with_credential_store(credential_store)
                 .with_resolver(resolver),
         )
         .expect("proxy should start")
@@ -1572,6 +1910,242 @@ mod tests {
         assert!(!upstream_request.contains("Proxy-Connection"));
         assert!(!upstream_request.contains("Connection: keep-alive"));
         assert!(upstream_request.contains("Connection: close"));
+    }
+
+    #[test]
+    fn egress_proxy_credential_injection_attaches_secret_only_to_allowed_destination() {
+        let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+        let denied_upstream =
+            TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\ndenied");
+        let proxy = start_test_proxy_with_store(
+            allow_policy([EgressRule::new(
+                "allowed",
+                EgressProtocol::Http,
+                "allowed.test",
+                upstream.addr.port(),
+            )
+            .allow_internal_ips(true)
+            .with_credential_injection(
+                EgressCredentialInjection::new("api-token", "Authorization")
+                    .with_value_prefix("Bearer "),
+            )]),
+            CredentialSecretStore::from_entries([("api-token", "secret-token")]),
+        );
+
+        let allowed = proxy_request(
+            proxy.local_addr(),
+            format!(
+                "GET http://allowed.test:{}/ok HTTP/1.1\r\nHost: allowed.test\r\n\r\n",
+                upstream.addr.port()
+            ),
+        );
+        assert!(
+            allowed.starts_with("HTTP/1.1 200 OK"),
+            "credential-injected allowed request should reach upstream, got: {allowed}"
+        );
+        let upstream_request = upstream
+            .request
+            .recv_timeout(Duration::from_secs(1))
+            .expect("upstream should receive allowed request");
+        assert!(
+            upstream_request.contains("Authorization: Bearer secret-token"),
+            "proxy must inject resolved credential only on the allowed request: {upstream_request}"
+        );
+
+        let denied = proxy_request(
+            proxy.local_addr(),
+            format!(
+                "GET http://denied.test:{}/ok HTTP/1.1\r\nHost: denied.test\r\n\r\n",
+                denied_upstream.addr.port()
+            ),
+        );
+        assert!(
+            denied.starts_with("HTTP/1.1 403 Forbidden"),
+            "denied destinations must not receive credentials, got: {denied}"
+        );
+        assert!(
+            denied_upstream
+                .request
+                .recv_timeout(Duration::from_millis(100))
+                .is_err(),
+            "denied credential targets must not contact upstream"
+        );
+    }
+
+    #[test]
+    fn egress_proxy_denies_caller_supplied_credential_headers_unless_policy_allows() {
+        let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+        let proxy = start_test_proxy_with_store(
+            allow_policy([EgressRule::new(
+                "allowed",
+                EgressProtocol::Http,
+                "allowed.test",
+                upstream.addr.port(),
+            )
+            .allow_internal_ips(true)
+            .with_credential_injection(
+                EgressCredentialInjection::new("api-token", "Authorization")
+                    .with_value_prefix("Bearer "),
+            )]),
+            CredentialSecretStore::from_entries([("api-token", "secret-token")]),
+        );
+
+        let response = proxy_request(
+            proxy.local_addr(),
+            format!(
+                "GET http://allowed.test:{}/ok HTTP/1.1\r\nHost: allowed.test\r\nAuthorization: Bearer caller-token\r\n\r\n",
+                upstream.addr.port()
+            ),
+        );
+
+        assert!(
+            response.starts_with("HTTP/1.1 403 Forbidden")
+                && response.contains("credential-bearing caller header"),
+            "caller-supplied credential headers must fail closed, got: {response}"
+        );
+        assert!(
+            upstream
+                .request
+                .recv_timeout(Duration::from_millis(100))
+                .is_err(),
+            "denied caller credentials must not contact upstream"
+        );
+    }
+
+    #[test]
+    fn egress_proxy_dlp_blocks_matching_body_and_truncated_or_unavailable_input() {
+        let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+        let proxy = start_test_proxy(allow_policy([EgressRule::new(
+            "allowed",
+            EgressProtocol::Http,
+            "allowed.test",
+            upstream.addr.port(),
+        )
+        .with_methods(["POST"])
+        .with_path_prefixes(["/upload"])
+        .allow_internal_ips(true)
+        .with_dlp_rules([EgressDlpRule::new("no-ssn", "ssn=").with_max_inspection_bytes(64)])]));
+
+        let matching_body = "user=alice&ssn=123";
+        let blocked = proxy_request(
+            proxy.local_addr(),
+            format!(
+                "POST http://allowed.test:{}/upload HTTP/1.1\r\nHost: allowed.test\r\nContent-Length: {}\r\n\r\n{}",
+                upstream.addr.port(),
+                matching_body.len(),
+                matching_body
+            ),
+        );
+        assert!(
+            blocked.starts_with("HTTP/1.1 403 Forbidden") && blocked.contains("DLP rule"),
+            "DLP pattern match must block before dial, got: {blocked}"
+        );
+        assert!(
+            upstream
+                .request
+                .recv_timeout(Duration::from_millis(100))
+                .is_err(),
+            "DLP-denied requests must not contact upstream"
+        );
+
+        let truncated_proxy = start_test_proxy(allow_policy([EgressRule::new(
+            "small-inspection",
+            EgressProtocol::Http,
+            "allowed.test",
+            upstream.addr.port(),
+        )
+        .with_methods(["POST"])
+        .with_path_prefixes(["/upload"])
+        .allow_internal_ips(true)
+        .with_dlp_rules([EgressDlpRule::new("small", "secret").with_max_inspection_bytes(4)])]));
+        let truncated = proxy_request(
+            truncated_proxy.local_addr(),
+            format!(
+                "POST http://allowed.test:{}/upload HTTP/1.1\r\nHost: allowed.test\r\nContent-Length: 10\r\n\r\nnotsecret!",
+                upstream.addr.port(),
+            ),
+        );
+        assert!(
+            truncated.starts_with("HTTP/1.1 403 Forbidden") && truncated.contains("truncated"),
+            "DLP input larger than inspection cap must fail closed, got: {truncated}"
+        );
+
+        let unavailable = proxy_request(
+            truncated_proxy.local_addr(),
+            format!(
+                "POST http://allowed.test:{}/upload HTTP/1.1\r\nHost: allowed.test\r\n\r\nbody-without-length",
+                upstream.addr.port(),
+            ),
+        );
+        assert!(
+            unavailable.starts_with("HTTP/1.1 403 Forbidden")
+                && unavailable.contains("DLP inspection input unavailable"),
+            "DLP without bounded inspection input must fail closed, got: {unavailable}"
+        );
+    }
+
+    #[test]
+    fn egress_proxy_redirect_to_non_allowlisted_host_strips_injected_credentials() {
+        let redirect_location = "http://redirect.test/landing";
+        let upstream = TestHttpServer::start(
+            "HTTP/1.1 302 Found\r\nLocation: http://redirect.test/landing\r\nContent-Length: 0\r\n\r\n",
+        );
+        let redirect_upstream =
+            TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nredirect");
+        let proxy = start_test_proxy_with_store(
+            allow_policy([EgressRule::new(
+                "allowed",
+                EgressProtocol::Http,
+                "allowed.test",
+                upstream.addr.port(),
+            )
+            .allow_internal_ips(true)
+            .with_credential_injection(
+                EgressCredentialInjection::new("api-token", "Authorization")
+                    .with_value_prefix("Bearer "),
+            )]),
+            CredentialSecretStore::from_entries([("api-token", "secret-token")]),
+        );
+
+        let response = proxy_request(
+            proxy.local_addr(),
+            format!(
+                "GET http://allowed.test:{}/redirect HTTP/1.1\r\nHost: allowed.test\r\n\r\n",
+                upstream.addr.port()
+            ),
+        );
+        assert!(
+            response.starts_with("HTTP/1.1 302 Found"),
+            "allowed redirect response should pass through, got: {response}"
+        );
+        assert!(
+            response.contains(redirect_location),
+            "redirect location should be visible to the caller, got: {response}"
+        );
+        let upstream_request = upstream
+            .request
+            .recv_timeout(Duration::from_secs(1))
+            .expect("original upstream should receive allowed request");
+        assert!(upstream_request.contains("Authorization: Bearer secret-token"));
+
+        let redirected_with_stale_credential = proxy_request(
+            proxy.local_addr(),
+            format!(
+                "GET http://redirect.test:{}/landing HTTP/1.1\r\nHost: redirect.test\r\nAuthorization: Bearer secret-token\r\n\r\n",
+                redirect_upstream.addr.port()
+            ),
+        );
+        assert!(
+            redirected_with_stale_credential.starts_with("HTTP/1.1 403 Forbidden"),
+            "redirect follow to non-allowlisted host must strip or deny stale credentials, got: {redirected_with_stale_credential}"
+        );
+        assert!(
+            redirect_upstream
+                .request
+                .recv_timeout(Duration::from_millis(100))
+                .is_err(),
+            "redirect target must not receive stale injected credentials"
+        );
     }
 
     #[test]

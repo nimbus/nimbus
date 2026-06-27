@@ -166,6 +166,10 @@ pub struct EgressRule {
     pub path_prefixes: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_internal_ips: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<EgressCredentialInjection>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dlp: Vec<EgressDlpRule>,
 }
 
 impl EgressRule {
@@ -183,6 +187,8 @@ impl EgressRule {
             methods: Vec::new(),
             path_prefixes: Vec::new(),
             allow_internal_ips: false,
+            credential: None,
+            dlp: Vec::new(),
         }
     }
 
@@ -201,6 +207,16 @@ impl EgressRule {
 
     pub fn allow_internal_ips(mut self, allow_internal_ips: bool) -> Self {
         self.allow_internal_ips = allow_internal_ips;
+        self
+    }
+
+    pub fn with_credential_injection(mut self, credential: EgressCredentialInjection) -> Self {
+        self.credential = Some(credential);
+        self
+    }
+
+    pub fn with_dlp_rules(mut self, dlp: impl IntoIterator<Item = EgressDlpRule>) -> Self {
+        self.dlp = dlp.into_iter().collect();
         self
     }
 
@@ -227,6 +243,12 @@ impl EgressRule {
         for path_prefix in &self.path_prefixes {
             validate_path_prefix(path_prefix, &self.name)?;
         }
+        if let Some(credential) = &self.credential {
+            credential.validate(&self.name)?;
+        }
+        for rule in &self.dlp {
+            rule.validate(&self.name)?;
+        }
         Ok(())
     }
 
@@ -245,6 +267,8 @@ impl EgressRule {
             methods,
             path_prefixes,
             allow_internal_ips: self.allow_internal_ips,
+            credential: self.credential.clone(),
+            dlp: self.dlp.clone(),
         }
     }
 
@@ -284,6 +308,103 @@ impl EgressRule {
         }
         true
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EgressCredentialInjection {
+    pub credential_ref: String,
+    pub header_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_caller_header: bool,
+}
+
+impl EgressCredentialInjection {
+    pub fn new(credential_ref: impl Into<String>, header_name: impl Into<String>) -> Self {
+        Self {
+            credential_ref: credential_ref.into(),
+            header_name: header_name.into(),
+            value_prefix: None,
+            allow_caller_header: false,
+        }
+    }
+
+    pub fn with_value_prefix(mut self, value_prefix: impl Into<String>) -> Self {
+        self.value_prefix = Some(value_prefix.into());
+        self
+    }
+
+    pub fn allow_caller_header(mut self, allow_caller_header: bool) -> Self {
+        self.allow_caller_header = allow_caller_header;
+        self
+    }
+
+    fn validate(&self, rule_name: &str) -> std::result::Result<(), String> {
+        if self.credential_ref.trim().is_empty()
+            || self.credential_ref != self.credential_ref.trim()
+            || self.credential_ref.contains(char::is_whitespace)
+        {
+            return Err(format!(
+                "sandbox egress rule `{rule_name}` credential_ref must be a concrete non-empty handle"
+            ));
+        }
+        validate_http_header_name(&self.header_name, rule_name)?;
+        if let Some(prefix) = &self.value_prefix {
+            if prefix.contains('\r') || prefix.contains('\n') {
+                return Err(format!(
+                    "sandbox egress rule `{rule_name}` credential value_prefix must not contain CR/LF"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EgressDlpRule {
+    pub name: String,
+    pub pattern: String,
+    #[serde(default = "default_dlp_max_inspection_bytes")]
+    pub max_inspection_bytes: usize,
+}
+
+impl EgressDlpRule {
+    pub fn new(name: impl Into<String>, pattern: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            pattern: pattern.into(),
+            max_inspection_bytes: default_dlp_max_inspection_bytes(),
+        }
+    }
+
+    pub fn with_max_inspection_bytes(mut self, max_inspection_bytes: usize) -> Self {
+        self.max_inspection_bytes = max_inspection_bytes;
+        self
+    }
+
+    fn validate(&self, rule_name: &str) -> std::result::Result<(), String> {
+        validate_rule_name(&self.name)?;
+        if self.pattern.is_empty() {
+            return Err(format!(
+                "sandbox egress rule `{rule_name}` DLP rule `{}` pattern must not be empty",
+                self.name
+            ));
+        }
+        if self.max_inspection_bytes == 0 {
+            return Err(format!(
+                "sandbox egress rule `{rule_name}` DLP rule `{}` max_inspection_bytes must be greater than 0",
+                self.name
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn default_dlp_max_inspection_bytes() -> usize {
+    64 * 1024
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -535,6 +656,47 @@ fn validate_http_method(method: &str, rule_name: &str) -> std::result::Result<()
     {
         return Err(format!(
             "sandbox egress rule `{rule_name}` HTTP method `{method}` must be an uppercase token"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_http_header_name(
+    header_name: &str,
+    rule_name: &str,
+) -> std::result::Result<(), String> {
+    if header_name.is_empty()
+        || !header_name.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'!' | b'#'
+                        | b'$'
+                        | b'%'
+                        | b'&'
+                        | b'\''
+                        | b'*'
+                        | b'+'
+                        | b'-'
+                        | b'.'
+                        | b'^'
+                        | b'_'
+                        | b'`'
+                        | b'|'
+                        | b'~'
+                )
+        })
+    {
+        return Err(format!(
+            "sandbox egress rule `{rule_name}` credential header_name `{header_name}` must be an HTTP token"
+        ));
+    }
+    if matches!(
+        header_name.to_ascii_lowercase().as_str(),
+        "host" | "content-length" | "connection" | "proxy-connection" | "transfer-encoding"
+    ) {
+        return Err(format!(
+            "sandbox egress rule `{rule_name}` credential header_name `{header_name}` is controlled by the proxy"
         ));
     }
     Ok(())
