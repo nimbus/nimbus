@@ -40,8 +40,8 @@ export {};
     .expect("bundle should write");
 
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
-    limits.max_heap_mb = 8;
-    limits.initial_heap_mb = 4;
+    limits.max_heap_mb = 32;
+    limits.initial_heap_mb = 16;
     limits.execution_timeout = std::time::Duration::from_secs(2);
     limits.max_concurrent_runtime_instances = 1;
     let runtime = NimbusRuntime::with_limits(Arc::new(RecordingHost::default()), limits);
@@ -62,7 +62,7 @@ export {};
         .expect_err("heap growth should trip the runtime heap limit");
 
     match error {
-        NimbusRuntimeError::HeapLimitExceeded(limit) => assert_eq!(limit, 8),
+        NimbusRuntimeError::HeapLimitExceeded(limit) => assert_eq!(limit, 32),
         other => panic!("unexpected heap-limit error: {other}"),
     }
 }

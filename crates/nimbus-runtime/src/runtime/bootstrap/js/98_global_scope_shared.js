@@ -302,7 +302,13 @@ const windowOrWorkerGlobalScope = {
   console: core.propNonEnumerable(
     new console.Console((msg, level) => core.print(msg, level > 1)),
   ),
-  crypto: core.propReadOnly(crypto.crypto),
+  crypto: {
+    configurable: true,
+    enumerable: false,
+    get() {
+      return crypto.crypto;
+    },
+  },
   fetch: core.propWritable(fetch.fetch),
   SubtleCrypto: core.propNonEnumerable(crypto.SubtleCrypto),
 };

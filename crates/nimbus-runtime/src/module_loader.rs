@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
@@ -115,14 +115,9 @@ impl RestrictedModuleLoader {
         };
         if let Some(registry) = loader.loader_hook_registry.clone() {
             let loader_for_default_resolve = loader.clone();
-            registry.set_default_resolve(Rc::new(move |specifier, referrer, conditions| {
+            registry.set_default_resolve(Rc::new(move |specifier, referrer| {
                 loader_for_default_resolve
-                    .resolve_unhooked_with_conditions(
-                        specifier,
-                        referrer,
-                        ResolutionKind::Import,
-                        conditions,
-                    )
+                    .resolve_unhooked(specifier, referrer, ResolutionKind::Import)
                     .map(|specifier| specifier.to_string())
             }));
         }
@@ -270,92 +265,6 @@ impl RestrictedModuleLoader {
             ModuleSourceCode::Bytes(code.into_boxed_slice().into()),
             module_specifier,
             code_cache,
-        ))
-    }
-
-    async fn load_after_async_resolve(
-        &self,
-        requested_specifier: ModuleSpecifier,
-        receiver: deno_node::ops::module_hooks::ResolveReceiver,
-        options: ModuleLoadOptions,
-    ) -> Result<ModuleSource, JsErrorBox> {
-        let (resolved_url, resolved_format) = receiver
-            .await
-            .map_err(|_| JsErrorBox::generic("module resolve hook cancelled"))?
-            .map_err(JsErrorBox::generic)?;
-        let resolved_specifier =
-            ModuleSpecifier::parse(&resolved_url).map_err(JsErrorBox::from_err)?;
-        let options = match resolved_format.as_deref() {
-            Some(format) => module_load_options_with_resolved_hook_format(options, format),
-            None => options,
-        };
-        let requested_module_type_for_hooks = options.requested_module_type.clone();
-        if let Some(registry) = &self.loader_hook_registry
-            && registry.load_active.get()
-            && !options.is_synchronous
-        {
-            let receiver = registry.push_load(
-                resolved_specifier.to_string(),
-                &requested_module_type_for_hooks,
-            );
-            match receiver.await {
-                Ok(Ok((_, Some(format), _)))
-                    if format == "builtin" && resolved_specifier.scheme() == "node" =>
-                {
-                    return Ok(ModuleSource::new_with_redirect(
-                        ModuleType::JavaScript,
-                        ModuleSourceCode::String(String::new().into()),
-                        &requested_specifier,
-                        &resolved_specifier,
-                        None,
-                    ));
-                }
-                Ok(Ok((Some(source), format, _))) => {
-                    let source = if self
-                        .should_wrap_hook_commonjs_source(&resolved_specifier, format.as_deref())
-                    {
-                        wrap_hook_commonjs_source(&resolved_specifier, &source)?
-                    } else {
-                        source
-                    };
-                    return Ok(ModuleSource::new_with_redirect(
-                        module_type_from_hook_format(format.as_deref()),
-                        ModuleSourceCode::String(source.into()),
-                        &requested_specifier,
-                        &resolved_specifier,
-                        None,
-                    ));
-                }
-                Ok(Ok((None, format, effective_url))) => {
-                    let hook_format = format.as_deref().or(resolved_format.as_deref());
-                    let found_specifier = effective_url
-                        .as_deref()
-                        .map(ModuleSpecifier::parse)
-                        .transpose()
-                        .map_err(JsErrorBox::from_err)?
-                        .unwrap_or(resolved_specifier);
-                    self.ensure_allowed_specifier(&found_specifier)?;
-                    let source = self
-                        .load_module_source(&found_specifier, options, hook_format)
-                        .await?;
-                    return Ok(redirect_module_source(
-                        source,
-                        &requested_specifier,
-                        &found_specifier,
-                    ));
-                }
-                Ok(Err(error)) => return Err(JsErrorBox::generic(error)),
-                Err(_) => return Err(JsErrorBox::generic("module load hook cancelled")),
-            }
-        }
-        self.ensure_allowed_specifier(&resolved_specifier)?;
-        let source = self
-            .load_module_source(&resolved_specifier, options, resolved_format.as_deref())
-            .await?;
-        Ok(redirect_module_source(
-            source,
-            &requested_specifier,
-            &resolved_specifier,
         ))
     }
 
@@ -517,46 +426,27 @@ impl ModuleLoader for RestrictedModuleLoader {
         specifier: &str,
         referrer: &str,
         kind: ResolutionKind,
-    ) -> Result<ModuleSpecifier, JsErrorBox> {
-        self.resolve_with_scope_and_type(
-            scope,
-            specifier,
-            referrer,
-            kind,
-            &RequestedModuleType::None,
-        )
-    }
-
-    fn resolve_with_scope_and_type(
-        &self,
-        scope: &mut v8::PinScope,
-        specifier: &str,
-        referrer: &str,
-        kind: ResolutionKind,
-        requested_module_type: &RequestedModuleType,
+        import_attributes: &HashMap<String, String>,
     ) -> Result<ModuleSpecifier, JsErrorBox> {
         if !self.is_synthetic_commonjs_wrapper_import(specifier, referrer)
             && let Some(registry) = &self.loader_hook_registry
-            && let Some(url) =
-                registry.resolve(scope, specifier, referrer, requested_module_type)?
+            && let Some(url) = registry.resolve(scope, specifier, referrer, import_attributes)?
         {
+            registry.record_resolved_attributes(&url, import_attributes);
             return ModuleSpecifier::parse(&url).map_err(JsErrorBox::from_err);
         }
-        self.resolve_unhooked(specifier, referrer, kind)
+        let resolved = self.resolve_unhooked(specifier, referrer, kind)?;
+        if let Some(registry) = &self.loader_hook_registry {
+            registry.record_resolved_attributes(resolved.as_str(), import_attributes);
+        }
+        Ok(resolved)
     }
 
-    fn import_meta_resolve_with_scope(
+    fn import_meta_resolve(
         &self,
-        scope: &mut v8::PinScope,
         specifier: &str,
         referrer: &str,
     ) -> Result<ModuleSpecifier, JsErrorBox> {
-        if let Some(registry) = &self.loader_hook_registry
-            && let Some(url) =
-                registry.resolve(scope, specifier, referrer, &RequestedModuleType::None)?
-        {
-            return ModuleSpecifier::parse(&url).map_err(JsErrorBox::from_err);
-        }
         self.resolve_unhooked(specifier, referrer, ResolutionKind::DynamicImport)
     }
 
@@ -566,34 +456,25 @@ impl ModuleLoader for RestrictedModuleLoader {
         _maybe_referrer: Option<&ModuleLoadReferrer>,
         options: ModuleLoadOptions,
     ) -> ModuleLoadResponse {
-        if let Some(registry) = &self.loader_hook_registry
-            && let Some(receiver) = registry.take_async_resolve(module_specifier.as_str())
-        {
-            let loader = self.clone();
-            let requested_specifier = module_specifier.clone();
-            return ModuleLoadResponse::Async(Box::pin(async move {
-                loader
-                    .load_after_async_resolve(requested_specifier, receiver, options)
-                    .await
-            }));
-        }
-        let requested_module_type_for_hooks = options.requested_module_type.clone();
-        let resolved_hook_format = self.loader_hook_registry.as_ref().and_then(|registry| {
-            registry
-                .take_resolved_format(module_specifier.as_str(), &requested_module_type_for_hooks)
-        });
-        let options = match resolved_hook_format.as_deref() {
-            Some(format) => module_load_options_with_resolved_hook_format(options, format),
-            None => options,
-        };
+        let import_attributes = self
+            .loader_hook_registry
+            .as_ref()
+            .map(|registry| {
+                let recorded = registry.take_resolved_attributes(module_specifier.as_str());
+                if recorded.is_empty() {
+                    import_attributes_from_requested_module_type(&options.requested_module_type)
+                } else {
+                    recorded
+                }
+            })
+            .unwrap_or_else(|| {
+                import_attributes_from_requested_module_type(&options.requested_module_type)
+            });
         if let Some(registry) = &self.loader_hook_registry
             && registry.load_active.get()
             && !options.is_synchronous
         {
-            let receiver = registry.push_load(
-                module_specifier.to_string(),
-                &requested_module_type_for_hooks,
-            );
+            let receiver = registry.push_load(module_specifier.to_string(), import_attributes);
             let loader = self.clone();
             let module_specifier = module_specifier.clone();
             return ModuleLoadResponse::Async(Box::pin(async move {
@@ -624,7 +505,6 @@ impl ModuleLoader for RestrictedModuleLoader {
                         ))
                     }
                     Ok(Ok((None, format, effective_url))) => {
-                        let hook_format = format.as_deref().or(resolved_hook_format.as_deref());
                         let module_specifier = effective_url
                             .as_deref()
                             .map(ModuleSpecifier::parse)
@@ -632,7 +512,7 @@ impl ModuleLoader for RestrictedModuleLoader {
                             .map_err(JsErrorBox::from_err)?
                             .unwrap_or(module_specifier);
                         loader
-                            .load_module_source(&module_specifier, options, hook_format)
+                            .load_module_source(&module_specifier, options, format.as_deref())
                             .await
                     }
                     Ok(Err(error)) => Err(JsErrorBox::generic(error)),
@@ -648,7 +528,7 @@ impl ModuleLoader for RestrictedModuleLoader {
             let module_specifier = module_specifier.clone();
             async move {
                 loader
-                    .load_module_source(&module_specifier, options, resolved_hook_format.as_deref())
+                    .load_module_source(&module_specifier, options, None)
                     .await
             }
         }))
@@ -681,18 +561,13 @@ impl ModuleLoader for RestrictedModuleLoader {
     }
 }
 
-fn redirect_module_source(
-    source: ModuleSource,
-    requested_specifier: &ModuleSpecifier,
-    found_specifier: &ModuleSpecifier,
-) -> ModuleSource {
-    ModuleSource::new_with_redirect(
-        source.module_type,
-        source.code,
-        requested_specifier,
-        found_specifier,
-        source.code_cache,
-    )
+fn import_attributes_from_requested_module_type(
+    requested_module_type: &RequestedModuleType,
+) -> HashMap<String, String> {
+    let Some(module_type) = requested_module_type.as_str() else {
+        return HashMap::new();
+    };
+    HashMap::from([("type".to_string(), module_type.to_string())])
 }
 
 fn module_type_from_hook_format(format: Option<&str>) -> ModuleType {
@@ -701,23 +576,6 @@ fn module_type_from_hook_format(format: Option<&str>) -> ModuleType {
         Some("wasm") => ModuleType::Wasm,
         Some("module") | Some("commonjs") | None => ModuleType::JavaScript,
         Some(other) => ModuleType::Other(Cow::Owned(other.to_string())),
-    }
-}
-
-fn module_load_options_with_resolved_hook_format(
-    options: ModuleLoadOptions,
-    format: &str,
-) -> ModuleLoadOptions {
-    let requested_module_type = match format {
-        "json" if options.requested_module_type == RequestedModuleType::None => {
-            RequestedModuleType::Json
-        }
-        _ => options.requested_module_type,
-    };
-    ModuleLoadOptions {
-        is_dynamic_import: options.is_dynamic_import,
-        is_synchronous: options.is_synchronous,
-        requested_module_type,
     }
 }
 

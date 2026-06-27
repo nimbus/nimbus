@@ -1,5 +1,27 @@
 use super::*;
 
+use crate::test_support::{IsolatedRuntimeTestCase, run_v8_sensitive_runtime_test_in_subprocess};
+
+const STARTUP_SNAPSHOT_MULTIPLE_PARKED_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "executor-cooperative-startup-snapshot-multiple-parked",
+    "cooperative-startup-snapshot",
+    "startup snapshot cooperative execution parks multiple runtime invocations without cross-test anchor contention",
+    "executor::tests::cooperative::cooperative_execution_model_startup_snapshot_handles_multiple_parked_runtimes_subprocess",
+);
+const SYNTHETIC_AWAIT_FOUR_TENANTS_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "executor-cooperative-synthetic-await-four-tenants",
+    "cooperative-warm-pool",
+    "cooperative warm-pool synthetic await handles four tenants without cross-test anchor contention",
+    "executor::tests::cooperative::cooperative_warm_pool_handles_synthetic_await_four_tenants_subprocess",
+);
+const REJECTED_WAIT_UNTIL_RESPONSE_READY_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "executor-cooperative-rejected-wait-until-response-ready",
+        "cooperative-response-ready",
+        "response-ready completion reports rejected waitUntil without cross-test anchor contention",
+        "executor::tests::cooperative::response_ready_completion_reports_rejected_wait_until_background_work_subprocess",
+    );
+
 #[tokio::test]
 async fn cooperative_execution_model_processes_worker_invocations() {
     let _test_lock = runtime_executor_test_lock().lock().await;
@@ -222,8 +244,22 @@ async fn pir4_response_ready_returns_before_wait_until_background_completion() {
     );
 }
 
-#[tokio::test]
-async fn response_ready_completion_reports_rejected_wait_until_background_work() {
+#[test]
+fn response_ready_completion_reports_rejected_wait_until_background_work() {
+    run_v8_sensitive_runtime_test_in_subprocess(REJECTED_WAIT_UNTIL_RESPONSE_READY_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate response-ready V8 anchor state"]
+fn response_ready_completion_reports_rejected_wait_until_background_work_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("response-ready cooperative test runtime should build")
+        .block_on(response_ready_completion_reports_rejected_wait_until_background_work_inner());
+}
+
+async fn response_ready_completion_reports_rejected_wait_until_background_work_inner() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_rejected_wait_until_bundle();
     let mut limits = cooperative_warm_pool_runtime_test_limits();
@@ -273,8 +309,24 @@ async fn response_ready_completion_reports_rejected_wait_until_background_work()
     );
 }
 
-#[tokio::test]
-async fn cooperative_execution_model_startup_snapshot_handles_multiple_parked_runtimes() {
+#[test]
+fn cooperative_execution_model_startup_snapshot_handles_multiple_parked_runtimes() {
+    run_v8_sensitive_runtime_test_in_subprocess(STARTUP_SNAPSHOT_MULTIPLE_PARKED_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate startup-snapshot V8 anchor state"]
+fn cooperative_execution_model_startup_snapshot_handles_multiple_parked_runtimes_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("startup-snapshot cooperative test runtime should build")
+        .block_on(
+            cooperative_execution_model_startup_snapshot_handles_multiple_parked_runtimes_inner(),
+        );
+}
+
+async fn cooperative_execution_model_startup_snapshot_handles_multiple_parked_runtimes_inner() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
     let mut limits = cooperative_startup_snapshot_runtime_test_limits();
@@ -349,8 +401,22 @@ async fn cooperative_execution_model_startup_snapshot_handles_multiple_parked_ru
     assert_eq!(metrics.retained_runtime_pool_entries, 0);
 }
 
-#[tokio::test]
-async fn cooperative_warm_pool_handles_synthetic_await_four_tenants() {
+#[test]
+fn cooperative_warm_pool_handles_synthetic_await_four_tenants() {
+    run_v8_sensitive_runtime_test_in_subprocess(SYNTHETIC_AWAIT_FOUR_TENANTS_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate cooperative warm-pool V8 anchor state"]
+fn cooperative_warm_pool_handles_synthetic_await_four_tenants_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("synthetic-await cooperative test runtime should build")
+        .block_on(cooperative_warm_pool_handles_synthetic_await_four_tenants_inner());
+}
+
+async fn cooperative_warm_pool_handles_synthetic_await_four_tenants_inner() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_function_named_get_bundle();
     let mut limits = cooperative_warm_pool_runtime_test_limits();

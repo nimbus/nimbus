@@ -103,6 +103,15 @@ function createNimbusFsPromisesModule() {
     validateSymlinkTypeForRuntime(type);
     return fsPromisesBuiltin.symlink(target, path, type);
   };
+  fsPromisesModule.stat = async function stat(path, options) {
+    return runtimeFsStat(path, true, options);
+  };
+  fsPromisesModule.lstat = async function lstat(path, options) {
+    return runtimeFsStat(path, false, options);
+  };
+  fsPromisesModule.readlink = async function readlink(path, options) {
+    return runtimeFsReadlink(path, options);
+  };
   return fsPromisesModule;
 }
 
@@ -140,6 +149,34 @@ function createNimbusFsModule(fsPromisesModule) {
       path: validatedPath,
       write: openFlagsNeedWrite(flags),
     });
+  }
+  function normalizeInvalidOpenPromiseError(path, flags, error) {
+    return new Promise((resolve) => {
+      normalizeInvalidOpenThrow(fsBuiltin, path, flags, error, resolve);
+    });
+  }
+  async function writeFilePromiseWithCurrentFsBindings(originalWriteFile, path, data, options, defaultFlag) {
+    let writeOptions;
+    try {
+      writeOptions = normalizeWriteFileOptions(path, options, defaultFlag);
+    } catch (error) {
+      throw (await normalizeInvalidOpenPromiseError(path, defaultFlag, error)) ?? error;
+    }
+    const {
+      flag,
+      isUserFd,
+      normalizedOptions,
+      validatedPath,
+    } = writeOptions;
+
+    try {
+      return await originalWriteFile(path, data, sanitizeWriteFileOptions(normalizedOptions));
+    } catch (error) {
+      if (isUserFd) {
+        throw error;
+      }
+      throw (await normalizeInvalidOpenPromiseError(validatedPath, flag, error)) ?? error;
+    }
   }
   function precheckReadFilePathSync(validatedPath, options) {
     const fd = fsModule.openSync(validatedPath, options?.flag ?? "r");
@@ -392,29 +429,22 @@ function createNimbusFsModule(fsPromisesModule) {
     }
   };
   fsPromisesModule.writeFile = async function writeFile(path, data, options) {
-    const normalizedOptions = copyObject(getOptions(options, {
-      encoding: "utf8",
-      mode: 0o666,
-      flag: "w",
-      flush: false,
-    }));
-    const flush = normalizedOptions.flush ?? false;
-    validateBooleanOption(flush, "options.flush");
-    return originalFsPromisesWriteFile(path, data, sanitizeWriteFileOptions(normalizedOptions));
+    return writeFilePromiseWithCurrentFsBindings(
+      originalFsPromisesWriteFile,
+      path,
+      data,
+      options,
+      "w",
+    );
   };
   fsPromisesModule.appendFile = async function appendFile(path, data, options) {
-    const normalizedOptions = copyObject(getOptions(options, {
-      encoding: "utf8",
-      mode: 0o666,
-      flag: "a",
-      flush: false,
-    }));
-    const flush = normalizedOptions.flush ?? false;
-    validateBooleanOption(flush, "options.flush");
-    if (!normalizedOptions.flag || isNodeFd(path)) {
-      normalizedOptions.flag = "a";
-    }
-    return originalFsPromisesAppendFile(path, data, sanitizeWriteFileOptions(normalizedOptions));
+    return writeFilePromiseWithCurrentFsBindings(
+      originalFsPromisesAppendFile,
+      path,
+      data,
+      options,
+      "a",
+    );
   };
   const plainRmdirSyncTargets = new Set();
 
@@ -592,15 +622,47 @@ function createNimbusFsModule(fsPromisesModule) {
     enumerable: true,
     writable: true,
   });
+  fsModule.stat = function stat(path, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+      options = undefined;
+    }
+    validateCallbackFunction(callback, "callback");
+    runtimeFsStat(path, true, options).then(
+      (stats) => callback(null, stats),
+      (error) => callback(error),
+    );
+  };
+  fsModule.statSync = function statSync(path, options) {
+    return runtimeFsStatSync(path, true, options);
+  };
+  fsModule.lstat = function lstat(path, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+      options = undefined;
+    }
+    validateCallbackFunction(callback, "callback");
+    runtimeFsStat(path, false, options).then(
+      (stats) => callback(null, stats),
+      (error) => callback(error),
+    );
+  };
+  fsModule.lstatSync = function lstatSync(path, options) {
+    return runtimeFsStatSync(path, false, options);
+  };
   fsModule.readlink = function readlink(path, options, callback) {
     if (typeof options === "function") {
       callback = options;
       options = undefined;
     }
-    return fsBuiltin.readlink(path, snapshotFsEncodingOptions(options), callback);
+    validateCallbackFunction(callback, "callback");
+    runtimeFsReadlink(path, options).then(
+      (target) => callback(null, target),
+      (error) => callback(error),
+    );
   };
   fsModule.readlinkSync = function readlinkSync(path, options) {
-    return fsBuiltin.readlinkSync(path, snapshotFsEncodingOptions(options));
+    return runtimeFsReadlinkSync(path, options);
   };
   fsModule.realpath = function realpath(path, options, callback) {
     if (typeof options === "function") {

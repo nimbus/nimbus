@@ -666,6 +666,7 @@ Object.freeze(globalThis.__nimbusCreateContext);
 const DENO_RUNTIME_GLOBALS_SOURCE: &str = r#"
 const __nimbusRuntimeEnvOverlaySymbol = Symbol.for("nimbus.runtimeEnvOverlay");
 const __nimbusRuntimeEnvDeletedMarker = Symbol.for("nimbus.runtimeEnvDeleted");
+const __nimbusProcessEnvProxyMarker = Symbol.for("nimbus.processEnvProxy");
 if (globalThis[__nimbusRuntimeEnvOverlaySymbol] === undefined) {
   Object.defineProperty(globalThis, __nimbusRuntimeEnvOverlaySymbol, {
     value: Object.create(null),
@@ -692,6 +693,12 @@ const __nimbusErrInvalidObjectDefineProperty = function __nimbusErrInvalidObject
 const __nimbusCreateProcessEnvProxy = function __nimbusCreateProcessEnvProxy() {
   const snapshot = __nimbusCoreOps.op_nimbus_runtime_env_snapshot();
   const target = Object.assign(Object.create(null), snapshot);
+  Object.defineProperty(target, __nimbusProcessEnvProxyMarker, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
   return new Proxy(target, {
     get(currentTarget, property) {
       if (typeof property !== "string") {
@@ -991,7 +998,9 @@ const __nimbusInstallRuntimeContractGlobals = function __nimbusInstallRuntimeCon
     const env = __nimbusCreateProcessEnvProxy();
     const processBase = globalThis.process ?? {};
     const processValue =
-      processBase && typeof processBase === "object" ? processBase : {};
+      processBase && typeof processBase === "object"
+        ? Object.create(processBase)
+        : {};
     const existingVersions =
       processBase.versions && typeof processBase.versions === "object"
         ? processBase.versions
@@ -1026,6 +1035,27 @@ const __nimbusInstallRuntimeContractGlobals = function __nimbusInstallRuntimeCon
       processBase.features,
       desiredFeatures,
     );
+    if (processBase && typeof processBase === "object" && "emitWarning" in processBase) {
+      Object.defineProperty(processValue, "emitWarning", {
+        get() {
+          return processBase.emitWarning;
+        },
+        set(value) {
+          try {
+            processBase.emitWarning = value;
+          } catch (_error) {
+            Object.defineProperty(processBase, "emitWarning", {
+              value,
+              configurable: true,
+              enumerable: false,
+              writable: true,
+            });
+          }
+        },
+        configurable: true,
+        enumerable: false,
+      });
+    }
     Object.defineProperty(processValue, "cwd", {
       value() {
         return cwd;
