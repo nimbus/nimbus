@@ -207,8 +207,11 @@ impl CooperativeBackendDriver for V8LockerDriver {
                 self.deferred_v8_runtime_drops
                     .defer(reusable_runtime.runtime);
             }
-            RuntimePoolKind::BunJscTrustedRetained | RuntimePoolKind::BunJscFreshDiscard => {
-                unreachable!("Bun/JSC pool kinds are rejected before V8 runtime invocation")
+            RuntimePoolKind::BunJscTrustedRetained
+            | RuntimePoolKind::BunJscFreshDiscard
+            | RuntimePoolKind::PrecompiledModuleCache
+            | RuntimePoolKind::RetainedStorePool => {
+                unreachable!("non-V8 pool kinds are rejected before V8 runtime invocation")
             }
         }
     }

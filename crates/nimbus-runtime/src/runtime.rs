@@ -65,7 +65,6 @@ impl RuntimeHost {
         NimbusRuntime::with_policy(self.bridge.clone(), policy)
     }
 
-    #[cfg(feature = "bun-jsc-linked-adapter")]
     pub(crate) fn bridge(&self) -> Arc<dyn HostBridge> {
         self.bridge.clone()
     }

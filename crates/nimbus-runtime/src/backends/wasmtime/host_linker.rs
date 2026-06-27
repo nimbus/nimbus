@@ -70,7 +70,6 @@ pub(crate) fn create_wasmtime_component_engine() -> Result<wasmtime::Engine> {
     config.wasm_component_model(true);
     config.wasm_component_model_async(true);
     config.consume_fuel(true);
-    config.epoch_interruption(true);
     wasmtime::Engine::new(&config).map_err(wasmtime_error)
 }
 

@@ -17,6 +17,7 @@ pub enum RuntimeBackendKind {
     #[serde(rename = "v8")]
     V8,
     BunJsc,
+    Wasmtime,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -36,6 +37,7 @@ pub enum RuntimeBackendLockdownProfile {
     BunJscProofOnly,
     BunJscTrustedGeneratedWrapper,
     BunJscInProcessUntrusted,
+    WasmtimeComponentModel,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -51,6 +53,8 @@ pub enum RuntimeBackendLifecyclePolicy {
     /// concurrency, quota, cancellation, and teardown, but individual VMs are
     /// fresh or discarded unless Bun/JSC proves a hard in-process boundary.
     BunJscFreshDiscardPoolOuterQuotaRequired,
+    WasmtimePrecompiledModuleCache,
+    WasmtimeRetainedStorePool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -75,6 +79,7 @@ pub enum RuntimeJavaScriptEvaluationFormat {
 pub enum RuntimeCompatibilityTarget {
     WebStandardIsolate,
     BunJsc,
+    WasmComponent,
     Node20,
     Node22,
     Node24,
@@ -216,6 +221,9 @@ impl RuntimeCompatibilityTarget {
             | "WebStandardIsolate"
             | "web" => Some(Self::WebStandardIsolate),
             "bun_jsc" | "bun-jsc" | "bun" | "BunJsc" => Some(Self::BunJsc),
+            "wasm_component" | "wasm-component" | "wasmtime" | "WasmComponent" | "wasm" => {
+                Some(Self::WasmComponent)
+            }
             "node20" | "node_20" | "node-20" | "Node20" | "20" => Some(Self::Node20),
             "node22" | "node_22" | "node-22" | "Node22" | "22" => Some(Self::Node22),
             "node24" | "node_24" | "node-24" | "Node24" | "24" => Some(Self::Node24),
@@ -268,7 +276,7 @@ impl RuntimeCompatibilityTarget {
             Self::Node22 => Some("node22"),
             Self::Node24 => Some("node24"),
             Self::Node26 => Some("node26"),
-            Self::WebStandardIsolate | Self::BunJsc => None,
+            Self::WebStandardIsolate | Self::BunJsc | Self::WasmComponent => None,
         }
     }
 
@@ -326,6 +334,8 @@ impl<'de> Deserialize<'de> for RuntimeCompatibilityTarget {
                 &[
                     "web_standard_isolate",
                     "bun_jsc",
+                    "wasm_component",
+                    "wasmtime",
                     "node20",
                     "node22",
                     "node24",
@@ -345,6 +355,7 @@ impl<'de> Deserialize<'de> for RuntimeCompatibilityTarget {
 pub enum RuntimeExecutionModel {
     RunToCompletion,
     CooperativeLocker,
+    CooperativeFuel,
     /// Backend-owned event-loop and API-lock lifecycle. This is not the V8
     /// cooperative locker model; it is for engines such as Bun/JSC where the
     /// backend pool owns guest-entry acknowledgement, event-loop progress,
@@ -397,6 +408,12 @@ pub enum RuntimePoolKind {
     /// This is typed diagnostic/admission metadata only until BEP4+ land a real
     /// Bun pool behind the backend seam.
     BunJscFreshDiscard,
+    /// Wasmtime: retain compiled components process-wide and create a fresh
+    /// Store for each invocation.
+    PrecompiledModuleCache,
+    /// Wasmtime: worker-local retained Store pool. W6 owns the concrete
+    /// lifecycle; W3 rejects this pool until that phase lands.
+    RetainedStorePool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize)]
@@ -413,6 +430,7 @@ pub enum RuntimeMemoryEnforcement {
     #[default]
     V8IsolateHeapLimit,
     OuterQuotaRequired,
+    WasmtimeResourceLimiter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -488,10 +506,10 @@ pub(super) fn validate_backend_policy_axes(limits: &RuntimeLimits) {
             }
             if matches!(
                 limits.compatibility_target,
-                RuntimeCompatibilityTarget::BunJsc
+                RuntimeCompatibilityTarget::BunJsc | RuntimeCompatibilityTarget::WasmComponent
             ) {
                 panic!(
-                    "V8 runtime backend cannot use Bun/JSC compatibility target {:?}",
+                    "V8 runtime backend cannot use non-V8 compatibility target {:?}",
                     limits.compatibility_target
                 );
             }
@@ -620,6 +638,95 @@ pub(super) fn validate_backend_policy_axes(limits: &RuntimeLimits) {
                         trust_tier, lockdown_profile, lifecycle_policy, runtime_pool_kind
                     )
                 }
+            }
+        }
+        RuntimeBackendKind::Wasmtime => {
+            if !matches!(
+                limits.backend_trust_tier,
+                RuntimeBackendTrustTier::InProcessUntrusted
+            ) {
+                panic!(
+                    "Wasmtime runtime backend requires in-process-untrusted trust tier, got {:?}",
+                    limits.backend_trust_tier
+                );
+            }
+            if !matches!(
+                limits.backend_lockdown_profile,
+                RuntimeBackendLockdownProfile::WasmtimeComponentModel
+            ) {
+                panic!(
+                    "Wasmtime runtime backend requires Component Model lockdown profile, got {:?}",
+                    limits.backend_lockdown_profile
+                );
+            }
+            if !matches!(
+                limits.backend_lifecycle_policy,
+                RuntimeBackendLifecyclePolicy::WasmtimePrecompiledModuleCache
+            ) {
+                panic!(
+                    "Wasmtime runtime backend requires precompiled-module-cache lifecycle policy before retained Store pooling lands, got {:?}",
+                    limits.backend_lifecycle_policy
+                );
+            }
+            if !matches!(
+                limits.bundle_content_kind,
+                RuntimeBundleContentKind::WasmComponent
+            ) {
+                panic!(
+                    "Wasmtime runtime backend requires WASM component bundle content, got {:?}",
+                    limits.bundle_content_kind
+                );
+            }
+            if !matches!(
+                limits.javascript_evaluation_format,
+                RuntimeJavaScriptEvaluationFormat::EsModule
+            ) {
+                panic!(
+                    "Wasmtime runtime backend does not use JavaScript program-wrapper evaluation, got {:?}",
+                    limits.javascript_evaluation_format
+                );
+            }
+            if !matches!(
+                limits.compatibility_target,
+                RuntimeCompatibilityTarget::WasmComponent
+            ) {
+                panic!(
+                    "Wasmtime runtime backend requires WASM component compatibility target, got {:?}",
+                    limits.compatibility_target
+                );
+            }
+            if !matches!(
+                limits.execution_model,
+                RuntimeExecutionModel::RunToCompletion
+            ) {
+                panic!(
+                    "Wasmtime runtime backend supports only run-to-completion until cooperative fuel lands, got {:?}",
+                    limits.execution_model
+                );
+            }
+            if !matches!(limits.language, RuntimeLanguage::WasmComponent) {
+                panic!(
+                    "Wasmtime runtime backend requires WASM component runtime language, got {:?}",
+                    limits.language
+                );
+            }
+            if !matches!(
+                limits.runtime_pool_kind,
+                RuntimePoolKind::PrecompiledModuleCache
+            ) {
+                panic!(
+                    "Wasmtime runtime backend requires the precompiled module cache pool before retained Store pooling lands, got {:?}",
+                    limits.runtime_pool_kind
+                );
+            }
+            if !matches!(
+                limits.memory_enforcement,
+                RuntimeMemoryEnforcement::WasmtimeResourceLimiter
+            ) {
+                panic!(
+                    "Wasmtime runtime backend requires Wasmtime ResourceLimiter memory enforcement, got {:?}",
+                    limits.memory_enforcement
+                );
             }
         }
     }

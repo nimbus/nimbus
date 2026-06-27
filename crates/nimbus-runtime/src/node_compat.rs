@@ -489,9 +489,9 @@ fn node_code_translator_mode_for_target(
         | RuntimeCompatibilityTarget::Node22
         | RuntimeCompatibilityTarget::Node24
         | RuntimeCompatibilityTarget::Node26 => NodeCodeTranslatorMode::ModuleLoader,
-        RuntimeCompatibilityTarget::WebStandardIsolate | RuntimeCompatibilityTarget::BunJsc => {
-            NodeCodeTranslatorMode::ModuleLoader
-        }
+        RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => NodeCodeTranslatorMode::ModuleLoader,
     }
 }
 

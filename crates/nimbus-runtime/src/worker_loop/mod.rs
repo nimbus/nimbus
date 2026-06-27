@@ -23,6 +23,9 @@ pub(crate) fn create_worker_loop_factory(
             let factory = factory.with_test_state(test_state);
             Arc::new(factory)
         }
+        RuntimeExecutionModel::CooperativeFuel => {
+            panic!("Wasmtime cooperative fuel worker loop is owned by W5")
+        }
         RuntimeExecutionModel::CooperativeLocker => {
             let factory = CooperativeWorkerLoopFactory::new(watchdog);
             #[cfg(test)]

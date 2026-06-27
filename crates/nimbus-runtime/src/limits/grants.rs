@@ -12,6 +12,7 @@ pub enum RuntimeMode {
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeLanguage {
     JavaScript,
+    WasmComponent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
