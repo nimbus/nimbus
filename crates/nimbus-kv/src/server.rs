@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use nimbus_core::{TenantId, refuse_non_loopback_bind};
 use rand::{RngCore, rngs::OsRng};
@@ -18,6 +19,8 @@ use redis_protocol::resp3::{
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+
+use crate::{NimbusKvStore, TieringConfig};
 
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
@@ -143,6 +146,7 @@ impl CredentialRegistry {
 pub struct NimbusKvConfig {
     pub bind_addr: SocketAddr,
     pub credentials: CredentialRegistry,
+    pub store: Option<NimbusKvStore>,
 }
 
 impl NimbusKvConfig {
@@ -151,7 +155,14 @@ impl NimbusKvConfig {
         Self {
             bind_addr,
             credentials,
+            store: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_store(mut self, store: NimbusKvStore) -> Self {
+        self.store = Some(store);
+        self
     }
 }
 
@@ -192,6 +203,8 @@ enum Response {
     SimpleString(String),
     Error(String),
     Bulk(Vec<u8>),
+    Null,
+    Integer(i64),
     Array(Vec<Response>),
     Hello { proto: i64 },
 }
@@ -214,12 +227,16 @@ pub async fn run_listener(config: NimbusKvConfig) -> Result<(), KvError> {
 pub async fn serve(listener: TcpListener, config: NimbusKvConfig) -> Result<(), KvError> {
     refuse_non_loopback_bind(listener.local_addr()?)?;
     let credentials = Arc::new(config.credentials);
+    let store = config
+        .store
+        .unwrap_or(NimbusKvStore::no_disk(TieringConfig::no_disk())?);
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;
         let credentials = Arc::clone(&credentials);
+        let store = store.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_connection(stream, credentials).await {
+            if let Err(error) = handle_connection(stream, credentials, store).await {
                 tracing::warn!(%peer_addr, %error, "nimbus-kv connection ended with error");
             }
         });
@@ -229,6 +246,7 @@ pub async fn serve(listener: TcpListener, config: NimbusKvConfig) -> Result<(), 
 async fn handle_connection(
     mut stream: TcpStream,
     credentials: Arc<CredentialRegistry>,
+    store: NimbusKvStore,
 ) -> Result<(), KvError> {
     let mut state = ConnectionState::default();
     let mut buffer = Vec::new();
@@ -237,7 +255,7 @@ async fn handle_connection(
     loop {
         while let Some(frame) = decode_next_frame(state.protocol, &mut buffer)? {
             let outcome = match parse_command(frame) {
-                Ok(command) => execute_command(command, &mut state, &credentials),
+                Ok(command) => execute_command(command, &mut state, &credentials, &store),
                 Err(response) => CommandOutcome {
                     response,
                     protocol: None,
@@ -366,6 +384,7 @@ fn execute_command(
     command: CommandRequest,
     state: &mut ConnectionState,
     credentials: &CredentialRegistry,
+    store: &NimbusKvStore,
 ) -> CommandOutcome {
     let name = String::from_utf8_lossy(&command.args[0]).to_ascii_uppercase();
     match name.as_str() {
@@ -387,12 +406,121 @@ fn execute_command(
         },
         "CLIENT" => client_command(&command.args),
         "SELECT" => select_command(&command.args, state),
+        "GET" => get_command(&command.args, store),
+        "SET" => set_command(&command.args, store),
+        "DEL" => del_command(&command.args, store),
+        "EXPIRE" => expire_command(&command.args, store),
+        "TTL" => ttl_command(&command.args, store),
+        "INCR" => incr_command(&command.args, store),
         _ => CommandOutcome {
             response: Response::Error(format!("ERR unknown command '{name}'")),
             protocol: None,
             close: false,
         },
     }
+}
+
+fn get_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
+    let response = match args {
+        [_, key] => match store.get(key, now_ms()) {
+            Ok(Some(value)) => Response::Bulk(value),
+            Ok(None) => Response::Null,
+            Err(error) => storage_error(error),
+        },
+        _ => Response::Error("ERR wrong number of arguments for 'GET'".to_owned()),
+    };
+    command_response(response)
+}
+
+fn set_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
+    let response = match args {
+        [_, key, value] => match store.set(key.clone(), value.clone(), None) {
+            Ok(()) => Response::SimpleString("OK".to_owned()),
+            Err(error) => storage_error(error),
+        },
+        [_, key, value, option, ttl] if option.eq_ignore_ascii_case(b"EX") => {
+            match parse_expire_seconds(ttl)
+                .and_then(|seconds| expire_at_from_now(seconds, now_ms()))
+            {
+                Ok(expire_at_ms) => match store.set(key.clone(), value.clone(), Some(expire_at_ms))
+                {
+                    Ok(()) => Response::SimpleString("OK".to_owned()),
+                    Err(error) => storage_error(error),
+                },
+                Err(response) => response,
+            }
+        }
+        [_, key, value, option, ttl] if option.eq_ignore_ascii_case(b"PX") => {
+            match parse_expire_millis(ttl)
+                .and_then(|millis| expire_at_ms_from_now(millis, now_ms()))
+            {
+                Ok(expire_at_ms) => match store.set(key.clone(), value.clone(), Some(expire_at_ms))
+                {
+                    Ok(()) => Response::SimpleString("OK".to_owned()),
+                    Err(error) => storage_error(error),
+                },
+                Err(response) => response,
+            }
+        }
+        _ => Response::Error("ERR syntax error".to_owned()),
+    };
+    command_response(response)
+}
+
+fn del_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
+    if args.len() < 2 {
+        return command_response(Response::Error(
+            "ERR wrong number of arguments for 'DEL'".to_owned(),
+        ));
+    }
+    let mut deleted = 0_i64;
+    for key in &args[1..] {
+        match store.delete(key) {
+            Ok(true) => deleted += 1,
+            Ok(false) => {}
+            Err(error) => return command_response(storage_error(error)),
+        }
+    }
+    command_response(Response::Integer(deleted))
+}
+
+fn expire_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
+    let response = match args {
+        [_, key, seconds] => match parse_expire_seconds(seconds)
+            .and_then(|seconds| expire_at_from_now(seconds, now_ms()))
+        {
+            Ok(expire_at_ms) => match store.expire(key, expire_at_ms, now_ms()) {
+                Ok(true) => Response::Integer(1),
+                Ok(false) => Response::Integer(0),
+                Err(error) => storage_error(error),
+            },
+            Err(response) => response,
+        },
+        _ => Response::Error("ERR wrong number of arguments for 'EXPIRE'".to_owned()),
+    };
+    command_response(response)
+}
+
+fn ttl_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
+    let response = match args {
+        [_, key] => match store.ttl(key, now_ms()) {
+            Ok(ttl) => Response::Integer(ttl),
+            Err(error) => storage_error(error),
+        },
+        _ => Response::Error("ERR wrong number of arguments for 'TTL'".to_owned()),
+    };
+    command_response(response)
+}
+
+fn incr_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
+    let response = match args {
+        [_, key] => match store.incr(key, now_ms()) {
+            Ok(value) => Response::Integer(value),
+            Err(error) => storage_error(error),
+        },
+        _ => Response::Error("ERR wrong number of arguments for 'INCR'".to_owned()),
+    };
+    command_response(response)
 }
 
 fn auth_command(
@@ -570,6 +698,55 @@ fn noauth() -> CommandOutcome {
     }
 }
 
+fn command_response(response: Response) -> CommandOutcome {
+    CommandOutcome {
+        response,
+        protocol: None,
+        close: false,
+    }
+}
+
+fn storage_error(error: KvError) -> Response {
+    Response::Error(format!("ERR {error}"))
+}
+
+fn now_ms() -> i64 {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    i64::try_from(millis).unwrap_or(i64::MAX)
+}
+
+fn parse_expire_seconds(value: &[u8]) -> Result<i64, Response> {
+    let value = std::str::from_utf8(value)
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| Response::Error("ERR invalid expire time".to_owned()))?;
+    value
+        .checked_mul(1_000)
+        .ok_or_else(|| Response::Error("ERR invalid expire time".to_owned()))
+}
+
+fn parse_expire_millis(value: &[u8]) -> Result<i64, Response> {
+    std::str::from_utf8(value)
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| Response::Error("ERR invalid expire time".to_owned()))
+}
+
+fn expire_at_from_now(ttl_ms: i64, now_ms: i64) -> Result<i64, Response> {
+    expire_at_ms_from_now(ttl_ms, now_ms)
+}
+
+fn expire_at_ms_from_now(ttl_ms: i64, now_ms: i64) -> Result<i64, Response> {
+    now_ms
+        .checked_add(ttl_ms)
+        .ok_or_else(|| Response::Error("ERR invalid expire time".to_owned()))
+}
+
 fn encode_response(response: &Response, protocol: Protocol) -> Result<Vec<u8>, KvError> {
     match protocol {
         Protocol::Resp2 => encode_resp2(response),
@@ -599,6 +776,8 @@ impl Response {
             Self::SimpleString(data) => Resp2Frame::SimpleString(data.as_bytes().to_vec()),
             Self::Error(data) => Resp2Frame::Error(data.clone()),
             Self::Bulk(data) => Resp2Frame::BulkString(data.clone()),
+            Self::Null => Resp2Frame::Null,
+            Self::Integer(data) => Resp2Frame::Integer(*data),
             Self::Array(items) => Resp2Frame::Array(items.iter().map(Self::to_resp2).collect()),
             Self::Hello { proto } => Resp2Frame::Array(vec![
                 Resp2Frame::BulkString(b"server".to_vec()),
@@ -621,6 +800,11 @@ impl Response {
             },
             Self::Bulk(data) => Resp3Frame::BlobString {
                 data: data.clone(),
+                attributes: None,
+            },
+            Self::Null => Resp3Frame::Null,
+            Self::Integer(data) => Resp3Frame::Number {
+                data: *data,
                 attributes: None,
             },
             Self::Array(items) => Resp3Frame::Array {

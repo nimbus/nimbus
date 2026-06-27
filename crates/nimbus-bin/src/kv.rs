@@ -1,9 +1,10 @@
 use std::error::Error;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 
 use clap::Args;
 use nimbus::TenantId;
-use nimbus_kv::{CredentialRegistry, NimbusKvConfig, run_listener};
+use nimbus_kv::{CredentialRegistry, NimbusKvConfig, NimbusKvStore, TieringConfig, run_listener};
 
 #[derive(Debug, Args)]
 #[command(
@@ -23,15 +24,29 @@ pub(crate) struct KvCommand {
     /// Password for AUTH. Defaults to NIMBUS_KV_PASSWORD or a generated value.
     #[arg(long)]
     password: Option<String>,
+    /// redb tenant file for durable mode.
+    #[arg(long)]
+    data: Option<PathBuf>,
+    /// Keep state in memory only.
+    #[arg(long)]
+    no_disk: bool,
+    /// Disable the read-through cache.
+    #[arg(long)]
+    no_cache: bool,
+    /// Approximate cache byte budget.
+    #[arg(long)]
+    maxmemory: Option<usize>,
 }
 
 pub(crate) async fn run_kv_command(command: KvCommand) -> Result<(), Box<dyn Error>> {
-    let tenant = TenantId::new(command.tenant)?;
+    let tenant = TenantId::new(command.tenant.clone())?;
     let username = command
         .username
+        .clone()
         .unwrap_or_else(|| tenant.as_str().to_owned());
     let password = command
         .password
+        .clone()
         .or_else(|| std::env::var("NIMBUS_KV_PASSWORD").ok());
 
     let (credentials, password) = match password {
@@ -54,9 +69,51 @@ pub(crate) async fn run_kv_command(command: KvCommand) -> Result<(), Box<dyn Err
         tenant.as_str()
     );
 
-    let config = NimbusKvConfig::new(command.bind, credentials);
+    let store = kv_store_for_command(&command, &tenant)?;
+    let config = NimbusKvConfig::new(command.bind, credentials).with_store(store);
     run_listener(config).await?;
     Ok(())
+}
+
+fn kv_store_for_command(
+    command: &KvCommand,
+    tenant: &TenantId,
+) -> Result<NimbusKvStore, Box<dyn Error>> {
+    if command.no_disk && command.no_cache {
+        return Err("nimbus kv cannot combine --no-disk and --no-cache".into());
+    }
+
+    let tiering = match (command.no_disk, command.no_cache) {
+        (true, false) => TieringConfig::no_disk(),
+        (false, true) => TieringConfig::no_cache(),
+        (false, false) => TieringConfig::durable(),
+        (true, true) => unreachable!("validated above"),
+    };
+    let tiering = match command.maxmemory {
+        Some(maxmemory) => tiering.with_maxmemory(maxmemory),
+        None => tiering,
+    };
+
+    if command.no_disk {
+        return Ok(NimbusKvStore::no_disk(tiering)?);
+    }
+
+    let data = command
+        .data
+        .clone()
+        .unwrap_or_else(|| default_data_path(tenant));
+    if let Some(parent) = data.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(NimbusKvStore::durable_at(data, tiering)?)
+}
+
+fn default_data_path(tenant: &TenantId) -> PathBuf {
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(".nimbus")
+        .join("kv")
+        .join(format!("{}.redb", tenant.as_str()))
 }
 
 impl Default for KvCommand {
@@ -66,6 +123,10 @@ impl Default for KvCommand {
             tenant: "demo".to_owned(),
             username: None,
             password: None,
+            data: None,
+            no_disk: false,
+            no_cache: false,
+            maxmemory: None,
         }
     }
 }

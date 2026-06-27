@@ -6195,9 +6195,11 @@ version = "0.1.44"
 dependencies = [
  "hex",
  "nimbus-core",
+ "nimbus-storage",
  "rand 0.8.5",
  "redis",
  "redis-protocol",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

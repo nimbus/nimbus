@@ -32,8 +32,8 @@ use crate::{
 };
 
 pub use kv::{
-    KvBatchOp, KvBatchOutcome, KvEntry, KvPut, KvScanPage, KvStorageEngine, KvSweepOutcome,
-    TenantKvStore,
+    KvBatchOp, KvBatchOutcome, KvEntry, KvMutation, KvPut, KvScanPage, KvStorageEngine,
+    KvSweepOutcome, TenantKvStore,
 };
 
 /// Tenant lifecycle and discovery for provider families that can own tenants.
