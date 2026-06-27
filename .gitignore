@@ -73,3 +73,8 @@ data/
 # Pipeline-owned runtime-compat inputs that builds and CI depend on live
 # under tests/runtime/node/ instead, never here.
 docs/private/
+
+# Embedded NodeFull(Node22) anchor snapshots are GENERATED per build target+config
+# (V8 snapshots are platform-specific) by `make build-node22-anchor-snapshot`, not committed.
+crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
+crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.pc.bin

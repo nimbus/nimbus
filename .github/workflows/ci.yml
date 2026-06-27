@@ -184,13 +184,6 @@ jobs:
         # CLAUDE.md) so this lane intentionally has no Node/UI prerequisites.
         run: make test-rust-runtime
 
-      - name: Verify embedded anchor snapshot (feature-off) is live
-        # The serving path DESERIALIZES a committed NodeFull(Node22) anchor snapshot (~19ms) instead
-        # of building it (~4.18s, which blows per-request timeouts when armed lazily). This --check
-        # fails loud if a bootstrap / op-surface / extension / deno-fork change left the committed
-        # feature-off blob stale (provenance mismatch). Reuses this lane's feature-off build.
-        run: cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot -- --check
-
   rust-runtime-ptrcomp-check:
     name: Rust Runtime Ptrcomp Check
     runs-on: ubuntu-24.04
@@ -214,6 +207,14 @@ jobs:
           grep -F 'v8 feature "v8_enable_pointer_compression"' /tmp/runtime-ptrcomp-tree.txt
           grep -F 'v8 feature "simdutf"' /tmp/runtime-ptrcomp-tree.txt
 
+      - name: Generate + verify embedded anchor snapshot (pointer-compression)
+        # A V8 startup snapshot is platform-specific, so the feature-on (.pc.bin) anchor snapshot the
+        # release/cage serving path uses is GENERATED for THIS runner's target (not committed) and
+        # self-`--check`ed live. This clean job's shared gn_out/obj/librusty_v8.a is the
+        # pointer-compression variant (no interleaved feature-off build to mislink it). Required by the
+        # under-cage integration test below.
+        run: env -u V8_FROM_SOURCE make build-node22-anchor-snapshot-on
+
       - name: Run cage crash-oracle lane
         # The cross-profile shared-RO-heap crash only reproduces under the single
         # pointer-compression cage, which is exactly how release binaries ship (see
@@ -223,12 +224,6 @@ jobs:
         # fix tests assert success, each in its own process. Uses the prebuilt ptrcomp rusty_v8
         # (V8_FROM_SOURCE unset), matching the check above.
         run: env -u V8_FROM_SOURCE make test-rust-runtime-cage
-
-      - name: Verify embedded anchor snapshot (pointer-compression) is live
-        # Same staleness gate for the feature-on (.pc.bin) blob the release/cage serving path uses.
-        # This is a clean CI job, so its shared gn_out/obj/librusty_v8.a is the pointer-compression
-        # variant (no interleaved feature-off build to mislink it). Reuses this lane's feature-on build.
-        run: env -u V8_FROM_SOURCE cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression -- --check
 
       - name: Verify embedded anchor installs under the cage
         # The cfg(test) cage oracle above CANNOT exercise the EMBEDDED anchor path: under cfg(test)

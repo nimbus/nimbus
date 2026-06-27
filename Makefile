@@ -131,8 +131,11 @@ test: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
 
 # Run the CI runtime Rust test bucket. No UI prereq: nimbus-runtime has
 # zero workspace deps (per CLAUDE.md), so cargo test -p nimbus-runtime
-# doesn't compile nimbus-server and doesn't need the UI artifacts.
-test-rust-runtime:
+# doesn't compile nimbus-server and doesn't need the UI artifacts. The
+# build-node22-anchor-snapshot-off prerequisite (also nimbus-runtime-only)
+# generates the feature-off blob the tests/embedded_anchor integration test
+# installs; it is idempotent so an up-to-date tree pays only a --check.
+test-rust-runtime: build-node22-anchor-snapshot-off
 	$(SINGLE_FLIGHT) --key cargo-test-runtime-ci -- cargo test -p nimbus-runtime -- --skip runtime::tests::node_compat::
 
 # Run the cage (pointer-compression) crash-oracle lane. The cross-profile shared-RO-heap
@@ -145,26 +148,32 @@ test-rust-runtime:
 test-rust-runtime-cage:
 	$(SINGLE_FLIGHT) --key cargo-test-runtime-cage-ci -- cargo test -p nimbus-runtime --features v8-pointer-compression --lib isol_
 
-.PHONY: build-node22-anchor-snapshot verify-node22-anchor-snapshot
-# Regenerate BOTH committed embedded NodeFull(Node22) anchor snapshots, one per pointer-compression
-# config: src/backends/v8/node22_anchor_snapshot.bin (feature-off = dev/test) and ...pc.bin
-# (feature-on = release/cage). The serving path DESERIALIZES the committed blob (~19ms) instead of
-# building it (~4.18s, which blows per-request timeouts when the anchor arms lazily). Run after any
-# bootstrap / extension / op-surface / deno-fork change, then `make verify-node22-anchor-snapshot`.
-# The feature-on run uses a separate CARGO_TARGET_DIR so its pointer-compression V8 prebuilt does not
-# collide with the shared gn_out/obj/librusty_v8.a that the feature-off build just overwrote (the
-# nimbus-runtime build.rs guard otherwise fails the feature-on link — by design).
+.PHONY: build-node22-anchor-snapshot build-node22-anchor-snapshot-off build-node22-anchor-snapshot-on
+# The embedded NodeFull(Node22) anchor snapshots are GENERATED per build target + pointer-compression
+# config (a V8 startup snapshot is platform-specific) and are NOT committed (gitignored). The serving
+# path DESERIALIZES the generated blob (~19ms) instead of building it lazily (~4.18s, which blows
+# per-request timeouts). Each CI lane / a release build regenerates the blob for ITS target+config
+# BEFORE building the consuming binary; the runtime provenance guard (arch+OS+V8+pc+extensions+ops+JS)
+# falls back to a runtime build if a blob is missing or built for the wrong target/config, so a fresh
+# `cargo build` without this step is slow-but-correct, never wrong. Each target also `--check`s that
+# the just-generated blob is live (a self-test of the generator). `-off`/`-on` do ONE config (the
+# single-config CI lanes); the bare target does both for local dev (the `-on` half in a separate
+# CARGO_TARGET_DIR so its pointer-compression V8 prebuilt does not collide with the shared
+# gn_out/obj/librusty_v8.a a preceding feature-off build wrote — the build.rs guard otherwise fails).
+# `-off`/`-on` are IDEMPOTENT (`--check` first; only regenerate if the blob is absent or stale for
+# this target+config), so they are cheap to use as a build prerequisite — a fresh checkout / changed
+# bootstrap pays the ~4.18s once, an up-to-date tree pays only a `--check`. The bare target FORCE
+# regenerates both (the `-on` half in a separate CARGO_TARGET_DIR to dodge the shared-.a guard).
+build-node22-anchor-snapshot-off:
+	cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot -- --check \
+		|| cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot
+build-node22-anchor-snapshot-on:
+	cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression -- --check \
+		|| cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression
 build-node22-anchor-snapshot:
 	cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot
-	CARGO_TARGET_DIR=target/ptrcomp cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression
-
-# Fail-loud staleness gate for BOTH committed anchor blobs (provenance match + structural parse, per
-# pointer-compression config). NOT a byte-compare: V8 embeds a random hash-seed, so its startup
-# snapshots are not byte-reproducible (two builds from identical inputs differ); the provenance hash
-# is over INPUTS, which ARE deterministic. Run in CI to catch a bootstrap/op/extension change that
-# was not regenerated.
-verify-node22-anchor-snapshot:
 	cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot -- --check
+	CARGO_TARGET_DIR=target/ptrcomp cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression
 	CARGO_TARGET_DIR=target/ptrcomp cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression -- --check
 
 # Run the CI workspace Rust test bucket. CW2: when NIMBUS_NEXTEST_PARTITION is
@@ -180,7 +189,11 @@ NEXTEST_PARTITION_ARGS := --partition hash:$(NIMBUS_NEXTEST_PARTITION)
 NEXTEST_SINGLE_FLIGHT_SUFFIX := -$(subst /,-of-,$(NIMBUS_NEXTEST_PARTITION))
 endif
 
-test-rust-workspace: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
+# The convex seeded HTTP test (in nimbus-server) deserializes the embedded NodeFull anchor snapshot
+# (~19ms) on its first request; without it the anchor builds lazily (~4.18s) and blows the test's 3s
+# per-request timeout. The blob is generated per target (not committed), so generate it (idempotently)
+# before the workspace build — locally and in CI.
+test-rust-workspace: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST) build-node22-anchor-snapshot-off
 	NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 $(SINGLE_FLIGHT) --key cargo-nextest-workspace-ci$(NEXTEST_SINGLE_FLIGHT_SUFFIX) -- cargo nextest run --workspace --exclude nimbus-runtime $(NEXTEST_PARTITION_ARGS)
 
 # LR12: live hidden node-workload-executor test against session systemd
