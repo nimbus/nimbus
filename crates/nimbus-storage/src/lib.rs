@@ -9,6 +9,7 @@ pub mod encrypted_redb;
 pub mod format;
 pub mod index;
 pub mod keys;
+pub mod kv;
 pub mod libsql;
 pub mod materializer;
 pub mod mysql;
@@ -54,6 +55,7 @@ pub use format::{
     validate_document_version_storage_format_state, validate_index_version_storage_format,
     validate_index_version_storage_format_state, validate_storage_format_version,
 };
+pub use kv::{FJALL_KV_ENGINE_NAME, RedbTenantKvStore, fjall_kv_engine_type_marker};
 pub use libsql::{
     LibsqlReplicaBarrierPath, LibsqlReplicaFreshnessStats, LibsqlReplicaProvider,
     LibsqlReplicaProviderConfig, LibsqlReplicaRefreshCause, LibsqlReplicaRefreshPath,
@@ -111,8 +113,9 @@ pub use table_identity::{
     apply_table_lifecycle_transition,
 };
 pub use traits::{
-    ControlPlaneUsage, DurableJournal, KeyProviderSurface, SchedulerStore, StorageEngine,
-    TenantLifecycle, TenantPointRead, TenantPointWrite, TenantRangeScan,
+    ControlPlaneUsage, DurableJournal, KeyProviderSurface, KvBatchOp, KvBatchOutcome, KvEntry,
+    KvPut, KvScanPage, KvStorageEngine, KvSweepOutcome, SchedulerStore, StorageEngine,
+    TenantKvStore, TenantLifecycle, TenantPointRead, TenantPointWrite, TenantRangeScan,
 };
 pub use usage_store::{MonthlyActiveUsersSnapshot, UsageStore};
 
