@@ -269,13 +269,16 @@ fn embeddable_node22_snapshot_target() -> (RuntimeCompatibilityTarget, bool) {
 /// to the provenance hash (e.g. a change to the blob byte layout, or a subtle op-behavior change
 /// that alters the bootstrapped heap without changing op names or JS source text). This is the
 /// manual catch-all for "changed but not regenerated" inputs the structured hash cannot see.
-const EMBEDDED_SNAPSHOT_SCHEMA_VERSION: u64 = 2;
+const EMBEDDED_SNAPSHOT_SCHEMA_VERSION: u64 = 3;
 
 /// Provenance hash over EVERYTHING that determines the NodeFull snapshot's RO heap, computed
 /// IDENTICALLY at build time (in the blob) and at runtime (here). The embedded blob is used ONLY
 /// when this equals the blob's stored provenance; on ANY mismatch the serving path falls back to a
 /// runtime build (slow-but-correct), NEVER installs a stale snapshot (which would silently
 /// reinstall the cross-profile cage collision baked into the binary). Coverage:
+///   - the build TARGET arch + OS (a V8 startup snapshot is platform-specific — a darwin-arm64
+///     snapshot deserialized on linux-x86_64 is a hard V8_Fatal; the committed blob is per-platform,
+///     so a foreign-target blob MUST mismatch and fall back, never install);
 ///   - the V8 version (snapshots are V8-version-specific; skew must not install);
 ///   - the `v8-pointer-compression` feature (release ships pointer-compressed; V8 refuses to
 ///     deserialize a snapshot built under a different pointer-compression config — installing a
@@ -295,6 +298,12 @@ fn embedded_node22_snapshot_provenance() -> Result<u64> {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     EMBEDDED_SNAPSHOT_SCHEMA_VERSION.hash(&mut hasher);
+    // A V8 startup snapshot is platform-specific: the build target's arch + OS must gate it so a
+    // blob built for one platform (e.g. the committed darwin-arm64 one) can NEVER install on another
+    // (e.g. linux-x86_64 CI), which would be a hard V8_Fatal. `std::env::consts` reflects the build
+    // TARGET (the binary's compiled-for platform), identical at build time (builder bin) and runtime.
+    std::env::consts::ARCH.hash(&mut hasher);
+    std::env::consts::OS.hash(&mut hasher);
     super::embedder::v8::V8::get_version().hash(&mut hasher);
     cfg!(feature = "v8-pointer-compression").hash(&mut hasher);
     let (target, service_extension_enabled) = embeddable_node22_snapshot_target();
