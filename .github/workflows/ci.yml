@@ -232,6 +232,13 @@ jobs:
         # nimbus-runtime, so the anchor installs FROM the committed .pc.bin into the real shared cage
         # — the production serving path. The shipped first-installer guard stays silent (the anchor is
         # the first, superset, installer).
+        #
+        # `if: !cancelled()` so this runs even when the crash-oracle lane above reports failure: that
+        # lane runs the full ptrcomp lib suite, which currently carries a pre-existing failure on main
+        # (pool_reuse::*condemns_stalled_wait_until*, identical 67-pass/1-fail on the branch point) that
+        # is unrelated to the embedded-anchor path. Gating this step on the whole lane's success would
+        # let an inherited red mask the embedded-anchor verification this PR actually owns.
+        if: ${{ !cancelled() }}
         run: env -u V8_FROM_SOURCE cargo test -p nimbus-runtime --features v8-pointer-compression --test embedded_anchor
 
   profile-aware-runtime-crossover:
@@ -980,6 +987,16 @@ jobs:
       - name: Refresh nimbus-ui artifact mtimes
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
+      - name: Generate embedded anchor snapshot
+        # The harness exercises the production Convex serving path, where the NodeFull
+        # anchor installs from the embedded blob (release.yml gens it per target). The
+        # committed blob is a gitignored empty placeholder, so without this the harness
+        # runs the ~4.18s LAZY anchor build, which blows the 3s seeded-action timeout at
+        # convex demo step 0 (e.g. smoke-storage-baseline-31 on the convex demo surface).
+        # Generate the feature-off blob for THIS runner's target so the harness uses the
+        # ~19ms embedded deserialize, matching the workspace-tests and release lanes.
+        run: env -u V8_FROM_SOURCE make build-node22-anchor-snapshot-off
+
       - name: Run required verification harness corpus
         run: bash scripts/verification-harness.sh required ${{ matrix.surface }} ${{ matrix.shard }}
 
@@ -1024,6 +1041,12 @@ jobs:
 
       - name: Build nimbus-ui artifacts
         run: make build-ui
+
+      - name: Generate embedded anchor snapshot
+        # Match the production Convex serving path: without the embedded blob the
+        # harness runs the ~4.18s lazy NodeFull anchor build, blowing the 3s
+        # seeded-action timeout. See the required-harness lane above.
+        run: env -u V8_FROM_SOURCE make build-node22-anchor-snapshot-off
 
       - name: Run nightly verification harness corpus
         run: bash scripts/verification-harness.sh nightly ${{ matrix.surface }}
