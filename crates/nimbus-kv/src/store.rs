@@ -270,16 +270,16 @@ impl NimbusKvStore {
     fn get_entry(&self, key: &[u8], now_ms: i64) -> Result<Option<KvEntry>, KvError> {
         if self.cache_enabled() {
             let mut cache = self.cache_lock()?;
-            if let Some(entry) = cache.get(key) {
-                if !cache_entry_expired(entry, now_ms) {
-                    self.inner.metrics.record_cache_hit();
-                    return Ok(Some(KvEntry {
-                        key: key.to_vec(),
-                        value: entry.value.clone(),
-                        metadata: BTreeMap::new(),
-                        expire_at_ms: entry.expire_at_ms,
-                    }));
-                }
+            if let Some(entry) = cache.get(key)
+                && !cache_entry_expired(entry, now_ms)
+            {
+                self.inner.metrics.record_cache_hit();
+                return Ok(Some(KvEntry {
+                    key: key.to_vec(),
+                    value: entry.value.clone(),
+                    metadata: BTreeMap::new(),
+                    expire_at_ms: entry.expire_at_ms,
+                }));
             }
             cache.remove(key);
             self.inner.metrics.record_cache_miss();

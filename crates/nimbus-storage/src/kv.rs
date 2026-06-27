@@ -154,8 +154,13 @@ impl TenantKvStore for TenantStore {
 
         let effective_cursor = cursor.filter(|cursor| cursor.starts_with(prefix));
         let start = effective_cursor.unwrap_or(prefix);
-        let mut entries = Vec::new();
-        let mut next_cursor = None;
+        let mut scan = KvScanState::default();
+        let scan_constraints = ScanConstraints {
+            prefix,
+            cursor: effective_cursor,
+            limit,
+            now_ms,
+        };
 
         match prefix_end(prefix) {
             Some(end) => {
@@ -164,17 +169,8 @@ impl TenantKvStore for TenantStore {
                     .map_err(map_redb_error)?
                 {
                     let (key, value) = item.map_err(map_redb_error)?;
-                    scan_entry(
-                        &mut entries,
-                        &mut next_cursor,
-                        key.value(),
-                        value.value(),
-                        prefix,
-                        effective_cursor,
-                        limit,
-                        now_ms,
-                    )?;
-                    if next_cursor.is_some() {
+                    scan_entry(&mut scan, key.value(), value.value(), &scan_constraints)?;
+                    if scan.next_cursor.is_some() {
                         break;
                     }
                 }
@@ -185,17 +181,8 @@ impl TenantKvStore for TenantStore {
                     if !key.value().starts_with(prefix) {
                         break;
                     }
-                    scan_entry(
-                        &mut entries,
-                        &mut next_cursor,
-                        key.value(),
-                        value.value(),
-                        prefix,
-                        effective_cursor,
-                        limit,
-                        now_ms,
-                    )?;
-                    if next_cursor.is_some() {
+                    scan_entry(&mut scan, key.value(), value.value(), &scan_constraints)?;
+                    if scan.next_cursor.is_some() {
                         break;
                     }
                 }
@@ -203,8 +190,8 @@ impl TenantKvStore for TenantStore {
         }
 
         Ok(KvScanPage {
-            entries,
-            next_cursor,
+            entries: scan.entries,
+            next_cursor: scan.next_cursor,
         })
     }
 
@@ -472,29 +459,38 @@ fn remove_expiry_index(
     Ok(())
 }
 
-fn scan_entry(
-    entries: &mut Vec<KvEntry>,
-    next_cursor: &mut Option<Vec<u8>>,
-    key: &[u8],
-    value: &[u8],
-    prefix: &[u8],
-    cursor: Option<&[u8]>,
+#[derive(Default)]
+struct KvScanState {
+    entries: Vec<KvEntry>,
+    next_cursor: Option<Vec<u8>>,
+}
+
+struct ScanConstraints<'a> {
+    prefix: &'a [u8],
+    cursor: Option<&'a [u8]>,
     limit: usize,
     now_ms: i64,
+}
+
+fn scan_entry(
+    scan: &mut KvScanState,
+    key: &[u8],
+    value: &[u8],
+    constraints: &ScanConstraints<'_>,
 ) -> Result<()> {
-    if !key.starts_with(prefix) {
+    if !key.starts_with(constraints.prefix) {
         return Ok(());
     }
-    if cursor.is_some_and(|cursor| key <= cursor) {
+    if constraints.cursor.is_some_and(|cursor| key <= cursor) {
         return Ok(());
     }
     let record = decode_record(value)?;
-    if record.is_expired_at(now_ms) {
+    if record.is_expired_at(constraints.now_ms) {
         return Ok(());
     }
-    entries.push(record.into_entry(key.to_vec()));
-    if entries.len() == limit {
-        *next_cursor = Some(key.to_vec());
+    scan.entries.push(record.into_entry(key.to_vec()));
+    if scan.entries.len() == constraints.limit {
+        scan.next_cursor = Some(key.to_vec());
     }
     Ok(())
 }

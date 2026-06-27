@@ -149,11 +149,11 @@ impl NimbusKvMetricsSnapshot {
     #[must_use]
     pub fn render_text(&self) -> String {
         let total_cache = self.cache_hits.saturating_add(self.cache_misses);
-        let cache_hit_ratio_ppm = if total_cache == 0 {
-            0
-        } else {
-            self.cache_hits.saturating_mul(1_000_000) / total_cache
-        };
+        let cache_hit_ratio_ppm = self
+            .cache_hits
+            .saturating_mul(1_000_000)
+            .checked_div(total_cache)
+            .unwrap_or(0);
 
         let mut out = String::new();
         let _ = writeln!(out, "# Nimbus KV");

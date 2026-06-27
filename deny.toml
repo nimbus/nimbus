@@ -37,6 +37,7 @@ confidence-threshold = 0.8
 exceptions = [
   { crate = "ar_archive_writer", allow = ["Apache-2.0 WITH LLVM-exception"] },
   { crate = "tiny-keccak", allow = ["CC0-1.0"] },
+  { crate = "varint-rs", allow = ["0BSD"] },
 ]
 # Workspace crates use the Nimbus Community License (custom, not SPDX)
 private = { ignore = true }
@@ -73,6 +74,7 @@ skip = [
     { crate = "brotli-decompressor@4.0.3", reason = "The pinned Deno HTTP/web stack carries brotli-decompressor 4 while async-compression carries brotli-decompressor 5." },
     { crate = "compact_str@0.7.1", reason = "The pinned Deno SWC codegen stack carries compact_str 0.7 while the OXC code-index stack carries compact_str 0.9." },
     { crate = "crypto-bigint@0.7.3", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "dashmap@5.5.3", reason = "The pinned Deno resolver/config stack carries dashmap 5 while the fjall storage lane uses dashmap 6." },
     { crate = "der@0.8.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "elliptic-curve@0.14.0-rc.28", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "hashbrown@0.15.5", reason = "The pinned rusqlite/imara-diff lanes still carry hashbrown 0.15 while indexmap and OXC carry newer hashbrown lanes." },
