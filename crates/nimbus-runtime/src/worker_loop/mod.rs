@@ -3,10 +3,10 @@ use std::sync::Arc;
 use crate::limits::{RuntimeExecutionModel, RuntimePolicy};
 use crate::watchdog::WatchdogTimer;
 
-mod cooperative;
+pub(crate) mod cooperative;
 mod run_to_completion;
 
-pub(crate) use cooperative::CooperativeWorkerLoopFactory;
+pub(crate) use cooperative::{CooperativeWorkerLoopFactory, WasmtimeFuelWorkerLoopFactory};
 pub(crate) use run_to_completion::{
     RunToCompletionWorkerLoopFactory, WorkerLoop, WorkerLoopFactory,
 };
@@ -24,7 +24,10 @@ pub(crate) fn create_worker_loop_factory(
             Arc::new(factory)
         }
         RuntimeExecutionModel::CooperativeFuel => {
-            panic!("Wasmtime cooperative fuel worker loop is owned by W5")
+            let factory = WasmtimeFuelWorkerLoopFactory::new(watchdog);
+            #[cfg(test)]
+            let factory = factory.with_test_state(test_state);
+            Arc::new(factory)
         }
         RuntimeExecutionModel::CooperativeLocker => {
             let factory = CooperativeWorkerLoopFactory::new(watchdog);

@@ -9,7 +9,7 @@ use wasmtime::component::Component;
 
 use crate::backends::{RuntimeBackend, RuntimeBackendFactory, RuntimeBackendInvocation};
 use crate::error::{NimbusRuntimeError, Result};
-use crate::limits::RuntimeBundleContentKind;
+use crate::limits::{RuntimeBundleContentKind, RuntimePolicy};
 use crate::runtime::{RuntimeBundle, RuntimeComponentWorld};
 
 use super::host_linker::{
@@ -19,6 +19,7 @@ use super::host_linker::{
 const WASMTIME_ENGINE_CONFIG_HASH: &str =
     "wasmtime-46.0.1|component-model|component-async|fuel|epoch";
 const WASMTIME_RUN_TO_COMPLETION_FUEL: u64 = 10_000_000;
+const WASMTIME_COOPERATIVE_FUEL_SLICE: u64 = 1_000_000;
 
 #[derive(Clone)]
 pub(crate) struct WasmtimeBackendFactory {
@@ -48,19 +49,23 @@ impl WasmtimeBackendFactory {
             }),
         }
     }
+
+    pub(crate) fn create_typed(&self) -> WasmtimeBackend {
+        WasmtimeBackend {
+            engine: self.shared.engine.clone(),
+            linker: self.shared.linker.clone(),
+            module_cache: self.shared.module_cache.clone(),
+        }
+    }
 }
 
 impl RuntimeBackendFactory for WasmtimeBackendFactory {
     fn create(&self) -> Box<dyn RuntimeBackend> {
-        Box::new(WasmtimeBackend {
-            engine: self.shared.engine.clone(),
-            linker: self.shared.linker.clone(),
-            module_cache: self.shared.module_cache.clone(),
-        })
+        Box::new(self.create_typed())
     }
 }
 
-struct WasmtimeBackend {
+pub(crate) struct WasmtimeBackend {
     engine: wasmtime::Engine,
     linker: WasmtimeHostLinker,
     module_cache: Arc<WasmtimeModuleCache>,
@@ -130,16 +135,16 @@ impl WasmtimeBackend {
             ),
         );
         store
-            .set_fuel(WASMTIME_RUN_TO_COMPLETION_FUEL)
-            .map_err(wasmtime_error)?;
+            .set_fuel(fuel_budget_for_policy(&policy))
+            .map_err(wasmtime_error_for_policy(&policy))?;
 
         let instance = self
             .linker
             .instantiate_async(&mut store, component.as_ref())
             .await
-            .map_err(wasmtime_error)?;
+            .map_err(wasmtime_error_for_policy(&policy))?;
         let args = serde_json::to_string(&request.args)?;
-        call_nimbus_function_handler(&instance, &mut store, args).await
+        call_nimbus_function_handler(&instance, &mut store, args, &policy).await
     }
 }
 
@@ -147,6 +152,7 @@ async fn call_nimbus_function_handler(
     instance: &wasmtime::component::Instance,
     store: &mut wasmtime::Store<super::host_linker::InvocationHostState>,
     args: String,
+    policy: &RuntimePolicy,
 ) -> Result<Value> {
     if let Ok(handler) = instance
         .get_typed_func::<(String,), (std::result::Result<String, String>,)>(&mut *store, "handler")
@@ -154,7 +160,7 @@ async fn call_nimbus_function_handler(
         let (response,) = handler
             .call_async(&mut *store, (args,))
             .await
-            .map_err(wasmtime_error)?;
+            .map_err(wasmtime_error_for_policy(policy))?;
         return parse_handler_result(response);
     }
 
@@ -162,7 +168,7 @@ async fn call_nimbus_function_handler(
         let (response,) = handler
             .call_async(&mut *store, (args,))
             .await
-            .map_err(wasmtime_error)?;
+            .map_err(wasmtime_error_for_policy(policy))?;
         return parse_component_response(&response);
     }
 
@@ -184,6 +190,42 @@ fn parse_component_response(response: &str) -> Result<Value> {
 
 fn wasmtime_error(error: wasmtime::Error) -> NimbusRuntimeError {
     NimbusRuntimeError::Contract(format!("wasmtime component execution error: {error}"))
+}
+
+fn wasmtime_error_for_policy(
+    policy: &RuntimePolicy,
+) -> impl FnOnce(wasmtime::Error) -> NimbusRuntimeError + '_ {
+    move |error| {
+        if is_wasmtime_out_of_fuel(&error) {
+            NimbusRuntimeError::ExecutionTimeout(policy.limits().execution_timeout)
+        } else {
+            wasmtime_error(error)
+        }
+    }
+}
+
+fn is_wasmtime_out_of_fuel(error: &wasmtime::Error) -> bool {
+    if matches!(
+        error.downcast_ref::<wasmtime::Trap>(),
+        Some(wasmtime::Trap::OutOfFuel)
+    ) {
+        return true;
+    }
+    let message = error.to_string();
+    message.contains("all fuel consumed")
+        || message.contains("wasm trap: interrupt")
+        || message.contains("OutOfFuel")
+}
+
+fn fuel_budget_for_policy(policy: &RuntimePolicy) -> u64 {
+    if matches!(
+        policy.limits().execution_model,
+        crate::limits::RuntimeExecutionModel::CooperativeFuel
+    ) {
+        WASMTIME_COOPERATIVE_FUEL_SLICE
+    } else {
+        WASMTIME_RUN_TO_COMPLETION_FUEL
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

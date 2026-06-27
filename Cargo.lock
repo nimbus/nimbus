@@ -6593,6 +6593,7 @@ dependencies = [
  "deno_web",
  "deno_webidl",
  "deno_websocket",
+ "futures",
  "libc",
  "libloading 0.8.9",
  "node_resolver",

@@ -231,6 +231,13 @@ impl RuntimeLimits {
         }
     }
 
+    pub fn application_wasm_component_cooperative_fuel() -> Self {
+        Self {
+            execution_model: RuntimeExecutionModel::CooperativeFuel,
+            ..Self::application_wasm_component()
+        }
+    }
+
     pub fn tooling_node22() -> Self {
         Self::tooling_node(RuntimeCompatibilityTarget::Node22)
     }

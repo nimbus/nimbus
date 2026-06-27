@@ -90,7 +90,7 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
             // single worker on a new admission; defer the job locally so the
             // slot holding capacity can be polled.
             if let Some(job) = self.next_admission_job(queue) {
-                if !job.execution_plan.permits_cooperative_scheduler_admission()
+                if !self.driver.permits_scheduler_admission(&job.execution_plan)
                     && !self.scheduler.is_idle()
                 {
                     self.pending_admissions.push_front(job);

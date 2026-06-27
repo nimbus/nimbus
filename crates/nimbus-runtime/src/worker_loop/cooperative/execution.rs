@@ -178,7 +178,7 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
                 permit: permit.clone(),
                 activity_signal,
             };
-            if !job.execution_plan.permits_cooperative_scheduler_admission() {
+            if !self.driver.permits_scheduler_admission(&job.execution_plan) {
                 let result = self.driver.invoke_direct(start).await;
                 return Ok::<_, (NimbusRuntimeError, Instant)>((
                     CooperativeAdmissionStart::DirectResult(result),
