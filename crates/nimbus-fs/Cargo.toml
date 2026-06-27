@@ -14,6 +14,7 @@ nimbus-blob = { path = "../nimbus-blob" }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 async-trait.workspace = true
+bytes.workspace = true
 deno_core.workspace = true
 deno_fs.workspace = true
 deno_io.workspace = true

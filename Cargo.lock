@@ -6055,6 +6055,7 @@ name = "nimbus-fs"
 version = "0.1.44"
 dependencies = [
  "async-trait",
+ "bytes",
  "deno_core",
  "deno_fs",
  "deno_io",

@@ -15,10 +15,12 @@ use deno_io::fs::{File, FsResult, FsStat, FsStatFs};
 use deno_permissions::{CheckedPath, CheckedPathBuf};
 use nimbus_runtime::NimbusFsBackend;
 
+pub mod cas_ro;
 pub mod memfs;
 pub mod mount;
 pub mod resolver;
 
+pub use cas_ro::{CasBlobChunk, CasManifestEntry, CasReadOnlyBackend, CasReadOnlyManifest};
 pub use memfs::MemFsBackend;
 pub use mount::MountTable;
 pub use resolver::{MountResolver, ResolvedAccess, ResolvedPath};
