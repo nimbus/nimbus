@@ -6,7 +6,7 @@ pub(crate) mod cursor;
 mod handshake;
 mod index;
 pub(crate) mod session;
-mod tenant;
+pub(crate) mod tenant;
 
 use std::sync::Arc;
 
@@ -16,14 +16,35 @@ use nimbus_engine::Engine;
 use super::AuthConfig;
 use super::auth;
 use super::connection::ConnectionState;
+use super::credential_registry::MongoAuth;
 use super::error::{MongoError, UNAUTHORIZED, ok_doc};
 
+/// Dispatch a command authenticated by the single tenant-agnostic credential.
+///
+/// Thin wrapper over [`dispatch_authed`] in unbound mode, preserving the
+/// `&AuthConfig` signature `nimbus-server` calls. Bound (per-tenant) callers use
+/// [`dispatch_authed`] with [`MongoAuth::Bound`] directly.
 pub async fn dispatch(
     command_name: &str,
     body: &bson::Document,
     conn: &mut ConnectionState,
     engine: &Arc<Engine>,
     auth: &AuthConfig,
+) -> Result<bson::Document, MongoError> {
+    dispatch_authed(command_name, body, conn, engine, &MongoAuth::Unbound(auth)).await
+}
+
+/// Dispatch a command under an explicit auth mode.
+///
+/// In [`MongoAuth::Bound`] mode authentication decides the tenant: a successful
+/// SCRAM handshake fixes the connection's tenant, and tenant resolution refuses
+/// any wire `$db` naming a different tenant.
+pub async fn dispatch_authed(
+    command_name: &str,
+    body: &bson::Document,
+    conn: &mut ConnectionState,
+    engine: &Arc<Engine>,
+    auth: &MongoAuth<'_>,
 ) -> Result<bson::Document, MongoError> {
     let principal = if requires_authentication(command_name) {
         Some(authenticated_principal(conn)?)
