@@ -3,7 +3,7 @@
 # (`docs/private/plans/cloudflare-adapters-plan.md`).
 #
 # Exits 0 iff every condition in the plan's Completion Gate is satisfied.
-# Ships in CFA0 so /goal is verifiable from day one; CFA1-CFA8 progressively
+# Ships in CFA0 so /goal is verifiable from day one; CFA1-CFA9 progressively
 # flip conditions from FAIL to PASS, CFA9 closes the plan and archives it.
 #
 # Primitives-first: CFA builds a Nimbus KV primitive (`TenantKvStore` in
@@ -40,6 +40,7 @@ NIMBUS_RUNTIME="crates/nimbus-runtime"
 RUNTIME_HOST="${NIMBUS_RUNTIME}/src/host.rs"
 SERVICES_CATALOG="crates/nimbus-services/src/catalog.rs"
 OPERATOR_DOC="docs/private/operating/cloudflare-adapters.md"
+COMMON_BIND_GUARD_PATHS="crates/nimbus-core/src crates/nimbus-net/src"
 
 PASS=0
 FAIL=0
@@ -256,6 +257,35 @@ if [ "${c11_doc}" = 1 ] && [ "${ledger_clean}" = 1 ] && [ "${ci_green}" = 1 ]; t
   pass "operator doc present, ledger clean, CI green"
 else
   fail "CFA9 closeout incomplete" "doc=${c11_doc} ledger=${ledger_clean} ci=${ci_green}"
+fi
+
+# 12. Security posture: fail-closed bind/auth/tenant behavior.
+step 12 "Security posture: loopback guard + auth + tenant isolation"
+c12_helper=0; c12_uses_helper=0; c12_bind_test=0; c12_auth_test=0; c12_tenant_binding=0; c12_cross_tenant_do=0
+for guard_path in ${COMMON_BIND_GUARD_PATHS}; do
+  if [ -d "${guard_path}" ] && grep -rqE 'refuse_non_loopback_bind' "${guard_path}" 2>/dev/null; then
+    c12_helper=1
+  fi
+done
+if grep_dir 'refuse_non_loopback_bind' "${CF_DIR}" || { [ -f "${START_ADAPTERS}" ] && grep -qiE 'cloudflare.*refuse_non_loopback_bind|refuse_non_loopback_bind.*cloudflare' "${START_ADAPTERS}"; }; then
+  c12_uses_helper=1
+fi
+if { grep_dir 'non.?loopback|loopback.*refus|refus.*loopback' "${CF_DIR}" || grep -rqE 'cloudflare.*non.?loopback|non.?loopback.*cloudflare|refus.*cloudflare.*loopback' crates/nimbus-server/tests 2>/dev/null; }; then
+  c12_bind_test=1
+fi
+if { grep_dir 'unauthenticated|requires.*auth|dev.?cred|credential' "${CF_DIR}" || grep -rqE 'cloudflare.*unauthenticated|unauthenticated.*cloudflare|cloudflare.*requires.*auth' crates/nimbus-server/tests 2>/dev/null; }; then
+  c12_auth_test=1
+fi
+if grep_dir 'AccessKeyRegistry|credential.*TenantId|TenantId.*credential|tenant.*credential|credential.*tenant' "${CF_DIR}"; then
+  c12_tenant_binding=1
+fi
+if { grep_dir 'cross.?tenant|tenant_a|tenant.?A|idFromString|id_from_string|forged.*64' "${CF_DO_DIR}" || grep -rqE 'cross.?tenant.*cloudflare|cloudflare.*cross.?tenant|tenant_a.*durable|idFromString|id_from_string|forged.*64' crates/nimbus-server/tests 2>/dev/null; }; then
+  c12_cross_tenant_do=1
+fi
+if [ "${c12_helper}" = 1 ] && [ "${c12_uses_helper}" = 1 ] && [ "${c12_bind_test}" = 1 ] && [ "${c12_auth_test}" = 1 ] && [ "${c12_tenant_binding}" = 1 ] && [ "${c12_cross_tenant_do}" = 1 ]; then
+  pass "Cloudflare ingress surfaces share the bind guard, require auth, and prove tenant isolation"
+else
+  fail "Security posture incomplete" "helper=${c12_helper} uses_helper=${c12_uses_helper} bind_test=${c12_bind_test} auth_test=${c12_auth_test} tenant_binding=${c12_tenant_binding} cross_tenant_do=${c12_cross_tenant_do}"
 fi
 
 # -------- summary ----------------------------------------------------------
