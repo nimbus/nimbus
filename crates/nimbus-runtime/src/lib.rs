@@ -24,6 +24,10 @@ pub fn bun_jsc_adapter_artifact_diagnostics() -> RuntimeExecutionAdapterArtifact
     backends::bun_jsc::adapter_artifact_diagnostics()
 }
 
+pub fn wasmtime_component_linker_diagnostics() -> Result<()> {
+    backends::wasmtime::component_linker_diagnostics()
+}
+
 /// Build / check the embeddable NodeFull(Node22) anchor-snapshot blob. Called by the
 /// `build_node22_anchor_snapshot` builder binary (a normal consumer of this crate): it writes the
 /// committed per-config `.bin`/`.pc.bin` the lib `include_bytes!`es, and `--check` byte-compares a

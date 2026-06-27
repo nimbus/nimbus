@@ -109,17 +109,17 @@ else
   fail "W0 proof incomplete" "Expected ${PROOF_W0} with activation/no-backend/branch/NFS5-NEG6-WAC/verifier anchors"
 fi
 
-# 3. W0 runtime baseline confirms there is no Wasmtime backend yet.
+# 3. W0 runtime baseline confirms the historical no-backend starting point.
 step 3 "W0 runtime no-backend baseline"
-no_wasmtime_dependency=0
-no_wasmtime_backend=0
+historical_no_wasmtime_dependency=0
+historical_no_wasmtime_backend=0
 v8_baseline=0
 no_workspace_deps=0
-if ! grep_file '^[[:space:]]*wasmtime[[:space:].=]' "${RUNTIME_CARGO}"; then
-  no_wasmtime_dependency=1
+if grep_file 'no .*Wasmtime.*dependency|no `wasmtime` dependency' "${PROOF_W0}"; then
+  historical_no_wasmtime_dependency=1
 fi
-if ! grep_dir 'RuntimeBackendKind::Wasmtime|WasmtimeBackend|mod wasmtime' "${RUNTIME_SRC}"; then
-  no_wasmtime_backend=1
+if grep_file 'no Wasmtime backend variant' "${PROOF_W0}"; then
+  historical_no_wasmtime_backend=1
 fi
 if grep_dir 'RuntimeBackendKind::V8|V8RuntimeBackendFactory|BunJscRuntimeBackendFactory' "${RUNTIME_SRC}"; then
   v8_baseline=1
@@ -128,13 +128,13 @@ workspace_deps="$(grep -En 'path = "../nimbus-' "${RUNTIME_CARGO}" 2>/dev/null |
 if [ -z "${workspace_deps}" ]; then
   no_workspace_deps=1
 fi
-if [ "${no_wasmtime_dependency}" = "1" ] \
-  && [ "${no_wasmtime_backend}" = "1" ] \
+if [ "${historical_no_wasmtime_dependency}" = "1" ] \
+  && [ "${historical_no_wasmtime_backend}" = "1" ] \
   && [ "${v8_baseline}" = "1" ] \
   && [ "${no_workspace_deps}" = "1" ]; then
-  pass "Runtime baseline has V8/Bun-JSC seams, no Wasmtime backend, and no workspace path deps"
+  pass "W0 proof records the no-Wasmtime starting point; current runtime still has V8/Bun-JSC seams and no workspace path deps"
 else
-  fail "W0 runtime baseline drifted" "no_dependency=${no_wasmtime_dependency} no_backend=${no_wasmtime_backend} v8_baseline=${v8_baseline} no_workspace_deps=${no_workspace_deps}"
+  fail "W0 runtime baseline incomplete" "historical_no_dependency=${historical_no_wasmtime_dependency} historical_no_backend=${historical_no_wasmtime_backend} v8_baseline=${v8_baseline} no_workspace_deps=${no_workspace_deps}"
 fi
 
 # 4. W1 backend abstraction exists without breaking V8 or the dependency boundary.
