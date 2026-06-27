@@ -80,7 +80,13 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/private/plans/profile-aware-isolate-runtime-plan.md"
+PLAN_ACTIVE="docs/private/plans/profile-aware-isolate-runtime-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/profile-aware-isolate-runtime-plan.md"
+if [ -f "${PLAN_ACTIVE}" ]; then
+  PLAN="${PLAN_ACTIVE}"
+else
+  PLAN="${PLAN_ARCHIVED}"
+fi
 FINAL_ARCH_PLAN="docs/private/plans/profile-aware-isolate-runtime-final-architecture-plan.md"
 PLANS_INDEX="docs/private/plans/README.md"
 LAYERED_PLAN="docs/private/plans/layered-admission-control-plan.md"
@@ -115,7 +121,13 @@ PIR3_PROOF="docs/private/plans/proof/profile-aware-isolate-runtime/pir3-side-cha
 PIR4_PROOF="docs/private/plans/proof/profile-aware-isolate-runtime/pir4-host-call-session-binding.md"
 PIR7_HOST_BUDGET_PROOF="docs/private/plans/proof/profile-aware-isolate-runtime/pir7-host-resource-budget.md"
 PIR7M_FUNCTION_SCALING_PROOF="docs/private/plans/proof/profile-aware-isolate-runtime/pir7m-function-scaling-ux.md"
-TFA_PLAN="docs/private/plans/tenant-function-autoscaling-plan.md"
+TFA_PLAN_ACTIVE="docs/private/plans/tenant-function-autoscaling-plan.md"
+TFA_PLAN_ARCHIVED="docs/private/plans/archive/tenant-function-autoscaling-plan.md"
+if [[ -f "${TFA_PLAN_ACTIVE}" ]]; then
+  TFA_PLAN="${TFA_PLAN_ACTIVE}"
+else
+  TFA_PLAN="${TFA_PLAN_ARCHIVED}"
+fi
 TFA_PROOF="docs/private/plans/proof/tenant-function-autoscaling/README.md"
 POST_PIR_OPTIMIZATION_PROOF="docs/private/plans/proof/profile-aware-isolate-runtime/post-pir-optimization-benchmarks.md"
 POST_PIR_OPTIMIZATION_SMOKE_TRACE="docs/private/plans/proof/profile-aware-isolate-runtime/artifacts/post-pir-optimization-smoke.jsonl"

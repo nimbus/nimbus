@@ -121,30 +121,37 @@ if [ -f "${STARTUP_KEY}" ] &&
   contains_all "${STARTUP_KEY}" \
     'pub\(crate\) enum RuntimeStartupSnapshotKey' \
     'WebLean' \
+    'WebLeanService' \
     'NodeFull' \
-    'for_target' \
+    'NodeFullService' \
+    'for_limits' \
     'RuntimeProfile::for_compatibility_target' \
     'snapshot_build_target' \
+    'service_extension_enabled' \
     'RuntimeCompatibilityTarget::Node22' \
     'startup_snapshot_key_collapses_node_majors_to_node_full' \
-    'startup_snapshot_key_keeps_web_and_unsupported_targets_separate' >/tmp/nfr1-startup-key-missing.txt; then
+    'startup_snapshot_key_keeps_web_and_unsupported_targets_separate' \
+    'startup_snapshot_key_partitions_optional_service_extension' >/tmp/nfr1-startup-key-missing.txt; then
   pass "startup snapshot key is a narrow internal module"
 else
   fail "RuntimeStartupSnapshotKey module is incomplete" \
     "$(cat /tmp/nfr1-startup-key-missing.txt 2>/dev/null)"
 fi
 
-step 3 "Construction uses one NodeFull snapshot cell, not per-Node-major cells"
+step 3 "Construction uses one NodeFull startup substrate, split only by service extension"
 if [ -f "${CONSTRUCTION}" ] &&
   contains_all "${CONSTRUCTION}" \
+    'WEB_STANDARD_SERVICE_BOOTSTRAP_SNAPSHOT' \
     'NODE_FULL_BOOTSTRAP_SNAPSHOT' \
-    'RuntimeStartupSnapshotKey::for_target' \
-    'snapshot_key.snapshot_build_target' >/tmp/nfr1-construction-missing.txt &&
+    'NODE_FULL_SERVICE_BOOTSTRAP_SNAPSHOT' \
+    'RuntimeStartupSnapshotKey::for_limits' \
+    'snapshot_key.snapshot_build_target' \
+    'snapshot_key.service_extension_enabled' >/tmp/nfr1-construction-missing.txt &&
   ! contains 'NODE20_BOOTSTRAP_SNAPSHOT' "${CONSTRUCTION}" &&
   ! contains 'NODE22_BOOTSTRAP_SNAPSHOT' "${CONSTRUCTION}" &&
   ! contains 'NODE24_BOOTSTRAP_SNAPSHOT' "${CONSTRUCTION}" &&
   ! contains 'NODE26_BOOTSTRAP_SNAPSHOT' "${CONSTRUCTION}"; then
-  pass "construction collapses immutable Node startup substrate to one NodeFull cell"
+  pass "construction collapses Node-major startup substrate while partitioning service extension state"
 else
   fail "construction still has per-Node-major startup snapshot state" \
     "$(cat /tmp/nfr1-construction-missing.txt 2>/dev/null)"
@@ -167,29 +174,25 @@ else
     "$(cat /tmp/nfr1-tests-missing.txt 2>/dev/null)"
 fi
 
-step 5 "NFR1 proof records exact verification and residual blocker"
+step 5 "NFR1 proof records current PR21 reconciliation verification"
 if [ -f "${NFR1_PROOF}" ] &&
   contains_all "${NFR1_PROOF}" \
     'NFR1 Profile-Keyed Startup Snapshot Proof' \
+    'PR21 NFR-R1 Reconciliation Verification' \
     'RuntimeStartupSnapshotKey' \
     'NodeFull startup snapshot cell' \
     'node_major_startup_snapshots_share_node_full_cell' \
     'node_full_shared_snapshot_keeps_exact_node_target_metadata' \
-    'cycle72_esm_cjs_named_error' \
-    'node24_default_lane_executes_cycle53_fs_symlink_batch' \
+    'startup_snapshot_key_partitions_optional_service_extension' \
     'cargo test -p nimbus-runtime startup_snapshot_key --lib -- --nocapture' \
-    '2 passed; 0 failed; 0 ignored; 0 measured; 1048 filtered out' \
+    '3 passed; 0 failed; 0 ignored; 0 measured; 1230 filtered out' \
     'cargo test -p nimbus-runtime node_major_startup_snapshots_share_node_full_cell --lib -- --nocapture' \
-    '1 passed; 0 failed; 0 ignored; 0 measured; 1049 filtered out' \
+    '1 passed; 0 failed; 0 ignored; 0 measured; 1232 filtered out' \
     'cargo test -p nimbus-runtime node_full_shared_snapshot_keeps_exact_node_target_metadata --lib -- --nocapture' \
-    '1 passed; 0 failed; 0 ignored; 0 measured; 1049 filtered out' \
-    'cargo test -p nimbus-runtime cycle72_esm_cjs_named_error --lib -- --nocapture' \
-    '2 passed; 0 failed; 0 ignored; 0 measured; 1048 filtered out' \
-    'cargo test -p nimbus-runtime node24_default_lane_executes_cycle53_fs_symlink_batch --lib -- --nocapture' \
-    '1 passed; 0 failed; 0 ignored; 0 measured; 1049 filtered out' \
-    'NFR2-NFR6 remain blocked until REC0-REC5 close' \
-    'Summary: 6 passed, 0 failed' >/tmp/nfr1-proof-missing.txt; then
-  pass "NFR1 proof records exact commands, counts, and the REC blocker"
+    'bash scripts/verify-node-full-substrate-realm.sh' \
+    'Summary: 11 passed, 4 failed' \
+    'R2-R5 remain open' >/tmp/nfr1-proof-missing.txt; then
+  pass "NFR1 proof records exact current commands, counts, and remaining R2-R5 failures"
 else
   fail "NFR1 proof artifact is incomplete" \
     "$(cat /tmp/nfr1-proof-missing.txt 2>/dev/null)"
