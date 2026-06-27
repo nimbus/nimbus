@@ -15,7 +15,8 @@ use crate::executor::WorkerActivitySignal;
 use crate::limits::{RuntimePolicy, RuntimePoolKind};
 use crate::runtime::CooperativeRuntimeSlotPoll;
 use crate::worker_loop::cooperative::backend::{
-    CooperativeBackendDriver, CooperativeBackendInvocationStart, CooperativeBackendSlot,
+    CooperativeBackendDriver, CooperativeBackendFinishFuture, CooperativeBackendInvocationStart,
+    CooperativeBackendPollFuture, CooperativeBackendSlot,
 };
 
 use super::WasmtimeBackendFactory;
@@ -39,7 +40,7 @@ pub(crate) struct WasmtimeFuelSlot {
 }
 
 enum WasmtimeFuelSlotState {
-    Pending(Option<CooperativeBackendInvocationStart>),
+    Pending(Option<Box<CooperativeBackendInvocationStart>>),
     Running {
         future: WasmtimeFuelFuture,
         timeout: Pin<Box<tokio::time::Sleep>>,
@@ -74,7 +75,7 @@ impl WasmtimeFuelWake {
 impl WasmtimeFuelSlot {
     fn new(start: CooperativeBackendInvocationStart) -> Self {
         Self {
-            state: WasmtimeFuelSlotState::Pending(Some(start)),
+            state: WasmtimeFuelSlotState::Pending(Some(Box::new(start))),
         }
     }
 
@@ -153,16 +154,14 @@ impl WasmtimeFuelSlot {
 impl CooperativeBackendSlot for WasmtimeFuelSlot {
     type ReusableRuntime = ();
 
-    fn poll_once<'a>(
-        &'a mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<CooperativeRuntimeSlotPoll>> + 'a>> {
+    fn poll_once<'a>(&'a mut self) -> CooperativeBackendPollFuture<'a> {
         Box::pin(async move {
             let pending = match &mut self.state {
                 WasmtimeFuelSlotState::Pending(start) => start.take(),
                 _ => None,
             };
             if let Some(start) = pending {
-                self.start_pending(start);
+                self.start_pending(*start);
                 return Ok(CooperativeRuntimeSlotPoll::Runnable);
             }
 
@@ -223,9 +222,7 @@ impl CooperativeBackendSlot for WasmtimeFuelSlot {
         })
     }
 
-    fn finish_with_runtime<'a>(
-        self,
-    ) -> Pin<Box<dyn Future<Output = (Result<Value>, Option<Self::ReusableRuntime>)> + 'a>>
+    fn finish_with_runtime<'a>(self) -> CooperativeBackendFinishFuture<'a, Self::ReusableRuntime>
     where
         Self: Sized,
     {
@@ -250,7 +247,7 @@ impl CooperativeBackendSlot for WasmtimeFuelSlot {
     fn finish_with_result_and_runtime<'a>(
         self,
         result: Result<Value>,
-    ) -> Pin<Box<dyn Future<Output = (Result<Value>, Option<Self::ReusableRuntime>)> + 'a>>
+    ) -> CooperativeBackendFinishFuture<'a, Self::ReusableRuntime>
     where
         Self: Sized,
     {

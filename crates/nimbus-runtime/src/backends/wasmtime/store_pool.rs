@@ -125,9 +125,13 @@ impl WasmtimeStorePool {
         }
     }
 
+    pub(crate) fn stats(&self) -> WasmtimeStorePoolStats {
+        self.stats
+    }
+
     #[cfg(test)]
     pub(crate) fn stats_for_test(&self) -> WasmtimeStorePoolStats {
-        self.stats
+        self.stats()
     }
 }
 

@@ -18,23 +18,24 @@ use crate::runtime::{
 };
 use crate::watchdog::WatchdogTimer;
 
+pub(crate) type CooperativeBackendPollFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<CooperativeRuntimeSlotPoll>> + 'a>>;
+pub(crate) type CooperativeBackendFinishFuture<'a, ReusableRuntime> =
+    Pin<Box<dyn Future<Output = (Result<Value>, Option<ReusableRuntime>)> + 'a>>;
+
 pub(crate) trait CooperativeBackendSlot: 'static {
     type ReusableRuntime;
 
-    fn poll_once<'a>(
-        &'a mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<CooperativeRuntimeSlotPoll>> + 'a>>;
+    fn poll_once<'a>(&'a mut self) -> CooperativeBackendPollFuture<'a>;
 
-    fn finish_with_runtime<'a>(
-        self,
-    ) -> Pin<Box<dyn Future<Output = (Result<Value>, Option<Self::ReusableRuntime>)> + 'a>>
+    fn finish_with_runtime<'a>(self) -> CooperativeBackendFinishFuture<'a, Self::ReusableRuntime>
     where
         Self: Sized;
 
     fn finish_with_result_and_runtime<'a>(
         self,
         result: Result<Value>,
-    ) -> Pin<Box<dyn Future<Output = (Result<Value>, Option<Self::ReusableRuntime>)> + 'a>>
+    ) -> CooperativeBackendFinishFuture<'a, Self::ReusableRuntime>
     where
         Self: Sized;
 
@@ -103,15 +104,11 @@ impl V8LockerDriver {
 impl CooperativeBackendSlot for CooperativeLockerRuntimeSlot {
     type ReusableRuntime = ReusableV8Runtime;
 
-    fn poll_once<'a>(
-        &'a mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<CooperativeRuntimeSlotPoll>> + 'a>> {
+    fn poll_once<'a>(&'a mut self) -> CooperativeBackendPollFuture<'a> {
         Box::pin(CooperativeLockerRuntimeSlot::poll_once(self))
     }
 
-    fn finish_with_runtime<'a>(
-        self,
-    ) -> Pin<Box<dyn Future<Output = (Result<Value>, Option<Self::ReusableRuntime>)> + 'a>>
+    fn finish_with_runtime<'a>(self) -> CooperativeBackendFinishFuture<'a, Self::ReusableRuntime>
     where
         Self: Sized,
     {
@@ -121,7 +118,7 @@ impl CooperativeBackendSlot for CooperativeLockerRuntimeSlot {
     fn finish_with_result_and_runtime<'a>(
         self,
         result: Result<Value>,
-    ) -> Pin<Box<dyn Future<Output = (Result<Value>, Option<Self::ReusableRuntime>)> + 'a>>
+    ) -> CooperativeBackendFinishFuture<'a, Self::ReusableRuntime>
     where
         Self: Sized,
     {

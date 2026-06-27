@@ -24,6 +24,7 @@ const PIR0_TRACE_SCHEMA: &str = "nimbus.profile_aware_isolate_runtime.pir0.trace
 const PIR5_RETAINED_DENSITY_TRACE_SCHEMA: &str =
     "nimbus.profile_aware_isolate_runtime.pir5.retained_density.v1";
 const NFR6_TRACE_SCHEMA: &str = "nimbus.node_full_substrate_realm.nfr6.benchmark.v1";
+const WASMTIME_V8_COMPARISON_TRACE_SCHEMA: &str = "nimbus.wasmtime_backend.w7.v8_comparison.v1";
 const PIR5_RETAINED_DENSITY_COUNT: usize = 4;
 const NFR6_TENANT_LABEL: &str = "tenant-a";
 
@@ -290,6 +291,7 @@ fn execution_model_label(execution_model: RuntimeExecutionModel) -> &'static str
     match execution_model {
         RuntimeExecutionModel::RunToCompletion => "run_to_completion",
         RuntimeExecutionModel::CooperativeLocker => "cooperative_locker",
+        RuntimeExecutionModel::CooperativeFuel => "cooperative_fuel",
         RuntimeExecutionModel::BackendOwnedEventLoop => "backend_owned_event_loop",
     }
 }
@@ -504,14 +506,18 @@ fn maybe_report_phase_metrics_once(
         |nanos_total: u64| nanos_total as f64 / total_invocations as f64 / 1_000_000.0;
     eprintln!(
         concat!(
-            "phase-metrics {}: module_load={:.3}ms evaluation={:.3}ms ",
+            "phase-metrics {} schema={}: module_load={:.3}ms evaluation={:.3}ms ",
             "bundle_total={:.3}ms realm_create={:.3}ms ",
             "realm_bootstrap_install={:.3}ms realm_bootstrap_finalize={:.3}ms ",
             "realm_bootstrap_reset={:.3}ms realm_invoke_script={:.3}ms ",
-            "realm_promise_resolve={:.3}ms realm_deserialize={:.3}ms ",
-            "realm_destroy={:.3}ms"
+            "realm_promise_resolve={:.3}ms realm_deserialize={:.3}ms realm_destroy={:.3}ms ",
+            "wasmtime_module_cache_hits={} wasmtime_module_cache_misses={} ",
+            "wasmtime_compilation_time_ns={} wasmtime_fuel_consumed_total={} ",
+            "wasmtime_store_pool_hits={} wasmtime_store_pool_misses={} ",
+            "comparison='Wasmtime WASM backend versus V8 path'"
         ),
         key,
+        WASMTIME_V8_COMPARISON_TRACE_SCHEMA,
         per_invocation(snapshot.bundle_module_load_nanos_total),
         per_invocation(snapshot.bundle_evaluation_nanos_total),
         per_invocation(snapshot.bundle_load_nanos_total),
@@ -523,6 +529,12 @@ fn maybe_report_phase_metrics_once(
         per_invocation(snapshot.fresh_realm_promise_resolve_nanos_total),
         per_invocation(snapshot.fresh_realm_deserialization_nanos_total),
         per_invocation(snapshot.fresh_realm_destroy_nanos_total),
+        snapshot.wasmtime_module_cache_hits,
+        snapshot.wasmtime_module_cache_misses,
+        snapshot.wasmtime_module_compilation_nanos_total,
+        snapshot.wasmtime_fuel_consumed_total,
+        snapshot.wasmtime_store_pool_hits,
+        snapshot.wasmtime_store_pool_misses,
     );
 }
 
