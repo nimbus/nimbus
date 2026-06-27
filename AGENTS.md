@@ -123,7 +123,8 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   Read `docs/private/plans/nimbus-crypto-extraction-plan.md` (NC0..NC4),
   `docs/private/plans/nimbus-isolate-filesystem-plan.md` (NFS0..NFS7),
   `docs/private/plans/nimbus-s3-object-storage-plan.md` (NOS0..NOS7), and
-  `docs/private/plans/nimbus-egress-gateway-extraction-plan.md` (NEG0..NEG7).
+  `docs/private/plans/archive/nimbus-egress-gateway-extraction-plan.md`
+  (completed NEG0..NEG7).
   NC is the practical predecessor for NOS byte-plane crypto; NOS may do
   metadata/interface design before NC, but do not duplicate the encryption
   stack instead of sourcing it from `nimbus-crypto`. NFS/NOS/NEG/NC verifier
