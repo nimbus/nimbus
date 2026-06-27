@@ -16,6 +16,7 @@ use super::node22_runtime::node22_runtime_bootstrap_extension;
 #[cfg(test)]
 use super::ops::runtime_test_extension;
 use super::ops::{runtime_extension, service_extension};
+use super::state::install_missing_deno_extension_state;
 use super::web_standard_runtime::web_standard_runtime_bootstrap_extension;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,7 +66,6 @@ struct RuntimeBootstrapExtensionRegistry;
 
 struct NodeExecutionExtensionContext<'a> {
     path_policy: &'a RuntimePathPolicy,
-    loader_hook_registry: Option<LoaderHookRegistry>,
     limits: &'a RuntimeLimits,
     fs: deno_fs::FileSystemRc,
 }
@@ -141,6 +141,10 @@ impl RuntimeBootstrapExtensionRegistry {
             NodeBootstrapExtensionSlot::snapshot_extension,
             web_standard_runtime_bootstrap_extension,
         );
+        if target.is_node() {
+            extensions.push(loader_hook_registry_extension(None));
+        }
+        extensions.push(deno_extension_state_extension());
         extensions.push(runtime_extension());
         #[cfg(test)]
         extensions.push(runtime_test_extension());
@@ -160,7 +164,6 @@ impl RuntimeBootstrapExtensionRegistry {
         // Context is consumed only by Node-only slots; web-standard slots ignore it.
         let context = NodeExecutionExtensionContext {
             path_policy,
-            loader_hook_registry,
             limits,
             fs: MaybeArc::new(deno_fs::RealFs),
         };
@@ -169,6 +172,10 @@ impl RuntimeBootstrapExtensionRegistry {
             |slot| slot.execution_extension(&context),
             web_standard_runtime_bootstrap_extension,
         );
+        if let Some(registry) = loader_hook_registry {
+            extensions.push(loader_hook_registry_extension(Some(registry)));
+        }
+        extensions.push(deno_extension_state_extension());
         extensions.push(runtime_extension());
         #[cfg(test)]
         extensions.push(runtime_test_extension());
@@ -191,6 +198,10 @@ impl RuntimeBootstrapExtensionRegistry {
             Self::selected_bootstrap_entries(target, NodeBootstrapExtensionSlot::label, || {
                 web_standard_runtime_bootstrap_extension().name
             });
+        if target.is_node() {
+            labels.push("nimbus_node_loader_hook_registry_ext");
+        }
+        labels.push("nimbus_deno_extension_state_ext");
         labels.push("nimbus_runtime");
         labels.push("nimbus_runtime_test");
         if service_extension_enabled {
@@ -258,7 +269,6 @@ impl NodeBootstrapExtensionSlot {
             >(
                 Some(build_node_init_services(
                     context.path_policy,
-                    context.loader_hook_registry.clone(),
                     &context.limits.node_conditions,
                 )),
                 context.fs.clone(),
@@ -315,6 +325,26 @@ impl NodeBootstrapExtensionSlot {
             Self::Node => "node",
             Self::NodeRuntimeBootstrap => "node_runtime_bootstrap",
         }
+    }
+}
+
+fn loader_hook_registry_extension(registry: Option<LoaderHookRegistry>) -> Extension {
+    Extension {
+        name: "nimbus_node_loader_hook_registry_ext",
+        op_state_fn: registry.map(|registry| {
+            Box::new(move |state: &mut deno_core::OpState| {
+                state.put(registry.clone());
+            }) as Box<dyn FnOnce(&mut deno_core::OpState)>
+        }),
+        ..Default::default()
+    }
+}
+
+fn deno_extension_state_extension() -> Extension {
+    Extension {
+        name: "nimbus_deno_extension_state_ext",
+        op_state_fn: Some(Box::new(install_missing_deno_extension_state)),
+        ..Default::default()
     }
 }
 
@@ -377,6 +407,7 @@ mod tests {
                 "net",
                 "tls",
                 "nimbus_web_standard_runtime_bootstrap_ext",
+                "nimbus_deno_extension_state_ext",
                 "nimbus_runtime",
                 "nimbus_runtime_test",
             ]
@@ -415,7 +446,12 @@ mod tests {
         );
         assert_eq!(
             &labels[NODE_BOOTSTRAP_EXTENSION_SLOTS.len()..],
-            ["nimbus_runtime", "nimbus_runtime_test"]
+            [
+                "nimbus_node_loader_hook_registry_ext",
+                "nimbus_deno_extension_state_ext",
+                "nimbus_runtime",
+                "nimbus_runtime_test"
+            ]
         );
     }
 }

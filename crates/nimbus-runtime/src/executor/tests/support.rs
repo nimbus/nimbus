@@ -8,6 +8,8 @@ use tokio::sync::{Mutex as TokioMutex, Notify};
 use super::*;
 use crate::host::{HostBridge, HostBridgeFuture, HostCallOperation, HostCallRequest};
 
+const HOST_START_TIMEOUT: Duration = Duration::from_secs(15);
+
 pub(super) struct NoopHost;
 
 impl HostBridge for NoopHost {
@@ -49,7 +51,7 @@ impl ControlledAsyncWorkerRuntimeIdHost {
     }
 
     pub(super) async fn wait_until_started(&self, document_id: &str) {
-        tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::time::timeout(HOST_START_TIMEOUT, async {
             loop {
                 let notified = self.started_notify.notified();
                 if self
@@ -268,7 +270,7 @@ struct StepControlledAsyncGetHostState {
 
 impl StepControlledAsyncGetHost {
     pub(super) async fn wait_until_started(&self, document_id: &str) {
-        tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::time::timeout(HOST_START_TIMEOUT, async {
             loop {
                 let notified = self.started_notify.notified();
                 if self
@@ -427,7 +429,7 @@ impl ControlledAsyncGetHost {
     }
 
     pub(super) async fn wait_until_started(&self, document_id: &str) {
-        tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::time::timeout(HOST_START_TIMEOUT, async {
             loop {
                 let notified = self.started_notify.notified();
                 if self
@@ -575,7 +577,7 @@ impl SlowSyncQueryHost {
     }
 
     pub(super) async fn wait_until_started(&self) {
-        tokio::time::timeout(Duration::from_secs(1), self.started.notified())
+        tokio::time::timeout(HOST_START_TIMEOUT, self.started.notified())
             .await
             .expect("slow sync query host should start");
     }

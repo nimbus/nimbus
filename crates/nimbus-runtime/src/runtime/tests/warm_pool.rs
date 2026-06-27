@@ -872,8 +872,8 @@ export {};
         services: Default::default(),
     };
     let mut limits = cooperative_warm_pool_runtime_test_limits();
-    limits.initial_heap_mb = 4;
-    limits.max_heap_mb = 8;
+    limits.initial_heap_mb = 16;
+    limits.max_heap_mb = 32;
     limits.execution_timeout = std::time::Duration::from_secs(5);
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
@@ -912,7 +912,7 @@ export {};
         .expect_err("heap growth should trip the near-heap-limit callback");
 
     match error {
-        NimbusRuntimeError::HeapLimitExceeded(limit) => assert_eq!(limit, 8),
+        NimbusRuntimeError::HeapLimitExceeded(limit) => assert_eq!(limit, 32),
         other => panic!("unexpected near-heap-limit error: {other}"),
     }
 

@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use crate::backends::{RuntimeBackend, RuntimeBackendFactory, RuntimeBackendInvocation};
@@ -13,7 +14,7 @@ mod startup;
 mod startup_key;
 mod warm_pool;
 
-use self::embedder::JsRuntime;
+use self::embedder::{JsRuntime, v8};
 
 pub(crate) use self::lifecycle::{
     RuntimeReuseLifecycle, WarmPoolMemoryPressureEviction, WarmRuntimeBoundaryMaintenance,
@@ -36,6 +37,28 @@ pub use self::startup::{
 };
 pub(crate) use self::startup_key::RuntimeStartupSnapshotKey;
 pub(crate) use self::warm_pool::{ReusableV8Runtime, V8WorkerRuntimePool};
+
+pub(crate) fn attach_cppgc_heap(create_params: v8::CreateParams) -> v8::CreateParams {
+    let heap = v8::cppgc::Heap::create(cppgc_platform(), v8::cppgc::HeapCreateParams::default());
+    create_params.cpp_heap(heap)
+}
+
+fn cppgc_platform() -> v8::SharedRef<v8::Platform> {
+    static CPPGC_PLATFORM: OnceLock<v8::SharedRef<v8::Platform>> = OnceLock::new();
+    CPPGC_PLATFORM
+        .get_or_init(|| {
+            let thread_pool_size = std::cmp::min(
+                std::thread::available_parallelism()
+                    .map(|n| n.get() as u32)
+                    .unwrap_or(4),
+                4,
+            );
+            let platform = v8::new_default_platform(thread_pool_size, false).make_shared();
+            v8::cppgc::initialize_process(platform.clone());
+            platform
+        })
+        .clone()
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct V8RuntimeBackendFactory;

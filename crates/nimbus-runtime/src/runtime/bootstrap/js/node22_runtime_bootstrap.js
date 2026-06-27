@@ -3806,10 +3806,36 @@ Object.defineProperty(deno, "execPath", {
 Object.defineProperty(deno, "env", {
   value: {
     get(name) {
-      return globalThis.process?.env?.[name];
+      const operation = core.ops?.op_nimbus_runtime_env_get;
+      if (typeof operation !== "function") {
+        return undefined;
+      }
+      const result = operation(String(name));
+      if (result?.status === "allowed") {
+        return result.value;
+      }
+      if (result?.status === "missing" || result?.status === "denied") {
+        return undefined;
+      }
+      throw new Error(result?.message ?? `runtime env capability denied for ${name}`);
     },
     toObject() {
-      return { ...(globalThis.process?.env ?? {}) };
+      const operation = core.ops?.op_nimbus_runtime_env_snapshot;
+      return typeof operation === "function" ? operation() : {};
+    },
+    set(name, value) {
+      const processEnv = globalThis.process?.env;
+      const marker = globalThis.Symbol.for("nimbus.processEnvProxy");
+      if (processEnv?.[marker] === true) {
+        processEnv[String(name)] = String(value);
+      }
+    },
+    delete(name) {
+      const processEnv = globalThis.process?.env;
+      const marker = globalThis.Symbol.for("nimbus.processEnvProxy");
+      if (processEnv?.[marker] === true) {
+        delete globalThis.process.env[String(name)];
+      }
     },
   },
   configurable: true,
@@ -3818,8 +3844,8 @@ Object.defineProperty(deno, "env", {
 });
 Object.defineProperty(deno, "version", {
   value: {
-    deno: "2.8.0-nimbus",
-    v8: "149.0.0-nimbus.1",
+    deno: "2.9.0-nimbus.1",
+    v8: "149.4.0-nimbus.10",
     typescript: "0.0.0-nimbus",
   },
   configurable: true,
@@ -4037,12 +4063,26 @@ if (typeof internals.__initWorkerThreads === "function") {
     globalThis.process &&
     typeof globalThis.process === "object"
   ) {
-    globalThis.process.env = workerEnv;
+    Object.defineProperty(globalThis.process, "env", {
+      value: workerEnv,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    });
     if (
       internals.nodeGlobals?.process &&
       typeof internals.nodeGlobals.process === "object"
     ) {
-      internals.nodeGlobals.process.env = workerEnv;
+      try {
+        Object.defineProperty(internals.nodeGlobals.process, "env", {
+          value: workerEnv,
+          configurable: true,
+          enumerable: true,
+          writable: true,
+        });
+      } catch (_error) {
+        internals.nodeGlobals.process.env = workerEnv;
+      }
     }
     Object.defineProperty(globalThis, "__nimbusWorkerThreadEnv", {
       value: workerEnv,

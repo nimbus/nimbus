@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use deno_core::FastString;
 use deno_fs::sync::MaybeArc;
-use deno_node::ops::module_hooks::LoaderHookRegistry;
 use deno_node::{NodeExtInitServices, NodeRequireLoader};
 use deno_permissions::{OpenAccessKind, PermissionsContainer};
 use deno_resolver::cache::ParsedSourceCache;
@@ -313,7 +312,6 @@ fn build_node_resolver_with_condition_override(
 
 pub(crate) fn build_node_init_services(
     path_policy: &RuntimePathPolicy,
-    loader_hook_registry: Option<LoaderHookRegistry>,
     node_conditions: &[String],
 ) -> NodeExtInitServices<ScopedInNpmPackageChecker, ScopedNodeModulesResolver, RealSys> {
     let package_json_resolver = build_package_json_resolver();
@@ -329,7 +327,6 @@ pub(crate) fn build_node_init_services(
         )),
         node_resolver: MaybeArc::new(node_resolver),
         pkg_json_resolver: package_json_resolver,
-        loader_hook_registry,
         sys: RealSys,
     }
 }
@@ -488,12 +485,10 @@ fn node_code_translator_mode_for_target(
     target: RuntimeCompatibilityTarget,
 ) -> NodeCodeTranslatorMode {
     match target {
-        RuntimeCompatibilityTarget::Node20 | RuntimeCompatibilityTarget::Node22 => {
-            NodeCodeTranslatorMode::ModuleLoaderWithoutModuleExports
-        }
-        RuntimeCompatibilityTarget::Node24 | RuntimeCompatibilityTarget::Node26 => {
-            NodeCodeTranslatorMode::ModuleLoader
-        }
+        RuntimeCompatibilityTarget::Node20
+        | RuntimeCompatibilityTarget::Node22
+        | RuntimeCompatibilityTarget::Node24
+        | RuntimeCompatibilityTarget::Node26 => NodeCodeTranslatorMode::ModuleLoader,
         RuntimeCompatibilityTarget::WebStandardIsolate | RuntimeCompatibilityTarget::BunJsc => {
             NodeCodeTranslatorMode::ModuleLoader
         }
@@ -723,10 +718,10 @@ mod tests {
     }
 
     #[test]
-    fn cjs_translator_mode_matches_node_namespace_version() {
+    fn cjs_translator_mode_uses_deno_2_9_module_loader_mode() {
         assert!(matches!(
             node_code_translator_mode_for_target(RuntimeCompatibilityTarget::Node22),
-            NodeCodeTranslatorMode::ModuleLoaderWithoutModuleExports
+            NodeCodeTranslatorMode::ModuleLoader
         ));
         assert!(matches!(
             node_code_translator_mode_for_target(RuntimeCompatibilityTarget::Node24),

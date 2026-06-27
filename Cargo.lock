@@ -223,6 +223,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "argon2"
+version = "0.6.0-rc.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7af50940b73bf4e16c15c448a2b121c63f2d68e3e54b6a8731673cb4aa0cdff5"
+dependencies = [
+ "base64ct",
+ "blake2 0.11.0-rc.6",
+ "cpufeatures 0.3.0",
+ "password-hash",
+]
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -310,7 +322,7 @@ dependencies = [
  "futures-core",
  "libc",
  "portable-atomic",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "tokio",
  "tokio-stream",
  "xattr",
@@ -1006,7 +1018,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "regex",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "shlex",
  "syn 2.0.117",
 ]
@@ -1026,7 +1038,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "regex",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "shlex",
  "syn 2.0.117",
 ]
@@ -1071,6 +1083,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
 dependencies = [
  "digest 0.10.7",
+]
+
+[[package]]
+name = "blake2"
+version = "0.11.0-rc.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "061f1a09225e328e1ffbb378d2d49923c0ca5fee19fb5ac1cc9c1e9d52b93690"
+dependencies = [
+ "digest 0.11.2",
 ]
 
 [[package]]
@@ -1721,6 +1742,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "countme"
+version = "3.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7704b5fdd17b18ae31c4c1da5a2e0305a2bf17b5249300a9ee9ed7b72114c636"
+
+[[package]]
 name = "cow-utils"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2184,8 +2211,8 @@ dependencies = [
 
 [[package]]
 name = "deno_cache_dir"
-version = "0.43.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.44.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2210,8 +2237,8 @@ dependencies = [
 
 [[package]]
 name = "deno_config"
-version = "0.101.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.102.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "boxed_error",
  "capacity_builder",
@@ -2236,8 +2263,8 @@ dependencies = [
 
 [[package]]
 name = "deno_core"
-version = "0.404.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.405.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "anyhow",
  "az",
@@ -2278,18 +2305,17 @@ dependencies = [
 
 [[package]]
 name = "deno_crypto"
-version = "0.265.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.266.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "aes",
  "aes-gcm",
  "aes-kw",
+ "argon2",
  "aws-lc-rs",
- "aws-lc-sys 0.40.0",
  "base64 0.22.1",
  "cbc",
  "const-oid 0.9.6",
- "crypto-bigint 0.5.5",
  "ctr",
  "curve25519-dalek",
  "deno_core",
@@ -2298,6 +2324,7 @@ dependencies = [
  "ed448-goldilocks",
  "elliptic-curve 0.13.8",
  "fips203",
+ "fips205",
  "hmac 0.12.1",
  "num-traits",
  "ocb3",
@@ -2315,6 +2342,7 @@ dependencies = [
  "signature 2.2.0",
  "spki 0.7.3",
  "thiserror 2.0.18",
+ "tiny-keccak",
  "tokio",
  "uuid",
  "x25519-dalek",
@@ -2322,16 +2350,16 @@ dependencies = [
 
 [[package]]
 name = "deno_crypto_provider"
-version = "0.45.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.46.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "aws-lc-sys 0.40.0",
 ]
 
 [[package]]
 name = "deno_dotenv"
-version = "0.20.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.21.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "deno_path_util",
  "sys_traits",
@@ -2365,16 +2393,16 @@ dependencies = [
 
 [[package]]
 name = "deno_features"
-version = "0.48.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.49.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "deno_core",
 ]
 
 [[package]]
 name = "deno_fetch"
-version = "0.275.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.276.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "async-compression",
  "base64 0.22.1",
@@ -2411,8 +2439,8 @@ dependencies = [
 
 [[package]]
 name = "deno_fs"
-version = "0.161.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.162.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "async-trait",
  "boxed_error",
@@ -2437,9 +2465,9 @@ dependencies = [
 
 [[package]]
 name = "deno_graph"
-version = "0.108.4"
+version = "0.109.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21d2b976d342f56afb862e2291e891a13391e07771baf6d266aee16bfd758285"
+checksum = "18b1634ebdfde4f040b2c40f2510969e755e5b782319a01dc9cab88ef25b7e3f"
 dependencies = [
  "async-trait",
  "boxed_error",
@@ -2470,8 +2498,8 @@ dependencies = [
 
 [[package]]
 name = "deno_http"
-version = "0.249.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.250.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "async-compression",
  "async-trait",
@@ -2509,8 +2537,8 @@ dependencies = [
 
 [[package]]
 name = "deno_http_h1"
-version = "0.2.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.3.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "httparse",
  "memchr",
@@ -2520,8 +2548,8 @@ dependencies = [
 
 [[package]]
 name = "deno_inspector_server"
-version = "0.25.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.26.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2538,8 +2566,8 @@ dependencies = [
 
 [[package]]
 name = "deno_io"
-version = "0.161.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.162.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "async-trait",
  "deno_core",
@@ -2561,8 +2589,8 @@ dependencies = [
 
 [[package]]
 name = "deno_lockfile"
-version = "0.53.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.54.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "async-trait",
  "deno_semver",
@@ -2573,8 +2601,8 @@ dependencies = [
 
 [[package]]
 name = "deno_maybe_sync"
-version = "0.38.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.39.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "dashmap",
 ]
@@ -2593,11 +2621,12 @@ dependencies = [
 
 [[package]]
 name = "deno_napi"
-version = "0.182.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.183.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "deno_core",
  "deno_error",
+ "deno_node",
  "deno_permissions",
  "denort_helper",
  "libc",
@@ -2624,8 +2653,8 @@ dependencies = [
 
 [[package]]
 name = "deno_net"
-version = "0.243.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.244.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2653,8 +2682,8 @@ dependencies = [
 
 [[package]]
 name = "deno_node"
-version = "0.189.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.190.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "base64 0.22.1",
  "boxed_error",
@@ -2710,15 +2739,15 @@ dependencies = [
 
 [[package]]
 name = "deno_node_crypto"
-version = "0.21.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.22.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "aead-gcm-stream",
  "aes",
  "aws-lc-rs",
  "aws-lc-sys 0.40.0",
  "base64 0.22.1",
- "blake2",
+ "blake2 0.10.6",
  "cbc",
  "const-oid 0.9.6",
  "ctr",
@@ -2773,8 +2802,8 @@ dependencies = [
 
 [[package]]
 name = "deno_node_sqlite"
-version = "0.21.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.22.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2785,8 +2814,8 @@ dependencies = [
 
 [[package]]
 name = "deno_npm"
-version = "0.63.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.64.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "async-trait",
  "capacity_builder",
@@ -2806,8 +2835,8 @@ dependencies = [
 
 [[package]]
 name = "deno_npmrc"
-version = "0.12.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.13.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "log",
  "monch",
@@ -2818,8 +2847,8 @@ dependencies = [
 
 [[package]]
 name = "deno_ops"
-version = "0.280.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.281.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "indexmap 2.13.0",
  "proc-macro2",
@@ -2834,8 +2863,8 @@ dependencies = [
 
 [[package]]
 name = "deno_os"
-version = "0.68.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.69.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2851,8 +2880,8 @@ dependencies = [
 
 [[package]]
 name = "deno_package_json"
-version = "0.53.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.54.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "boxed_error",
  "capacity_builder",
@@ -2883,8 +2912,8 @@ dependencies = [
 
 [[package]]
 name = "deno_permissions"
-version = "0.110.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.111.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "capacity_builder",
  "chrono",
@@ -2892,6 +2921,7 @@ dependencies = [
  "deno_path_util",
  "deno_terminal",
  "deno_unsync",
+ "dunce",
  "fqdn",
  "ipnet",
  "libc",
@@ -2911,8 +2941,8 @@ dependencies = [
 
 [[package]]
 name = "deno_process"
-version = "0.66.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.67.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2938,8 +2968,8 @@ dependencies = [
 
 [[package]]
 name = "deno_resolver"
-version = "0.82.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.83.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "anyhow",
  "async-once-cell",
@@ -2979,6 +3009,7 @@ dependencies = [
  "thiserror 2.0.18",
  "twox-hash",
  "url",
+ "yaml_parser",
 ]
 
 [[package]]
@@ -3000,8 +3031,8 @@ dependencies = [
 
 [[package]]
 name = "deno_signals"
-version = "0.42.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.43.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "libc",
  "signal-hook",
@@ -3012,8 +3043,8 @@ dependencies = [
 
 [[package]]
 name = "deno_subprocess_windows"
-version = "0.46.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.47.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "fastrand",
  "futures-channel",
@@ -3023,8 +3054,8 @@ dependencies = [
 
 [[package]]
 name = "deno_telemetry"
-version = "0.73.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.74.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "async-trait",
  "deno_core",
@@ -3068,8 +3099,8 @@ dependencies = [
 
 [[package]]
 name = "deno_tls"
-version = "0.238.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.239.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -3114,8 +3145,8 @@ dependencies = [
 
 [[package]]
 name = "deno_web"
-version = "0.282.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.283.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "async-trait",
  "brotli 6.0.0",
@@ -3129,22 +3160,23 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tokio",
+ "unicode-normalization",
  "urlpattern",
  "uuid",
 ]
 
 [[package]]
 name = "deno_webidl"
-version = "0.251.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.252.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "deno_core",
 ]
 
 [[package]]
 name = "deno_websocket"
-version = "0.256.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.257.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "bytes",
  "deno_core",
@@ -3176,8 +3208,8 @@ dependencies = [
 
 [[package]]
 name = "denort_helper"
-version = "0.49.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.50.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "deno_error",
  "deno_path_util",
@@ -3446,7 +3478,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33175ddb7a6d418589cab2966bd14a710b3b1139459d3d5ca9edf783c4833f4c"
 dependencies = [
  "num-bigint",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "swc_atoms",
  "swc_common",
  "swc_ecma_ast",
@@ -3659,6 +3691,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 
 [[package]]
+name = "enum-as-inner"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1e6a265c649f3f5979b601d26f1d05ada116434c87741c9493cb56218f76cbc"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "enumflags2"
 version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3865,6 +3909,18 @@ dependencies = [
  "rand_core 0.6.4",
  "sha3 0.10.9",
  "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "fips205"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f5626bf5534df4ebdbd2536465d7eaa8a9dc2cdeb7e036e0ecf291dcc80ffb6"
+dependencies = [
+ "rand_core 0.6.4",
+ "sha2 0.10.9",
+ "sha3 0.10.9",
  "zeroize",
 ]
 
@@ -4354,22 +4410,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "hickory-net"
-version = "0.26.1"
+name = "hickory-proto"
+version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2295ed2f9c31e471e1428a8f88a3f0e1f4b27c15049592138d1eebe9c35b183"
+checksum = "f8a6fe56c0038198998a6f217ca4e7ef3a5e51f46163bd6dd60b5c71ca6c6502"
 dependencies = [
  "async-trait",
  "cfg-if",
  "data-encoding",
+ "enum-as-inner",
  "futures-channel",
  "futures-io",
  "futures-util",
- "hickory-proto",
  "idna",
  "ipnet",
- "jni 0.22.4",
- "rand 0.10.1",
+ "once_cell",
+ "rand 0.9.3",
+ "ring",
+ "serde",
  "thiserror 2.0.18",
  "tinyvec",
  "tokio",
@@ -4378,48 +4436,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "hickory-proto"
-version = "0.26.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bab31817bfb44672a252e97fe81cd0c18d1b2cf892108922f6818820df8c643"
-dependencies = [
- "data-encoding",
- "idna",
- "ipnet",
- "jni 0.22.4",
- "once_cell",
- "prefix-trie",
- "rand 0.10.1",
- "ring",
- "serde",
- "thiserror 2.0.18",
- "tinyvec",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "hickory-resolver"
-version = "0.26.1"
+version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0d58d28879ceecde6607729660c2667a081ccdc082e082675042793960f178c"
+checksum = "dc62a9a99b0bfb44d2ab95a7208ac952d31060efc16241c87eaf36406fecf87a"
 dependencies = [
  "cfg-if",
  "futures-util",
- "hickory-net",
  "hickory-proto",
  "ipconfig",
- "ipnet",
- "jni 0.22.4",
  "moka",
- "ndk-context",
  "once_cell",
  "parking_lot",
- "rand 0.10.1",
+ "rand 0.9.3",
  "resolv-conf",
  "serde",
  "smallvec",
- "system-configuration",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4481,7 +4513,7 @@ dependencies = [
  "hashbrown 0.14.5",
  "new_debug_unreachable",
  "once_cell",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "serde",
  "triomphe",
 ]
@@ -5034,9 +5066,6 @@ name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "iri-string"
@@ -5138,36 +5167,6 @@ dependencies = [
  "thiserror 1.0.69",
  "walkdir",
  "windows-sys 0.45.0",
-]
-
-[[package]]
-name = "jni"
-version = "0.22.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5efd9a482cf3a427f00d6b35f14332adc7902ce91efb778580e180ff90fa3498"
-dependencies = [
- "cfg-if",
- "combine",
- "jni-macros",
- "jni-sys 0.4.1",
- "log",
- "simd_cesu8",
- "thiserror 2.0.18",
- "walkdir",
- "windows-link",
-]
-
-[[package]]
-name = "jni-macros"
-version = "0.22.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a00109accc170f0bdb141fed3e393c565b6f5e072365c3bd58f5b062591560a3"
-dependencies = [
- "proc-macro2",
- "quote",
- "rustc_version",
- "simd_cesu8",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -5719,8 +5718,8 @@ dependencies = [
 
 [[package]]
 name = "napi_sym"
-version = "0.181.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.182.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "quote",
  "serde",
@@ -5744,12 +5743,6 @@ dependencies = [
  "security-framework-sys",
  "tempfile",
 ]
-
-[[package]]
-name = "ndk-context"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 
 [[package]]
 name = "netif"
@@ -6402,8 +6395,8 @@ dependencies = [
 
 [[package]]
 name = "node_resolver"
-version = "0.89.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.90.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6431,8 +6424,8 @@ dependencies = [
 
 [[package]]
 name = "node_shim"
-version = "0.26.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.27.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "serde_json",
  "url",
@@ -6957,7 +6950,7 @@ dependencies = [
  "allocator-api2",
  "hashbrown 0.17.1",
  "oxc_data_structures",
- "rustc-hash",
+ "rustc-hash 2.1.2",
 ]
 
 [[package]]
@@ -7071,7 +7064,7 @@ dependencies = [
  "oxc_span",
  "oxc_str",
  "oxc_syntax",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "seq-macro",
 ]
 
@@ -7088,7 +7081,7 @@ dependencies = [
  "oxc_span",
  "oxc_str",
  "phf 0.13.1",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "unicode-id-start",
 ]
 
@@ -7279,6 +7272,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "password-hash"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aab41826031698d6ffcd9cff78ef56ef998e39dc7e5067cdfebe373842d4723b"
+dependencies = [
+ "phc",
+]
+
+[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7339,6 +7341,16 @@ checksum = "3672b37090dbd86368a4145bc067582552b29c27377cad4e0a306c97f9bd7772"
 dependencies = [
  "fixedbitset",
  "indexmap 2.13.0",
+]
+
+[[package]]
+name = "phc"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44dc769b75f93afdddd8c7fa12d685292ddeff1e66f7f0f3a234cf1818afe892"
+dependencies = [
+ "base64ct",
+ "ctutils",
 ]
 
 [[package]]
@@ -7631,17 +7643,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prefix-trie"
-version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cf6e3177f0684016a5c209b00882e15f8bdd3f3bb48f0491df10cd102d0c6e7"
-dependencies = [
- "either",
- "ipnet",
- "num-traits",
-]
-
-[[package]]
 name = "pretty_assertions"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7927,7 +7928,7 @@ dependencies = [
  "pin-project-lite",
  "quinn-proto",
  "quinn-udp",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "rustls",
  "socket2 0.6.3",
  "thiserror 2.0.18",
@@ -7949,7 +7950,7 @@ dependencies = [
  "lru-slab",
  "rand 0.9.3",
  "ring",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "rustls",
  "rustls-pki-types",
  "slab",
@@ -8359,6 +8360,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rowan"
+version = "0.15.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62f509095fc8cc0c8c8564016771d458079c11a8d857e65861f045145c0d3208"
+dependencies = [
+ "countme",
+ "hashbrown 0.14.5",
+ "memoffset",
+ "rustc-hash 1.1.0",
+ "text-size",
+]
+
+[[package]]
 name = "rsa"
 version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8426,6 +8440,12 @@ dependencies = [
  "sha2 0.10.9",
  "walkdir",
 ]
+
+[[package]]
+name = "rustc-hash"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
 name = "rustc-hash"
@@ -8566,7 +8586,7 @@ checksum = "1d99feebc72bae7ab76ba994bb5e121b8d83d910ca40b36e0921f53becc41784"
 dependencies = [
  "core-foundation 0.10.1",
  "core-foundation-sys",
- "jni 0.21.1",
+ "jni",
  "log",
  "once_cell",
  "rustls",
@@ -8911,8 +8931,8 @@ dependencies = [
 
 [[package]]
 name = "serde_v8"
-version = "0.313.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.8.3-nimbus.81#14088864a5d2ed2c2355ada17bfe3c70a88af1ce"
+version = "0.314.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.0-nimbus.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
 dependencies = [
  "deno_error",
  "num-bigint",
@@ -9142,16 +9162,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 
 [[package]]
-name = "simd_cesu8"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94f90157bb87cddf702797c5dadfa0be7d266cdf49e22da2fcaa32eff75b2c33"
-dependencies = [
- "rustc_version",
- "simdutf8",
-]
-
-[[package]]
 name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9238,7 +9248,7 @@ dependencies = [
  "data-encoding",
  "debugid",
  "if_chain",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "serde",
  "serde_json",
  "unicode-id-start",
@@ -9404,7 +9414,7 @@ dependencies = [
  "allocator-api2",
  "bumpalo",
  "hashbrown 0.14.5",
- "rustc-hash",
+ "rustc-hash 2.1.2",
 ]
 
 [[package]]
@@ -9433,7 +9443,7 @@ dependencies = [
  "new_debug_unreachable",
  "num-bigint",
  "once_cell",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "serde",
  "siphasher 0.3.11",
  "swc_atoms",
@@ -9482,7 +9492,7 @@ dependencies = [
  "num-bigint",
  "once_cell",
  "phf 0.11.3",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "serde",
  "string_enum",
  "swc_atoms",
@@ -9503,7 +9513,7 @@ dependencies = [
  "num-bigint",
  "once_cell",
  "regex",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "ryu-js",
  "serde",
  "swc_allocator",
@@ -9535,7 +9545,7 @@ dependencies = [
  "bitflags",
  "either",
  "num-bigint",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "seq-macro",
  "serde",
  "smallvec",
@@ -9556,7 +9566,7 @@ checksum = "fbcababb48f0d46587a0a854b2c577eb3a56fa99687de558338021e93cd2c8f5"
 dependencies = [
  "anyhow",
  "pathdiff",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "serde",
  "swc_atoms",
  "swc_common",
@@ -9573,7 +9583,7 @@ dependencies = [
  "either",
  "num-bigint",
  "phf 0.11.3",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "seq-macro",
  "serde",
  "smartstring",
@@ -9595,7 +9605,7 @@ dependencies = [
  "once_cell",
  "par-core",
  "phf 0.11.3",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "serde",
  "swc_atoms",
  "swc_common",
@@ -9638,7 +9648,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2d7748d4112c87ce1885260035e4a43cebfe7661a40174b7d77a0a04760a257"
 dependencies = [
  "either",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "serde",
  "swc_atoms",
  "swc_common",
@@ -9659,7 +9669,7 @@ dependencies = [
  "bytes-str",
  "indexmap 2.13.0",
  "once_cell",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "serde",
  "sha1",
  "string_enum",
@@ -9680,7 +9690,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4408800fdeb541fabf3659db622189a0aeb386f57b6103f9294ff19dfde4f7b0"
 dependencies = [
  "bytes-str",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "serde",
  "swc_atoms",
  "swc_common",
@@ -9701,7 +9711,7 @@ dependencies = [
  "num_cpus",
  "once_cell",
  "par-core",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "ryu-js",
  "swc_atoms",
  "swc_common",
@@ -9759,7 +9769,7 @@ dependencies = [
  "data-encoding",
  "debugid",
  "if_chain",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "serde",
  "serde_json",
  "unicode-id-start",
@@ -10026,6 +10036,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "text-size"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f18aa187839b2bdb1ad2fa35ead8c4c2976b64e4363c386d45ac0f7ee85c9233"
+
+[[package]]
 name = "text_lines"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10135,6 +10151,15 @@ dependencies = [
  "zerotrie",
  "zerovec",
  "zoneinfo64",
+]
+
+[[package]]
+name = "tiny-keccak"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
+dependencies = [
+ "crunchy",
 ]
 
 [[package]]
@@ -11524,6 +11549,15 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "winnow"
+version = "0.6.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e90edd2ac1aa278a5c4599b1d89cf03074b610800f866d4026dc199d7929a28"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "winnow"
 version = "0.7.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
@@ -11713,6 +11747,16 @@ name = "xmlparser"
 version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66fee0b777b0f5ac1c69bb06d361268faafa61cd4682ae064a171c16c433e9e4"
+
+[[package]]
+name = "yaml_parser"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a6a39b6b5ba0d02c910d05d7fbc366a4befb8901ea107dcde9c1c97acb8a366"
+dependencies = [
+ "rowan",
+ "winnow 0.6.26",
+]
 
 [[package]]
 name = "yansi"

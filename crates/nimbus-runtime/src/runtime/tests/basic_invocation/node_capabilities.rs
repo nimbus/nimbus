@@ -685,9 +685,21 @@ export {};
         .await
         .expect("bundle should execute");
 
-    assert_eq!(result["insideStat"]["ok"], serde_json::json!(true));
-    assert_eq!(result["insideStat"]["value"], serde_json::json!(true));
-    assert_eq!(result["insideReadlink"]["ok"], serde_json::json!(true));
+    assert_eq!(
+        result["insideStat"]["ok"],
+        serde_json::json!(true),
+        "inside symlink stat should resolve inside target: {result}"
+    );
+    assert_eq!(
+        result["insideStat"]["value"],
+        serde_json::json!(true),
+        "inside symlink stat should report a file: {result}"
+    );
+    assert_eq!(
+        result["insideReadlink"]["ok"],
+        serde_json::json!(true),
+        "inside symlink readlink should resolve inside target: {result}"
+    );
     assert_eq!(
         result["insideReadlink"]["value"],
         serde_json::json!(inside_target.display().to_string())

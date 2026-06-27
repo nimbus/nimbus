@@ -4067,9 +4067,9 @@ module.exports.namedValue = 42;
     let host = Arc::new(RecordingHost::default());
     let bundle = RuntimeBundle::new(&bundle_path);
 
-    for (target, expected_has_marker) in [
-        (RuntimeCompatibilityTarget::Node22, false),
-        (RuntimeCompatibilityTarget::Node24, true),
+    for target in [
+        RuntimeCompatibilityTarget::Node22,
+        RuntimeCompatibilityTarget::Node24,
     ] {
         let target_owner = NimbusRuntime::with_policy(
             host.clone(),
@@ -4120,17 +4120,13 @@ module.exports.namedValue = 42;
         );
         assert_eq!(
             result["hasModuleExportsMarker"],
-            serde_json::json!(expected_has_marker),
-            "{target:?}: translator mode should preserve the module.exports marker boundary"
+            serde_json::json!(true),
+            "{target:?}: Deno 2.9 module-loader translator should expose the module.exports marker"
         );
         assert_eq!(
             result["moduleExportsMarker"],
-            if expected_has_marker {
-                serde_json::json!("commonjs-default")
-            } else {
-                Value::Null
-            },
-            "{target:?}: module.exports marker payload should match the active translator mode"
+            serde_json::json!("commonjs-default"),
+            "{target:?}: module.exports marker payload should match the Deno 2.9 translator mode"
         );
     }
 }
@@ -6254,9 +6250,9 @@ export {};
             "label": "first",
             "previousMarker": null,
             "previousDetachedLength": null,
-            "sourceBufferDetached": true,
-            "detachedLength": 0,
-            "sourceViewLength": 0,
+            "sourceBufferDetached": false,
+            "detachedLength": 16,
+            "sourceViewLength": 16,
             "clonedByte": 17,
             "clonedLength": 16,
         })
@@ -6281,13 +6277,13 @@ export {};
             "label": "second",
             "previousMarker": null,
             "previousDetachedLength": null,
-            "sourceBufferDetached": true,
-            "detachedLength": 0,
-            "sourceViewLength": 0,
+            "sourceBufferDetached": false,
+            "detachedLength": 16,
+            "sourceViewLength": 16,
             "clonedByte": 29,
             "clonedLength": 16,
         }),
-        "ArrayBuffer backing-store state and realm globals must not leak across clean NodeFull leases"
+        "structured-clone marker state and realm globals must not leak across clean NodeFull leases"
     );
 }
 
@@ -7659,7 +7655,7 @@ async fn fresh_realm_installs_bootstrap_and_uses_bound_host_bridge() {
 }
 
 // ============================================================================================
-// deno_core::shared_ro_heap_serialize_lock GATE TESTS (v2.8.3-nimbus.81).
+// deno_core::shared_ro_heap_serialize_lock GATE TESTS.
 // The fork patch acquires this lock inside InnerIsolateState::drop. These exercise the REAL
 // Drop path (not just the type) for the two properties the patch turns on.
 // ============================================================================================

@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::error::Result;
 use crate::limits::RuntimeCompatibilityTarget;
 use crate::runtime::bootstrap::{
-    extension_transpiler_for_target, install_bootstrap, snapshot_extensions,
+    extension_transpiler_for_target, install_bootstrap, install_missing_deno_extension_state,
+    snapshot_extensions,
 };
 
 use super::embedder::{
@@ -141,8 +142,13 @@ pub(crate) fn create_v8_startup_snapshot(
     let mut runtime = JsRuntimeForSnapshot::new(RuntimeOptions {
         extensions,
         extension_transpiler: extension_transpiler_for_target(compatibility_target),
+        create_params: Some(super::attach_cppgc_heap(Default::default())),
         ..Default::default()
     });
+    {
+        let op_state = runtime.op_state();
+        install_missing_deno_extension_state(&mut op_state.borrow_mut());
+    }
     if compatibility_target.is_node() {
         let isolate = runtime.v8_isolate();
         crate::backends::v8::embedder::v8::scope!(scope, isolate);

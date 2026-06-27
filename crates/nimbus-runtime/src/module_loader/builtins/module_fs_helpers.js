@@ -86,7 +86,10 @@ function createOpenEexistError(path, originalError) {
 }
 
 function isInvalidOpenThrow(error) {
-  return error instanceof TypeError && error.message === "invalid_argument";
+  return error instanceof TypeError && error.message === "invalid_argument" ||
+    error &&
+      typeof error === "object" &&
+      error.message === "invalid_argument";
 }
 
 function openFlagsRequireExclusiveCreate(flags, fsConstants) {
@@ -97,22 +100,172 @@ function openFlagsRequireExclusiveCreate(flags, fsConstants) {
   return normalizedFlags.includes("x");
 }
 
+function resolveOpenProbePath(path) {
+  if (typeof path !== "string" || pathModule.isAbsolute(path)) {
+    return path;
+  }
+  const cwd = typeof processModule?.cwd === "function" ? processModule.cwd() : ".";
+  return pathModule.resolve(cwd, path);
+}
+
+function runtimeFsPathToString(path) {
+  return resolveOpenProbePath(getValidatedPathToString(path));
+}
+
+function mapRuntimeFsHostError(error, operation) {
+  const hostError = error?.nimbusHostError;
+  if (!hostError || typeof hostError !== "object") {
+    const message = typeof error?.message === "string" ? error.message : "";
+    const code = typeof error?.code === "string" && error.code.length > 0
+      ? error.code
+      : message.match(/"code":"([A-Z0-9_]+)"/)?.[1] ?? null;
+    if (code === null) {
+      return error;
+    }
+    const mappedError = new Error(message.length > 0 ? message : `${operation} failed`);
+    mappedError.code = code;
+    return mappedError;
+  }
+  const message =
+    typeof hostError.message === "string" && hostError.message.length > 0
+      ? hostError.message
+      : String(error?.message ?? `${operation} failed`);
+  const mappedError = new Error(message);
+  mappedError.code = hostError.code ?? null;
+  mappedError.nimbusHostError = hostError;
+  return mappedError;
+}
+
+function runtimeStatsFromMetadata(value, options) {
+  const isFile = value?.isFile === true;
+  const isDirectory = value?.isDirectory === true;
+  const isSymlink = value?.isSymlink === true;
+  const size = Number(value?.size ?? 0);
+  const mtimeMs = value?.mtimeMs ?? null;
+  const atimeMs = value?.atimeMs ?? null;
+  const birthtimeMs = value?.birthtimeMs ?? null;
+  const ctimeMs = value?.ctimeMs ?? null;
+  const stats = {
+    isFile() {
+      return isFile;
+    },
+    isDirectory() {
+      return isDirectory;
+    },
+    isSymbolicLink() {
+      return isSymlink;
+    },
+    isBlockDevice() {
+      return false;
+    },
+    isCharacterDevice() {
+      return false;
+    },
+    isFIFO() {
+      return false;
+    },
+    isSocket() {
+      return false;
+    },
+    size,
+    mtimeMs,
+    atimeMs,
+    birthtimeMs,
+    ctimeMs,
+    mtime: mtimeMs == null ? null : new Date(mtimeMs),
+    atime: atimeMs == null ? null : new Date(atimeMs),
+    birthtime: birthtimeMs == null ? null : new Date(birthtimeMs),
+    ctime: ctimeMs == null ? null : new Date(ctimeMs),
+    mode: value?.mode ?? null,
+    dev: value?.dev ?? null,
+    ino: value?.ino ?? null,
+    nlink: value?.nlink ?? null,
+    uid: value?.uid ?? null,
+    gid: value?.gid ?? null,
+    rdev: value?.rdev ?? null,
+    blksize: value?.blksize ?? null,
+    blocks: value?.blocks ?? null,
+  };
+  return options && typeof options === "object" && options.bigint === true
+    ? convertStatsToBigIntStats(stats)
+    : stats;
+}
+
+async function runtimeFsStat(path, followSymlink, options) {
+  try {
+    const value = await globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_stat", {
+      path: runtimeFsPathToString(path),
+      follow_symlink: followSymlink,
+    });
+    return runtimeStatsFromMetadata(value, options);
+  } catch (error) {
+    throw mapRuntimeFsHostError(error, "stat");
+  }
+}
+
+function runtimeFsStatSync(path, followSymlink, options) {
+  try {
+    const value = globalThis.__nimbusSyncHostValue("op_nimbus_runtime_stat_sync", {
+      path: runtimeFsPathToString(path),
+      follow_symlink: followSymlink,
+    });
+    return runtimeStatsFromMetadata(value, options);
+  } catch (error) {
+    throw mapRuntimeFsHostError(error, "statSync");
+  }
+}
+
+async function runtimeFsReadlink(path, options) {
+  try {
+    const value = await globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_read_link", {
+      path: runtimeFsPathToString(path),
+    });
+    return encodeWatchFilename(String(value ?? ""), snapshotFsEncodingOptions(options)?.encoding);
+  } catch (error) {
+    throw mapRuntimeFsHostError(error, "readlink");
+  }
+}
+
+function runtimeFsReadlinkSync(path, options) {
+  try {
+    const value = globalThis.__nimbusSyncHostValue("op_nimbus_runtime_read_link_sync", {
+      path: runtimeFsPathToString(path),
+    });
+    return encodeWatchFilename(String(value ?? ""), snapshotFsEncodingOptions(options)?.encoding);
+  } catch (error) {
+    throw mapRuntimeFsHostError(error, "readlinkSync");
+  }
+}
+
 function normalizeInvalidOpenThrow(fsBuiltin, path, flags, error, callback) {
   if (!isInvalidOpenThrow(error)) {
     callback(error);
     return;
   }
-  return fsBuiltin.stat(path, (statError) => {
+  const statPath = resolveOpenProbePath(path);
+  try {
+    return fsBuiltin.stat(statPath, (statError) => {
+      if (statError?.code === "ENOENT" || isInvalidOpenThrow(statError)) {
+        callback(createOpenEnoentError(path, statError));
+        return;
+      }
+      if (!statError && openFlagsRequireExclusiveCreate(flags, fsBuiltin.constants)) {
+        callback(createOpenEexistError(path, error));
+        return;
+      }
+      callback(error);
+    });
+  } catch (statError) {
+    if (isInvalidOpenThrow(statError)) {
+      callback(createOpenEnoentError(path, statError));
+      return;
+    }
     if (statError?.code === "ENOENT") {
       callback(createOpenEnoentError(path, statError));
       return;
     }
-    if (!statError && openFlagsRequireExclusiveCreate(flags, fsBuiltin.constants)) {
-      callback(createOpenEexistError(path, error));
-      return;
-    }
     callback(error);
-  });
+  }
 }
 
 function sanitizeRmdirOptions(options) {
@@ -1033,4 +1186,3 @@ function wrapDirHandle(dir) {
 
   return dir;
 }
-

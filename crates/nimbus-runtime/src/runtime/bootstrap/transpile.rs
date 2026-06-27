@@ -58,18 +58,34 @@ function __nimbusResolveDeno() {
   if (deno.env === undefined) {
     deno.env = {
       get(name) {
-        return globalThis.process?.env?.[name];
+        const operation = __nimbusCore.ops?.op_nimbus_runtime_env_get;
+        if (typeof operation !== "function") {
+          return undefined;
+        }
+        const result = operation(String(name));
+        if (result?.status === "allowed") {
+          return result.value;
+        }
+        if (result?.status === "missing" || result?.status === "denied") {
+          return undefined;
+        }
+        throw new Error(result?.message ?? `runtime env capability denied for ${name}`);
       },
       toObject() {
-        return { ...(globalThis.process?.env ?? {}) };
+        const operation = __nimbusCore.ops?.op_nimbus_runtime_env_snapshot;
+        return typeof operation === "function" ? operation() : {};
       },
       set(name, value) {
-        if (globalThis.process?.env) {
-          globalThis.process.env[String(name)] = String(value);
+        const processEnv = globalThis.process?.env;
+        const marker = globalThis.Symbol.for("nimbus.processEnvProxy");
+        if (processEnv?.[marker] === true) {
+          processEnv[String(name)] = String(value);
         }
       },
       delete(name) {
-        if (globalThis.process?.env) {
+        const processEnv = globalThis.process?.env;
+        const marker = globalThis.Symbol.for("nimbus.processEnvProxy");
+        if (processEnv?.[marker] === true) {
           delete globalThis.process.env[String(name)];
         }
       },
@@ -80,8 +96,8 @@ function __nimbusResolveDeno() {
   }
   if (deno.version === undefined) {
     deno.version = {
-      deno: "2.8.0-nimbus",
-      v8: "149.0.0-nimbus.1",
+      deno: "2.9.0-nimbus.1",
+      v8: "149.4.0-nimbus.10",
       typescript: "0.0.0-nimbus",
     };
   }
@@ -150,7 +166,7 @@ fn maybe_transpile_source(
     name: ModuleName,
     source: ModuleCodeString,
 ) -> Result<(ModuleCodeString, Option<SourceMapData>), JsErrorBox> {
-    let source = rewrite_node_extension_source(&name, source.to_string());
+    let source = rewrite_node_extension_source(&name, source.to_string())?;
 
     // Match Deno's extension transpilation contract so Node22 startup and live
     // runtime composition can consume the same TypeScript-backed ext modules.
@@ -210,9 +226,14 @@ fn maybe_transpile_source(
     Ok((transpiled_source.text.into(), maybe_source_map))
 }
 
-fn rewrite_node_extension_source(name: &str, source: String) -> String {
+fn rewrite_node_extension_source(name: &str, source: String) -> Result<String, JsErrorBox> {
     if !name.starts_with("ext:deno_node/") && !name.starts_with("node:") {
-        return source;
+        return Ok(source);
+    }
+
+    let mut source = source;
+    if name == "ext:deno_node/worker_threads.ts" {
+        source = inject_worker_share_env_metadata(source)?;
     }
 
     // Keep Deno's Node polyfills bound to Nimbus-owned Node bootstrap state.
@@ -232,12 +253,25 @@ fn rewrite_node_extension_source(name: &str, source: String) -> String {
     if name.starts_with("ext:deno_node/")
         && let Some(source) = inject_node_lazy_script_prelude(&source)
     {
-        return source;
+        return Ok(source);
     }
 
-    format!(
+    Ok(format!(
         "{NODE_EXTENSION_INTERNAL_DENO_PRELUDE_HEADER}{NODE_EXTENSION_INTERNAL_DENO_PRELUDE_BODY}{source}"
-    )
+    ))
+}
+
+fn inject_worker_share_env_metadata(source: String) -> Result<String, JsErrorBox> {
+    const WORKER_METADATA_ENV_FIELD: &str = "      env: env_,\n      argv: argv_,";
+    const WORKER_METADATA_WITH_SHARE_ENV: &str =
+        "      env: env_,\n      shareEnv: envOpt === SHARE_ENV,\n      argv: argv_,";
+    let anchor_count = source.matches(WORKER_METADATA_ENV_FIELD).count();
+    if anchor_count != 1 {
+        return Err(JsErrorBox::generic(format!(
+            "worker_threads SHARE_ENV metadata rewrite expected exactly one env/argv metadata anchor, found {anchor_count}",
+        )));
+    }
+    Ok(source.replacen(WORKER_METADATA_ENV_FIELD, WORKER_METADATA_WITH_SHARE_ENV, 1))
 }
 
 fn inject_node_lazy_script_prelude(source: &str) -> Option<String> {
@@ -293,6 +327,58 @@ mod tests {
         assert!(
             message.contains("invalid runtime extension specifier"),
             "unexpected transpiler error: {message}"
+        );
+    }
+
+    #[test]
+    fn worker_threads_rewrite_preserves_share_env_metadata() {
+        let source = r#"
+const serializedWorkerMetadata = serializeJsMessageData({
+      workerData: options?.workerData,
+      environmentData: environmentData,
+      env: env_,
+      argv: argv_,
+}, options?.transferList ?? []);
+"#;
+
+        let rewritten =
+            rewrite_node_extension_source("ext:deno_node/worker_threads.ts", source.to_string())
+                .expect("worker_threads metadata rewrite should succeed");
+
+        assert!(
+            rewritten.contains("shareEnv: envOpt === SHARE_ENV"),
+            "worker_threads rewrite must keep SHARE_ENV visible to Nimbus worker bootstrap: {rewritten}"
+        );
+    }
+
+    #[test]
+    fn worker_threads_rewrite_rejects_missing_share_env_anchor() {
+        let error = rewrite_node_extension_source(
+            "ext:deno_node/worker_threads.ts",
+            "const serializedWorkerMetadata = serializeJsMessageData({});".to_string(),
+        )
+        .expect_err("missing worker metadata anchor should fail closed");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("expected exactly one env/argv metadata anchor, found 0"),
+            "unexpected rewrite error: {message}"
+        );
+    }
+
+    #[test]
+    fn worker_threads_rewrite_rejects_duplicate_share_env_anchor() {
+        let anchor = "      env: env_,\n      argv: argv_,";
+        let error = rewrite_node_extension_source(
+            "ext:deno_node/worker_threads.ts",
+            format!("const a = {{\n{anchor}\n}};\nconst b = {{\n{anchor}\n}};"),
+        )
+        .expect_err("duplicate worker metadata anchors should fail closed");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("expected exactly one env/argv metadata anchor, found 2"),
+            "unexpected rewrite error: {message}"
         );
     }
 }

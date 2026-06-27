@@ -10,7 +10,9 @@ pub(in super::super) fn op_nimbus_runtime_env_get(
     state: &mut OpState,
     #[string] name: String,
 ) -> RuntimeEnvLookupDescriptor {
-    let policy = state.borrow::<InstalledRuntimeCapabilityPolicy>();
+    let Some(policy) = state.try_borrow::<InstalledRuntimeCapabilityPolicy>() else {
+        return RuntimeEnvLookupDescriptor::Missing;
+    };
     let permissions = policy.permissions.clone();
     match permissions.check_env(&name) {
         Ok(()) => policy.env.lookup(&name),
@@ -25,8 +27,10 @@ pub(in super::super) fn op_nimbus_runtime_env_get(
 pub(in super::super) fn op_nimbus_runtime_env_snapshot(
     state: &mut OpState,
 ) -> BTreeMap<String, String> {
-    let policy = state.borrow::<InstalledRuntimeCapabilityPolicy>();
-    policy.env.snapshot()
+    state
+        .try_borrow::<InstalledRuntimeCapabilityPolicy>()
+        .map(|policy| policy.env.snapshot())
+        .unwrap_or_default()
 }
 
 fn shared_env(state: &OpState) -> RuntimeSharedWorkerEnv {
