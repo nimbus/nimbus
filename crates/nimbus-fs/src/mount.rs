@@ -76,6 +76,10 @@ impl MountTable {
         &self.entries
     }
 
+    pub(crate) fn from_entries(entries: Vec<MountEntry>) -> Self {
+        Self { entries }
+    }
+
     pub fn resolve_entry(&self, virtual_path: &Path) -> Option<&MountEntry> {
         // Longest-prefix matching is the authority boundary: overlays and
         // concrete backends are both represented as mount-table entries.
@@ -107,6 +111,22 @@ impl MountTable {
 }
 
 impl MountEntry {
+    pub(crate) fn backend(prefix: PathBuf, backend: FileSystemRc, readonly: bool) -> Self {
+        Self {
+            prefix,
+            target: MountTarget::Backend { backend, readonly },
+        }
+    }
+
+    pub(crate) fn masked(prefix: PathBuf, message: impl Into<String>) -> Self {
+        Self {
+            prefix,
+            target: MountTarget::Masked {
+                message: message.into(),
+            },
+        }
+    }
+
     pub fn prefix(&self) -> &Path {
         &self.prefix
     }

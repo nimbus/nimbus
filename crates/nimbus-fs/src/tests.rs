@@ -17,8 +17,8 @@ use nimbus_blob::{BlobHash, BlobStore, ByteStream, LocalPackStore};
 use nimbus_core::Result as NimbusResult;
 
 use super::{
-    CasBlobChunk, CasReadOnlyBackend, CasReadOnlyManifest, MemFsBackend, MountResolver, MountTable,
-    NimbusFs, PassthroughBackend,
+    CasBlobChunk, CasReadOnlyBackend, CasReadOnlyManifest, FsCaps, FsMountCaps, MemFsBackend,
+    MountResolver, MountTable, NimbusFs, PassthroughBackend,
 };
 
 fn checked(path: &Path) -> CheckedPath<'_> {
@@ -512,6 +512,179 @@ fn cas_ro_rejects_every_mutation_with_erofs() {
             "unexpected {label} error: {error}"
         );
     }
+}
+
+fn table_with_mem_mount(prefix: &str, backend: MemFsBackend) -> MountTable {
+    let mut table = MountTable::new(memfs_rc());
+    table.mount(prefix, MaybeArc::new(backend)).unwrap();
+    table
+}
+
+#[test]
+fn fscaps_ungranted_mount_is_invisible_without_passthrough_fallthrough() {
+    let allowed = MemFsBackend::new();
+    let secret = MemFsBackend::new();
+    secret
+        .write_file_sync(
+            &checked(Path::new("/leak.txt")),
+            OpenOptions::write(true, false, false, None),
+            b"secret",
+        )
+        .unwrap();
+    let mut table = MountTable::new(memfs_rc());
+    table.mount("/allowed", MaybeArc::new(allowed)).unwrap();
+    table.mount("/secret", MaybeArc::new(secret)).unwrap();
+
+    let gated = FsCaps::new()
+        .grant("/allowed", FsMountCaps::read_write())
+        .apply_to_mount_table(&table);
+    let fs = fs_with_mounts(gated);
+
+    fs.write_file_sync(
+        &checked(Path::new("/allowed/file.txt")),
+        OpenOptions::write(true, false, false, None),
+        b"ok",
+    )
+    .unwrap();
+    assert!(!fs.exists_sync(&checked(Path::new("/secret/leak.txt"))));
+    let hidden = expect_stat_error(
+        fs.stat_sync(&checked(Path::new("/secret/leak.txt"))),
+        "ungranted mount must be hidden",
+    );
+    assert_eq!(hidden.kind(), io::ErrorKind::NotFound);
+}
+
+#[test]
+fn fscaps_readonly_and_write_size_quota_are_enforced() {
+    let backend = MemFsBackend::new();
+    let gated = FsCaps::new()
+        .grant("/data", FsMountCaps::read_write().with_write_size_limit(4))
+        .apply_to_mount_table(&table_with_mem_mount("/data", backend));
+    let fs = fs_with_mounts(gated);
+
+    fs.write_file_sync(
+        &checked(Path::new("/data/small.txt")),
+        OpenOptions::write(true, false, false, None),
+        b"1234",
+    )
+    .unwrap();
+    let quota = fs
+        .write_file_sync(
+            &checked(Path::new("/data/large.txt")),
+            OpenOptions::write(true, false, false, None),
+            b"12345",
+        )
+        .expect_err("write-size quota must reject oversized writes");
+    assert_eq!(quota.kind(), io::ErrorKind::StorageFull);
+
+    let readonly_backend = MemFsBackend::new();
+    let readonly = FsCaps::new()
+        .grant("/ro", FsMountCaps::read_only())
+        .apply_to_mount_table(&table_with_mem_mount("/ro", readonly_backend));
+    let fs = fs_with_mounts(readonly);
+    let error = fs
+        .write_file_sync(
+            &checked(Path::new("/ro/file.txt")),
+            OpenOptions::write(true, false, false, None),
+            b"x",
+        )
+        .expect_err("readonly grant rejects writes");
+    assert!(
+        error.to_string().contains("EROFS"),
+        "unexpected readonly error: {error}"
+    );
+}
+
+#[test]
+fn fscaps_open_and_mutation_matrix_is_fail_closed() {
+    let read = FsCaps::open_requires(OpenOptions::read());
+    assert!(read.file_read);
+    assert!(!read.file_write);
+    assert!(!read.directory_mutate);
+
+    let create = FsCaps::open_requires(OpenOptions::write(true, false, false, None));
+    assert!(create.file_write);
+    assert!(create.directory_mutate);
+    assert!(create.create);
+    assert!(create.truncate);
+
+    let append = FsCaps::open_requires(OpenOptions::write(false, true, false, None));
+    assert!(append.file_write);
+    assert!(append.append);
+
+    let mut no_metadata = FsMountCaps::read_write();
+    no_metadata.metadata_mutate = false;
+    let backend = MemFsBackend::new();
+    backend
+        .write_file_sync(
+            &checked(Path::new("/file.txt")),
+            OpenOptions::write(true, false, false, None),
+            b"x",
+        )
+        .unwrap();
+    let fs = fs_with_mounts(
+        FsCaps::new()
+            .grant("/data", no_metadata)
+            .apply_to_mount_table(&table_with_mem_mount("/data", backend)),
+    );
+    let chmod = fs
+        .chmod_sync(&checked(Path::new("/data/file.txt")), 0o600)
+        .expect_err("chmod requires metadata-mutate");
+    assert!(chmod.to_string().contains("metadata-mutate"));
+    let chown = fs
+        .chown_sync(&checked(Path::new("/data/file.txt")), Some(1), Some(1))
+        .expect_err("chown requires metadata-mutate");
+    assert!(chown.to_string().contains("metadata-mutate"));
+    let utime = fs
+        .utime_sync(&checked(Path::new("/data/file.txt")), 1, 0, 1, 0)
+        .expect_err("utime requires metadata-mutate");
+    assert!(utime.to_string().contains("metadata-mutate"));
+
+    let mut no_dir = FsMountCaps::read_write();
+    no_dir.directory_mutate = false;
+    let fs = fs_with_mounts(
+        FsCaps::new()
+            .grant("/data", no_dir)
+            .apply_to_mount_table(&table_with_mem_mount("/data", MemFsBackend::new())),
+    );
+    let create_denied = fs
+        .write_file_sync(
+            &checked(Path::new("/data/new.txt")),
+            OpenOptions::write(true, false, false, None),
+            b"x",
+        )
+        .expect_err("create requires directory-mutate");
+    assert!(create_denied.to_string().contains("EROFS"));
+    let rename = fs
+        .rename_sync(
+            &checked(Path::new("/data/a.txt")),
+            &checked(Path::new("/data/b.txt")),
+        )
+        .expect_err("rename requires directory-mutate");
+    assert!(rename.to_string().contains("EROFS"));
+
+    let mut no_link = FsMountCaps::read_write();
+    no_link.link_create = false;
+    let fs = fs_with_mounts(
+        FsCaps::new()
+            .grant("/data", no_link)
+            .apply_to_mount_table(&table_with_mem_mount("/data", MemFsBackend::new())),
+    );
+    let link = fs
+        .link_sync(
+            &checked(Path::new("/data/a.txt")),
+            &checked(Path::new("/data/b.txt")),
+        )
+        .expect_err("link requires link-create");
+    assert!(link.to_string().contains("link-create"));
+    let symlink = fs
+        .symlink_sync(
+            &checked(Path::new("a.txt")),
+            &checked(Path::new("/data/link.txt")),
+            None,
+        )
+        .expect_err("symlink creation requires link-create");
+    assert!(symlink.to_string().contains("link-create"));
 }
 
 #[derive(Debug, Clone, Default)]
