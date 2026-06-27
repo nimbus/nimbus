@@ -14,6 +14,7 @@ members = [
     "crates/nimbus-crypto",
     "crates/nimbus-dynamodb",
     "crates/nimbus-firebase",
+    "crates/nimbus-kv",
     "crates/nimbus-license",
     "crates/nimbus-machine",
     "crates/nimbus-mongodb",
@@ -115,6 +116,8 @@ parking_lot = "0.12"
 pbkdf2 = { version = "0.12", features = ["hmac"] }
 rand = "0.8"
 redb = "2"
+redis = "1.3.0"
+redis-protocol = "6.0.0"
 reqwest = { version = "0.12", features = ["blocking", "json", "native-tls-vendored"] }
 ring = "0.17"
 rmp = "0.8"

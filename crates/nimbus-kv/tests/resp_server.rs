@@ -1,0 +1,145 @@
+use std::io::ErrorKind;
+use std::net::{Ipv4Addr, SocketAddr};
+
+use nimbus_core::TenantId;
+use nimbus_kv::{CredentialRegistry, KvError, NimbusKvConfig, run_listener, serve};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::task::JoinHandle;
+use tokio::time::{Duration, timeout};
+
+fn tenant(id: &str) -> TenantId {
+    TenantId::new(id).expect("valid tenant id")
+}
+
+async fn spawn_test_server(credentials: CredentialRegistry) -> (SocketAddr, JoinHandle<()>) {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("listener binds");
+    let addr = listener.local_addr().expect("listener has addr");
+    let config = NimbusKvConfig::new(addr, credentials);
+    let handle = tokio::spawn(async move {
+        serve(listener, config).await.expect("server should run");
+    });
+    (addr, handle)
+}
+
+fn resp_command(parts: &[&[u8]]) -> Vec<u8> {
+    let mut out = format!("*{}\r\n", parts.len()).into_bytes();
+    for part in parts {
+        out.extend_from_slice(format!("${}\r\n", part.len()).as_bytes());
+        out.extend_from_slice(part);
+        out.extend_from_slice(b"\r\n");
+    }
+    out
+}
+
+async fn read_response(stream: &mut TcpStream) -> String {
+    let mut buf = vec![0_u8; 2048];
+    let read = timeout(Duration::from_secs(2), stream.read(&mut buf))
+        .await
+        .expect("read should not time out")
+        .expect("read should succeed");
+    String::from_utf8_lossy(&buf[..read]).into_owned()
+}
+
+async fn write_command(stream: &mut TcpStream, parts: &[&[u8]]) -> String {
+    stream
+        .write_all(&resp_command(parts))
+        .await
+        .expect("command write should succeed");
+    read_response(stream).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn redis_rs_client_connects_and_ping_echo_round_trip() {
+    let password = "secret";
+    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), password);
+    let (addr, server) = spawn_test_server(credentials).await;
+
+    let url = format!("redis://:{password}@{addr}/");
+    let result = tokio::task::spawn_blocking(move || {
+        let client = redis::Client::open(url).expect("redis client should parse URL");
+        let mut connection = client.get_connection().expect("redis-rs client connects");
+        let pong: String = redis::cmd("PING")
+            .query(&mut connection)
+            .expect("PING should round-trip");
+        let echo: String = redis::cmd("ECHO")
+            .arg("hello")
+            .query(&mut connection)
+            .expect("ECHO should round-trip");
+        (pong, echo)
+    })
+    .await
+    .expect("blocking redis client task joins");
+
+    assert_eq!(result, ("PONG".to_owned(), "hello".to_owned()));
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hello_3_negotiates_resp3() {
+    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), "secret");
+    let (addr, server) = spawn_test_server(credentials).await;
+    let mut stream = TcpStream::connect(addr).await.expect("connects");
+
+    let auth = write_command(&mut stream, &[b"AUTH", b"secret"]).await;
+    assert_eq!(auth, "+OK\r\n");
+
+    let hello = write_command(&mut stream, &[b"HELLO", b"3"]).await;
+    assert!(
+        hello.starts_with('%'),
+        "HELLO 3 should return a RESP3 map, got {hello:?}"
+    );
+    assert!(hello.contains("proto"));
+
+    let ping = write_command(&mut stream, &[b"PING"]).await;
+    assert_eq!(ping, "+PONG\r\n");
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn listener_rejects_non_loopback_bind() {
+    let config = NimbusKvConfig::new(
+        "0.0.0.0:0".parse().expect("addr parses"),
+        CredentialRegistry::single_dev(tenant("tenant-a"), "secret"),
+    );
+
+    let error = run_listener(config)
+        .await
+        .expect_err("non-loopback bind should fail closed");
+    match error {
+        KvError::Io(error) => assert_eq!(error.kind(), ErrorKind::InvalidInput),
+        other => panic!("expected InvalidInput io error, got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unauthenticated_command_is_rejected() {
+    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), "secret");
+    let (addr, server) = spawn_test_server(credentials).await;
+    let mut stream = TcpStream::connect(addr).await.expect("connects");
+
+    let response = write_command(&mut stream, &[b"PING"]).await;
+    assert_eq!(response, "-NOAUTH Authentication required\r\n");
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tenant_a_credential_cannot_read_tenant_b_keys() {
+    let credentials = CredentialRegistry::new()
+        .bind("tenant-a", "secret-a", tenant("tenant-a"))
+        .bind("tenant-b", "secret-b", tenant("tenant-b"));
+    let (addr, server) = spawn_test_server(credentials).await;
+    let mut stream = TcpStream::connect(addr).await.expect("connects");
+
+    let auth = write_command(&mut stream, &[b"AUTH", b"tenant-a", b"secret-a"]).await;
+    assert_eq!(auth, "+OK\r\n");
+
+    let cross_tenant = write_command(&mut stream, &[b"SELECT", b"tenant-b"]).await;
+    assert!(
+        cross_tenant.contains("cannot change tenant"),
+        "credential bound to tenant A must not select tenant B, got {cross_tenant:?}"
+    );
+    server.abort();
+}
