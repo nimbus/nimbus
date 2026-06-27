@@ -126,12 +126,10 @@ impl CasReadOnlyBackend {
         block_on_blob(async move {
             let mut stream = store.get_stream(&hash).await.map_err(blob_error)?;
             let mut bytes = Vec::new();
-            stream.read_to_end(&mut bytes).await.map_err(|error| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("read CAS blob stream: {error}"),
-                )
-            })?;
+            stream
+                .read_to_end(&mut bytes)
+                .await
+                .map_err(|error| io::Error::other(format!("read CAS blob stream: {error}")))?;
             Ok(bytes)
         })
     }
@@ -871,7 +869,7 @@ fn dir_entry(name: String, entry: &CasManifestEntry) -> FsDirEntry {
 fn blob_error(error: nimbus_core::Error) -> io::Error {
     match error {
         nimbus_core::Error::NotFound(message) => io::Error::new(io::ErrorKind::NotFound, message),
-        other => io::Error::new(io::ErrorKind::Other, other.to_string()),
+        other => io::Error::other(other.to_string()),
     }
 }
 

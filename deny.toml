@@ -24,6 +24,10 @@ ignore = [
   # not enable `log`, and Nimbus uses `tracing_subscriber`.
   { id = "RUSTSEC-2026-0097", reason = "Requires rand log + thread_rng features plus a custom log::Log path; Nimbus does not enable rand log and uses tracing_subscriber." },
   { id = "RUSTSEC-2023-0071", reason = "RustCrypto rsa has no safe fixed release; exposure is limited to user-authored Deno/Node crypto operations, so keep the audit visible until upstream replaces the implementation." },
+  { id = "RUSTSEC-2026-0118", reason = "Pinned nimbus/deno v2.9.0-nimbus.2 carries hickory-proto 0.25 through deno_net; keep visible until the Deno fork moves DNSSEC validation off the affected 0.25 API." },
+  { id = "RUSTSEC-2026-0119", reason = "Pinned nimbus/deno v2.9.0-nimbus.2 carries hickory-proto 0.25 through deno_net; keep visible until the Deno fork advances to hickory-proto >=0.26.1." },
+  { id = "RUSTSEC-2026-0185", reason = "Pinned nimbus/deno v2.9.0-nimbus.2 carries quinn-proto 0.11.14 through deno_net/deno_tunnel; keep visible until the Deno fork advances to quinn-proto >=0.11.15." },
+  { crate = "crypto-bigint@0.7.3", reason = "Pinned Deno crypto ed448-goldilocks prerelease lane still requires the yanked RustCrypto 0.14 prerelease dependency; replace when the Deno fork updates RustCrypto." },
 ]
 
 [licenses]
@@ -32,6 +36,7 @@ version = 2
 confidence-threshold = 0.8
 exceptions = [
   { crate = "ar_archive_writer", allow = ["Apache-2.0 WITH LLVM-exception"] },
+  { crate = "tiny-keccak", allow = ["CC0-1.0"] },
 ]
 # Workspace crates use the Nimbus Community License (custom, not SPDX)
 private = { ignore = true }
@@ -63,6 +68,7 @@ multiple-versions = "deny"
 wildcards = "allow"
 skip = [
     { crate = "base16ct@1.0.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "blake2@0.10.6", reason = "The pinned Deno Node crypto stack still carries blake2 0.10 while Deno argon2 has moved to the RustCrypto 0.11 prerelease lane." },
     { crate = "brotli@6.0.0", reason = "The pinned Deno HTTP/web stack carries brotli 6 while async-compression carries brotli 8." },
     { crate = "brotli-decompressor@4.0.3", reason = "The pinned Deno HTTP/web stack carries brotli-decompressor 4 while async-compression carries brotli-decompressor 5." },
     { crate = "compact_str@0.7.1", reason = "The pinned Deno SWC codegen stack carries compact_str 0.7 while the OXC code-index stack carries compact_str 0.9." },
@@ -80,6 +86,7 @@ skip = [
     { crate = "spki@0.8.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "tonic@0.12.3", reason = "The pinned Deno telemetry stack still carries tonic 0.12 while the server gRPC stack has moved forward." },
     { crate = "which@6.0.3", reason = "The rusty_v8 build stack carries which 6 while the current Deno permission stack uses which 8." },
+    { crate = "winnow@0.6.26", reason = "The pinned Deno resolver YAML parser still carries winnow 0.6 while the workspace TOML parser uses winnow 0.7." },
 ]
 skip-tree = [
     { crate = "aws-config@1.8.16", reason = "AWS SDK transport crates intentionally carry a parallel HTTP and crypto stack." },
@@ -90,7 +97,7 @@ skip-tree = [
     { crate = "bson@3.1.0", reason = "The MongoDB adapter stack currently carries its own BSON/rand support lane." },
     { crate = "bollard@0.20.2", reason = "The container/buildkit stack carries tonic 0.14 and related transport crates independently from server gRPC." },
     { crate = "testcontainers@0.27.2", reason = "The dev-only external-provider harness carries additional legacy utility crates." },
-    { crate = "deno_core@0.404.0", reason = "The embedded V8 runtime stack carries its own support-ecosystem crates." },
+    { crate = "deno_core@0.405.0", reason = "The embedded V8 runtime stack carries its own support-ecosystem crates." },
 ]
 
 [sources]

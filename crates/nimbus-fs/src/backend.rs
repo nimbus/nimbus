@@ -161,6 +161,12 @@ impl fmt::Debug for BackendRegistration {
     }
 }
 
+impl Default for BackendRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn validate_caps_contract(caps: &FsMountCaps) -> FsResult<()> {
     if !caps.visible {
         return Err(io::Error::new(

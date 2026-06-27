@@ -132,11 +132,7 @@ impl NimbusFs {
         if left.mount_prefix == right.mount_prefix {
             return Ok(());
         }
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("cross-mount {op} is unsupported"),
-        )
-        .into())
+        Err(io::Error::other(format!("cross-mount {op} is unsupported")).into())
     }
 
     fn virtualize_backend_path(&self, resolved: &ResolvedPath, backend_path: PathBuf) -> PathBuf {
