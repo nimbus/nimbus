@@ -178,6 +178,124 @@ export {};
 }
 
 #[tokio::test]
+async fn runtime_mutation_context_exposes_query_and_mutation_nested_calls() {
+    let _guard = acquire_runtime_suite_lock().await;
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function (request) {
+  const ctx = globalThis.__nimbusCreateContext({ request });
+  globalThis.__nimbusInvokeNamedLocal = async function (nestedRequest) {
+    return {
+      kind: nestedRequest.kind,
+      functionName: nestedRequest.function_name,
+      args: nestedRequest.args,
+    };
+  };
+  let runActionError = null;
+  try {
+    await ctx.runAction({ name: "messages:fanout", visibility: "public" }, {});
+  } catch (error) {
+    runActionError = String(error && error.message ? error.message : error);
+  }
+  return {
+    schedulerType: typeof ctx.scheduler.runAfter,
+    runQueryResult: await ctx.runQuery(
+      { name: "messages:list", visibility: "public" },
+      { author: "Ada" },
+    ),
+    runMutationResult: await ctx.runMutation(
+      { name: "messages:send", visibility: "public" },
+      { body: "hello" },
+    ),
+    runActionError,
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let host = Arc::new(RecordingHost::default());
+    let runtime = NimbusRuntime::with_policy(
+        host.clone(),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
+    let result = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Mutation,
+                function_name: "messages:writer".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect("mutation context shape should be inspectable");
+
+    assert_eq!(result["schedulerType"], "function");
+    assert_eq!(
+        result["runQueryResult"],
+        serde_json::json!({
+            "kind": "query",
+            "functionName": "messages:list",
+            "args": { "author": "Ada" },
+        })
+    );
+    assert_eq!(
+        result["runMutationResult"],
+        serde_json::json!({
+            "kind": "mutation",
+            "functionName": "messages:send",
+            "args": { "body": "hello" },
+        })
+    );
+    let run_action_error = result["runActionError"]
+        .as_str()
+        .expect("mutation runAction should return an error string");
+    assert!(
+        run_action_error.contains("not available for mutation handlers"),
+        "unexpected mutation runAction denial: {run_action_error}"
+    );
+    let calls = host
+        .calls
+        .lock()
+        .expect("host calls lock should not be poisoned")
+        .clone();
+    assert_eq!(calls.len(), 2);
+    assert!(
+        calls
+            .iter()
+            .all(|call| call.operation == HostCallOperation::CtxRuntimeEnterNestedCall)
+    );
+    assert_eq!(
+        calls[0].payload,
+        serde_json::json!({
+            "name": "messages:list",
+            "visibility": "public",
+            "kind": "query",
+            "host_call_session_id": "mutation:messages:writer",
+        })
+    );
+    assert_eq!(
+        calls[1].payload,
+        serde_json::json!({
+            "name": "messages:send",
+            "visibility": "public",
+            "kind": "mutation",
+            "host_call_session_id": "mutation:messages:writer",
+        })
+    );
+}
+
+#[tokio::test]
 async fn runtime_action_context_exposes_nested_calls_without_direct_db() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");

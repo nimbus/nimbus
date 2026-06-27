@@ -5,6 +5,7 @@ import { runActionFixtures } from "./selftest/action_fixtures.mjs";
 import { runCapabilityBoundaryFixtures } from "./selftest/capability_boundary_fixtures.mjs";
 import { runCodegenChecks } from "./selftest/check_fixtures.mjs";
 import { runCloudFunctionsFixtures } from "./selftest/cloud_functions_fixtures.mjs";
+import { runContextFixtures } from "./selftest/context_fixtures.mjs";
 import { runCoreFixtures } from "./selftest/core_fixtures.mjs";
 import { runDatabaseFixtures } from "./selftest/database_fixtures.mjs";
 import { runRuntimeFixtures } from "./selftest/runtime_fixtures.mjs";
@@ -22,6 +23,7 @@ async function main() {
   }
   await runCapabilityBoundaryFixtures();
   await runCloudFunctionsFixtures();
+  await runContextFixtures();
   await runCoreFixtures();
   await runDatabaseFixtures();
   await runActionFixtures();

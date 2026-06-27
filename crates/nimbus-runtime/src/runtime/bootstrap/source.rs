@@ -440,18 +440,22 @@ globalThis.__nimbusCreateContext = function(options = {}) {
           db: true,
           dbWrite: false,
           scheduler: false,
-          runQuery: true,
-          runMutation: false,
-          runAction: false,
+          nestedCalls: {
+            query: true,
+            mutation: false,
+            action: false,
+          },
         };
       case "mutation":
         return {
           db: true,
           dbWrite: true,
           scheduler: true,
-          runQuery: true,
-          runMutation: true,
-          runAction: false,
+          nestedCalls: {
+            query: true,
+            mutation: true,
+            action: false,
+          },
         };
       case "action":
       case "http_action":
@@ -459,18 +463,22 @@ globalThis.__nimbusCreateContext = function(options = {}) {
           db: false,
           dbWrite: false,
           scheduler: true,
-          runQuery: true,
-          runMutation: true,
-          runAction: true,
+          nestedCalls: {
+            query: true,
+            mutation: true,
+            action: true,
+          },
         };
       default:
         return {
           db: true,
           dbWrite: true,
           scheduler: true,
-          runQuery: true,
-          runMutation: true,
-          runAction: true,
+          nestedCalls: {
+            query: true,
+            mutation: true,
+            action: true,
+          },
         };
     }
   })();
@@ -609,7 +617,7 @@ globalThis.__nimbusCreateContext = function(options = {}) {
     scheduler,
     runQuery(functionRef, args = {}) {
       guardStale();
-      if (!capabilities.runQuery) {
+      if (!capabilities.nestedCalls.query) {
         unsupported("runQuery");
       }
       return __nimbusRunNamedFunction(
@@ -625,7 +633,7 @@ globalThis.__nimbusCreateContext = function(options = {}) {
     },
     runMutation(functionRef, args = {}) {
       guardStale();
-      if (!capabilities.runMutation) {
+      if (!capabilities.nestedCalls.mutation) {
         unsupported("runMutation");
       }
       return __nimbusRunNamedFunction(
@@ -641,7 +649,7 @@ globalThis.__nimbusCreateContext = function(options = {}) {
     },
     runAction(functionRef, args = {}) {
       guardStale();
-      if (!capabilities.runAction) {
+      if (!capabilities.nestedCalls.action) {
         unsupported("runAction");
       }
       return __nimbusRunNamedFunction(

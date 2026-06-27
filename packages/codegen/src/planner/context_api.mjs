@@ -25,7 +25,7 @@ function createContextProxy(filePath, schema, kind, operationLog, argsSchema) {
       ? createSchedulerProxy(filePath, operationLog, kind === "http_action")
       : createUnsupportedContextApi("scheduler", unsupported),
     runQuery:
-      (kind === "action" || kind === "http_action")
+      capabilities.nestedCalls.query
         ? (functionRef, args = {}) =>
             recordOperation(operationLog, {
               type: "call_query",
@@ -39,7 +39,7 @@ function createContextProxy(filePath, schema, kind, operationLog, argsSchema) {
             }, kind === "http_action")
         : () => unsupported("runQuery"),
     runMutation:
-      (kind === "action" || kind === "http_action")
+      capabilities.nestedCalls.mutation
         ? (functionRef, args = {}) =>
             recordOperation(operationLog, {
               type: "call_mutation",
@@ -53,7 +53,7 @@ function createContextProxy(filePath, schema, kind, operationLog, argsSchema) {
             }, kind === "http_action")
         : () => unsupported("runMutation"),
     runAction:
-      (kind === "action" || kind === "http_action")
+      capabilities.nestedCalls.action
         ? (functionRef, args = {}) =>
             recordOperation(operationLog, {
               type: "call_action",
@@ -73,14 +73,34 @@ function contextCapabilities(kind) {
   switch (kind) {
     case "query":
     case "paginated_query":
-      return { db: true, dbWrite: false, scheduler: false };
+      return {
+        db: true,
+        dbWrite: false,
+        scheduler: false,
+        nestedCalls: { query: true, mutation: false, action: false },
+      };
     case "mutation":
-      return { db: true, dbWrite: true, scheduler: true };
+      return {
+        db: true,
+        dbWrite: true,
+        scheduler: true,
+        nestedCalls: { query: true, mutation: true, action: false },
+      };
     case "action":
     case "http_action":
-      return { db: false, dbWrite: false, scheduler: true };
+      return {
+        db: false,
+        dbWrite: false,
+        scheduler: true,
+        nestedCalls: { query: true, mutation: true, action: true },
+      };
     default:
-      return { db: false, dbWrite: false, scheduler: false };
+      return {
+        db: false,
+        dbWrite: false,
+        scheduler: false,
+        nestedCalls: { query: false, mutation: false, action: false },
+      };
   }
 }
 

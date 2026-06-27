@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
-# Verification gate for
-# docs/private/plans/runtime-execution-classification-plan.md.
+# Verification gate for the Runtime Execution Classification plan. The
+# completed plan lives under docs/private/plans/archive.
 
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/private/plans/runtime-execution-classification-plan.md"
+PLAN_ACTIVE="docs/private/plans/runtime-execution-classification-plan.md"
+PLAN_ARCHIVE="docs/private/plans/archive/runtime-execution-classification-plan.md"
+if [ -f "${PLAN_ACTIVE}" ]; then
+  PLAN="${PLAN_ACTIVE}"
+else
+  PLAN="${PLAN_ARCHIVE}"
+fi
 PROOF="docs/private/plans/proof/runtime-execution-classification/rec0-baseline.md"
 REC1_PROOF="docs/private/plans/proof/runtime-execution-classification/rec1-execution-plan.md"
 REC2_PROOF="docs/private/plans/proof/runtime-execution-classification/rec2-host-effects.md"
@@ -89,8 +95,10 @@ printf '\033[1mREC verification gate -- runtime execution classification\033[0m\
 printf 'Repo: %s\n' "${REPO_ROOT}"
 
 step 1 "REC ledger records REC0 through REC5 closed"
-if [ -f "${PLAN}" ] &&
+if [ ! -f "${PLAN_ACTIVE}" ] &&
+  [ -f "${PLAN_ARCHIVE}" ] &&
   contains '\*\*Status:\*\* `done`' "${PLAN}" &&
+  contains 'Archive state' "${PLAN}" &&
   contains '\| REC0 \| `done`' "${PLAN}" &&
   contains '\| REC1 \| `done`' "${PLAN}" &&
   contains '\| REC2 \| `done`' "${PLAN}" &&
@@ -105,10 +113,10 @@ if [ -f "${PLAN}" ] &&
   contains 'REC3 scheduler-consumption closeout' "${PLAN}" &&
   contains 'REC4 runtime-context and codegen-alignment closeout' "${PLAN}" &&
   contains 'REC5 numeric validation and closeout' "${PLAN}"; then
-  pass "plan ledger closes REC0/REC1/REC2/REC3/REC4/REC5"
+  pass "archived plan ledger closes REC0/REC1/REC2/REC3/REC4/REC5"
 else
   fail "REC phase ledger is not in the expected closed state" \
-    "expected top-level done, REC0/REC1/REC2/REC3/REC4/REC5 done, and PIR 90/0 baseline"
+    "expected archived plan, top-level done, REC0/REC1/REC2/REC3/REC4/REC5 done, and PIR 90/0 baseline"
 fi
 
 step 2 "REC0 proof records baseline, diagram, and verifier closeout"
@@ -529,11 +537,13 @@ if [ -f "${REC4_PROOF}" ] &&
     '__nimbusCreateContext\(\{ request \}\)' \
     'request-kind capability shape' \
     'cargo test -p nimbus-runtime runtime_query_context_is_reader_only_when_request_kind_is_present --lib -- --nocapture' \
-    '1 passed; 0 failed; 0 ignored; 0 measured; 1066 filtered out' \
+    '1 passed; 0 failed; 0 ignored; 0 measured; 1232 filtered out' \
+    'cargo test -p nimbus-runtime runtime_mutation_context_exposes_query_and_mutation_nested_calls --lib -- --nocapture' \
     'cargo test -p nimbus-runtime runtime_action_context_exposes_nested_calls_without_direct_db --lib -- --nocapture' \
     'cargo test -p nimbus-runtime rec3_query_write_effect_violation_rejects_before_host_dispatch --lib -- --nocapture' \
     '1 passed; 0 failed; 1 ignored; 0 measured; 1065 filtered out' \
     'npm run test --workspace @nimbus/codegen' \
+    'Convex nested-call matrix' \
     'runtime remap fixtures: ok \(4 cases\)' \
     'Summary: 20 passed, 0 failed' \
     'REC5 must run the PIR-aligned numeric validation' >/tmp/rec4-proof-missing.txt; then
