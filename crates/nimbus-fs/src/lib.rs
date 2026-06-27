@@ -20,12 +20,14 @@ pub mod cas_ro;
 pub mod memfs;
 pub mod mount;
 pub mod resolver;
+pub mod wasi;
 
 pub use caps::{FsCaps, FsMountCaps};
 pub use cas_ro::{CasBlobChunk, CasManifestEntry, CasReadOnlyBackend, CasReadOnlyManifest};
 pub use memfs::MemFsBackend;
 pub use mount::MountTable;
 pub use resolver::{MountResolver, ResolvedAccess, ResolvedPath};
+pub use wasi::{DirPerms, FilePerms, WasiPreopenBuilder, WasiPreopenDescriptor};
 
 #[cfg(test)]
 mod tests;

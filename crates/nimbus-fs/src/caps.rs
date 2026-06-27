@@ -105,6 +105,10 @@ impl FsCaps {
     }
 
     fn best_grant(&self, path: &Path) -> Option<&FsMountCaps> {
+        self.grant_for_path(path)
+    }
+
+    pub fn grant_for_path(&self, path: &Path) -> Option<&FsMountCaps> {
         self.grants
             .iter()
             .filter(|(prefix, _)| path == prefix.as_path() || path.starts_with(prefix))

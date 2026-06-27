@@ -17,8 +17,9 @@ use nimbus_blob::{BlobHash, BlobStore, ByteStream, LocalPackStore};
 use nimbus_core::Result as NimbusResult;
 
 use super::{
-    CasBlobChunk, CasReadOnlyBackend, CasReadOnlyManifest, FsCaps, FsMountCaps, MemFsBackend,
-    MountResolver, MountTable, NimbusFs, PassthroughBackend,
+    CasBlobChunk, CasReadOnlyBackend, CasReadOnlyManifest, DirPerms, FilePerms, FsCaps,
+    FsMountCaps, MemFsBackend, MountResolver, MountTable, NimbusFs, PassthroughBackend,
+    ResolvedAccess, WasiPreopenBuilder,
 };
 
 fn checked(path: &Path) -> CheckedPath<'_> {
@@ -685,6 +686,101 @@ fn fscaps_open_and_mutation_matrix_is_fail_closed() {
         )
         .expect_err("symlink creation requires link-create");
     assert!(symlink.to_string().contains("link-create"));
+}
+
+#[test]
+fn wasi_preopen_builder_maps_dir_and_file_permissions() {
+    let mut table = MountTable::new(memfs_rc());
+    table.mount("/rw", memfs_rc()).unwrap();
+    table.mount_readonly("/ro", memfs_rc()).unwrap();
+    table.mount("/read", memfs_rc()).unwrap();
+    let mut read_only_files = FsMountCaps::read_write();
+    read_only_files.file_write = false;
+    read_only_files.directory_mutate = false;
+    read_only_files.readonly = true;
+    let caps = FsCaps::new()
+        .grant("/rw", FsMountCaps::read_write())
+        .grant("/ro", FsMountCaps::read_write())
+        .grant("/read", read_only_files);
+
+    let builder = WasiPreopenBuilder::from_caps(&table, &caps);
+
+    assert_eq!(builder.descriptors().len(), 3);
+    let rw = builder.descriptor_for_path(Path::new("/rw/app")).unwrap();
+    assert!(rw.dir_perms.contains(DirPerms::READ));
+    assert!(rw.dir_perms.contains(DirPerms::MUTATE));
+    assert!(rw.file_perms.contains(FilePerms::READ));
+    assert!(rw.file_perms.contains(FilePerms::WRITE));
+
+    let ro = builder.descriptor_for_path(Path::new("/ro/app")).unwrap();
+    assert!(ro.dir_perms.contains(DirPerms::READ));
+    assert!(!ro.dir_perms.contains(DirPerms::MUTATE));
+    assert!(ro.file_perms.contains(FilePerms::READ));
+    assert!(!ro.file_perms.contains(FilePerms::WRITE));
+
+    let read = builder.descriptor_for_path(Path::new("/read/app")).unwrap();
+    assert!(read.dir_perms.contains(DirPerms::READ));
+    assert!(!read.dir_perms.contains(DirPerms::MUTATE));
+    assert!(read.file_perms.contains(FilePerms::READ));
+    assert!(!read.file_perms.contains(FilePerms::WRITE));
+}
+
+#[test]
+fn wasi_preopen_builder_omits_denied_and_masked_mounts() {
+    let mut table = MountTable::new(memfs_rc());
+    table.mount("/visible", memfs_rc()).unwrap();
+    table.mount("/denied", memfs_rc()).unwrap();
+    table.mount_masked("/masked").unwrap();
+    let caps = FsCaps::new()
+        .grant("/visible", FsMountCaps::read_write())
+        .grant("/masked", FsMountCaps::read_write());
+
+    let builder = WasiPreopenBuilder::from_caps(&table, &caps);
+
+    assert!(
+        builder
+            .descriptor_for_path(Path::new("/visible/file"))
+            .is_some()
+    );
+    assert!(
+        builder
+            .descriptor_for_path(Path::new("/denied/file"))
+            .is_none()
+    );
+    assert!(
+        builder
+            .descriptor_for_path(Path::new("/masked/file"))
+            .is_none()
+    );
+}
+
+#[test]
+fn wasi_and_v8_binders_resolve_the_same_gated_mount_and_rights() {
+    let mut table = MountTable::new(memfs_rc());
+    table.mount("/rw", memfs_rc()).unwrap();
+    table.mount_readonly("/ro", memfs_rc()).unwrap();
+    let caps = FsCaps::new()
+        .grant("/rw", FsMountCaps::read_write())
+        .grant("/ro", FsMountCaps::read_write());
+    let gated = caps.apply_to_mount_table(&table);
+    let resolver = MountResolver::new(gated);
+    let builder = WasiPreopenBuilder::from_caps(&table, &caps);
+
+    let rw = builder
+        .cross_binder_resolution(&resolver, Path::new("/"), Path::new("/rw/file.txt"))
+        .unwrap();
+    assert_eq!(rw.v8_mount_prefix, Path::new("/rw"));
+    assert_eq!(rw.wasi_preopen_path, Path::new("/rw"));
+    assert_eq!(rw.v8_access, ResolvedAccess::ReadWrite);
+    assert_eq!(rw.wasi_rights, FsMountCaps::read_write());
+
+    let ro = builder
+        .cross_binder_resolution(&resolver, Path::new("/"), Path::new("/ro/file.txt"))
+        .unwrap();
+    assert_eq!(ro.v8_mount_prefix, Path::new("/ro"));
+    assert_eq!(ro.wasi_preopen_path, Path::new("/ro"));
+    assert_eq!(ro.v8_access, ResolvedAccess::ReadOnly);
+    assert!(ro.wasi_rights.readonly);
 }
 
 #[derive(Debug, Clone, Default)]
