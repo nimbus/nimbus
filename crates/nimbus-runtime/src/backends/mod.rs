@@ -14,6 +14,7 @@ use crate::watchdog::WatchdogTimer;
 
 pub(crate) mod bun_jsc;
 pub(crate) mod v8;
+pub(crate) mod wasmtime;
 
 pub(crate) trait RuntimeBackendFactory: Send + Sync + 'static {
     fn create(&self) -> Box<dyn RuntimeBackend>;
