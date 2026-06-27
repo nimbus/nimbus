@@ -8,8 +8,9 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::adapters::mongodb::listener::run_listener;
+use crate::adapters::mongodb::listener::{MongoAuthSource, run_listener};
 use crate::adapters::mongodb::wire::OP_MSG;
+use nimbus_mongodb::CredentialRegistry;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -159,10 +160,10 @@ pub(crate) async fn mongodb_wire_crud_roundtrip_inner() {
     tokio::spawn(run_listener(
         listener,
         service,
-        Arc::new(AuthConfig::new(
+        MongoAuthSource::Unbound(Arc::new(AuthConfig::new(
             MONGODB_TEST_USER.into(),
             MONGODB_TEST_PASSWORD.into(),
-        )),
+        ))),
     ));
 
     let mut stream = TcpStream::connect(addr).await.expect("connect");
@@ -218,10 +219,10 @@ pub(crate) async fn mongodb_wire_handshake_inner() {
     tokio::spawn(run_listener(
         listener,
         service,
-        Arc::new(AuthConfig::new(
+        MongoAuthSource::Unbound(Arc::new(AuthConfig::new(
             MONGODB_TEST_USER.into(),
             MONGODB_TEST_PASSWORD.into(),
-        )),
+        ))),
     ));
 
     let mut stream = TcpStream::connect(addr).await.expect("connect");
@@ -237,6 +238,102 @@ pub(crate) async fn mongodb_wire_handshake_inner() {
     assert!(resp.get_i32("maxBsonObjectSize").is_ok());
     assert!(resp.get_i32("maxWireVersion").is_ok());
     assert!(resp.get_i64("connectionId").is_ok());
+}
+
+/// Acceptance bar (M9a): cross-tenant rejection THROUGH the ingested-and-served
+/// path. The registry is built by the SAME parser the operator path uses
+/// (`CredentialRegistry::from_operator_spec` on a `NIMBUS_MONGODB_CREDENTIALS`-
+/// format spec), served the SAME way `nimbus-server` serves it (`run_listener`
+/// over a real loopback TCP socket dispatching through `dispatch_authed`), and a
+/// real SCRAM handshake as `user-a` (bound to `tenant-a`) is performed before a
+/// cross-tenant `find` is refused and the same-tenant `find` is allowed.
+#[tokio::test]
+async fn mongodb_wire_bound_credential_cross_tenant_refused_through_served_path() {
+    // 1. Ingest exactly as the operator path does: parse the env-format spec.
+    let registry =
+        CredentialRegistry::from_operator_spec("user-a:tenant-a:secret-a,user-b:tenant-b:secret-b")
+            .expect("operator credential spec must parse");
+
+    // 2. Serve it exactly as nimbus-server does: a bound listener over loopback.
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    tokio::spawn(run_listener(
+        listener,
+        fixture.engine(),
+        MongoAuthSource::Bound(Arc::new(registry)),
+    ));
+
+    let mut stream = TcpStream::connect(addr).await.expect("connect");
+
+    // 3. Real SCRAM handshake as user-a; authentication binds tenant-a.
+    authenticate(&mut stream, "user-a", "secret-a").await;
+
+    // Seed tenant-a (same-tenant write is allowed and ensures the tenant exists).
+    let seeded = send_command(
+        &mut stream,
+        &bson::doc! {
+            "insert": "users",
+            "$db": "tenant-a",
+            "documents": [{ "_id": "a1", "name": "alice" }],
+        },
+    )
+    .await;
+    assert_eq!(
+        seeded.get_f64("ok").unwrap(),
+        1.0,
+        "same-tenant insert must be allowed: {seeded:?}"
+    );
+
+    // Cross-tenant find ($db = tenant-b) is REFUSED through the served path.
+    let refused = send_command(
+        &mut stream,
+        &bson::doc! { "find": "users", "$db": "tenant-b", "filter": {} },
+    )
+    .await;
+    let refused_code = refused.get_str("codeName").unwrap();
+    println!(
+        "REFUSED  cross-tenant find $db=tenant-b -> ok={} codeName={} message={:?}",
+        refused.get_f64("ok").unwrap(),
+        refused_code,
+        refused.get_str("errmsg").unwrap_or("<none>"),
+    );
+    assert_eq!(
+        refused.get_f64("ok").unwrap(),
+        0.0,
+        "cross-tenant find must be refused"
+    );
+    assert_eq!(
+        refused_code, "Unauthorized",
+        "cross-tenant refusal must be Unauthorized"
+    );
+
+    // Same-tenant find ($db = tenant-a) is ALLOWED and sees the seeded document.
+    let allowed = send_command(
+        &mut stream,
+        &bson::doc! { "find": "users", "$db": "tenant-a", "filter": {} },
+    )
+    .await;
+    let allowed_batch = allowed
+        .get_document("cursor")
+        .unwrap()
+        .get_array("firstBatch")
+        .unwrap()
+        .len();
+    println!(
+        "ALLOWED  same-tenant find  $db=tenant-a -> ok={} firstBatch.len={}",
+        allowed.get_f64("ok").unwrap(),
+        allowed_batch,
+    );
+    assert_eq!(
+        allowed.get_f64("ok").unwrap(),
+        1.0,
+        "same-tenant find must be allowed: {allowed:?}"
+    );
+    assert_eq!(
+        allowed_batch, 1,
+        "same-tenant find should see the seeded document"
+    );
 }
 
 #[tokio::test]

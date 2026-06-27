@@ -23,6 +23,7 @@
 //!   tenant, and the command path refuses any `$db` naming a different tenant.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use nimbus_core::TenantId;
 use ring::rand::{SecureRandom, SystemRandom};
@@ -134,6 +135,86 @@ impl CredentialRegistry {
     pub fn len(&self) -> usize {
         self.bindings.len()
     }
+
+    /// Parse an operator credential spec (the `NIMBUS_MONGODB_CREDENTIALS`
+    /// value) into a registry.
+    ///
+    /// The format mirrors the DynamoDB `NIMBUS_DYNAMODB_ACCESS_KEYS` convention
+    /// (the operator-path parser in `nimbus-bin`): comma-separated entries, each
+    /// `USERNAME:TENANT:PASSWORD`. Surrounding whitespace on each entry is
+    /// trimmed and empty entries are skipped (so a stray or trailing comma is
+    /// harmless), exactly as the DynamoDB env path does. A non-empty entry that
+    /// is not three colon-separated segments, has an empty segment, names an
+    /// invalid tenant id, or names a reserved Nimbus-internal tenant is a hard
+    /// error so the operator sees a clean refusal at boot rather than a silent
+    /// auth failure later. The password is the third segment taken whole, so it
+    /// may itself contain `:`; usernames and tenant ids may not.
+    ///
+    /// This is the same parser the served listener is built from, so a test that
+    /// parses a spec here exercises exactly what the operator path ingests.
+    ///
+    /// # Errors
+    /// A [`CredentialSpecError`] naming the offending entry and the expected
+    /// format when an entry cannot be parsed or binds a reserved tenant.
+    pub fn from_operator_spec(spec: &str) -> Result<Self, CredentialSpecError> {
+        let mut registry = Self::new();
+        for entry in spec
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+        {
+            let mut parts = entry.splitn(3, ':');
+            let (Some(username), Some(tenant), Some(password)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                return Err(spec_error(format!(
+                    "invalid MongoDB credential binding `{entry}`: expected USERNAME:TENANT:PASSWORD"
+                )));
+            };
+            if username.is_empty() || tenant.is_empty() || password.is_empty() {
+                return Err(spec_error(format!(
+                    "invalid MongoDB credential binding `{entry}`: every segment must be non-empty"
+                )));
+            }
+            let tenant_id = TenantId::new(tenant).map_err(|error| {
+                spec_error(format!(
+                    "invalid MongoDB credential binding `{entry}`: {error}"
+                ))
+            })?;
+            if is_reserved_tenant(&tenant_id) {
+                return Err(spec_error(format!(
+                    "invalid MongoDB credential binding `{entry}`: tenant `{tenant}` is reserved \
+                     for Nimbus-internal use"
+                )));
+            }
+            registry = registry.bind(username, tenant_id, password);
+        }
+        Ok(registry)
+    }
+}
+
+/// Failure parsing an operator credential spec (see
+/// [`CredentialRegistry::from_operator_spec`]).
+///
+/// Carries an operator-facing message that names the offending entry and the
+/// expected `USERNAME:TENANT:PASSWORD` format, mirroring the DynamoDB access-key
+/// binding parse errors so an operator can fix the env value without reading
+/// source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CredentialSpecError {
+    message: String,
+}
+
+impl fmt::Display for CredentialSpecError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for CredentialSpecError {}
+
+fn spec_error(message: String) -> CredentialSpecError {
+    CredentialSpecError { message }
 }
 
 /// The `AuthenticationFailed` error returned for an unknown or refused username.
@@ -241,6 +322,89 @@ mod tests {
     fn is_reserved_tenant_flags_the_internal_prefix() {
         assert!(is_reserved_tenant(&tenant("_nimbus_internal")));
         assert!(!is_reserved_tenant(&tenant("tenant-a")));
+    }
+
+    #[test]
+    fn from_operator_spec_parses_username_tenant_password_entries() {
+        // The operator-path format: comma-separated USERNAME:TENANT:PASSWORD.
+        let registry = CredentialRegistry::from_operator_spec(
+            "user-a:tenant-a:secret-a,user-b:tenant-b:secret-b",
+        )
+        .expect("a well-formed spec should parse");
+        assert_eq!(registry.len(), 2);
+        let a = registry.resolve("user-a").expect("user-a resolves");
+        assert_eq!(a.tenant, tenant("tenant-a"));
+        assert_eq!(a.password, "secret-a");
+        assert_eq!(a.iterations, 4096);
+        let b = registry.resolve("user-b").expect("user-b resolves");
+        assert_eq!(b.tenant, tenant("tenant-b"));
+        assert_eq!(b.password, "secret-b");
+        // Per-binding salts are still unique through the parsed path.
+        assert_ne!(a.salt, b.salt);
+    }
+
+    #[test]
+    fn from_operator_spec_trims_and_skips_empty_entries() {
+        // Mirrors the DynamoDB env path: surrounding whitespace is trimmed and
+        // empty entries (e.g. a trailing comma) are skipped, not errors.
+        let registry = CredentialRegistry::from_operator_spec(
+            " user-a:tenant-a:secret-a , , user-b:tenant-b:secret-b ,",
+        )
+        .expect("trimmed entries with empties should parse");
+        assert_eq!(registry.len(), 2);
+        assert!(registry.resolve("user-a").is_ok());
+        assert!(registry.resolve("user-b").is_ok());
+
+        // An empty (or whitespace-only) spec yields an empty registry, not an
+        // error — the caller decides whether bound mode applies.
+        assert!(
+            CredentialRegistry::from_operator_spec("   ")
+                .expect("whitespace-only spec parses")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn from_operator_spec_password_may_contain_colons() {
+        // The password is the third segment taken whole, so a base64-ish or
+        // URI-ish password containing `:` survives intact.
+        let registry = CredentialRegistry::from_operator_spec("user-a:tenant-a:p:a:ss")
+            .expect("password with colons should parse");
+        assert_eq!(registry.resolve("user-a").unwrap().password, "p:a:ss");
+    }
+
+    #[test]
+    fn from_operator_spec_rejects_malformed_entries() {
+        let error = CredentialRegistry::from_operator_spec("user-a:tenant-a")
+            .expect_err("a two-segment entry must be rejected");
+        assert!(
+            error.to_string().contains("USERNAME:TENANT:PASSWORD"),
+            "malformed-entry error must name the expected format: {error}"
+        );
+    }
+
+    #[test]
+    fn from_operator_spec_rejects_empty_segments() {
+        let error = CredentialRegistry::from_operator_spec("user-a::secret-a")
+            .expect_err("an empty tenant segment must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("every segment must be non-empty"),
+            "empty-segment error must explain the constraint: {error}"
+        );
+    }
+
+    #[test]
+    fn from_operator_spec_refuses_reserved_tenant() {
+        // The registry refuses a reserved tenant at resolve time; ingestion
+        // surfaces it as a clean operator error at parse time instead.
+        let error = CredentialRegistry::from_operator_spec("user-evil:_nimbus_internal:secret")
+            .expect_err("binding a reserved Nimbus-internal tenant must be refused");
+        assert!(
+            error.to_string().contains("reserved"),
+            "reserved-tenant error must explain the refusal: {error}"
+        );
     }
 
     #[test]
