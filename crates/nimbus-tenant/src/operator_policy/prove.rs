@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use nimbus_core::{Error, Result};
-use nimbus_sandbox::PublishedEndpointProtocol;
+use nimbus_egress::EgressProtocol;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -194,10 +194,7 @@ fn prove_broad_egress(
     let workload_key = workload.key();
     for rule in &workload.network.egress.allow {
         let mut reasons = Vec::new();
-        if matches!(
-            rule.protocol,
-            PublishedEndpointProtocol::Http | PublishedEndpointProtocol::Https
-        ) {
+        if matches!(rule.protocol, EgressProtocol::Http | EgressProtocol::Https) {
             if rule.methods.is_empty() {
                 reasons.push("all HTTP methods");
             }

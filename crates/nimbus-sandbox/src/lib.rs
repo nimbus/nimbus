@@ -10,7 +10,6 @@ pub mod backends;
 
 mod artifact_paths;
 mod backend;
-mod egress;
 mod egress_proxy;
 mod endpoint;
 mod error;
@@ -19,13 +18,6 @@ mod process;
 mod spec;
 
 pub use backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
-pub use egress::{
-    CompiledSandboxEgressPolicy, SANDBOX_EGRESS_ENFORCEMENT_ENV,
-    SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION, SANDBOX_EGRESS_LEGACY_POLICY_ENV,
-    SANDBOX_EGRESS_PROXY_URL_ENV, SANDBOX_EGRESS_RESERVED_ENV_KEYS, SandboxEgressAuthorization,
-    SandboxEgressEnforcementMode, SandboxEgressEnforcementPlan, SandboxEgressLaunchEnforcement,
-    SandboxEgressPolicy, SandboxEgressReloadPolicy, SandboxEgressRequest, SandboxEgressRule,
-};
 pub use egress_proxy::{SandboxEgressProxy, SandboxEgressProxyConfig};
 pub use endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 pub use error::{Result, SandboxError};

@@ -9,9 +9,8 @@ use std::time::Duration;
 
 use url::Url;
 
-use crate::egress::{CompiledSandboxEgressPolicy, SandboxEgressRequest};
-use crate::endpoint::PublishedEndpointProtocol;
 use crate::error::{Result, SandboxError};
+use nimbus_egress::{CompiledEgressPolicy, EgressProtocol, EgressRequest};
 
 const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -23,7 +22,7 @@ type Resolver = Arc<dyn Fn(&str, u16) -> io::Result<Vec<SocketAddr>> + Send + Sy
 #[derive(Clone)]
 pub struct SandboxEgressProxyConfig {
     pub bind_addr: SocketAddr,
-    pub policy: CompiledSandboxEgressPolicy,
+    pub policy: CompiledEgressPolicy,
     pub connect_timeout: Duration,
     pub io_timeout: Duration,
     pub max_connections: usize,
@@ -31,7 +30,7 @@ pub struct SandboxEgressProxyConfig {
 }
 
 impl SandboxEgressProxyConfig {
-    pub fn new(policy: CompiledSandboxEgressPolicy) -> Self {
+    pub fn new(policy: CompiledEgressPolicy) -> Self {
         Self {
             bind_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
             policy,
@@ -69,7 +68,7 @@ pub struct SandboxEgressProxy {
     local_addr: SocketAddr,
     shutdown: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
-    policy: Arc<RwLock<CompiledSandboxEgressPolicy>>,
+    policy: Arc<RwLock<CompiledEgressPolicy>>,
 }
 
 impl SandboxEgressProxy {
@@ -127,7 +126,7 @@ impl SandboxEgressProxy {
         self.local_addr
     }
 
-    pub fn reload_policy(&self, policy: CompiledSandboxEgressPolicy) -> Result<()> {
+    pub fn reload_policy(&self, policy: CompiledEgressPolicy) -> Result<()> {
         let mut guard = self
             .policy
             .write()
@@ -152,7 +151,7 @@ impl Drop for SandboxEgressProxy {
 struct ProxyWorker {
     listener: TcpListener,
     shutdown: Arc<AtomicBool>,
-    policy: Arc<RwLock<CompiledSandboxEgressPolicy>>,
+    policy: Arc<RwLock<CompiledEgressPolicy>>,
     resolver: Resolver,
     connect_timeout: Duration,
     io_timeout: Duration,
@@ -241,7 +240,7 @@ impl Drop for ConnectionPermit {
 }
 
 struct ParsedProxyRequest {
-    egress_request: SandboxEgressRequest,
+    egress_request: EgressRequest,
     upstream_host: String,
     upstream_port: u16,
     mode: ProxyRequestMode,
@@ -259,7 +258,7 @@ enum ProxyRequestMode {
 
 fn handle_client(
     mut client: TcpStream,
-    policy: Arc<RwLock<CompiledSandboxEgressPolicy>>,
+    policy: Arc<RwLock<CompiledEgressPolicy>>,
     resolver: Resolver,
     connect_timeout: Duration,
     io_timeout: Duration,
@@ -388,8 +387,7 @@ fn parse_proxy_request(
     if method.eq_ignore_ascii_case("CONNECT") {
         let (host, port) = parse_connect_authority(target)?;
         let egress_request =
-            SandboxEgressRequest::new(PublishedEndpointProtocol::Https, host.clone(), port)
-                .with_http("CONNECT", "");
+            EgressRequest::new(EgressProtocol::Https, host.clone(), port).with_http("CONNECT", "");
         return Ok(ParsedProxyRequest {
             egress_request,
             upstream_host: host,
@@ -405,7 +403,7 @@ fn parse_proxy_request(
         HttpProxyResponse::bad_request("sandbox egress proxy target must be an absolute URI")
     })?;
     let protocol = match url.scheme() {
-        "http" => PublishedEndpointProtocol::Http,
+        "http" => EgressProtocol::Http,
         "https" => {
             return Err(HttpProxyResponse::not_implemented(
                 "sandbox egress proxy HTTPS requests must use CONNECT",
@@ -426,7 +424,7 @@ fn parse_proxy_request(
     })?;
     let origin_form = origin_form(&url);
     let egress_request =
-        SandboxEgressRequest::new(protocol, host.clone(), port).with_http(method, url.path());
+        EgressRequest::new(protocol, host.clone(), port).with_http(method, url.path());
     let header_lines = lines
         .filter(|line| {
             let header = line
@@ -621,14 +619,14 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use crate::egress::{SandboxEgressPolicy, SandboxEgressRule};
+    use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
 
     #[test]
     fn egress_proxy_allows_matching_http_request() {
         let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
-        let proxy = start_test_proxy(allow_policy([SandboxEgressRule::new(
+        let proxy = start_test_proxy(allow_policy([EgressRule::new(
             "allowed",
-            PublishedEndpointProtocol::Http,
+            EgressProtocol::Http,
             "allowed.test",
             upstream.addr.port(),
         )
@@ -666,9 +664,9 @@ mod tests {
         // M3 the forward path truncated it to the co-buffered prefix.
         let body_len = 16 * 1024;
         let upstream = TestHttpBodyEchoServer::start();
-        let proxy = start_test_proxy(allow_policy([SandboxEgressRule::new(
+        let proxy = start_test_proxy(allow_policy([EgressRule::new(
             "allowed",
-            PublishedEndpointProtocol::Http,
+            EgressProtocol::Http,
             "allowed.test",
             upstream.addr.port(),
         )
@@ -704,7 +702,7 @@ mod tests {
     #[test]
     fn egress_proxy_denies_default_policy_without_contacting_upstream() {
         let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
-        let proxy = start_test_proxy(CompiledSandboxEgressPolicy::deny_all());
+        let proxy = start_test_proxy(CompiledEgressPolicy::deny_all());
 
         let response = proxy_request(
             proxy.local_addr(),
@@ -730,9 +728,9 @@ mod tests {
     #[test]
     fn egress_proxy_denies_dns_resolved_internal_targets() {
         let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
-        let proxy = start_test_proxy(allow_policy([SandboxEgressRule::new(
+        let proxy = start_test_proxy(allow_policy([EgressRule::new(
             "metadata-by-name",
-            PublishedEndpointProtocol::Http,
+            EgressProtocol::Http,
             "metadata.test",
             upstream.addr.port(),
         )]));
@@ -762,9 +760,9 @@ mod tests {
     #[test]
     fn egress_proxy_denies_l7_method_and_path_mismatches() {
         let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
-        let proxy = start_test_proxy(allow_policy([SandboxEgressRule::new(
+        let proxy = start_test_proxy(allow_policy([EgressRule::new(
             "allowed",
-            PublishedEndpointProtocol::Http,
+            EgressProtocol::Http,
             "allowed.test",
             upstream.addr.port(),
         )
@@ -808,7 +806,7 @@ mod tests {
     fn egress_proxy_reload_updates_policy_without_restart() {
         let first = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfirst");
         let second = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nsecond");
-        let proxy = start_test_proxy(CompiledSandboxEgressPolicy::deny_all());
+        let proxy = start_test_proxy(CompiledEgressPolicy::deny_all());
 
         let denied = proxy_request(
             proxy.local_addr(),
@@ -823,9 +821,9 @@ mod tests {
         );
 
         proxy
-            .reload_policy(allow_policy([SandboxEgressRule::new(
+            .reload_policy(allow_policy([EgressRule::new(
                 "first",
-                PublishedEndpointProtocol::Http,
+                EgressProtocol::Http,
                 "first.test",
                 first.addr.port(),
             )
@@ -844,9 +842,9 @@ mod tests {
         );
 
         proxy
-            .reload_policy(allow_policy([SandboxEgressRule::new(
+            .reload_policy(allow_policy([EgressRule::new(
                 "second",
-                PublishedEndpointProtocol::Http,
+                EgressProtocol::Http,
                 "second.test",
                 second.addr.port(),
             )
@@ -876,7 +874,7 @@ mod tests {
         );
     }
 
-    fn start_test_proxy(policy: CompiledSandboxEgressPolicy) -> SandboxEgressProxy {
+    fn start_test_proxy(policy: CompiledEgressPolicy) -> SandboxEgressProxy {
         let resolver = Arc::new(|host: &str, port: u16| {
             let ip = match host {
                 "allowed.test" | "first.test" | "second.test" | "metadata.test" => {
@@ -894,8 +892,8 @@ mod tests {
         .expect("proxy should start")
     }
 
-    fn allow_policy<const N: usize>(rules: [SandboxEgressRule; N]) -> CompiledSandboxEgressPolicy {
-        SandboxEgressPolicy::new(rules)
+    fn allow_policy<const N: usize>(rules: [EgressRule; N]) -> CompiledEgressPolicy {
+        EgressPolicy::new(rules)
             .compile()
             .expect("policy should compile")
     }
@@ -972,7 +970,7 @@ mod tests {
 
     #[test]
     fn egress_proxy_config_defaults_to_loopback_ephemeral_bind() {
-        let config = SandboxEgressProxyConfig::new(CompiledSandboxEgressPolicy::deny_all());
+        let config = SandboxEgressProxyConfig::new(CompiledEgressPolicy::deny_all());
 
         assert_eq!(config.bind_addr, SocketAddr::from(([127, 0, 0, 1], 0)));
         assert_eq!(config.max_connections, DEFAULT_MAX_CONNECTIONS);
@@ -981,8 +979,7 @@ mod tests {
     #[test]
     fn egress_proxy_rejects_zero_connection_limit() {
         let error = match SandboxEgressProxy::start(
-            SandboxEgressProxyConfig::new(CompiledSandboxEgressPolicy::deny_all())
-                .with_max_connections(0),
+            SandboxEgressProxyConfig::new(CompiledEgressPolicy::deny_all()).with_max_connections(0),
         ) {
             Ok(_) => panic!("zero connection limit should be rejected"),
             Err(error) => error,
@@ -1016,9 +1013,9 @@ mod tests {
     #[test]
     fn egress_proxy_strips_hop_by_hop_proxy_headers() {
         let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
-        let proxy = start_test_proxy(allow_policy([SandboxEgressRule::new(
+        let proxy = start_test_proxy(allow_policy([EgressRule::new(
             "allowed",
-            PublishedEndpointProtocol::Http,
+            EgressProtocol::Http,
             "allowed.test",
             upstream.addr.port(),
         )
@@ -1044,9 +1041,9 @@ mod tests {
     #[test]
     fn egress_proxy_allows_https_connect_tunnel() {
         let upstream = TestTcpServer::start(b"pong");
-        let proxy = start_test_proxy(allow_policy([SandboxEgressRule::new(
+        let proxy = start_test_proxy(allow_policy([EgressRule::new(
             "allowed-https",
-            PublishedEndpointProtocol::Https,
+            EgressProtocol::Https,
             "allowed.test",
             upstream.addr.port(),
         )
@@ -1086,9 +1083,9 @@ mod tests {
     #[test]
     fn egress_proxy_rejects_https_absolute_uri_without_connect() {
         let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
-        let proxy = start_test_proxy(allow_policy([SandboxEgressRule::new(
+        let proxy = start_test_proxy(allow_policy([EgressRule::new(
             "allowed-https",
-            PublishedEndpointProtocol::Https,
+            EgressProtocol::Https,
             "allowed.test",
             upstream.addr.port(),
         )

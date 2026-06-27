@@ -38,19 +38,22 @@ pub use nimbus_runtime::{
     RuntimeScalingLimit, RuntimeScalingPlanSet, RuntimeScalingPreset, RuntimeScalingTarget,
     VerifiedUserIdentity, VerifiedUserIdentityKind,
 };
+// Tenant egress policy decision point.
+pub use nimbus_egress::{
+    CompiledEgressPolicy, EGRESS_ENFORCEMENT_ENV, EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+    EGRESS_LEGACY_POLICY_ENV, EGRESS_PROXY_URL_ENV, EGRESS_RESERVED_ENV_KEYS, EgressAuthorization,
+    EgressEnforcementMode, EgressEnforcementPlan, EgressLaunchEnforcement, EgressPolicy,
+    EgressProtocol, EgressReloadPolicy, EgressRequest, EgressRule,
+};
 // Sandbox orchestration surface.
 pub use nimbus_sandbox::{
-    CompiledSandboxEgressPolicy, PublishedEndpoint, PublishedEndpointProtocol,
-    SANDBOX_EGRESS_ENFORCEMENT_ENV, SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
-    SANDBOX_EGRESS_LEGACY_POLICY_ENV, SANDBOX_EGRESS_RESERVED_ENV_KEYS, SandboxBackend,
-    SandboxBackendKind, SandboxEgressAuthorization, SandboxEgressEnforcementMode,
-    SandboxEgressEnforcementPlan, SandboxEgressPolicy, SandboxEgressReloadPolicy,
-    SandboxEgressRequest, SandboxEgressRule, SandboxError, SandboxHandle, SandboxId,
-    SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec, SandboxOciBuildSpec,
-    SandboxOciImageReferenceSpec, SandboxOciImageSource, SandboxOciImageSpec, SandboxOwnerSpec,
-    SandboxPortBinding, SandboxProcessSpec, SandboxResourceCharge, SandboxResourceLimits,
-    SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec,
-    SandboxSpec, SandboxStatus, validate_sandbox_mounts, validate_tenant_volume_name,
+    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
+    SandboxHandle, SandboxId, SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec,
+    SandboxOciBuildSpec, SandboxOciImageReferenceSpec, SandboxOciImageSource, SandboxOciImageSpec,
+    SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceCharge,
+    SandboxResourceLimits, SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxRootSpec,
+    SandboxRootfsSpec, SandboxSpec, SandboxStatus, validate_sandbox_mounts,
+    validate_tenant_volume_name,
 };
 // Server integration and transport construction helpers.
 #[cfg(feature = "aws-kms")]

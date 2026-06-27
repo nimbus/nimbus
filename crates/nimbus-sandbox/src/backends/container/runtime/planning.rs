@@ -1,7 +1,7 @@
 use super::support::*;
 
 use crate::backends::oci::network::{OciMachinePortForwarderConfig, OciNetworkDirectEgress};
-use crate::egress::SANDBOX_EGRESS_PROXY_URL_ENV;
+use nimbus_egress::EGRESS_PROXY_URL_ENV;
 use tempfile::TempDir;
 
 #[test]
@@ -71,7 +71,7 @@ fn execute_plan_assigns_bridge_reachable_egress_proxy_and_injects_proxy_env() {
         "execute bundle should steer proxy-aware tools through the egress proxy: {env:?}"
     );
     assert!(
-        env.contains(&format!("{SANDBOX_EGRESS_PROXY_URL_ENV}=http://10.89.0.1:15000").as_str()),
+        env.contains(&format!("{EGRESS_PROXY_URL_ENV}=http://10.89.0.1:15000").as_str()),
         "execute bundle should expose Nimbus egress proxy metadata: {env:?}"
     );
 }
@@ -208,9 +208,7 @@ fn plan_only_service_workload_prepares_runner_manifest_pointer_and_proxy_env() {
     assert!(
         env.contains(&"HTTP_PROXY=http://10.89.0.1:15000")
             && env.contains(&"http_proxy=http://10.89.0.1:15000")
-            && env.contains(
-                &format!("{SANDBOX_EGRESS_PROXY_URL_ENV}=http://10.89.0.1:15000").as_str()
-            ),
+            && env.contains(&format!("{EGRESS_PROXY_URL_ENV}=http://10.89.0.1:15000").as_str()),
         "service bundle should route proxy-aware tools through the runner-owned egress proxy: {env:?}"
     );
 }

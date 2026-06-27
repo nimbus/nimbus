@@ -1,3 +1,4 @@
+use nimbus_egress::EgressProtocol;
 use nimbus_sandbox::{PublishedEndpointProtocol, SandboxBackendKind, SandboxResourceCharge};
 
 use crate::TenantRuntimePolicyAdmission;
@@ -112,5 +113,13 @@ pub(super) fn protocol_label(protocol: PublishedEndpointProtocol) -> &'static st
         PublishedEndpointProtocol::Tcp => "tcp",
         PublishedEndpointProtocol::Http => "http",
         PublishedEndpointProtocol::Https => "https",
+    }
+}
+
+pub(super) fn egress_protocol_label(protocol: EgressProtocol) -> &'static str {
+    match protocol {
+        EgressProtocol::Tcp => "tcp",
+        EgressProtocol::Http => "http",
+        EgressProtocol::Https => "https",
     }
 }

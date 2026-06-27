@@ -40,7 +40,6 @@ use crate::backends::oci::network::{
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
-use crate::egress::SandboxEgressPolicy;
 use crate::egress_proxy::{SandboxEgressProxy, SandboxEgressProxyConfig};
 use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::error::{Result, SandboxError};
@@ -49,6 +48,7 @@ use crate::spec::{
     SandboxOciImageSource, SandboxResourceQuotaPolicy, SandboxRootSpec, SandboxSpec,
     resolve_process_without_image_defaults,
 };
+use nimbus_egress::EgressPolicy;
 
 const DEFAULT_RUNTIME_PATH: &str = "crun";
 const DEFAULT_CONMON_PATH: &str = "conmon";
@@ -158,7 +158,7 @@ impl ContainerSandboxBackend {
         }
     }
 
-    pub fn reload_egress_policy(&self, id: &SandboxId, egress: SandboxEgressPolicy) -> Result<()> {
+    pub fn reload_egress_policy(&self, id: &SandboxId, egress: EgressPolicy) -> Result<()> {
         let compiled = egress
             .compile()
             .map_err(|message| SandboxError::InvalidSpec { message })?;
@@ -1165,11 +1165,7 @@ impl SandboxBackend for ContainerSandboxBackend {
         Box::pin(async move { backend.stop_sync(&sandbox_id) })
     }
 
-    fn reload_egress_policy(
-        &self,
-        id: &SandboxId,
-        egress: SandboxEgressPolicy,
-    ) -> SandboxFuture<()> {
+    fn reload_egress_policy(&self, id: &SandboxId, egress: EgressPolicy) -> SandboxFuture<()> {
         let backend = self.clone();
         let sandbox_id = id.clone();
         Box::pin(async move {

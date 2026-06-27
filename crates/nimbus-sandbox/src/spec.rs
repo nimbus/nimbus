@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use nimbus_core::TenantId;
 
 use crate::backend::SandboxBackendKind;
-use crate::egress::SandboxEgressPolicy;
 use crate::endpoint::PublishedEndpointProtocol;
 use crate::error::{Result, SandboxError};
+use nimbus_egress::EgressPolicy;
 
 const DEFAULT_SANDBOX_PATH: &str =
     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -646,7 +646,7 @@ pub struct SandboxSpec {
     #[serde(default)]
     pub mounts: Vec<SandboxMountSpec>,
     #[serde(default)]
-    pub egress: SandboxEgressPolicy,
+    pub egress: EgressPolicy,
 }
 
 impl SandboxSpec {
@@ -667,7 +667,7 @@ impl SandboxSpec {
             lifecycle: SandboxLifecycleSpec::default(),
             port_bindings: Vec::new(),
             mounts: Vec::new(),
-            egress: SandboxEgressPolicy::default(),
+            egress: EgressPolicy::default(),
         }
     }
 
@@ -746,7 +746,7 @@ impl SandboxSpec {
         self
     }
 
-    pub fn with_egress_policy(mut self, egress: SandboxEgressPolicy) -> Self {
+    pub fn with_egress_policy(mut self, egress: EgressPolicy) -> Self {
         self.egress = egress;
         self
     }

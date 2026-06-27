@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use nimbus::{
-    Error, PublishedEndpointProtocol, SandboxBackendKind, SandboxEgressPolicy, SandboxEgressRule,
+    EgressPolicy, EgressProtocol, EgressRule, Error, PublishedEndpointProtocol, SandboxBackendKind,
     SandboxLifecycleSpec, SandboxMountSpec, SandboxOciBuildSpec, SandboxOciImageReferenceSpec,
     SandboxOciImageSource, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
     SandboxRestartPolicy, SandboxRootSpec, SandboxSpec, ServiceBackend, ServiceDefinitionCatalog,
@@ -220,7 +220,7 @@ pub(crate) struct ComposeNimbusEgressPlan {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComposeNimbusEgressRulePlan {
     pub(crate) name: String,
-    pub(crate) protocol: PublishedEndpointProtocol,
+    pub(crate) protocol: EgressProtocol,
     pub(crate) host: String,
     pub(crate) port: u16,
     #[serde(default)]

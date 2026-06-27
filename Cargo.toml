@@ -26,6 +26,7 @@ members = [
     "crates/nimbus-runtime",
     "crates/nimbus-sandbox",
     "crates/nimbus-core",
+    "crates/nimbus-egress",
     "crates/nimbus-engine",
     "crates/nimbus-server",
     "crates/nimbus-storage",

@@ -1,5 +1,5 @@
 use nimbus_core::{Error, Result};
-use nimbus_sandbox::{PublishedEndpointProtocol, SandboxEgressPolicy, SandboxEgressRule};
+use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
 use serde::{Deserialize, Serialize};
 
 use super::{OperatorPolicyDocument, OperatorPolicyWorkload, OperatorSandboxEgressRulePolicy};
@@ -10,7 +10,7 @@ pub struct OperatorDeniedEgressEvent {
     pub tenant_id: String,
     pub workload_kind: String,
     pub workload_name: String,
-    pub protocol: PublishedEndpointProtocol,
+    pub protocol: EgressProtocol,
     pub host: String,
     pub port: u16,
     pub method: Option<String>,
@@ -192,10 +192,7 @@ fn draft_rule_from_denied_event(
     }
     let mut methods = Vec::new();
     let mut path_prefixes = Vec::new();
-    if matches!(
-        event.protocol,
-        PublishedEndpointProtocol::Http | PublishedEndpointProtocol::Https
-    ) {
+    if matches!(event.protocol, EgressProtocol::Http | EgressProtocol::Https) {
         if let Some(method) = event.method.as_deref().map(str::trim)
             && !method.is_empty()
         {
@@ -227,13 +224,13 @@ fn sanitized_path_prefix(path: Option<&str>) -> Option<String> {
 fn unique_rule_name(
     workload: &OperatorPolicyWorkload,
     host: &str,
-    protocol: PublishedEndpointProtocol,
+    protocol: EgressProtocol,
     port: u16,
 ) -> String {
     let protocol = match protocol {
-        PublishedEndpointProtocol::Tcp => "tcp",
-        PublishedEndpointProtocol::Http => "http",
-        PublishedEndpointProtocol::Https => "https",
+        EgressProtocol::Tcp => "tcp",
+        EgressProtocol::Http => "http",
+        EgressProtocol::Https => "https",
     };
     let mut base = host
         .chars()
@@ -277,7 +274,7 @@ fn unique_rule_name(
 }
 
 fn validate_draft_rule(rule: &OperatorSandboxEgressRulePolicy, workload_key: &str) -> Result<()> {
-    let mut sandbox_rule = SandboxEgressRule::new(
+    let mut sandbox_rule = EgressRule::new(
         rule.name.clone(),
         rule.protocol,
         rule.host.clone(),
@@ -288,7 +285,7 @@ fn validate_draft_rule(rule: &OperatorSandboxEgressRulePolicy, workload_key: &st
     if rule.allow_internal_ips {
         sandbox_rule = sandbox_rule.allow_internal_ips(true);
     }
-    SandboxEgressPolicy::new([sandbox_rule])
+    EgressPolicy::new([sandbox_rule])
         .validate()
         .map_err(|message| {
             Error::InvalidInput(format!(

@@ -18,6 +18,7 @@ bun-jsc-linked-adapter = [
 v8-pointer-compression = ["nimbus-runtime/v8-pointer-compression"]
 
 [dependencies]
+nimbus-egress = { path = "../nimbus-egress" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-core = { path = "../nimbus-core" }

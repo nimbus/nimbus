@@ -1,9 +1,8 @@
 use nimbus_core::{Error, Result};
+use nimbus_egress::{CompiledEgressPolicy, EgressAuthorization, EgressPolicy, EgressRequest};
 use nimbus_runtime::{RuntimePolicy, RuntimeTenantBudget};
 use nimbus_sandbox::{
-    CompiledSandboxEgressPolicy, PublishedEndpointProtocol, SandboxEgressAuthorization,
-    SandboxEgressPolicy, SandboxEgressRequest, SandboxResourceCharge, SandboxSpec,
-    validate_sandbox_mounts,
+    PublishedEndpointProtocol, SandboxResourceCharge, SandboxSpec, validate_sandbox_mounts,
 };
 use serde::Serialize;
 
@@ -68,7 +67,7 @@ pub struct TenantNetworkPolicyDecision {
     pub(super) endpoints: Vec<TenantNetworkEndpointDecision>,
     public_exposure_allowed: bool,
     generic_loopback_allowed: bool,
-    sandbox_egress: CompiledSandboxEgressPolicy,
+    sandbox_egress: CompiledEgressPolicy,
 }
 
 impl TenantNetworkPolicyDecision {
@@ -77,7 +76,7 @@ impl TenantNetworkPolicyDecision {
             endpoints: endpoints.into_iter().collect(),
             public_exposure_allowed: false,
             generic_loopback_allowed: false,
-            sandbox_egress: CompiledSandboxEgressPolicy::deny_all(),
+            sandbox_egress: CompiledEgressPolicy::deny_all(),
         }
     }
 
@@ -85,21 +84,18 @@ impl TenantNetworkPolicyDecision {
         &self.endpoints
     }
 
-    pub fn with_sandbox_egress(mut self, sandbox_egress: SandboxEgressPolicy) -> Result<Self> {
+    pub fn with_sandbox_egress(mut self, sandbox_egress: EgressPolicy) -> Result<Self> {
         self.sandbox_egress = sandbox_egress.compile().map_err(|message| {
             Error::InvalidInput(format!("invalid sandbox egress policy: {message}"))
         })?;
         Ok(self)
     }
 
-    pub fn sandbox_egress(&self) -> &SandboxEgressPolicy {
+    pub fn sandbox_egress(&self) -> &EgressPolicy {
         self.sandbox_egress.policy()
     }
 
-    pub fn authorize_sandbox_egress(
-        &self,
-        request: &SandboxEgressRequest,
-    ) -> SandboxEgressAuthorization {
+    pub fn authorize_sandbox_egress(&self, request: &EgressRequest) -> EgressAuthorization {
         self.sandbox_egress.authorize(request)
     }
 

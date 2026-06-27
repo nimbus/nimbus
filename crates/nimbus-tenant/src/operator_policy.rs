@@ -35,7 +35,7 @@ pub use external::{
     OperatorExternalPolicyEngine, OperatorExternalPolicyEvidence, OperatorExternalPolicyOutcome,
     OperatorExternalPolicyRequest,
 };
-use formatting::{join_or_none, normalized_strings, protocol_label};
+use formatting::{egress_protocol_label, join_or_none, normalized_strings, protocol_label};
 pub use prove::{
     OperatorPolicyAcceptedRisk, OperatorPolicyAdvisory, OperatorPolicyAdvisoryKind,
     OperatorPolicyAdvisorySeverity, OperatorPolicyProofReport,

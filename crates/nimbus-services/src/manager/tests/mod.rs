@@ -4,12 +4,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nimbus_core::{Error, TenantId};
+use nimbus_egress::{EgressPolicy, EgressRule};
 use nimbus_runtime::HostCallCancellation;
 use nimbus_sandbox::{
-    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
-    SandboxEgressPolicy, SandboxEgressRule, SandboxError, SandboxFuture, SandboxHandle, SandboxId,
-    SandboxMountSpec, SandboxOciBuildSpec, SandboxOciImageSource, SandboxOwnerSpec,
-    SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus,
+    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
+    SandboxFuture, SandboxHandle, SandboxId, SandboxMountSpec, SandboxOciBuildSpec,
+    SandboxOciImageSource, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
+    SandboxStatus,
 };
 
 use crate::{
@@ -50,7 +51,7 @@ struct StubSandboxBackend {
     stop_calls: AtomicUsize,
     artifact_cleanup_calls: AtomicUsize,
     inspect_calls: AtomicUsize,
-    egress_reloads: Mutex<Vec<(String, SandboxEgressPolicy)>>,
+    egress_reloads: Mutex<Vec<(String, EgressPolicy)>>,
     fail_stop_ids: Mutex<BTreeSet<String>>,
     ready_after_inspects: usize,
     handle_tenant_override: Option<TenantId>,
@@ -223,11 +224,7 @@ impl SandboxBackend for StubSandboxBackend {
         Box::pin(async move { Ok(()) })
     }
 
-    fn reload_egress_policy(
-        &self,
-        id: &SandboxId,
-        egress: SandboxEgressPolicy,
-    ) -> SandboxFuture<()> {
+    fn reload_egress_policy(&self, id: &SandboxId, egress: EgressPolicy) -> SandboxFuture<()> {
         self.egress_reloads
             .lock()
             .expect("backend lock should not be poisoned")

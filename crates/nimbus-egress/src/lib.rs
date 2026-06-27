@@ -2,15 +2,13 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::endpoint::PublishedEndpointProtocol;
-
-pub const SANDBOX_EGRESS_ENFORCEMENT_ENV: &str = "NIMBUS_SANDBOX_EGRESS_ENFORCEMENT_JSON";
-pub const SANDBOX_EGRESS_LEGACY_POLICY_ENV: &str = "NIMBUS_SANDBOX_EGRESS_POLICY_JSON";
-pub const SANDBOX_EGRESS_PROXY_URL_ENV: &str = "NIMBUS_SANDBOX_EGRESS_PROXY_URL";
-pub const SANDBOX_EGRESS_RESERVED_ENV_KEYS: [&str; 11] = [
-    SANDBOX_EGRESS_ENFORCEMENT_ENV,
-    SANDBOX_EGRESS_LEGACY_POLICY_ENV,
-    SANDBOX_EGRESS_PROXY_URL_ENV,
+pub const EGRESS_ENFORCEMENT_ENV: &str = "NIMBUS_SANDBOX_EGRESS_ENFORCEMENT_JSON";
+pub const EGRESS_LEGACY_POLICY_ENV: &str = "NIMBUS_SANDBOX_EGRESS_POLICY_JSON";
+pub const EGRESS_PROXY_URL_ENV: &str = "NIMBUS_SANDBOX_EGRESS_PROXY_URL";
+pub const EGRESS_RESERVED_ENV_KEYS: [&str; 11] = [
+    EGRESS_ENFORCEMENT_ENV,
+    EGRESS_LEGACY_POLICY_ENV,
+    EGRESS_PROXY_URL_ENV,
     "HTTP_PROXY",
     "http_proxy",
     "HTTPS_PROXY",
@@ -20,32 +18,40 @@ pub const SANDBOX_EGRESS_RESERVED_ENV_KEYS: [&str; 11] = [
     "NO_PROXY",
     "no_proxy",
 ];
-pub const SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION: u32 = 1;
+pub const EGRESS_ENFORCEMENT_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EgressProtocol {
+    Tcp,
+    Http,
+    Https,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SandboxEgressPolicy {
+pub struct EgressPolicy {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub allow: Vec<SandboxEgressRule>,
+    pub allow: Vec<EgressRule>,
 }
 
-impl SandboxEgressPolicy {
+impl EgressPolicy {
     pub fn deny_all() -> Self {
         Self::default()
     }
 
-    pub fn new(rules: impl IntoIterator<Item = SandboxEgressRule>) -> Self {
+    pub fn new(rules: impl IntoIterator<Item = EgressRule>) -> Self {
         Self {
             allow: rules.into_iter().collect(),
         }
     }
 
-    pub fn with_rule(mut self, rule: SandboxEgressRule) -> Self {
+    pub fn with_rule(mut self, rule: EgressRule) -> Self {
         self.allow.push(rule);
         self
     }
 
-    pub fn rules(&self) -> &[SandboxEgressRule] {
+    pub fn rules(&self) -> &[EgressRule] {
         &self.allow
     }
 
@@ -57,7 +63,7 @@ impl SandboxEgressPolicy {
         self.compile().map(|_| ())
     }
 
-    pub fn compile(&self) -> std::result::Result<CompiledSandboxEgressPolicy, String> {
+    pub fn compile(&self) -> std::result::Result<CompiledEgressPolicy, String> {
         let mut names = std::collections::BTreeSet::new();
         let mut rules = Vec::with_capacity(self.allow.len());
         for rule in &self.allow {
@@ -71,43 +77,43 @@ impl SandboxEgressPolicy {
             rules.push(rule.canonicalized());
         }
         rules.sort_by(|left, right| left.name.cmp(&right.name));
-        Ok(CompiledSandboxEgressPolicy {
+        Ok(CompiledEgressPolicy {
             policy: Self { allow: rules },
         })
     }
 
-    pub fn authorize(&self, request: &SandboxEgressRequest) -> SandboxEgressAuthorization {
+    pub fn authorize(&self, request: &EgressRequest) -> EgressAuthorization {
         match self.compile() {
             Ok(compiled) => compiled.authorize(request),
-            Err(message) => SandboxEgressAuthorization::deny(format!(
-                "sandbox egress policy invalid: {message}"
-            )),
+            Err(message) => {
+                EgressAuthorization::deny(format!("sandbox egress policy invalid: {message}"))
+            }
         }
     }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
-pub struct CompiledSandboxEgressPolicy {
-    policy: SandboxEgressPolicy,
+pub struct CompiledEgressPolicy {
+    policy: EgressPolicy,
 }
 
-impl CompiledSandboxEgressPolicy {
+impl CompiledEgressPolicy {
     pub fn deny_all() -> Self {
         Self {
-            policy: SandboxEgressPolicy::deny_all(),
+            policy: EgressPolicy::deny_all(),
         }
     }
 
-    pub fn policy(&self) -> &SandboxEgressPolicy {
+    pub fn policy(&self) -> &EgressPolicy {
         &self.policy
     }
 
-    pub fn into_policy(self) -> SandboxEgressPolicy {
+    pub fn into_policy(self) -> EgressPolicy {
         self.policy
     }
 
-    pub fn authorize(&self, request: &SandboxEgressRequest) -> SandboxEgressAuthorization {
+    pub fn authorize(&self, request: &EgressRequest) -> EgressAuthorization {
         let mut matched_but_denied = None;
         for rule in &self.policy.allow {
             if !rule.matches_l4(request) {
@@ -133,14 +139,14 @@ impl CompiledSandboxEgressPolicy {
                 });
                 continue;
             }
-            return SandboxEgressAuthorization::allow(rule.name.clone());
+            return EgressAuthorization::allow(rule.name.clone());
         }
 
         if let Some(reason) = matched_but_denied {
-            return SandboxEgressAuthorization::deny(reason);
+            return EgressAuthorization::deny(reason);
         }
 
-        SandboxEgressAuthorization::deny(format!(
+        EgressAuthorization::deny(format!(
             "sandbox egress default deny: no rule matched {}",
             request.target_summary()
         ))
@@ -149,9 +155,9 @@ impl CompiledSandboxEgressPolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SandboxEgressRule {
+pub struct EgressRule {
     pub name: String,
-    pub protocol: PublishedEndpointProtocol,
+    pub protocol: EgressProtocol,
     pub host: String,
     pub port: u16,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -162,10 +168,10 @@ pub struct SandboxEgressRule {
     pub allow_internal_ips: bool,
 }
 
-impl SandboxEgressRule {
+impl EgressRule {
     pub fn new(
         name: impl Into<String>,
-        protocol: PublishedEndpointProtocol,
+        protocol: EgressProtocol,
         host: impl Into<String>,
         port: u16,
     ) -> Self {
@@ -207,7 +213,7 @@ impl SandboxEgressRule {
                 self.name
             ));
         }
-        if matches!(self.protocol, PublishedEndpointProtocol::Tcp)
+        if matches!(self.protocol, EgressProtocol::Tcp)
             && (!self.methods.is_empty() || !self.path_prefixes.is_empty())
         {
             return Err(format!(
@@ -242,14 +248,14 @@ impl SandboxEgressRule {
         }
     }
 
-    fn matches_l4(&self, request: &SandboxEgressRequest) -> bool {
+    fn matches_l4(&self, request: &EgressRequest) -> bool {
         self.protocol == request.protocol
             && self.port == request.port
             && self.host == canonical_host(&request.host)
     }
 
-    fn matches_l7(&self, request: &SandboxEgressRequest) -> bool {
-        if matches!(self.protocol, PublishedEndpointProtocol::Tcp) {
+    fn matches_l7(&self, request: &EgressRequest) -> bool {
+        if matches!(self.protocol, EgressProtocol::Tcp) {
             return true;
         }
         if !self.methods.is_empty() {
@@ -282,89 +288,77 @@ impl SandboxEgressRule {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SandboxEgressEnforcementMode {
+pub enum EgressEnforcementMode {
     LaunchMetadata,
     SupervisorProxy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SandboxEgressReloadPolicy {
+pub enum EgressReloadPolicy {
     RecreateRequired,
     LiveReload,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SandboxEgressLaunchEnforcement {
+pub enum EgressLaunchEnforcement {
     LaunchMetadata,
     ProcessSupervisorProxy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SandboxEgressEnforcementPlan {
+pub struct EgressEnforcementPlan {
     pub schema_version: u32,
-    pub mode: SandboxEgressEnforcementMode,
-    pub reload_policy: SandboxEgressReloadPolicy,
-    pub policy: SandboxEgressPolicy,
+    pub mode: EgressEnforcementMode,
+    pub reload_policy: EgressReloadPolicy,
+    pub policy: EgressPolicy,
 }
 
-impl SandboxEgressEnforcementPlan {
-    pub fn launch_metadata(policy: &CompiledSandboxEgressPolicy) -> Self {
+impl EgressEnforcementPlan {
+    pub fn launch_metadata(policy: &CompiledEgressPolicy) -> Self {
         Self {
-            schema_version: SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
-            mode: SandboxEgressEnforcementMode::LaunchMetadata,
-            reload_policy: SandboxEgressReloadPolicy::RecreateRequired,
+            schema_version: EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+            mode: EgressEnforcementMode::LaunchMetadata,
+            reload_policy: EgressReloadPolicy::RecreateRequired,
             policy: policy.policy().clone(),
         }
     }
 
     pub fn supervisor_proxy(
-        policy: &CompiledSandboxEgressPolicy,
-        reload_policy: SandboxEgressReloadPolicy,
+        policy: &CompiledEgressPolicy,
+        reload_policy: EgressReloadPolicy,
     ) -> Self {
         Self {
-            schema_version: SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
-            mode: SandboxEgressEnforcementMode::SupervisorProxy,
+            schema_version: EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+            mode: EgressEnforcementMode::SupervisorProxy,
             reload_policy,
             policy: policy.policy().clone(),
         }
     }
 
-    pub fn from_launch_policy(policy: &SandboxEgressPolicy) -> std::result::Result<Self, String> {
+    pub fn from_launch_policy(policy: &EgressPolicy) -> std::result::Result<Self, String> {
         policy
             .compile()
             .map(|compiled| Self::launch_metadata(&compiled))
     }
 
-    pub fn policy(&self) -> &SandboxEgressPolicy {
+    pub fn policy(&self) -> &EgressPolicy {
         &self.policy
     }
 
-    pub fn validate(&self) -> std::result::Result<CompiledSandboxEgressPolicy, String> {
-        if self.schema_version != SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION {
+    pub fn validate(&self) -> std::result::Result<CompiledEgressPolicy, String> {
+        if self.schema_version != EGRESS_ENFORCEMENT_SCHEMA_VERSION {
             return Err(format!(
                 "sandbox egress enforcement schema_version must be {}, got {}",
-                SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION, self.schema_version
+                EGRESS_ENFORCEMENT_SCHEMA_VERSION, self.schema_version
             ));
         }
         match (self.mode, self.reload_policy) {
-            (
-                SandboxEgressEnforcementMode::LaunchMetadata,
-                SandboxEgressReloadPolicy::RecreateRequired,
-            )
-            | (
-                SandboxEgressEnforcementMode::SupervisorProxy,
-                SandboxEgressReloadPolicy::LiveReload,
-            )
-            | (
-                SandboxEgressEnforcementMode::SupervisorProxy,
-                SandboxEgressReloadPolicy::RecreateRequired,
-            ) => {}
-            (
-                SandboxEgressEnforcementMode::LaunchMetadata,
-                SandboxEgressReloadPolicy::LiveReload,
-            ) => {
+            (EgressEnforcementMode::LaunchMetadata, EgressReloadPolicy::RecreateRequired)
+            | (EgressEnforcementMode::SupervisorProxy, EgressReloadPolicy::LiveReload)
+            | (EgressEnforcementMode::SupervisorProxy, EgressReloadPolicy::RecreateRequired) => {}
+            (EgressEnforcementMode::LaunchMetadata, EgressReloadPolicy::LiveReload) => {
                 return Err(
                     "launch-metadata sandbox egress enforcement cannot claim live reload"
                         .to_owned(),
@@ -375,25 +369,25 @@ impl SandboxEgressEnforcementPlan {
     }
 }
 
-impl SandboxEgressLaunchEnforcement {
+impl EgressLaunchEnforcement {
     pub fn materialize(
         self,
-        policy: &SandboxEgressPolicy,
-    ) -> std::result::Result<SandboxEgressEnforcementPlan, String> {
+        policy: &EgressPolicy,
+    ) -> std::result::Result<EgressEnforcementPlan, String> {
         let compiled = policy.compile()?;
         Ok(match self {
-            Self::LaunchMetadata => SandboxEgressEnforcementPlan::launch_metadata(&compiled),
-            Self::ProcessSupervisorProxy => SandboxEgressEnforcementPlan::supervisor_proxy(
+            Self::LaunchMetadata => EgressEnforcementPlan::launch_metadata(&compiled),
+            Self::ProcessSupervisorProxy => EgressEnforcementPlan::supervisor_proxy(
                 &compiled,
-                SandboxEgressReloadPolicy::RecreateRequired,
+                EgressReloadPolicy::RecreateRequired,
             ),
         })
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SandboxEgressRequest {
-    pub protocol: PublishedEndpointProtocol,
+pub struct EgressRequest {
+    pub protocol: EgressProtocol,
     pub host: String,
     pub port: u16,
     pub method: Option<String>,
@@ -401,8 +395,8 @@ pub struct SandboxEgressRequest {
     pub resolved_ip: Option<IpAddr>,
 }
 
-impl SandboxEgressRequest {
-    pub fn new(protocol: PublishedEndpointProtocol, host: impl Into<String>, port: u16) -> Self {
+impl EgressRequest {
+    pub fn new(protocol: EgressProtocol, host: impl Into<String>, port: u16) -> Self {
         Self {
             protocol,
             host: host.into(),
@@ -434,22 +428,22 @@ impl SandboxEgressRequest {
 
     fn target_summary(&self) -> String {
         let protocol = match self.protocol {
-            PublishedEndpointProtocol::Tcp => "tcp",
-            PublishedEndpointProtocol::Http => "http",
-            PublishedEndpointProtocol::Https => "https",
+            EgressProtocol::Tcp => "tcp",
+            EgressProtocol::Http => "http",
+            EgressProtocol::Https => "https",
         };
         format!("{protocol}://{}:{}", self.host, self.port)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SandboxEgressAuthorization {
+pub struct EgressAuthorization {
     allowed: bool,
     matched_rule: Option<String>,
     reason: String,
 }
 
-impl SandboxEgressAuthorization {
+impl EgressAuthorization {
     fn allow(rule_name: String) -> Self {
         Self {
             allowed: true,
@@ -650,9 +644,8 @@ mod tests {
 
     #[test]
     fn sandbox_egress_policy_denies_by_default() {
-        let policy = SandboxEgressPolicy::deny_all();
-        let request =
-            SandboxEgressRequest::new(PublishedEndpointProtocol::Https, "api.stripe.com", 443);
+        let policy = EgressPolicy::deny_all();
+        let request = EgressRequest::new(EgressProtocol::Https, "api.stripe.com", 443);
 
         let authorization = policy.authorize(&request);
 
@@ -666,9 +659,9 @@ mod tests {
 
     #[test]
     fn sandbox_egress_policy_allows_matching_http_method_and_path() {
-        let policy = SandboxEgressPolicy::new([SandboxEgressRule::new(
+        let policy = EgressPolicy::new([EgressRule::new(
             "stripe",
-            PublishedEndpointProtocol::Https,
+            EgressProtocol::Https,
             "API.Stripe.COM",
             443,
         )
@@ -679,14 +672,14 @@ mod tests {
         assert_eq!(compiled.policy().rules()[0].methods, vec!["POST"]);
 
         let allowed = compiled.authorize(
-            &SandboxEgressRequest::new(PublishedEndpointProtocol::Https, "api.stripe.com", 443)
+            &EgressRequest::new(EgressProtocol::Https, "api.stripe.com", 443)
                 .with_http("POST", "/v1/charges"),
         );
         assert!(allowed.is_allowed(), "{allowed:?}");
         assert_eq!(allowed.matched_rule(), Some("stripe"));
 
         let denied = compiled.authorize(
-            &SandboxEgressRequest::new(PublishedEndpointProtocol::Https, "api.stripe.com", 443)
+            &EgressRequest::new(EgressProtocol::Https, "api.stripe.com", 443)
                 .with_http("GET", "/v1/charges"),
         );
         assert!(!denied.is_allowed());
@@ -698,25 +691,19 @@ mod tests {
 
     #[test]
     fn sandbox_egress_enforcement_plan_defaults_to_launch_metadata_recreate_required() {
-        let plan = SandboxEgressEnforcementPlan::launch_metadata(
-            &SandboxEgressPolicy::deny_all()
+        let plan = EgressEnforcementPlan::launch_metadata(
+            &EgressPolicy::deny_all()
                 .compile()
                 .expect("deny-all should compile"),
         );
 
-        assert_eq!(
-            plan.schema_version,
-            SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION
-        );
-        assert_eq!(plan.mode, SandboxEgressEnforcementMode::LaunchMetadata);
-        assert_eq!(
-            plan.reload_policy,
-            SandboxEgressReloadPolicy::RecreateRequired
-        );
+        assert_eq!(plan.schema_version, EGRESS_ENFORCEMENT_SCHEMA_VERSION);
+        assert_eq!(plan.mode, EgressEnforcementMode::LaunchMetadata);
+        assert_eq!(plan.reload_policy, EgressReloadPolicy::RecreateRequired);
         assert!(plan.policy().is_deny_all());
         let compiled = plan.validate().expect("launch metadata should validate");
-        let denied = compiled.authorize(&SandboxEgressRequest::new(
-            PublishedEndpointProtocol::Https,
+        let denied = compiled.authorize(&EgressRequest::new(
+            EgressProtocol::Https,
             "api.stripe.com",
             443,
         ));
@@ -725,23 +712,20 @@ mod tests {
 
     #[test]
     fn sandbox_egress_enforcement_plan_materializes_canonical_allow_rules() {
-        let policy = SandboxEgressPolicy::new([SandboxEgressRule::new(
+        let policy = EgressPolicy::new([EgressRule::new(
             "stripe",
-            PublishedEndpointProtocol::Https,
+            EgressProtocol::Https,
             "API.Stripe.COM",
             443,
         )
         .with_methods(["POST", "POST"])
         .with_path_prefixes(["/v1/", "/v1/"])]);
 
-        let plan = SandboxEgressEnforcementPlan::from_launch_policy(&policy)
+        let plan = EgressEnforcementPlan::from_launch_policy(&policy)
             .expect("allow policy should compile into launch metadata");
 
-        assert_eq!(plan.mode, SandboxEgressEnforcementMode::LaunchMetadata);
-        assert_eq!(
-            plan.reload_policy,
-            SandboxEgressReloadPolicy::RecreateRequired
-        );
+        assert_eq!(plan.mode, EgressEnforcementMode::LaunchMetadata);
+        assert_eq!(plan.reload_policy, EgressReloadPolicy::RecreateRequired);
         assert_eq!(plan.policy().rules()[0].host, "api.stripe.com");
         assert_eq!(plan.policy().rules()[0].methods, vec!["POST"]);
         assert_eq!(plan.policy().rules()[0].path_prefixes, vec!["/v1/"]);
@@ -749,22 +733,19 @@ mod tests {
 
     #[test]
     fn sandbox_egress_launch_enforcement_selects_supervisor_proxy_for_process_launches() {
-        let policy = SandboxEgressPolicy::new([SandboxEgressRule::new(
+        let policy = EgressPolicy::new([EgressRule::new(
             "github",
-            PublishedEndpointProtocol::Https,
+            EgressProtocol::Https,
             "API.GitHub.COM",
             443,
         )]);
 
-        let plan = SandboxEgressLaunchEnforcement::ProcessSupervisorProxy
+        let plan = EgressLaunchEnforcement::ProcessSupervisorProxy
             .materialize(&policy)
             .expect("process launch egress policy should materialize");
 
-        assert_eq!(plan.mode, SandboxEgressEnforcementMode::SupervisorProxy);
-        assert_eq!(
-            plan.reload_policy,
-            SandboxEgressReloadPolicy::RecreateRequired
-        );
+        assert_eq!(plan.mode, EgressEnforcementMode::SupervisorProxy);
+        assert_eq!(plan.reload_policy, EgressReloadPolicy::RecreateRequired);
         assert_eq!(plan.policy().rules()[0].host, "api.github.com");
         plan.validate()
             .expect("process launch supervisor contract should validate");
@@ -772,14 +753,10 @@ mod tests {
 
     #[test]
     fn sandbox_egress_launch_enforcement_fails_closed_for_invalid_raw_policy() {
-        let policy = SandboxEgressPolicy::new([SandboxEgressRule::new(
-            "wildcard",
-            PublishedEndpointProtocol::Https,
-            "*",
-            443,
-        )]);
+        let policy =
+            EgressPolicy::new([EgressRule::new("wildcard", EgressProtocol::Https, "*", 443)]);
 
-        let error = SandboxEgressLaunchEnforcement::ProcessSupervisorProxy
+        let error = EgressLaunchEnforcement::ProcessSupervisorProxy
             .materialize(&policy)
             .expect_err("invalid process launch egress policy should fail closed");
 
@@ -791,13 +768,13 @@ mod tests {
 
     #[test]
     fn sandbox_egress_enforcement_plan_fails_closed_for_invalid_raw_policy() {
-        let plan = SandboxEgressEnforcementPlan {
-            schema_version: SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
-            mode: SandboxEgressEnforcementMode::LaunchMetadata,
-            reload_policy: SandboxEgressReloadPolicy::RecreateRequired,
-            policy: SandboxEgressPolicy::new([SandboxEgressRule::new(
+        let plan = EgressEnforcementPlan {
+            schema_version: EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+            mode: EgressEnforcementMode::LaunchMetadata,
+            reload_policy: EgressReloadPolicy::RecreateRequired,
+            policy: EgressPolicy::new([EgressRule::new(
                 "wildcard",
-                PublishedEndpointProtocol::Https,
+                EgressProtocol::Https,
                 "*",
                 443,
             )]),
@@ -814,11 +791,11 @@ mod tests {
 
     #[test]
     fn sandbox_egress_enforcement_plan_rejects_false_live_reload_claims() {
-        let plan = SandboxEgressEnforcementPlan {
-            schema_version: SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
-            mode: SandboxEgressEnforcementMode::LaunchMetadata,
-            reload_policy: SandboxEgressReloadPolicy::LiveReload,
-            policy: SandboxEgressPolicy::deny_all(),
+        let plan = EgressEnforcementPlan {
+            schema_version: EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+            mode: EgressEnforcementMode::LaunchMetadata,
+            reload_policy: EgressReloadPolicy::LiveReload,
+            policy: EgressPolicy::deny_all(),
         };
 
         let error = plan
@@ -832,20 +809,20 @@ mod tests {
 
     #[test]
     fn sandbox_egress_enforcement_plan_models_future_supervisor_live_reload() {
-        let plan = SandboxEgressEnforcementPlan::supervisor_proxy(
-            &SandboxEgressPolicy::new([SandboxEgressRule::new(
+        let plan = EgressEnforcementPlan::supervisor_proxy(
+            &EgressPolicy::new([EgressRule::new(
                 "github",
-                PublishedEndpointProtocol::Https,
+                EgressProtocol::Https,
                 "api.github.com",
                 443,
             )])
             .compile()
             .expect("allow policy should compile"),
-            SandboxEgressReloadPolicy::LiveReload,
+            EgressReloadPolicy::LiveReload,
         );
 
-        assert_eq!(plan.mode, SandboxEgressEnforcementMode::SupervisorProxy);
-        assert_eq!(plan.reload_policy, SandboxEgressReloadPolicy::LiveReload);
+        assert_eq!(plan.mode, EgressEnforcementMode::SupervisorProxy);
+        assert_eq!(plan.reload_policy, EgressReloadPolicy::LiveReload);
         assert_eq!(plan.policy().rules()[0].name, "github");
         plan.validate()
             .expect("supervisor proxy contract should validate");
@@ -853,46 +830,33 @@ mod tests {
 
     #[test]
     fn sandbox_egress_enforcement_plan_allows_supervisor_recreate_lifecycle() {
-        let plan = SandboxEgressEnforcementPlan::supervisor_proxy(
-            &SandboxEgressPolicy::deny_all()
+        let plan = EgressEnforcementPlan::supervisor_proxy(
+            &EgressPolicy::deny_all()
                 .compile()
                 .expect("deny-all should compile"),
-            SandboxEgressReloadPolicy::RecreateRequired,
+            EgressReloadPolicy::RecreateRequired,
         );
 
-        assert_eq!(plan.mode, SandboxEgressEnforcementMode::SupervisorProxy);
-        assert_eq!(
-            plan.reload_policy,
-            SandboxEgressReloadPolicy::RecreateRequired
-        );
+        assert_eq!(plan.mode, EgressEnforcementMode::SupervisorProxy);
+        assert_eq!(plan.reload_policy, EgressReloadPolicy::RecreateRequired);
         plan.validate()
             .expect("supervisor proxy can start before live reload exists");
     }
 
     #[test]
     fn sandbox_egress_policy_checks_all_l4_matching_rules_before_denying() {
-        let policy = SandboxEgressPolicy::new([
-            SandboxEgressRule::new(
-                "stripe-read",
-                PublishedEndpointProtocol::Https,
-                "api.stripe.com",
-                443,
-            )
-            .with_methods(["GET"])
-            .with_path_prefixes(["/v1/customers"]),
-            SandboxEgressRule::new(
-                "stripe-write",
-                PublishedEndpointProtocol::Https,
-                "api.stripe.com",
-                443,
-            )
-            .with_methods(["POST"])
-            .with_path_prefixes(["/v1/charges"]),
+        let policy = EgressPolicy::new([
+            EgressRule::new("stripe-read", EgressProtocol::Https, "api.stripe.com", 443)
+                .with_methods(["GET"])
+                .with_path_prefixes(["/v1/customers"]),
+            EgressRule::new("stripe-write", EgressProtocol::Https, "api.stripe.com", 443)
+                .with_methods(["POST"])
+                .with_path_prefixes(["/v1/charges"]),
         ]);
         policy.validate().expect("policy should validate");
 
         let authorization = policy.authorize(
-            &SandboxEgressRequest::new(PublishedEndpointProtocol::Https, "api.stripe.com", 443)
+            &EgressRequest::new(EgressProtocol::Https, "api.stripe.com", 443)
                 .with_http("POST", "/v1/charges"),
         );
 
@@ -902,16 +866,16 @@ mod tests {
 
     #[test]
     fn sandbox_egress_policy_denies_resolved_internal_ip_without_explicit_allow() {
-        let policy = SandboxEgressPolicy::new([SandboxEgressRule::new(
+        let policy = EgressPolicy::new([EgressRule::new(
             "metadata-lookalike",
-            PublishedEndpointProtocol::Http,
+            EgressProtocol::Http,
             "metadata.example.com",
             80,
         )]);
         policy.validate().expect("policy should validate");
 
         let denied = policy.authorize(
-            &SandboxEgressRequest::new(PublishedEndpointProtocol::Http, "metadata.example.com", 80)
+            &EgressRequest::new(EgressProtocol::Http, "metadata.example.com", 80)
                 .with_resolved_ip(IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254))),
         );
         assert!(!denied.is_allowed());
@@ -920,9 +884,9 @@ mod tests {
             "SSRF/internal denial should be named: {denied:?}"
         );
 
-        let allowed_policy = SandboxEgressPolicy::new([SandboxEgressRule::new(
+        let allowed_policy = EgressPolicy::new([EgressRule::new(
             "metadata",
-            PublishedEndpointProtocol::Http,
+            EgressProtocol::Http,
             "169.254.169.254",
             80,
         )
@@ -930,8 +894,8 @@ mod tests {
         allowed_policy
             .validate()
             .expect("explicit internal allowlist should validate");
-        let allowed = allowed_policy.authorize(&SandboxEgressRequest::new(
-            PublishedEndpointProtocol::Http,
+        let allowed = allowed_policy.authorize(&EgressRequest::new(
+            EgressProtocol::Http,
             "169.254.169.254",
             80,
         ));
@@ -940,9 +904,9 @@ mod tests {
 
     #[test]
     fn sandbox_egress_policy_treats_reserved_and_mapped_addresses_as_internal() {
-        let policy = SandboxEgressPolicy::new([SandboxEgressRule::new(
+        let policy = EgressPolicy::new([EgressRule::new(
             "reserved-lookalike",
-            PublishedEndpointProtocol::Http,
+            EgressProtocol::Http,
             "reserved.example.com",
             80,
         )]);
@@ -964,12 +928,8 @@ mod tests {
             ),
         ] {
             let denied = policy.authorize(
-                &SandboxEgressRequest::new(
-                    PublishedEndpointProtocol::Http,
-                    "reserved.example.com",
-                    80,
-                )
-                .with_resolved_ip(resolved_ip),
+                &EgressRequest::new(EgressProtocol::Http, "reserved.example.com", 80)
+                    .with_resolved_ip(resolved_ip),
             );
             assert!(
                 !denied.is_allowed(),
@@ -978,12 +938,13 @@ mod tests {
         }
 
         let allowed = policy.authorize(
-            &SandboxEgressRequest::new(PublishedEndpointProtocol::Http, "reserved.example.com", 80)
-                .with_resolved_ip(IpAddr::V6(
+            &EgressRequest::new(EgressProtocol::Http, "reserved.example.com", 80).with_resolved_ip(
+                IpAddr::V6(
                     "64:ff9b::93.184.216.34"
                         .parse()
                         .expect("global NAT64 IPv6 address should parse"),
-                )),
+                ),
+            ),
         );
         assert!(
             allowed.is_allowed(),
@@ -993,9 +954,9 @@ mod tests {
 
     #[test]
     fn sandbox_egress_policy_rejects_wildcards_and_tcp_l7_fields() {
-        let wildcard = SandboxEgressPolicy::new([SandboxEgressRule::new(
+        let wildcard = EgressPolicy::new([EgressRule::new(
             "all",
-            PublishedEndpointProtocol::Https,
+            EgressProtocol::Https,
             "*.example.com",
             443,
         )]);
@@ -1007,9 +968,9 @@ mod tests {
             "wildcard error should be explicit: {error}"
         );
 
-        let tcp_with_method = SandboxEgressPolicy::new([SandboxEgressRule::new(
+        let tcp_with_method = EgressPolicy::new([EgressRule::new(
             "postgres",
-            PublishedEndpointProtocol::Tcp,
+            EgressProtocol::Tcp,
             "db.example.com",
             5432,
         )
@@ -1033,9 +994,9 @@ mod tests {
             "[::1]",
             "-bad.example.com",
         ] {
-            let policy = SandboxEgressPolicy::new([SandboxEgressRule::new(
+            let policy = EgressPolicy::new([EgressRule::new(
                 "bad-host",
-                PublishedEndpointProtocol::Https,
+                EgressProtocol::Https,
                 host,
                 443,
             )]);

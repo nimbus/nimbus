@@ -10,6 +10,7 @@ use crate::{
     TenantImageAdmissionSource, TenantImageVerificationEvidence, TenantImageVerificationProvider,
     TenantImageVerificationRequest, TenantRuntimePolicyAdmission,
 };
+use nimbus_egress::EgressProtocol;
 use nimbus_sandbox::PublishedEndpointProtocol;
 
 use super::*;
@@ -801,7 +802,7 @@ fn denied_egress_draft_proposes_minimal_rule_without_mutating_policy() {
         tenant_id: "tenant-a".to_string(),
         workload_kind: "service".to_string(),
         workload_name: "worker".to_string(),
-        protocol: PublishedEndpointProtocol::Https,
+        protocol: EgressProtocol::Https,
         host: "API.GitHub.com".to_string(),
         port: 443,
         method: Some("get".to_string()),
@@ -847,7 +848,7 @@ fn denied_egress_draft_requires_approval_before_apply() {
             tenant_id: "tenant-a".to_string(),
             workload_kind: "service".to_string(),
             workload_name: "worker".to_string(),
-            protocol: PublishedEndpointProtocol::Https,
+            protocol: EgressProtocol::Https,
             host: "api.github.com".to_string(),
             port: 443,
             method: Some("GET".to_string()),
@@ -895,7 +896,7 @@ fn denied_egress_draft_rejects_mismatched_tenant_and_unknown_workload() {
         tenant_id: "tenant-b".to_string(),
         workload_kind: "service".to_string(),
         workload_name: "worker".to_string(),
-        protocol: PublishedEndpointProtocol::Https,
+        protocol: EgressProtocol::Https,
         host: "api.github.com".to_string(),
         port: 443,
         method: Some("GET".to_string()),
@@ -914,7 +915,7 @@ fn denied_egress_draft_rejects_mismatched_tenant_and_unknown_workload() {
         tenant_id: "tenant-a".to_string(),
         workload_kind: "service".to_string(),
         workload_name: "missing".to_string(),
-        protocol: PublishedEndpointProtocol::Https,
+        protocol: EgressProtocol::Https,
         host: "api.github.com".to_string(),
         port: 443,
         method: Some("GET".to_string()),
