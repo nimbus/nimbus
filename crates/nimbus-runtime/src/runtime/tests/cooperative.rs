@@ -317,6 +317,31 @@ async fn wait_until_slot_parked(
     });
 }
 
+async fn wait_until_active_runtime_instances(
+    policy: Arc<RuntimePolicy>,
+    expected: usize,
+    case: IsolatedRuntimeTestCase,
+    context: &str,
+) {
+    let timeout = cooperative_slot_progress_timeout();
+    tokio::time::timeout(timeout, async {
+        loop {
+            if policy.metrics_snapshot().active_runtime_instances == expected {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        let observed = policy.metrics_snapshot().active_runtime_instances;
+        panic!(
+            "{} after {timeout:?}: expected active_runtime_instances={expected}, observed {observed}; {context}",
+            case.failure_context("cooperative slot active-runtime metric did not settle")
+        )
+    });
+}
+
 async fn wait_until_slot_completed_without_external_release(
     slot: &mut CooperativeLockerRuntimeSlot,
     case: IsolatedRuntimeTestCase,
@@ -450,13 +475,13 @@ export {};
         "deferred async host work should park before release",
     )
     .await;
-    assert_eq!(
-        runtime_owner
-            .policy
-            .metrics_snapshot()
-            .active_runtime_instances,
-        0
-    );
+    wait_until_active_runtime_instances(
+        runtime_owner.policy(),
+        0,
+        PARK_AND_RESUME_CASE,
+        "deferred async host work should suspend active isolate accounting while parked",
+    )
+    .await;
 
     let initial_generation = activity_signal.current_generation();
     host.release();
