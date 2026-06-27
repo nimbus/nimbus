@@ -15,6 +15,8 @@ use deno_io::fs::{File, FsResult, FsStat, FsStatFs};
 use deno_permissions::{CheckedPath, CheckedPathBuf};
 use nimbus_runtime::NimbusFsBackend;
 
+pub mod backend;
+pub mod cache;
 pub mod caps;
 pub mod cas_ro;
 pub mod memfs;
@@ -22,6 +24,11 @@ pub mod mount;
 pub mod resolver;
 pub mod wasi;
 
+pub use backend::{
+    BackendRegistration, BackendRegistry, ObjectRwBackend, ObjectUnsupportedOperation,
+    PersistenceMode,
+};
+pub use cache::{CacheLookup, ChunkCache};
 pub use caps::{FsCaps, FsMountCaps};
 pub use cas_ro::{CasBlobChunk, CasManifestEntry, CasReadOnlyBackend, CasReadOnlyManifest};
 pub use memfs::MemFsBackend;

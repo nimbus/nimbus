@@ -17,8 +17,9 @@ use nimbus_blob::{BlobHash, BlobStore, ByteStream, LocalPackStore};
 use nimbus_core::Result as NimbusResult;
 
 use super::{
-    CasBlobChunk, CasReadOnlyBackend, CasReadOnlyManifest, DirPerms, FilePerms, FsCaps,
-    FsMountCaps, MemFsBackend, MountResolver, MountTable, NimbusFs, PassthroughBackend,
+    BackendRegistry, CacheLookup, CasBlobChunk, CasReadOnlyBackend, CasReadOnlyManifest,
+    ChunkCache, DirPerms, FilePerms, FsCaps, FsMountCaps, MemFsBackend, MountResolver, MountTable,
+    NimbusFs, ObjectRwBackend, ObjectUnsupportedOperation, PassthroughBackend, PersistenceMode,
     ResolvedAccess, WasiPreopenBuilder,
 };
 
@@ -781,6 +782,121 @@ fn wasi_and_v8_binders_resolve_the_same_gated_mount_and_rights() {
     assert_eq!(ro.wasi_preopen_path, Path::new("/ro"));
     assert_eq!(ro.v8_access, ResolvedAccess::ReadOnly);
     assert!(ro.wasi_rights.readonly);
+}
+
+#[test]
+fn backend_registry_registers_stub_and_serves_through_mount_table() {
+    let backend = MemFsBackend::new();
+    let mut registry = BackendRegistry::new();
+    registry
+        .register(
+            "stub",
+            backend,
+            FsMountCaps::read_write(),
+            PersistenceMode::DurableExternal {
+                sync_required: true,
+            },
+        )
+        .unwrap();
+    assert!(
+        registry.get("stub").unwrap().requires_explicit_sync(),
+        "external backend persistence must make sync semantics explicit"
+    );
+
+    let mut table = MountTable::new(memfs_rc());
+    registry
+        .mount_registered(&mut table, "/external", "stub")
+        .unwrap();
+    let fs = fs_with_mounts(table);
+
+    fs.write_file_sync(
+        &checked(Path::new("/external/file.txt")),
+        OpenOptions::write(true, false, false, None),
+        b"registered",
+    )
+    .unwrap();
+    assert_eq!(
+        fs.read_file_sync(
+            &checked(Path::new("/external/file.txt")),
+            OpenOptions::read()
+        )
+        .unwrap()
+        .as_ref(),
+        b"registered"
+    );
+}
+
+#[test]
+fn backend_registry_rejects_invalid_fscaps_contract() {
+    let mut caps = FsMountCaps::read_only();
+    caps.file_write = true;
+    let error = BackendRegistry::new()
+        .register("bad", MemFsBackend::new(), caps, PersistenceMode::Ephemeral)
+        .expect_err("readonly backend cannot advertise write authority");
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+}
+
+#[test]
+fn object_rw_backend_slot_rejects_unsupported_posix_operations() {
+    assert_eq!(
+        ObjectRwBackend::unsupported_operations(),
+        &[
+            ObjectUnsupportedOperation::RandomWrite,
+            ObjectUnsupportedOperation::Hardlink,
+            ObjectUnsupportedOperation::Symlink,
+            ObjectUnsupportedOperation::MutableOwnership,
+            ObjectUnsupportedOperation::DirectoryRename,
+        ]
+    );
+
+    for operation in ObjectRwBackend::unsupported_operations() {
+        let error = ObjectRwBackend::reject_unsupported(*operation)
+            .expect_err("object slot must fail unsupported POSIX operation early");
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        assert!(
+            error.to_string().contains("unsupported POSIX"),
+            "unexpected object slot error: {error}"
+        );
+    }
+}
+
+#[test]
+fn cache_hit_avoids_refetch_and_eviction_respects_capacity() {
+    let mut cache = ChunkCache::new(2);
+    let mut fetches = 0;
+
+    let (a, first) = cache.get_or_insert_with("a", |_| {
+        fetches += 1;
+        "alpha".to_string()
+    });
+    assert_eq!(a, "alpha");
+    assert_eq!(first, CacheLookup::Miss);
+
+    let (a, second) = cache.get_or_insert_with("a", |_| {
+        fetches += 1;
+        "new-alpha".to_string()
+    });
+    assert_eq!(a, "alpha");
+    assert_eq!(second, CacheLookup::Hit);
+    assert_eq!(fetches, 1, "cache hit avoids re-fetch");
+
+    cache.get_or_insert_with("b", |_| {
+        fetches += 1;
+        "bravo".to_string()
+    });
+    let (_, hot) = cache.get_or_insert_with("a", |_| {
+        fetches += 1;
+        "new-alpha".to_string()
+    });
+    assert_eq!(hot, CacheLookup::Hit);
+    cache.get_or_insert_with("c", |_| {
+        fetches += 1;
+        "charlie".to_string()
+    });
+    assert_eq!(cache.len(), 2);
+    assert!(cache.contains_key(&"a"), "recent cache hit keeps a hot");
+    assert!(!cache.contains_key(&"b"), "oldest cold key is evicted");
+    assert!(cache.contains_key(&"c"));
 }
 
 #[derive(Debug, Clone, Default)]
