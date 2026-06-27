@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use nimbus_core::Error;
 use nimbus_storage::{KvBatchOp, KvEntry, KvMutation, KvPut, RedbTenantKvStore, TenantKvStore};
@@ -68,6 +68,7 @@ struct NimbusKvStoreInner {
     engine: Arc<dyn TenantKvStore + Send + Sync>,
     tiering: TieringConfig,
     metrics: NimbusKvMetrics,
+    operation: Mutex<()>,
     cache: Mutex<BTreeMap<Vec<u8>, CacheEntry>>,
 }
 
@@ -113,6 +114,7 @@ impl NimbusKvStore {
                 engine,
                 tiering,
                 metrics: NimbusKvMetrics::default(),
+                operation: Mutex::new(()),
                 cache: Mutex::new(BTreeMap::new()),
             }),
         }
@@ -129,6 +131,7 @@ impl NimbusKvStore {
     }
 
     pub fn get(&self, key: &[u8], now_ms: i64) -> Result<Option<Vec<u8>>, KvError> {
+        let _operation = self.operation_lock()?;
         Ok(self.get_entry(key, now_ms)?.map(|entry| entry.value))
     }
 
@@ -138,6 +141,7 @@ impl NimbusKvStore {
         value: impl Into<Vec<u8>>,
         expire_at_ms: Option<i64>,
     ) -> Result<(), KvError> {
+        let _operation = self.operation_lock()?;
         let put = KvPut {
             key: key.into(),
             value: value.into(),
@@ -156,6 +160,7 @@ impl NimbusKvStore {
     }
 
     pub fn delete(&self, key: &[u8]) -> Result<bool, KvError> {
+        let _operation = self.operation_lock()?;
         let _write = self.inner.metrics.start_durable_write();
         let deleted = self.inner.engine.kv_delete(key)?;
         self.cache_remove(key);
@@ -165,6 +170,7 @@ impl NimbusKvStore {
     pub fn flush_all(&self, now_ms: i64) -> Result<usize, KvError> {
         const BATCH_LIMIT: usize = 256;
 
+        let _operation = self.operation_lock()?;
         let _write = self.inner.metrics.start_durable_write();
         let mut cursor = None;
         let mut deleted = 0_usize;
@@ -204,6 +210,7 @@ impl NimbusKvStore {
     }
 
     pub fn expire(&self, key: &[u8], expire_at_ms: i64, now_ms: i64) -> Result<bool, KvError> {
+        let _operation = self.operation_lock()?;
         let mut found = false;
         let mut update = |previous: Option<KvEntry>| {
             let Some(previous) = previous else {
@@ -227,6 +234,7 @@ impl NimbusKvStore {
     }
 
     pub fn ttl(&self, key: &[u8], now_ms: i64) -> Result<i64, KvError> {
+        let _operation = self.operation_lock()?;
         let Some(entry) = self.get_entry(key, now_ms)? else {
             return Ok(-2);
         };
@@ -237,6 +245,7 @@ impl NimbusKvStore {
     }
 
     pub fn incr(&self, key: &[u8], now_ms: i64) -> Result<i64, KvError> {
+        let _operation = self.operation_lock()?;
         let mut next = None;
         let mut update = |previous: Option<KvEntry>| {
             let (previous_value, expire_at_ms, metadata) = match previous {
@@ -334,6 +343,14 @@ impl NimbusKvStore {
     ) -> Result<std::sync::MutexGuard<'_, BTreeMap<Vec<u8>, CacheEntry>>, KvError> {
         self.inner.cache.lock().map_err(|_| {
             KvError::Core(Error::Internal("nimbus-kv cache lock poisoned".to_string()))
+        })
+    }
+
+    fn operation_lock(&self) -> Result<MutexGuard<'_, ()>, KvError> {
+        self.inner.operation.lock().map_err(|_| {
+            KvError::Core(Error::Internal(
+                "nimbus-kv operation lock poisoned".to_string(),
+            ))
         })
     }
 }
