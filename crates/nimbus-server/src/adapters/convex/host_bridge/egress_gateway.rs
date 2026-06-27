@@ -67,13 +67,13 @@ impl EgressGateway for ConvexHostBridge {
         if let Err(reason) = self.egress_readiness().ensure_ready(self.decision()) {
             return RuntimeEgressAuthorization::deny(reason);
         }
-        if let Some(tenant_label) = request.tenant_label.as_deref() {
-            if tenant_label != self.tenant_id().as_str() {
-                return RuntimeEgressAuthorization::deny(format!(
-                    "egress gateway request tenant `{tenant_label}` does not match admitted tenant `{}`",
-                    self.tenant_id()
-                ));
-            }
+        if let Some(tenant_label) = request.tenant_label.as_deref()
+            && tenant_label != self.tenant_id().as_str()
+        {
+            return RuntimeEgressAuthorization::deny(format!(
+                "egress gateway request tenant `{tenant_label}` does not match admitted tenant `{}`",
+                self.tenant_id()
+            ));
         }
         if request.uses_custom_client {
             return RuntimeEgressAuthorization::deny(
@@ -108,12 +108,10 @@ fn policy_request_from_runtime_request(
     if matches!(
         request.protocol,
         RuntimeEgressProtocol::Http | RuntimeEgressProtocol::Https
-    ) {
-        if let (Some(method), Some(path)) =
-            (request.method.as_deref(), request.path_and_query.as_deref())
-        {
-            policy_request = policy_request.with_http(method, path);
-        }
+    ) && let (Some(method), Some(path)) =
+        (request.method.as_deref(), request.path_and_query.as_deref())
+    {
+        policy_request = policy_request.with_http(method, path);
     }
     Some(policy_request)
 }

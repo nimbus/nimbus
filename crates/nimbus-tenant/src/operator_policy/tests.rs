@@ -11,7 +11,6 @@ use crate::{
     TenantImageVerificationRequest, TenantRuntimePolicyAdmission,
 };
 use nimbus_egress::EgressProtocol;
-use nimbus_sandbox::PublishedEndpointProtocol;
 
 use super::*;
 

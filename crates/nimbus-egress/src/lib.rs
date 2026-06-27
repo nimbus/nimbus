@@ -351,12 +351,12 @@ impl EgressCredentialInjection {
             ));
         }
         validate_http_header_name(&self.header_name, rule_name)?;
-        if let Some(prefix) = &self.value_prefix {
-            if prefix.contains('\r') || prefix.contains('\n') {
-                return Err(format!(
-                    "sandbox egress rule `{rule_name}` credential value_prefix must not contain CR/LF"
-                ));
-            }
+        if let Some(prefix) = &self.value_prefix
+            && (prefix.contains('\r') || prefix.contains('\n'))
+        {
+            return Err(format!(
+                "sandbox egress rule `{rule_name}` credential value_prefix must not contain CR/LF"
+            ));
         }
         Ok(())
     }
