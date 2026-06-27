@@ -6250,9 +6250,9 @@ export {};
             "label": "first",
             "previousMarker": null,
             "previousDetachedLength": null,
-            "sourceBufferDetached": false,
-            "detachedLength": 16,
-            "sourceViewLength": 16,
+            "sourceBufferDetached": true,
+            "detachedLength": 0,
+            "sourceViewLength": 0,
             "clonedByte": 17,
             "clonedLength": 16,
         })
@@ -6277,13 +6277,13 @@ export {};
             "label": "second",
             "previousMarker": null,
             "previousDetachedLength": null,
-            "sourceBufferDetached": false,
-            "detachedLength": 16,
-            "sourceViewLength": 16,
+            "sourceBufferDetached": true,
+            "detachedLength": 0,
+            "sourceViewLength": 0,
             "clonedByte": 29,
             "clonedLength": 16,
         }),
-        "structured-clone marker state and realm globals must not leak across clean NodeFull leases"
+        "ArrayBuffer backing-store state and realm globals must not leak across clean NodeFull leases"
     );
 }
 

@@ -39,6 +39,7 @@ DENO_JSRUNTIME="/Users/jack/src/github.com/nimbus/deno/libs/core/runtime/jsrunti
 DENO_JSREALM_TESTS="/Users/jack/src/github.com/nimbus/deno/libs/core/runtime/tests/jsrealm.rs"
 DENO_PROCESS="/Users/jack/src/github.com/nimbus/deno/ext/node/polyfills/process.ts"
 DENO_MESSAGE_PORT="/Users/jack/src/github.com/nimbus/deno/ext/web/13_message_port.js"
+DENO_OPS_BUILTIN="/Users/jack/src/github.com/nimbus/deno/libs/core/ops_builtin_v8.rs"
 DENO_STRUCTURED_CLONE_TEST="/Users/jack/src/github.com/nimbus/deno/tests/unit/structured_clone_test.ts"
 MAKEFILE_PATH="Makefile"
 CI_WORKFLOW=".github/workflows/ci.yml"
@@ -554,6 +555,9 @@ if [ -f "${NFR5_PROOF}" ] &&
     'RuntimeRealmLeaseCondemnationReason::TimedOut' \
     'RuntimeRealmLeaseCondemnationReason::ExternalPressure' \
     'start_fresh_realm_bundle_invocation_with_lease_and_reason_trace' >/tmp/nfr5-driver-invocation-missing.txt &&
+  contains_all "${CONSTRUCTION}" \
+    'SharedArrayBufferStore::default' \
+    'shared_array_buffer_store: Some' >/tmp/nfr5-construction-missing.txt &&
   contains_all "${EXECUTION_PLAN}" \
     'realm_lease_authority_key_partitions_permission_grants_and_node_conditions' \
     'runtime_execution_plan_keeps_node_full_ineligible_until_realm_proof' \
@@ -614,19 +618,23 @@ if [ -f "${NFR5_PROOF}" ] &&
     'routing_affinity: RuntimeRoutingAffinity' \
     'RuntimeBundleEngineCacheKey::for_limits\(limits, construction_mode\)' >/tmp/nfr5-runtime-bundle-missing.txt &&
   contains_all "${CARGO_MANIFEST}" \
-    'v2\.8\.3-nimbus\.79' >/tmp/nfr5-cargo-manifest-missing.txt &&
+    'v2\.9\.0-nimbus\.2' >/tmp/nfr5-cargo-manifest-missing.txt &&
   contains_all "${CARGO_LOCK}" \
-    'v2\.8\.3-nimbus\.79#828cd062096fc765d672f8678b8b39f9cca148c6' >/tmp/nfr5-cargo-lock-missing.txt &&
+    'v2\.9\.0-nimbus\.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52' >/tmp/nfr5-cargo-lock-missing.txt &&
   contains_all "${DENO_MESSAGE_PORT}" \
-    'ArrayBufferPrototypeTransferToFixedLength' \
-    'detachTransferredArrayBuffersIfNeeded' \
-    'const cloned = deserializeJsMessageData\(messageData\)\[0\]' \
-    'detachTransferredArrayBuffersIfNeeded\(options\.transfer\)' >/tmp/nfr5-deno-message-port-missing.txt &&
+    'const transferredArrayBuffers = \[\]' \
+    'serializeJsMessageData\(value, options\.transfer\)' \
+    'deserializeJsMessageData\(messageData\)\[0\]' \
+    'ArrayBuffer at index' >/tmp/nfr5-deno-message-port-missing.txt &&
+  contains_all "${DENO_OPS_BUILTIN}" \
+    'shared_array_buffer_store' \
+    'buf\.detach\(None\)' \
+    'value_serializer\.transfer_array_buffer' \
+    'value_deserializer\.transfer_array_buffer' >/tmp/nfr5-deno-ops-missing.txt &&
   contains_all "${DENO_STRUCTURED_CLONE_TEST}" \
-    'structuredClone detaches transferred typed array backing store' \
-    'assertEquals\(buffer\.byteLength, 0\)' \
-    'assertEquals\(view\.byteLength, 0\)' \
-    'assertEquals\(cloned\.view\.buffer\.byteLength, 16\)' >/tmp/nfr5-deno-structured-test-missing.txt &&
+    'structuredClone\(ab, \{ transfer: \[ab\] \}\)' \
+    'ArrayBuffer at index 0 is already detached' \
+    'ab2 should not be detached after above failure' >/tmp/nfr5-deno-structured-test-missing.txt &&
   contains_all "${NODE_WATCHPOINTS}" \
     'node22_buffer_isascii_watchpoint' \
     'node20_buffer_isascii_watchpoint' \
@@ -636,8 +644,9 @@ if [ -f "${NFR5_PROOF}" ] &&
   contains_all "${NFR5_PROOF}" \
     'NFR5 Security And Cleanliness Proof' \
     'Status: `done`' \
-    'v2\.8\.3-nimbus\.79' \
-    '828cd062096fc765d672f8678b8b39f9cca148c6' \
+    'v2\.9\.0-nimbus\.2' \
+    '5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52' \
+    'SharedArrayBufferStore' \
     'structured-clone transfer detachment' \
     'take_runtime_wait_until_pending' \
     'drain_wait_until_with_trace' \
@@ -705,6 +714,8 @@ if [ -f "${NFR5_PROOF}" ] &&
     'cargo test -p nimbus-runtime node_full_fresh_realm_lease_condemns_heap_limit_before_reuse --lib -- --nocapture' \
     '1 passed; 0 failed; 0 ignored; 0 measured; 1108 filtered out' \
     'cargo test -p nimbus-runtime node_full_fresh_realm_lease_resets_arraybuffer_and_structured_clone_state --lib -- --nocapture' \
+    'cargo test -p nimbus-runtime isol_node_full_fresh_realm_lease_resets_arraybuffer_and_structured_clone_state --lib -- --nocapture' \
+    '1 passed; 0 failed; 0 ignored; 0 measured; 1232 filtered out' \
     'cargo test -p nimbus-runtime node_full_fresh_realm --lib -- --nocapture' \
     '25 passed; 0 failed; 0 ignored; 0 measured; 1084 filtered out' \
     'cargo test -p nimbus-runtime buffer_isascii_watchpoint --lib -- --nocapture' \
@@ -734,8 +745,8 @@ if [ -f "${NFR5_PROOF}" ] &&
     'Public Node `WarmContextRecycle` remains fail-closed by default' \
     'explicit `SameOwnerExactAuthority` proof axis' >/tmp/nfr5-proof-missing.txt &&
   contains_all "${PLAN}" \
-    'v2\.8\.3-nimbus\.79' \
-    '828cd062096fc765d672f8678b8b39f9cca148c6' \
+    'v2\.9\.0-nimbus\.2' \
+    '5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52' \
     'NFR5 initial security/cleanliness slice' \
     'child-process plus worker-thread resource surfaces are denied cleanly' \
     'dependency source change reloads fresh cached data' \
@@ -814,7 +825,7 @@ if [ -f "${NFR5_PROOF}" ] &&
   pass "NFR5 cleanup proof is closed and backed by focused tests"
 else
   fail "NFR5 cleanup proof is incomplete" \
-    "$(cat /tmp/nfr5-tests-missing.txt 2>/dev/null) $(cat /tmp/nfr5-node-bootstrap-missing.txt 2>/dev/null) $(cat /tmp/nfr5-bootstrap-state-missing.txt 2>/dev/null) $(cat /tmp/nfr5-driver-loading-missing.txt 2>/dev/null) $(cat /tmp/nfr5-driver-invocation-missing.txt 2>/dev/null) $(cat /tmp/nfr5-execution-plan-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-grants-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-axes-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-resources-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-tests-missing.txt 2>/dev/null) $(cat /tmp/nfr5-code-cache-missing.txt 2>/dev/null) $(cat /tmp/nfr5-runtime-bundle-missing.txt 2>/dev/null) $(cat /tmp/nfr5-cargo-manifest-missing.txt 2>/dev/null) $(cat /tmp/nfr5-cargo-lock-missing.txt 2>/dev/null) $(cat /tmp/nfr5-deno-message-port-missing.txt 2>/dev/null) $(cat /tmp/nfr5-deno-structured-test-missing.txt 2>/dev/null) $(cat /tmp/nfr5-node-watchpoints-missing.txt 2>/dev/null) $(cat /tmp/nfr5-proof-missing.txt 2>/dev/null) $(cat /tmp/nfr5-plan-missing.txt 2>/dev/null)"
+    "$(cat /tmp/nfr5-tests-missing.txt 2>/dev/null) $(cat /tmp/nfr5-node-bootstrap-missing.txt 2>/dev/null) $(cat /tmp/nfr5-bootstrap-state-missing.txt 2>/dev/null) $(cat /tmp/nfr5-driver-loading-missing.txt 2>/dev/null) $(cat /tmp/nfr5-driver-invocation-missing.txt 2>/dev/null) $(cat /tmp/nfr5-construction-missing.txt 2>/dev/null) $(cat /tmp/nfr5-execution-plan-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-grants-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-axes-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-resources-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-tests-missing.txt 2>/dev/null) $(cat /tmp/nfr5-code-cache-missing.txt 2>/dev/null) $(cat /tmp/nfr5-runtime-bundle-missing.txt 2>/dev/null) $(cat /tmp/nfr5-cargo-manifest-missing.txt 2>/dev/null) $(cat /tmp/nfr5-cargo-lock-missing.txt 2>/dev/null) $(cat /tmp/nfr5-deno-message-port-missing.txt 2>/dev/null) $(cat /tmp/nfr5-deno-ops-missing.txt 2>/dev/null) $(cat /tmp/nfr5-deno-structured-test-missing.txt 2>/dev/null) $(cat /tmp/nfr5-node-watchpoints-missing.txt 2>/dev/null) $(cat /tmp/nfr5-proof-missing.txt 2>/dev/null) $(cat /tmp/nfr5-plan-missing.txt 2>/dev/null)"
 fi
 
 step 15 "NFR6 benchmark artifact records an evidence-backed rejection"
