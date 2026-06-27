@@ -28,7 +28,9 @@ pub use adapters::cloud_functions::CloudFunctionsRegistry;
 pub use adapters::convex::ConvexRegistry;
 pub use adapters::dynamodb::DynamoDbConfig;
 pub use adapters::firebase::FirebaseConfig;
-pub use adapters::mongodb::{AuthConfig as MongoDbAuthConfig, MongoDbConfig};
+pub use adapters::mongodb::{
+    AuthConfig as MongoDbAuthConfig, CredentialRegistry as MongoDbCredentialRegistry, MongoDbConfig,
+};
 pub use artifact_verifier_effects::{
     ArtifactVerifierCommandBackend, ArtifactVerifierCommandInvocation,
     ArtifactVerifierCommandOutput, ArtifactVerifierCommandRunner, CosignVerifierBackend,
