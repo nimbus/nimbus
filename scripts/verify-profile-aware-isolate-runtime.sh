@@ -682,12 +682,13 @@ step 26 "PIR6 web-lean snapshot registry shape is explicit and tested"
 if [ -f "${BOOTSTRAP_EXTENSIONS}" ] &&
   [ -f "${PIR6_PROOF}" ] &&
   contains 'fn snapshot_extension_labels' "${BOOTSTRAP_EXTENSIONS}" &&
-  contains 'web_standard_snapshot_registry_is_lean_runtime_only' "${BOOTSTRAP_EXTENSIONS}" &&
+  contains 'web_standard_snapshot_registry_carries_web_extensions_not_node_internals' "${BOOTSTRAP_EXTENSIONS}" &&
   contains 'node_snapshot_registry_extends_ordered_node_slots' "${BOOTSTRAP_EXTENSIONS}" &&
   contains 'RuntimeCompatibilityTarget::WebStandardIsolate' "${BOOTSTRAP_EXTENSIONS}" &&
-  contains 'vec!\["nimbus_runtime", "nimbus_runtime_test"\]' "${BOOTSTRAP_EXTENSIONS}" &&
+  contains 'labels.push\("nimbus_runtime"\)' "${BOOTSTRAP_EXTENSIONS}" &&
+  contains 'labels.push\("nimbus_runtime_test"\)' "${BOOTSTRAP_EXTENSIONS}" &&
   contains 'cargo test -p nimbus-runtime snapshot_registry --lib -- --nocapture' "${PIR6_PROOF}" &&
-  contains '2 passed, 0 failed, 970 filtered out' "${PIR6_PROOF}" &&
+  contains '2 passed, 0 failed, 1231 filtered out' "${PIR6_PROOF}" &&
   contains 'web-lean snapshot shape proof' "${PLAN}"; then
   pass "PIR6 records a tested web-lean snapshot registry shape"
 else
@@ -1235,7 +1236,8 @@ step 43 "PIR3 native and bootstrap side-channel hardening is wired"
 if [ -f "${RUNTIME_CONSTRUCTION}" ] &&
   [ -f "${RUNTIME_BOOTSTRAP_SOURCE}" ] &&
   [ -f "${RUNTIME_V8_EMBEDDER}" ] &&
-  contains 'shared_array_buffer_store: None' "${RUNTIME_CONSTRUCTION}" &&
+  [ -f "${PIR3_PROOF}" ] &&
+  contains 'shared_array_buffer_store: Some\(SharedArrayBufferStore::default\(\)\)' "${RUNTIME_CONSTRUCTION}" &&
   contains 'allow_atomics_wait\(false\)' "${RUNTIME_CONSTRUCTION}" &&
   contains_all "${RUNTIME_BOOTSTRAP_SOURCE}" \
     'NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE' \
@@ -1250,8 +1252,12 @@ if [ -f "${RUNTIME_CONSTRUCTION}" ] &&
     'SharedArrayBuffer' \
     '<nimbus-runtime:bootstrap:side-channel-hardening>' \
     'pir3_side_channel_hardening_source_coarsens_timers_and_removes_shared_memory' >/tmp/pir3-bootstrap-missing.txt &&
-  ! contains 'SharedArrayBufferStore' "${RUNTIME_V8_EMBEDDER}"; then
-  pass "runtime construction disables Atomics.wait, withholds SAB store, and installs timer/SAB/Atomics bootstrap hardening"
+  contains 'SharedArrayBufferStore' "${RUNTIME_V8_EMBEDDER}" &&
+  contains 'embedder-owned transfer' "${PIR3_PROOF}" &&
+  contains 'backing store' "${PIR3_PROOF}" &&
+  contains 'SharedArrayBuffer remains hidden from user code' "${PIR3_PROOF}" &&
+  contains '1226 filtered out' "${PIR3_PROOF}"; then
+  pass "runtime construction disables Atomics.wait, hides SAB from user code, and keeps the embedder backing store policy-scoped"
 else
   fail "PIR3 runtime hardening is incomplete" "$(cat /tmp/pir3-bootstrap-missing.txt 2>/dev/null)"
 fi
@@ -2017,9 +2023,9 @@ if [ -f "${PIR2_NODE_REALM_PROOF}" ] &&
     'RestrictedModuleLoader::new' >/tmp/pir2-node-realm-construction-missing.txt &&
   contains_all "${BOOTSTRAP_EXTENSIONS}" \
     'struct NodeExecutionExtensionContext' \
-    'loader_hook_registry: Option<LoaderHookRegistry>' \
     'build_node_init_services' \
-    'context.loader_hook_registry.clone' \
+    'loader_hook_registry: Option<LoaderHookRegistry>' \
+    'loader_hook_registry_extension\(Some\(registry\)\)' \
     'fn snapshot_extension' \
     'fn execution_extension' >/tmp/pir2-node-realm-extensions-missing.txt &&
   contains_all "crates/nimbus-runtime/src/module_loader.rs" \
@@ -2027,8 +2033,8 @@ if [ -f "${PIR2_NODE_REALM_PROOF}" ] &&
     'set_default_resolve' \
     'registry.resolve' \
     'push_load' \
-    'take_async_resolve' \
-    'take_resolved_format' >/tmp/pir2-node-realm-module-loader-missing.txt &&
+    'take_resolved_attributes' \
+    'module_type_from_hook_format' >/tmp/pir2-node-realm-module-loader-missing.txt &&
   contains_all "crates/nimbus-runtime/src/limits/axes.rs" \
     'WarmContextRecycle' \
     'RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority' \
@@ -3716,7 +3722,7 @@ if [ -f "${V8_STARTUP_KEY}" ] &&
     'service_extension_enabled' \
     'startup_snapshot_key_partitions_optional_service_extension' >/tmp/pir-post-optimization-snapshot-key-missing.txt &&
   contains_all "${V8_STARTUP}" \
-    'V8_STARTUP_SNAPSHOT_BUILD_LOCK' \
+    'deno_core::shared_ro_heap_serialize_lock\(\)' \
     'create_v8_startup_snapshot' \
     'service_extension_enabled: bool' \
     'snapshot_extensions\(compatibility_target, service_extension_enabled\)' >/tmp/pir-post-optimization-startup-missing.txt &&
@@ -3740,7 +3746,7 @@ if [ -f "${V8_STARTUP_KEY}" ] &&
     'Host-Bridge Session And Snapshot Safety Closeout' \
     'WebLeanService' \
     'NodeFullService' \
-    'V8_STARTUP_SNAPSHOT_BUILD_LOCK' \
+    'deno_core::shared_ro_heap_serialize_lock' \
     'cargo test -p nimbus-runtime backends::v8::startup_key --lib' \
     '3 passed; 0 failed; 1115 filtered out' \
     'cargo test -p nimbus-runtime runtime::tests::host_bridge --lib' \

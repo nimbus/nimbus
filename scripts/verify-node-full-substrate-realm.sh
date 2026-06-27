@@ -7,7 +7,13 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/private/plans/node-full-substrate-realm-plan.md"
+PLAN_ACTIVE="docs/private/plans/node-full-substrate-realm-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/node-full-substrate-realm-plan.md"
+if [ -f "${PLAN_ACTIVE}" ]; then
+  PLAN="${PLAN_ACTIVE}"
+else
+  PLAN="${PLAN_ARCHIVED}"
+fi
 CARGO_MANIFEST="Cargo.toml"
 CARGO_LOCK="Cargo.lock"
 NFR1_PROOF="docs/private/plans/proof/node-full-substrate-realm/nfr1-profile-keyed-startup-snapshot.md"
