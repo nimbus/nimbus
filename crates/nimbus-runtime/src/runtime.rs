@@ -131,4 +131,5 @@ mod tests {
     mod verification_harness;
     mod warm_pool;
     mod wasmtime_fuel;
+    mod wasmtime_store_pool;
 }

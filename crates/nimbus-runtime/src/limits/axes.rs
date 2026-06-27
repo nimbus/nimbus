@@ -662,9 +662,10 @@ pub(super) fn validate_backend_policy_axes(limits: &RuntimeLimits) {
             if !matches!(
                 limits.backend_lifecycle_policy,
                 RuntimeBackendLifecyclePolicy::WasmtimePrecompiledModuleCache
+                    | RuntimeBackendLifecyclePolicy::WasmtimeRetainedStorePool
             ) {
                 panic!(
-                    "Wasmtime runtime backend requires precompiled-module-cache lifecycle policy before retained Store pooling lands, got {:?}",
+                    "Wasmtime runtime backend requires a Wasmtime lifecycle policy, got {:?}",
                     limits.backend_lifecycle_policy
                 );
             }
@@ -712,11 +713,26 @@ pub(super) fn validate_backend_policy_axes(limits: &RuntimeLimits) {
             }
             if !matches!(
                 limits.runtime_pool_kind,
-                RuntimePoolKind::PrecompiledModuleCache
+                RuntimePoolKind::PrecompiledModuleCache | RuntimePoolKind::RetainedStorePool
             ) {
                 panic!(
-                    "Wasmtime runtime backend requires the precompiled module cache pool before retained Store pooling lands, got {:?}",
+                    "Wasmtime runtime backend requires a Wasmtime pool kind, got {:?}",
                     limits.runtime_pool_kind
+                );
+            }
+            if !matches!(
+                (limits.backend_lifecycle_policy, limits.runtime_pool_kind),
+                (
+                    RuntimeBackendLifecyclePolicy::WasmtimePrecompiledModuleCache,
+                    RuntimePoolKind::PrecompiledModuleCache,
+                ) | (
+                    RuntimeBackendLifecyclePolicy::WasmtimeRetainedStorePool,
+                    RuntimePoolKind::RetainedStorePool,
+                )
+            ) {
+                panic!(
+                    "Wasmtime lifecycle policy {:?} must match pool kind {:?}",
+                    limits.backend_lifecycle_policy, limits.runtime_pool_kind
                 );
             }
             if !matches!(

@@ -15,6 +15,7 @@ use crate::runtime::{RuntimeBundle, RuntimeComponentWorld};
 use super::host_linker::{
     WasmtimeHostLinker, build_nimbus_host_linker, create_wasmtime_component_engine,
 };
+use super::store_pool::{ReusableStore, WasmtimeStoreAuthorityKey, WasmtimeStorePool};
 
 const WASMTIME_ENGINE_CONFIG_HASH: &str =
     "wasmtime-46.0.1|component-model|component-async|fuel|epoch";
@@ -55,6 +56,7 @@ impl WasmtimeBackendFactory {
             engine: self.shared.engine.clone(),
             linker: self.shared.linker.clone(),
             module_cache: self.shared.module_cache.clone(),
+            store_pool: WasmtimeStorePool::new(),
         }
     }
 }
@@ -69,6 +71,7 @@ pub(crate) struct WasmtimeBackend {
     engine: wasmtime::Engine,
     linker: WasmtimeHostLinker,
     module_cache: Arc<WasmtimeModuleCache>,
+    store_pool: WasmtimeStorePool,
 }
 
 impl RuntimeBackend for WasmtimeBackend {
@@ -126,26 +129,102 @@ impl WasmtimeBackend {
         }
 
         let component = self.module_cache.get_or_compile(&bundle)?;
+        if matches!(
+            policy.limits().runtime_pool_kind,
+            crate::limits::RuntimePoolKind::RetainedStorePool
+        ) {
+            let authority = WasmtimeStoreAuthorityKey::for_invocation(&policy, &bundle, &context)?;
+            let mut reusable_store = self.take_or_create_reusable_store(
+                &authority,
+                &host,
+                &policy,
+                &context,
+                cancellation.clone(),
+            );
+            reusable_store.store_mut().data_mut().reset_for_invocation(
+                host.bridge(),
+                context,
+                cancellation,
+                &policy,
+            );
+            let result = invoke_with_store(
+                &self.linker,
+                component.as_ref(),
+                reusable_store.store_mut(),
+                request,
+                &policy,
+            )
+            .await;
+            if result.is_ok() {
+                self.store_pool.return_store(reusable_store);
+            }
+            return result;
+        }
+
+        let mut store = self.create_store(&host, &policy, context, cancellation);
+        invoke_with_store(
+            &self.linker,
+            component.as_ref(),
+            &mut store,
+            request,
+            &policy,
+        )
+        .await
+    }
+
+    fn create_store(
+        &self,
+        host: &crate::runtime::RuntimeHost,
+        policy: &RuntimePolicy,
+        context: crate::RuntimeInvocationContext,
+        cancellation: Option<crate::host::HostCallCancellation>,
+    ) -> wasmtime::Store<super::host_linker::InvocationHostState> {
         let mut store = wasmtime::Store::new(
             &self.engine,
-            super::host_linker::InvocationHostState::new(
+            super::host_linker::InvocationHostState::new_for_policy(
                 host.bridge(),
-                context.clone(),
+                context,
                 cancellation,
+                policy,
             ),
         );
+        store.limiter(|state| state.resource_limiter());
         store
-            .set_fuel(fuel_budget_for_policy(&policy))
-            .map_err(wasmtime_error_for_policy(&policy))?;
-
-        let instance = self
-            .linker
-            .instantiate_async(&mut store, component.as_ref())
-            .await
-            .map_err(wasmtime_error_for_policy(&policy))?;
-        let args = serde_json::to_string(&request.args)?;
-        call_nimbus_function_handler(&instance, &mut store, args, &policy).await
     }
+
+    fn take_or_create_reusable_store(
+        &mut self,
+        authority: &WasmtimeStoreAuthorityKey,
+        host: &crate::runtime::RuntimeHost,
+        policy: &RuntimePolicy,
+        context: &crate::RuntimeInvocationContext,
+        cancellation: Option<crate::host::HostCallCancellation>,
+    ) -> ReusableStore {
+        self.store_pool.take(authority).unwrap_or_else(|| {
+            ReusableStore::new(
+                self.create_store(host, policy, context.clone(), cancellation),
+                authority.clone(),
+            )
+        })
+    }
+}
+
+async fn invoke_with_store(
+    linker: &WasmtimeHostLinker,
+    component: &Component,
+    store: &mut wasmtime::Store<super::host_linker::InvocationHostState>,
+    request: crate::runtime::InvocationRequest,
+    policy: &RuntimePolicy,
+) -> Result<Value> {
+    store
+        .set_fuel(fuel_budget_for_policy(policy))
+        .map_err(wasmtime_error_for_policy(policy))?;
+    let instance = linker
+        .instantiate_async(&mut *store, component)
+        .await
+        .map_err(wasmtime_error_for_policy(policy))?;
+    let args = serde_json::to_string(&request.args)?;
+    call_nimbus_function_handler(&instance, store, args, policy).await
 }
 
 async fn call_nimbus_function_handler(
@@ -198,6 +277,8 @@ fn wasmtime_error_for_policy(
     move |error| {
         if is_wasmtime_out_of_fuel(&error) {
             NimbusRuntimeError::ExecutionTimeout(policy.limits().execution_timeout)
+        } else if is_wasmtime_resource_limiter_memory_error(&error) {
+            NimbusRuntimeError::HeapLimitExceeded(policy.limits().max_heap_mb)
         } else {
             wasmtime_error(error)
         }
@@ -215,6 +296,14 @@ fn is_wasmtime_out_of_fuel(error: &wasmtime::Error) -> bool {
     message.contains("all fuel consumed")
         || message.contains("wasm trap: interrupt")
         || message.contains("OutOfFuel")
+}
+
+fn is_wasmtime_resource_limiter_memory_error(error: &wasmtime::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .to_string()
+            .contains("Wasmtime ResourceLimiter memory limit exceeded")
+    })
 }
 
 fn fuel_budget_for_policy(policy: &RuntimePolicy) -> u64 {
