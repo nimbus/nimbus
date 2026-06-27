@@ -2,20 +2,20 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::backends::v8::{DeferredV8RuntimeDropQueue, V8WorkerRuntimePool};
 use crate::executor::{RuntimeWorkerJob, SharedInvocationPermit};
 use crate::host::HostCallCancellation;
 use crate::limits::RuntimePolicy;
-use crate::runtime::CooperativeLockerRuntimeSlot;
 use crate::watchdog::WatchdogTimer;
 
 use super::{WorkerLoop, WorkerLoopFactory};
 
+mod backend;
 mod execution;
 mod retention;
 mod run;
 mod scheduler;
 
+use self::backend::{CooperativeBackendDriver, CooperativeBackendSlot, V8LockerDriver};
 use self::scheduler::{CooperativeRunnableSlot, CooperativeScheduler};
 
 pub(crate) struct CooperativeWorkerLoopFactory {
@@ -49,38 +49,39 @@ impl WorkerLoopFactory for CooperativeWorkerLoopFactory {
             worker_id,
             policy,
             self.watchdog.clone(),
+            V8LockerDriver::new(),
             #[cfg(test)]
             self.test_state.clone(),
         ))
     }
 }
 
-struct CooperativeWorkerLoop {
+struct CooperativeWorkerLoop<D: CooperativeBackendDriver> {
     worker_id: usize,
     policy: Arc<RuntimePolicy>,
     watchdog: WatchdogTimer,
     worker_runtime: tokio::runtime::Runtime,
-    v8_runtime_pool: V8WorkerRuntimePool,
+    driver: D,
     activity_signal: Arc<crate::executor::WorkerActivitySignal>,
     activity_generation: u64,
-    scheduler: CooperativeScheduler<CooperativeInvocation>,
+    scheduler: CooperativeScheduler<CooperativeInvocation<D::Slot>>,
     pending_admissions: VecDeque<RuntimeWorkerJob>,
-    deferred_v8_runtime_drops: DeferredV8RuntimeDropQueue,
 }
 
-struct CooperativeInvocation {
+struct CooperativeInvocation<S: CooperativeBackendSlot> {
     job: RuntimeWorkerJob,
     permit: SharedInvocationPermit,
-    slot: CooperativeLockerRuntimeSlot,
+    slot: S,
     execution_started_at: Instant,
     cancellation_for_metrics: Option<HostCallCancellation>,
 }
 
-impl CooperativeWorkerLoop {
+impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
     fn new(
         worker_id: usize,
         policy: Arc<RuntimePolicy>,
         watchdog: WatchdogTimer,
+        driver: D,
         #[cfg(test)] test_state: Option<Arc<crate::executor::RuntimeExecutorTestState>>,
     ) -> Self {
         let worker_runtime = tokio::runtime::Builder::new_current_thread()
@@ -100,12 +101,11 @@ impl CooperativeWorkerLoop {
             policy,
             watchdog,
             worker_runtime,
-            v8_runtime_pool: V8WorkerRuntimePool::new(),
+            driver,
             activity_signal,
             activity_generation,
             scheduler: CooperativeScheduler::new(),
             pending_admissions: VecDeque::new(),
-            deferred_v8_runtime_drops: DeferredV8RuntimeDropQueue::new(),
         }
     }
 }
