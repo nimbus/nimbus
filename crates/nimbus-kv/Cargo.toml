@@ -1,0 +1,22 @@
+[package]
+name = "nimbus-kv"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hex.workspace = true
+nimbus-core = { path = "../nimbus-core" }
+rand.workspace = true
+redis-protocol.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+redis.workspace = true

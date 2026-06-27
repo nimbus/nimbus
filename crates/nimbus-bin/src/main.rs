@@ -14,6 +14,7 @@ mod encryption;
 mod explain;
 mod function_scaling;
 mod init;
+mod kv;
 mod list;
 mod local_server_client;
 mod machine;
@@ -47,6 +48,7 @@ use crate::dev::{DevCommand, run_dev_command};
 use crate::encryption::{EncryptionCommand, run_encryption_command};
 use crate::explain::{ExplainCommand, run_explain_command};
 use crate::init::{InitCommand, run_init_command};
+use crate::kv::{KvCommand, run_kv_command};
 use crate::list::{ListCommand, run_list_command};
 use crate::machine::{MachineCommand, run_machine_command};
 use crate::node_service::{NodeCommand, run_node_command};
@@ -96,6 +98,8 @@ enum Command {
     Codegen(CodegenCommand),
     /// Scaffold a new Nimbus project.
     Init(InitCommand),
+    /// Run the Nimbus KV RESP listener.
+    Kv(KvCommand),
     /// Local admin token management commands.
     #[command(subcommand)]
     Token(TokenCommand),
@@ -152,6 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Sandbox(command) => run_sandbox_command(command).await?,
         Command::Codegen(command) => run_codegen_command(command).await?,
         Command::Init(command) => run_init_command(command).await?,
+        Command::Kv(command) => run_kv_command(command).await?,
         Command::Token(command) => run_token_command(command).await?,
         Command::Auth(command) => run_auth_command(command).await?,
         Command::Backup(command) => run_backup_command(command).await?,
@@ -341,6 +346,25 @@ mod tests {
         assert!(
             matches!(cli.command, Command::ContainerRunner(_)),
             "container-runner should parse as the packaged internal entrypoint"
+        );
+    }
+
+    #[test]
+    fn kv_root_command_parses() {
+        let cli = Cli::parse_from([
+            "nimbus",
+            "kv",
+            "--bind",
+            "127.0.0.1:6380",
+            "--tenant",
+            "tenant-a",
+            "--password",
+            "secret",
+        ]);
+
+        assert!(
+            matches!(cli.command, Command::Kv(_)),
+            "nimbus kv should parse as a first-class root command"
         );
     }
 }

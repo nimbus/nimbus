@@ -211,8 +211,8 @@ c6_cache=0
 c6_incr_test=0
 c6_expiry_test=0
 if dir_has_rs "${KV_SRC}"; then
-  grep_dir 'maxmemory|no[-_]?disk|no[-_]?cache|NoDisk|NoCache|cache.*mode|tier' "${KV_SRC}" && c6_config=1
-  grep_dir 'cache|Cache|hit|miss' "${KV_SRC}" && c6_cache=1
+  grep_dir 'maxmemory|no[-_]?disk|no[-_]?cache|NoDisk|NoCache|CacheMode|TieringConfig' "${KV_SRC}" && c6_config=1
+  grep_dir 'struct[[:space:]]+.*Cache|enum[[:space:]]+.*Cache|CacheMode|cache_hit|cache_miss' "${KV_SRC}" && c6_cache=1
 fi
 if [ -d "${KV_TESTS}" ]; then
   grep -rqE 'concurrent.*INCR|INCR.*concurrent|disk.*no.?disk|no.?disk.*INCR|incr.*coher' "${KV_TESTS}" 2>/dev/null && c6_incr_test=1
@@ -232,7 +232,7 @@ c7_skip_sections=0
 c7_minimum=0
 c7_valkey=0
 if [ -d "${KV_TESTS}" ]; then
-  grep -rqE 'REDISRS_SERVER_BIN|redis::Client|Command::new|spawn.*nimbus[-_]kv|PING' "${KV_TESTS}" 2>/dev/null && c7_redis_rs=1
+  grep -rqE 'REDISRS_SERVER_BIN|Command::new|spawn.*nimbus[-_]kv' "${KV_TESTS}" 2>/dev/null && c7_redis_rs=1
 fi
 [ -f "${CONFORMANCE_SCRIPT}" ] && c7_script=1
 SKIPFILE="$(skipfile_path)"
