@@ -107,6 +107,46 @@ skipfile_path() {
   printf ''
 }
 
+ci_branch() {
+  if [ -n "${NIMBUS_VERIFY_CI_BRANCH:-}" ]; then
+    printf '%s\n' "${NIMBUS_VERIFY_CI_BRANCH}"
+    return 0
+  fi
+
+  branch="$(git branch --show-current 2>/dev/null || true)"
+  if [ -n "${branch}" ]; then
+    printf '%s\n' "${branch}"
+  else
+    printf 'main\n'
+  fi
+}
+
+ci_workflow_green() {
+  branch="$1"
+  if ! command -v gh >/dev/null 2>&1; then
+    printf '        note: gh not on PATH; ci.yml for %s is UNVERIFIED\n' "${branch}"
+    return 1
+  fi
+
+  latest="$(gh run list --branch "${branch}" --workflow ci.yml --limit 1 --json conclusion,status,databaseId,headSha 2>/dev/null || true)"
+  if [ -z "${latest}" ] || [ "${latest}" = "[]" ]; then
+    printf '        note: no ci.yml run found for branch %s\n' "${branch}"
+    return 1
+  fi
+
+  conclusion="$(printf '%s\n' "${latest}" | grep -oE '"conclusion":"[^"]*"' | head -n 1 | cut -d: -f2 | tr -d '"')"
+  status="$(printf '%s\n' "${latest}" | grep -oE '"status":"[^"]*"' | head -n 1 | cut -d: -f2 | tr -d '"')"
+  run_id="$(printf '%s\n' "${latest}" | grep -oE '"databaseId":[0-9]+' | head -n 1 | cut -d: -f2)"
+
+  if [ "${conclusion}" = "success" ]; then
+    return 0
+  fi
+
+  printf '        note: latest ci.yml for %s is status=%s conclusion=%s run=%s\n' \
+    "${branch}" "${status:-unknown}" "${conclusion:-none}" "${run_id:-unknown}"
+  return 1
+}
+
 # -------- conditions -------------------------------------------------------
 
 printf '\033[1mNKV verification gate - nimbus-kv-foundation\033[0m\n'
@@ -257,6 +297,7 @@ c8_smoke=0
 c8_doc=0
 c8_ledger=0
 c8_ci=0
+c8_ci_branch="$(ci_branch)"
 if grep_any 'GET.*SET.*DEL.*EXPIRE.*INCR|SET.*GET.*DEL.*EXPIRE.*INCR|RESP2.*RESP3|RESP3.*RESP2' "${KV_TESTS}" "${PROOF_DIR}"; then
   c8_smoke=1
 fi
@@ -272,22 +313,11 @@ if [ -n "${PLAN_FILE}" ]; then
     c8_ledger=1
   fi
 fi
-if command -v gh >/dev/null 2>&1; then
-  latest="$(gh run list --branch main --workflow ci.yml --limit 1 --json conclusion 2>/dev/null | grep -oE '"conclusion":"[^"]*"' | head -n 1)"
-  if [ "${latest}" = '"conclusion":"success"' ]; then
-    c8_ci=1
-  elif [ -z "${latest}" ]; then
-    c8_ci=1
-    printf '        note: gh returned no ci.yml conclusion for main; CI-green ASSUMED - verify manually\n'
-  fi
-else
-  c8_ci=1
-  printf '        note: gh not on PATH; CI-green for main is UNVERIFIED locally (CI enforces it on merge)\n'
-fi
+ci_workflow_green "${c8_ci_branch}" && c8_ci=1
 if [ "${c8_smoke}" = "1" ] && [ "${c8_doc}" = "1" ] && [ "${c8_ledger}" = "1" ] && [ "${c8_ci}" = "1" ]; then
   pass "smoke proof/test, operator doc, ledger clean, CI green"
 else
-  fail "F5 closeout incomplete" "smoke=${c8_smoke} doc=${c8_doc} ledger=${c8_ledger} ci=${c8_ci}"
+  fail "F5 closeout incomplete" "smoke=${c8_smoke} doc=${c8_doc} ledger=${c8_ledger} ci=${c8_ci} ci_branch=${c8_ci_branch}"
 fi
 
 # 9. F1 security: bind guard + auth + credential-to-tenant isolation.
