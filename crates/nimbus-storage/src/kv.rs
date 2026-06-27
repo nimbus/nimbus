@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::keys::prefix_end;
 use crate::store::{TenantStore, map_redb_error};
 use crate::traits::{
-    KvBatchOp, KvBatchOutcome, KvEntry, KvPut, KvScanPage, KvStorageEngine, KvSweepOutcome,
-    TenantKvStore,
+    KvBatchOp, KvBatchOutcome, KvEntry, KvMutation, KvPut, KvScanPage, KvStorageEngine,
+    KvSweepOutcome, TenantKvStore,
 };
 
 const KV_VALUES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("kv_values");
@@ -60,6 +60,15 @@ impl TenantKvStore for RedbTenantKvStore {
 
     fn kv_apply_batch(&self, ops: &[KvBatchOp]) -> Result<KvBatchOutcome> {
         self.inner.kv_apply_batch(ops)
+    }
+
+    fn kv_update(
+        &self,
+        key: &[u8],
+        now_ms: i64,
+        update: &mut dyn FnMut(Option<KvEntry>) -> Result<KvMutation>,
+    ) -> Result<Option<KvEntry>> {
+        self.inner.kv_update(key, now_ms, update)
     }
 
     fn kv_sweep_expired(&self, now_ms: i64, limit: usize) -> Result<KvSweepOutcome> {
@@ -223,6 +232,22 @@ impl TenantKvStore for TenantStore {
         Ok(outcome)
     }
 
+    fn kv_update(
+        &self,
+        key: &[u8],
+        now_ms: i64,
+        update: &mut dyn FnMut(Option<KvEntry>) -> Result<KvMutation>,
+    ) -> Result<Option<KvEntry>> {
+        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
+        let updated = {
+            let mut values = write_txn.open_table(KV_VALUES).map_err(map_redb_error)?;
+            let mut expiry = write_txn.open_table(KV_EXPIRY).map_err(map_redb_error)?;
+            apply_update(&mut values, &mut expiry, key, now_ms, update)?
+        };
+        write_txn.commit().map_err(map_redb_error)?;
+        Ok(updated)
+    }
+
     fn kv_sweep_expired(&self, now_ms: i64, limit: usize) -> Result<KvSweepOutcome> {
         if limit == 0 {
             return Ok(KvSweepOutcome::default());
@@ -382,6 +407,55 @@ fn apply_delete(
     let previous = decode_record(value.value())?;
     remove_expiry_index(expiry, key, previous.expire_at_ms)?;
     Ok(true)
+}
+
+fn apply_update(
+    values: &mut redb::Table<&[u8], &[u8]>,
+    expiry: &mut redb::Table<&[u8], &[u8]>,
+    key: &[u8],
+    now_ms: i64,
+    update: &mut dyn FnMut(Option<KvEntry>) -> Result<KvMutation>,
+) -> Result<Option<KvEntry>> {
+    let previous = values
+        .get(key)
+        .map_err(map_redb_error)?
+        .map(|value| decode_record(value.value()))
+        .transpose()?;
+    let visible_previous = match previous {
+        Some(record) if record.is_expired_at(now_ms) => {
+            remove_expiry_index(expiry, key, record.expire_at_ms)?;
+            values.remove(key).map_err(map_redb_error)?;
+            None
+        }
+        Some(record) => Some(record.into_entry(key.to_vec())),
+        None => None,
+    };
+
+    match update(visible_previous.clone())? {
+        KvMutation::Keep => Ok(visible_previous),
+        KvMutation::Delete => {
+            if let Some(previous) = visible_previous {
+                remove_expiry_index(expiry, key, previous.expire_at_ms)?;
+                values.remove(key).map_err(map_redb_error)?;
+            }
+            Ok(None)
+        }
+        KvMutation::Put(put) => {
+            if put.key != key {
+                return Err(Error::InvalidInput(
+                    "kv_update put key must match update key".to_string(),
+                ));
+            }
+            let entry = KvEntry {
+                key: put.key.clone(),
+                value: put.value.clone(),
+                metadata: put.metadata.clone(),
+                expire_at_ms: put.expire_at_ms,
+            };
+            apply_put(values, expiry, put)?;
+            Ok(Some(entry))
+        }
+    }
 }
 
 fn remove_expiry_index(
@@ -559,6 +633,40 @@ mod tests {
             .map(|entry| (entry.key, entry.value))
             .collect();
         assert_eq!(entries, vec![(b"ttl:live".to_vec(), b"new".to_vec())]);
+    }
+
+    #[test]
+    fn kv_update_performs_read_modify_write_inside_one_transaction() {
+        let store = TenantStore::create_in_memory().expect("store should open");
+        store
+            .kv_put(KvPut::new("counter", "41"))
+            .expect("put should succeed");
+
+        let mut increment = |previous: Option<KvEntry>| {
+            let previous = previous.expect("counter should exist");
+            let value = std::str::from_utf8(&previous.value)
+                .expect("counter is utf8")
+                .parse::<i64>()
+                .expect("counter parses");
+            Ok(KvMutation::Put(KvPut::new(
+                previous.key,
+                (value + 1).to_string(),
+            )))
+        };
+        let updated = store
+            .kv_update(b"counter", 0, &mut increment)
+            .expect("update should commit")
+            .expect("updated entry should exist");
+
+        assert_eq!(updated.value, b"42");
+        assert_eq!(
+            store
+                .kv_get(b"counter", 0)
+                .expect("get succeeds")
+                .expect("entry exists")
+                .value,
+            b"42"
+        );
     }
 
     #[test]

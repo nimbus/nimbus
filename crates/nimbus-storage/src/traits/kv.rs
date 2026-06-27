@@ -16,6 +16,12 @@ pub trait TenantKvStore {
         now_ms: i64,
     ) -> Result<KvScanPage>;
     fn kv_apply_batch(&self, ops: &[KvBatchOp]) -> Result<KvBatchOutcome>;
+    fn kv_update(
+        &self,
+        key: &[u8],
+        now_ms: i64,
+        update: &mut dyn FnMut(Option<KvEntry>) -> Result<KvMutation>,
+    ) -> Result<Option<KvEntry>>;
     fn kv_sweep_expired(&self, now_ms: i64, limit: usize) -> Result<KvSweepOutcome>;
 }
 
@@ -68,6 +74,13 @@ impl KvPut {
 pub enum KvBatchOp {
     Put(KvPut),
     Delete(Vec<u8>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KvMutation {
+    Put(KvPut),
+    Delete,
+    Keep,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

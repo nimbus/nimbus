@@ -143,3 +143,53 @@ async fn tenant_a_credential_cannot_read_tenant_b_keys() {
     );
     server.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resp_get_set_del_expire_ttl_incr_round_trip() {
+    let password = "secret";
+    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), password);
+    let (addr, server) = spawn_test_server(credentials).await;
+
+    let url = format!("redis://:{password}@{addr}/");
+    let result = tokio::task::spawn_blocking(move || {
+        let client = redis::Client::open(url).expect("redis client should parse URL");
+        let mut connection = client.get_connection().expect("redis-rs client connects");
+        let set: String = redis::cmd("SET")
+            .arg("counter")
+            .arg("41")
+            .query(&mut connection)
+            .expect("SET should succeed");
+        let get: String = redis::cmd("GET")
+            .arg("counter")
+            .query(&mut connection)
+            .expect("GET should return value");
+        let incr: i64 = redis::cmd("INCR")
+            .arg("counter")
+            .query(&mut connection)
+            .expect("INCR should succeed");
+        let expire: i64 = redis::cmd("EXPIRE")
+            .arg("counter")
+            .arg(60)
+            .query(&mut connection)
+            .expect("EXPIRE should succeed");
+        let ttl: i64 = redis::cmd("TTL")
+            .arg("counter")
+            .query(&mut connection)
+            .expect("TTL should succeed");
+        let del: i64 = redis::cmd("DEL")
+            .arg("counter")
+            .query(&mut connection)
+            .expect("DEL should succeed");
+        (set, get, incr, expire, ttl, del)
+    })
+    .await
+    .expect("blocking redis client task joins");
+
+    assert_eq!(result.0, "OK");
+    assert_eq!(result.1, "41");
+    assert_eq!(result.2, 42);
+    assert_eq!(result.3, 1);
+    assert!(result.4 > 0, "TTL should be positive, got {}", result.4);
+    assert_eq!(result.5, 1);
+    server.abort();
+}

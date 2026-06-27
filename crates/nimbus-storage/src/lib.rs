@@ -114,7 +114,7 @@ pub use table_identity::{
 };
 pub use traits::{
     ControlPlaneUsage, DurableJournal, KeyProviderSurface, KvBatchOp, KvBatchOutcome, KvEntry,
-    KvPut, KvScanPage, KvStorageEngine, KvSweepOutcome, SchedulerStore, StorageEngine,
+    KvMutation, KvPut, KvScanPage, KvStorageEngine, KvSweepOutcome, SchedulerStore, StorageEngine,
     TenantKvStore, TenantLifecycle, TenantPointRead, TenantPointWrite, TenantRangeScan,
 };
 pub use usage_store::{MonthlyActiveUsersSnapshot, UsageStore};
