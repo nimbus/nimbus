@@ -14,10 +14,8 @@ impl HostBridge for WasmtimeStorePoolHost {
 #[tokio::test]
 async fn wasmtime_store_pool_invokes_component_with_retained_store_pool() {
     let (_tempdir, bundle) = write_component_fixture(nimbus_function_component_wat());
-    let runtime = NimbusRuntime::with_policy(
-        Arc::new(WasmtimeStorePoolHost),
-        Arc::new(RuntimePolicy::new(wasmtime_store_pool_test_limits())),
-    );
+    let policy = Arc::new(RuntimePolicy::new(wasmtime_store_pool_test_limits()));
+    let runtime = NimbusRuntime::with_policy(Arc::new(WasmtimeStorePoolHost), policy.clone());
 
     let first = runtime
         .invoke_bundle(&bundle, &request())
@@ -30,6 +28,18 @@ async fn wasmtime_store_pool_invokes_component_with_retained_store_pool() {
 
     assert_eq!(first, serde_json::json!({ "ok": true }));
     assert_eq!(second, serde_json::json!({ "ok": true }));
+    let metrics = policy.metrics().snapshot();
+    assert_eq!(metrics.wasmtime_module_cache_misses, 1);
+    assert_eq!(metrics.wasmtime_module_cache_hits, 1);
+    assert_eq!(metrics.wasmtime_module_compilations, 1);
+    assert_eq!(metrics.wasmtime_store_pool_misses, 1);
+    assert_eq!(metrics.wasmtime_store_pool_hits, 1);
+    assert_eq!(metrics.wasmtime_store_pool_authority_mismatches, 0);
+    assert_eq!(metrics.wasmtime_fuel_exhaustions, 0);
+    assert!(
+        metrics.wasmtime_fuel_consumed_total > 0,
+        "successful Wasmtime invocations should report consumed fuel"
+    );
 }
 
 #[tokio::test]

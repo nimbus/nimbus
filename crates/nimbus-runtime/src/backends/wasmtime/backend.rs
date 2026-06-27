@@ -3,6 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use wasmtime::component::Component;
@@ -15,7 +16,9 @@ use crate::runtime::{RuntimeBundle, RuntimeComponentWorld};
 use super::host_linker::{
     WasmtimeHostLinker, build_nimbus_host_linker, create_wasmtime_component_engine,
 };
-use super::store_pool::{ReusableStore, WasmtimeStoreAuthorityKey, WasmtimeStorePool};
+use super::store_pool::{
+    ReusableStore, WasmtimeStoreAuthorityKey, WasmtimeStorePool, WasmtimeStorePoolStats,
+};
 
 const WASMTIME_ENGINE_CONFIG_HASH: &str =
     "wasmtime-46.0.1|component-model|component-async|fuel|epoch";
@@ -128,7 +131,9 @@ impl WasmtimeBackend {
             }
         }
 
-        let component = self.module_cache.get_or_compile(&bundle)?;
+        let lookup = self.module_cache.get_or_compile(&bundle)?;
+        record_wasmtime_module_cache_lookup(&policy, &lookup);
+        let component = lookup.component;
         if matches!(
             policy.limits().runtime_pool_kind,
             crate::limits::RuntimePoolKind::RetainedStorePool
@@ -156,7 +161,7 @@ impl WasmtimeBackend {
             )
             .await;
             if result.is_ok() {
-                self.store_pool.return_store(reusable_store);
+                self.return_reusable_store(reusable_store, &policy);
             }
             return result;
         }
@@ -200,12 +205,21 @@ impl WasmtimeBackend {
         context: &crate::RuntimeInvocationContext,
         cancellation: Option<crate::host::HostCallCancellation>,
     ) -> ReusableStore {
-        self.store_pool.take(authority).unwrap_or_else(|| {
+        let before = self.store_pool.stats();
+        let retained_store = self.store_pool.take(authority);
+        record_wasmtime_store_pool_delta(policy, before, self.store_pool.stats());
+        retained_store.unwrap_or_else(|| {
             ReusableStore::new(
                 self.create_store(host, policy, context.clone(), cancellation),
                 authority.clone(),
             )
         })
+    }
+
+    fn return_reusable_store(&mut self, store: ReusableStore, policy: &RuntimePolicy) {
+        let before = self.store_pool.stats();
+        self.store_pool.return_store(store);
+        record_wasmtime_store_pool_delta(policy, before, self.store_pool.stats());
     }
 }
 
@@ -216,15 +230,23 @@ async fn invoke_with_store(
     request: crate::runtime::InvocationRequest,
     policy: &RuntimePolicy,
 ) -> Result<Value> {
+    let fuel_budget = fuel_budget_for_policy(policy);
     store
-        .set_fuel(fuel_budget_for_policy(policy))
+        .set_fuel(fuel_budget)
         .map_err(wasmtime_error_for_policy(policy))?;
-    let instance = linker
-        .instantiate_async(&mut *store, component)
-        .await
-        .map_err(wasmtime_error_for_policy(policy))?;
+    let instance = match linker.instantiate_async(&mut *store, component).await {
+        Ok(instance) => instance,
+        Err(error) => {
+            let mapped = wasmtime_error_for_policy(policy)(error);
+            record_wasmtime_fuel_metrics(policy, store, fuel_budget, Some(&mapped));
+            return Err(mapped);
+        }
+    };
     let args = serde_json::to_string(&request.args)?;
-    call_nimbus_function_handler(&instance, store, args, policy).await
+    let result = call_nimbus_function_handler(&instance, store, args, policy).await;
+    let error = result.as_ref().err();
+    record_wasmtime_fuel_metrics(policy, store, fuel_budget, error);
+    result
 }
 
 async fn call_nimbus_function_handler(
@@ -317,10 +339,58 @@ fn fuel_budget_for_policy(policy: &RuntimePolicy) -> u64 {
     }
 }
 
+fn record_wasmtime_fuel_metrics(
+    policy: &RuntimePolicy,
+    store: &wasmtime::Store<super::host_linker::InvocationHostState>,
+    fuel_budget: u64,
+    error: Option<&NimbusRuntimeError>,
+) {
+    if let Ok(remaining) = store.get_fuel() {
+        policy
+            .metrics()
+            .record_wasmtime_fuel_consumed(fuel_budget.saturating_sub(remaining));
+    }
+    if matches!(error, Some(NimbusRuntimeError::ExecutionTimeout(_))) {
+        policy.metrics().record_wasmtime_fuel_exhaustion();
+    }
+}
+
+fn record_wasmtime_store_pool_delta(
+    policy: &RuntimePolicy,
+    before: WasmtimeStorePoolStats,
+    after: WasmtimeStorePoolStats,
+) {
+    let metrics = policy.metrics();
+    for _ in 0..after.hits.saturating_sub(before.hits) {
+        metrics.record_wasmtime_store_pool_hit();
+    }
+    for _ in 0..after.misses.saturating_sub(before.misses) {
+        metrics.record_wasmtime_store_pool_miss();
+    }
+    for _ in 0..after
+        .authority_mismatches
+        .saturating_sub(before.authority_mismatches)
+    {
+        metrics.record_wasmtime_store_pool_authority_mismatch();
+    }
+    for _ in 0..after.evictions.saturating_sub(before.evictions) {
+        metrics.record_wasmtime_store_pool_eviction();
+    }
+    for _ in 0..after.retirements.saturating_sub(before.retirements) {
+        metrics.record_wasmtime_store_pool_retirement();
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct WasmtimeModuleCacheKey {
     bundle_sha256: String,
     engine_config_hash: &'static str,
+}
+
+struct WasmtimeModuleCacheLookup {
+    component: Arc<Component>,
+    was_hit: bool,
+    compilation_duration: Option<Duration>,
 }
 
 struct WasmtimeModuleCache {
@@ -340,7 +410,7 @@ impl WasmtimeModuleCache {
         }
     }
 
-    fn get_or_compile(&self, bundle: &RuntimeBundle) -> Result<Arc<Component>> {
+    fn get_or_compile(&self, bundle: &RuntimeBundle) -> Result<WasmtimeModuleCacheLookup> {
         let key = WasmtimeModuleCacheKey {
             bundle_sha256: RuntimeBundle::compute_sha256_for_path(bundle.entrypoint())?,
             engine_config_hash: WASMTIME_ENGINE_CONFIG_HASH,
@@ -351,14 +421,24 @@ impl WasmtimeModuleCache {
             .expect("Wasmtime module cache lock should not be poisoned");
         if let Some(component) = compiled.get(&key) {
             self.hits.fetch_add(1, Ordering::Relaxed);
-            return Ok(component.clone());
+            return Ok(WasmtimeModuleCacheLookup {
+                component: component.clone(),
+                was_hit: true,
+                compilation_duration: None,
+            });
         }
 
         let bytes = std::fs::read(bundle.entrypoint())?;
+        let started_at = Instant::now();
         let component = Arc::new(Component::new(&self.engine, bytes).map_err(wasmtime_error)?);
+        let compilation_duration = started_at.elapsed();
         compiled.insert(key, component.clone());
         self.misses.fetch_add(1, Ordering::Relaxed);
-        Ok(component)
+        Ok(WasmtimeModuleCacheLookup {
+            component,
+            was_hit: false,
+            compilation_duration: Some(compilation_duration),
+        })
     }
 
     #[cfg(test)]
@@ -369,6 +449,18 @@ impl WasmtimeModuleCache {
     #[cfg(test)]
     fn miss_count_for_test(&self) -> usize {
         self.misses.load(Ordering::Relaxed)
+    }
+}
+
+fn record_wasmtime_module_cache_lookup(policy: &RuntimePolicy, lookup: &WasmtimeModuleCacheLookup) {
+    let metrics = policy.metrics();
+    if lookup.was_hit {
+        metrics.record_wasmtime_module_cache_hit();
+    } else {
+        metrics.record_wasmtime_module_cache_miss();
+    }
+    if let Some(duration) = lookup.compilation_duration {
+        metrics.record_wasmtime_module_compilation_time(duration);
     }
 }
 
@@ -451,7 +543,7 @@ mod tests {
             .get_or_compile(&bundle)
             .expect("second component lookup should hit cache");
 
-        assert!(Arc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&first.component, &second.component));
         assert_eq!(cache.miss_count_for_test(), 1);
         assert_eq!(cache.hit_count_for_test(), 1);
     }
