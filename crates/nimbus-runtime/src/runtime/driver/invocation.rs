@@ -414,7 +414,9 @@ impl NimbusRuntime {
                 }
                 crate::limits::RuntimePoolKind::StartupSnapshotCache
                 | crate::limits::RuntimePoolKind::BunJscTrustedRetained
-                | crate::limits::RuntimePoolKind::BunJscFreshDiscard => {}
+                | crate::limits::RuntimePoolKind::BunJscFreshDiscard
+                | crate::limits::RuntimePoolKind::PrecompiledModuleCache
+                | crate::limits::RuntimePoolKind::RetainedStorePool => {}
             }
             pool.return_runtime_for_invocation(self, &bundle, Some(&context), runtime);
         }

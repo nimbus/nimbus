@@ -211,6 +211,31 @@ impl RuntimeBundle {
         ))
     }
 
+    pub fn wasm_component(entrypoint: impl AsRef<Path>) -> Self {
+        Self::from_parts(
+            entrypoint.as_ref().to_path_buf(),
+            RuntimeBundleContentKind::WasmComponent,
+            RuntimeBundleEntrypointKind::Main,
+            None,
+            None,
+            None,
+        )
+    }
+
+    pub fn wasm_component_with_expected_sha256(
+        entrypoint: impl AsRef<Path>,
+        expected_sha256: impl AsRef<str>,
+    ) -> Result<Self> {
+        Ok(Self::from_parts(
+            entrypoint.as_ref().to_path_buf(),
+            RuntimeBundleContentKind::WasmComponent,
+            RuntimeBundleEntrypointKind::Main,
+            Some(normalize_sha256(expected_sha256.as_ref())?),
+            None,
+            None,
+        ))
+    }
+
     pub fn for_tenant(
         entrypoint: impl AsRef<Path>,
         expected_sha256: impl AsRef<str>,

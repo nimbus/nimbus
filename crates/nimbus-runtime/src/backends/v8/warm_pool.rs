@@ -188,8 +188,11 @@ impl V8WorkerRuntimePool {
                 self.warmed = true;
                 return Ok(ReusableV8Runtime::fresh(runtime, construction_mode));
             }
-            RuntimePoolKind::BunJscTrustedRetained | RuntimePoolKind::BunJscFreshDiscard => {
-                unreachable!("Bun/JSC pool kinds are rejected before V8 runtime invocation")
+            RuntimePoolKind::BunJscTrustedRetained
+            | RuntimePoolKind::BunJscFreshDiscard
+            | RuntimePoolKind::PrecompiledModuleCache
+            | RuntimePoolKind::RetainedStorePool => {
+                unreachable!("non-V8 pool kinds are rejected before V8 runtime invocation")
             }
         }
         if self.warmed {
@@ -265,8 +268,11 @@ impl V8WorkerRuntimePool {
                     .increment_retained_runtime_pool_entries();
                 self.enforce_warm_pool_bounds(runtime_owner);
             }
-            RuntimePoolKind::BunJscTrustedRetained | RuntimePoolKind::BunJscFreshDiscard => {
-                unreachable!("Bun/JSC pool kinds are rejected before V8 runtime invocation")
+            RuntimePoolKind::BunJscTrustedRetained
+            | RuntimePoolKind::BunJscFreshDiscard
+            | RuntimePoolKind::PrecompiledModuleCache
+            | RuntimePoolKind::RetainedStorePool => {
+                unreachable!("non-V8 pool kinds are rejected before V8 runtime invocation")
             }
         }
     }

@@ -5,7 +5,10 @@
 //! envelope. Later phases attach this module to runtime backend dispatch,
 //! bundle loading, fuel scheduling, and retained Store pooling.
 
+mod backend;
 pub(crate) mod host_linker;
+
+pub(crate) use backend::WasmtimeBackendFactory;
 
 pub(crate) fn component_linker_diagnostics() -> crate::Result<()> {
     host_linker::component_linker_diagnostics()

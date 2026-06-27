@@ -30,7 +30,7 @@ impl RuntimeProfile {
             | RuntimeCompatibilityTarget::Node22
             | RuntimeCompatibilityTarget::Node24
             | RuntimeCompatibilityTarget::Node26 => Some(Self::NodeFull),
-            RuntimeCompatibilityTarget::BunJsc => None,
+            RuntimeCompatibilityTarget::BunJsc | RuntimeCompatibilityTarget::WasmComponent => None,
         }
     }
 }

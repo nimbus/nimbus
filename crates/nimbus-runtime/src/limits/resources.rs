@@ -211,6 +211,26 @@ impl RuntimeLimits {
         }
     }
 
+    pub fn application_wasm_component() -> Self {
+        Self {
+            backend_kind: RuntimeBackendKind::Wasmtime,
+            backend_trust_tier: RuntimeBackendTrustTier::InProcessUntrusted,
+            backend_lockdown_profile: RuntimeBackendLockdownProfile::WasmtimeComponentModel,
+            backend_lifecycle_policy: RuntimeBackendLifecyclePolicy::WasmtimePrecompiledModuleCache,
+            bundle_content_kind: RuntimeBundleContentKind::WasmComponent,
+            javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::EsModule,
+            compatibility_target: RuntimeCompatibilityTarget::WasmComponent,
+            execution_model: RuntimeExecutionModel::RunToCompletion,
+            mode: RuntimeMode::Standard,
+            language: RuntimeLanguage::WasmComponent,
+            preset: RuntimePreset::Application,
+            grants: RuntimeGrants::restricted(),
+            runtime_pool_kind: RuntimePoolKind::PrecompiledModuleCache,
+            memory_enforcement: RuntimeMemoryEnforcement::WasmtimeResourceLimiter,
+            ..Self::default()
+        }
+    }
+
     pub fn tooling_node22() -> Self {
         Self::tooling_node(RuntimeCompatibilityTarget::Node22)
     }
@@ -246,9 +266,9 @@ impl RuntimeLimits {
             }
             RuntimePoolKind::StartupSnapshotCache
             | RuntimePoolKind::WarmContextRecycle
-            | RuntimePoolKind::BunJscFreshDiscard => {
-                RuntimeModuleStateSemantics::FreshPerInvocation
-            }
+            | RuntimePoolKind::BunJscFreshDiscard
+            | RuntimePoolKind::PrecompiledModuleCache
+            | RuntimePoolKind::RetainedStorePool => RuntimeModuleStateSemantics::FreshPerInvocation,
         }
     }
 
@@ -263,7 +283,9 @@ impl RuntimeLimits {
             }
             RuntimePoolKind::StartupSnapshotCache
             | RuntimePoolKind::WarmContextRecycle
-            | RuntimePoolKind::BunJscFreshDiscard => RuntimeResetCapabilities {
+            | RuntimePoolKind::BunJscFreshDiscard
+            | RuntimePoolKind::PrecompiledModuleCache
+            | RuntimePoolKind::RetainedStorePool => RuntimeResetCapabilities {
                 op_state_per_invocation: true,
                 bootstrap_state_per_invocation: true,
                 user_module_state_per_invocation: true,
