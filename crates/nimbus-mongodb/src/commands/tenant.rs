@@ -22,10 +22,10 @@
 //! the first place.
 //!
 //! This deviation from the contract is load-bearing-mitigated *only* by
-//! `guard_listener_is_loopback_only` refusing any non-loopback bind. Before the
-//! adapter may bind a routable address, each SCRAM credential must be bound to a
-//! specific tenant (mirroring DynamoDB's `AccessKeyRegistry`); until then the
-//! loopback guard must stay.
+//! `guard_bind_address` refusing any non-loopback bind while the credential is
+//! unbound. Before the adapter may bind a routable address, each SCRAM credential
+//! must be bound to a specific tenant (mirroring DynamoDB's `AccessKeyRegistry`);
+//! until then the loopback guard must stay.
 
 use std::sync::Arc;
 

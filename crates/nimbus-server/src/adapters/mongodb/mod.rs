@@ -43,7 +43,7 @@ impl WireProtocolAdapter for MongoDbConfig {
     }
 
     fn guard(&self, addr: SocketAddr) -> std::io::Result<()> {
-        listener::guard_listener_is_loopback_only(addr)
+        listener::guard_bind_address(addr, &self.auth)
     }
 
     fn spawn(
