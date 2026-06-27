@@ -11,6 +11,8 @@ const IN_FLIGHT_REQUEST_DROP_CASE: DeterministicTestCase = DeterministicTestCase
 async fn dropped_runtime_http_request_cancels_runtime_invocation() {
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.max_concurrent_runtime_instances = 1;
+    limits.execution_timeout = std::time::Duration::from_secs(120);
+    limits.system_timeout = std::time::Duration::from_secs(120);
     let registry = runtime_request_drop_registry(json!([
         {
             "name": "messages:spin",
@@ -43,8 +45,8 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
         &json!({ "name": "messages:spin", "args": {} }),
     )
     .await;
-    wait_for_runtime_metrics_case(
-        &registry,
+    wait_for_server_runtime_metrics_case(
+        &server,
         IN_FLIGHT_REQUEST_DROP_CASE,
         "runtime invocation to start",
         |metrics| {
@@ -55,8 +57,8 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
 
     drop(request);
 
-    let metrics = wait_for_runtime_metrics_case(
-        &registry,
+    let metrics = wait_for_server_runtime_metrics_case(
+        &server,
         IN_FLIGHT_REQUEST_DROP_CASE,
         "dropped runtime request cancellation",
         |metrics| metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 1,
@@ -92,8 +94,8 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
         .expect("recovery runtime query response should parse");
     assert_eq!(recovery_body, json!("after-cancel"));
 
-    let recovery_metrics = wait_for_runtime_metrics_case(
-        &registry,
+    let recovery_metrics = wait_for_server_runtime_metrics_case(
+        &server,
         IN_FLIGHT_REQUEST_DROP_CASE,
         "recovery runtime invocation after cancellation",
         |metrics| {

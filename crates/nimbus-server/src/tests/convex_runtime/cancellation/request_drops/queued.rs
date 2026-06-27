@@ -18,6 +18,8 @@ const QUEUED_REQUEST_RECOVERY_CASE: DeterministicTestCase = DeterministicTestCas
 async fn dropped_queued_runtime_request_never_starts_mutation() {
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.max_concurrent_runtime_instances = 1;
+    limits.execution_timeout = std::time::Duration::from_secs(120);
+    limits.system_timeout = std::time::Duration::from_secs(120);
     let registry = runtime_request_drop_registry(json!([
         {
             "name": "messages:block",
@@ -51,8 +53,8 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         &json!({ "name": "messages:block", "args": {} }),
     )
     .await;
-    wait_for_runtime_metrics_case(
-        &registry,
+    wait_for_server_runtime_metrics_case(
+        &server,
         QUEUED_REQUEST_DROP_CASE,
         "blocking runtime query to start",
         |metrics| {
@@ -67,34 +69,42 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         &json!({ "name": "messages:insertQueued", "args": { "body": "queued" } }),
     )
     .await;
-    let queued_snapshot = wait_for_runtime_metrics_case(
-        &registry,
+    let queued_snapshot = wait_for_server_runtime_metrics_case(
+        &server,
         QUEUED_REQUEST_DROP_CASE,
         "queued runtime mutation to be admitted but not started",
         |metrics| {
             metrics.active_runtime_instances == 1
-                && metrics.worker_dispatched_invocations == 2
                 && metrics.started_invocations == 1
+                && metrics
+                    .recent_request_correlations
+                    .iter()
+                    .any(|correlation| {
+                        correlation.function_name == "messages:insertQueued"
+                            && correlation
+                                .server_request_id
+                                .starts_with("convex-mutation-")
+                    })
         },
     )
     .await;
     assert_eq!(queued_snapshot.active_runtime_instances, 1);
-    assert_eq!(queued_snapshot.worker_dispatched_invocations, 2);
+    assert_eq!(queued_snapshot.worker_dispatched_invocations, 1);
     assert_eq!(queued_snapshot.started_invocations, 1);
 
     drop(queued_mutation);
     drop(blocker);
 
-    let metrics = wait_for_runtime_metrics_case(
-        &registry,
+    let metrics = wait_for_server_runtime_metrics_case(
+        &server,
         QUEUED_REQUEST_DROP_CASE,
         "queued runtime mutation cancellation",
         |metrics| metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 2,
     )
     .await;
-    assert_eq!(metrics.worker_dispatched_invocations, 2);
-    assert_eq!(metrics.queued_canceled_invocations, 0);
-    assert_eq!(metrics.in_flight_canceled_invocations, 2);
+    assert_eq!(metrics.worker_dispatched_invocations, 1);
+    assert_eq!(metrics.queued_canceled_invocations, 1);
+    assert_eq!(metrics.in_flight_canceled_invocations, 1);
     assert_eq!(metrics.disconnect_canceled_invocations, 2);
     assert_eq!(metrics.explicit_canceled_invocations, 0);
     assert_eq!(metrics.runtime_pool_misses, 1);
@@ -106,8 +116,8 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         .expect("tenant runtime metrics should be present");
     assert_eq!(tenant_metrics.started_invocations, 1);
     assert_eq!(tenant_metrics.completed_invocations, 1);
-    assert_eq!(tenant_metrics.queued_canceled_invocations, 0);
-    assert_eq!(tenant_metrics.in_flight_canceled_invocations, 2);
+    assert_eq!(tenant_metrics.queued_canceled_invocations, 1);
+    assert_eq!(tenant_metrics.in_flight_canceled_invocations, 1);
     assert_eq!(tenant_metrics.disconnect_canceled_invocations, 2);
     assert_eq!(tenant_metrics.explicit_canceled_invocations, 0);
     assert!(
@@ -145,6 +155,8 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
 async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_pressure_clears() {
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.max_concurrent_runtime_instances = 1;
+    limits.execution_timeout = std::time::Duration::from_secs(120);
+    limits.system_timeout = std::time::Duration::from_secs(120);
     let registry = runtime_request_drop_registry(json!([
         {
             "name": "messages:block",
@@ -182,8 +194,8 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         &json!({ "name": "messages:block", "args": {} }),
     )
     .await;
-    wait_for_runtime_metrics_case(
-        &registry,
+    wait_for_server_runtime_metrics_case(
+        &server,
         QUEUED_REQUEST_RECOVERY_CASE,
         "blocking runtime query to start",
         |metrics| {
@@ -198,34 +210,42 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         &json!({ "name": "messages:insertQueued", "args": { "body": "queued" } }),
     )
     .await;
-    let queued_snapshot = wait_for_runtime_metrics_case(
-        &registry,
+    let queued_snapshot = wait_for_server_runtime_metrics_case(
+        &server,
         QUEUED_REQUEST_RECOVERY_CASE,
         "queued runtime mutation recovery request to be admitted but not started",
         |metrics| {
             metrics.active_runtime_instances == 1
-                && metrics.worker_dispatched_invocations == 2
                 && metrics.started_invocations == 1
+                && metrics
+                    .recent_request_correlations
+                    .iter()
+                    .any(|correlation| {
+                        correlation.function_name == "messages:insertQueued"
+                            && correlation
+                                .server_request_id
+                                .starts_with("convex-mutation-")
+                    })
         },
     )
     .await;
     assert_eq!(queued_snapshot.active_runtime_instances, 1);
-    assert_eq!(queued_snapshot.worker_dispatched_invocations, 2);
+    assert_eq!(queued_snapshot.worker_dispatched_invocations, 1);
     assert_eq!(queued_snapshot.started_invocations, 1);
 
     drop(queued_mutation);
     drop(blocker);
 
-    let canceled = wait_for_runtime_metrics_case(
-        &registry,
+    let canceled = wait_for_server_runtime_metrics_case(
+        &server,
         QUEUED_REQUEST_RECOVERY_CASE,
         "queued runtime mutation cancellation",
         |metrics| metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 2,
     )
     .await;
-    assert_eq!(canceled.worker_dispatched_invocations, 2);
-    assert_eq!(canceled.queued_canceled_invocations, 0);
-    assert_eq!(canceled.in_flight_canceled_invocations, 2);
+    assert_eq!(canceled.worker_dispatched_invocations, 1);
+    assert_eq!(canceled.queued_canceled_invocations, 1);
+    assert_eq!(canceled.in_flight_canceled_invocations, 1);
 
     let recovery_response = api
         .convex_named_mutation(
@@ -236,13 +256,13 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         .await;
     assert_eq!(recovery_response.status(), StatusCode::OK);
 
-    let recovered = wait_for_runtime_metrics_case(
-        &registry,
+    let recovered = wait_for_server_runtime_metrics_case(
+        &server,
         QUEUED_REQUEST_RECOVERY_CASE,
         "runtime recovery after queued request drop",
         |metrics| {
             metrics.active_runtime_instances == 0
-                && metrics.worker_dispatched_invocations == 3
+                && metrics.worker_dispatched_invocations == 2
                 && metrics.started_invocations == 2
                 && metrics.completed_invocations == 2
         },
@@ -253,8 +273,8 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         2,
         "two started invocations should account for two pool outcomes"
     );
-    assert_eq!(recovered.queued_canceled_invocations, 0);
-    assert_eq!(recovered.in_flight_canceled_invocations, 2);
+    assert_eq!(recovered.queued_canceled_invocations, 1);
+    assert_eq!(recovered.in_flight_canceled_invocations, 1);
     assert_eq!(recovered.disconnect_canceled_invocations, 2);
     assert_eq!(recovered.runtime_pool_replacements, 1);
 

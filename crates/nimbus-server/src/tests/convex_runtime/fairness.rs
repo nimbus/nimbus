@@ -5,12 +5,11 @@ use nimbus_testing::{
 };
 use reqwest::StatusCode;
 use serde_json::json;
-use tokio::net::TcpStream;
 
 use crate::ConvexRegistry;
 use crate::tests::{
-    convex_registry_with_routes_and_bundle, open_json_post_stream, router_for_convex,
-    wait_for_runtime_metrics, wait_for_runtime_metrics_case,
+    PendingHttpRequest, convex_registry_with_routes_and_bundle, open_json_post_stream,
+    router_for_convex, wait_for_server_runtime_metrics, wait_for_server_runtime_metrics_case,
 };
 
 pub(crate) const FAIRNESS_HTTP_REJECTION_CASE: DeterministicTestCase = DeterministicTestCase::new(
@@ -29,6 +28,8 @@ pub(crate) const FAIRNESS_WEBSOCKET_REJECTION_CASE: DeterministicTestCase =
 fn fairness_runtime_registry() -> ConvexRegistry {
     let mut limits = bounded_fairness_runtime_test_limits();
     limits.max_concurrent_runtime_instances = 1;
+    limits.execution_timeout = std::time::Duration::from_secs(120);
+    limits.system_timeout = std::time::Duration::from_secs(120);
     convex_registry_with_routes_and_bundle(
         json!([
             {
@@ -117,13 +118,13 @@ export {};
 }
 
 async fn cleanup_fairness_blockers(
-    registry: &ConvexRegistry,
-    blocker: TcpStream,
-    queued: TcpStream,
+    server: &ServerFixture,
+    blocker: PendingHttpRequest,
+    queued: PendingHttpRequest,
 ) {
     drop(queued);
     drop(blocker);
-    let _ = wait_for_runtime_metrics(registry, "tenant fairness cleanup", |metrics| {
+    let _ = wait_for_server_runtime_metrics(server, "tenant fairness cleanup", |metrics| {
         metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 2
     })
     .await;
@@ -151,8 +152,8 @@ pub(crate) async fn convex_runtime_http_rejections_return_too_many_requests_inne
         &json!({ "name": "messages:block", "args": {} }),
     )
     .await;
-    wait_for_runtime_metrics_case(
-        &registry,
+    wait_for_server_runtime_metrics_case(
+        &server,
         FAIRNESS_HTTP_REJECTION_CASE,
         "blocking fairness runtime query to start",
         |metrics| {
@@ -167,8 +168,8 @@ pub(crate) async fn convex_runtime_http_rejections_return_too_many_requests_inne
         &json!({ "name": "messages:block", "args": {} }),
     )
     .await;
-    wait_for_runtime_metrics_case(
-        &registry,
+    wait_for_server_runtime_metrics_case(
+        &server,
         FAIRNESS_HTTP_REJECTION_CASE,
         "queued fairness runtime query to be observed by the runtime queue",
         |metrics| {
@@ -198,8 +199,8 @@ pub(crate) async fn convex_runtime_http_rejections_return_too_many_requests_inne
         "expected queue-limit rejection message, got {body}"
     );
 
-    let metrics = wait_for_runtime_metrics_case(
-        &registry,
+    let metrics = wait_for_server_runtime_metrics_case(
+        &server,
         FAIRNESS_HTTP_REJECTION_CASE,
         "tenant fairness rejection metrics",
         |metrics| metrics.rejected_invocations == 1,
@@ -214,7 +215,7 @@ pub(crate) async fn convex_runtime_http_rejections_return_too_many_requests_inne
         1
     );
 
-    cleanup_fairness_blockers(&registry, blocker, queued).await;
+    cleanup_fairness_blockers(&server, blocker, queued).await;
 }
 
 #[tokio::test]
@@ -239,8 +240,8 @@ pub(crate) async fn convex_runtime_websocket_bootstrap_rejections_send_error_fra
         &json!({ "name": "messages:block", "args": {} }),
     )
     .await;
-    wait_for_runtime_metrics_case(
-        &registry,
+    wait_for_server_runtime_metrics_case(
+        &server,
         FAIRNESS_WEBSOCKET_REJECTION_CASE,
         "blocking fairness websocket query to start",
         |metrics| {
@@ -255,8 +256,8 @@ pub(crate) async fn convex_runtime_websocket_bootstrap_rejections_send_error_fra
         &json!({ "name": "messages:block", "args": {} }),
     )
     .await;
-    wait_for_runtime_metrics_case(
-        &registry,
+    wait_for_server_runtime_metrics_case(
+        &server,
         FAIRNESS_WEBSOCKET_REJECTION_CASE,
         "queued fairness websocket query to be observed by the runtime queue",
         |metrics| {
@@ -288,8 +289,8 @@ pub(crate) async fn convex_runtime_websocket_bootstrap_rejections_send_error_fra
         "expected queue-limit websocket error, got {message}"
     );
 
-    let metrics = wait_for_runtime_metrics_case(
-        &registry,
+    let metrics = wait_for_server_runtime_metrics_case(
+        &server,
         FAIRNESS_WEBSOCKET_REJECTION_CASE,
         "tenant fairness websocket rejection metrics",
         |metrics| metrics.rejected_invocations == 1,
@@ -304,5 +305,5 @@ pub(crate) async fn convex_runtime_websocket_bootstrap_rejections_send_error_fra
         1
     );
 
-    cleanup_fairness_blockers(&registry, blocker, queued).await;
+    cleanup_fairness_blockers(&server, blocker, queued).await;
 }

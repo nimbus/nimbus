@@ -135,8 +135,11 @@ test: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
 # build-node22-anchor-snapshot-off prerequisite (also nimbus-runtime-only)
 # generates the feature-off blob the tests/embedded_anchor integration test
 # installs; it is idempotent so an up-to-date tree pays only a --check.
+# Keep this feature-off lane out of the pool_reuse `isol_` parent tests:
+# those subprocess crash-oracle parents are covered by test-rust-runtime-cage
+# under the pointer-compression configuration they are designed to prove.
 test-rust-runtime: build-node22-anchor-snapshot-off
-	$(SINGLE_FLIGHT) --key cargo-test-runtime-ci -- cargo test -p nimbus-runtime -- --skip runtime::tests::node_compat::
+	$(SINGLE_FLIGHT) --key cargo-test-runtime-ci -- cargo test -p nimbus-runtime -- --test-threads=1 --skip runtime::tests::node_compat:: --skip runtime::tests::pool_reuse::isol_
 
 # Run the cage (pointer-compression) crash-oracle lane. The cross-profile shared-RO-heap
 # crash only reproduces under --features v8-pointer-compression (the single shared cage),

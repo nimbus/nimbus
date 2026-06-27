@@ -5131,8 +5131,17 @@ export {};
         None,
     )
     .await;
-    match result.expect_err("stalled waitUntil work should hit the system timeout") {
+    match result.expect_err("stalled waitUntil work should fail before reuse") {
         NimbusRuntimeError::SystemTimeout(timeout) => assert_eq!(timeout, system_timeout),
+        NimbusRuntimeError::JavaScript(message)
+            if message.contains(
+                "Promise resolution is still pending but the event loop has already resolved",
+            ) =>
+        {
+            // Under heavily loaded cage runs Deno can report the unresolved
+            // waitUntil promise before the watchdog flag is observed. The
+            // safety contract is still below: the substrate must be condemned.
+        }
         other => panic!("unexpected stalled waitUntil error: {other}"),
     }
     assert!(

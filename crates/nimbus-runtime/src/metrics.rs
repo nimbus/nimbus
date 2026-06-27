@@ -40,7 +40,7 @@ pub struct RuntimeMetrics {
     recent_request_correlations: correlations::RuntimeRequestCorrelationLog,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct RuntimeMetricsSnapshot {
     pub active_runtime_instances: usize,
     pub queued_invocations: usize,
