@@ -3,6 +3,12 @@
 //! `nimbus-runtime` owns only the Deno ABI-facing seam. This crate owns the
 //! concrete shell and backends, then `nimbus-server` wires the default shell into
 //! runtime construction.
+//!
+//! The model is one mount table, two binders, and a shared `FsCaps` matrix:
+//! V8 goes through `deno_fs::FileSystem`, WASI consumes preopen descriptors,
+//! and both resolve the same virtual paths to the same backend authority.
+//! Container and microVM substrates use sandbox bundles, not this in-process
+//! filesystem seam.
 
 use std::io;
 use std::path::{Path, PathBuf};
