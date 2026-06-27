@@ -1,11 +1,14 @@
 use std::sync::OnceLock;
 
+use deno_error::JsErrorBox;
 use deno_fs::sync::MaybeArc;
 use deno_node::ops::module_hooks::LoaderHookRegistry;
+use deno_permissions::PermissionsContainer;
 use deno_web::InMemoryBroadcastChannel;
 use sys_traits::impls::RealSys;
 
 use crate::backends::v8::embedder::Extension;
+use crate::egress::{EgressRequest, RuntimeEgressGatewayBinding};
 use crate::limits::{RuntimeCompatibilityTarget, RuntimeLimits};
 use crate::node_compat::{
     ScopedInNpmPackageChecker, ScopedNodeModulesResolver, build_node_init_services,
@@ -16,7 +19,10 @@ use super::node22_runtime::node22_runtime_bootstrap_extension;
 #[cfg(test)]
 use super::ops::runtime_test_extension;
 use super::ops::{runtime_extension, service_extension};
-use super::state::install_missing_deno_extension_state;
+use super::state::{
+    InstalledRuntimeEgressGateway, RuntimeInvocationHostCallBinding,
+    install_missing_deno_extension_state,
+};
 use super::web_standard_runtime::web_standard_runtime_bootstrap_extension;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -250,7 +256,7 @@ impl NodeBootstrapExtensionSlot {
                 InMemoryBroadcastChannel::default(),
             ),
             Self::Crypto => deno_crypto::deno_crypto::init(None),
-            Self::Fetch => deno_fetch::deno_fetch::init(Default::default()),
+            Self::Fetch => deno_fetch::deno_fetch::init(egress_fetch_options()),
             Self::WebSocket => deno_websocket::deno_websocket::init(),
             Self::Net => deno_net::deno_net::init(None, None),
             Self::Tls => deno_tls::deno_tls::init(),
@@ -337,6 +343,66 @@ fn loader_hook_registry_extension(registry: Option<LoaderHookRegistry>) -> Exten
             }) as Box<dyn FnOnce(&mut deno_core::OpState)>
         }),
         ..Default::default()
+    }
+}
+
+fn egress_fetch_options() -> deno_fetch::Options {
+    deno_fetch::Options {
+        egress_gateway_hook: Some(
+            nimbus_fetch_egress_gateway_hook as deno_fetch::FetchEgressGatewayHook,
+        ),
+        ..Default::default()
+    }
+}
+
+fn nimbus_fetch_egress_gateway_hook(
+    state: &mut deno_core::OpState,
+    request: deno_fetch::FetchEgressGatewayRequest<'_>,
+) -> Result<deno_fetch::FetchEgressGatewayAuthorization, JsErrorBox> {
+    let binding = state
+        .try_borrow::<InstalledRuntimeEgressGateway>()
+        .map(|installed| installed.binding.clone())
+        .unwrap_or(RuntimeEgressGatewayBinding::Missing);
+    match binding {
+        RuntimeEgressGatewayBinding::CoarsePermissions => state
+            .borrow_mut::<PermissionsContainer>()
+            .check_net_url(request.url, "fetch()")
+            .map(|_| deno_fetch::FetchEgressGatewayAuthorization::use_deno_permissions())
+            .map_err(|error| JsErrorBox::generic(error.to_string())),
+        RuntimeEgressGatewayBinding::Gateway(gateway) => {
+            let invocation = state
+                .try_borrow::<RuntimeInvocationHostCallBinding>()
+                .cloned();
+            let egress_request = EgressRequest::from_fetch_url_with_context(
+                request.method.as_str(),
+                request.url.as_str(),
+                request.client_rid.is_some(),
+                invocation
+                    .as_ref()
+                    .and_then(RuntimeInvocationHostCallBinding::tenant_label)
+                    .map(str::to_owned),
+                invocation
+                    .as_ref()
+                    .and_then(RuntimeInvocationHostCallBinding::session_id)
+                    .map(str::to_owned),
+                invocation
+                    .as_ref()
+                    .and_then(RuntimeInvocationHostCallBinding::invocation_id),
+            )
+            .map_err(|error| JsErrorBox::generic(error.to_string()))?;
+            let authorization = gateway.authorize(&egress_request);
+            if authorization.is_allowed() {
+                Ok(deno_fetch::FetchEgressGatewayAuthorization::bypass_deno_permissions())
+            } else {
+                Err(JsErrorBox::generic(format!(
+                    "fetch egress denied: {}",
+                    authorization.reason()
+                )))
+            }
+        }
+        RuntimeEgressGatewayBinding::Missing => {
+            Err(JsErrorBox::generic("fetch egress gateway is not installed"))
+        }
     }
 }
 
@@ -452,6 +518,16 @@ mod tests {
                 "nimbus_runtime",
                 "nimbus_runtime_test"
             ]
+        );
+    }
+
+    #[test]
+    fn fetch_execution_extension_installs_egress_gateway_hook() {
+        let options = egress_fetch_options();
+
+        assert!(
+            options.egress_gateway_hook.is_some(),
+            "fetch must consult the runtime EgressGateway hook before falling back to net permissions"
         );
     }
 }

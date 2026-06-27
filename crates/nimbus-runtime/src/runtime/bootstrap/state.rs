@@ -9,6 +9,7 @@ use deno_web::{JsMessageData, MessagePort};
 use crate::RuntimeBundle;
 use crate::backends::v8::embedder::{CancelHandle, JsRuntime, OpState};
 use crate::context::RuntimeInvocationContext;
+use crate::egress::RuntimeEgressGatewayBinding;
 use crate::error::{NimbusRuntimeError, Result};
 use crate::execution_plan::RuntimeExecutionPlan;
 use crate::executor::SharedInvocationPermit;
@@ -58,6 +59,11 @@ impl RuntimeHostBridgeSlot {
 #[derive(Clone)]
 pub(super) struct InstalledRuntimeHostBridge {
     pub(super) slot: RuntimeHostBridgeSlot,
+}
+
+#[derive(Clone)]
+pub(super) struct InstalledRuntimeEgressGateway {
+    pub(super) binding: RuntimeEgressGatewayBinding,
 }
 
 #[derive(Clone)]
@@ -429,6 +435,7 @@ pub(crate) fn initialize_runtime_state(
 ) -> Result<()> {
     install_runtime_owner(runtime, runtime_owner.clone());
     install_runtime_host_bridge_slot(runtime, runtime_owner.host.clone());
+    install_runtime_egress_gateway(runtime, runtime_owner.egress_gateway_binding());
     reset_runtime_contract(runtime, runtime_owner, bundle)?;
     if runtime_owner
         .policy()
@@ -498,6 +505,15 @@ pub(crate) fn install_runtime_host_bridge_slot(
     state.put(InstalledRuntimeHostBridge {
         slot: RuntimeHostBridgeSlot::new(bridge),
     });
+}
+
+pub(crate) fn install_runtime_egress_gateway(
+    runtime: &mut JsRuntime,
+    binding: RuntimeEgressGatewayBinding,
+) {
+    let op_state = runtime.op_state();
+    let mut state = op_state.borrow_mut();
+    state.put(InstalledRuntimeEgressGateway { binding });
 }
 
 pub(crate) fn main_thread_worker_bootstrap_state() -> InstalledRuntimeWorkerBootstrapState {

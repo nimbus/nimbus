@@ -3,6 +3,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::RuntimeInvocationContext;
+use crate::egress::{EgressGateway, RuntimeEgressGatewayBinding};
 use crate::error::Result;
 use crate::executor::RuntimeExecutor;
 use crate::host::{HostBridge, HostCallCancellation};
@@ -23,8 +24,22 @@ impl NimbusRuntime {
         Self {
             host,
             policy,
+            egress_gateway: RuntimeEgressGatewayBinding::coarse_permissions(),
             owned_executor: Arc::default(),
         }
+    }
+
+    pub fn with_egress_gateway(mut self, gateway: Arc<dyn EgressGateway>) -> Self {
+        self.egress_gateway = RuntimeEgressGatewayBinding::gateway(gateway);
+        self
+    }
+
+    pub(crate) fn with_egress_gateway_binding(
+        mut self,
+        binding: RuntimeEgressGatewayBinding,
+    ) -> Self {
+        self.egress_gateway = binding;
+        self
     }
 
     pub(crate) fn invocation_host(&self) -> RuntimeHost {
@@ -90,5 +105,9 @@ impl NimbusRuntime {
 
     pub(crate) fn policy(&self) -> Arc<RuntimePolicy> {
         self.policy.clone()
+    }
+
+    pub(crate) fn egress_gateway_binding(&self) -> RuntimeEgressGatewayBinding {
+        self.egress_gateway.clone()
     }
 }

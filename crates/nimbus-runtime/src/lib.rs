@@ -1,6 +1,7 @@
 mod affinity;
 mod backends;
 mod context;
+mod egress;
 mod error;
 mod execution_plan;
 mod executor;
@@ -37,6 +38,10 @@ pub use backends::v8::{
 pub use runtime::driver::anchor::smoke_install_committed_embedded_anchor;
 
 pub use context::RuntimeInvocationContext;
+pub use egress::{
+    AllowAllEgressGateway, DenyAllEgressGateway, EgressAuthorization, EgressGateway,
+    EgressProtocol, EgressRequest, EgressRequestError, EgressSubstrate, authorize_fetch_egress,
+};
 pub use error::{NimbusRuntimeError, Result};
 pub use executor::{RuntimeExecutor, RuntimeInvocationResponse};
 pub use host::{
