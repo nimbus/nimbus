@@ -91,16 +91,33 @@ impl RuntimePolicy {
 
     pub fn clone_with_effective_scaling_plans(&self, plans: RuntimeScalingPlanSet) -> Self {
         Self {
-            runtime_instance_semaphore: Arc::new(Semaphore::new(
-                self.limits.max_concurrent_runtime_instances,
-            )),
-            metrics: Arc::new(RuntimeMetrics::default()),
+            runtime_instance_semaphore: self.runtime_instance_semaphore.clone(),
+            metrics: self.metrics.clone(),
             limits: self.limits.clone(),
             host_resource_budget: self.host_resource_budget,
             host_pressure_source: self.host_pressure_source.clone(),
             host_resource_governor_enabled: self.host_resource_governor_enabled,
             adaptive_controller_settings: self.adaptive_controller_settings,
             effective_scaling_plans: plans,
+            file_system: self.file_system.clone(),
+        }
+    }
+
+    pub fn clone_with_host_resource_governor(
+        &self,
+        host_resource_budget: RuntimeHostResourceBudget,
+        host_pressure_source: Arc<dyn RuntimeHostPressureSource>,
+        adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
+    ) -> Self {
+        Self {
+            runtime_instance_semaphore: self.runtime_instance_semaphore.clone(),
+            metrics: self.metrics.clone(),
+            limits: self.limits.clone(),
+            host_resource_budget,
+            host_pressure_source,
+            host_resource_governor_enabled: true,
+            adaptive_controller_settings,
+            effective_scaling_plans: self.effective_scaling_plans.clone(),
             file_system: self.file_system.clone(),
         }
     }
@@ -162,7 +179,7 @@ impl RuntimePolicy {
 
     pub fn host_resource_decision(&self) -> RuntimeHostResourceDecision {
         let decision = self.host_resource_budget.decide(
-            self.limits.max_concurrent_runtime_instances,
+            self.limits.worker_threads,
             self.host_pressure_source.sample(),
         );
         if self.host_resource_governor_enabled {
