@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use nimbus_core::Error;
 use nimbus_storage::{KvBatchOp, KvEntry, KvMutation, KvPut, RedbTenantKvStore, TenantKvStore};
 
-use crate::KvError;
+use crate::{KvError, NimbusKvMetrics};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TieringMode {
@@ -67,6 +67,7 @@ pub struct NimbusKvStore {
 struct NimbusKvStoreInner {
     engine: Arc<dyn TenantKvStore + Send + Sync>,
     tiering: TieringConfig,
+    metrics: NimbusKvMetrics,
     cache: Mutex<BTreeMap<Vec<u8>, CacheEntry>>,
 }
 
@@ -111,9 +112,15 @@ impl NimbusKvStore {
             inner: Arc::new(NimbusKvStoreInner {
                 engine,
                 tiering,
+                metrics: NimbusKvMetrics::default(),
                 cache: Mutex::new(BTreeMap::new()),
             }),
         }
+    }
+
+    #[must_use]
+    pub fn metrics(&self) -> NimbusKvMetrics {
+        self.inner.metrics.clone()
     }
 
     #[must_use]
@@ -137,6 +144,7 @@ impl NimbusKvStore {
             metadata: BTreeMap::new(),
             expire_at_ms,
         };
+        let _write = self.inner.metrics.start_durable_write();
         self.inner.engine.kv_put(put.clone())?;
         self.cache_put(&KvEntry {
             key: put.key,
@@ -148,6 +156,7 @@ impl NimbusKvStore {
     }
 
     pub fn delete(&self, key: &[u8]) -> Result<bool, KvError> {
+        let _write = self.inner.metrics.start_durable_write();
         let deleted = self.inner.engine.kv_delete(key)?;
         self.cache_remove(key);
         Ok(deleted)
@@ -156,6 +165,7 @@ impl NimbusKvStore {
     pub fn flush_all(&self, now_ms: i64) -> Result<usize, KvError> {
         const BATCH_LIMIT: usize = 256;
 
+        let _write = self.inner.metrics.start_durable_write();
         let mut cursor = None;
         let mut deleted = 0_usize;
         loop {
@@ -207,6 +217,7 @@ impl NimbusKvStore {
                 expire_at_ms: Some(expire_at_ms),
             }))
         };
+        let _write = self.inner.metrics.start_durable_write();
         let updated = self.inner.engine.kv_update(key, now_ms, &mut update)?;
         match updated {
             Some(entry) => self.cache_put(&entry),
@@ -246,6 +257,7 @@ impl NimbusKvStore {
                 expire_at_ms,
             }))
         };
+        let _write = self.inner.metrics.start_durable_write();
         let updated = self.inner.engine.kv_update(key, now_ms, &mut update)?;
         if let Some(entry) = updated {
             self.cache_put(&entry);
@@ -260,6 +272,7 @@ impl NimbusKvStore {
             let mut cache = self.cache_lock()?;
             if let Some(entry) = cache.get(key) {
                 if !cache_entry_expired(entry, now_ms) {
+                    self.inner.metrics.record_cache_hit();
                     return Ok(Some(KvEntry {
                         key: key.to_vec(),
                         value: entry.value.clone(),
@@ -269,6 +282,7 @@ impl NimbusKvStore {
                 }
             }
             cache.remove(key);
+            self.inner.metrics.record_cache_miss();
         }
 
         let entry = self.inner.engine.kv_get(key, now_ms)?;

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use nimbus_core::{TenantId, refuse_non_loopback_bind};
 use rand::{RngCore, rngs::OsRng};
@@ -20,7 +20,7 @@ use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::{NimbusKvStore, TieringConfig};
+use crate::{NimbusKvMetrics, NimbusKvStore, TieringConfig};
 
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
@@ -147,6 +147,7 @@ pub struct NimbusKvConfig {
     pub bind_addr: SocketAddr,
     pub credentials: CredentialRegistry,
     pub store: Option<NimbusKvStore>,
+    pub metrics: Option<NimbusKvMetrics>,
 }
 
 impl NimbusKvConfig {
@@ -156,12 +157,19 @@ impl NimbusKvConfig {
             bind_addr,
             credentials,
             store: None,
+            metrics: None,
         }
     }
 
     #[must_use]
     pub fn with_store(mut self, store: NimbusKvStore) -> Self {
         self.store = Some(store);
+        self
+    }
+
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: NimbusKvMetrics) -> Self {
+        self.metrics = Some(metrics);
         self
     }
 }
@@ -190,6 +198,12 @@ impl Default for ConnectionState {
 #[derive(Debug)]
 struct CommandRequest {
     args: Vec<Vec<u8>>,
+}
+
+impl CommandRequest {
+    fn name(&self) -> String {
+        String::from_utf8_lossy(&self.args[0]).to_ascii_uppercase()
+    }
 }
 
 #[derive(Debug)]
@@ -230,13 +244,15 @@ pub async fn serve(listener: TcpListener, config: NimbusKvConfig) -> Result<(), 
     let store = config
         .store
         .unwrap_or(NimbusKvStore::no_disk(TieringConfig::no_disk())?);
+    let metrics = config.metrics.unwrap_or_else(|| store.metrics());
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;
         let credentials = Arc::clone(&credentials);
         let store = store.clone();
+        let metrics = metrics.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_connection(stream, credentials, store).await {
+            if let Err(error) = handle_connection(stream, credentials, store, metrics).await {
                 tracing::warn!(%peer_addr, %error, "nimbus-kv connection ended with error");
             }
         });
@@ -247,7 +263,9 @@ async fn handle_connection(
     mut stream: TcpStream,
     credentials: Arc<CredentialRegistry>,
     store: NimbusKvStore,
+    metrics: NimbusKvMetrics,
 ) -> Result<(), KvError> {
+    let _client = metrics.client_connected();
     let mut state = ConnectionState::default();
     let mut buffer = Vec::new();
     let mut read_buf = [0_u8; 4096];
@@ -255,7 +273,18 @@ async fn handle_connection(
     loop {
         while let Some(frame) = decode_next_frame(state.protocol, &mut buffer)? {
             let outcome = match parse_command(frame) {
-                Ok(command) => execute_command(command, &mut state, &credentials, &store),
+                Ok(command) => {
+                    let name = command.name();
+                    let started_at = Instant::now();
+                    let outcome =
+                        execute_command(command, &mut state, &credentials, &store, &metrics);
+                    metrics.record_command(
+                        &name,
+                        started_at.elapsed(),
+                        matches!(outcome.response, Response::Error(_)),
+                    );
+                    outcome
+                }
                 Err(response) => CommandOutcome {
                     response,
                     protocol: None,
@@ -385,8 +414,9 @@ fn execute_command(
     state: &mut ConnectionState,
     credentials: &CredentialRegistry,
     store: &NimbusKvStore,
+    metrics: &NimbusKvMetrics,
 ) -> CommandOutcome {
-    let name = String::from_utf8_lossy(&command.args[0]).to_ascii_uppercase();
+    let name = command.name();
     match name.as_str() {
         "AUTH" => auth_command(&command.args, state, credentials),
         "HELLO" => hello_command(&command.args, state, credentials),
@@ -414,6 +444,8 @@ fn execute_command(
         "EXPIRE" => expire_command(&command.args, store),
         "TTL" => ttl_command(&command.args, store),
         "INCR" => incr_command(&command.args, store),
+        "NIMBUS.READY" => ready_command(&command.args),
+        "NIMBUS.METRICS" => metrics_command(&command.args, metrics),
         _ => CommandOutcome {
             response: Response::Error(format!("ERR unknown command '{name}'")),
             protocol: None,
@@ -518,6 +550,22 @@ fn function_command(args: &[Vec<u8>]) -> CommandOutcome {
             Response::SimpleString("OK".to_owned())
         }
         _ => Response::Error("ERR unsupported FUNCTION subcommand".to_owned()),
+    };
+    command_response(response)
+}
+
+fn ready_command(args: &[Vec<u8>]) -> CommandOutcome {
+    let response = match args {
+        [_] => Response::SimpleString("READY".to_owned()),
+        _ => Response::Error("ERR wrong number of arguments for 'NIMBUS.READY'".to_owned()),
+    };
+    command_response(response)
+}
+
+fn metrics_command(args: &[Vec<u8>], metrics: &NimbusKvMetrics) -> CommandOutcome {
+    let response = match args {
+        [_] => Response::Bulk(metrics.render_text().into_bytes()),
+        _ => Response::Error("ERR wrong number of arguments for 'NIMBUS.METRICS'".to_owned()),
     };
     command_response(response)
 }

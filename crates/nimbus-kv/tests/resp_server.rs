@@ -196,6 +196,12 @@ async fn resp_get_set_del_expire_ttl_incr_round_trip() {
             .arg("reset")
             .query(&mut connection)
             .expect("GET after FLUSHALL should succeed");
+        let readiness: String = redis::cmd("NIMBUS.READY")
+            .query(&mut connection)
+            .expect("NIMBUS.READY should be distinct from PING");
+        let metrics: String = redis::cmd("NIMBUS.METRICS")
+            .query(&mut connection)
+            .expect("NIMBUS.METRICS should return operator diagnostics");
         (
             set,
             get,
@@ -207,6 +213,8 @@ async fn resp_get_set_del_expire_ttl_incr_round_trip() {
             function_flush,
             flushall,
             reset_after_flush,
+            readiness,
+            metrics,
         )
     })
     .await
@@ -222,5 +230,15 @@ async fn resp_get_set_del_expire_ttl_incr_round_trip() {
     assert_eq!(result.7, "OK");
     assert_eq!(result.8, "OK");
     assert_eq!(result.9, None);
+    assert_eq!(result.10, "READY");
+    assert!(result.11.contains("readiness:ready"));
+    assert!(result.11.contains("connected_clients:"));
+    assert!(result.11.contains("cache_hits:"));
+    assert!(result.11.contains("cache_misses:"));
+    assert!(result.11.contains("cache_hit_ratio_ppm:"));
+    assert!(result.11.contains("durable_writes_in_flight:"));
+    assert!(result.11.contains("durable_write_latency_us_total:"));
+    assert!(result.11.contains("command.SET.calls:"));
+    assert!(result.11.contains("command.GET.latency_us_total:"));
     server.abort();
 }
