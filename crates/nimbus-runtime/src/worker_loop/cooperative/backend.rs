@@ -18,7 +18,7 @@ use crate::runtime::{
 };
 use crate::watchdog::WatchdogTimer;
 
-pub(super) trait CooperativeBackendSlot: 'static {
+pub(crate) trait CooperativeBackendSlot: 'static {
     type ReusableRuntime;
 
     fn poll_once<'a>(
@@ -41,22 +41,26 @@ pub(super) trait CooperativeBackendSlot: 'static {
     fn is_ready_to_resume(&self) -> bool;
 }
 
-pub(super) struct CooperativeBackendInvocationStart {
-    pub(super) watchdog: WatchdogTimer,
-    pub(super) host: RuntimeHost,
-    pub(super) policy: Arc<RuntimePolicy>,
-    pub(super) bundle: RuntimeBundle,
-    pub(super) request: InvocationRequest,
-    pub(super) context: RuntimeInvocationContext,
-    pub(super) execution_plan: RuntimeExecutionPlan,
-    pub(super) cancellation: Option<HostCallCancellation>,
-    pub(super) response_ready_tx: Option<oneshot::Sender<Value>>,
-    pub(super) permit: SharedInvocationPermit,
-    pub(super) activity_signal: Arc<WorkerActivitySignal>,
+pub(crate) struct CooperativeBackendInvocationStart {
+    pub(crate) watchdog: WatchdogTimer,
+    pub(crate) host: RuntimeHost,
+    pub(crate) policy: Arc<RuntimePolicy>,
+    pub(crate) bundle: RuntimeBundle,
+    pub(crate) request: InvocationRequest,
+    pub(crate) context: RuntimeInvocationContext,
+    pub(crate) execution_plan: RuntimeExecutionPlan,
+    pub(crate) cancellation: Option<HostCallCancellation>,
+    pub(crate) response_ready_tx: Option<oneshot::Sender<Value>>,
+    pub(crate) permit: SharedInvocationPermit,
+    pub(crate) activity_signal: Arc<WorkerActivitySignal>,
 }
 
-pub(super) trait CooperativeBackendDriver: 'static {
+pub(crate) trait CooperativeBackendDriver: 'static {
     type Slot: CooperativeBackendSlot;
+
+    fn permits_scheduler_admission(&self, execution_plan: &RuntimeExecutionPlan) -> bool {
+        execution_plan.permits_cooperative_scheduler_admission()
+    }
 
     fn start_slot<'a>(
         &'a mut self,

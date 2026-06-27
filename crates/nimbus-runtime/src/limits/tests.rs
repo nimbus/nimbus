@@ -1557,15 +1557,12 @@ fn runtime_policy_rejects_unsupported_engine_axis_combinations() {
         "Wasmtime must require WASM component bundle content"
     );
 
-    let wasmtime_with_cooperative_fuel_before_w5 = std::panic::catch_unwind(|| {
-        RuntimePolicy::new(RuntimeLimits {
-            execution_model: RuntimeExecutionModel::CooperativeFuel,
-            ..RuntimeLimits::application_wasm_component()
-        })
-    });
-    assert!(
-        wasmtime_with_cooperative_fuel_before_w5.is_err(),
-        "Wasmtime must reject cooperative fuel until W5 wires park/resume"
+    let wasmtime_with_cooperative_fuel =
+        RuntimePolicy::new(RuntimeLimits::application_wasm_component_cooperative_fuel());
+    assert_eq!(
+        wasmtime_with_cooperative_fuel.limits().execution_model,
+        RuntimeExecutionModel::CooperativeFuel,
+        "Wasmtime W5 wires cooperative fuel through the generic park/resume scheduler"
     );
 
     let wasmtime_with_retained_store_before_w6 = std::panic::catch_unwind(|| {

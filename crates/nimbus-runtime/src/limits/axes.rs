@@ -697,10 +697,10 @@ pub(super) fn validate_backend_policy_axes(limits: &RuntimeLimits) {
             }
             if !matches!(
                 limits.execution_model,
-                RuntimeExecutionModel::RunToCompletion
+                RuntimeExecutionModel::RunToCompletion | RuntimeExecutionModel::CooperativeFuel
             ) {
                 panic!(
-                    "Wasmtime runtime backend supports only run-to-completion until cooperative fuel lands, got {:?}",
+                    "Wasmtime runtime backend requires run-to-completion or cooperative-fuel execution, got {:?}",
                     limits.execution_model
                 );
             }

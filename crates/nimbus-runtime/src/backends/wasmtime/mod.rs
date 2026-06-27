@@ -6,9 +6,11 @@
 //! bundle loading, fuel scheduling, and retained Store pooling.
 
 mod backend;
+mod fuel;
 pub(crate) mod host_linker;
 
 pub(crate) use backend::WasmtimeBackendFactory;
+pub(crate) use fuel::WasmtimeFuelDriver;
 
 pub(crate) fn component_linker_diagnostics() -> crate::Result<()> {
     host_linker::component_linker_diagnostics()

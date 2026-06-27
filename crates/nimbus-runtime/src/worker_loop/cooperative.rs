@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::backends::wasmtime::WasmtimeFuelDriver;
 use crate::executor::{RuntimeWorkerJob, SharedInvocationPermit};
 use crate::host::HostCallCancellation;
 use crate::limits::RuntimePolicy;
@@ -9,7 +10,7 @@ use crate::watchdog::WatchdogTimer;
 
 use super::{WorkerLoop, WorkerLoopFactory};
 
-mod backend;
+pub(crate) mod backend;
 mod execution;
 mod retention;
 mod run;
@@ -22,6 +23,31 @@ pub(crate) struct CooperativeWorkerLoopFactory {
     watchdog: WatchdogTimer,
     #[cfg(test)]
     test_state: Option<Arc<crate::executor::RuntimeExecutorTestState>>,
+}
+
+pub(crate) struct WasmtimeFuelWorkerLoopFactory {
+    watchdog: WatchdogTimer,
+    #[cfg(test)]
+    test_state: Option<Arc<crate::executor::RuntimeExecutorTestState>>,
+}
+
+impl WasmtimeFuelWorkerLoopFactory {
+    pub(crate) fn new(watchdog: WatchdogTimer) -> Self {
+        Self {
+            watchdog,
+            #[cfg(test)]
+            test_state: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_state(
+        mut self,
+        test_state: Arc<crate::executor::RuntimeExecutorTestState>,
+    ) -> Self {
+        self.test_state = Some(test_state);
+        self
+    }
 }
 
 impl CooperativeWorkerLoopFactory {
@@ -50,6 +76,19 @@ impl WorkerLoopFactory for CooperativeWorkerLoopFactory {
             policy,
             self.watchdog.clone(),
             V8LockerDriver::new(),
+            #[cfg(test)]
+            self.test_state.clone(),
+        ))
+    }
+}
+
+impl WorkerLoopFactory for WasmtimeFuelWorkerLoopFactory {
+    fn create(&self, worker_id: usize, policy: Arc<RuntimePolicy>) -> Box<dyn WorkerLoop> {
+        Box::new(CooperativeWorkerLoop::new(
+            worker_id,
+            policy,
+            self.watchdog.clone(),
+            WasmtimeFuelDriver::new(),
             #[cfg(test)]
             self.test_state.clone(),
         ))

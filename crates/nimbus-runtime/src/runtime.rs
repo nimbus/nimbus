@@ -130,4 +130,5 @@ mod tests {
     mod timeout_cancellation;
     mod verification_harness;
     mod warm_pool;
+    mod wasmtime_fuel;
 }
