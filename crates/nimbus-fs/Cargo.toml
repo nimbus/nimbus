@@ -1,0 +1,24 @@
+[package]
+name = "nimbus-fs"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nimbus-blob = { path = "../nimbus-blob" }
+nimbus-core = { path = "../nimbus-core" }
+nimbus-runtime = { path = "../nimbus-runtime" }
+async-trait.workspace = true
+deno_fs.workspace = true
+deno_io.workspace = true
+deno_permissions.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

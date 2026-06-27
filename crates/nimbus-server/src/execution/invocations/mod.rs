@@ -121,6 +121,8 @@ fn runtime_for_host(
     host_bridge: Arc<dyn HostBridge>,
     runtime_policy: Arc<RuntimePolicy>,
 ) -> NimbusRuntime {
+    let runtime_policy =
+        Arc::new(runtime_policy.clone_with_file_system(nimbus_fs::default_file_system()));
     NimbusRuntime::with_policy(host_bridge, runtime_policy)
 }
 

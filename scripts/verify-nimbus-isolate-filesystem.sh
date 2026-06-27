@@ -109,7 +109,7 @@ check_nfs1() {
     && grep_file "struct NimbusFs" "crates/nimbus-fs/src/lib.rs" \
     && grep_file "struct PassthroughBackend" "crates/nimbus-fs/src/lib.rs" \
     && ! grep_file "MaybeArc::new\\(deno_fs::RealFs\\)" "crates/nimbus-runtime/src/runtime/bootstrap/extensions.rs" \
-    && grep_file "file_system\\(\\)" "crates/nimbus-runtime/src/runtime/bootstrap/extensions.rs" \
+    && grep_file "file_system\\(\\)" "crates/nimbus-runtime/src/runtime/driver/construction.rs" \
     && check_direct_bypass_scan \
     && has_file "$PROOF_DIR/nfs1-shell.md" \
     && grep_file "Node-compat.*passed|node compat.*passed|no-regression.*passed" "$PROOF_DIR/nfs1-shell.md"; then

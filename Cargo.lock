@@ -6051,6 +6051,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "nimbus-fs"
+version = "0.1.44"
+dependencies = [
+ "async-trait",
+ "deno_fs",
+ "deno_io",
+ "deno_permissions",
+ "nimbus-blob",
+ "nimbus-core",
+ "nimbus-runtime",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "nimbus-license"
 version = "0.1.44"
 dependencies = [
@@ -6226,6 +6242,7 @@ dependencies = [
  "nimbus-dynamodb",
  "nimbus-engine",
  "nimbus-firebase",
+ "nimbus-fs",
  "nimbus-license",
  "nimbus-machine",
  "nimbus-mongodb",

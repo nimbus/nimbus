@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tokio::sync::Semaphore;
 
+use crate::fs::RuntimeFileSystem;
 use crate::metrics::{RuntimeMetrics, RuntimeMetricsSnapshot};
 
 use super::{
@@ -21,6 +22,7 @@ pub struct RuntimePolicy {
     host_resource_governor_enabled: bool,
     adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
     effective_scaling_plans: RuntimeScalingPlanSet,
+    file_system: RuntimeFileSystem,
 }
 
 impl RuntimePolicy {
@@ -61,6 +63,7 @@ impl RuntimePolicy {
             host_resource_governor_enabled,
             adaptive_controller_settings: RuntimeAdaptiveControllerSettings::default(),
             effective_scaling_plans: RuntimeScalingPlanSet::default(),
+            file_system: RuntimeFileSystem::default(),
         }
     }
 
@@ -98,11 +101,30 @@ impl RuntimePolicy {
             host_resource_governor_enabled: self.host_resource_governor_enabled,
             adaptive_controller_settings: self.adaptive_controller_settings,
             effective_scaling_plans: plans,
+            file_system: self.file_system.clone(),
+        }
+    }
+
+    pub fn clone_with_file_system(&self, file_system: deno_fs::FileSystemRc) -> Self {
+        Self {
+            runtime_instance_semaphore: self.runtime_instance_semaphore.clone(),
+            metrics: self.metrics.clone(),
+            limits: self.limits.clone(),
+            host_resource_budget: self.host_resource_budget,
+            host_pressure_source: self.host_pressure_source.clone(),
+            host_resource_governor_enabled: self.host_resource_governor_enabled,
+            adaptive_controller_settings: self.adaptive_controller_settings,
+            effective_scaling_plans: self.effective_scaling_plans.clone(),
+            file_system: RuntimeFileSystem::new(file_system),
         }
     }
 
     pub fn limits(&self) -> &RuntimeLimits {
         &self.limits
+    }
+
+    pub fn file_system(&self) -> deno_fs::FileSystemRc {
+        self.file_system.clone_inner()
     }
 
     pub(crate) fn validate_bundle_content_kind(
