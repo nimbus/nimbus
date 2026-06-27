@@ -238,6 +238,14 @@ impl RuntimeLimits {
         }
     }
 
+    pub fn application_wasm_component_retained_store_pool() -> Self {
+        Self {
+            backend_lifecycle_policy: RuntimeBackendLifecyclePolicy::WasmtimeRetainedStorePool,
+            runtime_pool_kind: RuntimePoolKind::RetainedStorePool,
+            ..Self::application_wasm_component()
+        }
+    }
+
     pub fn tooling_node22() -> Self {
         Self::tooling_node(RuntimeCompatibilityTarget::Node22)
     }

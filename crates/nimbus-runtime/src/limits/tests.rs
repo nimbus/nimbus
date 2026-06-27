@@ -1565,16 +1565,12 @@ fn runtime_policy_rejects_unsupported_engine_axis_combinations() {
         "Wasmtime W5 wires cooperative fuel through the generic park/resume scheduler"
     );
 
-    let wasmtime_with_retained_store_before_w6 = std::panic::catch_unwind(|| {
-        RuntimePolicy::new(RuntimeLimits {
-            backend_lifecycle_policy: RuntimeBackendLifecyclePolicy::WasmtimeRetainedStorePool,
-            runtime_pool_kind: RuntimePoolKind::RetainedStorePool,
-            ..RuntimeLimits::application_wasm_component()
-        })
-    });
-    assert!(
-        wasmtime_with_retained_store_before_w6.is_err(),
-        "Wasmtime must reject retained Store pooling until W6 proves authority reset"
+    let wasmtime_with_retained_store =
+        RuntimePolicy::new(RuntimeLimits::application_wasm_component_retained_store_pool());
+    assert_eq!(
+        wasmtime_with_retained_store.limits().runtime_pool_kind,
+        RuntimePoolKind::RetainedStorePool,
+        "Wasmtime W6 wires retained Store pooling with authority reset"
     );
 }
 

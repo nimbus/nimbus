@@ -8,6 +8,7 @@
 mod backend;
 mod fuel;
 pub(crate) mod host_linker;
+mod store_pool;
 
 pub(crate) use backend::WasmtimeBackendFactory;
 pub(crate) use fuel::WasmtimeFuelDriver;

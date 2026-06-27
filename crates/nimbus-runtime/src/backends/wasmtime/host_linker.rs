@@ -26,6 +26,7 @@ pub(crate) struct InvocationHostState {
     bridge: Arc<dyn HostBridge>,
     context: RuntimeInvocationContext,
     cancellation: HostCallCancellation,
+    limiter: WasmtimeResourceLimiter,
 }
 
 impl InvocationHostState {
@@ -38,7 +39,39 @@ impl InvocationHostState {
             bridge,
             context,
             cancellation: cancellation.unwrap_or_default(),
+            limiter: WasmtimeResourceLimiter::default(),
         }
+    }
+
+    pub(crate) fn new_for_policy(
+        bridge: Arc<dyn HostBridge>,
+        context: RuntimeInvocationContext,
+        cancellation: Option<HostCallCancellation>,
+        policy: &crate::limits::RuntimePolicy,
+    ) -> Self {
+        Self {
+            bridge,
+            context,
+            cancellation: cancellation.unwrap_or_default(),
+            limiter: WasmtimeResourceLimiter::for_policy(policy),
+        }
+    }
+
+    pub(crate) fn reset_for_invocation(
+        &mut self,
+        bridge: Arc<dyn HostBridge>,
+        context: RuntimeInvocationContext,
+        cancellation: Option<HostCallCancellation>,
+        policy: &crate::limits::RuntimePolicy,
+    ) {
+        self.bridge = bridge;
+        self.context = context;
+        self.cancellation = cancellation.unwrap_or_default();
+        self.limiter = WasmtimeResourceLimiter::for_policy(policy);
+    }
+
+    pub(crate) fn resource_limiter(&mut self) -> &mut dyn wasmtime::ResourceLimiter {
+        &mut self.limiter
     }
 
     async fn call_async(&self, request: HostCallRequest) -> std::result::Result<String, String> {
@@ -51,6 +84,67 @@ impl InvocationHostState {
 
     fn context_identity(&self) -> String {
         "null".to_string()
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct WasmtimeResourceLimiter {
+    max_memory_bytes: usize,
+    max_tables: usize,
+    max_instances: usize,
+}
+
+impl Default for WasmtimeResourceLimiter {
+    fn default() -> Self {
+        Self {
+            max_memory_bytes: 128 * 1024 * 1024,
+            max_tables: 64,
+            max_instances: 64,
+        }
+    }
+}
+
+impl WasmtimeResourceLimiter {
+    fn for_policy(policy: &crate::limits::RuntimePolicy) -> Self {
+        Self {
+            max_memory_bytes: policy.limits().max_heap_mb.saturating_mul(1024 * 1024),
+            max_tables: 64,
+            max_instances: 64,
+        }
+    }
+}
+
+impl wasmtime::ResourceLimiter for WasmtimeResourceLimiter {
+    fn memory_growing(
+        &mut self,
+        _current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        if desired <= self.max_memory_bytes {
+            return Ok(true);
+        }
+        Err(wasmtime::Error::msg(format!(
+            "Wasmtime ResourceLimiter memory limit exceeded: desired_bytes={desired} max_bytes={}",
+            self.max_memory_bytes
+        )))
+    }
+
+    fn table_growing(
+        &mut self,
+        _current: usize,
+        _desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        Ok(true)
+    }
+
+    fn tables(&self) -> usize {
+        self.max_tables
+    }
+
+    fn instances(&self) -> usize {
+        self.max_instances
     }
 }
 
