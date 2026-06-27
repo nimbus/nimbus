@@ -12,38 +12,22 @@ use nimbus_mongodb::connection::{ConnectionState, next_request_id};
 use nimbus_mongodb::error::MongoError;
 use nimbus_mongodb::wire::{self, WireError};
 
-/// Fail-closed bind guard for the MongoDB listener.
+/// Refuse to bind the MongoDB listener to anything but a loopback address.
 ///
-/// This guard is load-bearing for the adapter's security model, not a convenience
-/// default. The adapter authenticates against a single, tenant-agnostic SCRAM
-/// credential (`AuthConfig`) and selects the tenant from the requested database name
-/// (the wire `$db`) rather than from the authenticated user — so a network-reachable
-/// listener would let any holder of that one credential reach every tenant by varying
-/// `$db`. The invariant is therefore: **a non-loopback bind is permitted only when the
-/// credential authenticates a specific tenant** (`AuthConfig::is_tenant_bound`; the
-/// credential->TenantId binding is M9(a), issue #23). The refusal is derived from that
-/// binding state, not hardcoded, so there is no one-line path to a non-loopback bind
-/// without the binding.
-///
-/// The check runs at the bind seam (`WireProtocolAdapter::guard`), which ABORTS BOOT
-/// before the listener serves a byte (see `adapters::wire`): reconfiguring MongoDB to a
-/// non-loopback address yields an immediate, unmissable startup failure pointing at
-/// #23, not a server that comes up subtly exposed. Today no credential is tenant-bound,
-/// so every non-loopback bind is refused; the only future allow is a non-loopback bind
-/// whose credential is tenant-bound.
-pub(crate) fn guard_bind_address(addr: SocketAddr, auth: &AuthConfig) -> std::io::Result<()> {
-    if addr.ip().is_loopback() {
-        return Ok(());
-    }
-    if !auth.is_tenant_bound() {
+/// This guard is load-bearing for the adapter's security model, not a
+/// convenience default. The adapter authenticates against a single,
+/// tenant-agnostic SCRAM credential (`AuthConfig`) and selects the tenant from
+/// the requested database name rather than from the authenticated user. That
+/// model is only safe while the listener is unreachable off-host. Binding a
+/// non-loopback address would expose every tenant to anyone who holds the one
+/// credential, so that change must wait until credentials are bound per-tenant.
+pub(crate) fn guard_listener_is_loopback_only(addr: SocketAddr) -> std::io::Result<()> {
+    if !addr.ip().is_loopback() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!(
-                "MongoDB listener refuses to bind non-loopback address {addr}: the adapter selects \
-                 the tenant from the wire $db under a single tenant-agnostic credential, so a \
-                 non-loopback bind requires per-tenant credential binding (credential->TenantId). \
-                 Bind to a loopback address, or implement credential->TenantId binding first \
-                 (see issue #23)."
+                "MongoDB listener refuses to bind non-loopback address {addr}; bind to loopback \
+                 and require explicit SCRAM credentials"
             ),
         ));
     }
@@ -199,28 +183,12 @@ mod tests {
     }
 
     #[test]
-    fn listener_refuses_non_loopback_bind_while_credential_is_unbound() {
+    fn listener_rejects_non_loopback_bind_address() {
         let addr: SocketAddr = "0.0.0.0:27017".parse().unwrap();
-        let auth = AuthConfig::new("test-user".into(), "test-password".into());
-        assert!(
-            !auth.is_tenant_bound(),
-            "the shipped credential is tenant-agnostic; this test exercises the unbound path"
-        );
-        // Refusal is at the guard (bind seam), which aborts boot before the listener serves a
-        // byte — a startup failure, not a per-connection rejection. The only future allow is a
-        // non-loopback bind whose credential is tenant-bound (M9a, #23).
-        let error = guard_bind_address(addr, &auth)
-            .expect_err("non-loopback MongoDB bind must be refused while credentials are unbound");
+        let error = guard_listener_is_loopback_only(addr)
+            .expect_err("network-reachable MongoDB listener must be refused");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         assert!(error.to_string().contains("non-loopback"));
-        assert!(error.to_string().contains("#23"));
-    }
-
-    #[test]
-    fn listener_allows_loopback_bind() {
-        let addr: SocketAddr = "127.0.0.1:27017".parse().unwrap();
-        let auth = AuthConfig::new("test-user".into(), "test-password".into());
-        guard_bind_address(addr, &auth).expect("loopback MongoDB bind must be permitted");
     }
 
     #[tokio::test]
