@@ -91,6 +91,46 @@ grep_dir() {
   grep -rqE --include='*.rs' "$1" "$2" 2>/dev/null
 }
 
+ci_branch() {
+  if [ -n "${NIMBUS_VERIFY_CI_BRANCH:-}" ]; then
+    printf '%s\n' "${NIMBUS_VERIFY_CI_BRANCH}"
+    return 0
+  fi
+
+  branch="$(git branch --show-current 2>/dev/null || true)"
+  if [ -n "${branch}" ]; then
+    printf '%s\n' "${branch}"
+  else
+    printf 'main\n'
+  fi
+}
+
+ci_workflow_green() {
+  branch="$1"
+  if ! command -v gh >/dev/null 2>&1; then
+    printf '        note: gh not on PATH; ci.yml for %s is UNVERIFIED\n' "${branch}"
+    return 1
+  fi
+
+  latest="$(gh run list --branch "${branch}" --workflow ci.yml --limit 1 --json conclusion,status,databaseId,headSha 2>/dev/null || true)"
+  if [ -z "${latest}" ] || [ "${latest}" = "[]" ]; then
+    printf '        note: no ci.yml run found for branch %s\n' "${branch}"
+    return 1
+  fi
+
+  conclusion="$(printf '%s\n' "${latest}" | grep -oE '"conclusion":"[^"]*"' | head -n 1 | cut -d: -f2 | tr -d '"')"
+  status="$(printf '%s\n' "${latest}" | grep -oE '"status":"[^"]*"' | head -n 1 | cut -d: -f2 | tr -d '"')"
+  run_id="$(printf '%s\n' "${latest}" | grep -oE '"databaseId":[0-9]+' | head -n 1 | cut -d: -f2)"
+
+  if [ "${conclusion}" = "success" ]; then
+    return 0
+  fi
+
+  printf '        note: latest ci.yml for %s is status=%s conclusion=%s run=%s\n' \
+    "${branch}" "${status:-unknown}" "${conclusion:-none}" "${run_id:-unknown}"
+  return 1
+}
+
 # -------- conditions -------------------------------------------------------
 
 printf '\033[1mCFA verification gate — cloudflare-adapters (primitives-first)\033[0m\n'
@@ -229,6 +269,7 @@ fi
 # 11. CFA9: operator doc + ledger all done + CI green.
 step 11 "CFA9: operator doc + ledger green + CI green"
 c11_doc=0; ledger_clean=0; ci_green=0
+c11_ci_branch="$(ci_branch)"
 [ -f "${OPERATOR_DOC}" ] && c11_doc=1
 PLAN_FILE="$(plan_file)"
 if [ -n "${PLAN_FILE}" ]; then
@@ -241,22 +282,11 @@ if [ -n "${PLAN_FILE}" ]; then
     ledger_clean=1
   fi
 fi
-if command -v gh >/dev/null 2>&1; then
-  latest=$(gh run list --branch main --workflow ci.yml --limit 1 --json conclusion 2>/dev/null | grep -oE '"conclusion":"[^"]*"' | head -n 1)
-  if [ "${latest}" = '"conclusion":"success"' ]; then
-    ci_green=1
-  elif [ -z "${latest}" ]; then
-    ci_green=1
-    printf '        note: gh returned no ci.yml conclusion for main; CI-green ASSUMED — verify manually\n'
-  fi
-else
-  ci_green=1
-  printf '        note: gh not on PATH; CI-green for main is UNVERIFIED locally (CI enforces it on merge)\n'
-fi
+ci_workflow_green "${c11_ci_branch}" && ci_green=1
 if [ "${c11_doc}" = 1 ] && [ "${ledger_clean}" = 1 ] && [ "${ci_green}" = 1 ]; then
   pass "operator doc present, ledger clean, CI green"
 else
-  fail "CFA9 closeout incomplete" "doc=${c11_doc} ledger=${ledger_clean} ci=${ci_green}"
+  fail "CFA9 closeout incomplete" "doc=${c11_doc} ledger=${ledger_clean} ci=${ci_green} ci_branch=${c11_ci_branch}"
 fi
 
 # 12. Security posture: fail-closed bind/auth/tenant behavior.
