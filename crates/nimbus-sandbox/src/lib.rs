@@ -10,7 +10,6 @@ pub mod backends;
 
 mod artifact_paths;
 mod backend;
-mod egress_proxy;
 mod endpoint;
 mod error;
 mod instance;
@@ -18,7 +17,6 @@ mod process;
 mod spec;
 
 pub use backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
-pub use egress_proxy::{SandboxEgressProxy, SandboxEgressProxyConfig};
 pub use endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 pub use error::{Result, SandboxError};
 pub use instance::{SandboxHandle, SandboxId, SandboxStatus};

@@ -6137,6 +6137,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nimbus-proxy"
+version = "0.1.44"
+dependencies = [
+ "nimbus-core",
+ "nimbus-egress",
+ "url",
+]
+
+[[package]]
 name = "nimbus-runtime"
 version = "0.1.44"
 dependencies = [
@@ -6193,6 +6202,7 @@ dependencies = [
  "libc",
  "nimbus-core",
  "nimbus-egress",
+ "nimbus-proxy",
  "oci-client",
  "serde",
  "serde_json",

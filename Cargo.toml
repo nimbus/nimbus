@@ -20,6 +20,7 @@ members = [
     "crates/nimbus-node",
     "crates/nimbus-operator",
     "crates/nimbus-provenance",
+    "crates/nimbus-proxy",
     "crates/nimbus-services",
     "crates/nimbus-system",
     "crates/nimbus-tenant",

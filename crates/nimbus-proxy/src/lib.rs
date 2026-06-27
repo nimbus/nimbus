@@ -1,3 +1,5 @@
+use std::error::Error as StdError;
+use std::fmt;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::{
@@ -7,10 +9,9 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use nimbus_core::TenantId;
+use nimbus_egress::{CompiledEgressPolicy, EgressPolicy, EgressProtocol, EgressRequest};
 use url::Url;
-
-use crate::error::{Result, SandboxError};
-use nimbus_egress::{CompiledEgressPolicy, EgressProtocol, EgressRequest};
 
 const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -19,24 +20,207 @@ const DEFAULT_MAX_CONNECTIONS: usize = 128;
 
 type Resolver = Arc<dyn Fn(&str, u16) -> io::Result<Vec<SocketAddr>> + Send + Sync + 'static>;
 
+pub type Result<T> = std::result::Result<T, EgressProxyError>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EgressProxyError {
+    OperationFailed { message: String },
+}
+
+impl fmt::Display for EgressProxyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::OperationFailed { message } => formatter.write_str(message),
+        }
+    }
+}
+
+impl StdError for EgressProxyError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PolicyGeneration(u64);
+
+impl PolicyGeneration {
+    fn initial() -> Self {
+        Self(1)
+    }
+
+    fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EgressProxyReadiness {
+    pub ready: bool,
+    pub policy_generation: Option<PolicyGeneration>,
+}
+
+#[derive(Debug, Clone)]
+struct LastKnownGoodPolicy {
+    policy_generation: PolicyGeneration,
+    policy: CompiledEgressPolicy,
+}
+
+#[derive(Debug, Clone, Default)]
+struct EgressProxyPolicyState {
+    last_known_good: Option<LastKnownGoodPolicy>,
+}
+
+impl EgressProxyPolicyState {
+    fn with_policy(policy: CompiledEgressPolicy) -> Self {
+        Self {
+            last_known_good: Some(LastKnownGoodPolicy {
+                policy_generation: PolicyGeneration::initial(),
+                policy,
+            }),
+        }
+    }
+
+    fn active(&self) -> Option<&LastKnownGoodPolicy> {
+        self.last_known_good.as_ref()
+    }
+
+    fn reload(&mut self, policy: CompiledEgressPolicy) -> PolicyGeneration {
+        let next_generation = self
+            .last_known_good
+            .as_ref()
+            .map(|current| current.policy_generation.next())
+            .unwrap_or_else(PolicyGeneration::initial);
+        self.last_known_good = Some(LastKnownGoodPolicy {
+            policy_generation: next_generation,
+            policy,
+        });
+        next_generation
+    }
+
+    fn readiness(&self) -> EgressProxyReadiness {
+        EgressProxyReadiness {
+            ready: self.last_known_good.is_some(),
+            policy_generation: self
+                .last_known_good
+                .as_ref()
+                .map(|policy| policy.policy_generation),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DnsCacheConfig {
+    pub max_hosts: usize,
+    pub max_addresses_per_host: usize,
+    pub min_ttl: Duration,
+    pub max_ttl: Duration,
+}
+
+impl Default for DnsCacheConfig {
+    fn default() -> Self {
+        Self {
+            max_hosts: 1024,
+            max_addresses_per_host: 16,
+            min_ttl: Duration::from_secs(1),
+            max_ttl: Duration::from_secs(300),
+        }
+    }
+}
+
+impl DnsCacheConfig {
+    pub fn with_max_addresses_per_host(mut self, max_addresses_per_host: usize) -> Self {
+        self.max_addresses_per_host = max_addresses_per_host;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DnsResolution {
+    pub canonical_host: String,
+    pub alias_chain: Vec<String>,
+    pub addresses: Vec<SocketAddr>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EgressProxySubstrate {
+    Container,
+    Isolate,
+    Wasm,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TlsVerificationMode {
+    WebPki,
+    Disabled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EgressProxyPoolKey {
+    pub tenant_id: TenantId,
+    pub substrate: EgressProxySubstrate,
+    pub policy_generation: PolicyGeneration,
+    pub credential_identity: Option<String>,
+    pub destination: String,
+    pub resolved_peer: SocketAddr,
+    pub sni: Option<String>,
+    pub tls_verification: TlsVerificationMode,
+    pub client_cert_identity: Option<String>,
+    pub alpn: Vec<String>,
+    pub proxy_settings: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EgressProxyRequestPhase {
+    CanonicalizeAuthority,
+    ResolveDns,
+    AuthorizeResolvedPeer,
+    SelectPoolKey,
+    Dial,
+    Relay,
+}
+
+pub const REQUEST_PHASE_ORDER: [EgressProxyRequestPhase; 6] = [
+    EgressProxyRequestPhase::CanonicalizeAuthority,
+    EgressProxyRequestPhase::ResolveDns,
+    EgressProxyRequestPhase::AuthorizeResolvedPeer,
+    EgressProxyRequestPhase::SelectPoolKey,
+    EgressProxyRequestPhase::Dial,
+    EgressProxyRequestPhase::Relay,
+];
+
 #[derive(Clone)]
-pub struct SandboxEgressProxyConfig {
+pub struct EgressProxyConfig {
     pub bind_addr: SocketAddr,
-    pub policy: CompiledEgressPolicy,
+    pub policy: Option<CompiledEgressPolicy>,
     pub connect_timeout: Duration,
     pub io_timeout: Duration,
     pub max_connections: usize,
+    pub dns_cache: DnsCacheConfig,
     resolver: Resolver,
 }
 
-impl SandboxEgressProxyConfig {
+impl EgressProxyConfig {
     pub fn new(policy: CompiledEgressPolicy) -> Self {
         Self {
             bind_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
-            policy,
+            policy: Some(policy),
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
             io_timeout: DEFAULT_IO_TIMEOUT,
             max_connections: DEFAULT_MAX_CONNECTIONS,
+            dns_cache: DnsCacheConfig::default(),
+            resolver: Arc::new(resolve_socket_addrs),
+        }
+    }
+
+    pub fn without_active_policy() -> Self {
+        Self {
+            bind_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
+            policy: None,
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            io_timeout: DEFAULT_IO_TIMEOUT,
+            max_connections: DEFAULT_MAX_CONNECTIONS,
+            dns_cache: DnsCacheConfig::default(),
             resolver: Arc::new(resolve_socket_addrs),
         }
     }
@@ -57,6 +241,11 @@ impl SandboxEgressProxyConfig {
         self
     }
 
+    pub fn with_dns_cache_config(mut self, dns_cache: DnsCacheConfig) -> Self {
+        self.dns_cache = dns_cache;
+        self
+    }
+
     #[cfg(test)]
     fn with_resolver(mut self, resolver: Resolver) -> Self {
         self.resolver = resolver;
@@ -64,45 +253,53 @@ impl SandboxEgressProxyConfig {
     }
 }
 
-pub struct SandboxEgressProxy {
+pub struct EgressProxy {
     local_addr: SocketAddr,
     shutdown: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
-    policy: Arc<RwLock<CompiledEgressPolicy>>,
+    policy_state: Arc<RwLock<EgressProxyPolicyState>>,
 }
 
-impl SandboxEgressProxy {
-    pub fn start(config: SandboxEgressProxyConfig) -> Result<Self> {
+impl EgressProxy {
+    pub fn start(config: EgressProxyConfig) -> Result<Self> {
         if config.max_connections == 0 {
-            return Err(SandboxError::OperationFailed {
-                message: "sandbox egress proxy max_connections must be greater than 0".to_owned(),
+            return Err(EgressProxyError::OperationFailed {
+                message: "egress proxy max_connections must be greater than 0".to_owned(),
             });
         }
-        let listener =
-            TcpListener::bind(config.bind_addr).map_err(|error| SandboxError::OperationFailed {
+        let listener = TcpListener::bind(config.bind_addr).map_err(|error| {
+            EgressProxyError::OperationFailed {
                 message: format!(
-                    "failed to bind sandbox egress proxy on {}: {error}",
+                    "failed to bind egress proxy on {}: {error}",
                     config.bind_addr
                 ),
-            })?;
-        let local_addr = listener
-            .local_addr()
-            .map_err(|error| SandboxError::OperationFailed {
-                message: format!("failed to read sandbox egress proxy listen address: {error}"),
-            })?;
+            }
+        })?;
+        let local_addr =
+            listener
+                .local_addr()
+                .map_err(|error| EgressProxyError::OperationFailed {
+                    message: format!("failed to read egress proxy listen address: {error}"),
+                })?;
         listener
             .set_nonblocking(true)
-            .map_err(|error| SandboxError::OperationFailed {
-                message: format!("failed to configure sandbox egress proxy listener: {error}"),
+            .map_err(|error| EgressProxyError::OperationFailed {
+                message: format!("failed to configure egress proxy listener: {error}"),
             })?;
 
         let shutdown = Arc::new(AtomicBool::new(false));
-        let policy = Arc::new(RwLock::new(config.policy));
+        let policy_state = Arc::new(RwLock::new(
+            config
+                .policy
+                .map(EgressProxyPolicyState::with_policy)
+                .unwrap_or_default(),
+        ));
         let worker = ProxyWorker {
             listener,
             shutdown: Arc::clone(&shutdown),
-            policy: Arc::clone(&policy),
+            policy_state: Arc::clone(&policy_state),
             resolver: config.resolver,
+            dns_cache: config.dns_cache,
             connect_timeout: config.connect_timeout,
             io_timeout: config.io_timeout,
             connection_limiter: ConnectionLimiter::new(config.max_connections),
@@ -110,15 +307,15 @@ impl SandboxEgressProxy {
         let join = thread::Builder::new()
             .name("nimbus-egress-proxy".to_owned())
             .spawn(move || worker.run())
-            .map_err(|error| SandboxError::OperationFailed {
-                message: format!("failed to spawn sandbox egress proxy: {error}"),
+            .map_err(|error| EgressProxyError::OperationFailed {
+                message: format!("failed to spawn egress proxy: {error}"),
             })?;
 
         Ok(Self {
             local_addr,
             shutdown,
             join: Some(join),
-            policy,
+            policy_state,
         })
     }
 
@@ -126,19 +323,37 @@ impl SandboxEgressProxy {
         self.local_addr
     }
 
-    pub fn reload_policy(&self, policy: CompiledEgressPolicy) -> Result<()> {
-        let mut guard = self
-            .policy
-            .write()
-            .map_err(|_| SandboxError::OperationFailed {
-                message: "sandbox egress proxy policy lock is poisoned".to_owned(),
+    pub fn readiness(&self) -> Result<EgressProxyReadiness> {
+        let guard = self
+            .policy_state
+            .read()
+            .map_err(|_| EgressProxyError::OperationFailed {
+                message: "egress proxy policy lock is poisoned".to_owned(),
             })?;
-        *guard = policy;
-        Ok(())
+        Ok(guard.readiness())
+    }
+
+    pub fn reload_policy(&self, policy: CompiledEgressPolicy) -> Result<PolicyGeneration> {
+        let mut guard =
+            self.policy_state
+                .write()
+                .map_err(|_| EgressProxyError::OperationFailed {
+                    message: "egress proxy policy lock is poisoned".to_owned(),
+                })?;
+        Ok(guard.reload(policy))
+    }
+
+    pub fn reload_uncompiled_policy(&self, policy: EgressPolicy) -> Result<PolicyGeneration> {
+        let compiled = policy
+            .compile()
+            .map_err(|message| EgressProxyError::OperationFailed {
+                message: format!("invalid egress proxy policy reload: {message}"),
+            })?;
+        self.reload_policy(compiled)
     }
 }
 
-impl Drop for SandboxEgressProxy {
+impl Drop for EgressProxy {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::SeqCst);
         let _ = TcpStream::connect_timeout(&self.local_addr, Duration::from_millis(100));
@@ -151,8 +366,9 @@ impl Drop for SandboxEgressProxy {
 struct ProxyWorker {
     listener: TcpListener,
     shutdown: Arc<AtomicBool>,
-    policy: Arc<RwLock<CompiledEgressPolicy>>,
+    policy_state: Arc<RwLock<EgressProxyPolicyState>>,
     resolver: Resolver,
+    dns_cache: DnsCacheConfig,
     connect_timeout: Duration,
     io_timeout: Duration,
     connection_limiter: ConnectionLimiter,
@@ -168,19 +384,26 @@ impl ProxyWorker {
                         let _ = write_http_response(
                             &mut client,
                             HttpProxyResponse::service_unavailable(
-                                "sandbox egress proxy connection limit exceeded",
+                                "egress proxy connection limit exceeded",
                             ),
                         );
                         continue;
                     };
-                    let policy = Arc::clone(&self.policy);
+                    let policy_state = Arc::clone(&self.policy_state);
                     let resolver = Arc::clone(&self.resolver);
+                    let dns_cache = self.dns_cache.clone();
                     let connect_timeout = self.connect_timeout;
                     let io_timeout = self.io_timeout;
                     thread::spawn(move || {
                         let _connection_permit = connection_permit;
-                        let _ =
-                            handle_client(client, policy, resolver, connect_timeout, io_timeout);
+                        let _ = handle_client(
+                            client,
+                            policy_state,
+                            resolver,
+                            dns_cache,
+                            connect_timeout,
+                            io_timeout,
+                        );
                     });
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -258,8 +481,9 @@ enum ProxyRequestMode {
 
 fn handle_client(
     mut client: TcpStream,
-    policy: Arc<RwLock<CompiledEgressPolicy>>,
+    policy_state: Arc<RwLock<EgressProxyPolicyState>>,
     resolver: Resolver,
+    dns_cache: DnsCacheConfig,
     connect_timeout: Duration,
     io_timeout: Duration,
 ) -> io::Result<()> {
@@ -273,34 +497,57 @@ fn handle_client(
         Err(response) => return write_http_response(&mut client, response),
     };
 
-    let upstream_addrs = match resolver(&parsed.upstream_host, parsed.upstream_port) {
-        Ok(addrs) if !addrs.is_empty() => addrs,
+    let active_policy = policy_state
+        .read()
+        .map_err(|_| io::Error::other("egress proxy policy lock is poisoned"))?
+        .active()
+        .cloned();
+    let Some(active_policy) = active_policy else {
+        return write_http_response(
+            &mut client,
+            HttpProxyResponse::forbidden(
+                "egress proxy default deny: no active policy generation is ready",
+            ),
+        );
+    };
+
+    let dns_resolution = match resolve_dns(
+        &resolver,
+        &dns_cache,
+        &parsed.upstream_host,
+        parsed.upstream_port,
+    ) {
+        Ok(resolution) if !resolution.addresses.is_empty() => resolution,
         Ok(_) => {
             return write_http_response(
                 &mut client,
-                HttpProxyResponse::bad_gateway(
-                    "sandbox egress proxy DNS resolution returned no addresses",
-                ),
+                HttpProxyResponse::bad_gateway("egress proxy DNS resolution returned no addresses"),
+            );
+        }
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            return write_http_response(
+                &mut client,
+                HttpProxyResponse::forbidden(&format!(
+                    "egress proxy DNS cache overflow default deny: {error}"
+                )),
             );
         }
         Err(error) => {
             return write_http_response(
                 &mut client,
                 HttpProxyResponse::bad_gateway(&format!(
-                    "sandbox egress proxy DNS resolution failed: {error}"
+                    "egress proxy DNS resolution failed: {error}"
                 )),
             );
         }
     };
-    let upstream_addr = upstream_addrs[0];
+    let upstream_addr = dns_resolution.addresses[0];
     let egress_request = parsed
         .egress_request
         .clone()
         .with_resolved_ip(upstream_addr.ip());
-    let authorization = policy
-        .read()
-        .map_err(|_| io::Error::other("sandbox egress proxy policy lock is poisoned"))?
-        .authorize(&egress_request);
+    let _policy_generation = active_policy.policy_generation;
+    let authorization = active_policy.policy.authorize(&egress_request);
     if !authorization.is_allowed() {
         return write_http_response(
             &mut client,
@@ -350,7 +597,7 @@ fn read_http_headers(client: &mut TcpStream, buffer: &mut Vec<u8>) -> io::Result
             let _ = write_http_response(
                 client,
                 HttpProxyResponse::request_header_fields_too_large(
-                    "sandbox egress proxy request headers are too large",
+                    "egress proxy request headers are too large",
                 ),
             );
             return Err(io::Error::new(
@@ -366,12 +613,12 @@ fn parse_proxy_request(
 ) -> std::result::Result<ParsedProxyRequest, HttpProxyResponse> {
     let Some(header_end) = find_header_end(buffer) else {
         return Err(HttpProxyResponse::bad_request(
-            "sandbox egress proxy request is missing HTTP headers",
+            "egress proxy request is missing HTTP headers",
         ));
     };
     let body_offset = header_end + 4;
     let headers = std::str::from_utf8(&buffer[..header_end]).map_err(|_| {
-        HttpProxyResponse::bad_request("sandbox egress proxy request headers must be UTF-8")
+        HttpProxyResponse::bad_request("egress proxy request headers must be UTF-8")
     })?;
     let mut lines = headers.split("\r\n");
     let request_line = lines.next().unwrap_or_default();
@@ -381,7 +628,7 @@ fn parse_proxy_request(
     let version = parts.next().unwrap_or_default();
     if method.is_empty() || target.is_empty() || version.is_empty() || parts.next().is_some() {
         return Err(HttpProxyResponse::bad_request(
-            "sandbox egress proxy request line must be METHOD absolute-uri HTTP-version",
+            "egress proxy request line must be METHOD absolute-uri HTTP-version",
         ));
     }
     if method.eq_ignore_ascii_case("CONNECT") {
@@ -400,27 +647,33 @@ fn parse_proxy_request(
         });
     }
     let url = Url::parse(target).map_err(|_| {
-        HttpProxyResponse::bad_request("sandbox egress proxy target must be an absolute URI")
+        HttpProxyResponse::bad_request("egress proxy target must be an absolute URI")
     })?;
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(HttpProxyResponse::bad_request(
+            "egress proxy canonical authority must not include userinfo",
+        ));
+    }
     let protocol = match url.scheme() {
         "http" => EgressProtocol::Http,
         "https" => {
             return Err(HttpProxyResponse::not_implemented(
-                "sandbox egress proxy HTTPS requests must use CONNECT",
+                "egress proxy HTTPS requests must use CONNECT",
             ));
         }
         _ => {
             return Err(HttpProxyResponse::bad_request(
-                "sandbox egress proxy only supports http and https targets",
+                "egress proxy only supports http and https targets",
             ));
         }
     };
     let host = url
         .host_str()
-        .ok_or_else(|| HttpProxyResponse::bad_request("sandbox egress proxy target needs a host"))?
+        .ok_or_else(|| HttpProxyResponse::bad_request("egress proxy target needs a host"))?
         .to_owned();
+    let host = canonicalize_proxy_host(&host)?;
     let port = url.port_or_known_default().ok_or_else(|| {
-        HttpProxyResponse::bad_request("sandbox egress proxy target needs an explicit port")
+        HttpProxyResponse::bad_request("egress proxy target needs an explicit port")
     })?;
     let origin_form = origin_form(&url);
     let egress_request =
@@ -495,48 +748,48 @@ fn relay_bidirectional(mut client: TcpStream, mut upstream: TcpStream) -> io::Re
 fn parse_connect_authority(target: &str) -> std::result::Result<(String, u16), HttpProxyResponse> {
     if target.contains("://") || target.contains('/') || target.contains('@') {
         return Err(HttpProxyResponse::bad_request(
-            "sandbox egress proxy CONNECT target must be host:port",
+            "egress proxy CONNECT target must be host:port",
         ));
     }
     let (host, port) = if let Some(rest) = target.strip_prefix('[') {
         let Some((host, suffix)) = rest.split_once(']') else {
             return Err(HttpProxyResponse::bad_request(
-                "sandbox egress proxy CONNECT IPv6 target needs closing bracket",
+                "egress proxy CONNECT IPv6 target needs closing bracket",
             ));
         };
         let Some(port) = suffix.strip_prefix(':') else {
             return Err(HttpProxyResponse::bad_request(
-                "sandbox egress proxy CONNECT target needs a port",
+                "egress proxy CONNECT target needs a port",
             ));
         };
         (host.to_owned(), port)
     } else {
         let Some((host, port)) = target.rsplit_once(':') else {
             return Err(HttpProxyResponse::bad_request(
-                "sandbox egress proxy CONNECT target needs a port",
+                "egress proxy CONNECT target needs a port",
             ));
         };
         if host.contains(':') {
             return Err(HttpProxyResponse::bad_request(
-                "sandbox egress proxy CONNECT IPv6 target must use brackets",
+                "egress proxy CONNECT IPv6 target must use brackets",
             ));
         }
         (host.to_owned(), port)
     };
     if host.is_empty() {
         return Err(HttpProxyResponse::bad_request(
-            "sandbox egress proxy CONNECT target needs a host",
+            "egress proxy CONNECT target needs a host",
         ));
     }
     let port = port.parse::<u16>().map_err(|_| {
-        HttpProxyResponse::bad_request("sandbox egress proxy CONNECT port must be a number")
+        HttpProxyResponse::bad_request("egress proxy CONNECT port must be a number")
     })?;
     if port == 0 {
         return Err(HttpProxyResponse::bad_request(
-            "sandbox egress proxy CONNECT port must not be 0",
+            "egress proxy CONNECT port must not be 0",
         ));
     }
-    Ok((host, port))
+    Ok((canonicalize_proxy_host(&host)?, port))
 }
 
 fn origin_form(url: &Url) -> String {
@@ -552,6 +805,57 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
 
 fn resolve_socket_addrs(host: &str, port: u16) -> io::Result<Vec<SocketAddr>> {
     (host, port).to_socket_addrs().map(|addrs| addrs.collect())
+}
+
+fn resolve_dns(
+    resolver: &Resolver,
+    dns_cache: &DnsCacheConfig,
+    host: &str,
+    port: u16,
+) -> io::Result<DnsResolution> {
+    if dns_cache.max_hosts == 0 || dns_cache.max_addresses_per_host == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "DNS cache caps must be nonzero",
+        ));
+    }
+    let canonical_host = host.to_ascii_lowercase();
+    let addresses = resolver(&canonical_host, port)?;
+    if addresses.len() > dns_cache.max_addresses_per_host {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "{} addresses exceeds max_addresses_per_host {}",
+                addresses.len(),
+                dns_cache.max_addresses_per_host
+            ),
+        ));
+    }
+    Ok(DnsResolution {
+        canonical_host: canonical_host.clone(),
+        alias_chain: vec![canonical_host],
+        addresses,
+    })
+}
+
+fn canonicalize_proxy_host(host: &str) -> std::result::Result<String, HttpProxyResponse> {
+    let trimmed = host.trim();
+    if trimmed.is_empty() {
+        return Err(HttpProxyResponse::bad_request(
+            "egress proxy target needs a host",
+        ));
+    }
+    if trimmed.contains('%')
+        || trimmed.contains('@')
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.chars().any(char::is_whitespace)
+    {
+        return Err(HttpProxyResponse::bad_request(
+            "egress proxy canonical authority rejected ambiguous host",
+        ));
+    }
+    Ok(trimmed.trim_end_matches('.').to_ascii_lowercase())
 }
 
 struct HttpProxyResponse {
@@ -726,6 +1030,44 @@ mod tests {
     }
 
     #[test]
+    fn egress_proxy_without_active_policy_denies_before_dns() {
+        let resolver_calls = Arc::new(AtomicUsize::new(0));
+        let resolver_call_counter = Arc::clone(&resolver_calls);
+        let resolver = Arc::new(move |_host: &str, _port: u16| {
+            resolver_call_counter.fetch_add(1, Ordering::SeqCst);
+            Err(io::Error::other(
+                "resolver must not be called without policy",
+            ))
+        });
+        let proxy = EgressProxy::start(
+            EgressProxyConfig::without_active_policy()
+                .with_timeouts(Duration::from_secs(5), Duration::from_secs(5))
+                .with_resolver(resolver),
+        )
+        .expect("proxy should start without active policy");
+
+        let readiness = proxy.readiness().expect("readiness should be observable");
+        assert!(!readiness.ready);
+        assert_eq!(readiness.policy_generation, None);
+
+        let response = proxy_request(
+            proxy.local_addr(),
+            "GET http://blocked.test:443/ HTTP/1.1\r\nHost: blocked.test\r\n\r\n".to_string(),
+        );
+
+        assert!(
+            response.starts_with("HTTP/1.1 403 Forbidden")
+                && response.contains("no active policy generation"),
+            "missing policy generation must fail closed, got: {response}"
+        );
+        assert_eq!(
+            resolver_calls.load(Ordering::SeqCst),
+            0,
+            "missing active policy must deny before DNS resolution"
+        );
+    }
+
+    #[test]
     fn egress_proxy_denies_dns_resolved_internal_targets() {
         let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
         let proxy = start_test_proxy(allow_policy([EgressRule::new(
@@ -874,7 +1216,201 @@ mod tests {
         );
     }
 
-    fn start_test_proxy(policy: CompiledEgressPolicy) -> SandboxEgressProxy {
+    #[test]
+    fn egress_proxy_invalid_reload_preserves_last_known_good_generation() {
+        let first = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfirst");
+        let proxy = start_test_proxy(allow_policy([EgressRule::new(
+            "first",
+            EgressProtocol::Http,
+            "first.test",
+            first.addr.port(),
+        )
+        .allow_internal_ips(true)]));
+        let initial = proxy.readiness().expect("readiness should be observable");
+        assert_eq!(initial.policy_generation, Some(PolicyGeneration::initial()));
+
+        let invalid =
+            EgressPolicy::new([EgressRule::new("wildcard", EgressProtocol::Http, "*", 80)]);
+        let error = proxy
+            .reload_uncompiled_policy(invalid)
+            .expect_err("invalid reload should fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid egress proxy policy reload"),
+            "reload error should explain invalid policy: {error}"
+        );
+        let after_error = proxy.readiness().expect("readiness should remain readable");
+        assert_eq!(
+            after_error.policy_generation,
+            Some(PolicyGeneration::initial()),
+            "invalid reload must keep the last-known-good generation"
+        );
+
+        let allowed = proxy_request(
+            proxy.local_addr(),
+            format!(
+                "GET http://first.test:{}/ok HTTP/1.1\r\nHost: first.test\r\n\r\n",
+                first.addr.port()
+            ),
+        );
+        assert!(
+            allowed.starts_with("HTTP/1.1 200 OK"),
+            "last-known-good policy should still authorize first target, got: {allowed}"
+        );
+    }
+
+    #[test]
+    fn egress_proxy_dns_overflow_defaults_to_deny_before_dial() {
+        let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+        let resolver = Arc::new(move |_host: &str, port: u16| {
+            Ok(vec![
+                SocketAddr::from(([127, 0, 0, 1], port)),
+                SocketAddr::from(([127, 0, 0, 2], port)),
+            ])
+        });
+        let proxy = EgressProxy::start(
+            EgressProxyConfig::new(allow_policy([EgressRule::new(
+                "allowed",
+                EgressProtocol::Http,
+                "allowed.test",
+                upstream.addr.port(),
+            )
+            .allow_internal_ips(true)]))
+            .with_timeouts(Duration::from_secs(5), Duration::from_secs(5))
+            .with_dns_cache_config(DnsCacheConfig::default().with_max_addresses_per_host(1))
+            .with_resolver(resolver),
+        )
+        .expect("proxy should start");
+
+        let response = proxy_request(
+            proxy.local_addr(),
+            format!(
+                "GET http://allowed.test:{}/ok HTTP/1.1\r\nHost: allowed.test\r\n\r\n",
+                upstream.addr.port()
+            ),
+        );
+
+        assert!(
+            response.starts_with("HTTP/1.1 403 Forbidden")
+                && response.contains("DNS cache overflow default deny"),
+            "DNS overflow must fail closed, got: {response}"
+        );
+        assert!(
+            upstream
+                .request
+                .recv_timeout(Duration::from_millis(100))
+                .is_err(),
+            "DNS-overflow denied requests must not contact upstream"
+        );
+    }
+
+    #[test]
+    fn egress_proxy_rejects_ambiguous_canonical_authorities() {
+        let resolver_calls = Arc::new(AtomicUsize::new(0));
+        let resolver_call_counter = Arc::clone(&resolver_calls);
+        let resolver = Arc::new(move |_host: &str, _port: u16| {
+            resolver_call_counter.fetch_add(1, Ordering::SeqCst);
+            Ok(vec![SocketAddr::from(([127, 0, 0, 1], 80))])
+        });
+        let proxy = EgressProxy::start(
+            EgressProxyConfig::new(allow_policy([EgressRule::new(
+                "allowed",
+                EgressProtocol::Http,
+                "allowed.test",
+                80,
+            )
+            .allow_internal_ips(true)]))
+            .with_resolver(resolver),
+        )
+        .expect("proxy should start");
+
+        let userinfo = proxy_request(
+            proxy.local_addr(),
+            "GET http://allowed.test@127.0.0.1/ok HTTP/1.1\r\nHost: allowed.test\r\n\r\n"
+                .to_string(),
+        );
+        let encoded = proxy_request(
+            proxy.local_addr(),
+            "CONNECT allowed.test%2eexample:443 HTTP/1.1\r\nHost: allowed.test\r\n\r\n".to_string(),
+        );
+
+        assert!(
+            userinfo.starts_with("HTTP/1.1 400 Bad Request")
+                && userinfo.contains("canonical authority"),
+            "userinfo authority smuggling should reject, got: {userinfo}"
+        );
+        assert!(
+            encoded.starts_with("HTTP/1.1 400 Bad Request")
+                && encoded.contains("canonical authority"),
+            "encoded authority should reject, got: {encoded}"
+        );
+        assert_eq!(
+            resolver_calls.load(Ordering::SeqCst),
+            0,
+            "canonicalization failures must happen before DNS resolution"
+        );
+    }
+
+    #[test]
+    fn egress_proxy_request_phase_order_is_explicit() {
+        assert_eq!(
+            REQUEST_PHASE_ORDER,
+            [
+                EgressProxyRequestPhase::CanonicalizeAuthority,
+                EgressProxyRequestPhase::ResolveDns,
+                EgressProxyRequestPhase::AuthorizeResolvedPeer,
+                EgressProxyRequestPhase::SelectPoolKey,
+                EgressProxyRequestPhase::Dial,
+                EgressProxyRequestPhase::Relay,
+            ]
+        );
+    }
+
+    #[test]
+    fn egress_proxy_pool_key_covers_security_relevant_identity() {
+        let tenant_id = TenantId::new("tenant-a").expect("tenant id should be valid");
+        let base = EgressProxyPoolKey {
+            tenant_id,
+            substrate: EgressProxySubstrate::Container,
+            policy_generation: PolicyGeneration::initial(),
+            credential_identity: Some("secret:stripe".to_string()),
+            destination: "https://api.stripe.com:443".to_string(),
+            resolved_peer: SocketAddr::from(([203, 0, 113, 10], 443)),
+            sni: Some("api.stripe.com".to_string()),
+            tls_verification: TlsVerificationMode::WebPki,
+            client_cert_identity: Some("client-cert:payments".to_string()),
+            alpn: vec!["h2".to_string()],
+            proxy_settings: Some("direct".to_string()),
+        };
+
+        let mut changed = base.clone();
+        changed.policy_generation = base.policy_generation.next();
+        assert_ne!(base, changed);
+        let mut changed = base.clone();
+        changed.credential_identity = Some("secret:github".to_string());
+        assert_ne!(base, changed);
+        let mut changed = base.clone();
+        changed.resolved_peer = SocketAddr::from(([203, 0, 113, 11], 443));
+        assert_ne!(base, changed);
+        let mut changed = base.clone();
+        changed.sni = Some("uploads.stripe.com".to_string());
+        assert_ne!(base, changed);
+        let mut changed = base.clone();
+        changed.tls_verification = TlsVerificationMode::Disabled;
+        assert_ne!(base, changed);
+        let mut changed = base.clone();
+        changed.client_cert_identity = None;
+        assert_ne!(base, changed);
+        let mut changed = base.clone();
+        changed.alpn = vec!["http/1.1".to_string()];
+        assert_ne!(base, changed);
+        let mut changed = base.clone();
+        changed.proxy_settings = Some("upstream-proxy-a".to_string());
+        assert_ne!(base, changed);
+    }
+
+    fn start_test_proxy(policy: CompiledEgressPolicy) -> EgressProxy {
         let resolver = Arc::new(|host: &str, port: u16| {
             let ip = match host {
                 "allowed.test" | "first.test" | "second.test" | "metadata.test" => {
@@ -884,8 +1420,8 @@ mod tests {
             };
             Ok(vec![SocketAddr::new(ip, port)])
         });
-        SandboxEgressProxy::start(
-            SandboxEgressProxyConfig::new(policy)
+        EgressProxy::start(
+            EgressProxyConfig::new(policy)
                 .with_timeouts(Duration::from_secs(5), Duration::from_secs(5))
                 .with_resolver(resolver),
         )
@@ -970,7 +1506,7 @@ mod tests {
 
     #[test]
     fn egress_proxy_config_defaults_to_loopback_ephemeral_bind() {
-        let config = SandboxEgressProxyConfig::new(CompiledEgressPolicy::deny_all());
+        let config = EgressProxyConfig::new(CompiledEgressPolicy::deny_all());
 
         assert_eq!(config.bind_addr, SocketAddr::from(([127, 0, 0, 1], 0)));
         assert_eq!(config.max_connections, DEFAULT_MAX_CONNECTIONS);
@@ -978,8 +1514,8 @@ mod tests {
 
     #[test]
     fn egress_proxy_rejects_zero_connection_limit() {
-        let error = match SandboxEgressProxy::start(
-            SandboxEgressProxyConfig::new(CompiledEgressPolicy::deny_all()).with_max_connections(0),
+        let error = match EgressProxy::start(
+            EgressProxyConfig::new(CompiledEgressPolicy::deny_all()).with_max_connections(0),
         ) {
             Ok(_) => panic!("zero connection limit should be rejected"),
             Err(error) => error,

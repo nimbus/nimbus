@@ -122,7 +122,7 @@ if [ -d crates/nimbus-proxy ] \
   && contains crates/nimbus-proxy/Cargo.toml '^nimbus-core[[:space:]]*=' \
   && ! rg -q '^nimbus-proxy[[:space:]]*=' crates/nimbus-egress/Cargo.toml 2>/dev/null \
   && rg_contains '\bEgressProxy\b' crates/nimbus-proxy/src \
-  && ! rg -q '\bSandboxEgressProxy\b' crates scripts \
+  && ! rg -q '\bSandboxEgressProxy\b' crates scripts --glob '!verify-nimbus-egress-gateway-extraction.sh' \
   && rg_contains 'policy_generation|PolicyGeneration' crates/nimbus-proxy/src \
   && rg_contains 'last_known_good|LastKnownGood' crates/nimbus-proxy/src \
   && rg_contains 'Dns|DNS|alias_chain|AliasChain' crates/nimbus-proxy/src \
