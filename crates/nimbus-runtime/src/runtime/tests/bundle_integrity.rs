@@ -1,8 +1,8 @@
 use super::*;
 use crate::backends::v8::V8RuntimeConstructionMode;
 use crate::limits::{
-    RuntimeExecutionModel, RuntimeMemoryEnforcement, RuntimeMode, RuntimeNodeFullRealmReusePolicy,
-    RuntimePoolKind, RuntimePreset, RuntimeRoutingAffinity,
+    RuntimeBundleContentKind, RuntimeExecutionModel, RuntimeMemoryEnforcement, RuntimeMode,
+    RuntimeNodeFullRealmReusePolicy, RuntimePoolKind, RuntimePreset, RuntimeRoutingAffinity,
 };
 use crate::test_support::{RuntimeReproCase, product_default_runtime_test_policy};
 
@@ -177,6 +177,113 @@ export {};
         }
         other => panic!("unexpected integrity error: {other}"),
     }
+}
+
+#[test]
+fn wasm_bundle_records_component_world_and_hash_identity() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("agent.component.wasm");
+    std::fs::write(&bundle_path, b"wasm component bytes").expect("WASM bundle should write");
+    let expected_sha256 =
+        RuntimeBundle::compute_sha256_for_path(&bundle_path).expect("WASM bundle hash should load");
+
+    let bundle = RuntimeBundle::wasm_component_for_world_with_expected_sha256(
+        &bundle_path,
+        RuntimeComponentWorld::NimbusAgent,
+        &expected_sha256,
+    )
+    .expect("WASM bundle identity should accept sha256");
+
+    assert_eq!(
+        bundle.content_kind(),
+        RuntimeBundleContentKind::WasmComponent
+    );
+    assert_eq!(
+        bundle.target_world(),
+        Some(RuntimeComponentWorld::NimbusAgent)
+    );
+    assert_eq!(
+        bundle.identity().target_world(),
+        Some(RuntimeComponentWorld::NimbusAgent)
+    );
+    assert_eq!(
+        bundle.identity().expected_sha256(),
+        Some(expected_sha256.as_str())
+    );
+    match bundle.content() {
+        RuntimeBundleContent::WasmComponent(content) => {
+            assert_eq!(content.target_world(), RuntimeComponentWorld::NimbusAgent);
+            assert_eq!(content.precompiled_sha256(), None);
+        }
+        RuntimeBundleContent::JavaScript => panic!("WASM bundle should carry component content"),
+    }
+
+    let js_bundle = RuntimeBundle::new(tempdir.path().join("bundle.mjs"));
+    assert_eq!(js_bundle.target_world(), None);
+    assert_eq!(js_bundle.identity().target_world(), None);
+}
+
+#[test]
+fn wasm_bundle_rejects_tampered_wasm_component_bytes() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("tampered-wasm.component.wasm");
+    std::fs::write(&bundle_path, b"original wasm component bytes")
+        .expect("WASM bundle should write");
+    let expected_sha256 =
+        RuntimeBundle::compute_sha256_for_path(&bundle_path).expect("WASM bundle hash should load");
+    let bundle = RuntimeBundle::wasm_component_with_expected_sha256(&bundle_path, expected_sha256)
+        .expect("WASM bundle integrity metadata should build");
+
+    std::fs::write(&bundle_path, b"tampered WASM component bytes")
+        .expect("tampered WASM bundle should write");
+    let error = bundle
+        .verify_integrity()
+        .expect_err("tampered WASM component should fail integrity verification");
+
+    match error {
+        NimbusRuntimeError::BundleIntegrityMismatch(message) => {
+            assert!(message.contains("tampered-wasm.component.wasm"));
+        }
+        other => panic!("unexpected tampered WASM integrity error: {other}"),
+    }
+}
+
+#[test]
+fn wasm_bundle_verifies_precompiled_component_hash_separately() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let component_path = tempdir.path().join("function.component.wasm");
+    let precompiled_path = tempdir.path().join("function.component.cwasm");
+    std::fs::write(&component_path, b"component model bytes").expect("component should write");
+    std::fs::write(&precompiled_path, b"precompiled component bytes")
+        .expect("precompiled component should write");
+    let component_sha256 = RuntimeBundle::compute_sha256_for_path(&component_path)
+        .expect("component hash should load");
+    let precompiled_sha256 = RuntimeBundle::compute_sha256_for_path(&precompiled_path)
+        .expect("precompiled component hash should load");
+    let bundle = RuntimeBundle::wasm_component_with_precompiled_sha256(
+        &component_path,
+        RuntimeComponentWorld::NimbusFunction,
+        component_sha256,
+        &precompiled_sha256,
+    )
+    .expect("WASM bundle precompile metadata should build");
+
+    bundle
+        .verify_integrity()
+        .expect("component bytes should match recorded provenance");
+    bundle
+        .verify_precompiled_component_integrity(&precompiled_path)
+        .expect("precompiled component bytes should match recorded provenance");
+
+    std::fs::write(&precompiled_path, b"tampered precompiled WASM component")
+        .expect("tampered precompiled component should write");
+    let error = bundle
+        .verify_precompiled_component_integrity(&precompiled_path)
+        .expect_err("tampered precompiled component should fail integrity verification");
+    assert!(
+        matches!(error, NimbusRuntimeError::BundleIntegrityMismatch(_)),
+        "unexpected precompiled WASM integrity error: {error}"
+    );
 }
 
 #[tokio::test]

@@ -10,7 +10,7 @@ use wasmtime::component::Component;
 use crate::backends::{RuntimeBackend, RuntimeBackendFactory, RuntimeBackendInvocation};
 use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::RuntimeBundleContentKind;
-use crate::runtime::RuntimeBundle;
+use crate::runtime::{RuntimeBundle, RuntimeComponentWorld};
 
 use super::host_linker::{
     WasmtimeHostLinker, build_nimbus_host_linker, create_wasmtime_component_engine,
@@ -104,6 +104,20 @@ impl WasmtimeBackend {
                 "Wasmtime backend requires a WASM component bundle, got {:?}",
                 bundle.content_kind()
             )));
+        }
+        match bundle.target_world() {
+            Some(RuntimeComponentWorld::NimbusFunction) => {}
+            Some(RuntimeComponentWorld::NimbusAgent) => {
+                return Err(NimbusRuntimeError::Contract(
+                    "Wasmtime NimbusAgent components require WAC agent-capability imports before invocation"
+                        .to_string(),
+                ));
+            }
+            None => {
+                return Err(NimbusRuntimeError::Contract(
+                    "Wasmtime backend requires a WASM component target world".to_string(),
+                ));
+            }
         }
 
         let component = self.module_cache.get_or_compile(&bundle)?;
@@ -344,6 +358,50 @@ mod tests {
                 .expect_err("JavaScript bundle must be rejected by Wasmtime backend")
                 .to_string()
                 .contains("runtime bundle content kind JavaScript does not match")
+        );
+    }
+
+    #[test]
+    fn wasmtime_run_to_completion_rejects_agent_world_until_wac_imports_land() {
+        let (_tempdir, function_bundle) = write_component_fixture();
+        let expected_sha256 = function_bundle
+            .identity()
+            .expected_sha256()
+            .expect("fixture should record a hash")
+            .to_string();
+        let agent_bundle = RuntimeBundle::wasm_component_for_world_with_expected_sha256(
+            function_bundle.entrypoint(),
+            RuntimeComponentWorld::NimbusAgent,
+            expected_sha256,
+        )
+        .expect("agent-world bundle metadata should build");
+        let mut backend = WasmtimeBackendFactory::new().create();
+        let request = request();
+        let policy = Arc::new(RuntimePolicy::new(
+            RuntimeLimits::application_wasm_component(),
+        ));
+        let context = crate::RuntimeInvocationContext::top_level(&request);
+        let permit =
+            crate::executor::SharedInvocationPermit::new(policy.clone(), None, None, true, None);
+
+        let result = tokio::runtime::Runtime::new()
+            .expect("tokio runtime should build")
+            .block_on(backend.invoke(RuntimeBackendInvocation {
+                watchdog: crate::watchdog::WatchdogTimer::new(),
+                host: crate::runtime::RuntimeHost::new(Arc::new(NoopHost)),
+                policy,
+                bundle: agent_bundle,
+                request,
+                context,
+                cancellation: None,
+                permit,
+            }));
+
+        assert!(
+            result
+                .expect_err("NimbusAgent world must fail closed before WAC imports land")
+                .to_string()
+                .contains("NimbusAgent components require WAC")
         );
     }
 

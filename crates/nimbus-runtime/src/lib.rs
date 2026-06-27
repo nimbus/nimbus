@@ -96,5 +96,6 @@ pub use metrics::{
 pub use runtime::{
     InvocationAuth, InvocationKind, InvocationRequest, InvocationServiceBinding,
     InvocationServiceEndpoint, InvocationServiceProtocol, InvocationServices, NimbusRuntime,
-    RuntimeBundle, RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
+    RuntimeBundle, RuntimeBundleContent, RuntimeBundleWasmComponentContent, RuntimeComponentWorld,
+    RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
 };
