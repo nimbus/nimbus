@@ -381,10 +381,13 @@ if [ -f "${EXECUTION_PLAN}" ] &&
     'pub\(crate\) fn reset_runtime_contract' \
     'state\.put\(InstalledRuntimeContract \{ limits \}\)' >/tmp/nfr4-bootstrap-missing.txt &&
   contains_all "${DRIVER_LOADING}" \
+    'FreshRealmInvocationTrace' \
     'checkout_fresh_realm_lease' \
     'RuntimeExecutionPlan::for_realm_lease_invocation' \
     'start_fresh_realm_bundle_invocation_with_lease_and_trace' \
-    'reset_runtime_contract\(runtime, self, bundle\)' \
+    'start_fresh_realm_bundle_invocation_with_lease_and_reason_trace' \
+    'reset_runtime_contract\(runtime, self, trace\.bundle\)' \
+    'fresh_realm_module_loader' \
     'mark_realm_ready' \
     'mark_bundle_loaded' \
     'mark_invoking' \
@@ -392,6 +395,7 @@ if [ -f "${EXECUTION_PLAN}" ] &&
     'return_clean_fresh_realm_lease' \
     'condemn_dirty_fresh_realm_lease' >/tmp/nfr4-loading-missing.txt &&
   contains_all "${DRIVER_INVOCATION}" \
+    'FreshRealmInvocationTrace \{' \
     'start_fresh_realm_bundle_invocation_with_lease_and_reason_trace' \
     'resolve_fresh_realm_invocation_response_with_lease_and_trace' \
     'take_runtime_wait_until_pending' \
@@ -408,6 +412,7 @@ if [ -f "${EXECUTION_PLAN}" ] &&
     'node_full_fresh_realm_lease_denies_inspector_and_repl_in_production' \
     'node_full_fresh_realm_lease_denies_query_host_effects_before_dispatch' \
     'node_full_fresh_realm_lease_matches_startup_snapshot_for_node_fixture' \
+    '__mainRealmSentinel' \
     'mainRealmSentinelType' \
     'module\.exports' \
     'authority key mismatch' \
