@@ -115,9 +115,10 @@ impl ConvexRegistry {
             }) => &self.node26_runtime_lane,
             Some(ConvexRuntimeSelection {
                 engine: nimbus_runtime::RuntimeBackendKind::V8,
-                compatibility_target: RuntimeCompatibilityTarget::BunJsc,
+                compatibility_target:
+                    RuntimeCompatibilityTarget::BunJsc | RuntimeCompatibilityTarget::WasmComponent,
                 ..
-            }) => unreachable!("V8/BunJsc target manifests are rejected at registry load"),
+            }) => unreachable!("V8 non-V8-target manifests are rejected at registry load"),
             Some(ConvexRuntimeSelection {
                 engine: nimbus_runtime::RuntimeBackendKind::V8,
                 compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
@@ -128,6 +129,10 @@ impl ConvexRegistry {
                 engine: nimbus_runtime::RuntimeBackendKind::BunJsc,
                 ..
             }) => &self.bun_jsc_runtime_lane,
+            Some(ConvexRuntimeSelection {
+                engine: nimbus_runtime::RuntimeBackendKind::Wasmtime,
+                ..
+            }) => unreachable!("Wasmtime Convex manifests are rejected at registry load"),
         }
     }
 

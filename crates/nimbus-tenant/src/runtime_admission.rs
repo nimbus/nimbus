@@ -187,6 +187,11 @@ pub(super) fn validate_production_in_process_untrusted_policy(
 ) -> std::result::Result<(), ProductionRuntimePolicyRejection> {
     match limits.backend_kind {
         RuntimeBackendKind::V8 | RuntimeBackendKind::BunJsc => {}
+        RuntimeBackendKind::Wasmtime => {
+            return Err(ProductionRuntimePolicyRejection::wasm_capability_sandbox(
+                "uses Wasmtime backend before production WASM capability admission is enabled",
+            ));
+        }
     }
     if !matches!(
         limits.bundle_content_kind,

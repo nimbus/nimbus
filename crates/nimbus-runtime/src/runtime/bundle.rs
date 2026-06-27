@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::backends::v8::V8RuntimeConstructionMode;
@@ -16,10 +17,50 @@ use crate::limits::{
 };
 use crate::module_loader::BundleModuleCodeCache;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeComponentWorld {
+    #[default]
+    NimbusFunction,
+    NimbusAgent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RuntimeBundleWasmComponentContent {
+    target_world: RuntimeComponentWorld,
+    precompiled_sha256: Option<String>,
+}
+
+impl RuntimeBundleWasmComponentContent {
+    pub fn target_world(&self) -> RuntimeComponentWorld {
+        self.target_world
+    }
+
+    pub fn precompiled_sha256(&self) -> Option<&str> {
+        self.precompiled_sha256.as_deref()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RuntimeBundleContent {
+    JavaScript,
+    WasmComponent(RuntimeBundleWasmComponentContent),
+}
+
+impl RuntimeBundleContent {
+    pub fn content_kind(&self) -> RuntimeBundleContentKind {
+        match self {
+            Self::JavaScript => RuntimeBundleContentKind::JavaScript,
+            Self::WasmComponent(_) => RuntimeBundleContentKind::WasmComponent,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RuntimeBundleIdentity {
     tenant_label: Option<String>,
     content_kind: RuntimeBundleContentKind,
+    target_world: Option<RuntimeComponentWorld>,
     entrypoint_kind: RuntimeBundleEntrypointKind,
     entrypoint: PathBuf,
     expected_sha256: Option<String>,
@@ -32,6 +73,10 @@ impl RuntimeBundleIdentity {
 
     pub fn content_kind(&self) -> RuntimeBundleContentKind {
         self.content_kind
+    }
+
+    pub fn target_world(&self) -> Option<RuntimeComponentWorld> {
+        self.target_world
     }
 
     pub fn entrypoint(&self) -> &Path {
@@ -51,7 +96,7 @@ pub(crate) enum RuntimeBundleEntrypointKind {
 
 #[derive(Debug)]
 struct RuntimeBundleShared {
-    content_kind: RuntimeBundleContentKind,
+    content: RuntimeBundleContent,
     entrypoint_kind: RuntimeBundleEntrypointKind,
     entrypoint: PathBuf,
     canonical_entrypoint: Option<PathBuf>,
@@ -179,7 +224,7 @@ impl RuntimeBundle {
     pub fn new(entrypoint: impl AsRef<Path>) -> Self {
         Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
-            RuntimeBundleContentKind::JavaScript,
+            RuntimeBundleContent::JavaScript,
             RuntimeBundleEntrypointKind::Main,
             None,
             None,
@@ -203,7 +248,7 @@ impl RuntimeBundle {
     ) -> Result<Self> {
         Ok(Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
-            RuntimeBundleContentKind::JavaScript,
+            RuntimeBundleContent::JavaScript,
             RuntimeBundleEntrypointKind::Main,
             Some(normalize_sha256(expected_sha256.as_ref())?),
             None,
@@ -212,9 +257,19 @@ impl RuntimeBundle {
     }
 
     pub fn wasm_component(entrypoint: impl AsRef<Path>) -> Self {
+        Self::wasm_component_for_world(entrypoint, RuntimeComponentWorld::NimbusFunction)
+    }
+
+    pub fn wasm_component_for_world(
+        entrypoint: impl AsRef<Path>,
+        target_world: RuntimeComponentWorld,
+    ) -> Self {
         Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
-            RuntimeBundleContentKind::WasmComponent,
+            RuntimeBundleContent::WasmComponent(RuntimeBundleWasmComponentContent {
+                target_world,
+                precompiled_sha256: None,
+            }),
             RuntimeBundleEntrypointKind::Main,
             None,
             None,
@@ -226,9 +281,43 @@ impl RuntimeBundle {
         entrypoint: impl AsRef<Path>,
         expected_sha256: impl AsRef<str>,
     ) -> Result<Self> {
+        Self::wasm_component_for_world_with_expected_sha256(
+            entrypoint,
+            RuntimeComponentWorld::NimbusFunction,
+            expected_sha256,
+        )
+    }
+
+    pub fn wasm_component_for_world_with_expected_sha256(
+        entrypoint: impl AsRef<Path>,
+        target_world: RuntimeComponentWorld,
+        expected_sha256: impl AsRef<str>,
+    ) -> Result<Self> {
         Ok(Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
-            RuntimeBundleContentKind::WasmComponent,
+            RuntimeBundleContent::WasmComponent(RuntimeBundleWasmComponentContent {
+                target_world,
+                precompiled_sha256: None,
+            }),
+            RuntimeBundleEntrypointKind::Main,
+            Some(normalize_sha256(expected_sha256.as_ref())?),
+            None,
+            None,
+        ))
+    }
+
+    pub fn wasm_component_with_precompiled_sha256(
+        entrypoint: impl AsRef<Path>,
+        target_world: RuntimeComponentWorld,
+        expected_sha256: impl AsRef<str>,
+        precompiled_sha256: impl AsRef<str>,
+    ) -> Result<Self> {
+        Ok(Self::from_parts(
+            entrypoint.as_ref().to_path_buf(),
+            RuntimeBundleContent::WasmComponent(RuntimeBundleWasmComponentContent {
+                target_world,
+                precompiled_sha256: Some(normalize_sha256(precompiled_sha256.as_ref())?),
+            }),
             RuntimeBundleEntrypointKind::Main,
             Some(normalize_sha256(expected_sha256.as_ref())?),
             None,
@@ -243,7 +332,7 @@ impl RuntimeBundle {
     ) -> Result<Self> {
         Ok(Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
-            RuntimeBundleContentKind::JavaScript,
+            RuntimeBundleContent::JavaScript,
             RuntimeBundleEntrypointKind::Main,
             Some(normalize_sha256(expected_sha256.as_ref())?),
             Some(tenant_label.into()),
@@ -257,7 +346,7 @@ impl RuntimeBundle {
     ) -> Self {
         Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
-            RuntimeBundleContentKind::JavaScript,
+            RuntimeBundleContent::JavaScript,
             RuntimeBundleEntrypointKind::Main,
             None,
             None,
@@ -271,7 +360,7 @@ impl RuntimeBundle {
     ) -> Self {
         Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
-            RuntimeBundleContentKind::JavaScript,
+            RuntimeBundleContent::JavaScript,
             RuntimeBundleEntrypointKind::Side,
             None,
             None,
@@ -283,7 +372,7 @@ impl RuntimeBundle {
     pub(crate) fn with_side_entrypoint(entrypoint: impl AsRef<Path>) -> Self {
         Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
-            RuntimeBundleContentKind::JavaScript,
+            RuntimeBundleContent::JavaScript,
             RuntimeBundleEntrypointKind::Side,
             None,
             None,
@@ -296,7 +385,15 @@ impl RuntimeBundle {
     }
 
     pub fn content_kind(&self) -> RuntimeBundleContentKind {
-        self.shared.content_kind
+        self.shared.content.content_kind()
+    }
+
+    pub fn content(&self) -> &RuntimeBundleContent {
+        &self.shared.content
+    }
+
+    pub fn target_world(&self) -> Option<RuntimeComponentWorld> {
+        self.shared.identity.target_world()
     }
 
     pub(crate) fn entrypoint_kind(&self) -> RuntimeBundleEntrypointKind {
@@ -357,14 +454,47 @@ impl RuntimeBundle {
         )))
     }
 
+    pub fn verify_precompiled_component_integrity(
+        &self,
+        precompiled_path: impl AsRef<Path>,
+    ) -> Result<()> {
+        let RuntimeBundleContent::WasmComponent(content) = self.content() else {
+            return Err(NimbusRuntimeError::Contract(format!(
+                "runtime bundle `{}` is not a WASM component bundle",
+                self.entrypoint().display()
+            )));
+        };
+        let Some(expected_sha256) = content.precompiled_sha256() else {
+            return Err(NimbusRuntimeError::Contract(format!(
+                "WASM component bundle `{}` has no precompiled component hash",
+                self.entrypoint().display()
+            )));
+        };
+        let actual_sha256 = Self::compute_sha256_for_path(precompiled_path.as_ref())?;
+        if actual_sha256 == expected_sha256 {
+            return Ok(());
+        }
+        Err(NimbusRuntimeError::BundleIntegrityMismatch(format!(
+            "{} precompiled component (expected {}, got {})",
+            precompiled_path.as_ref().display(),
+            expected_sha256,
+            actual_sha256
+        )))
+    }
+
     fn from_parts(
         entrypoint: PathBuf,
-        content_kind: RuntimeBundleContentKind,
+        content: RuntimeBundleContent,
         entrypoint_kind: RuntimeBundleEntrypointKind,
         expected_sha256: Option<String>,
         tenant_label: Option<String>,
         explicit_module_root: Option<PathBuf>,
     ) -> Self {
+        let content_kind = content.content_kind();
+        let target_world = match &content {
+            RuntimeBundleContent::JavaScript => None,
+            RuntimeBundleContent::WasmComponent(content) => Some(content.target_world()),
+        };
         let canonical_entrypoint = entrypoint.canonicalize().ok();
         let module_specifier_path = canonical_entrypoint
             .clone()
@@ -391,6 +521,7 @@ impl RuntimeBundle {
         let identity = RuntimeBundleIdentity {
             tenant_label,
             content_kind,
+            target_world,
             entrypoint_kind,
             entrypoint: canonical_entrypoint
                 .clone()
@@ -399,7 +530,7 @@ impl RuntimeBundle {
         };
         Self {
             shared: Arc::new(RuntimeBundleShared {
-                content_kind,
+                content,
                 entrypoint_kind,
                 entrypoint,
                 canonical_entrypoint,
