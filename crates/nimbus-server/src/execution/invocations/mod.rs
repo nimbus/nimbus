@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use nimbus_core::TenantId;
 use nimbus_provenance::RuntimeBundleProvenanceConfig;
 use nimbus_runtime::{
-    HostBridge, HostCallCancellation, InvocationRequest, NimbusRuntime, RuntimeInvocationContext,
-    RuntimePolicy,
+    EgressGateway, HostBridge, HostCallCancellation, InvocationRequest, NimbusRuntime,
+    RuntimeInvocationContext, RuntimePolicy,
 };
 
 mod blocking;
@@ -124,8 +124,21 @@ fn runtime_for_host(
     NimbusRuntime::with_policy(host_bridge, runtime_policy)
 }
 
+fn runtime_for_host_with_egress_gateway<H>(
+    host_bridge: Arc<H>,
+    runtime_policy: Arc<RuntimePolicy>,
+) -> NimbusRuntime
+where
+    H: HostBridge + EgressGateway + 'static,
+{
+    let host: Arc<dyn HostBridge> = host_bridge.clone();
+    let gateway: Arc<dyn EgressGateway> = host_bridge;
+    NimbusRuntime::with_policy(host, runtime_policy).with_egress_gateway(gateway)
+}
+
+pub(crate) use blocking::invoke_runtime_bundle_blocking_with_egress_gateway;
 pub(crate) use blocking::invoke_runtime_bundle_blocking_with_host;
 #[cfg(test)]
 pub(crate) use blocking::invoke_runtime_bundle_blocking_with_host_state;
-pub(crate) use worker::invoke_runtime_bundle_on_worker_with_host;
+pub(crate) use worker::invoke_runtime_bundle_on_worker_with_egress_gateway;
 pub(crate) use worker::invoke_runtime_bundle_on_worker_with_host_state;

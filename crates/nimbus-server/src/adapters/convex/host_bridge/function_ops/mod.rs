@@ -1,7 +1,7 @@
 use super::*;
 use crate::execution::invocations::{
-    RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_host,
-    invoke_runtime_bundle_on_worker_with_host,
+    RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_egress_gateway,
+    invoke_runtime_bundle_on_worker_with_egress_gateway,
 };
 use nimbus_runtime::HostCallPayload;
 

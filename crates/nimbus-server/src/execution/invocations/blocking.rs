@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
 use nimbus_runtime::{
-    HostBridge, InvocationRequest, NimbusRuntime, NimbusRuntimeError, RuntimeBundle,
+    EgressGateway, HostBridge, InvocationRequest, NimbusRuntime, NimbusRuntimeError, RuntimeBundle,
     RuntimeExecutor, RuntimePolicy,
 };
 
-use super::{RuntimeBundleInvocationOptions, runtime_for_host, runtime_invocation_context};
+use super::{
+    RuntimeBundleInvocationOptions, runtime_for_host, runtime_for_host_with_egress_gateway,
+    runtime_invocation_context,
+};
 
 pub(crate) fn invoke_runtime_bundle_blocking_with_cancellation(
     runtime_executor: &RuntimeExecutor,
@@ -58,9 +61,9 @@ pub(crate) fn invoke_runtime_bundle_blocking_with_host_state<H, S>(
     snapshot: impl FnOnce(&H) -> S,
 ) -> std::result::Result<(serde_json::Value, S), NimbusRuntimeError>
 where
-    H: HostBridge + 'static,
+    H: HostBridge + EgressGateway + 'static,
 {
-    let response = invoke_runtime_bundle_blocking_with_host(
+    let response = invoke_runtime_bundle_blocking_with_egress_gateway(
         runtime_executor,
         runtime_policy,
         host_bridge.clone(),
@@ -69,4 +72,24 @@ where
         options,
     )?;
     Ok((response, snapshot(host_bridge.as_ref())))
+}
+
+pub(crate) fn invoke_runtime_bundle_blocking_with_egress_gateway<H>(
+    runtime_executor: &RuntimeExecutor,
+    runtime_policy: Arc<RuntimePolicy>,
+    host_bridge: Arc<H>,
+    bundle: RuntimeBundle,
+    request: InvocationRequest,
+    options: RuntimeBundleInvocationOptions<'_>,
+) -> std::result::Result<serde_json::Value, NimbusRuntimeError>
+where
+    H: HostBridge + EgressGateway + 'static,
+{
+    invoke_runtime_bundle_blocking_with_cancellation(
+        runtime_executor,
+        runtime_for_host_with_egress_gateway(host_bridge, runtime_policy),
+        bundle,
+        request,
+        options,
+    )
 }
