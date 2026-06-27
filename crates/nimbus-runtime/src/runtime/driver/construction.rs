@@ -52,6 +52,21 @@ impl NimbusRuntime {
             RuntimeStartupSnapshotKey::NodeFullService => &NODE_FULL_SERVICE_BOOTSTRAP_SNAPSHOT,
         };
         match snapshot.get_or_init(|| {
+            // Embedded fast path for the NodeFull anchor snapshot: deserialize the committed blob
+            // (~19ms) instead of building it (~4.18s, which — armed lazily — lands inside the first
+            // request and blows per-request timeouts). Active in BOTH pointer-compression configs
+            // (release/cage `.pc.bin` and dev/test `.bin`), each with its own committed blob.
+            // Provenance-guarded and FAIL-SAFE: a stale, empty, or corrupt blob returns None and we
+            // fall back to a runtime build (slow-but-correct); the embedded snapshot is NEVER
+            // installed on any doubt. The cage's first-installer ORDERING is independently guarded by
+            // `anchor::assert_cage_install_ordering` below.
+            if matches!(snapshot_key, RuntimeStartupSnapshotKey::NodeFull)
+                && let Some(embedded) = crate::backends::v8::try_embedded_node22_anchor_snapshot(
+                    crate::backends::v8::EMBEDDED_NODE22_ANCHOR_SNAPSHOT,
+                )
+            {
+                return Ok(embedded);
+            }
             Self::create_bootstrap_snapshot(
                 snapshot_key.snapshot_build_target(),
                 snapshot_key.service_extension_enabled(),
@@ -99,6 +114,25 @@ impl NimbusRuntime {
         )
     }
 
+    /// The SINGLE source of truth mapping a `V8RuntimeConstructionMode` to whether a startup
+    /// snapshot is deserialized: `StartupSnapshot` rides `bootstrap_snapshot`, `Unsnapshotted`
+    /// builds with no snapshot. Every construction path that selects a mode — the warm pool AND
+    /// the pool-less direct invocation path — routes through here, so the mapping cannot drift. A
+    /// divergent copy on the direct path that hardcoded the snapshot mode was the second
+    /// cross-profile cage-crash hole (efd891a8a).
+    pub(crate) fn create_runtime_for_mode(
+        &self,
+        bundle: &RuntimeBundle,
+        use_locker: bool,
+        construction_mode: V8RuntimeConstructionMode,
+    ) -> Result<JsRuntime> {
+        let startup_snapshot = match construction_mode {
+            V8RuntimeConstructionMode::StartupSnapshot => Some(self.bootstrap_snapshot()?),
+            V8RuntimeConstructionMode::Unsnapshotted => None::<&V8StartupSnapshot>,
+        };
+        self.create_runtime(bundle, startup_snapshot, use_locker)
+    }
+
     fn create_runtime_with_bootstrap_state(
         &self,
         bundle: &RuntimeBundle,
@@ -106,6 +140,30 @@ impl NimbusRuntime {
         use_locker: bool,
         worker_bootstrap_state: InstalledRuntimeWorkerBootstrapState,
     ) -> Result<JsRuntime> {
+        // Serialize cold isolate CREATION (snapshot restore deserializers in
+        // Isolate::Init) against snapshot BUILD and isolate DISPOSAL on one
+        // process-global re-entrant lock owned by deno_core. On a single (shared)
+        // pointer-compression cage every isolate aliases the group's shared
+        // read-only heap; create/build/dispose are its only unguarded writers and
+        // must be mutually exclusive across threads (else `shared_heap_object_cache
+        // ->at()` OOB / vector abort). Held across the whole body since
+        // bootstrap/snapshot-restore also touch the shared RO heap. Re-entrant so a
+        // failed construction dropping a partial runtime (deno Drop) doesn't
+        // self-deadlock. A multi-cage build (private RO heap per isolate) can drop
+        // this lock entirely.
+        // Anchor floor (Option A): fail closed if any isolate is built before the NodeFull
+        // RO-heap anchor is installed. No-op unless the anchor system is in use.
+        super::anchor::assert_anchor_floor();
+        let _shared_heap_guard = deno_core::shared_ro_heap_serialize_lock().lock();
+        // SHIPPED cage invariant guard (Option A): UNDER the shared-RO-heap lock (so the recorded
+        // first installer matches the actual install order), abort LOUD if a NodeFull superset
+        // snapshot would deserialize against a cage first fixed by a non-superset isolate — the
+        // cross-profile crash, otherwise a rare, silent V8_Fatal in ReadOnlyDeserializer. Covers the
+        // pre-anchor-arm window assert_anchor_floor does not. No-op feature-off.
+        super::anchor::assert_cage_install_ordering(
+            startup_snapshot.is_some(),
+            self.policy.limits().compatibility_target,
+        );
         let mut runtime = JsRuntime::new(self.runtime_options(
             bundle,
             startup_snapshot,
@@ -409,7 +467,41 @@ fn v8_string<'s>(
 }
 
 fn install_missing_runtime_extension_state(runtime: &mut JsRuntime) {
+    install_missing_uv_loop(runtime);
     let op_state = runtime.op_state();
     let mut state = op_state.borrow_mut();
     install_missing_deno_extension_state(&mut state);
+}
+
+/// Re-install the per-runtime libuv-compat loop on snapshot-restored runtimes.
+///
+/// `deno_core::JsRuntime::new` installs the `Box<uv_loop_t>` (and its sibling
+/// `uv_compat::AsyncId`) that ext/node TTY and stream ops borrow from `OpState`
+/// only on the fresh, non-snapshot construction path; the startup-snapshot
+/// restore path skips it. Without the loop, the first Node op that needs it --
+/// e.g. `process.stdout` materializing a `TTY` via `TTY.newTty` -- panics
+/// inside a non-unwinding V8 callback ("required type Box<uv_loop_t> is not
+/// present in GothamState container") and aborts the whole process.
+/// `install_missing_deno_extension_state` already backfills the sibling
+/// `AsyncId`; this backfills the loop itself, mirroring `deno_core`'s own setup.
+/// `deno_core`'s runtime teardown destroys the realm and then drops the
+/// `Box<uv_loop_t>` from `OpState` generically, so no extra cleanup is required.
+fn install_missing_uv_loop(runtime: &mut JsRuntime) {
+    {
+        let op_state = runtime.op_state();
+        let already_installed = op_state
+            .borrow()
+            .has::<Box<deno_core::uv_compat::uv_loop_t>>();
+        if already_installed {
+            return;
+        }
+    }
+    // SAFETY: zeroed memory is a valid `uv_loop_t` before `uv_loop_init`; the
+    // pointer is valid and initialized before `register_uv_loop`; the loop is
+    // owned by `OpState` for the runtime's lifetime and torn down with it.
+    let mut uv_loop = Box::new(unsafe { std::mem::zeroed::<deno_core::uv_compat::uv_loop_t>() });
+    unsafe { deno_core::uv_compat::uv_loop_init(&mut *uv_loop) };
+    let loop_ptr: *mut deno_core::uv_compat::uv_loop_t = &mut *uv_loop;
+    unsafe { runtime.register_uv_loop(loop_ptr) };
+    runtime.op_state().borrow_mut().put(uv_loop);
 }

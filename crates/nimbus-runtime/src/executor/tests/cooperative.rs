@@ -173,8 +173,14 @@ async fn pir4_response_ready_returns_before_wait_until_background_completion() {
     let executor = RuntimeExecutor::new(policy.clone());
     let host = Arc::new(ControlledAsyncGetHost::default());
     let bundle = RuntimeBundle::new(&bundle_path);
-    let mut request = test_request("messages:http_action");
-    request.kind = crate::runtime::InvocationKind::Action;
+    // Drive this through the default Query kind. These tests exercise the
+    // executor's kind-agnostic response-ready + waitUntil-drain plumbing using
+    // `ctx.db.get` as the controllable async host op, and `ctx.db.get` is
+    // correctly denied to action handlers (see runtime/tests/host_bridge.rs).
+    // waitUntil itself is available to queries (see the pool_reuse stalled-
+    // waitUntil tests), so Query exercises the full mechanism without violating
+    // the action context contract.
+    let request = test_request("messages:http_action");
 
     let response_ready = tokio::time::timeout(
         Duration::from_secs(1),
@@ -227,8 +233,14 @@ async fn response_ready_completion_reports_rejected_wait_until_background_work()
     let executor = RuntimeExecutor::new(policy.clone());
     let host = Arc::new(RejectingAsyncGetHost::new("reject-background"));
     let bundle = RuntimeBundle::new(&bundle_path);
-    let mut request = test_request("messages:http_action");
-    request.kind = crate::runtime::InvocationKind::Action;
+    // Drive this through the default Query kind. These tests exercise the
+    // executor's kind-agnostic response-ready + waitUntil-drain plumbing using
+    // `ctx.db.get` as the controllable async host op, and `ctx.db.get` is
+    // correctly denied to action handlers (see runtime/tests/host_bridge.rs).
+    // waitUntil itself is available to queries (see the pool_reuse stalled-
+    // waitUntil tests), so Query exercises the full mechanism without violating
+    // the action context contract.
+    let request = test_request("messages:http_action");
 
     let response_ready = executor
         .invoke_on_worker_response_ready(

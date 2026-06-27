@@ -10,10 +10,9 @@ use crate::runtime_capabilities::RuntimePermissionProfile;
 use super::RuntimeReuseLifecycleState;
 use super::{
     RuntimeReuseLifecycle, WarmPoolMemoryPressureEviction, WarmRuntimeBoundaryMaintenance,
-    WarmRuntimeCondemnationReason, WarmRuntimeRetentionDecision,
-    embedder::JsRuntime,
+    WarmRuntimeCondemnationReason, WarmRuntimeRetentionDecision, embedder::JsRuntime,
     prepare_warm_runtime_for_retention, retained_entry_eviction_count_for_pressure,
-    startup::{V8RuntimeConstructionMode, V8StartupSnapshot},
+    startup::V8RuntimeConstructionMode,
 };
 
 pub(crate) struct V8WorkerRuntimePool {
@@ -96,6 +95,11 @@ impl ReusableV8Runtime {
 
 impl V8WorkerRuntimePool {
     pub(crate) fn new() -> Self {
+        // Harden the NodeFull-anchor ordering convention into an enforced invariant at the pool
+        // boundary: `V8RuntimeBackendFactory::create` arms + BLOCKS on the anchor before building
+        // this pool, so by here the superset RO heap is installed. Fail closed if a future reorder
+        // ever constructs the pool first. No-op unless the anchor system is in use.
+        crate::runtime::driver::anchor::assert_anchor_floor();
         Self {
             warmed: false,
             warm_pool: Vec::new(),
@@ -180,7 +184,7 @@ impl V8WorkerRuntimePool {
                 runtime_owner.policy().metrics().record_warm_pool_miss();
                 record_profiled_runtime_pool_miss(runtime_owner);
                 let runtime =
-                    create_runtime_for_mode(runtime_owner, bundle, use_locker, construction_mode)?;
+                    runtime_owner.create_runtime_for_mode(bundle, use_locker, construction_mode)?;
                 self.warmed = true;
                 return Ok(ReusableV8Runtime::fresh(runtime, construction_mode));
             }
@@ -194,7 +198,7 @@ impl V8WorkerRuntimePool {
         } else {
             record_profiled_runtime_pool_miss(runtime_owner);
             let runtime =
-                create_runtime_for_mode(runtime_owner, bundle, use_locker, construction_mode)?;
+                runtime_owner.create_runtime_for_mode(bundle, use_locker, construction_mode)?;
             self.warmed = true;
             Ok(ReusableV8Runtime::fresh(runtime, construction_mode))
         }
@@ -438,21 +442,9 @@ fn create_reusable_runtime_for_mode(
     use_locker: bool,
     construction_mode: V8RuntimeConstructionMode,
 ) -> Result<ReusableV8Runtime> {
-    create_runtime_for_mode(runtime_owner, bundle, use_locker, construction_mode)
+    runtime_owner
+        .create_runtime_for_mode(bundle, use_locker, construction_mode)
         .map(|runtime| ReusableV8Runtime::fresh(runtime, construction_mode))
-}
-
-fn create_runtime_for_mode(
-    runtime_owner: &NimbusRuntime,
-    bundle: &RuntimeBundle,
-    use_locker: bool,
-    construction_mode: V8RuntimeConstructionMode,
-) -> Result<JsRuntime> {
-    let startup_snapshot = match construction_mode {
-        V8RuntimeConstructionMode::StartupSnapshot => Some(runtime_owner.bootstrap_snapshot()?),
-        V8RuntimeConstructionMode::Unsnapshotted => None::<&V8StartupSnapshot>,
-    };
-    runtime_owner.create_runtime(bundle, startup_snapshot, use_locker)
 }
 
 #[cfg(test)]
@@ -701,6 +693,27 @@ mod tests {
             Some(&tenant_a),
             V8RuntimeConstructionMode::Unsnapshotted,
         );
+        let snapshotted_key = RuntimePoolPartitionKey::for_invocation(
+            &base_owner,
+            &base_bundle,
+            Some(&tenant_a),
+            V8RuntimeConstructionMode::StartupSnapshot,
+        );
+
+        // Production-logic half (kept, not dropped): the cage fix builds non-Node profiles
+        // UNSNAPSHOTTED — they must never deserialize the shared RO heap — so WebStandard's
+        // production-SELECTED construction mode IS Unsnapshotted. The original case asserted the
+        // opposite implicitly (base_key's selected mode != Unsnapshotted), which was a real,
+        // now-stale fact; assert the current production reality explicitly so a regression in the
+        // selection is still caught here.
+        assert_eq!(
+            V8RuntimeConstructionMode::for_compatibility_target(
+                base_owner.policy().limits().compatibility_target
+            ),
+            V8RuntimeConstructionMode::Unsnapshotted,
+            "WebStandard must select Unsnapshotted (cage fix: non-Node never deserializes the \
+             shared RO heap)"
+        );
 
         let cases = [
             ("tenant", base_key.clone(), {
@@ -715,7 +728,10 @@ mod tests {
             ("script", script_base_key, script_alt_key),
             ("permission_profile", base_key.clone(), restricted_key),
             ("exact_service_grants", db_key, cache_key),
-            ("construction_mode", base_key, unsnapshotted_key),
+            // Capability half: the partition key incorporates construction_mode, so two runtimes
+            // built with DIFFERENT modes never share a recycled context. Not tautological — this
+            // drops to equal (and fails) if the key ever stops keying on mode.
+            ("construction_mode", snapshotted_key, unsnapshotted_key),
         ];
 
         for (dimension, left, right) in cases {

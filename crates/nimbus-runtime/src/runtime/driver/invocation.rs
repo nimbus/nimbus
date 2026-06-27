@@ -230,11 +230,17 @@ impl NimbusRuntime {
         let runtime = match v8_runtime_pool.as_deref_mut() {
             Some(pool) => pool.take_runtime_for_invocation(self, &bundle, Some(&context))?,
             None => {
-                let snapshot = self.bootstrap_snapshot()?;
-                ReusableV8Runtime::fresh(
-                    self.create_runtime_from_snapshot(&bundle, snapshot)?,
-                    V8RuntimeConstructionMode::StartupSnapshot,
-                )
+                // Pool-less direct path: route through the SAME mode->construction mapping the
+                // warm pool uses (`NimbusRuntime::create_runtime_for_mode`) so non-Node profiles
+                // are built UNSNAPSHOTTED here too. Hardcoding StartupSnapshot here was the second
+                // cross-profile cage-crash hole (efd891a8a): a snapshotted WebStandard deserializes
+                // against the NodeFull anchor's RO heap and aborts. `use_locker = false` matches
+                // the prior create_runtime_from_snapshot behavior on this path.
+                let mode = V8RuntimeConstructionMode::for_compatibility_target(
+                    self.policy.limits().compatibility_target,
+                );
+                let runtime = self.create_runtime_for_mode(&bundle, false, mode)?;
+                ReusableV8Runtime::fresh(runtime, mode)
             }
         };
         let mut driver =

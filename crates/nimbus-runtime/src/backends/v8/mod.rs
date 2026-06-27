@@ -28,7 +28,11 @@ pub(crate) use self::lifecycle::{
 #[cfg(test)]
 pub(crate) use self::startup::v8_bootstrap_snapshot_build_count_for_test;
 pub(crate) use self::startup::{
-    V8RuntimeConstructionMode, V8StartupSnapshot, create_v8_startup_snapshot,
+    EMBEDDED_NODE22_ANCHOR_SNAPSHOT, V8RuntimeConstructionMode, V8StartupSnapshot,
+    create_v8_startup_snapshot, try_embedded_node22_anchor_snapshot,
+};
+pub use self::startup::{
+    build_embeddable_node22_snapshot_blob, check_committed_embedded_anchor_snapshot,
 };
 pub(crate) use self::startup_key::RuntimeStartupSnapshotKey;
 pub(crate) use self::warm_pool::{ReusableV8Runtime, V8WorkerRuntimePool};
@@ -38,6 +42,10 @@ pub(crate) struct V8RuntimeBackendFactory;
 
 impl RuntimeBackendFactory for V8RuntimeBackendFactory {
     fn create(&self) -> Box<dyn RuntimeBackend> {
+        // Force NodeFull-first: arm + BLOCK on the NodeFull RO-heap anchor before this
+        // backend's pool exists or serves, so the cage RO heap is NodeFull's superset and a
+        // WebStandard-first install is unreachable (Option A crash fix).
+        crate::runtime::driver::anchor::enable_and_arm_nodefull_anchor();
         Box::new(V8RuntimeBackend {
             v8_runtime_pool: V8WorkerRuntimePool::new(),
         })
