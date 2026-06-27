@@ -51,6 +51,24 @@ pub async fn dispatch_authed(
     } else {
         None
     };
+    // Fail-closed bound-mode invariant. A bound (per-tenant) connection that has
+    // authenticated MUST carry the tenant authentication resolved; if it ever does
+    // not, refuse here — never let tenant resolution fall through to the wire `$db`
+    // (the M9 hole this change closes). In correct operation this never fires: a
+    // bound SCRAM success always binds a tenant (an unknown username never
+    // authenticates). This converts the bound invariant from "always set" into
+    // "enforced regardless of path", so the `$db`-deriving branch of
+    // `resolve_tenant_context` is unreachable while bound — even if a future code
+    // path were to authenticate in bound mode without binding a tenant.
+    if auth.is_tenant_bound() && conn.authenticated && conn.authenticated_tenant.is_none() {
+        return Err(MongoError::Command {
+            code: UNAUTHORIZED.code,
+            code_name: UNAUTHORIZED.code_name.into(),
+            message: "bound-mode connection authenticated without a tenant binding; refusing to \
+                      resolve the tenant from the wire $db"
+                .into(),
+        });
+    }
     if body.get_bool("startTransaction").unwrap_or(false) && principal.is_none() {
         return Err(unauthorized(command_name));
     }
@@ -205,6 +223,49 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
+    }
+
+    #[tokio::test]
+    async fn bound_mode_refuses_authenticated_connection_without_a_tenant_binding() {
+        // Fail-closed guard (defense-in-depth on the bound invariant): even if a
+        // connection reaches bound-mode dispatch authenticated but WITHOUT an
+        // authenticated tenant — an invariant violation that a real bound SCRAM
+        // handshake never produces (unknown usernames never authenticate) — tenant
+        // resolution must NOT fall through to the wire `$db`. The command is refused.
+        use crate::credential_registry::{CredentialRegistry, MongoAuth};
+        use nimbus_core::TenantId;
+
+        let registry = CredentialRegistry::new().bind(
+            "user-a",
+            TenantId::new("tenant-a").unwrap(),
+            "secret-a",
+        );
+        let auth = MongoAuth::Bound(&registry);
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+
+        // The invariant-violation state a buggy future auth path could leave:
+        // authenticated in bound mode, but no tenant bound.
+        let mut conn = test_conn();
+        conn.authenticated = true;
+        conn.auth_user = Some("user-a".to_string());
+        conn.authenticated_tenant = None;
+
+        let doc = bson::doc! { "find": "users", "$db": "tenant-a", "filter": {} };
+        let err = dispatch_authed("find", &doc, &mut conn, &fixture.engine(), &auth)
+            .await
+            .expect_err(
+                "bound + authenticated + no tenant must be refused, never resolved from $db",
+            );
+        match err {
+            MongoError::Command { code, message, .. } => {
+                assert_eq!(code, UNAUTHORIZED.code);
+                assert!(
+                    message.contains("without a tenant binding"),
+                    "refusal must name the fail-closed reason: {message}"
+                );
+            }
+            other => panic!("expected Command error, got {other:?}"),
+        }
     }
 
     #[tokio::test]
