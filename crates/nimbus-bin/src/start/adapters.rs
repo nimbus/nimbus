@@ -166,7 +166,7 @@ fn resolve_mongodb(
         return Ok(None);
     }
     // The server hard-guards the MongoDB listener to loopback
-    // (`guard_bind_address`): SCRAM runs over a plaintext
+    // (`guard_listener_is_loopback_only`): SCRAM runs over a plaintext
     // channel, so the wire endpoint never binds a network-reachable
     // address. Validate here for a flag-shaped error instead of a late
     // bind failure.

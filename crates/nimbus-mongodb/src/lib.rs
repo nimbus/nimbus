@@ -20,7 +20,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 /// tenant by varying the database name on the wire.
 ///
 /// This is only safe because the listener binds loopback-only
-/// (`guard_bind_address` in `nimbus-server`), so the credential
+/// (`guard_listener_is_loopback_only` in `nimbus-server`), so the credential
 /// never leaves the host. Before this adapter may bind any non-loopback
 /// address, the credential model must change to bind each credential to a
 /// specific tenant so that authentication — not the database name — decides
@@ -31,11 +31,6 @@ pub struct AuthConfig {
     pub password: String,
     pub salt: [u8; 16],
     pub iterations: u32,
-    /// Whether this credential authenticates a specific tenant (credential->TenantId)
-    /// rather than being the single tenant-agnostic credential. Always `false` today;
-    /// set when per-tenant credential binding lands (M9a, issue #23). The `nimbus-server`
-    /// bind guard refuses any non-loopback bind while this is `false`.
-    tenant_bound: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -70,36 +65,6 @@ impl AuthConfig {
             password,
             salt,
             iterations: 4096,
-            // The shipped credential is tenant-agnostic; per-tenant binding is M9(a) (#23).
-            tenant_bound: false,
         })
-    }
-
-    /// Whether this credential authenticates a specific tenant.
-    ///
-    /// `false` for the single tenant-agnostic credential the adapter ships with today
-    /// (tenant chosen from the wire `$db`). The `nimbus-server` bind guard
-    /// (`guard_bind_address`) refuses any non-loopback bind while this is `false`,
-    /// because a network-reachable listener under a tenant-agnostic credential would
-    /// expose every tenant. M9(a) — credential->TenantId binding, mirroring the DynamoDB
-    /// `AccessKeyRegistry` — makes this `true` for bound credentials, the prerequisite
-    /// for a non-loopback bind. See issue #23.
-    pub fn is_tenant_bound(&self) -> bool {
-        self.tenant_bound
-    }
-}
-
-#[cfg(test)]
-mod auth_config_tests {
-    use super::AuthConfig;
-
-    #[test]
-    fn auth_config_is_unbound_by_default() {
-        let auth = AuthConfig::new("admin".into(), "admin".into());
-        assert!(
-            !auth.is_tenant_bound(),
-            "the single shipped credential is tenant-agnostic (unbound); the non-loopback bind \
-             guard must stay fail-closed until credential->TenantId binding lands (M9a, #23)"
-        );
     }
 }
