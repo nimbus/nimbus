@@ -31,11 +31,13 @@
 //! cost of sharing a cage, and it goes away when the cage is no longer shared.
 
 use std::cell::Cell;
+#[cfg(feature = "v8-pointer-compression")]
+use std::sync::atomic::AtomicU8;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use crate::host::{HostBridge, HostCallRequest};
-use crate::limits::{RuntimeLimits, RuntimePolicy};
+use crate::limits::{RuntimeCompatibilityTarget, RuntimeLimits, RuntimePolicy};
 use crate::runtime::{NimbusRuntime, RuntimeBundle};
 
 /// HostBridge for the anchor isolate. The anchor is BUILT (to install the cage RO heap) but
@@ -60,8 +62,56 @@ static ANCHOR_ENABLED: AtomicBool = AtomicBool::new(false);
 static ANCHOR_INSTALLED: AtomicBool = AtomicBool::new(false);
 static ANCHOR: OnceLock<()> = OnceLock::new();
 
+/// Kind of the FIRST shared-cage read-only-heap installer this process: `0` = none yet, `1` =
+/// superset (a NodeFull snapshot), `2` = non-superset (an unsnapshotted / WebStandard profile). Only
+/// meaningful under the pointer-compression shared cage.
+#[cfg(feature = "v8-pointer-compression")]
+static FIRST_CAGE_INSTALLER_KIND: AtomicU8 = AtomicU8::new(0);
+
 thread_local! {
     static IN_ANCHOR_BUILD: Cell<bool> = const { Cell::new(false) };
+}
+
+/// SHIPPED cage invariant guard (Option A), active under `v8-pointer-compression` (the single shared
+/// cage; the config release ships). The FIRST isolate to construct installs the cage's shared
+/// read-only heap, fixing its layout for every later isolate. A NodeFull *snapshot* installs the
+/// SUPERSET RO heap (`installs_superset == true`); a WebStandard / unsnapshotted profile installs a
+/// non-superset one. The cross-profile crash is precisely: a NodeFull superset snapshot deserialized
+/// AFTER a non-superset isolate already fixed the cage — V8 aborts inside `ReadOnlyDeserializer`
+/// (`Check failed: magic_number_ == SerializedData::kMagicNumber`), a rare, timing-dependent, SILENT
+/// `V8_Fatal`. This converts that into a DETERMINISTIC, LOUD `process::abort` at the exact construction
+/// that would crash, and — unlike `assert_anchor_floor` (gated on `ANCHOR_ENABLED`) — it covers the window
+/// BEFORE the anchor is armed. A pure-unsnapshotted process (no NodeFull snapshot ever) never trips
+/// it, and a deliberately-snapshotted control isolate installing FIRST is allowed (the legacy crash
+/// the oracle reproduces is unaffected). MUST be called UNDER the shared-RO-heap serialize lock so
+/// the recorded first installer matches the actual install order.
+pub(crate) fn assert_cage_install_ordering(
+    installs_superset: bool,
+    target: RuntimeCompatibilityTarget,
+) {
+    #[cfg(feature = "v8-pointer-compression")]
+    {
+        let kind: u8 = if installs_superset { 1 } else { 2 };
+        // Record this as the first installer iff none recorded yet; otherwise keep the first's kind.
+        let _ =
+            FIRST_CAGE_INSTALLER_KIND.compare_exchange(0, kind, Ordering::SeqCst, Ordering::SeqCst);
+        if installs_superset && FIRST_CAGE_INSTALLER_KIND.load(Ordering::SeqCst) == 2 {
+            eprintln!(
+                "CAGE INVARIANT VIOLATED: a NodeFull superset snapshot (target={target:?}) is being \
+                 deserialized into the pointer-compression shared cage, but the cage's read-only heap \
+                 was FIRST installed by a non-superset (unsnapshotted / WebStandard) isolate. V8 would \
+                 abort in ReadOnlyDeserializer (the cross-profile magic crash). The NodeFull anchor \
+                 must install the superset RO heap FIRST. This deterministic guard caught the ordering \
+                 violation that would otherwise be a rare, silent V8_Fatal."
+            );
+            // ABORT (SIGABRT), not panic: this breach immediately precedes an unrecoverable V8_Fatal,
+            // so fail LOUD and UNMASKABLE — no `catch_unwind` can swallow it, and it matches the V8
+            // crash signal class the cage crash-oracle controls assert on.
+            std::process::abort();
+        }
+    }
+    #[cfg(not(feature = "v8-pointer-compression"))]
+    let _ = (installs_superset, target);
 }
 
 /// Install the NodeFull RO-heap anchor. Idempotent. Call ONCE at process init, BEFORE the
@@ -134,6 +184,35 @@ pub(crate) fn install_nodefull_anchor(host: Arc<dyn HostBridge>) {
 /// cannot race the install.
 pub(crate) fn enable_and_arm_nodefull_anchor() {
     install_nodefull_anchor(Arc::new(AnchorNoopHost));
+}
+
+/// VERIFICATION ENTRY POINT (not a diagnostic): force-install the COMMITTED embedded anchor snapshot
+/// (the cfg-selected `.bin` feature-off / `.pc.bin` feature-on) and construct a NodeFull isolate from
+/// it on the current thread. This is the ONLY way to exercise the EMBEDDED anchor install under the
+/// pointer-compression cage in a test — the cfg(test) cage oracle cannot, because its snapshot carries
+/// a test-only extension, so its provenance mismatches the committed production blob and it falls back
+/// to a runtime build. Called from the `tests/embedded_anchor.rs` integration test, which links
+/// NON-cfg(test) nimbus-runtime, so `try_embedded` computes the production provenance, matches the
+/// committed blob, and the anchor installs FROM it (the serving path). Returns `Err` if the blob fails
+/// provenance/parse; a V8 read-only-heap incompatibility would abort (V8_Fatal) — the very failure the
+/// embedding must not have. Under the cage, this isolate is the first installer (NodeFull superset),
+/// so `assert_cage_install_ordering` records it and stays silent.
+pub fn smoke_install_committed_embedded_anchor() -> std::result::Result<(), String> {
+    let snapshot = crate::backends::v8::try_embedded_node22_anchor_snapshot(
+        crate::backends::v8::EMBEDDED_NODE22_ANCHOR_SNAPSHOT,
+    )
+    .ok_or_else(|| {
+        "embedded blob failed provenance/parse (try_embedded returned None)".to_string()
+    })?;
+    let owner = NimbusRuntime::with_policy(
+        Arc::new(AnchorNoopHost),
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+    );
+    let bundle = RuntimeBundle::virtual_anchor();
+    owner
+        .create_runtime_from_snapshot(&bundle, &snapshot)
+        .map_err(|error| format!("create_runtime_from_snapshot failed: {error}"))?;
+    Ok(())
 }
 
 /// Fail-closed FLOOR (a regression assertion, NOT the live path). Every isolate build must

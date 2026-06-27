@@ -7721,3 +7721,55 @@ fn ro_heap_serialize_lock_isolate_drop_during_unwind_does_not_abort() {
         "panic must unwind and tear the isolate down cleanly, not abort the process"
     );
 }
+
+/// FAIL-SAFE gate for the embedded NodeFull(Node22) anchor snapshot. A freshly built blob round-trips
+/// (build -> serialize -> deserialize) into a USABLE, cage-correct NodeFull runtime, AND the
+/// provenance guard REFUSES a corrupted or truncated blob (returns `None`, so the serving path
+/// runtime-builds and NEVER installs a mismatched snapshot). The blob is built with THIS build's
+/// provenance (which under cfg(test) includes the test-only extension), so the match path is
+/// non-vacuous — a committed production blob would mismatch here and tell us nothing.
+#[tokio::test(flavor = "current_thread")]
+async fn embedded_node22_snapshot_roundtrips_and_guard_is_fail_safe() {
+    let blob = crate::backends::v8::build_embeddable_node22_snapshot_blob()
+        .expect("build embeddable node22 blob");
+
+    // GUARD MATCH PATH: fresh blob -> provenance matches -> deserialize (the serving path).
+    let snapshot = crate::backends::v8::try_embedded_node22_anchor_snapshot(&blob)
+        .expect("fresh embedded blob must pass the provenance guard and deserialize");
+
+    // GUARD FIRES PATH: corrupt the provenance header -> guard must REFUSE and return None
+    // (fail-safe: the caller then runtime-builds; it must NEVER install a mismatched snapshot).
+    let mut stale = blob.clone();
+    stale[0] ^= 0xff;
+    assert!(
+        crate::backends::v8::try_embedded_node22_anchor_snapshot(&stale).is_none(),
+        "stale/corrupt provenance MUST fail the guard (fail-safe to runtime build, never install)"
+    );
+    // Truncated blob must also fail the guard, not panic.
+    assert!(
+        crate::backends::v8::try_embedded_node22_anchor_snapshot(&blob[..4]).is_none(),
+        "truncated blob MUST fail the guard"
+    );
+
+    // Cage-critical: constructing FROM the guarded embedded snapshot must succeed (a mismatched RO
+    // heap aborts during deserialize), and a builtin must work (the NodeFull RO heap installed).
+    let owner = NimbusRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        Arc::new(RuntimePolicy::new(
+            crate::RuntimeLimits::application_node22(),
+        )),
+    );
+    let bundle = RuntimeBundle::virtual_anchor();
+    let mut runtime = owner
+        .create_runtime_from_snapshot(&bundle, &snapshot)
+        .expect("construct NodeFull runtime FROM EMBEDDED snapshot");
+    let probe = runtime
+        .execute_script("<embedded-snapshot-smoke>", "typeof globalThis.Object")
+        .expect("smoke script executes on embedded snapshot");
+    let value = deserialize_json_value(&mut runtime, probe).expect("probe deserializes");
+    assert_eq!(
+        value,
+        serde_json::json!("function"),
+        "embedded snapshot must install a working RO heap (globalThis.Object)"
+    );
+}

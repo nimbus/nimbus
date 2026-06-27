@@ -52,6 +52,21 @@ impl NimbusRuntime {
             RuntimeStartupSnapshotKey::NodeFullService => &NODE_FULL_SERVICE_BOOTSTRAP_SNAPSHOT,
         };
         match snapshot.get_or_init(|| {
+            // Embedded fast path for the NodeFull anchor snapshot: deserialize the committed blob
+            // (~19ms) instead of building it (~4.18s, which — armed lazily — lands inside the first
+            // request and blows per-request timeouts). Active in BOTH pointer-compression configs
+            // (release/cage `.pc.bin` and dev/test `.bin`), each with its own committed blob.
+            // Provenance-guarded and FAIL-SAFE: a stale, empty, or corrupt blob returns None and we
+            // fall back to a runtime build (slow-but-correct); the embedded snapshot is NEVER
+            // installed on any doubt. The cage's first-installer ORDERING is independently guarded by
+            // `anchor::assert_cage_install_ordering` below.
+            if matches!(snapshot_key, RuntimeStartupSnapshotKey::NodeFull)
+                && let Some(embedded) = crate::backends::v8::try_embedded_node22_anchor_snapshot(
+                    crate::backends::v8::EMBEDDED_NODE22_ANCHOR_SNAPSHOT,
+                )
+            {
+                return Ok(embedded);
+            }
             Self::create_bootstrap_snapshot(
                 snapshot_key.snapshot_build_target(),
                 snapshot_key.service_extension_enabled(),
@@ -140,6 +155,15 @@ impl NimbusRuntime {
         // RO-heap anchor is installed. No-op unless the anchor system is in use.
         super::anchor::assert_anchor_floor();
         let _shared_heap_guard = deno_core::shared_ro_heap_serialize_lock().lock();
+        // SHIPPED cage invariant guard (Option A): UNDER the shared-RO-heap lock (so the recorded
+        // first installer matches the actual install order), abort LOUD if a NodeFull superset
+        // snapshot would deserialize against a cage first fixed by a non-superset isolate — the
+        // cross-profile crash, otherwise a rare, silent V8_Fatal in ReadOnlyDeserializer. Covers the
+        // pre-anchor-arm window assert_anchor_floor does not. No-op feature-off.
+        super::anchor::assert_cage_install_ordering(
+            startup_snapshot.is_some(),
+            self.policy.limits().compatibility_target,
+        );
         let mut runtime = JsRuntime::new(self.runtime_options(
             bundle,
             startup_snapshot,

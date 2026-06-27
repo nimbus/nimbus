@@ -145,6 +145,28 @@ test-rust-runtime:
 test-rust-runtime-cage:
 	$(SINGLE_FLIGHT) --key cargo-test-runtime-cage-ci -- cargo test -p nimbus-runtime --features v8-pointer-compression --lib isol_
 
+.PHONY: build-node22-anchor-snapshot verify-node22-anchor-snapshot
+# Regenerate BOTH committed embedded NodeFull(Node22) anchor snapshots, one per pointer-compression
+# config: src/backends/v8/node22_anchor_snapshot.bin (feature-off = dev/test) and ...pc.bin
+# (feature-on = release/cage). The serving path DESERIALIZES the committed blob (~19ms) instead of
+# building it (~4.18s, which blows per-request timeouts when the anchor arms lazily). Run after any
+# bootstrap / extension / op-surface / deno-fork change, then `make verify-node22-anchor-snapshot`.
+# The feature-on run uses a separate CARGO_TARGET_DIR so its pointer-compression V8 prebuilt does not
+# collide with the shared gn_out/obj/librusty_v8.a that the feature-off build just overwrote (the
+# nimbus-runtime build.rs guard otherwise fails the feature-on link — by design).
+build-node22-anchor-snapshot:
+	cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot
+	CARGO_TARGET_DIR=target/ptrcomp cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression
+
+# Fail-loud staleness gate for BOTH committed anchor blobs (provenance match + structural parse, per
+# pointer-compression config). NOT a byte-compare: V8 embeds a random hash-seed, so its startup
+# snapshots are not byte-reproducible (two builds from identical inputs differ); the provenance hash
+# is over INPUTS, which ARE deterministic. Run in CI to catch a bootstrap/op/extension change that
+# was not regenerated.
+verify-node22-anchor-snapshot:
+	cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot -- --check
+	CARGO_TARGET_DIR=target/ptrcomp cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression -- --check
+
 # Run the CI workspace Rust test bucket. CW2: when NIMBUS_NEXTEST_PARTITION is
 # set to `N/M`, the partition is forwarded as `--partition hash:N/M` so the
 # job can be sharded across the CI matrix. The single-flight key includes the

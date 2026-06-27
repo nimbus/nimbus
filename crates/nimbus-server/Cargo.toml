@@ -14,6 +14,10 @@ workspace = true
 
 [features]
 bun-jsc-linked-adapter = ["nimbus-runtime/bun-jsc-linked-adapter"]
+# Build the V8 runtime under the single pointer-compression cage, exactly as release binaries ship.
+# Lets server-level tests exercise the cross-profile cage (NodeFull anchor + WebStandard workload)
+# and the embedded-snapshot anchor on the real serving path.
+v8-pointer-compression = ["nimbus-runtime/v8-pointer-compression"]
 
 [dependencies]
 axum.workspace = true

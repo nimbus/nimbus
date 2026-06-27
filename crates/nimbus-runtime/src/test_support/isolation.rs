@@ -172,7 +172,13 @@ pub(crate) fn run_v8_crash_control_in_subprocess(case: IsolatedRuntimeTestCase, 
             let stderr = String::from_utf8_lossy(&output.stderr);
             // A control must crash for the RIGHT reason. The shared-RO-heap/cage crashes have a
             // known signature family; require it so a crash for an UNRELATED reason (a panic in
-            // setup, an OOM) cannot read as "bug reproduced".
+            // setup, an OOM) cannot read as "bug reproduced". `CAGE INVARIANT VIOLATED` is the
+            // shipped first-installer guard (anchor::assert_cage_install_ordering): under the
+            // pointer-compression cage it deterministically `process::abort`s (SIGABRT) the instant a
+            // NodeFull superset snapshot would deserialize against a non-superset-first cage — i.e. it
+            // IS the cross-profile cage crash, caught one frame before V8's own `ReadOnlyDeserializer`
+            // abort. So it counts as a cage signature: the controls that race a WebStandard isolate in
+            // first now abort via the guard (deterministic) instead of the racy V8_Fatal.
             let has_cage_signature = [
                 "vector.h:415",
                 "Hardening",
@@ -180,6 +186,7 @@ pub(crate) fn run_v8_crash_control_in_subprocess(case: IsolatedRuntimeTestCase, 
                 "DeserializeStringTable",
                 "ReadReadOnlyHeapRef",
                 "SharedHeapDeserializer",
+                "CAGE INVARIANT VIOLATED",
             ]
             .iter()
             .any(|sig| stdout.contains(sig) || stderr.contains(sig));
