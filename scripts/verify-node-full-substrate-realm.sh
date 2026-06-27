@@ -216,8 +216,8 @@ if [ -f "${NFR2_PROOF}" ] &&
   contains_all "${NFR2_PROOF}" \
     'NFR2 Deno Realm Seam Inventory' \
     'Status: `done`' \
-    '1fdb7a09a8567a827e184361b294f44f91b35e4c' \
-    'v2\.8\.3-nimbus\.78' \
+    '5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52' \
+    'v2\.9\.0-nimbus\.2' \
     'JsRuntime::create_realm' \
     'init_extension_js_in_realm' \
     'load_main_es_module_in_realm' \
@@ -227,7 +227,7 @@ if [ -f "${NFR2_PROOF}" ] &&
     'with_event_loop_promise_in_realm' \
     'poll_event_loop_in_realm' \
     'realm-scoped extension JavaScript replay' \
-    'Node `process` / `module` lazy-load cycle' >/tmp/nfr2-proof-api-missing.txt &&
+    'Node `process` / `module` lazy-loader shape' >/tmp/nfr2-proof-api-missing.txt &&
   contains_all "${DENO_JSRUNTIME}" \
     'pub fn create_realm' \
     'pub fn init_extension_js_in_realm' \
@@ -249,8 +249,9 @@ if [ -f "${NFR2_PROOF}" ] &&
     'init_extension_js_in_realm_replays_snapshot_seeded_file_backed_extension_modules' >/tmp/nfr2-deno-tests-missing.txt &&
   contains_all "${DENO_PROCESS}" \
     'core\.createLazyLoader\("node:module"\)' \
-    'function getModule\(\)' \
-    'getModule\(\)\._extensions\["\.node"\]' >/tmp/nfr2-deno-process-missing.txt; then
+    'const lazyNodeModule' \
+    'lazyNodeModule\(\)\.default\._extensions\["\.node"\]' \
+    'lazyNodeModule\(\)\.getBuiltinModule' >/tmp/nfr2-deno-process-missing.txt; then
   pass "NFR2 records available Deno realm APIs including extension replay"
 else
   fail "NFR2 Deno realm API inventory is incomplete" \
@@ -278,27 +279,27 @@ else
     "$(cat /tmp/nfr2-authority-missing.txt 2>/dev/null)"
 fi
 
-step 9 "NFR2 focused verification, historical Deno tag, current pin, and REC host-session fix are recorded"
+step 9 "NFR2 focused verification, current Deno tag, current pin, and REC host-session fix are recorded"
 if [ -f "${NFR2_PROOF}" ] &&
   [ -f "${POOL_REUSE_TESTS}" ] &&
-  contains 'v2\.8\.3-nimbus\.78' "${NFR2_PROOF}" &&
-  contains '1fdb7a09a8567a827e184361b294f44f91b35e4c' "${NFR2_PROOF}" &&
-  contains 'v2\.8\.3-nimbus\.79#828cd062096fc765d672f8678b8b39f9cca148c6' "${CARGO_LOCK}" &&
+  contains 'v2\.9\.0-nimbus\.2' "${NFR2_PROOF}" &&
+  contains '5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52' "${NFR2_PROOF}" &&
+  contains 'v2\.9\.0-nimbus\.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52' "${CARGO_LOCK}" &&
   contains_all "${NFR2_PROOF}" \
     "CARGO_ENCODED_RUSTFLAGS='' cargo test -p deno_core create_realm --lib -- --nocapture" \
-    '2 passed; 0 failed; 0 ignored; 0 measured; 427 filtered out' \
+    '3 passed; 0 failed; 0 ignored; 0 measured; 429 filtered out' \
     "CARGO_ENCODED_RUSTFLAGS='' cargo test -p deno_core init_extension_js_in_realm --lib -- --nocapture" \
-    '3 passed; 0 failed' \
+    '3 passed; 0 failed; 0 ignored; 0 measured; 429 filtered out' \
     "CARGO_ENCODED_RUSTFLAGS='' cargo test -p deno_node --lib" \
-    '84 passed; 0 failed' \
+    '80 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out' \
     'cargo test -p nimbus-runtime fresh_realm --lib -- --nocapture' \
-    '4 passed; 0 failed; 1 ignored; 0 measured; 1062 filtered out' \
+    '32 passed; 0 failed; 32 ignored; 0 measured; 1169 filtered out' \
     '`fresh:` host-call session id' \
     '`query:<function_name>` invocation session' >/tmp/nfr2-verification-missing.txt &&
   contains '__nimbusCreateContext\(\{ request \}\)' "${POOL_REUSE_TESTS}" &&
   contains '"host_call_session_id": "query:messages:first"' "${POOL_REUSE_TESTS}" &&
   ! contains 'fresh:\$\{request.function_name\}' "${POOL_REUSE_TESTS}"; then
-  pass "NFR2 verification records historical Deno proof, current pin, and REC-aligned session use"
+  pass "NFR2 verification records current Deno proof, current pin, and REC-aligned session use"
 else
   fail "NFR2 verification evidence is incomplete" \
     "$(cat /tmp/nfr2-verification-missing.txt 2>/dev/null)"
