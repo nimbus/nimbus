@@ -7,7 +7,9 @@ pub mod wire;
 
 mod auth;
 
-pub use credential_registry::{CredentialBinding, CredentialRegistry, MongoAuth};
+pub use credential_registry::{
+    CredentialBinding, CredentialRegistry, CredentialSpecError, MongoAuth,
+};
 
 use std::error::Error as StdError;
 use std::fmt;

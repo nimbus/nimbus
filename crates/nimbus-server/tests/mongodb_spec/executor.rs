@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use nimbus_engine::Engine;
 use nimbus_server::MongoDbAuthConfig;
-use nimbus_server::adapters_mongodb::listener::run_listener;
+use nimbus_server::adapters_mongodb::listener::{MongoAuthSource, run_listener};
 use nimbus_testing::EngineFixture;
 use tokio::net::TcpListener;
 
@@ -28,10 +28,10 @@ impl SpecTestFixture {
         tokio::spawn(run_listener(
             listener,
             service,
-            Arc::new(MongoDbAuthConfig::new(
+            MongoAuthSource::Unbound(Arc::new(MongoDbAuthConfig::new(
                 TEST_USERNAME.into(),
                 TEST_PASSWORD.into(),
-            )),
+            ))),
         ));
 
         Self {
