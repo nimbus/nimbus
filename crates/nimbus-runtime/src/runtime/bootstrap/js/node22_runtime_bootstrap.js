@@ -970,43 +970,68 @@ function runtimeNodePlatform() {
 }
 
 const nimbusProcessCwdPatched = Symbol("nimbus.processCwdPatched");
+const nimbusProcessCwdState = Symbol("nimbus.processCwdState");
 const nimbusProcessStdioPatched = Symbol("nimbus.processStdioPatched");
 let nimbusRuntimeCurrentCwd = null;
+
+function runtimePolicyCwd() {
+  const policyCwd = typeof core.ops.op_nimbus_runtime_cwd === "function"
+    ? core.ops.op_nimbus_runtime_cwd()
+    : null;
+  return typeof policyCwd === "string" && policyCwd.length > 0
+    ? policyCwd
+    : null;
+}
 
 function seedNodeProcessCwd(nodeProcess) {
   if (
     !nodeProcess ||
-    typeof nodeProcess !== "object" ||
-    nodeProcess[nimbusProcessCwdPatched] === true
+    typeof nodeProcess !== "object"
   ) {
+    return;
+  }
+
+  const policyCwd = runtimePolicyCwd();
+  const existingState = nodeProcess[nimbusProcessCwdState];
+  if (existingState && typeof existingState === "object") {
+    if (policyCwd !== null) {
+      existingState.currentCwd = policyCwd;
+      nimbusRuntimeCurrentCwd = policyCwd;
+    }
     return;
   }
 
   const originalCwd = typeof nodeProcess.cwd === "function"
     ? nodeProcess.cwd.bind(nodeProcess)
     : null;
-  const policyCwd = typeof core.ops.op_nimbus_runtime_cwd === "function"
-    ? core.ops.op_nimbus_runtime_cwd()
-    : null;
-  let currentCwd = typeof policyCwd === "string" && policyCwd.length > 0
-    ? policyCwd
-    : nimbusRuntimeCurrentCwd ??
-      (nodeProcess !== globalThis.process &&
-          globalThis.process?.[nimbusProcessCwdPatched] === true &&
+  const cwdState = {
+    currentCwd: policyCwd !== null
+      ? policyCwd
+      : nimbusRuntimeCurrentCwd ??
+        (nodeProcess !== globalThis.process &&
+            globalThis.process?.[nimbusProcessCwdPatched] === true &&
           typeof globalThis.process?.cwd === "function"
         ? globalThis.process.cwd()
         : null) ??
       (originalCwd !== null &&
           nodeProcess === globalThis.process &&
           nodeProcess[nimbusProcessCwdPatched] === true
-        ? originalCwd()
-        : null) ??
-      "/";
-  nimbusRuntimeCurrentCwd = currentCwd;
+          ? originalCwd()
+          : null) ??
+        "/",
+  };
+  nimbusRuntimeCurrentCwd = cwdState.currentCwd;
+
+  Object.defineProperty(nodeProcess, nimbusProcessCwdState, {
+    value: cwdState,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
 
   Object.defineProperty(nodeProcess, "cwd", {
     value() {
-      return currentCwd;
+      return cwdState.currentCwd;
     },
     configurable: true,
     enumerable: false,
@@ -1015,30 +1040,32 @@ function seedNodeProcessCwd(nodeProcess) {
 
   Object.defineProperty(nodeProcess, "chdir", {
     value(directory) {
-      const nextCwd = nodePathResolve(currentCwd, String(directory));
+      const nextCwd = nodePathResolve(cwdState.currentCwd, String(directory));
       const fileInfo = runtimeFsAssertExistingCwd(nextCwd);
       if (!fileInfo.isDirectory) {
-        const error = new Error(`ENOTDIR: not a directory, chdir '${currentCwd}' -> '${nextCwd}'`);
+        const error = new Error(`ENOTDIR: not a directory, chdir '${cwdState.currentCwd}' -> '${nextCwd}'`);
         error.code = "ENOTDIR";
         error.errno = -20;
         error.syscall = "chdir";
         error.path = nextCwd;
         throw error;
       }
-      currentCwd = nextCwd;
-      nimbusRuntimeCurrentCwd = currentCwd;
+      cwdState.currentCwd = nextCwd;
+      nimbusRuntimeCurrentCwd = cwdState.currentCwd;
     },
     configurable: true,
     enumerable: false,
     writable: true,
   });
 
-  Object.defineProperty(nodeProcess, nimbusProcessCwdPatched, {
-    value: true,
-    configurable: false,
-    enumerable: false,
-    writable: false,
-  });
+  if (nodeProcess[nimbusProcessCwdPatched] !== true) {
+    Object.defineProperty(nodeProcess, nimbusProcessCwdPatched, {
+      value: true,
+      configurable: false,
+      enumerable: false,
+      writable: false,
+    });
+  }
 }
 
 function seedNodeProcessPlatformMetadata(nodeProcess) {
@@ -3973,6 +4000,9 @@ if (typeof runtimeTargetTriple === "string" && runtimeTargetTriple.length > 0) {
 enableNextTick();
 function refreshNodeRuntimeOpState() {
   op_stream_base_register_state(streamBaseState);
+  seedNodeProcessCwd(nodeProcessBuiltin);
+  seedNodeProcessCwd(internals.nodeGlobals?.process);
+  seedNodeProcessCwd(globalThis.process);
 }
 Object.defineProperty(globalThis, "__nimbusRefreshNodeRuntimeOpState", {
   value: refreshNodeRuntimeOpState,

@@ -107,6 +107,93 @@ export {};
 }
 
 #[tokio::test]
+async fn application_node22_startup_snapshot_refreshes_policy_cwd_for_relative_fs_writes() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (first_tempdir, first_bundle_path) = write_app_style_bundle(
+        r#"
+globalThis.__nimbusInvoke = function () {
+  return { cwd: process.cwd() };
+};
+
+export {};
+"#,
+    );
+    let (second_tempdir, second_bundle_path) = write_app_style_bundle(
+        r#"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+
+globalThis.__nimbusInvoke = function () {
+  mkdirSync("./node_modules/.prisma/client", { recursive: true });
+  writeFileSync("./node_modules/.prisma/client/query_engine.node", "not a prisma engine");
+  return {
+    cwd: process.cwd(),
+    wrote: existsSync("./node_modules/.prisma/client/query_engine.node"),
+  };
+};
+
+export {};
+"#,
+    );
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+    );
+    let request = |function_name: &str| InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: function_name.to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: None,
+        services: Default::default(),
+    };
+
+    let first = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&first_bundle_path),
+            &request("snapshot:first"),
+        )
+        .await
+        .expect("first bundle should execute");
+    let expected_first_cwd = first_tempdir
+        .path()
+        .join("app/.nimbus/convex")
+        .canonicalize()
+        .expect("first cwd should canonicalize");
+    assert_eq!(
+        first["cwd"],
+        serde_json::json!(expected_first_cwd.display().to_string())
+    );
+
+    let second = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&second_bundle_path),
+            &request("snapshot:second"),
+        )
+        .await
+        .expect("second bundle should execute");
+    let expected_second_cwd = second_tempdir
+        .path()
+        .join("app/.nimbus/convex")
+        .canonicalize()
+        .expect("second cwd should canonicalize");
+    assert_eq!(
+        second["cwd"],
+        serde_json::json!(expected_second_cwd.display().to_string())
+    );
+    assert_eq!(second["wrote"], serde_json::json!(true));
+    assert!(
+        second_bundle_path
+            .parent()
+            .expect("bundle parent should resolve")
+            .join("node_modules/.prisma/client/query_engine.node")
+            .exists(),
+        "relative write should stay inside the bundle-generated root"
+    );
+}
+
+#[tokio::test]
 async fn application_node22_production_hides_tls_reject_unauthorized_env_lookup() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let _tls_env = ScopedProcessEnvVar::set("NODE_TLS_REJECT_UNAUTHORIZED", "0");
