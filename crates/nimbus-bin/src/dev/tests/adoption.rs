@@ -560,7 +560,7 @@ async fn covered_app_round_trips_firestore_via_emulator_connection() {
         .take()
         .expect("dev-shaped Firestore client server must mount Firebase routes");
     enablement.firebase =
-        Some(nimbus_server::enable_firebase_emulator_mock_user_token_auth(firebase));
+        Some(nimbus_server::enable_firebase_emulator_token_verification_bypass(firebase));
     let engine = std::sync::Arc::new(
         nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"),
     );
@@ -592,7 +592,7 @@ async fn covered_app_round_trips_firestore_via_emulator_connection() {
         .arg("dxf4-round-trip")
         .env(
             "NIMBUS_FIREBASE_ROUND_TRIP_MOCK_USER_TOKEN",
-            r#"{"sub":"round-trip-user","tenant_id":"dxf4-round-trip"}"#,
+            r#"{"sub":"round-trip-user","iss":"https://securetoken.google.com/dxf4-round-trip"}"#,
         )
         .output()
         .await

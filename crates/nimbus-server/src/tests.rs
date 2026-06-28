@@ -47,8 +47,8 @@ use tonic::transport::Channel;
 
 use crate::{
     ConvexRegistry, FirebaseConfig, LicenseDocument, LicenseEntitlements, LicenseKind,
-    LicenseSourceInfo, LicenseSourceKind, LicenseState, RouterOptions, ServeOptions, build_router,
-    serve,
+    LicenseSourceInfo, LicenseSourceKind, LicenseState, ProjectTenantRegistry, RouterOptions,
+    ServeOptions, build_router, serve,
 };
 use crate::router::RouterBuildConfig;
 use crate::adapters::firebase::grpc::generated::google::firestore::v1::document_transform::FieldTransform as GrpcFieldTransform;
@@ -777,6 +777,280 @@ fn seed_firebase_document(
     );
 }
 
+/// A genuine Firebase ID-token issuer for `project`
+/// (`securetoken.google.com/<project>`). The #24 gate derives the verified
+/// project from this issuer.
+fn firebase_securetoken_issuer(project: &str) -> String {
+    format!("https://securetoken.google.com/{project}")
+}
+
+/// A dev-mode Firebase Emulator bearer token: a JSON object (not a signed JWT)
+/// carrying the subject and the Firebase project issuer. The token-verification
+/// bypass fabricates a *verified* principal from it, so `iss` selects the
+/// project the #24 registry binds to a tenant. `sub` becomes the principal's
+/// `subject`/`sub` claim (owner-based access policies match on it).
+fn firebase_verified_token(subject: &str, project: &str) -> String {
+    json!({
+        "sub": subject,
+        "iss": firebase_securetoken_issuer(project),
+    })
+    .to_string()
+}
+
+/// The `Authorization: Bearer` value for a verified-path Firestore request to
+/// `project` as `subject`.
+fn firebase_verified_bearer(subject: &str, project: &str) -> String {
+    format!("Bearer {}", firebase_verified_token(subject, project))
+}
+
+/// `FirebaseConfig` for the verified-path tests: the dev-mode
+/// token-verification bypass on (so a JSON emulator token fabricates a verified
+/// project) plus the identity registry (project -> same-named tenant), so a
+/// token for project `demo` reaches tenant `demo`. The `ServerFixture` binds
+/// loopback, so the bypass is allowed (the boot guard only refuses it on a
+/// public bind).
+fn firebase_verified_config() -> FirebaseConfig {
+    FirebaseConfig::new()
+        .with_emulator_token_verification_bypass()
+        .with_project_registry(ProjectTenantRegistry::identity())
+}
+
+/// The exact [`PrincipalContext`] the dev-mode bypass fabricates for the
+/// verified-path token. Use it when a test seeds engine state under the same
+/// principal a verified-path request carries (e.g. a transaction session, which
+/// the engine binds to its creating principal), so the engine's principal-bound
+/// checks match the later verified-path request.
+fn firebase_verified_principal(subject: &str, project: &str) -> PrincipalContext {
+    nimbus_auth::firebase_emulator_verification_bypass_principal_from_bearer(
+        &firebase_verified_token(subject, project),
+    )
+    .expect("verified-path bypass principal should build")
+}
+
+/// The browser WebSocket subprotocol header value that offers the dev-mode
+/// verified bearer for `project` alongside the Firestore Listen subprotocol.
+fn firebase_listen_ws_auth_protocol(subject: &str, project: &str) -> String {
+    let encoded = URL_SAFE_NO_PAD.encode(firebase_verified_token(subject, project).as_bytes());
+    format!("nimbus.firebase.listen.v1,nimbus.firebase.auth.{encoded}")
+}
+
+/// A reqwest client that sends the dev-mode verified-path bearer for `project`
+/// on every request, for the verified-path Firestore REST tests. Pair it with
+/// [`assert_firebase_rest_anonymous_refused`] (which uses the fixture's
+/// unauthenticated client) to keep each test non-vacuous.
+fn firebase_rest_client(subject: &str, project: &str) -> reqwest::Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        firebase_verified_bearer(subject, project)
+            .parse()
+            .expect("verified-path bearer should be a valid header value"),
+    );
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .expect("verified-path reqwest client should build")
+}
+
+/// Wrap a unary or client-streaming gRPC payload in a request carrying the
+/// dev-mode verified bearer for `project`, so the #24 gate resolves the project
+/// to its tenant.
+fn firebase_grpc_request<T>(message: T, subject: &str, project: &str) -> tonic::Request<T> {
+    let mut request = tonic::Request::new(message);
+    request.metadata_mut().insert(
+        "authorization",
+        MetadataValue::try_from(firebase_verified_bearer(subject, project))
+            .expect("grpc authorization metadata should build"),
+    );
+    request
+}
+
+/// A tonic interceptor that attaches the dev-mode verified bearer to every
+/// outgoing Firestore gRPC request, so the #24 gate resolves the project to its
+/// tenant without wrapping each call site.
+#[derive(Clone)]
+struct FirebaseBearerInterceptor {
+    bearer: MetadataValue<tonic::metadata::Ascii>,
+}
+
+impl tonic::service::Interceptor for FirebaseBearerInterceptor {
+    fn call(
+        &mut self,
+        mut request: tonic::Request<()>,
+    ) -> std::result::Result<tonic::Request<()>, tonic::Status> {
+        request
+            .metadata_mut()
+            .insert("authorization", self.bearer.clone());
+        Ok(request)
+    }
+}
+
+/// A Firestore gRPC client whose every request carries the dev-mode verified
+/// bearer for `project` as `subject` (the #24 verified-path client). Pair it
+/// with the matching `assert_firebase_grpc_*_anonymous_refused` helper to keep
+/// each test non-vacuous.
+async fn firestore_grpc_authed_client(
+    server: &ServerFixture,
+    subject: &str,
+    project: &str,
+) -> FirestoreClient<
+    tonic::service::interceptor::InterceptedService<Channel, FirebaseBearerInterceptor>,
+> {
+    let channel = Channel::from_shared(server.http_url(""))
+        .expect("Firestore gRPC channel URI should parse")
+        .connect()
+        .await
+        .expect("Firestore gRPC channel should connect");
+    let bearer = MetadataValue::try_from(firebase_verified_bearer(subject, project))
+        .expect("grpc authorization metadata should build");
+    FirestoreClient::with_interceptor(channel, FirebaseBearerInterceptor { bearer })
+}
+
+/// Assert an anonymous (no-metadata) gRPC unary request is refused at the #24
+/// gate with `PermissionDenied`. The non-vacuous half of every migrated gRPC
+/// unary test (the gate runs before any document access, so a fixed read path
+/// proves the refusal).
+async fn assert_firebase_grpc_unary_anonymous_refused(server: &ServerFixture) {
+    let mut client = firestore_grpc_client(server).await;
+    let error = client
+        .get_document(GrpcGetDocumentRequest {
+            name: "projects/demo/databases/(default)/documents/cities/SF".to_string(),
+            mask: None,
+            consistency_selector: None,
+        })
+        .await
+        .expect_err("anonymous gRPC unary request must be refused by the #24 gate");
+    assert_eq!(error.code(), Code::PermissionDenied);
+}
+
+/// Assert the Firestore REST endpoint refuses an anonymous (no-bearer) request
+/// with HTTP 403 — the #24 verified-project gate refuses a caller with no
+/// verified Firebase project. The non-vacuous half of every migrated REST test.
+async fn assert_firebase_rest_anonymous_refused(server: &ServerFixture, path: &str, body: &str) {
+    let response = server
+        .client()
+        .post(server.http_url(path))
+        .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+        .body(body.to_string())
+        .send()
+        .await
+        .expect("anonymous firebase request should send");
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "anonymous Firestore REST request must be refused by the #24 verified-project gate: {path}"
+    );
+}
+
+/// Assert an anonymous (no-metadata) gRPC write-stream handshake is refused at
+/// the #24 gate (the gate runs on the handshake, so the first response is the
+/// refusal). The non-vacuous half of every migrated write-stream test.
+async fn assert_firebase_grpc_write_stream_anonymous_refused(
+    server: &ServerFixture,
+    database: &str,
+) {
+    let mut client = firestore_grpc_client(server).await;
+    let (sender, receiver) = mpsc::unbounded();
+    let mut responses = client
+        .write(receiver)
+        .await
+        .expect("anonymous write stream should open")
+        .into_inner();
+    sender
+        .unbounded_send(GrpcWriteRequest {
+            database: database.to_string(),
+            ..Default::default()
+        })
+        .expect("anonymous write handshake should send");
+    let error = responses
+        .message()
+        .await
+        .expect_err("anonymous write-stream handshake must be refused by the #24 gate");
+    assert_eq!(error.code(), Code::PermissionDenied);
+}
+
+/// Assert an anonymous (no-metadata) gRPC Listen add-target is refused at the
+/// #24 gate. The non-vacuous half of every migrated gRPC Listen test.
+async fn assert_firebase_grpc_listen_anonymous_refused(
+    server: &ServerFixture,
+    parent: &str,
+    collection_id: &str,
+) {
+    let mut client = firestore_grpc_client(server).await;
+    let (sender, receiver) = mpsc::unbounded();
+    let mut responses = client
+        .listen(receiver)
+        .await
+        .expect("anonymous Listen stream should open")
+        .into_inner();
+    sender
+        .unbounded_send(grpc_listen_query_request(0, parent, collection_id))
+        .expect("anonymous Listen add_target should send");
+    let error = responses
+        .message()
+        .await
+        .expect_err("anonymous Listen add_target must be refused by the #24 gate");
+    assert_eq!(error.code(), Code::PermissionDenied);
+}
+
+/// Connect a browser WebSocket Listen socket that offers the dev-mode verified
+/// bearer for `project` as `subject` (the #24 verified-path WebSocket client).
+async fn firebase_listen_ws_connect(
+    server: &ServerFixture,
+    subject: &str,
+    project: &str,
+) -> WebSocketFixture {
+    let mut request = server
+        .ws_url("/google.firestore.v1.Firestore/Listen")
+        .into_client_request()
+        .expect("listen websocket request should build");
+    request.headers_mut().insert(
+        header::ORIGIN,
+        axum::http::HeaderValue::from_static("http://localhost:5173"),
+    );
+    request.headers_mut().insert(
+        header::SEC_WEBSOCKET_PROTOCOL,
+        axum::http::HeaderValue::from_str(&firebase_listen_ws_auth_protocol(subject, project))
+            .expect("listen auth subprotocol header should build"),
+    );
+    WebSocketFixture::connect_request(request)
+        .await
+        .expect("authenticated listen websocket should connect")
+}
+
+/// Assert an anonymous browser WebSocket Listen (no auth offer) is refused at
+/// the #24 gate: the connection opens but the add-target closes with a policy
+/// frame. The non-vacuous half of every migrated WebSocket Listen test.
+async fn assert_firebase_listen_ws_anonymous_refused(
+    server: &ServerFixture,
+    parent: &str,
+    collection_id: &str,
+) {
+    let mut request = server
+        .ws_url("/google.firestore.v1.Firestore/Listen")
+        .into_client_request()
+        .expect("anonymous browser websocket request should build");
+    request.headers_mut().insert(
+        header::ORIGIN,
+        axum::http::HeaderValue::from_static("http://localhost:5173"),
+    );
+    request.headers_mut().insert(
+        header::SEC_WEBSOCKET_PROTOCOL,
+        axum::http::HeaderValue::from_static("nimbus.firebase.listen.v1"),
+    );
+    let mut socket = WebSocketFixture::connect_request(request)
+        .await
+        .expect("anonymous browser websocket should connect before target admission");
+    socket
+        .send_binary(grpc_listen_query_request(91, parent, collection_id).encode_to_vec())
+        .await;
+    let close = socket.next_message().await;
+    let WsMessage::Close(Some(frame)) = close else {
+        panic!("anonymous WebSocket Listen must close with a policy frame, got {close:?}");
+    };
+    assert_eq!(frame.code, WsCloseCode::Policy);
+}
+
 fn firebase_owner_access_rule() -> AccessRule {
     AccessRule {
         require_authenticated: true,
@@ -861,24 +1135,6 @@ fn firebase_owner_schema_for_collection(
         }],
         access_policy: Some(access_policy),
     }
-}
-
-fn firebase_test_auth_config(
-    issuer: &str,
-    application_id: &str,
-    jwks_data_url: &str,
-) -> serde_json::Value {
-    json!({
-        "providers": [
-            {
-                "type": "customJwt",
-                "issuer": issuer,
-                "jwks": jwks_data_url,
-                "algorithm": "ES256",
-                "applicationID": application_id
-            }
-        ]
-    })
 }
 
 fn seed_firebase_document_with_principal(

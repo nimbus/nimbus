@@ -1,6 +1,6 @@
 pub(crate) mod grpc;
 
-pub use nimbus_firebase::FirebaseConfig;
+pub use nimbus_firebase::{FirebaseConfig, ProjectSpecError, ProjectTenantRegistry};
 
 #[cfg(test)]
 pub(crate) use nimbus_firebase::locator_for_document_path;
@@ -100,9 +100,15 @@ pub(crate) async fn commit(
         resource_names::decode_rest_database(&params.project_id, &params.database_id)
             .map_err(resource_name_error_to_core)
             .map_err(firebase_error_to_app)?;
-    let tenant_context =
-        tenant_context_for_database(&route_database, &auth.principal, "firestore.rest.commit")
-            .map_err(firebase_error_to_app)?;
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
+    let tenant_context = tenant_context_for_database(
+        registry,
+        &route_database,
+        &auth.principal,
+        "firestore.rest.commit",
+    )
+    .map_err(firebase_error_to_app)?;
     let parsed_commit =
         commit_request::parse_commit_request_with_resolver(&request_json, resolve_write_key)
             .map_err(commit_request_error_to_core)
@@ -115,6 +121,7 @@ pub(crate) async fn commit(
     }
 
     let outcome = commit_batch_for_database(
+        registry,
         &state.engine,
         &tenant_context,
         &parsed_commit.database,
@@ -164,7 +171,10 @@ pub(crate) async fn batch_write(
             params.project_id, params.database_id, parsed_request.database.project_id
         ))));
     }
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     let tenant_context = match tenant_context_for_database(
+        registry,
         &route_database,
         &auth.principal,
         "firestore.rest.batch_write",
@@ -174,6 +184,7 @@ pub(crate) async fn batch_write(
     };
 
     match batch_write_for_database(
+        registry,
         &state.engine,
         &tenant_context,
         &parsed_request.database,
@@ -203,7 +214,10 @@ pub(crate) async fn batch_get_documents(
                 );
             }
         };
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     let tenant_context = match tenant_context_for_database(
+        registry,
         &route_database,
         &auth.principal,
         "firestore.rest.batch_get",
@@ -225,6 +239,7 @@ pub(crate) async fn batch_get_documents(
             }
         };
     let outcome = match batch_get_documents_for_database(
+        registry,
         &state.engine,
         &tenant_context,
         &route_database,
@@ -278,7 +293,10 @@ pub(crate) async fn begin_transaction(
             Ok(database) => database,
             Err(error) => return Ok(firebase_error_response(resource_name_error_to_core(error))),
         };
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     let tenant_context = match tenant_context_for_database(
+        registry,
         &route_database,
         &auth.principal,
         "firestore.rest.begin_transaction",
@@ -302,6 +320,7 @@ pub(crate) async fn begin_transaction(
         }
     };
     let session = match begin_transaction_session_for_database(
+        registry,
         &state.engine,
         &tenant_context,
         &parsed_request.database,
@@ -331,7 +350,10 @@ pub(crate) async fn rollback(
             Ok(database) => database,
             Err(error) => return Ok(firebase_error_response(resource_name_error_to_core(error))),
         };
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     let tenant_context = match tenant_context_for_database(
+        registry,
         &route_database,
         &auth.principal,
         "firestore.rest.rollback",
@@ -353,6 +375,7 @@ pub(crate) async fn rollback(
             }
         };
     match rollback_transaction_session_for_database(
+        registry,
         &state.engine,
         &tenant_context,
         &parsed_request.database,
@@ -471,7 +494,10 @@ async fn list_collection_ids_for_parent_document(
         Ok(database) => database,
         Err(error) => return Ok(firebase_error_response(resource_name_error_to_core(error))),
     };
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     let tenant_context = match tenant_context_for_database(
+        registry,
         &route_database,
         &auth.principal,
         "firestore.rest.list_collection_ids",
@@ -504,6 +530,7 @@ async fn list_collection_ids_for_parent_document(
             }
         };
     let page = match list_collection_ids_for_database(
+        registry,
         &state.engine,
         &tenant_context,
         &route_database,
@@ -537,7 +564,10 @@ async fn run_query_for_parent_document(
             return Ok(firebase_error_response(resource_name_error_to_core(error)).into_response());
         }
     };
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     let tenant_context = match tenant_context_for_database(
+        registry,
         &route_database,
         &auth.principal,
         "firestore.rest.run_query",
@@ -571,6 +601,7 @@ async fn run_query_for_parent_document(
         }
     };
     let outcome = match run_query_documents_for_database(
+        registry,
         &state.engine,
         &tenant_context,
         &route_database,
@@ -618,7 +649,10 @@ async fn run_aggregation_query_for_parent_document(
             return Ok(firebase_error_response(resource_name_error_to_core(error)).into_response());
         }
     };
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     let tenant_context = match tenant_context_for_database(
+        registry,
         &route_database,
         &auth.principal,
         "firestore.rest.run_aggregation_query",
@@ -654,6 +688,7 @@ async fn run_aggregation_query_for_parent_document(
             }
         };
     let outcome = match run_aggregation_query_for_database(
+        registry,
         &state.engine,
         &tenant_context,
         &route_database,
@@ -687,6 +722,18 @@ fn ensure_firebase_enabled(state: &Arc<AppState>) -> std::result::Result<(), App
         .current_deployment()
         .firebase_config()
         .map(|_| ())
+        .ok_or_else(|| AppError::not_found("firebase adapter is disabled"))
+}
+
+/// The active deployment's Firebase config, or the same not-enabled error
+/// [`ensure_firebase_enabled`] returns. Callers hold the returned `Arc` in a
+/// binding so a borrow of its [`project_registry`] lives long enough.
+fn firebase_config_for_request(
+    state: &Arc<AppState>,
+) -> std::result::Result<Arc<FirebaseConfig>, AppError> {
+    state
+        .current_deployment()
+        .firebase_config()
         .ok_or_else(|| AppError::not_found("firebase adapter is disabled"))
 }
 

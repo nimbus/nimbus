@@ -41,6 +41,7 @@ use super::write_stream::{
     decode_nimbus_value_from_grpc, encode_document_field_to_grpc, encode_nimbus_value_to_grpc,
     firebase_grpc_status, lower_write_batch, prost_timestamp_from_core, proto_write_result,
 };
+use crate::ProjectTenantRegistry;
 use crate::batch_get_request::{
     ParsedBatchGetDocument, ParsedBatchGetRequest, lower_document_mask_paths,
 };
@@ -59,15 +60,18 @@ use crate::{
 type FirestoreGrpcLoweringResult<T> = Result<T, Box<Status>>;
 
 pub async fn handle_commit(
+    registry: &ProjectTenantRegistry,
     engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: CommitRequest,
 ) -> Result<Response<CommitResponse>, Status> {
     let database = parse_database_name(&request.database).map_err(|status| *status)?;
-    let tenant_context = tenant_context_for_database(&database, principal, "firestore.grpc.commit")
-        .map_err(firebase_grpc_status)?;
+    let tenant_context =
+        tenant_context_for_database(registry, &database, principal, "firestore.grpc.commit")
+            .map_err(firebase_grpc_status)?;
     let batch = lower_write_batch(&request.writes, &database)?;
     let outcome = commit_batch_for_database(
+        registry,
         engine,
         &tenant_context,
         &database,
@@ -88,6 +92,7 @@ pub async fn handle_commit(
 }
 
 pub async fn handle_get_document(
+    registry: &ProjectTenantRegistry,
     engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: GetDocumentRequest,
@@ -96,6 +101,7 @@ pub async fn handle_get_document(
         .map_err(resource_name_error_to_core)
         .map_err(firebase_grpc_status)?;
     let tenant_context = tenant_context_for_database(
+        registry,
         &parsed_document.database,
         principal,
         "firestore.grpc.get_document",
@@ -114,6 +120,7 @@ pub async fn handle_get_document(
         }
     };
     let document = get_document_for_database(
+        registry,
         engine,
         &tenant_context,
         &parsed_document.database,
@@ -130,17 +137,24 @@ pub async fn handle_get_document(
 }
 
 pub async fn handle_batch_get_documents(
+    registry: &ProjectTenantRegistry,
     engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: BatchGetDocumentsRequest,
 ) -> Result<Response<tonic::codegen::BoxStream<BatchGetDocumentsResponse>>, Status> {
     let (database, request) = lower_batch_get_request(request).map_err(|status| *status)?;
     let tenant_context =
-        tenant_context_for_database(&database, principal, "firestore.grpc.batch_get")
+        tenant_context_for_database(registry, &database, principal, "firestore.grpc.batch_get")
             .map_err(firebase_grpc_status)?;
-    let outcome =
-        batch_get_documents_for_database(engine, &tenant_context, &database, principal, &request)
-            .map_err(firebase_grpc_status)?;
+    let outcome = batch_get_documents_for_database(
+        registry,
+        engine,
+        &tenant_context,
+        &database,
+        principal,
+        &request,
+    )
+    .map_err(firebase_grpc_status)?;
     let read_time = Some(prost_timestamp_from_core(outcome.read_time)?);
     let mut responses = Vec::with_capacity(outcome.entries.len());
     for entry in outcome.entries {
@@ -166,21 +180,28 @@ pub async fn handle_batch_get_documents(
 }
 
 pub async fn handle_batch_write(
+    registry: &ProjectTenantRegistry,
     engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: BatchWriteRequest,
 ) -> Result<Response<BatchWriteResponse>, Status> {
     let database = parse_database_name(&request.database).map_err(|status| *status)?;
     let tenant_context =
-        tenant_context_for_database(&database, principal, "firestore.grpc.batch_write")
+        tenant_context_for_database(registry, &database, principal, "firestore.grpc.batch_write")
             .map_err(firebase_grpc_status)?;
     let batch = lower_write_batch(&request.writes, &database)?;
     batch_write_request::reject_duplicate_write_targets(&batch.writes)
         .map_err(batch_write_request_error_to_core)
         .map_err(firebase_grpc_status)?;
-    let outcome =
-        batch_write_for_database(engine, &tenant_context, &database, principal, batch.writes)
-            .map_err(firebase_grpc_status)?;
+    let outcome = batch_write_for_database(
+        registry,
+        engine,
+        &tenant_context,
+        &database,
+        principal,
+        batch.writes,
+    )
+    .map_err(firebase_grpc_status)?;
 
     let mut write_results = Vec::with_capacity(outcome.entries.len());
     for entry in &outcome.entries {
@@ -209,6 +230,7 @@ pub async fn handle_batch_write(
 }
 
 pub async fn handle_list_documents(
+    registry: &ProjectTenantRegistry,
     engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: ListDocumentsRequest,
@@ -255,11 +277,16 @@ pub async fn handle_list_documents(
     let parent = resource_names::parse_parent_name(&request.parent)
         .map_err(resource_name_error_to_core)
         .map_err(firebase_grpc_status)?;
-    let tenant_context =
-        tenant_context_for_database(&parent.database, principal, "firestore.grpc.list_documents")
-            .map_err(firebase_grpc_status)?;
+    let tenant_context = tenant_context_for_database(
+        registry,
+        &parent.database,
+        principal,
+        "firestore.grpc.list_documents",
+    )
+    .map_err(firebase_grpc_status)?;
     let response_mask = lower_optional_document_mask(request.mask).map_err(|status| *status)?;
     let outcome = run_query_documents_for_database(
+        registry,
         engine,
         &tenant_context,
         &parent.database,
@@ -300,6 +327,7 @@ pub async fn handle_list_documents(
 }
 
 pub async fn handle_list_collection_ids(
+    registry: &ProjectTenantRegistry,
     engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: ListCollectionIdsRequest,
@@ -334,12 +362,14 @@ pub async fn handle_list_collection_ids(
         .map_err(resource_name_error_to_core)
         .map_err(firebase_grpc_status)?;
     let tenant_context = tenant_context_for_database(
+        registry,
         &parent.database,
         principal,
         "firestore.grpc.list_collection_ids",
     )
     .map_err(firebase_grpc_status)?;
     let page = list_collection_ids_for_database(
+        registry,
         engine,
         &tenant_context,
         &parent.database,
@@ -363,6 +393,7 @@ fn rpc_status_from_error(error: nimbus_core::Error) -> RpcStatus {
 }
 
 pub async fn handle_create_document(
+    registry: &ProjectTenantRegistry,
     engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: CreateDocumentRequest,
@@ -371,6 +402,7 @@ pub async fn handle_create_document(
         .map_err(resource_name_error_to_core)
         .map_err(firebase_grpc_status)?;
     let tenant_context = tenant_context_for_database(
+        registry,
         &parent.database,
         principal,
         "firestore.grpc.create_document",
@@ -411,6 +443,7 @@ pub async fn handle_create_document(
         &parent.database,
     )?;
     commit_batch_for_database(
+        registry,
         engine,
         &tenant_context,
         &parent.database,
@@ -420,6 +453,7 @@ pub async fn handle_create_document(
     )
     .map_err(firebase_grpc_status)?;
     let created = get_document_for_database(
+        registry,
         engine,
         &tenant_context,
         &parent.database,
@@ -437,18 +471,29 @@ pub async fn handle_create_document(
 }
 
 pub async fn handle_begin_transaction(
+    registry: &ProjectTenantRegistry,
     engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: BeginTransactionRequest,
 ) -> Result<Response<BeginTransactionResponse>, Status> {
     let database = parse_database_name(&request.database).map_err(|status| *status)?;
-    let tenant_context =
-        tenant_context_for_database(&database, principal, "firestore.grpc.begin_transaction")
-            .map_err(firebase_grpc_status)?;
+    let tenant_context = tenant_context_for_database(
+        registry,
+        &database,
+        principal,
+        "firestore.grpc.begin_transaction",
+    )
+    .map_err(firebase_grpc_status)?;
     let mode = lower_transaction_mode(request.options).map_err(|status| *status)?;
-    let session =
-        begin_transaction_session_for_database(engine, &tenant_context, &database, principal, mode)
-            .map_err(firebase_grpc_status)?;
+    let session = begin_transaction_session_for_database(
+        registry,
+        engine,
+        &tenant_context,
+        &database,
+        principal,
+        mode,
+    )
+    .map_err(firebase_grpc_status)?;
 
     Ok(Response::new(BeginTransactionResponse {
         transaction: session.token.as_str().as_bytes().to_vec(),
@@ -456,15 +501,17 @@ pub async fn handle_begin_transaction(
 }
 
 pub async fn handle_rollback(
+    registry: &ProjectTenantRegistry,
     engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: RollbackRequest,
 ) -> Result<Response<()>, Status> {
     let database = parse_database_name(&request.database).map_err(|status| *status)?;
     let tenant_context =
-        tenant_context_for_database(&database, principal, "firestore.grpc.rollback")
+        tenant_context_for_database(registry, &database, principal, "firestore.grpc.rollback")
             .map_err(firebase_grpc_status)?;
     rollback_transaction_session_for_database(
+        registry,
         engine,
         &tenant_context,
         &database,
@@ -476,6 +523,7 @@ pub async fn handle_rollback(
 }
 
 pub async fn handle_update_document(
+    registry: &ProjectTenantRegistry,
     engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: UpdateDocumentRequest,
@@ -487,6 +535,7 @@ pub async fn handle_update_document(
         .map_err(resource_name_error_to_core)
         .map_err(firebase_grpc_status)?;
     let tenant_context = tenant_context_for_database(
+        registry,
         &parsed_document.database,
         principal,
         "firestore.grpc.update_document",
@@ -505,6 +554,7 @@ pub async fn handle_update_document(
         &parsed_document.database,
     )?;
     commit_batch_for_database(
+        registry,
         engine,
         &tenant_context,
         &parsed_document.database,
@@ -514,6 +564,7 @@ pub async fn handle_update_document(
     )
     .map_err(firebase_grpc_status)?;
     let updated = get_document_for_database(
+        registry,
         engine,
         &tenant_context,
         &parsed_document.database,
@@ -531,6 +582,7 @@ pub async fn handle_update_document(
 }
 
 pub async fn handle_delete_document(
+    registry: &ProjectTenantRegistry,
     engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: DeleteDocumentRequest,
@@ -539,6 +591,7 @@ pub async fn handle_delete_document(
         .map_err(resource_name_error_to_core)
         .map_err(firebase_grpc_status)?;
     let tenant_context = tenant_context_for_database(
+        registry,
         &parsed_document.database,
         principal,
         "firestore.grpc.delete_document",
@@ -554,6 +607,7 @@ pub async fn handle_delete_document(
         &parsed_document.database,
     )?;
     commit_batch_for_database(
+        registry,
         engine,
         &tenant_context,
         &parsed_document.database,
@@ -566,15 +620,21 @@ pub async fn handle_delete_document(
 }
 
 pub async fn handle_run_query(
+    registry: &ProjectTenantRegistry,
     engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: RunQueryRequest,
 ) -> Result<Response<tonic::codegen::BoxStream<RunQueryResponse>>, Status> {
     let request = lower_run_query_request(request).map_err(|status| *status)?;
-    let tenant_context =
-        tenant_context_for_database(&request.database, principal, "firestore.grpc.run_query")
-            .map_err(firebase_grpc_status)?;
+    let tenant_context = tenant_context_for_database(
+        registry,
+        &request.database,
+        principal,
+        "firestore.grpc.run_query",
+    )
+    .map_err(firebase_grpc_status)?;
     let outcome = run_query_documents_for_database(
+        registry,
         engine,
         &tenant_context,
         &request.database,
@@ -624,18 +684,21 @@ pub async fn handle_run_query(
 }
 
 pub async fn handle_run_aggregation_query(
+    registry: &ProjectTenantRegistry,
     engine: &Arc<Engine>,
     principal: &PrincipalContext,
     request: RunAggregationQueryRequest,
 ) -> Result<Response<tonic::codegen::BoxStream<RunAggregationQueryResponse>>, Status> {
     let request = lower_run_aggregation_query_request(request).map_err(|status| *status)?;
     let tenant_context = tenant_context_for_database(
+        registry,
         &request.database,
         principal,
         "firestore.grpc.run_aggregation_query",
     )
     .map_err(firebase_grpc_status)?;
     let outcome = run_aggregation_query_for_database(
+        registry,
         engine,
         &tenant_context,
         &request.database,
