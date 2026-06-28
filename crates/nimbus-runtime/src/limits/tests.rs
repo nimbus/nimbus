@@ -643,6 +643,40 @@ fn runtime_policy_clone_with_effective_plan_preserves_operational_controls() {
         cloned.host_resource_decision().host_pressure_level,
         RuntimeHostPressureLevel::High
     );
+    assert_eq!(
+        policy.metrics_snapshot().host_pressure.decisions,
+        1,
+        "policy overlays must keep reporting into the original lane metrics"
+    );
+}
+
+#[test]
+fn runtime_policy_clone_with_host_governor_preserves_lane_metrics() {
+    let policy = RuntimePolicy::new(RuntimeLimits {
+        max_concurrent_runtime_instances: 2,
+        ..RuntimeLimits::default()
+    });
+    policy.metrics().record_worker_dispatch();
+    let governed = policy.clone_with_host_resource_governor(
+        RuntimeHostResourceBudget::conservative_for_logical_cpus(NonZeroUsize::new(2).unwrap()),
+        Arc::new(FixedRuntimeHostPressureSource(
+            RuntimeHostPressureSample::unavailable(
+                RuntimeMemoryPressureSample::unavailable().classify(),
+            ),
+        )),
+    );
+
+    assert_eq!(
+        governed.metrics_snapshot().worker_dispatched_invocations,
+        1,
+        "host-governor overlays must not fork lane dispatch metrics"
+    );
+    governed.metrics().record_worker_dispatch();
+    assert_eq!(
+        policy.metrics_snapshot().worker_dispatched_invocations,
+        2,
+        "host-governor overlay metrics must remain visible through the source policy"
+    );
 }
 
 #[test]

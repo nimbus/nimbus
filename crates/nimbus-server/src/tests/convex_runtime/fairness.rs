@@ -5,12 +5,11 @@ use nimbus_testing::{
 };
 use reqwest::StatusCode;
 use serde_json::json;
-use tokio::net::TcpStream;
 
 use crate::ConvexRegistry;
 use crate::tests::{
-    convex_registry_with_routes_and_bundle, open_json_post_stream, router_for_convex,
-    wait_for_runtime_metrics, wait_for_runtime_metrics_case,
+    HeldJsonPostRequest, convex_registry_with_routes_and_bundle, open_json_post_stream,
+    router_for_convex, wait_for_runtime_metrics, wait_for_runtime_metrics_case,
 };
 
 pub(crate) const FAIRNESS_HTTP_REJECTION_CASE: DeterministicTestCase = DeterministicTestCase::new(
@@ -118,8 +117,8 @@ export {};
 
 async fn cleanup_fairness_blockers(
     registry: &ConvexRegistry,
-    blocker: TcpStream,
-    queued: TcpStream,
+    blocker: HeldJsonPostRequest,
+    queued: HeldJsonPostRequest,
 ) {
     drop(queued);
     drop(blocker);

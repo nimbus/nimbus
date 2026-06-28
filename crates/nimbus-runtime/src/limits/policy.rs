@@ -64,6 +64,25 @@ impl RuntimePolicy {
         }
     }
 
+    pub fn clone_with_host_resource_governor(
+        &self,
+        host_resource_budget: RuntimeHostResourceBudget,
+        host_pressure_source: Arc<dyn RuntimeHostPressureSource>,
+    ) -> Self {
+        Self {
+            runtime_instance_semaphore: Arc::new(Semaphore::new(
+                self.limits.max_concurrent_runtime_instances,
+            )),
+            metrics: self.metrics.clone(),
+            limits: self.limits.clone(),
+            host_resource_budget,
+            host_pressure_source,
+            host_resource_governor_enabled: true,
+            adaptive_controller_settings: self.adaptive_controller_settings,
+            effective_scaling_plans: self.effective_scaling_plans.clone(),
+        }
+    }
+
     pub fn with_adaptive_controller_settings(
         mut self,
         settings: RuntimeAdaptiveControllerSettings,
@@ -91,7 +110,7 @@ impl RuntimePolicy {
             runtime_instance_semaphore: Arc::new(Semaphore::new(
                 self.limits.max_concurrent_runtime_instances,
             )),
-            metrics: Arc::new(RuntimeMetrics::default()),
+            metrics: self.metrics.clone(),
             limits: self.limits.clone(),
             host_resource_budget: self.host_resource_budget,
             host_pressure_source: self.host_pressure_source.clone(),

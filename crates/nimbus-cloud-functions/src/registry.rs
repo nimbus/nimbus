@@ -88,12 +88,9 @@ impl CloudFunctionsRegistry {
         adaptive_settings: RuntimeAdaptiveControllerSettings,
     ) -> Self {
         let runtime_policy = Arc::new(
-            RuntimePolicy::with_host_resource_governor(
-                self.runtime_policy.limits().clone(),
-                budget,
-                pressure_source,
-            )
-            .with_adaptive_controller_settings(adaptive_settings),
+            self.runtime_policy
+                .clone_with_host_resource_governor(budget, pressure_source)
+                .with_adaptive_controller_settings(adaptive_settings),
         );
         self.runtime_policy = runtime_policy.clone();
         self.runtime_executor = Arc::new(RuntimeExecutor::new(runtime_policy));
@@ -393,6 +390,31 @@ export {};
                 .host_resource_decision()
                 .effective_dispatch_seats,
             0
+        );
+    }
+
+    #[test]
+    fn cloud_functions_registry_host_governor_preserves_runtime_metrics_identity() {
+        let app_dir = tempdir().expect("app tempdir should build");
+        write_cloud_functions_artifact(app_dir.path(), &[], "export {};");
+        let registry =
+            CloudFunctionsRegistry::from_app_dir(app_dir.path()).expect("registry should load");
+        let source_policy = registry.runtime_policy();
+        source_policy.metrics().record_worker_dispatch();
+
+        let governed = registry.with_runtime_host_governor(
+            two_seat_runtime_host_budget(),
+            critical_runtime_host_pressure_source(),
+            nimbus_runtime::RuntimeAdaptiveControllerSettings::default(),
+        );
+        governed.runtime_policy().metrics().record_worker_dispatch();
+
+        assert_eq!(
+            source_policy
+                .metrics_snapshot()
+                .worker_dispatched_invocations,
+            2,
+            "server-side Cloud Functions registry overlays must not fork runtime metrics"
         );
     }
 

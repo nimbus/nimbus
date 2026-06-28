@@ -140,12 +140,9 @@ impl ConvexRuntimeLane {
     ) -> Self {
         Self::from_policy(
             Arc::new(
-                RuntimePolicy::with_host_resource_governor(
-                    self.policy.limits().clone(),
-                    budget,
-                    pressure_source,
-                )
-                .with_adaptive_controller_settings(adaptive_settings),
+                self.policy
+                    .clone_with_host_resource_governor(budget, pressure_source)
+                    .with_adaptive_controller_settings(adaptive_settings),
             ),
             self.execution_adapter_state,
             self.execution_adapter_artifact.clone(),

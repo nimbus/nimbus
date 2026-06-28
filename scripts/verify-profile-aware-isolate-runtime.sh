@@ -2982,7 +2982,7 @@ if [ -f "${SERVER_ROUTER}" ] &&
     'fn from_policy' \
     'fn with_runtime_host_governor' \
     'RuntimeHostPressureSource' \
-    'RuntimePolicy::with_host_resource_governor' \
+    'clone_with_host_resource_governor' \
     'OnceLock::new' >/tmp/pir7-registry-convex-lane-missing.txt &&
   contains_all "${CONVEX_REGISTRY_LOADING}" \
     'pub fn with_runtime_host_resource_budget' \
@@ -3008,15 +3008,17 @@ if [ -f "${SERVER_ROUTER}" ] &&
     'pub fn with_runtime_host_resource_budget' \
     'pub fn with_runtime_host_governor' \
     'RuntimeHostPressureSource' \
-    'RuntimePolicy::with_host_resource_governor' \
+    'clone_with_host_resource_governor' \
     'RuntimeExecutor::new' \
     'runtime_policy' \
     'FixedRuntimeHostPressureSource' \
     'critical_runtime_host_pressure_source' \
     'cloud_functions_registry_applies_runtime_host_resource_budget_to_runtime_policy' \
+    'cloud_functions_registry_host_governor_preserves_runtime_metrics_identity' \
     'host_resource_decision' >/tmp/pir7-registry-cloud-functions-missing.txt &&
   contains_all "${PIR7_HOST_BUDGET_PROOF}" \
     'server registry host-budget injection slice' \
+    'RuntimePolicy::clone_with_host_resource_governor' \
     'ConvexRegistry::with_runtime_host_resource_budget' \
     'ConvexRegistry::with_runtime_host_governor' \
     'CloudFunctionsRegistry::with_runtime_host_resource_budget' \
@@ -3025,10 +3027,12 @@ if [ -f "${SERVER_ROUTER}" ] &&
     'FixedRuntimeHostPressureSource' \
     'convex_node_runtime_lanes_follow_lts_registry_targets' \
     'cargo test -p nimbus-convex convex_registry_applies_runtime_host_resource_budget_to_runtime_policy --lib -- --nocapture' \
-    '1 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out' \
+    'cargo test -p nimbus-convex convex_registry_host_governor_preserves_runtime_metrics_identity --lib -- --nocapture' \
+    '1 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out' \
     'cargo test -p nimbus-convex convex_node_runtime_lanes_follow_lts_registry_targets --lib -- --nocapture' \
     'cargo test -p nimbus-cloud-functions cloud_functions_registry_applies_runtime_host_resource_budget_to_runtime_policy --lib -- --nocapture' \
-    '1 passed; 0 failed; 0 ignored; 0 measured; 26 filtered out' \
+    'cargo test -p nimbus-cloud-functions cloud_functions_registry_host_governor_preserves_runtime_metrics_identity --lib -- --nocapture' \
+    '1 passed; 0 failed; 0 ignored; 0 measured; 28 filtered out' \
     'Summary: 82 passed, 0 failed' >/tmp/pir7-registry-proof-missing.txt &&
   contains_all "${PLAN}" \
     'PIR7 server registry host-budget injection slice' \

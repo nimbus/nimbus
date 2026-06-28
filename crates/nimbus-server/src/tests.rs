@@ -19,7 +19,7 @@ use nimbus_core::{
     TypedScalarValue,
 };
 use nimbus_engine::{Engine, run_scheduler};
-use nimbus_runtime::RuntimeBundle;
+use nimbus_runtime::{RuntimeBundle, RuntimeMetricsSnapshot};
 pub(crate) use nimbus_testing::{
     DeterministicHarness, DeterministicTestCase, EngineFixture, GeneratedTaskHistory,
     GeneratedTaskHistorySeedCase, GeneratedTaskPageExpectation, GeneratedTaskRecord,
@@ -34,8 +34,7 @@ use ring::rand::SystemRandom;
 use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, Ed25519KeyPair, KeyPair};
 use serde_json::json;
 use tempfile::tempdir;
-use tokio::io::AsyncWriteExt;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio::sync::watch;
 use tokio::time::{Duration, timeout};
@@ -1099,29 +1098,40 @@ fn convex_registry_with_routes_and_bundle_and_auth_and_schema(
     registry
 }
 
+struct HeldJsonPostRequest {
+    handle: tokio::task::JoinHandle<Result<StatusCode, reqwest::Error>>,
+}
+
+impl Drop for HeldJsonPostRequest {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
 async fn open_json_post_stream(
     server: &ServerFixture,
     path: &str,
     body: &serde_json::Value,
-) -> TcpStream {
-    let addr = server
-        .http_url("")
-        .trim_start_matches("http://")
-        .to_string();
-    let body = serde_json::to_string(body).expect("request body should serialize");
-    let mut stream = TcpStream::connect(&addr)
-        .await
-        .expect("raw HTTP client should connect");
-    let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    stream
-        .write_all(request.as_bytes())
-        .await
-        .expect("raw HTTP request should write");
-    stream.flush().await.expect("raw HTTP request should flush");
-    stream
+) -> HeldJsonPostRequest {
+    let client = server.client().clone();
+    let url = server.http_url(path);
+    let body = body.clone();
+    let handle = tokio::spawn(async move {
+        client
+            .post(url)
+            .json(&body)
+            .send()
+            .await
+            .map(|response| response.status())
+    });
+    tokio::task::yield_now().await;
+    if handle.is_finished() {
+        let outcome = handle
+            .await
+            .expect("held JSON POST task should not panic before returning");
+        panic!("JSON POST request completed before test could hold it open: {outcome:?}");
+    }
+    HeldJsonPostRequest { handle }
 }
 
 async fn wait_for_runtime_metrics(
@@ -1144,25 +1154,75 @@ async fn wait_for_runtime_metrics_case(
 async fn wait_for_runtime_metrics_case_impl(
     registry: &ConvexRegistry,
     description: String,
-    predicate: impl Fn(&nimbus_runtime::RuntimeMetricsSnapshot) -> bool,
-) -> nimbus_runtime::RuntimeMetricsSnapshot {
-    wait_for_value(
-        &description,
-        // Synchronization budget for a runtime-metrics condition (e.g. "the
-        // blocking query has dispatched onto a worker"), NOT an assertion. The
-        // first dispatch pays a cold-start cost -- worker-thread spawn + per-job
-        // tokio runtime build + first V8 isolate warm-up -- that lands around
-        // ~3s on a resource-contended CI host, so the previous 3s budget flaked
-        // (timeouts at ~3.0-3.02s). `wait_for_value` only ever awaits a positive
-        // condition and panics on timeout, so a wider budget buys slack on a
-        // loaded host, costs nothing on a healthy one, and never weakens the
-        // post-conditions these tests assert once the condition is met.
-        Duration::from_secs(20),
-        Duration::from_millis(25),
-        || async { registry.runtime_metrics_snapshot() },
-        predicate,
+    predicate: impl Fn(&RuntimeMetricsSnapshot) -> bool,
+) -> RuntimeMetricsSnapshot {
+    // Synchronization budget for a runtime-metrics condition, not a behavioral
+    // assertion. The first dispatch can pay multi-shard CI cold-start costs
+    // (worker-thread spawn, per-job tokio runtime build, and first V8 isolate
+    // warm-up). Timeout diagnostics include the last snapshot so failures show
+    // whether work was never routed, merely queued, or rejected early.
+    let timeout = Duration::from_secs(60);
+    let poll_interval = Duration::from_millis(25);
+    let started_at = tokio::time::Instant::now();
+    let mut attempts = 0_u64;
+    loop {
+        attempts += 1;
+        let metrics = registry.runtime_metrics_snapshot();
+        if predicate(&metrics) {
+            return metrics;
+        }
+        let elapsed = started_at.elapsed();
+        if elapsed >= timeout {
+            let lanes = registry
+                .runtime_lane_diagnostics()
+                .into_iter()
+                .map(|lane| {
+                    let metrics = lane.metrics;
+                    format!(
+                        "{}: default={}, linked={:?}, started={}, active={}, queued={}, dispatched={}, completed={}, canceled={}, rejected={}, correlations={}",
+                        lane.lane_name,
+                        lane.default_lane,
+                        lane.execution_adapter_state,
+                        lane.executor_started,
+                        metrics.active_runtime_instances,
+                        metrics.queued_invocations,
+                        metrics.worker_dispatched_invocations,
+                        metrics.completed_invocations,
+                        metrics.canceled_invocations,
+                        metrics.rejected_invocations,
+                        metrics.request_correlation_records
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            panic!(
+                "timed out waiting for {description} after {elapsed:?} \
+                 (budget {timeout:?}, poll interval {poll_interval:?}, attempts {attempts}, \
+                 last runtime metrics: {}, runtime lanes: {lanes})",
+                runtime_metrics_test_summary(&metrics)
+            );
+        }
+        tokio::time::sleep(poll_interval).await;
+    }
+}
+
+fn runtime_metrics_test_summary(metrics: &RuntimeMetricsSnapshot) -> String {
+    format!(
+        "active={}, queued={}, dispatched={}, router_dispatches={}, started={}, completed={}, canceled={}, rejected={}, pool_hits={}, pool_misses={}, pool_replacements={}, correlations={}, tenants={:?}",
+        metrics.active_runtime_instances,
+        metrics.queued_invocations,
+        metrics.worker_dispatched_invocations,
+        metrics.worker_router_dispatches,
+        metrics.started_invocations,
+        metrics.completed_invocations,
+        metrics.canceled_invocations,
+        metrics.rejected_invocations,
+        metrics.runtime_pool_hits,
+        metrics.runtime_pool_misses,
+        metrics.runtime_pool_replacements,
+        metrics.request_correlation_records,
+        metrics.tenants.keys().collect::<Vec<_>>()
     )
-    .await
 }
 
 #[path = "tests/auth_fixtures/mod.rs"]
