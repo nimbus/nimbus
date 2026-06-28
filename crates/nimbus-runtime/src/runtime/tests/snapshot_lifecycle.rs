@@ -4,14 +4,53 @@ use super::*;
 use crate::backends::v8::{ReusableV8Runtime, V8RuntimeConstructionMode, V8WorkerRuntimePool};
 use crate::limits::{RuntimeCompatibilityTarget, RuntimeLimits};
 
+const NODE_MAJOR_SNAPSHOT_CELL_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-node-major-startup-snapshot-cell",
+    "startup-snapshot",
+    "Node20/22/24/26 startup snapshots share the same NodeFull cell",
+    "runtime::tests::snapshot_lifecycle::node_major_startup_snapshots_share_node_full_cell_subprocess",
+);
+
+const NODE_FULL_TARGET_METADATA_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-node-full-shared-snapshot-target-metadata",
+    "startup-snapshot",
+    "shared NodeFull startup snapshot preserves exact target metadata per Node major",
+    "runtime::tests::snapshot_lifecycle::node_full_shared_snapshot_keeps_exact_node_target_metadata_subprocess",
+);
+
+const SNAPSHOT_DRIVER_REPEATED_ASYNC_HOST_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-snapshot-driver-repeated-async-host",
+        "startup-snapshot",
+        "snapshot-seeded driver cycles survive repeated async host invocations",
+        "runtime::tests::snapshot_lifecycle::snapshot_driver_repeated_async_host_subprocess",
+    );
+
+const SNAPSHOT_DRIVER_FRESH_OWNER_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-snapshot-driver-fresh-owner",
+    "startup-snapshot",
+    "snapshot-seeded driver cycles survive with a fresh runtime owner each cycle",
+    "runtime::tests::snapshot_lifecycle::snapshot_driver_fresh_owner_subprocess",
+);
+
+const SNAPSHOT_DRIVER_CURRENT_THREAD_DELAYED_HOST_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-snapshot-driver-current-thread-delayed-host",
+        "startup-snapshot",
+        "snapshot-seeded driver cycles survive current-thread delayed async host work",
+        "runtime::tests::snapshot_lifecycle::snapshot_driver_current_thread_delayed_host_subprocess",
+    );
+
+const REUSED_RUNTIME_MODULE_STATE_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-reused-runtime-module-state-reset-boundary",
+    "startup-snapshot",
+    "reused loaded runtimes retain user module state after current reset boundaries",
+    "runtime::tests::snapshot_lifecycle::reused_runtime_module_state_reset_boundary_subprocess",
+);
+
 #[test]
 fn node_major_startup_snapshots_share_node_full_cell() {
-    run_v8_sensitive_runtime_test_in_subprocess(IsolatedRuntimeTestCase::new(
-        "runtime-node-major-startup-snapshot-cell",
-        "startup-snapshot",
-        "Node20/22/24/26 startup snapshots share the same NodeFull cell",
-        "runtime::tests::snapshot_lifecycle::node_major_startup_snapshots_share_node_full_cell_subprocess",
-    ));
+    run_v8_sensitive_runtime_test_in_subprocess(NODE_MAJOR_SNAPSHOT_CELL_CASE);
 }
 
 #[test]
@@ -53,12 +92,7 @@ fn node_major_startup_snapshots_share_node_full_cell_subprocess() {
 
 #[test]
 fn node_full_shared_snapshot_keeps_exact_node_target_metadata() {
-    run_v8_sensitive_runtime_test_in_subprocess(IsolatedRuntimeTestCase::new(
-        "runtime-node-full-shared-snapshot-target-metadata",
-        "startup-snapshot",
-        "shared NodeFull startup snapshot preserves exact target metadata per Node major",
-        "runtime::tests::snapshot_lifecycle::node_full_shared_snapshot_keeps_exact_node_target_metadata_subprocess",
-    ));
+    run_v8_sensitive_runtime_test_in_subprocess(NODE_FULL_TARGET_METADATA_CASE);
 }
 
 #[tokio::test]
@@ -123,8 +157,14 @@ export {};
     }
 }
 
+#[test]
+fn snapshot_seeded_runtime_driver_cycles_survive_repeated_async_host_invocations() {
+    run_v8_sensitive_runtime_test_in_subprocess(SNAPSHOT_DRIVER_REPEATED_ASYNC_HOST_CASE);
+}
+
 #[tokio::test]
-async fn snapshot_seeded_runtime_driver_cycles_survive_repeated_async_host_invocations() {
+#[ignore = "runs in a subprocess to isolate startup-snapshot V8 state"]
+async fn snapshot_driver_repeated_async_host_subprocess() {
     init_test_tracing();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
@@ -242,8 +282,14 @@ export {};
     watchdog.shutdown();
 }
 
+#[test]
+fn snapshot_seeded_runtime_driver_cycles_survive_with_fresh_runtime_owner_each_cycle() {
+    run_v8_sensitive_runtime_test_in_subprocess(SNAPSHOT_DRIVER_FRESH_OWNER_CASE);
+}
+
 #[tokio::test]
-async fn snapshot_seeded_runtime_driver_cycles_survive_with_fresh_runtime_owner_each_cycle() {
+#[ignore = "runs in a subprocess to isolate startup-snapshot V8 state"]
+async fn snapshot_driver_fresh_owner_subprocess() {
     init_test_tracing();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
@@ -369,6 +415,12 @@ export {};
 #[test]
 fn snapshot_seeded_runtime_driver_cycles_survive_on_current_thread_runtime_with_delayed_async_host()
 {
+    run_v8_sensitive_runtime_test_in_subprocess(SNAPSHOT_DRIVER_CURRENT_THREAD_DELAYED_HOST_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate startup-snapshot V8 state"]
+fn snapshot_driver_current_thread_delayed_host_subprocess() {
     init_test_tracing();
     let _test_lock = acquire_snapshot_reset_test_lock();
     let worker_thread = std::thread::spawn(move || {
@@ -504,8 +556,14 @@ export {};
         .expect("current-thread worker thread should not panic");
 }
 
+#[test]
+fn reused_runtime_still_leaks_user_module_state_after_current_resets() {
+    run_v8_sensitive_runtime_test_in_subprocess(REUSED_RUNTIME_MODULE_STATE_CASE);
+}
+
 #[tokio::test]
-async fn reused_runtime_still_leaks_user_module_state_after_current_resets() {
+#[ignore = "runs in a subprocess to isolate reused-runtime V8 state"]
+async fn reused_runtime_module_state_reset_boundary_subprocess() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(

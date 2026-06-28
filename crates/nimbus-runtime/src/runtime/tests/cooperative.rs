@@ -450,13 +450,21 @@ export {};
         "deferred async host work should park before release",
     )
     .await;
-    assert_eq!(
-        runtime_owner
-            .policy
-            .metrics_snapshot()
-            .active_runtime_instances,
-        0
-    );
+    let description = PARK_AND_RESUME_CASE
+        .failure_context("parked cooperative slot should release active runtime capacity");
+    wait_for_condition(
+        description.as_str(),
+        cooperative_slot_progress_timeout(),
+        std::time::Duration::ZERO,
+        || async {
+            runtime_owner
+                .policy
+                .metrics_snapshot()
+                .active_runtime_instances
+                == 0
+        },
+    )
+    .await;
 
     let initial_generation = activity_signal.current_generation();
     host.release();
