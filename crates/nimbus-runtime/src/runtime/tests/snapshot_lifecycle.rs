@@ -6,6 +6,17 @@ use crate::limits::{RuntimeCompatibilityTarget, RuntimeLimits};
 
 #[test]
 fn node_major_startup_snapshots_share_node_full_cell() {
+    run_v8_sensitive_runtime_test_in_subprocess(IsolatedRuntimeTestCase::new(
+        "runtime-node-major-startup-snapshot-cell",
+        "startup-snapshot",
+        "Node20/22/24/26 startup snapshots share the same NodeFull cell",
+        "runtime::tests::snapshot_lifecycle::node_major_startup_snapshots_share_node_full_cell_subprocess",
+    ));
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate NodeFull startup-snapshot V8 state"]
+fn node_major_startup_snapshots_share_node_full_cell_subprocess() {
     let _test_lock = acquire_snapshot_reset_test_lock();
     let before = crate::backends::v8::v8_bootstrap_snapshot_build_count_for_test();
     let mut first_snapshot = None;
@@ -40,8 +51,19 @@ fn node_major_startup_snapshots_share_node_full_cell() {
     );
 }
 
+#[test]
+fn node_full_shared_snapshot_keeps_exact_node_target_metadata() {
+    run_v8_sensitive_runtime_test_in_subprocess(IsolatedRuntimeTestCase::new(
+        "runtime-node-full-shared-snapshot-target-metadata",
+        "startup-snapshot",
+        "shared NodeFull startup snapshot preserves exact target metadata per Node major",
+        "runtime::tests::snapshot_lifecycle::node_full_shared_snapshot_keeps_exact_node_target_metadata_subprocess",
+    ));
+}
+
 #[tokio::test]
-async fn node_full_shared_snapshot_keeps_exact_node_target_metadata() {
+#[ignore = "runs in a subprocess to isolate NodeFull startup-snapshot V8 state"]
+async fn node_full_shared_snapshot_keeps_exact_node_target_metadata_subprocess() {
     let _test_lock = acquire_snapshot_reset_test_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");

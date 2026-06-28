@@ -7670,6 +7670,17 @@ async fn fresh_realm_installs_bootstrap_and_uses_bound_host_bridge() {
 /// (whose isolate Drop re-acquires it) — all on one thread with the lock held throughout.
 #[test]
 fn ro_heap_serialize_lock_isolate_drop_while_held_does_not_self_deadlock() {
+    run_v8_sensitive_runtime_test_in_subprocess(IsolatedRuntimeTestCase::new(
+        "runtime-ro-heap-serialize-lock-drop-while-held",
+        "pool-reuse",
+        "isolate Drop re-enters the shared RO-heap serialize lock without self-deadlock",
+        "runtime::tests::pool_reuse::ro_heap_serialize_lock_isolate_drop_while_held_does_not_self_deadlock_subprocess",
+    ));
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate shared RO-heap/V8 teardown state"]
+fn ro_heap_serialize_lock_isolate_drop_while_held_does_not_self_deadlock_subprocess() {
     let _outer = deno_core::shared_ro_heap_serialize_lock().lock();
     let owner = NimbusRuntime::with_policy(
         std::sync::Arc::new(RecordingHost::default()),
@@ -7696,6 +7707,17 @@ fn ro_heap_serialize_lock_isolate_drop_while_held_does_not_self_deadlock() {
 /// This drives the real Drop path DURING unwind and confirms the panic is CAUGHT, not aborted.
 #[test]
 fn ro_heap_serialize_lock_isolate_drop_during_unwind_does_not_abort() {
+    run_v8_sensitive_runtime_test_in_subprocess(IsolatedRuntimeTestCase::new(
+        "runtime-ro-heap-serialize-lock-drop-during-unwind",
+        "pool-reuse",
+        "isolate Drop during unwind re-enters the shared RO-heap serialize lock without aborting",
+        "runtime::tests::pool_reuse::ro_heap_serialize_lock_isolate_drop_during_unwind_does_not_abort_subprocess",
+    ));
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate shared RO-heap/V8 teardown state"]
+fn ro_heap_serialize_lock_isolate_drop_during_unwind_does_not_abort_subprocess() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _outer = deno_core::shared_ro_heap_serialize_lock().lock();
         let owner = NimbusRuntime::with_policy(
