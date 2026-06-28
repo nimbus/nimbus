@@ -93,7 +93,12 @@ impl CloudFunctionsRegistry {
                 budget,
                 pressure_source,
             )
-            .with_adaptive_controller_settings(adaptive_settings),
+            .with_adaptive_controller_settings(adaptive_settings)
+            // Preserve the source policy's metrics handle across this
+            // build()-time governor re-derivation so the post-build executor
+            // increments the same counters the pre-build handle exposes.
+            // Observability-only; no scheduling/admission behavior changes.
+            .with_metrics(self.runtime_policy.metrics()),
         );
         self.runtime_policy = runtime_policy.clone();
         self.runtime_executor = Arc::new(RuntimeExecutor::new(runtime_policy));

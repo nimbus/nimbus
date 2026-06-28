@@ -145,7 +145,12 @@ impl ConvexRuntimeLane {
                     budget,
                     pressure_source,
                 )
-                .with_adaptive_controller_settings(adaptive_settings),
+                .with_adaptive_controller_settings(adaptive_settings)
+                // Preserve the source lane's metrics handle across this
+                // build()-time governor re-derivation so the post-build
+                // executor increments the same counters the pre-build registry
+                // handle (read by observers) exposes. Observability-only.
+                .with_metrics(self.policy.metrics()),
             ),
             self.execution_adapter_state,
             self.execution_adapter_artifact.clone(),
