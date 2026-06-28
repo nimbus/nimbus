@@ -7,8 +7,6 @@
 //! capability families they actually support.
 #![allow(async_fn_in_trait)]
 
-mod kv;
-
 use nimbus_core::{
     CommitEntry, Document, DocumentId, Filter, Result, SequenceNumber, TableName,
     TenantEventRecord, TenantId, Timestamp,
@@ -29,11 +27,6 @@ use crate::{
     IndexRangeBound, LibsqlReplicaProvider, LibsqlReplicaTenantStore, MySqlProvider,
     MySqlTenantStore, PostgresProvider, PostgresTenantStore, RedbUsageStorage, SqliteTenantStore,
     TenantStore,
-};
-
-pub use kv::{
-    KvBatchOp, KvBatchOutcome, KvEntry, KvMutation, KvPut, KvScanPage, KvStorageEngine,
-    KvSweepOutcome, TenantKvStore,
 };
 
 /// Tenant lifecycle and discovery for provider families that can own tenants.

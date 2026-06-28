@@ -280,20 +280,10 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `docs/private/adapters/cloud-functions/migration.md`,
   `docs/private/architecture/runtime/adapter-boundary.md`,
   `docs/private/architecture/server/auth-runtime-trust.md`
-- Data / KV substrate (`nimbus-kv` Foundation, RESP/Valkey-compatible KV
-  primitive, `TenantKvStore`, or Cloudflare Workers KV prerequisite work):
-  `docs/private/plans/nimbus-kv-foundation-plan.md` is the active control plane
-  (NKV0 F0..F5), gated on
-  `bash scripts/verify-nimbus-kv-foundation.sh` (9 conditions). Contract source
-  of truth is `docs/private/plans/research/nimbus-kv-architecture-2026.md`.
-  Start with NKV0 F0-F2 before Cloudflare CFA3/CFA5: F0 creates the verifier
-  and baseline proof, F1 creates the RESP server, and F2 lands `TenantKvStore`
-  in `nimbus-storage` with the redb implementation plus the required
-  redb-vs-fjall proof.
 - Cloudflare adapters (inbound Workers / Workers KV / D1 / R2 / Durable Objects
   compatibility): `docs/private/plans/cloudflare-adapters-plan.md` is the active
   control plane (CFA0..CFA9), gated on
-  `bash scripts/verify-cloudflare-adapters.sh` (12 conditions). Contract source
+  `bash scripts/verify-cloudflare-adapters.sh` (11 conditions). Contract source
   of truth is `docs/private/plans/research/cloudflare-adapters-2026.md` (do not
   re-derive Cloudflare API contracts from memory). **Primitives-first** (owner
   decision 2026-06-22): adapters are thin compat surfaces over Nimbus primitives,

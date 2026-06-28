@@ -8,7 +8,6 @@ pub mod error;
 pub mod index_history;
 pub mod mutation;
 pub mod mvcc;
-pub mod net;
 pub mod query;
 pub mod resource_path;
 pub mod scheduled;
@@ -48,7 +47,6 @@ pub use mvcc::{
     HistoricalQueryShape, HistoricalReadSnapshot, HistoricalReadSupport,
     HistoricalVersionVisibility, HistoryWindow, PolicySnapshotId, ReadTimestamp, RetentionFloor,
 };
-pub use net::refuse_non_loopback_bind;
 pub use query::{
     AggregationOperator, CollectionSelector, CompositeFilter, CompositeOperator, CountAggregation,
     Cursor, DistanceMeasure, FieldFilter, FieldFilterOperator, FieldReference, Filter, FilterOp,
