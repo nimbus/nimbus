@@ -253,9 +253,8 @@ mod tests {
         // The forgery primitive must be unreachable on a public bind even when
         // --allow-network was granted — the guard is independent of that flag.
         for host in ["0.0.0.0", "203.0.113.5", "::"] {
-            let error = ensure_firebase_bypass_loopback_only(host, true).expect_err(
-                "the verification bypass must be refused on a non-loopback bind",
-            );
+            let error = ensure_firebase_bypass_loopback_only(host, true)
+                .expect_err("the verification bypass must be refused on a non-loopback bind");
             match &error {
                 NetworkBindError::FirebaseBypassRequiresLoopback { host: h } => {
                     assert_eq!(h, host)

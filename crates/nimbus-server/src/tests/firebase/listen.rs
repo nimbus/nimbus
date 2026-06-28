@@ -20,10 +20,19 @@ async fn firebase_listen_add_target_bootstraps_documents_and_honors_explicit_tar
         &["cities", "LA"],
         [("name", json!("Los Angeles"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut client = firestore_grpc_client(&server).await;
+    assert_firebase_grpc_listen_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .listen(receiver)
@@ -91,10 +100,19 @@ async fn firebase_listen_add_target_bootstraps_documents_and_honors_explicit_tar
 async fn firebase_listen_assigns_target_id_when_client_uses_zero() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut client = firestore_grpc_client(&server).await;
+    assert_firebase_grpc_listen_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .listen(receiver)
@@ -147,10 +165,19 @@ async fn firebase_listen_remove_target_cleans_up_registration() {
         &["cities", "SF"],
         [("name", json!("San Francisco"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut client = firestore_grpc_client(&server).await;
+    assert_firebase_grpc_listen_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .listen(receiver)
@@ -249,10 +276,19 @@ async fn firebase_listen_stream_closure_cleans_up_active_registration() {
         &["cities", "SF"],
         [("name", json!("San Francisco"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut client = firestore_grpc_client(&server).await;
+    assert_firebase_grpc_listen_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .listen(receiver)
@@ -326,10 +362,19 @@ async fn firebase_listen_once_target_auto_removes_after_current_snapshot() {
         &["cities", "SF"],
         [("name", json!("San Francisco"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut client = firestore_grpc_client(&server).await;
+    assert_firebase_grpc_listen_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .listen(receiver)
@@ -425,10 +470,19 @@ async fn firebase_listen_resume_count_mismatch_emits_filter_then_resets() {
         &["cities", "LA"],
         [("name", json!("Los Angeles"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut client = firestore_grpc_client(&server).await;
+    assert_firebase_grpc_listen_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .listen(receiver)
@@ -460,7 +514,7 @@ async fn firebase_listen_resume_count_mismatch_emits_filter_then_resets() {
         "Listen stream should terminate when the client closes it"
     );
 
-    let mut resumed_client = firestore_grpc_client(&server).await;
+    let mut resumed_client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (resumed_sender, resumed_receiver) = mpsc::unbounded();
     let mut resumed_responses = resumed_client
         .listen(resumed_receiver)
@@ -535,10 +589,19 @@ async fn firebase_listen_reports_resource_exhausted_when_client_falls_too_far_be
         &["cities", "SF"],
         [("name", json!("San Francisco"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut client = firestore_grpc_client(&server).await;
+    assert_firebase_grpc_listen_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .listen(receiver)
@@ -612,10 +675,19 @@ async fn firebase_listen_allows_multiple_targets_with_distinct_server_assigned_i
         &["parks", "GGP"],
         [("name", json!("Golden Gate Park"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut client = firestore_grpc_client(&server).await;
+    assert_firebase_grpc_listen_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .listen(receiver)
@@ -698,10 +770,19 @@ async fn firebase_listen_routes_updates_and_cleanup_per_target_across_overlappin
         &["cities", "DEN"],
         [("name", json!("Denver")), ("region", json!("mountain"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut client = firestore_grpc_client(&server).await;
+    assert_firebase_grpc_listen_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .listen(receiver)
@@ -740,9 +821,12 @@ async fn firebase_listen_routes_updates_and_cleanup_per_target_across_overlappin
         .expect("second Listen add_target should send");
     let (west_target_changes, west_document_changes) =
         collect_listen_bootstrap(&mut responses).await;
+    // Target 41 stays active, so a no-change token for it can interleave ahead of
+    // target 42's bootstrap; scope the bootstrap-shape assertion to target 42.
     assert_eq!(
         west_target_changes
             .iter()
+            .filter(|change| change.target_ids.contains(&42))
             .map(
                 |change| GrpcTargetChangeType::try_from(change.target_change_type)
                     .expect("target change type should decode")
@@ -920,10 +1004,19 @@ async fn firebase_listen_resume_token_reconnects_with_delta_only() {
         &["cities", "LA"],
         [("name", json!("Los Angeles"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut client = firestore_grpc_client(&server).await;
+    assert_firebase_grpc_listen_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .listen(receiver)
@@ -978,7 +1071,7 @@ async fn firebase_listen_resume_token_reconnects_with_delta_only() {
         [("name", json!("San Francisco Updated"))],
     );
 
-    let mut resumed_client = firestore_grpc_client(&server).await;
+    let mut resumed_client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (resumed_sender, resumed_receiver) = mpsc::unbounded();
     let mut resumed_responses = resumed_client
         .listen(resumed_receiver)
@@ -1068,10 +1161,19 @@ async fn firebase_listen_stale_resume_token_resets_before_full_bootstrap() {
         &["cities", "LA"],
         [("name", json!("Los Angeles"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut client = firestore_grpc_client(&server).await;
+    assert_firebase_grpc_listen_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .listen(receiver)
@@ -1122,7 +1224,7 @@ async fn firebase_listen_stale_resume_token_resets_before_full_bootstrap() {
 
     let stale_resume_token =
         encode_grpc_resume_token(decode_grpc_resume_token(&initial_resume_token) + 999);
-    let mut resumed_client = firestore_grpc_client(&server).await;
+    let mut resumed_client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (resumed_sender, resumed_receiver) = mpsc::unbounded();
     let mut resumed_responses = resumed_client
         .listen(resumed_receiver)
@@ -1200,10 +1302,19 @@ async fn firebase_listen_no_change_tokens_and_read_times_advance_monotonically()
         &["cities", "SF"],
         [("name", json!("San Francisco"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut client = firestore_grpc_client(&server).await;
+    assert_firebase_grpc_listen_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .listen(receiver)

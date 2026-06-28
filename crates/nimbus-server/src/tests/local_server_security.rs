@@ -239,15 +239,23 @@ async fn firebase_routes_remain_application_surfaces_without_local_admin_auth() 
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
         RouterBuildConfig::core(fixture.engine())
-            .with_firebase(FirebaseConfig::new())
+            .with_firebase(firebase_verified_config())
             .with_local_server_security(local_server_security)
             .build(),
     )
     .await;
 
+    // A verified-path bearer (not a local-admin token) clears the #24 gate, so a
+    // non-403/401/404 status proves the Firestore route is an application surface
+    // that does not require local-admin auth. (The malformed `{}` commit then
+    // returns 400, which still satisfies the application-surface assertions.)
     let rest_response = server
         .client()
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
+        .header(
+            header::AUTHORIZATION,
+            firebase_verified_bearer("user-123", "demo"),
+        )
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body("{}")
         .send()

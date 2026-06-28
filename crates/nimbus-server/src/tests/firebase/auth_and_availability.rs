@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn firebase_mock_user_token_requires_explicit_server_opt_in() {
+async fn firebase_emulator_token_verification_bypass_requires_explicit_server_opt_in() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
@@ -19,48 +19,111 @@ async fn firebase_mock_user_token_requires_explicit_server_opt_in() {
         ]
     })
     .to_string();
-    let mock_user_token = json!({
-        "sub": "mock-user-123"
-    })
-    .to_string();
+    // A dev-mode emulator token carrying the Firebase project issuer. Without the
+    // opt-in it is treated as an ordinary (unverifiable) bearer; with the opt-in
+    // the bypass fabricates a verified principal from it.
+    let bypass_token = firebase_verified_token("mock-user-123", "demo");
 
+    // Without the opt-in the bypass is off: the JSON token is just a bearer with
+    // no configured verifier, so the route-layer auth middleware refuses it
+    // (401) before any handler runs.
     let without_opt_in =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let rejected = without_opt_in
         .client()
         .post(without_opt_in.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
-        .header(header::AUTHORIZATION, format!("Bearer {mock_user_token}"))
+        .header(header::AUTHORIZATION, format!("Bearer {bypass_token}"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(request_body.clone())
         .send()
         .await
-        .expect("ungated mock-user firebase request should send");
+        .expect("ungated bypass firebase request should send");
     assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
 
-    let with_opt_in = ServerFixture::start(router_for_firebase(
-        service,
-        FirebaseConfig::new().with_emulator_mock_user_token_auth(),
-    ))
+    let with_opt_in =
+        ServerFixture::start(router_for_firebase(service, firebase_verified_config())).await;
+
+    // Even with the opt-in, an anonymous request (no bearer, hence no verified
+    // project) is refused by the #24 verified-project gate.
+    assert_firebase_rest_anonymous_refused(
+        &with_opt_in,
+        "/v1/projects/demo/databases/(default)/documents:commit",
+        &request_body,
+    )
     .await;
+
     let accepted = with_opt_in
         .client()
         .post(with_opt_in.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
-        .header(header::AUTHORIZATION, format!("Bearer {mock_user_token}"))
+        .header(header::AUTHORIZATION, format!("Bearer {bypass_token}"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(request_body)
         .send()
         .await
-        .expect("gated mock-user firebase request should send");
+        .expect("gated bypass firebase request should send");
     assert_eq!(accepted.status(), StatusCode::OK);
+}
+
+/// #24 close (fail-closed default): a deployment that never configured project
+/// bindings — `NIMBUS_FIREBASE_PROJECTS` unset, so `FirebaseConfig` carries its
+/// default empty *strict* registry — refuses ALL Firestore traffic, even a fully
+/// verified token, because every project is unregistered. The most common
+/// deployment (operator sets nothing) must refuse, never fall back to permissive.
+#[tokio::test]
+async fn firebase_unconfigured_project_registry_refuses_all_traffic_even_with_a_verified_token() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
+
+    // Bypass ON (so the token fabricates a verified project "demo"), but NO
+    // project registry installed: the default is the empty strict (refuse-all)
+    // registry — the fail-closed state of an unconfigured deployment.
+    let config = FirebaseConfig::new().with_emulator_token_verification_bypass();
+    assert!(
+        config.project_registry().is_strict_empty(),
+        "an unconfigured FirebaseConfig must default to the empty strict (refuse-all) registry"
+    );
+    let server = ServerFixture::start(router_for_firebase(service, config)).await;
+
+    let commit_body = json!({
+        "database": "projects/demo/databases/(default)",
+        "writes": []
+    })
+    .to_string();
+
+    // A fully VERIFIED token for project "demo" — the authorized case in every
+    // other test — is still REFUSED here, because "demo" is unregistered. This is
+    // the close: the empty-strict default refuses on the registry resolution, not
+    // on a missing token.
+    let refused = server
+        .client()
+        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
+        .header(
+            header::AUTHORIZATION,
+            firebase_verified_bearer("user-1", "demo"),
+        )
+        .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+        .body(commit_body.clone())
+        .send()
+        .await
+        .expect("verified firebase commit should send");
+    assert_eq!(
+        refused.status(),
+        StatusCode::FORBIDDEN,
+        "an unconfigured (empty-strict) registry must refuse even a verified token"
+    );
+
+    // Anonymous is refused too — belt-and-suspenders, keeps the test non-vacuous.
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents:commit",
+        &commit_body,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn firebase_rest_commit_and_batch_get_respect_bearer_principal() {
-    let _guard = auth::auth_test_guard().await;
-    let issuer = "https://firebase-auth.example.com";
-    let application_id = "nimbus-firebase-test";
-    let (token, jwks_data_url) =
-        auth::issue_es256_test_token(issuer, application_id, "user-123", json!({}));
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
@@ -73,90 +136,70 @@ async fn firebase_rest_commit_and_batch_get_respect_bearer_principal() {
             ),
         )
         .expect("secureCities schema should install");
-    let registry = convex_registry_with_routes_and_bundle_and_auth(
-        json!([]),
-        json!([]),
-        None,
-        Some(firebase_test_auth_config(
-            issuer,
-            application_id,
-            &jwks_data_url,
-        )),
-    );
-    let server = ServerFixture::start(
-        RouterBuildConfig::core(service.clone())
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &registry,
-            ))
-            .with_convex(registry)
-            .with_firebase(FirebaseConfig::new())
-            .build(),
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
+
+    let commit_body = json!({
+        "database": "projects/demo/databases/(default)",
+        "writes": [
+            {
+                "update": {
+                    "name": "projects/demo/databases/(default)/documents/secureCities/SF",
+                    "fields": {
+                        "owner": { "stringValue": "user-123" },
+                        "body": { "stringValue": "authenticated write" }
+                    }
+                }
+            }
+        ]
+    })
+    .to_string();
+
+    // Anonymous (no verified project) is refused outright by the #24 gate.
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents:commit",
+        &commit_body,
     )
     .await;
 
     let commit_response = server
         .client()
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
-        .body(
-            json!({
-                "database": "projects/demo/databases/(default)",
-                "writes": [
-                    {
-                        "update": {
-                            "name": "projects/demo/databases/(default)/documents/secureCities/SF",
-                            "fields": {
-                                "owner": { "stringValue": "user-123" },
-                                "body": { "stringValue": "authenticated write" }
-                            }
-                        }
-                    }
-                ]
-            })
-            .to_string(),
-        )
+        .body(commit_body)
         .send()
         .await
         .expect("authenticated firebase commit should send");
     assert_eq!(commit_response.status(), StatusCode::OK);
 
-    let anonymous_batch_get = server
-        .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:batchGet"))
-        .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
-        .body(
-            json!({
-                "documents": [
-                    "projects/demo/databases/(default)/documents/secureCities/SF"
-                ]
-            })
-            .to_string(),
-        )
-        .send()
-        .await
-        .expect("anonymous firebase batchGet should send");
-    assert_eq!(anonymous_batch_get.status(), StatusCode::OK);
-    let anonymous_entries = response_json_lines(anonymous_batch_get).await;
-    assert_eq!(anonymous_entries.len(), 1);
-    assert_eq!(
-        anonymous_entries[0]["missing"],
-        json!("projects/demo/databases/(default)/documents/secureCities/SF")
-    );
+    let batch_get_body = json!({
+        "documents": [
+            "projects/demo/databases/(default)/documents/secureCities/SF"
+        ]
+    })
+    .to_string();
+
+    // Anonymous batchGet is refused at the gate (it can no longer reach the
+    // access-policy filter as an unauthenticated caller).
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents:batchGet",
+        &batch_get_body,
+    )
+    .await;
 
     let authenticated_batch_get = server
         .client()
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:batchGet"))
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
-        .body(
-            json!({
-                "documents": [
-                    "projects/demo/databases/(default)/documents/secureCities/SF"
-                ]
-            })
-            .to_string(),
-        )
+        .body(batch_get_body)
         .send()
         .await
         .expect("authenticated firebase batchGet should send");
@@ -170,45 +213,20 @@ async fn firebase_rest_commit_and_batch_get_respect_bearer_principal() {
 }
 
 #[tokio::test]
-async fn firebase_rest_batch_get_rejects_application_bearer_for_different_tenant() {
-    let _guard = auth::auth_test_guard().await;
-    let issuer = "https://firebase-auth.example.com";
-    let application_id = "nimbus-firebase-test";
-    let (tenant_b_token, jwks_data_url) = auth::issue_es256_test_token(
-        issuer,
-        application_id,
-        "user-123",
-        json!({ "tenant_id": "tenant-b" }),
-    );
+async fn firebase_rest_batch_get_rejects_bearer_for_different_tenant() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("tenant-a", Engine::create_tenant);
     fixture.create_tenant("tenant-b", Engine::create_tenant);
     let service = fixture.engine();
-    let registry = convex_registry_with_routes_and_bundle_and_auth(
-        json!([]),
-        json!([]),
-        None,
-        Some(firebase_test_auth_config(
-            issuer,
-            application_id,
-            &jwks_data_url,
-        )),
-    );
-    let server = ServerFixture::start(
-        RouterBuildConfig::core(service)
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &registry,
-            ))
-            .with_convex(registry)
-            .with_firebase(FirebaseConfig::new())
-            .build(),
-    )
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service, firebase_verified_config())).await;
+    // A token verified for project (tenant) tenant-b.
+    let tenant_b_bearer = firebase_verified_bearer("user-123", "tenant-b");
 
     let authorized = server
         .client()
         .post(server.http_url("/v1/projects/tenant-b/databases/(default)/documents:batchGet"))
-        .header(header::AUTHORIZATION, format!("Bearer {tenant_b_token}"))
+        .header(header::AUTHORIZATION, &tenant_b_bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -235,7 +253,7 @@ async fn firebase_rest_batch_get_rejects_application_bearer_for_different_tenant
     let rejected = server
         .client()
         .post(server.http_url("/v1/projects/tenant-a/databases/(default)/documents:batchGet"))
-        .header(header::AUTHORIZATION, format!("Bearer {tenant_b_token}"))
+        .header(header::AUTHORIZATION, &tenant_b_bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -259,22 +277,17 @@ async fn firebase_rest_batch_get_rejects_application_bearer_for_different_tenant
         "swapped-tenant firebase batchGet body: {rejected_body}"
     );
     assert!(
-        rejected_body.contains("authorizes tenant `tenant-b`"),
-        "swapped-tenant Firebase error should name the verified tenant claim: {rejected_body}"
+        rejected_body.contains("verified Firebase project `tenant-b`"),
+        "swapped-tenant Firebase error should name the verified project: {rejected_body}"
     );
     assert!(
-        rejected_body.contains("targeted tenant `tenant-a`"),
-        "swapped-tenant Firebase error should name the rejected target tenant: {rejected_body}"
+        rejected_body.contains("project `tenant-a`"),
+        "swapped-tenant Firebase error should name the rejected target project: {rejected_body}"
     );
 }
 
 #[tokio::test]
 async fn firebase_grpc_get_document_respects_bearer_principal() {
-    let _guard = auth::auth_test_guard().await;
-    let issuer = "https://firebase-auth.example.com";
-    let application_id = "nimbus-firebase-test";
-    let (token, jwks_data_url) =
-        auth::issue_es256_test_token(issuer, application_id, "user-123", json!({}));
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
@@ -296,40 +309,36 @@ async fn firebase_grpc_get_document_respects_bearer_principal() {
             ("name", json!("San Francisco")),
         ],
     );
-    let registry = convex_registry_with_routes_and_bundle_and_auth(
-        json!([]),
-        json!([]),
-        None,
-        Some(firebase_test_auth_config(
-            issuer,
-            application_id,
-            &jwks_data_url,
-        )),
-    );
-    let server = ServerFixture::start(
-        RouterBuildConfig::core(service.clone())
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &registry,
-            ))
-            .with_convex(registry)
-            .with_firebase(FirebaseConfig::new())
-            .build(),
-    )
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
     .await;
     let mut client = firestore_grpc_client(&server).await;
 
-    let mut authenticated_request = tonic::Request::new(GrpcGetDocumentRequest {
-        name: "projects/demo/databases/(default)/documents/secureGrpcReads/SF".to_string(),
-        mask: None,
-        consistency_selector: None,
-    });
-    authenticated_request.metadata_mut().insert(
-        "authorization",
-        MetadataValue::try_from(format!("Bearer {token}"))
-            .expect("grpc authorization metadata should build"),
-    );
+    let document_name = "projects/demo/databases/(default)/documents/secureGrpcReads/SF";
+
+    // Anonymous (no metadata) is refused at the #24 gate.
+    let anonymous_error = client
+        .get_document(GrpcGetDocumentRequest {
+            name: document_name.to_string(),
+            mask: None,
+            consistency_selector: None,
+        })
+        .await
+        .expect_err("anonymous gRPC GetDocument should be refused");
+    assert_eq!(anonymous_error.code(), Code::PermissionDenied);
+
     let authenticated = client
-        .get_document(authenticated_request)
+        .get_document(firebase_grpc_request(
+            GrpcGetDocumentRequest {
+                name: document_name.to_string(),
+                mask: None,
+                consistency_selector: None,
+            },
+            "user-123",
+            "demo",
+        ))
         .await
         .expect("authenticated gRPC GetDocument should succeed")
         .into_inner();
@@ -337,29 +346,10 @@ async fn firebase_grpc_get_document_respects_bearer_principal() {
         authenticated.fields["name"],
         grpc_string_value("San Francisco")
     );
-
-    let anonymous_error = client
-        .get_document(GrpcGetDocumentRequest {
-            name: "projects/demo/databases/(default)/documents/secureGrpcReads/SF".to_string(),
-            mask: None,
-            consistency_selector: None,
-        })
-        .await
-        .expect_err("anonymous gRPC GetDocument should be filtered");
-    assert_eq!(anonymous_error.code(), Code::NotFound);
 }
 
 #[tokio::test]
-async fn firebase_grpc_get_document_rejects_application_bearer_for_different_tenant() {
-    let _guard = auth::auth_test_guard().await;
-    let issuer = "https://firebase-auth.example.com";
-    let application_id = "nimbus-firebase-test";
-    let (tenant_b_token, jwks_data_url) = auth::issue_es256_test_token(
-        issuer,
-        application_id,
-        "user-123",
-        json!({ "tenant_id": "tenant-b" }),
-    );
+async fn firebase_grpc_get_document_rejects_bearer_for_different_tenant() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("tenant-a", Engine::create_tenant);
     let tenant_b = fixture.create_tenant("tenant-b", Engine::create_tenant);
@@ -370,40 +360,20 @@ async fn firebase_grpc_get_document_rejects_application_bearer_for_different_ten
         &["cities", "SF"],
         [("name", json!("San Francisco"))],
     );
-    let registry = convex_registry_with_routes_and_bundle_and_auth(
-        json!([]),
-        json!([]),
-        None,
-        Some(firebase_test_auth_config(
-            issuer,
-            application_id,
-            &jwks_data_url,
-        )),
-    );
-    let server = ServerFixture::start(
-        RouterBuildConfig::core(service)
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &registry,
-            ))
-            .with_convex(registry)
-            .with_firebase(FirebaseConfig::new())
-            .build(),
-    )
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service, firebase_verified_config())).await;
     let mut client = firestore_grpc_client(&server).await;
 
-    let mut authorized_request = tonic::Request::new(GrpcGetDocumentRequest {
-        name: "projects/tenant-b/databases/(default)/documents/cities/SF".to_string(),
-        mask: None,
-        consistency_selector: None,
-    });
-    authorized_request.metadata_mut().insert(
-        "authorization",
-        MetadataValue::try_from(format!("Bearer {tenant_b_token}"))
-            .expect("grpc authorization metadata should build"),
-    );
     let authorized = client
-        .get_document(authorized_request)
+        .get_document(firebase_grpc_request(
+            GrpcGetDocumentRequest {
+                name: "projects/tenant-b/databases/(default)/documents/cities/SF".to_string(),
+                mask: None,
+                consistency_selector: None,
+            },
+            "user-123",
+            "tenant-b",
+        ))
         .await
         .expect("same-tenant gRPC GetDocument should succeed")
         .into_inner();
@@ -412,38 +382,34 @@ async fn firebase_grpc_get_document_rejects_application_bearer_for_different_ten
         grpc_string_value("San Francisco")
     );
 
-    let mut rejected_request = tonic::Request::new(GrpcGetDocumentRequest {
-        name: "projects/tenant-a/databases/(default)/documents/cities/SF".to_string(),
-        mask: None,
-        consistency_selector: None,
-    });
-    rejected_request.metadata_mut().insert(
-        "authorization",
-        MetadataValue::try_from(format!("Bearer {tenant_b_token}"))
-            .expect("grpc authorization metadata should build"),
-    );
+    // The same tenant-b token addressing tenant-a is refused by the gate.
     let rejected = client
-        .get_document(rejected_request)
+        .get_document(firebase_grpc_request(
+            GrpcGetDocumentRequest {
+                name: "projects/tenant-a/databases/(default)/documents/cities/SF".to_string(),
+                mask: None,
+                consistency_selector: None,
+            },
+            "user-123",
+            "tenant-b",
+        ))
         .await
         .expect_err("swapped-tenant gRPC GetDocument should be rejected");
     assert_eq!(rejected.code(), Code::PermissionDenied);
     assert!(
-        rejected.message().contains("authorizes tenant `tenant-b`"),
-        "swapped-tenant gRPC error should name the verified tenant claim: {rejected}"
+        rejected
+            .message()
+            .contains("verified Firebase project `tenant-b`"),
+        "swapped-tenant gRPC error should name the verified project: {rejected}"
     );
     assert!(
-        rejected.message().contains("targeted tenant `tenant-a`"),
-        "swapped-tenant gRPC error should name the rejected target tenant: {rejected}"
+        rejected.message().contains("project `tenant-a`"),
+        "swapped-tenant gRPC error should name the rejected target project: {rejected}"
     );
 }
 
 #[tokio::test]
 async fn firebase_grpc_write_stream_respects_bearer_principal() {
-    let _guard = auth::auth_test_guard().await;
-    let issuer = "https://firebase-auth.example.com";
-    let application_id = "nimbus-firebase-test";
-    let (token, jwks_data_url) =
-        auth::issue_es256_test_token(issuer, application_id, "user-123", json!({}));
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
@@ -456,37 +422,23 @@ async fn firebase_grpc_write_stream_respects_bearer_principal() {
             ),
         )
         .expect("secureWriteStream schema should install");
-    let registry = convex_registry_with_routes_and_bundle_and_auth(
-        json!([]),
-        json!([]),
-        None,
-        Some(firebase_test_auth_config(
-            issuer,
-            application_id,
-            &jwks_data_url,
-        )),
-    );
-    let server = ServerFixture::start(
-        RouterBuildConfig::core(service.clone())
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &registry,
-            ))
-            .with_convex(registry)
-            .with_firebase(FirebaseConfig::new())
-            .build(),
-    )
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
     .await;
     let mut client = firestore_grpc_client(&server).await;
 
+    // Anonymous write-stream handshake is refused at the #24 gate.
+    assert_firebase_grpc_write_stream_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)",
+    )
+    .await;
+
     let (auth_sender, auth_receiver) = mpsc::unbounded();
-    let mut auth_request = tonic::Request::new(auth_receiver);
-    auth_request.metadata_mut().insert(
-        "authorization",
-        MetadataValue::try_from(format!("Bearer {token}"))
-            .expect("grpc authorization metadata should build"),
-    );
     let mut auth_responses = client
-        .write(auth_request)
+        .write(firebase_grpc_request(auth_receiver, "user-123", "demo"))
         .await
         .expect("authenticated Firestore write stream should open")
         .into_inner();
@@ -542,51 +494,10 @@ async fn firebase_grpc_write_stream_respects_bearer_principal() {
         )
         .expect("authenticated write should persist a document");
     assert_eq!(stored.get_field("owner"), Some(&json!("user-123")));
-
-    let (anonymous_sender, anonymous_receiver) = mpsc::unbounded();
-    let mut anonymous_responses = client
-        .write(anonymous_receiver)
-        .await
-        .expect("anonymous Firestore write stream should open")
-        .into_inner();
-    anonymous_sender
-        .unbounded_send(GrpcWriteRequest {
-            database: "projects/demo/databases/(default)".to_string(),
-            ..Default::default()
-        })
-        .expect("anonymous write handshake should send");
-    let anonymous_handshake = anonymous_responses
-        .message()
-        .await
-        .expect("anonymous handshake should stream")
-        .expect("anonymous handshake should be present");
-    anonymous_sender
-        .unbounded_send(GrpcWriteRequest {
-            stream_token: anonymous_handshake.stream_token.clone(),
-            writes: vec![grpc_update_write(
-                "projects/demo/databases/(default)/documents/secureWriteStream/denied",
-                [
-                    ("owner", grpc_string_value("user-123")),
-                    ("name", grpc_string_value("Denied")),
-                ],
-            )],
-            ..Default::default()
-        })
-        .expect("anonymous write request should send");
-    let anonymous_error = anonymous_responses
-        .message()
-        .await
-        .expect_err("anonymous write response should fail");
-    assert_eq!(anonymous_error.code(), Code::PermissionDenied);
 }
 
 #[tokio::test]
 async fn firebase_listen_websocket_auth_offer_controls_bootstrap_visibility() {
-    let _guard = auth::auth_test_guard().await;
-    let issuer = "https://firebase-auth.example.com";
-    let application_id = "nimbus-firebase-test";
-    let (token, jwks_data_url) =
-        auth::issue_es256_test_token(issuer, application_id, "user-123", json!({}));
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
@@ -608,28 +519,12 @@ async fn firebase_listen_websocket_auth_offer_controls_bootstrap_visibility() {
         &["secureListen", "theirs"],
         [("owner", json!("user-999")), ("name", json!("Hidden"))],
     );
-    let registry = convex_registry_with_routes_and_bundle_and_auth(
-        json!([]),
-        json!([]),
-        None,
-        Some(firebase_test_auth_config(
-            issuer,
-            application_id,
-            &jwks_data_url,
-        )),
-    );
-    let server = ServerFixture::start(
-        RouterBuildConfig::core(service.clone())
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &registry,
-            ))
-            .with_convex(registry)
-            .with_firebase(FirebaseConfig::new())
-            .build(),
-    )
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
     .await;
 
-    let encoded_token = URL_SAFE_NO_PAD.encode(token.as_bytes());
     let mut authenticated_request = server
         .ws_url("/google.firestore.v1.Firestore/Listen")
         .into_client_request()
@@ -640,10 +535,8 @@ async fn firebase_listen_websocket_auth_offer_controls_bootstrap_visibility() {
     );
     authenticated_request.headers_mut().insert(
         header::SEC_WEBSOCKET_PROTOCOL,
-        axum::http::HeaderValue::from_str(&format!(
-            "nimbus.firebase.listen.v1,nimbus.firebase.auth.{encoded_token}"
-        ))
-        .expect("listen auth subprotocol header should build"),
+        axum::http::HeaderValue::from_str(&firebase_listen_ws_auth_protocol("user-123", "demo"))
+            .expect("listen auth subprotocol header should build"),
     );
     let mut authenticated_socket = WebSocketFixture::connect_request(authenticated_request)
         .await
@@ -670,50 +563,18 @@ async fn firebase_listen_websocket_auth_offer_controls_bootstrap_visibility() {
         "projects/demo/databases/(default)/documents/secureListen/mine"
     );
 
-    let mut anonymous_request = server
-        .ws_url("/google.firestore.v1.Firestore/Listen")
-        .into_client_request()
-        .expect("anonymous browser websocket request should build");
-    anonymous_request.headers_mut().insert(
-        header::ORIGIN,
-        axum::http::HeaderValue::from_static("http://localhost:5173"),
-    );
-    anonymous_request.headers_mut().insert(
-        header::SEC_WEBSOCKET_PROTOCOL,
-        axum::http::HeaderValue::from_static("nimbus.firebase.listen.v1"),
-    );
-    let mut anonymous_socket = WebSocketFixture::connect_request(anonymous_request)
-        .await
-        .expect("anonymous websocket should connect");
-    anonymous_socket
-        .send_binary(
-            grpc_listen_query_request(
-                18,
-                "projects/demo/databases/(default)/documents",
-                "secureListen",
-            )
-            .encode_to_vec(),
-        )
-        .await;
-    let (_anonymous_target_changes, anonymous_document_changes) =
-        collect_listen_websocket_bootstrap(&mut anonymous_socket).await;
-    assert!(
-        anonymous_document_changes.is_empty(),
-        "anonymous websocket bootstrap should not expose protected documents: {anonymous_document_changes:?}"
-    );
+    // Anonymous (no auth offer) has no verified project: the #24 gate refuses the
+    // add-target and the socket closes with a policy frame.
+    assert_firebase_listen_ws_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "secureListen",
+    )
+    .await;
 }
 
 #[tokio::test]
-async fn firebase_listen_websocket_rejects_application_bearer_for_different_tenant() {
-    let _guard = auth::auth_test_guard().await;
-    let issuer = "https://firebase-auth.example.com";
-    let application_id = "nimbus-firebase-test";
-    let (tenant_b_token, jwks_data_url) = auth::issue_es256_test_token(
-        issuer,
-        application_id,
-        "user-123",
-        json!({ "tenant_id": "tenant-b" }),
-    );
+async fn firebase_listen_websocket_rejects_bearer_for_different_tenant() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("tenant-a", Engine::create_tenant);
     let tenant_b = fixture.create_tenant("tenant-b", Engine::create_tenant);
@@ -724,28 +585,12 @@ async fn firebase_listen_websocket_rejects_application_bearer_for_different_tena
         &["listenTenantProof", "mine"],
         [("name", json!("Visible"))],
     );
-    let registry = convex_registry_with_routes_and_bundle_and_auth(
-        json!([]),
-        json!([]),
-        None,
-        Some(firebase_test_auth_config(
-            issuer,
-            application_id,
-            &jwks_data_url,
-        )),
-    );
-    let server = ServerFixture::start(
-        RouterBuildConfig::core(service)
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &registry,
-            ))
-            .with_convex(registry)
-            .with_firebase(FirebaseConfig::new())
-            .build(),
-    )
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service, firebase_verified_config())).await;
 
-    let encoded_token = URL_SAFE_NO_PAD.encode(tenant_b_token.as_bytes());
+    // The auth offer carries a token verified for tenant-b.
+    let auth_protocol = firebase_listen_ws_auth_protocol("user-123", "tenant-b");
+
     let mut authorized_request = server
         .ws_url("/google.firestore.v1.Firestore/Listen")
         .into_client_request()
@@ -756,10 +601,8 @@ async fn firebase_listen_websocket_rejects_application_bearer_for_different_tena
     );
     authorized_request.headers_mut().insert(
         header::SEC_WEBSOCKET_PROTOCOL,
-        axum::http::HeaderValue::from_str(&format!(
-            "nimbus.firebase.listen.v1,nimbus.firebase.auth.{encoded_token}"
-        ))
-        .expect("listen auth subprotocol header should build"),
+        axum::http::HeaderValue::from_str(&auth_protocol)
+            .expect("listen auth subprotocol header should build"),
     );
     let mut authorized_socket = WebSocketFixture::connect_request(authorized_request)
         .await
@@ -787,6 +630,7 @@ async fn firebase_listen_websocket_rejects_application_bearer_for_different_tena
         "projects/tenant-b/databases/(default)/documents/listenTenantProof/mine"
     );
 
+    // The same tenant-b token addressing tenant-a is refused by the gate.
     let mut rejected_request = server
         .ws_url("/google.firestore.v1.Firestore/Listen")
         .into_client_request()
@@ -797,10 +641,8 @@ async fn firebase_listen_websocket_rejects_application_bearer_for_different_tena
     );
     rejected_request.headers_mut().insert(
         header::SEC_WEBSOCKET_PROTOCOL,
-        axum::http::HeaderValue::from_str(&format!(
-            "nimbus.firebase.listen.v1,nimbus.firebase.auth.{encoded_token}"
-        ))
-        .expect("listen auth subprotocol header should build"),
+        axum::http::HeaderValue::from_str(&auth_protocol)
+            .expect("listen auth subprotocol header should build"),
     );
     let mut rejected_socket = WebSocketFixture::connect_request(rejected_request)
         .await
@@ -821,12 +663,14 @@ async fn firebase_listen_websocket_rejects_application_bearer_for_different_tena
         panic!("expected swapped-tenant listen to close with a policy frame, got {close:?}");
     };
     assert_eq!(frame.code, WsCloseCode::Policy);
+    // The WebSocket close reason is bounded to 123 bytes, so the gate message is
+    // middle-truncated; assert the (preserved) verified and rejected tenant ids.
     assert!(
-        frame.reason.contains("authorizes tenant `tenant-b`"),
-        "swapped-tenant Listen close reason should name the verified tenant claim: {frame:?}"
+        frame.reason.contains("tenant-b"),
+        "swapped-tenant Listen close reason should name the verified tenant: {frame:?}"
     );
     assert!(
-        frame.reason.contains("targeted tenant `tenant-a`"),
+        frame.reason.contains("tenant-a"),
         "swapped-tenant Listen close reason should name the rejected target tenant: {frame:?}"
     );
 }
@@ -885,12 +729,11 @@ async fn firebase_listen_websocket_mock_user_token_requires_explicit_server_opt_
         ],
     );
 
-    let mock_user_token = json!({
-        "sub": "mock-user-123"
-    })
-    .to_string();
-    let encoded_token = URL_SAFE_NO_PAD.encode(mock_user_token.as_bytes());
+    let auth_protocol = firebase_listen_ws_auth_protocol("mock-user-123", "demo");
 
+    // Without the opt-in the bypass is off: the offered token cannot be verified,
+    // so the listen add-target is refused and the socket closes with a policy
+    // frame.
     let without_opt_in =
         ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut rejected_request = without_opt_in
@@ -903,22 +746,27 @@ async fn firebase_listen_websocket_mock_user_token_requires_explicit_server_opt_
     );
     rejected_request.headers_mut().insert(
         header::SEC_WEBSOCKET_PROTOCOL,
-        axum::http::HeaderValue::from_str(&format!(
-            "nimbus.firebase.listen.v1,nimbus.firebase.auth.{encoded_token}"
-        ))
-        .expect("listen auth subprotocol header should build"),
+        axum::http::HeaderValue::from_str(&auth_protocol)
+            .expect("listen auth subprotocol header should build"),
     );
     let mut rejected_socket = WebSocketFixture::connect_request(rejected_request)
         .await
         .expect("ungated websocket handshake should still complete");
+    rejected_socket
+        .send_binary(
+            grpc_listen_query_request(
+                22,
+                "projects/demo/databases/(default)/documents",
+                "mockTokenListen",
+            )
+            .encode_to_vec(),
+        )
+        .await;
     let close_code = websocket_close_code(rejected_socket.next_message().await);
     assert_eq!(close_code, WsCloseCode::Policy);
 
-    let with_opt_in = ServerFixture::start(router_for_firebase(
-        service,
-        FirebaseConfig::new().with_emulator_mock_user_token_auth(),
-    ))
-    .await;
+    let with_opt_in =
+        ServerFixture::start(router_for_firebase(service, firebase_verified_config())).await;
     let mut accepted_request = with_opt_in
         .ws_url("/google.firestore.v1.Firestore/Listen")
         .into_client_request()
@@ -929,14 +777,12 @@ async fn firebase_listen_websocket_mock_user_token_requires_explicit_server_opt_
     );
     accepted_request.headers_mut().insert(
         header::SEC_WEBSOCKET_PROTOCOL,
-        axum::http::HeaderValue::from_str(&format!(
-            "nimbus.firebase.listen.v1,nimbus.firebase.auth.{encoded_token}"
-        ))
-        .expect("listen auth subprotocol header should build"),
+        axum::http::HeaderValue::from_str(&auth_protocol)
+            .expect("listen auth subprotocol header should build"),
     );
     let mut accepted_socket = WebSocketFixture::connect_request(accepted_request)
         .await
-        .expect("gated websocket mock-user auth should connect");
+        .expect("gated websocket bypass auth should connect");
     accepted_socket
         .send_binary(
             grpc_listen_query_request(
@@ -991,8 +837,12 @@ async fn firebase_rest_routes_return_not_found_when_adapter_is_disabled() {
 async fn firebase_rest_routes_are_registered_when_adapter_is_enabled() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
 
     for path in [
         "/v1/projects/demo/databases/(default)/documents:commit",
@@ -1041,16 +891,25 @@ async fn firebase_rest_routes_are_registered_when_adapter_is_enabled() {
         } else {
             "{}".to_string()
         };
+
+        // An enabled route is reachable (not 404) but still gated: an anonymous
+        // request reaches the #24 gate and is refused with 403, never 404.
+        assert_firebase_rest_anonymous_refused(&server, path, &body).await;
+
         let response = server
             .client()
             .post(server.http_url(path))
+            .header(header::AUTHORIZATION, &bearer)
             .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
             .body(body)
             .send()
             .await
             .expect("enabled firebase request should send");
-        let expected = StatusCode::OK;
-        assert_eq!(response.status(), expected, "unexpected status for {path}");
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "unexpected status for {path}"
+        );
     }
 }
 
@@ -1098,12 +957,29 @@ async fn firebase_rest_routes_reject_invalid_bearer_uniformly() {
 #[tokio::test]
 async fn firebase_commit_rejects_malformed_commit_json() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+
+    // Even malformed commits must clear the #24 gate first: an anonymous
+    // malformed commit is refused with 403, not 400.
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents:commit",
+        "{}",
+    )
+    .await;
 
     let response = server
         .client()
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
+        .header(
+            header::AUTHORIZATION,
+            firebase_verified_bearer("user-123", "demo"),
+        )
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body("{}")
         .send()
