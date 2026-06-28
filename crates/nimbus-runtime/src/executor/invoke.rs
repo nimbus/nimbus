@@ -313,6 +313,7 @@ impl RuntimeExecutor {
         match cancellation {
             Some(cancellation) => {
                 tokio::select! {
+                    biased;
                     _ = cancellation.cancelled() => Err(NimbusRuntimeError::Cancelled),
                     response = &mut response_ready_rx => match response {
                         Ok(response) => Ok(RuntimeInvocationResponse {
@@ -338,6 +339,7 @@ impl RuntimeExecutor {
             }
             None => {
                 tokio::select! {
+                    biased;
                     response = &mut response_ready_rx => match response {
                         Ok(response) => Ok(RuntimeInvocationResponse {
                             response,

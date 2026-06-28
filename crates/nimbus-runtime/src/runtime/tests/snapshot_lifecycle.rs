@@ -4,8 +4,56 @@ use super::*;
 use crate::backends::v8::{ReusableV8Runtime, V8RuntimeConstructionMode, V8WorkerRuntimePool};
 use crate::limits::{RuntimeCompatibilityTarget, RuntimeLimits};
 
+const NODE_MAJOR_SHARED_SNAPSHOT_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-snapshot-node-major-shared-node-full-cell",
+    "run-to-completion-startup-snapshot",
+    "Node20/22/24/26 share one NodeFull startup snapshot cell",
+    "runtime::tests::snapshot_lifecycle::node_major_startup_snapshots_share_node_full_cell_subprocess",
+);
+
+const NODE_FULL_METADATA_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-snapshot-node-full-metadata",
+    "run-to-completion-startup-snapshot",
+    "shared NodeFull startup snapshot preserves exact Node target metadata",
+    "runtime::tests::snapshot_lifecycle::node_full_shared_snapshot_keeps_exact_node_target_metadata_subprocess",
+);
+
+const SNAPSHOT_DRIVER_REUSE_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-snapshot-driver-reuse-cycles",
+    "run-to-completion-startup-snapshot",
+    "snapshot-seeded runtime driver survives repeated async host invocations",
+    "runtime::tests::snapshot_lifecycle::snapshot_seeded_runtime_driver_cycles_survive_repeated_async_host_invocations_subprocess",
+);
+
+const SNAPSHOT_DRIVER_FRESH_OWNER_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-snapshot-driver-fresh-owner-cycles",
+    "run-to-completion-startup-snapshot",
+    "snapshot-seeded runtime driver survives repeated async host invocations with fresh runtime owners",
+    "runtime::tests::snapshot_lifecycle::snapshot_seeded_runtime_driver_cycles_survive_with_fresh_runtime_owner_each_cycle_subprocess",
+);
+
+const SNAPSHOT_DRIVER_CURRENT_THREAD_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-snapshot-driver-current-thread-delayed-host",
+    "run-to-completion-startup-snapshot",
+    "snapshot-seeded runtime driver survives current-thread delayed async host invocations",
+    "runtime::tests::snapshot_lifecycle::snapshot_seeded_runtime_driver_cycles_survive_on_current_thread_runtime_with_delayed_async_host_subprocess",
+);
+
+const REUSED_RUNTIME_USER_MODULE_STATE_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "runtime-snapshot-reused-user-module-state",
+    "run-to-completion-startup-snapshot",
+    "snapshot-backed reused runtime preserves user module state under the current reset contract",
+    "runtime::tests::snapshot_lifecycle::reused_runtime_still_leaks_user_module_state_after_current_resets_subprocess",
+);
+
 #[test]
 fn node_major_startup_snapshots_share_node_full_cell() {
+    run_v8_sensitive_runtime_test_in_subprocess(NODE_MAJOR_SHARED_SNAPSHOT_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate snapshot lifecycle V8 state"]
+fn node_major_startup_snapshots_share_node_full_cell_subprocess() {
     let _test_lock = acquire_snapshot_reset_test_lock();
     let before = crate::backends::v8::v8_bootstrap_snapshot_build_count_for_test();
     let mut first_snapshot = None;
@@ -42,6 +90,12 @@ fn node_major_startup_snapshots_share_node_full_cell() {
 
 #[tokio::test]
 async fn node_full_shared_snapshot_keeps_exact_node_target_metadata() {
+    run_v8_sensitive_runtime_test_in_subprocess(NODE_FULL_METADATA_CASE);
+}
+
+#[tokio::test]
+#[ignore = "runs in a subprocess to isolate snapshot lifecycle V8 state"]
+async fn node_full_shared_snapshot_keeps_exact_node_target_metadata_subprocess() {
     let _test_lock = acquire_snapshot_reset_test_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
@@ -103,7 +157,15 @@ export {};
 
 #[tokio::test]
 async fn snapshot_seeded_runtime_driver_cycles_survive_repeated_async_host_invocations() {
+    run_v8_sensitive_runtime_test_in_subprocess(SNAPSHOT_DRIVER_REUSE_CASE);
+}
+
+#[tokio::test]
+#[ignore = "runs in a subprocess to isolate snapshot lifecycle V8 state"]
+async fn snapshot_seeded_runtime_driver_cycles_survive_repeated_async_host_invocations_subprocess()
+{
     init_test_tracing();
+    let _test_lock = acquire_snapshot_reset_test_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -223,7 +285,15 @@ export {};
 
 #[tokio::test]
 async fn snapshot_seeded_runtime_driver_cycles_survive_with_fresh_runtime_owner_each_cycle() {
+    run_v8_sensitive_runtime_test_in_subprocess(SNAPSHOT_DRIVER_FRESH_OWNER_CASE);
+}
+
+#[tokio::test]
+#[ignore = "runs in a subprocess to isolate snapshot lifecycle V8 state"]
+async fn snapshot_seeded_runtime_driver_cycles_survive_with_fresh_runtime_owner_each_cycle_subprocess()
+ {
     init_test_tracing();
+    let _test_lock = acquire_snapshot_reset_test_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -349,6 +419,13 @@ export {};
 #[test]
 fn snapshot_seeded_runtime_driver_cycles_survive_on_current_thread_runtime_with_delayed_async_host()
 {
+    run_v8_sensitive_runtime_test_in_subprocess(SNAPSHOT_DRIVER_CURRENT_THREAD_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate snapshot lifecycle V8 state"]
+fn snapshot_seeded_runtime_driver_cycles_survive_on_current_thread_runtime_with_delayed_async_host_subprocess()
+ {
     init_test_tracing();
     let _test_lock = acquire_snapshot_reset_test_lock();
     let worker_thread = std::thread::spawn(move || {
@@ -487,6 +564,13 @@ export {};
 
 #[tokio::test]
 async fn reused_runtime_still_leaks_user_module_state_after_current_resets() {
+    run_v8_sensitive_runtime_test_in_subprocess(REUSED_RUNTIME_USER_MODULE_STATE_CASE);
+}
+
+#[tokio::test]
+#[ignore = "runs in a subprocess to isolate snapshot lifecycle V8 state"]
+async fn reused_runtime_still_leaks_user_module_state_after_current_resets_subprocess() {
+    let _test_lock = acquire_snapshot_reset_test_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
