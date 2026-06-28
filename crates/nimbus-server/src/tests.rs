@@ -38,7 +38,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::Command;
 use tokio::sync::watch;
-use tokio::time::{Duration, timeout};
+use tokio::time::{Duration, Instant, timeout};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode as WsCloseCode;
@@ -1146,23 +1146,33 @@ async fn wait_for_runtime_metrics_case_impl(
     description: String,
     predicate: impl Fn(&nimbus_runtime::RuntimeMetricsSnapshot) -> bool,
 ) -> nimbus_runtime::RuntimeMetricsSnapshot {
-    wait_for_value(
-        &description,
-        // Synchronization budget for a runtime-metrics condition (e.g. "the
-        // blocking query has dispatched onto a worker"), NOT an assertion. The
-        // first dispatch pays a cold-start cost -- worker-thread spawn + per-job
-        // tokio runtime build + first V8 isolate warm-up -- that lands around
-        // ~3s on a resource-contended CI host, so the previous 3s budget flaked
-        // (timeouts at ~3.0-3.02s). `wait_for_value` only ever awaits a positive
-        // condition and panics on timeout, so a wider budget buys slack on a
-        // loaded host, costs nothing on a healthy one, and never weakens the
-        // post-conditions these tests assert once the condition is met.
-        Duration::from_secs(20),
-        Duration::from_millis(25),
-        || async { registry.runtime_metrics_snapshot() },
-        predicate,
-    )
-    .await
+    // Synchronization budget for a runtime-metrics condition (e.g. "the
+    // blocking query has dispatched onto a worker"), NOT an assertion. The
+    // first dispatch pays a cold-start cost -- worker-thread spawn + per-job
+    // tokio runtime build + first V8 isolate warm-up -- that lands around
+    // ~3s on a resource-contended CI host, so the previous 3s budget flaked
+    // (timeouts at ~3.0-3.02s). This loop only ever awaits a positive
+    // condition and panics on timeout, so a wider budget buys slack on a
+    // loaded host, costs nothing on a healthy one, and never weakens the
+    // post-conditions these tests assert once the condition is met.
+    let timeout = Duration::from_secs(20);
+    let poll_interval = Duration::from_millis(25);
+    let started_at = Instant::now();
+    let mut attempts = 0_u64;
+    loop {
+        attempts += 1;
+        let snapshot = registry.runtime_metrics_snapshot();
+        if predicate(&snapshot) {
+            return snapshot;
+        }
+        let elapsed = started_at.elapsed();
+        if elapsed >= timeout {
+            panic!(
+                "timed out waiting for {description} after {elapsed:?} (budget {timeout:?}, poll interval {poll_interval:?}, attempts {attempts}); last runtime metrics snapshot: {snapshot:#?}"
+            );
+        }
+        tokio::time::sleep(poll_interval).await;
+    }
 }
 
 #[path = "tests/auth_fixtures/mod.rs"]
