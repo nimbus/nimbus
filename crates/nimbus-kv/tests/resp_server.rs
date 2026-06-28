@@ -12,6 +12,10 @@ fn tenant(id: &str) -> TenantId {
     TenantId::new(id).expect("valid tenant id")
 }
 
+fn test_password(label: &str) -> String {
+    format!("{}-{label}", std::process::id())
+}
+
 async fn spawn_test_server(credentials: CredentialRegistry) -> (SocketAddr, JoinHandle<()>) {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
@@ -53,8 +57,8 @@ async fn write_command(stream: &mut TcpStream, parts: &[&[u8]]) -> String {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn redis_rs_client_connects_and_ping_echo_round_trip() {
-    let password = "secret";
-    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), password);
+    let password = test_password("redis-rs");
+    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), password.clone());
     let (addr, server) = spawn_test_server(credentials).await;
 
     let url = format!("redis://:{password}@{addr}/");
@@ -79,11 +83,12 @@ async fn redis_rs_client_connects_and_ping_echo_round_trip() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn hello_3_negotiates_resp3() {
-    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), "secret");
+    let password = test_password("hello");
+    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), password.clone());
     let (addr, server) = spawn_test_server(credentials).await;
     let mut stream = TcpStream::connect(addr).await.expect("connects");
 
-    let auth = write_command(&mut stream, &[b"AUTH", b"secret"]).await;
+    let auth = write_command(&mut stream, &[b"AUTH", password.as_bytes()]).await;
     assert_eq!(auth, "+OK\r\n");
 
     let hello = write_command(&mut stream, &[b"HELLO", b"3"]).await;
@@ -102,7 +107,7 @@ async fn hello_3_negotiates_resp3() {
 async fn listener_rejects_non_loopback_bind() {
     let config = NimbusKvConfig::new(
         "0.0.0.0:0".parse().expect("addr parses"),
-        CredentialRegistry::single_dev(tenant("tenant-a"), "secret"),
+        CredentialRegistry::single_dev(tenant("tenant-a"), test_password("bind")),
     );
 
     let error = run_listener(config)
@@ -116,7 +121,7 @@ async fn listener_rejects_non_loopback_bind() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn unauthenticated_command_is_rejected() {
-    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), "secret");
+    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), test_password("unauth"));
     let (addr, server) = spawn_test_server(credentials).await;
     let mut stream = TcpStream::connect(addr).await.expect("connects");
 
@@ -127,13 +132,19 @@ async fn unauthenticated_command_is_rejected() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tenant_a_credential_cannot_read_tenant_b_keys() {
+    let tenant_a_password = test_password("tenant-a");
+    let tenant_b_password = test_password("tenant-b");
     let credentials = CredentialRegistry::new()
-        .bind("tenant-a", "secret-a", tenant("tenant-a"))
-        .bind("tenant-b", "secret-b", tenant("tenant-b"));
+        .bind("tenant-a", tenant_a_password.clone(), tenant("tenant-a"))
+        .bind("tenant-b", tenant_b_password, tenant("tenant-b"));
     let (addr, server) = spawn_test_server(credentials).await;
     let mut stream = TcpStream::connect(addr).await.expect("connects");
 
-    let auth = write_command(&mut stream, &[b"AUTH", b"tenant-a", b"secret-a"]).await;
+    let auth = write_command(
+        &mut stream,
+        &[b"AUTH", b"tenant-a", tenant_a_password.as_bytes()],
+    )
+    .await;
     assert_eq!(auth, "+OK\r\n");
 
     let cross_tenant = write_command(&mut stream, &[b"SELECT", b"tenant-b"]).await;
@@ -146,8 +157,8 @@ async fn tenant_a_credential_cannot_read_tenant_b_keys() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn resp_get_set_del_expire_ttl_incr_round_trip() {
-    let password = "secret";
-    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), password);
+    let password = test_password("commands");
+    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), password.clone());
     let (addr, server) = spawn_test_server(credentials).await;
 
     let url = format!("redis://:{password}@{addr}/");
