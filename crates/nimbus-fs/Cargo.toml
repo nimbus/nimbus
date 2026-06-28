@@ -15,6 +15,7 @@ nimbus-core = { path = "../nimbus-core" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 async-trait.workspace = true
 bytes.workspace = true
+cap-std = "4.0.2"
 deno_core.workspace = true
 deno_fs.workspace = true
 deno_io.workspace = true

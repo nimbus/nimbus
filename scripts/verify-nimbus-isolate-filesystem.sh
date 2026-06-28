@@ -106,15 +106,21 @@ check_nfs1() {
   if has_dir "crates/nimbus-runtime/src/fs" \
     && has_file "crates/nimbus-runtime/src/fs/mod.rs" \
     && has_file "crates/nimbus-fs/src/lib.rs" \
+    && has_file "crates/nimbus-fs/src/passthrough.rs" \
     && grep_file "trait NimbusFsBackend" "crates/nimbus-runtime/src/fs/mod.rs" \
     && grep_file "struct NimbusFs" "crates/nimbus-fs/src/lib.rs" \
-    && grep_file "struct PassthroughBackend" "crates/nimbus-fs/src/lib.rs" \
+    && grep_file "struct PassthroughBackend" "crates/nimbus-fs/src/passthrough.rs" \
+    && grep_file "RootCapability" "crates/nimbus-fs/src/passthrough.rs" \
+    && grep_file "cap_std::fs::Dir|Dir as CapDir" "crates/nimbus-fs/src/passthrough.rs" \
+    && grep_file "cap-std" "crates/nimbus-fs/Cargo.toml" \
+    && grep_file "raw_passthrough_chdir_does_not_touch_process_cwd" "crates/nimbus-fs/src/tests.rs" \
+    && grep_file "rooted_passthrough_rejects_parent_escape_before_create" "crates/nimbus-fs/src/tests.rs" \
     && ! grep_file "MaybeArc::new\\(deno_fs::RealFs\\)" "crates/nimbus-runtime/src/runtime/bootstrap/extensions.rs" \
     && grep_file "file_system\\(\\)" "crates/nimbus-runtime/src/runtime/driver/construction.rs" \
     && check_direct_bypass_scan \
     && has_file "$PROOF_DIR/nfs1-shell.md" \
     && grep_file "Node-compat.*passed|node compat.*passed|no-regression.*passed" "$PROOF_DIR/nfs1-shell.md"; then
-    pass "NFS1 runtime seam, NimbusFS shell, passthrough wiring, and bypass scan are present"
+    pass "NFS1 runtime seam, NimbusFS shell, capability-rooted passthrough, and bypass scan are present"
   else
     fail "NFS1 seam/shell/wiring/proof condition is incomplete"
   fi

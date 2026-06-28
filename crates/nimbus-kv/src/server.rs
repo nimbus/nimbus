@@ -462,23 +462,9 @@ fn authenticated_tenant(state: &ConnectionState) -> &TenantId {
         .tenant
 }
 
-fn tenant_prefix(tenant: &TenantId) -> Vec<u8> {
-    let tenant = tenant.as_str().as_bytes();
-    let mut prefix = Vec::with_capacity(tenant.len() + 1);
-    prefix.extend_from_slice(tenant);
-    prefix.push(0);
-    prefix
-}
-
-fn tenant_key(tenant: &TenantId, key: &[u8]) -> Vec<u8> {
-    let mut scoped = tenant_prefix(tenant);
-    scoped.extend_from_slice(key);
-    scoped
-}
-
 fn get_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> CommandOutcome {
     let response = match args {
-        [_, key] => match store.get(&tenant_key(tenant, key), now_ms()) {
+        [_, key] => match store.get(tenant, key, now_ms()) {
             Ok(Some(value)) => Response::Bulk(value),
             Ok(None) => Response::Null,
             Err(error) => storage_error(error),
@@ -490,7 +476,7 @@ fn get_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> Co
 
 fn set_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> CommandOutcome {
     let response = match args {
-        [_, key, value] => match store.set(tenant_key(tenant, key), value.clone(), None) {
+        [_, key, value] => match store.set(tenant, key.clone(), value.clone(), None) {
             Ok(()) => Response::SimpleString("OK".to_owned()),
             Err(error) => storage_error(error),
         },
@@ -499,7 +485,7 @@ fn set_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> Co
                 .and_then(|seconds| expire_at_from_now(seconds, now_ms()))
             {
                 Ok(expire_at_ms) => {
-                    match store.set(tenant_key(tenant, key), value.clone(), Some(expire_at_ms)) {
+                    match store.set(tenant, key.clone(), value.clone(), Some(expire_at_ms)) {
                         Ok(()) => Response::SimpleString("OK".to_owned()),
                         Err(error) => storage_error(error),
                     }
@@ -512,7 +498,7 @@ fn set_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> Co
                 .and_then(|millis| expire_at_ms_from_now(millis, now_ms()))
             {
                 Ok(expire_at_ms) => {
-                    match store.set(tenant_key(tenant, key), value.clone(), Some(expire_at_ms)) {
+                    match store.set(tenant, key.clone(), value.clone(), Some(expire_at_ms)) {
                         Ok(()) => Response::SimpleString("OK".to_owned()),
                         Err(error) => storage_error(error),
                     }
@@ -533,7 +519,7 @@ fn del_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> Co
     }
     let mut deleted = 0_i64;
     for key in &args[1..] {
-        match store.delete(&tenant_key(tenant, key)) {
+        match store.delete(tenant, key) {
             Ok(true) => deleted += 1,
             Ok(false) => {}
             Err(error) => return command_response(storage_error(error)),
@@ -544,14 +530,14 @@ fn del_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> Co
 
 fn flushall_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> CommandOutcome {
     let response = match args {
-        [_] => match store.flush_prefix(&tenant_prefix(tenant), now_ms()) {
+        [_] => match store.flush_all(tenant, now_ms()) {
             Ok(_) => Response::SimpleString("OK".to_owned()),
             Err(error) => storage_error(error),
         },
         [_, option]
             if option.eq_ignore_ascii_case(b"SYNC") || option.eq_ignore_ascii_case(b"ASYNC") =>
         {
-            match store.flush_prefix(&tenant_prefix(tenant), now_ms()) {
+            match store.flush_all(tenant, now_ms()) {
                 Ok(_) => Response::SimpleString("OK".to_owned()),
                 Err(error) => storage_error(error),
             }
@@ -599,13 +585,11 @@ fn expire_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) ->
         [_, key, seconds] => match parse_expire_seconds(seconds)
             .and_then(|seconds| expire_at_from_now(seconds, now_ms()))
         {
-            Ok(expire_at_ms) => {
-                match store.expire(&tenant_key(tenant, key), expire_at_ms, now_ms()) {
-                    Ok(true) => Response::Integer(1),
-                    Ok(false) => Response::Integer(0),
-                    Err(error) => storage_error(error),
-                }
-            }
+            Ok(expire_at_ms) => match store.expire(tenant, key, expire_at_ms, now_ms()) {
+                Ok(true) => Response::Integer(1),
+                Ok(false) => Response::Integer(0),
+                Err(error) => storage_error(error),
+            },
             Err(response) => response,
         },
         _ => Response::Error("ERR wrong number of arguments for 'EXPIRE'".to_owned()),
@@ -615,7 +599,7 @@ fn expire_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) ->
 
 fn ttl_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> CommandOutcome {
     let response = match args {
-        [_, key] => match store.ttl(&tenant_key(tenant, key), now_ms()) {
+        [_, key] => match store.ttl(tenant, key, now_ms()) {
             Ok(ttl) => Response::Integer(ttl),
             Err(error) => storage_error(error),
         },
@@ -626,7 +610,7 @@ fn ttl_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> Co
 
 fn incr_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> CommandOutcome {
     let response = match args {
-        [_, key] => match store.incr(&tenant_key(tenant, key), now_ms()) {
+        [_, key] => match store.incr(tenant, key, now_ms()) {
             Ok(value) => Response::Integer(value),
             Err(error) => storage_error(error),
         },

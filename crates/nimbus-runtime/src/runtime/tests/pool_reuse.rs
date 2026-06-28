@@ -6061,7 +6061,7 @@ export {};
         .push("NFR5_DOTENV_VALUE".to_string());
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(limits)),
+        runtime_test_policy_with_real_fs(limits),
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner

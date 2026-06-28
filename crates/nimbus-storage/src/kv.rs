@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use nimbus_core::{Error, Result};
+use nimbus_core::{Error, Result, TenantId};
 use redb::{ReadableTable, TableDefinition, TableError};
 use serde::{Deserialize, Serialize};
 
@@ -36,39 +36,41 @@ impl RedbTenantKvStore {
 }
 
 impl TenantKvStore for RedbTenantKvStore {
-    fn kv_get(&self, key: &[u8], now_ms: i64) -> Result<Option<KvEntry>> {
-        self.inner.kv_get(key, now_ms)
+    fn kv_get(&self, tenant: &TenantId, key: &[u8], now_ms: i64) -> Result<Option<KvEntry>> {
+        self.inner.kv_get(tenant, key, now_ms)
     }
 
-    fn kv_put(&self, put: KvPut) -> Result<()> {
-        self.inner.kv_put(put)
+    fn kv_put(&self, tenant: &TenantId, put: KvPut) -> Result<()> {
+        self.inner.kv_put(tenant, put)
     }
 
-    fn kv_delete(&self, key: &[u8]) -> Result<bool> {
-        self.inner.kv_delete(key)
+    fn kv_delete(&self, tenant: &TenantId, key: &[u8]) -> Result<bool> {
+        self.inner.kv_delete(tenant, key)
     }
 
     fn kv_scan(
         &self,
+        tenant: &TenantId,
         prefix: &[u8],
         cursor: Option<&[u8]>,
         limit: usize,
         now_ms: i64,
     ) -> Result<KvScanPage> {
-        self.inner.kv_scan(prefix, cursor, limit, now_ms)
+        self.inner.kv_scan(tenant, prefix, cursor, limit, now_ms)
     }
 
-    fn kv_apply_batch(&self, ops: &[KvBatchOp]) -> Result<KvBatchOutcome> {
-        self.inner.kv_apply_batch(ops)
+    fn kv_apply_batch(&self, tenant: &TenantId, ops: &[KvBatchOp]) -> Result<KvBatchOutcome> {
+        self.inner.kv_apply_batch(tenant, ops)
     }
 
     fn kv_update(
         &self,
+        tenant: &TenantId,
         key: &[u8],
         now_ms: i64,
         update: &mut dyn FnMut(Option<KvEntry>) -> Result<KvMutation>,
     ) -> Result<Option<KvEntry>> {
-        self.inner.kv_update(key, now_ms, update)
+        self.inner.kv_update(tenant, key, now_ms, update)
     }
 
     fn kv_sweep_expired(&self, now_ms: i64, limit: usize) -> Result<KvSweepOutcome> {
@@ -83,7 +85,8 @@ impl KvStorageEngine for RedbTenantKvStore {
 }
 
 impl TenantKvStore for TenantStore {
-    fn kv_get(&self, key: &[u8], now_ms: i64) -> Result<Option<KvEntry>> {
+    fn kv_get(&self, tenant: &TenantId, key: &[u8], now_ms: i64) -> Result<Option<KvEntry>> {
+        let scoped_key = tenant_key(tenant, key);
         let read_txn = self.db.begin_read().map_err(map_redb_error)?;
         let values = match read_txn.open_table(KV_VALUES) {
             Ok(values) => values,
@@ -91,7 +94,7 @@ impl TenantKvStore for TenantStore {
             Err(error) => return Err(map_redb_error(error)),
         };
         let Some(record) = values
-            .get(key)
+            .get(scoped_key.as_slice())
             .map_err(map_redb_error)?
             .map(|value| decode_record(value.value()))
             .transpose()?
@@ -104,23 +107,24 @@ impl TenantKvStore for TenantStore {
         Ok(Some(record.into_entry(key.to_vec())))
     }
 
-    fn kv_put(&self, put: KvPut) -> Result<()> {
+    fn kv_put(&self, tenant: &TenantId, put: KvPut) -> Result<()> {
         let write_txn = self.db.begin_write().map_err(map_redb_error)?;
         {
             let mut values = write_txn.open_table(KV_VALUES).map_err(map_redb_error)?;
             let mut expiry = write_txn.open_table(KV_EXPIRY).map_err(map_redb_error)?;
-            apply_put(&mut values, &mut expiry, put)?;
+            apply_put(&mut values, &mut expiry, scope_put(tenant, put))?;
         }
         write_txn.commit().map_err(map_redb_error)?;
         Ok(())
     }
 
-    fn kv_delete(&self, key: &[u8]) -> Result<bool> {
+    fn kv_delete(&self, tenant: &TenantId, key: &[u8]) -> Result<bool> {
+        let scoped_key = tenant_key(tenant, key);
         let write_txn = self.db.begin_write().map_err(map_redb_error)?;
         let removed = {
             let mut values = write_txn.open_table(KV_VALUES).map_err(map_redb_error)?;
             let mut expiry = write_txn.open_table(KV_EXPIRY).map_err(map_redb_error)?;
-            apply_delete(&mut values, &mut expiry, key)?
+            apply_delete(&mut values, &mut expiry, scoped_key.as_slice())?
         };
         write_txn.commit().map_err(map_redb_error)?;
         Ok(removed)
@@ -128,6 +132,7 @@ impl TenantKvStore for TenantStore {
 
     fn kv_scan(
         &self,
+        tenant: &TenantId,
         prefix: &[u8],
         cursor: Option<&[u8]>,
         limit: usize,
@@ -140,6 +145,9 @@ impl TenantKvStore for TenantStore {
             });
         }
 
+        let scoped_prefix = tenant_key(tenant, prefix);
+        let scoped_cursor = cursor.map(|cursor| tenant_key(tenant, cursor));
+        let scoped_cursor = scoped_cursor.as_deref();
         let read_txn = self.db.begin_read().map_err(map_redb_error)?;
         let values = match read_txn.open_table(KV_VALUES) {
             Ok(values) => values,
@@ -152,17 +160,18 @@ impl TenantKvStore for TenantStore {
             Err(error) => return Err(map_redb_error(error)),
         };
 
-        let effective_cursor = cursor.filter(|cursor| cursor.starts_with(prefix));
-        let start = effective_cursor.unwrap_or(prefix);
+        let effective_cursor =
+            scoped_cursor.filter(|cursor| cursor.starts_with(scoped_prefix.as_slice()));
+        let start = effective_cursor.unwrap_or(scoped_prefix.as_slice());
         let mut scan = KvScanState::default();
         let scan_constraints = ScanConstraints {
-            prefix,
+            prefix: scoped_prefix.as_slice(),
             cursor: effective_cursor,
             limit,
             now_ms,
         };
 
-        match prefix_end(prefix) {
+        match prefix_end(scoped_prefix.as_slice()) {
             Some(end) => {
                 for item in values
                     .range(start..end.as_slice())
@@ -178,7 +187,7 @@ impl TenantKvStore for TenantStore {
             None => {
                 for item in values.range(start..).map_err(map_redb_error)? {
                     let (key, value) = item.map_err(map_redb_error)?;
-                    if !key.value().starts_with(prefix) {
+                    if !key.value().starts_with(scoped_prefix.as_slice()) {
                         break;
                     }
                     scan_entry(&mut scan, key.value(), value.value(), &scan_constraints)?;
@@ -190,18 +199,30 @@ impl TenantKvStore for TenantStore {
         }
 
         Ok(KvScanPage {
-            entries: scan.entries,
-            next_cursor: scan.next_cursor,
+            entries: scan
+                .entries
+                .into_iter()
+                .map(|entry| untenant_entry(tenant, entry))
+                .collect::<Result<Vec<_>>>()?,
+            next_cursor: scan
+                .next_cursor
+                .map(|cursor| untenant_key(tenant, cursor.as_slice()))
+                .transpose()?,
         })
     }
 
-    fn kv_apply_batch(&self, ops: &[KvBatchOp]) -> Result<KvBatchOutcome> {
+    fn kv_apply_batch(&self, tenant: &TenantId, ops: &[KvBatchOp]) -> Result<KvBatchOutcome> {
+        let scoped_ops = ops
+            .iter()
+            .cloned()
+            .map(|op| scope_op(tenant, op))
+            .collect::<Vec<_>>();
         let write_txn = self.db.begin_write().map_err(map_redb_error)?;
         let mut outcome = KvBatchOutcome::default();
         {
             let mut values = write_txn.open_table(KV_VALUES).map_err(map_redb_error)?;
             let mut expiry = write_txn.open_table(KV_EXPIRY).map_err(map_redb_error)?;
-            for op in ops {
+            for op in &scoped_ops {
                 match op {
                     KvBatchOp::Put(put) => {
                         apply_put(&mut values, &mut expiry, put.clone())?;
@@ -221,18 +242,41 @@ impl TenantKvStore for TenantStore {
 
     fn kv_update(
         &self,
+        tenant: &TenantId,
         key: &[u8],
         now_ms: i64,
         update: &mut dyn FnMut(Option<KvEntry>) -> Result<KvMutation>,
     ) -> Result<Option<KvEntry>> {
+        let scoped_key = tenant_key(tenant, key);
+        let mut scoped_update = |previous: Option<KvEntry>| {
+            let previous = previous
+                .map(|entry| untenant_entry(tenant, entry))
+                .transpose()?;
+            match update(previous)? {
+                KvMutation::Put(put) if put.key != key => Err(Error::InvalidInput(
+                    "kv_update put key must match update key".to_string(),
+                )),
+                KvMutation::Put(put) => Ok(KvMutation::Put(scope_put(tenant, put))),
+                KvMutation::Delete => Ok(KvMutation::Delete),
+                KvMutation::Keep => Ok(KvMutation::Keep),
+            }
+        };
         let write_txn = self.db.begin_write().map_err(map_redb_error)?;
         let updated = {
             let mut values = write_txn.open_table(KV_VALUES).map_err(map_redb_error)?;
             let mut expiry = write_txn.open_table(KV_EXPIRY).map_err(map_redb_error)?;
-            apply_update(&mut values, &mut expiry, key, now_ms, update)?
+            apply_update(
+                &mut values,
+                &mut expiry,
+                scoped_key.as_slice(),
+                now_ms,
+                &mut scoped_update,
+            )?
         };
         write_txn.commit().map_err(map_redb_error)?;
-        Ok(updated)
+        updated
+            .map(|entry| untenant_entry(tenant, entry))
+            .transpose()
     }
 
     fn kv_sweep_expired(&self, now_ms: i64, limit: usize) -> Result<KvSweepOutcome> {
@@ -319,6 +363,39 @@ pub const FJALL_KV_ENGINE_NAME: &str = "fjall";
 
 pub fn fjall_kv_engine_type_marker() -> &'static str {
     std::any::type_name::<fjall::SingleWriterTxDatabase>()
+}
+
+fn tenant_key(tenant: &TenantId, key: &[u8]) -> Vec<u8> {
+    let tenant = tenant.as_str().as_bytes();
+    let mut scoped = Vec::with_capacity(tenant.len() + 1 + key.len());
+    scoped.extend_from_slice(tenant);
+    scoped.push(0);
+    scoped.extend_from_slice(key);
+    scoped
+}
+
+fn untenant_key(tenant: &TenantId, key: &[u8]) -> Result<Vec<u8>> {
+    let prefix = tenant_key(tenant, &[]);
+    key.strip_prefix(prefix.as_slice())
+        .map(|key| key.to_vec())
+        .ok_or_else(|| Error::Internal("kv entry escaped tenant scope".to_string()))
+}
+
+fn scope_put(tenant: &TenantId, mut put: KvPut) -> KvPut {
+    put.key = tenant_key(tenant, put.key.as_slice());
+    put
+}
+
+fn scope_op(tenant: &TenantId, op: KvBatchOp) -> KvBatchOp {
+    match op {
+        KvBatchOp::Put(put) => KvBatchOp::Put(scope_put(tenant, put)),
+        KvBatchOp::Delete(key) => KvBatchOp::Delete(tenant_key(tenant, key.as_slice())),
+    }
+}
+
+fn untenant_entry(tenant: &TenantId, mut entry: KvEntry) -> Result<KvEntry> {
+    entry.key = untenant_key(tenant, entry.key.as_slice())?;
+    Ok(entry)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -543,45 +620,63 @@ fn decode_sortable_i64(bytes: [u8; 8]) -> i64 {
 mod tests {
     use super::*;
 
+    fn tenant(id: &str) -> TenantId {
+        TenantId::new(id).expect("valid tenant id")
+    }
+
     #[test]
     fn redb_kv_round_trips_put_get_delete_and_scan() {
         let store = TenantStore::create_in_memory().expect("store should open");
+        let tenant = tenant("tenant-a");
         store
-            .kv_put(KvPut::new("alpha:one", "1"))
+            .kv_put(&tenant, KvPut::new("alpha:one", "1"))
             .expect("put should succeed");
         store
-            .kv_put(KvPut::new("alpha:two", "2"))
+            .kv_put(&tenant, KvPut::new("alpha:two", "2"))
             .expect("put should succeed");
         store
-            .kv_put(KvPut::new("beta:one", "3"))
+            .kv_put(&tenant, KvPut::new("beta:one", "3"))
             .expect("put should succeed");
 
         let entry = store
-            .kv_get(b"alpha:one", 0)
+            .kv_get(&tenant, b"alpha:one", 0)
             .expect("get should succeed")
             .expect("entry should exist");
         assert_eq!(entry.value, b"1");
 
         let page = store
-            .kv_scan(b"alpha:", None, 10, 0)
+            .kv_scan(&tenant, b"alpha:", None, 10, 0)
             .expect("scan should succeed");
         let keys: Vec<Vec<u8>> = page.entries.into_iter().map(|entry| entry.key).collect();
         assert_eq!(keys, vec![b"alpha:one".to_vec(), b"alpha:two".to_vec()]);
         assert_eq!(page.next_cursor, None);
 
-        assert!(store.kv_delete(b"alpha:one").expect("delete succeeds"));
-        assert_eq!(store.kv_get(b"alpha:one", 0).expect("get succeeds"), None);
+        assert!(
+            store
+                .kv_delete(&tenant, b"alpha:one")
+                .expect("delete succeeds")
+        );
+        assert_eq!(
+            store
+                .kv_get(&tenant, b"alpha:one", 0)
+                .expect("get succeeds"),
+            None
+        );
     }
 
     #[test]
     fn kv_apply_batch_is_atomic_for_multiple_keys() {
         let store = TenantStore::create_in_memory().expect("store should open");
+        let tenant = tenant("tenant-a");
         let outcome = store
-            .kv_apply_batch(&[
-                KvBatchOp::Put(KvPut::new("counter:a", "1")),
-                KvBatchOp::Put(KvPut::new("counter:b", "2")),
-                KvBatchOp::Delete(b"missing".to_vec()),
-            ])
+            .kv_apply_batch(
+                &tenant,
+                &[
+                    KvBatchOp::Put(KvPut::new("counter:a", "1")),
+                    KvBatchOp::Put(KvPut::new("counter:b", "2")),
+                    KvBatchOp::Delete(b"missing".to_vec()),
+                ],
+            )
             .expect("batch should commit");
 
         assert_eq!(
@@ -593,7 +688,7 @@ mod tests {
         );
         assert_eq!(
             store
-                .kv_get(b"counter:a", 0)
+                .kv_get(&tenant, b"counter:a", 0)
                 .expect("get succeeds")
                 .expect("entry exists")
                 .value,
@@ -601,7 +696,7 @@ mod tests {
         );
         assert_eq!(
             store
-                .kv_get(b"counter:b", 0)
+                .kv_get(&tenant, b"counter:b", 0)
                 .expect("get succeeds")
                 .expect("entry exists")
                 .value,
@@ -612,16 +707,28 @@ mod tests {
     #[test]
     fn skip_on_read_hides_expired_entries_from_get_and_scan() {
         let store = TenantStore::create_in_memory().expect("store should open");
+        let tenant = tenant("tenant-a");
         store
-            .kv_put(KvPut::new("ttl:dead", "old").with_expire_at_ms(100))
+            .kv_put(
+                &tenant,
+                KvPut::new("ttl:dead", "old").with_expire_at_ms(100),
+            )
             .expect("expired put should succeed");
         store
-            .kv_put(KvPut::new("ttl:live", "new").with_expire_at_ms(1_000))
+            .kv_put(
+                &tenant,
+                KvPut::new("ttl:live", "new").with_expire_at_ms(1_000),
+            )
             .expect("live put should succeed");
 
-        assert_eq!(store.kv_get(b"ttl:dead", 200).expect("get succeeds"), None);
+        assert_eq!(
+            store
+                .kv_get(&tenant, b"ttl:dead", 200)
+                .expect("get succeeds"),
+            None
+        );
         let page = store
-            .kv_scan(b"ttl:", None, 10, 200)
+            .kv_scan(&tenant, b"ttl:", None, 10, 200)
             .expect("scan should succeed");
         let entries: Vec<(Vec<u8>, Vec<u8>)> = page
             .entries
@@ -634,8 +741,9 @@ mod tests {
     #[test]
     fn kv_update_performs_read_modify_write_inside_one_transaction() {
         let store = TenantStore::create_in_memory().expect("store should open");
+        let tenant = tenant("tenant-a");
         store
-            .kv_put(KvPut::new("counter", "41"))
+            .kv_put(&tenant, KvPut::new("counter", "41"))
             .expect("put should succeed");
 
         let mut increment = |previous: Option<KvEntry>| {
@@ -650,14 +758,14 @@ mod tests {
             )))
         };
         let updated = store
-            .kv_update(b"counter", 0, &mut increment)
+            .kv_update(&tenant, b"counter", 0, &mut increment)
             .expect("update should commit")
             .expect("updated entry should exist");
 
         assert_eq!(updated.value, b"42");
         assert_eq!(
             store
-                .kv_get(b"counter", 0)
+                .kv_get(&tenant, b"counter", 0)
                 .expect("get succeeds")
                 .expect("entry exists")
                 .value,
@@ -668,13 +776,14 @@ mod tests {
     #[test]
     fn ttl_sweep_compare_and_delete_preserves_key_extended_by_racing_set_ex() {
         let store = TenantStore::create_in_memory().expect("store should open");
+        let tenant = tenant("tenant-a");
         store
-            .kv_put(KvPut::new("lease", "old").with_expire_at_ms(100))
+            .kv_put(&tenant, KvPut::new("lease", "old").with_expire_at_ms(100))
             .expect("initial put should succeed");
         store
-            .kv_put(KvPut::new("lease", "new").with_expire_at_ms(1_000))
+            .kv_put(&tenant, KvPut::new("lease", "new").with_expire_at_ms(1_000))
             .expect("racing SET EX extension should commit");
-        insert_stale_expiry_index_for_test(&store, 100, b"lease");
+        insert_stale_expiry_index_for_test(&store, 100, tenant_key(&tenant, b"lease").as_slice());
 
         let sweep = store
             .kv_sweep_expired(200, 10)
@@ -687,7 +796,7 @@ mod tests {
             }
         );
         let entry = store
-            .kv_get(b"lease", 200)
+            .kv_get(&tenant, b"lease", 200)
             .expect("get should succeed")
             .expect("extended key must survive stale expiry index sweep");
         assert_eq!(entry.value, b"new");
@@ -697,8 +806,12 @@ mod tests {
     #[test]
     fn ttl_sweep_deletes_expired_key_with_its_expired_index_entry() {
         let store = TenantStore::create_in_memory().expect("store should open");
+        let tenant = tenant("tenant-a");
         store
-            .kv_put(KvPut::new("session", "dead").with_expire_at_ms(100))
+            .kv_put(
+                &tenant,
+                KvPut::new("session", "dead").with_expire_at_ms(100),
+            )
             .expect("put should succeed");
 
         let sweep = store
@@ -711,12 +824,80 @@ mod tests {
                 stale_index_entries: 0
             }
         );
-        assert_eq!(store.kv_get(b"session", 200).expect("get succeeds"), None);
+        assert_eq!(
+            store
+                .kv_get(&tenant, b"session", 200)
+                .expect("get succeeds"),
+            None
+        );
 
         let second_sweep = store
             .kv_sweep_expired(200, 10)
             .expect("second sweep should succeed");
         assert_eq!(second_sweep, KvSweepOutcome::default());
+    }
+
+    #[test]
+    fn tenant_kv_store_isolates_same_key_inside_storage_seam() {
+        let store = TenantStore::create_in_memory().expect("store should open");
+        let tenant_a = tenant("tenant-a");
+        let tenant_b = tenant("tenant-b");
+
+        store
+            .kv_put(&tenant_a, KvPut::new("shared", "alpha"))
+            .expect("tenant A put succeeds");
+        store
+            .kv_put(&tenant_b, KvPut::new("shared", "bravo"))
+            .expect("tenant B put succeeds");
+
+        assert_eq!(
+            store
+                .kv_get(&tenant_a, b"shared", 0)
+                .expect("tenant A get succeeds")
+                .expect("tenant A entry exists")
+                .value,
+            b"alpha"
+        );
+        assert_eq!(
+            store
+                .kv_get(&tenant_b, b"shared", 0)
+                .expect("tenant B get succeeds")
+                .expect("tenant B entry exists")
+                .value,
+            b"bravo"
+        );
+
+        let tenant_a_page = store
+            .kv_scan(&tenant_a, b"sh", None, 10, 0)
+            .expect("tenant A scan succeeds");
+        assert_eq!(
+            tenant_a_page
+                .entries
+                .iter()
+                .map(|entry| (entry.key.clone(), entry.value.clone()))
+                .collect::<Vec<_>>(),
+            vec![(b"shared".to_vec(), b"alpha".to_vec())]
+        );
+
+        assert!(
+            store
+                .kv_delete(&tenant_a, b"shared")
+                .expect("tenant A delete succeeds")
+        );
+        assert_eq!(
+            store
+                .kv_get(&tenant_a, b"shared", 0)
+                .expect("tenant A get succeeds"),
+            None
+        );
+        assert_eq!(
+            store
+                .kv_get(&tenant_b, b"shared", 0)
+                .expect("tenant B get succeeds")
+                .expect("tenant B entry remains")
+                .value,
+            b"bravo"
+        );
     }
 
     fn insert_stale_expiry_index_for_test(store: &TenantStore, expire_at_ms: i64, key: &[u8]) {

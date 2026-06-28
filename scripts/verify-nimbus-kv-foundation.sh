@@ -328,6 +328,8 @@ c9_bind_test=0
 c9_auth=0
 c9_auth_test=0
 c9_tenant_binding=0
+c9_storage_scope=0
+c9_storage_test=0
 c9_tenant_test=0
 for guard_path in ${COMMON_BIND_GUARD_PATHS}; do
   if [ -d "${guard_path}" ] && grep -rqE 'refuse_non_loopback_bind' "${guard_path}" 2>/dev/null; then
@@ -346,16 +348,22 @@ fi
 if [ -d "${KV_TESTS}" ] && grep -rqE 'unauthenticated|NOAUTH|requires.*auth|auth.*reject|credential' "${KV_TESTS}" 2>/dev/null; then
   c9_auth_test=1
 fi
-if grep_dir 'authenticated_tenant|tenant_key|tenant_prefix|credential.*TenantId|TenantId.*credential|tenant.*credential|credential.*tenant' "${KV_SRC}"; then
+if grep_dir 'authenticated_tenant|credential.*TenantId|TenantId.*credential|tenant.*credential|credential.*tenant' "${KV_SRC}"; then
   c9_tenant_binding=1
+fi
+if grep_dir 'fn kv_get\(&self, tenant: &TenantId|fn kv_put\(&self, tenant: &TenantId|tenant_key\(tenant|untenant_entry|tenant_kv_store_isolates_same_key_inside_storage_seam' "${NIMBUS_STORAGE_SRC}"; then
+  c9_storage_scope=1
+fi
+if cargo test -p nimbus-storage tenant_kv_store_isolates_same_key_inside_storage_seam -- --nocapture >/dev/null 2>&1; then
+  c9_storage_test=1
 fi
 if cargo test -p nimbus-kv --test resp_server tenant_a_credential_cannot_read_tenant_b_keys -- --nocapture >/dev/null 2>&1; then
   c9_tenant_test=1
 fi
-if [ "${c9_helper}" = "1" ] && [ "${c9_uses_helper}" = "1" ] && [ "${c9_bind_test}" = "1" ] && [ "${c9_auth}" = "1" ] && [ "${c9_auth_test}" = "1" ] && [ "${c9_tenant_binding}" = "1" ] && [ "${c9_tenant_test}" = "1" ]; then
-  pass "RESP listener shares the bind guard, requires auth, and proves credential-to-tenant isolation"
+if [ "${c9_helper}" = "1" ] && [ "${c9_uses_helper}" = "1" ] && [ "${c9_bind_test}" = "1" ] && [ "${c9_auth}" = "1" ] && [ "${c9_auth_test}" = "1" ] && [ "${c9_tenant_binding}" = "1" ] && [ "${c9_storage_scope}" = "1" ] && [ "${c9_storage_test}" = "1" ] && [ "${c9_tenant_test}" = "1" ]; then
+  pass "RESP listener shares the bind guard, requires auth, and storage proves credential-to-tenant isolation"
 else
-  fail "F1 security incomplete" "helper=${c9_helper} uses_helper=${c9_uses_helper} bind_test=${c9_bind_test} auth=${c9_auth} auth_test=${c9_auth_test} tenant_binding=${c9_tenant_binding} tenant_test=${c9_tenant_test}"
+  fail "F1 security incomplete" "helper=${c9_helper} uses_helper=${c9_uses_helper} bind_test=${c9_bind_test} auth=${c9_auth} auth_test=${c9_auth_test} tenant_binding=${c9_tenant_binding} storage_scope=${c9_storage_scope} storage_test=${c9_storage_test} tenant_test=${c9_tenant_test}"
 fi
 
 # -------- summary ----------------------------------------------------------

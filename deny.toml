@@ -38,6 +38,7 @@ exceptions = [
   { crate = "ar_archive_writer", allow = ["Apache-2.0 WITH LLVM-exception"] },
   { crate = "tiny-keccak", allow = ["CC0-1.0"] },
   { crate = "varint-rs", allow = ["0BSD"] },
+  { crate = "winx", allow = ["Apache-2.0 WITH LLVM-exception"] },
 ]
 # Workspace crates use the Nimbus Community License (custom, not SPDX)
 private = { ignore = true }
@@ -79,6 +80,7 @@ skip = [
     { crate = "elliptic-curve@0.14.0-rc.28", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "hashbrown@0.15.5", reason = "The pinned rusqlite/imara-diff lanes still carry hashbrown 0.15 while indexmap and OXC carry newer hashbrown lanes." },
     { crate = "hashbrown@0.17.1", reason = "The OXC code-index stack carries hashbrown 0.17 while the broader indexmap stack carries hashbrown 0.16." },
+    { crate = "io-lifetimes@2.0.4", reason = "cap-std 4.0.2 pulls fs-set-times on io-lifetimes 2 while cap-std/io-extras use io-lifetimes 3; keep the duplicate visible until cap-std aligns upstream." },
     { crate = "keccak@0.2.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "nix@0.30.1", reason = "The pinned Deno filesystem and permission stack still carries nix 0.30 while newer workspace stacks use nix 0.31." },
     { crate = "object@0.36.7", reason = "The pinned Deno N-API stack carries object 0.36 while the SWC/stacker support lane carries object 0.37." },

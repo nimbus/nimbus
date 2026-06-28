@@ -84,6 +84,23 @@ fn chdir_is_instance_local_and_does_not_touch_process_cwd() {
 }
 
 #[test]
+fn raw_passthrough_chdir_does_not_touch_process_cwd() {
+    let original = std::env::current_dir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("child")).unwrap();
+    let backend = PassthroughBackend::rooted(root.path());
+
+    backend.chdir(&checked(Path::new("/child"))).unwrap();
+
+    assert_eq!(std::env::current_dir().unwrap(), original);
+    let error = backend
+        .chdir(&checked(Path::new("/missing")))
+        .expect_err("missing target should not be admitted");
+    assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    assert_eq!(std::env::current_dir().unwrap(), original);
+}
+
+#[test]
 fn rooted_passthrough_stays_under_configured_root() {
     let root = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
@@ -117,6 +134,81 @@ fn rooted_passthrough_stays_under_configured_root() {
         )
         .expect_err("rooted passthrough must reject symlink escape");
     assert_eq!(escape.kind(), io::ErrorKind::PermissionDenied);
+}
+
+#[test]
+fn rooted_passthrough_rejects_parent_escape_before_create() {
+    let root = tempfile::tempdir().unwrap();
+    let backend = PassthroughBackend::rooted(root.path());
+    let escape_name = format!(
+        "{}-escape.txt",
+        root.path()
+            .file_name()
+            .expect("tempdir should have basename")
+            .to_string_lossy()
+    );
+    let outside_target = root
+        .path()
+        .parent()
+        .expect("tempdir should have parent")
+        .join(&escape_name);
+    assert!(!outside_target.exists());
+
+    let escape = match backend.open_sync(
+        &checked(&Path::new("/..").join(&escape_name)),
+        OpenOptions::write(true, false, false, None),
+    ) {
+        Ok(_) => panic!("parent traversal must fail before file creation"),
+        Err(error) => error,
+    };
+
+    assert_eq!(escape.kind(), io::ErrorKind::PermissionDenied);
+    assert!(
+        !outside_target.exists(),
+        "escape target outside the root must not be created"
+    );
+}
+
+#[test]
+fn rooted_passthrough_rejects_absolute_symlink_targets() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let backend = PassthroughBackend::rooted(root.path());
+
+    let error = backend
+        .symlink_sync(
+            &checked(&outside.path().join("secret.txt")),
+            &checked(Path::new("/link")),
+            None,
+        )
+        .expect_err("absolute symlink targets must not be admitted");
+
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert!(!root.path().join("link").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn rooted_passthrough_cp_rejects_absolute_symlink_targets() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let source_dir = root.path().join("source");
+    std::fs::create_dir(&source_dir).unwrap();
+    std::os::unix::fs::symlink(outside.path().join("secret.txt"), source_dir.join("link")).unwrap();
+
+    let backend = PassthroughBackend::rooted(root.path());
+    let error = backend
+        .cp_sync(
+            &checked(Path::new("/source")),
+            &checked(Path::new("/destination")),
+        )
+        .expect_err("recursive copy must not admit absolute symlink targets");
+
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert!(
+        !root.path().join("destination/link").exists(),
+        "copy must fail before creating an escaped symlink in the destination tree"
+    );
 }
 
 fn memfs_rc() -> deno_fs::FileSystemRc {
