@@ -253,7 +253,7 @@ pub async fn serve(listener: TcpListener, config: NimbusKvConfig) -> Result<(), 
         let metrics = metrics.clone();
         tokio::spawn(async move {
             if let Err(error) = handle_connection(stream, credentials, store, metrics).await {
-                tracing::warn!(%peer_addr, %error, "nimbus-kv connection ended with error");
+                tracing::warn!(%peer_addr, error = %error.to_string(), "nimbus-kv connection ended with error");
             }
         });
     }

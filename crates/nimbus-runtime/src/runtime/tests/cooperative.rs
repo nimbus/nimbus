@@ -335,10 +335,11 @@ async fn wait_until_active_runtime_instances(
     .await
     .unwrap_or_else(|_| {
         let observed = policy.metrics_snapshot().active_runtime_instances;
-        panic!(
+        let message = format!(
             "{} after {timeout:?}: expected active_runtime_instances={expected}, observed {observed}; {context}",
-            case.failure_context("cooperative slot active-runtime metric did not settle")
-        )
+            case.failure_context("cooperative slot active-runtime metric did not settle"),
+        );
+        std::panic::panic_any(message);
     });
 }
 
