@@ -18,6 +18,7 @@ use tower_http::services::ServeDir;
 
 use crate::adapters::cloud_functions;
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
+use crate::adapters::cloudflare::{self, CloudflareConfig};
 use crate::adapters::convex::{self, ConvexRegistry};
 use crate::adapters::firebase::{self, FirebaseConfig};
 use crate::license::LicenseState;
@@ -75,6 +76,7 @@ pub struct RouterOptions {
     convex_registry: Option<ConvexRegistry>,
     system_convex_registry: Option<ConvexRegistry>,
     cloud_functions_registry: Option<CloudFunctionsRegistry>,
+    cloudflare_config: Option<CloudflareConfig>,
     firebase_config: Option<FirebaseConfig>,
     license_state: LicenseState,
     service_instances: Option<Arc<dyn ServiceInstanceCatalog>>,
@@ -97,6 +99,7 @@ impl RouterOptions {
             convex_registry: None,
             system_convex_registry: None,
             cloud_functions_registry: None,
+            cloudflare_config: None,
             firebase_config: None,
             license_state: LicenseState::community(),
             service_instances: None,
@@ -133,6 +136,11 @@ impl RouterOptions {
 
     pub fn with_firebase_config(mut self, firebase_config: FirebaseConfig) -> Self {
         self.firebase_config = Some(firebase_config);
+        self
+    }
+
+    pub fn with_cloudflare_config(mut self, cloudflare_config: CloudflareConfig) -> Self {
+        self.cloudflare_config = Some(cloudflare_config);
         self
     }
 
@@ -242,6 +250,9 @@ impl RouterOptions {
         if let Some(cloud_functions_registry) = self.cloud_functions_registry {
             config = config.with_cloud_functions(cloud_functions_registry);
         }
+        if let Some(cloudflare_config) = self.cloudflare_config {
+            config = config.with_cloudflare(cloudflare_config);
+        }
         if let Some(firebase_config) = self.firebase_config {
             config = config.with_firebase(firebase_config);
         }
@@ -276,6 +287,7 @@ pub(crate) struct RouterBuildConfig {
     system_convex_registry: Option<ConvexRegistry>,
     application_auth_verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
     cloud_functions_registry: Option<CloudFunctionsRegistry>,
+    cloudflare_config: Option<CloudflareConfig>,
     firebase_config: Option<FirebaseConfig>,
     license_state: LicenseState,
     runtime_service_source: RuntimeServiceSource,
@@ -300,6 +312,7 @@ impl RouterBuildConfig {
             system_convex_registry: None,
             application_auth_verifier: None,
             cloud_functions_registry: None,
+            cloudflare_config: None,
             firebase_config: None,
             license_state: LicenseState::community(),
             runtime_service_source: RuntimeServiceSource::ServiceInstanceCatalog(Arc::new(
@@ -387,6 +400,11 @@ impl RouterBuildConfig {
 
     pub(crate) fn with_firebase(mut self, firebase_config: FirebaseConfig) -> Self {
         self.firebase_config = Some(firebase_config);
+        self
+    }
+
+    pub(crate) fn with_cloudflare(mut self, cloudflare_config: CloudflareConfig) -> Self {
+        self.cloudflare_config = Some(cloudflare_config);
         self
     }
 
@@ -498,6 +516,18 @@ impl RouterBuildConfig {
             )
             .await?;
         }
+        if self.cloudflare_config.is_some() {
+            nimbus_system::record_listener_state_async(
+                &self.engine,
+                "cloudflare",
+                "http",
+                &listen_addr.to_string(),
+                "listening",
+                Some(version),
+                None,
+            )
+            .await?;
+        }
         Ok(())
     }
 
@@ -543,6 +573,7 @@ impl RouterBuildConfig {
             system_convex_registry,
             application_auth_verifier: self.application_auth_verifier,
             cloud_functions_registry,
+            cloudflare_config: self.cloudflare_config,
             firebase_config: self.firebase_config,
             license_state: self.license_state,
             runtime_service_registry: self
@@ -604,6 +635,7 @@ impl RouterBuildConfig {
                 .expect("cloud functions runtime hooks should install from active deployment");
         }
         let firebase_enabled = deployment.firebase_config().is_some();
+        let cloudflare_config = deployment.cloudflare_config();
 
         let local_admin_policy = LocalServerAccessPolicy::standard(state.clone());
         let deploy_admin_policy = LocalServerAccessPolicy::deploy(state.clone());
@@ -636,6 +668,9 @@ impl RouterBuildConfig {
             .merge(build_convex_router());
         if firebase_enabled {
             router = router.merge(build_firebase_router(state.clone()));
+        }
+        if let Some(cloudflare_config) = cloudflare_config {
+            router = router.merge(cloudflare::build_cloudflare_router(cloudflare_config));
         }
         if deployment.cloud_functions_registry().is_some() {
             router = router.fallback(any(cloud_functions::http_handler));

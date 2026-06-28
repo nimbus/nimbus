@@ -40,6 +40,10 @@ pub enum HostCallOperation {
     CtxSchedulerCancel,
     CtxServiceLookup,
     CtxRuntimeEnterNestedCall,
+    CfKvGet,
+    CfKvPut,
+    CfKvDelete,
+    CfKvList,
     RuntimeExtensionCall,
 }
 
@@ -72,6 +76,10 @@ impl HostCallOperation {
             Self::CtxSchedulerCancel => "ctx_scheduler_cancel",
             Self::CtxServiceLookup => "ctx_service_lookup",
             Self::CtxRuntimeEnterNestedCall => "ctx_runtime_enter_nested_call",
+            Self::CfKvGet => "cf_kv_get",
+            Self::CfKvPut => "cf_kv_put",
+            Self::CfKvDelete => "cf_kv_delete",
+            Self::CfKvList => "cf_kv_list",
             Self::RuntimeExtensionCall => "runtime_extension_call",
         }
     }
@@ -100,6 +108,8 @@ impl HostCallOperation {
             Self::CtxRunMutation | Self::CtxRunAction | Self::CtxRuntimeEnterNestedCall => {
                 RuntimeEffectClass::NestedRuntime
             }
+            Self::CfKvGet | Self::CfKvList => RuntimeEffectClass::ObservableRead,
+            Self::CfKvPut | Self::CfKvDelete => RuntimeEffectClass::Write,
             Self::CtxSchedulerRunAfter | Self::CtxSchedulerRunAt | Self::CtxSchedulerCancel => {
                 RuntimeEffectClass::Scheduler
             }
@@ -196,6 +206,56 @@ pub struct RuntimeAsyncExtensionPayload {
     pub operation: String,
     #[serde(default)]
     pub payload: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeAsyncCfKvGetPayload {
+    pub tenant_id: String,
+    pub namespace: String,
+    pub key: String,
+    #[serde(default)]
+    pub value_type: Option<String>,
+    #[serde(default)]
+    pub host_call_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeAsyncCfKvPutPayload {
+    pub tenant_id: String,
+    pub namespace: String,
+    pub key: String,
+    pub value_base64: String,
+    #[serde(default)]
+    pub metadata: Value,
+    #[serde(default)]
+    pub expiration: Option<i64>,
+    #[serde(default)]
+    pub expiration_ttl: Option<i64>,
+    #[serde(default)]
+    pub host_call_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeAsyncCfKvDeletePayload {
+    pub tenant_id: String,
+    pub namespace: String,
+    pub key: String,
+    #[serde(default)]
+    pub host_call_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeAsyncCfKvListPayload {
+    pub tenant_id: String,
+    pub namespace: String,
+    #[serde(default)]
+    pub prefix: Option<String>,
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub host_call_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -344,6 +404,10 @@ pub enum HostCallPayload {
     CtxSchedulerCancel(RuntimeAsyncSchedulerCancelPayload),
     CtxServiceLookup(RuntimeAsyncServiceLookupPayload),
     CtxRuntimeEnterNestedCall(RuntimeSyncNestedCallPayload),
+    CfKvGet(RuntimeAsyncCfKvGetPayload),
+    CfKvPut(RuntimeAsyncCfKvPutPayload),
+    CfKvDelete(RuntimeAsyncCfKvDeletePayload),
+    CfKvList(RuntimeAsyncCfKvListPayload),
     RuntimeExtensionCall(RuntimeAsyncExtensionPayload),
 }
 
@@ -376,6 +440,10 @@ impl HostCallPayload {
             Self::CtxSchedulerCancel(_) => HostCallOperation::CtxSchedulerCancel,
             Self::CtxServiceLookup(_) => HostCallOperation::CtxServiceLookup,
             Self::CtxRuntimeEnterNestedCall(_) => HostCallOperation::CtxRuntimeEnterNestedCall,
+            Self::CfKvGet(_) => HostCallOperation::CfKvGet,
+            Self::CfKvPut(_) => HostCallOperation::CfKvPut,
+            Self::CfKvDelete(_) => HostCallOperation::CfKvDelete,
+            Self::CfKvList(_) => HostCallOperation::CfKvList,
             Self::RuntimeExtensionCall(_) => HostCallOperation::RuntimeExtensionCall,
         }
     }
@@ -408,6 +476,10 @@ impl HostCallPayload {
             Self::CtxSchedulerCancel(payload) => payload.host_call_session_id.as_deref(),
             Self::CtxServiceLookup(payload) => payload.host_call_session_id.as_deref(),
             Self::CtxRuntimeEnterNestedCall(payload) => payload.host_call_session_id.as_deref(),
+            Self::CfKvGet(payload) => payload.host_call_session_id.as_deref(),
+            Self::CfKvPut(payload) => payload.host_call_session_id.as_deref(),
+            Self::CfKvDelete(payload) => payload.host_call_session_id.as_deref(),
+            Self::CfKvList(payload) => payload.host_call_session_id.as_deref(),
         }
     }
 
@@ -485,6 +557,10 @@ impl HostCallPayload {
             HostCallOperation::CtxRuntimeEnterNestedCall => Ok(Self::CtxRuntimeEnterNestedCall(
                 serde_json::from_value(payload)?,
             )),
+            HostCallOperation::CfKvGet => Ok(Self::CfKvGet(serde_json::from_value(payload)?)),
+            HostCallOperation::CfKvPut => Ok(Self::CfKvPut(serde_json::from_value(payload)?)),
+            HostCallOperation::CfKvDelete => Ok(Self::CfKvDelete(serde_json::from_value(payload)?)),
+            HostCallOperation::CfKvList => Ok(Self::CfKvList(serde_json::from_value(payload)?)),
             HostCallOperation::RuntimeExtensionCall => {
                 Ok(Self::RuntimeExtensionCall(serde_json::from_value(payload)?))
             }
@@ -556,7 +632,7 @@ mod tests {
 
     use super::{
         HOST_CALL_ABI_VERSION, HostCallCancellation, HostCallCancellationCause, HostCallEnvelope,
-        HostCallOperation, HostCallRequest, RuntimeAsyncDbGetPayload,
+        HostCallOperation, HostCallRequest, RuntimeAsyncCfKvGetPayload, RuntimeAsyncDbGetPayload,
     };
 
     #[test]
@@ -679,6 +755,16 @@ mod tests {
                 RuntimeEffectClass::NestedRuntime,
             ),
             (
+                HostCallOperation::CfKvGet,
+                RuntimeEffectClass::ObservableRead,
+            ),
+            (HostCallOperation::CfKvPut, RuntimeEffectClass::Write),
+            (HostCallOperation::CfKvDelete, RuntimeEffectClass::Write),
+            (
+                HostCallOperation::CfKvList,
+                RuntimeEffectClass::ObservableRead,
+            ),
+            (
                 HostCallOperation::RuntimeExtensionCall,
                 RuntimeEffectClass::Extension,
             ),
@@ -729,6 +815,28 @@ mod tests {
             super::HostCallPayload::DocumentGet(RuntimeAsyncDbGetPayload {
                 table: "messages".to_string(),
                 id: "doc-1".to_string(),
+                host_call_session_id: None,
+            })
+        );
+
+        let envelope = HostCallEnvelope::try_from(HostCallRequest::new(
+            HostCallOperation::CfKvGet,
+            json!({
+                "tenant_id": "tenant-a",
+                "namespace": "CACHE",
+                "key": "greeting",
+                "value_type": "text",
+            }),
+        ))
+        .expect("matching Cloudflare KV payload should parse");
+        assert_eq!(envelope.operation(), HostCallOperation::CfKvGet);
+        assert_eq!(
+            envelope.payload,
+            super::HostCallPayload::CfKvGet(RuntimeAsyncCfKvGetPayload {
+                tenant_id: "tenant-a".to_string(),
+                namespace: "CACHE".to_string(),
+                key: "greeting".to_string(),
+                value_type: Some("text".to_string()),
                 host_call_session_id: None,
             })
         );

@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::error::{NimbusRuntimeError, Result};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InvocationKind {
@@ -10,6 +12,7 @@ pub enum InvocationKind {
     PaginatedQuery,
     Mutation,
     Action,
+    CloudflareWorkerFetch,
 }
 
 impl InvocationKind {
@@ -19,6 +22,7 @@ impl InvocationKind {
             Self::PaginatedQuery => "paginated_query",
             Self::Mutation => "mutation",
             Self::Action => "action",
+            Self::CloudflareWorkerFetch => "cloudflare_worker_fetch",
         }
     }
 
@@ -41,6 +45,30 @@ pub struct InvocationRequest {
     pub auth: Option<InvocationAuth>,
     #[serde(default, skip_serializing)]
     pub services: InvocationServices,
+}
+
+impl InvocationRequest {
+    pub(crate) fn runtime_invoke_expression(
+        &self,
+        module_specifier: Option<&str>,
+    ) -> Result<String> {
+        let request_json = serde_json::to_string(self)?;
+        match self.kind {
+            InvocationKind::CloudflareWorkerFetch => {
+                let module_specifier = module_specifier.ok_or_else(|| {
+                    NimbusRuntimeError::Contract(
+                        "Cloudflare Worker fetch invocation requires a loaded runtime bundle"
+                            .to_string(),
+                    )
+                })?;
+                let module_specifier_json = serde_json::to_string(module_specifier)?;
+                Ok(format!(
+                    "globalThis.__nimbusInvokeCloudflareWorkerFetch(import({module_specifier_json}), {request_json})"
+                ))
+            }
+            _ => Ok(format!("globalThis.__nimbusInvoke({request_json})")),
+        }
+    }
 }
 
 pub type InvocationServices = BTreeMap<String, InvocationServiceBinding>;

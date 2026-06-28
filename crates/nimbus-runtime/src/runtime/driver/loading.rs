@@ -24,7 +24,9 @@ use super::super::realm_lease::{
     RuntimeRealmLeaseOwner,
 };
 use super::super::realm_lifecycle::destroy_fresh_realm;
-use super::super::{InvocationRequest, NimbusRuntime, RuntimeBundle, RuntimeBundleEntrypointKind};
+use super::super::{
+    InvocationKind, InvocationRequest, NimbusRuntime, RuntimeBundle, RuntimeBundleEntrypointKind,
+};
 use super::tracing::{
     trace_snapshot_seeded_runtime_error, trace_snapshot_seeded_runtime_error_with_optional_bundle,
     trace_snapshot_seeded_runtime_phase, trace_snapshot_seeded_runtime_phase_with_optional_bundle,
@@ -868,8 +870,12 @@ impl NimbusRuntime {
             lease.mark_bundle_loaded().map_err(realm_lease_error)?;
         }
 
-        let request_json = serde_json::to_string(request)?;
-        let expression = format!("globalThis.__nimbusInvoke({request_json})");
+        let module_specifier = if matches!(request.kind, InvocationKind::CloudflareWorkerFetch) {
+            Some(bundle.module_specifier()?.to_string())
+        } else {
+            None
+        };
+        let expression = request.runtime_invoke_expression(module_specifier.as_deref())?;
         trace_snapshot_seeded_runtime_phase(
             construction_mode,
             bundle,
@@ -984,8 +990,14 @@ impl NimbusRuntime {
         construction_mode: V8RuntimeConstructionMode,
         context: Option<&RuntimeInvocationContext>,
     ) -> Result<serde_json::Value> {
-        let request_json = serde_json::to_string(request)?;
-        let expression = format!("globalThis.__nimbusInvoke({request_json})");
+        let module_specifier = match (
+            matches!(request.kind, InvocationKind::CloudflareWorkerFetch),
+            bundle,
+        ) {
+            (true, Some(bundle)) => Some(bundle.module_specifier()?.to_string()),
+            (true, None) | (false, _) => None,
+        };
+        let expression = request.runtime_invoke_expression(module_specifier.as_deref())?;
         trace_snapshot_seeded_runtime_phase_with_optional_bundle(
             construction_mode,
             bundle,

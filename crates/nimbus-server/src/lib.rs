@@ -25,6 +25,10 @@ mod tls;
 mod ws;
 
 pub use adapters::cloud_functions::CloudFunctionsRegistry;
+pub use adapters::cloudflare::{
+    CloudflareBindingRegistry, CloudflareConfig, D1DatabaseBinding, DurableObjectBinding,
+    KvNamespaceBinding, R2BucketBinding, WranglerConfigError,
+};
 pub use adapters::convex::ConvexRegistry;
 pub use adapters::dynamodb::DynamoDbConfig;
 pub use adapters::firebase::FirebaseConfig;

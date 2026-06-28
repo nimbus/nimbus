@@ -1,4 +1,5 @@
 pub(crate) mod cloud_functions;
+pub mod cloudflare;
 pub(crate) mod convex;
 pub mod dynamodb;
 pub(crate) mod firebase;

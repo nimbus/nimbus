@@ -7,10 +7,13 @@ mod sandbox_templates;
 mod workload_control;
 
 pub use catalog::{
-    BuiltInServiceSpec, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
-    ExternalAuthPolicy, ExternalServiceSpec, HealthCheckPolicy, SandboxResource, ServiceBackend,
-    ServiceDefinition, ServiceDefinitionCatalog, ServiceDefinitionSource, ServiceInstanceCatalog,
-    SessionLifecycleState, SessionResource, SessionTarget, SessionTargetSnapshot,
+    BuiltInServiceSpec, DurableObjectActivationLease, DurableObjectId, DurableObjectIdError,
+    DurableObjectInstance, DurableObjectInstanceKey, DurableObjectNamespace,
+    DurableObjectNamespaceError, DurableObjectStorageHandle, EmptyServiceDefinitionCatalog,
+    EmptyServiceInstanceCatalog, ExternalAuthPolicy, ExternalServiceSpec, HealthCheckPolicy,
+    SandboxResource, ServiceBackend, ServiceDefinition, ServiceDefinitionCatalog,
+    ServiceDefinitionSource, ServiceInstanceCatalog, SessionLifecycleState, SessionResource,
+    SessionTarget, SessionTargetSnapshot,
 };
 pub use manager::{
     LocalBuildAdmission, NoopServiceEvidenceWriter, ServiceEvidenceFuture, ServiceEvidenceWriter,

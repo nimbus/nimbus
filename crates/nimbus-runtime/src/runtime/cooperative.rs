@@ -21,7 +21,7 @@ use super::bootstrap::{clear_runtime_wait_until_pending, take_runtime_wait_until
 use super::helpers::{deserialize_json_value, ensure_wait_until_drain_succeeded, runtime_js_error};
 use super::realm_lifecycle::destroy_fresh_realm;
 use super::{
-    FreshRealmInvocationTrace, InvocationRequest, NimbusRuntime, RuntimeBundle,
+    FreshRealmInvocationTrace, InvocationKind, InvocationRequest, NimbusRuntime, RuntimeBundle,
     RuntimeInvocationDriver, RuntimeInvocationDriverPrepare,
 };
 
@@ -507,8 +507,13 @@ impl NimbusRuntime {
                 .await?;
             (Ok(value), Some(realm))
         } else {
-            let request_json = serde_json::to_string(&request)?;
-            let expression = format!("globalThis.__nimbusInvoke({request_json})");
+            let module_specifier = if matches!(request.kind, InvocationKind::CloudflareWorkerFetch)
+            {
+                Some(bundle.module_specifier()?.to_string())
+            } else {
+                None
+            };
+            let expression = request.runtime_invoke_expression(module_specifier.as_deref())?;
             (
                 driver
                     .runtime
