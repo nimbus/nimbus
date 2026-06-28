@@ -132,7 +132,7 @@ impl CooperativeLockerRuntimeSlot {
                     Ok(_) => driver
                         .wait_until_phase_timeout_error()
                         .map_or(response, Err),
-                    Err(error) => Err(error),
+                    Err(error) => Err(driver.classify_wait_until_drain_error(error)),
                 };
                 self.destroy_fresh_realm(&mut driver);
                 self.completed = Some((driver, result));
@@ -203,7 +203,7 @@ impl CooperativeLockerRuntimeSlot {
                                 Ok(_) => driver
                                     .wait_until_phase_timeout_error()
                                     .map_or(response, Err),
-                                Err(error) => Err(error),
+                                Err(error) => Err(driver.classify_wait_until_drain_error(error)),
                             };
                             self.destroy_fresh_realm(&mut driver);
                             self.completed = Some((driver, result));
@@ -214,6 +214,8 @@ impl CooperativeLockerRuntimeSlot {
                         )),
                     };
                     drop(locked);
+                    let result =
+                        result.map_err(|error| driver.classify_wait_until_drain_error(error));
                     self.destroy_fresh_realm(&mut driver);
                     self.completed = Some((driver, result));
                     return Ok(CooperativeRuntimeSlotPoll::Completed);

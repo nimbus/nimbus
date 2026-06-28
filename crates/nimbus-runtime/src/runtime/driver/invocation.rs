@@ -91,6 +91,24 @@ impl RuntimeInvocationDriver {
         None
     }
 
+    pub(crate) fn classify_wait_until_drain_error(
+        &self,
+        error: crate::error::NimbusRuntimeError,
+    ) -> crate::error::NimbusRuntimeError {
+        match error {
+            // A no-ref never-resolving waitUntil promise leaves no event-loop work to poll,
+            // so deno_core reports a pending promise before the watchdog can terminate V8.
+            // Nimbus still treats the uncompleted background phase as system-timeout bounded.
+            crate::error::NimbusRuntimeError::JavaScript(message)
+                if wait_until_drain_stalled_without_event_loop(&message) =>
+            {
+                self.system_timeout_triggered.store(true, Ordering::SeqCst);
+                crate::error::NimbusRuntimeError::SystemTimeout(self.policy.limits().system_timeout)
+            }
+            other => other,
+        }
+    }
+
     pub(crate) fn record_fresh_realm_promise_resolve(&self, duration: Duration) {
         self.policy
             .metrics()
@@ -308,18 +326,24 @@ impl NimbusRuntime {
                             }
                             if take_runtime_wait_until_pending(&mut driver.runtime) {
                                 driver.begin_wait_until_phase().await?;
-                                self.drain_wait_until_with_trace(
-                                    &mut driver.runtime,
-                                    Some(&realm),
-                                    Some(&bundle),
-                                    &request,
-                                    driver.construction_mode,
-                                    Some(&context),
-                                )
-                                .await?;
-                                match driver.wait_until_phase_timeout_error() {
-                                    Some(error) => Err(error),
-                                    None => Ok(response),
+                                let drain = self
+                                    .drain_wait_until_with_trace(
+                                        &mut driver.runtime,
+                                        Some(&realm),
+                                        Some(&bundle),
+                                        &request,
+                                        driver.construction_mode,
+                                        Some(&context),
+                                    )
+                                    .await;
+                                match drain {
+                                    Ok(()) => match driver.wait_until_phase_timeout_error() {
+                                        Some(error) => Err(error),
+                                        None => Ok(response),
+                                    },
+                                    Err(error) => {
+                                        Err(driver.classify_wait_until_drain_error(error))
+                                    }
                                 }
                             } else {
                                 Ok(response)
@@ -371,18 +395,22 @@ impl NimbusRuntime {
                 }
                 if take_runtime_wait_until_pending(&mut driver.runtime) {
                     driver.begin_wait_until_phase().await?;
-                    self.drain_wait_until_with_trace(
-                        &mut driver.runtime,
-                        None,
-                        Some(&bundle),
-                        &request,
-                        driver.construction_mode,
-                        Some(&context),
-                    )
-                    .await?;
-                    match driver.wait_until_phase_timeout_error() {
-                        Some(error) => Err(error),
-                        None => Ok(response),
+                    let drain = self
+                        .drain_wait_until_with_trace(
+                            &mut driver.runtime,
+                            None,
+                            Some(&bundle),
+                            &request,
+                            driver.construction_mode,
+                            Some(&context),
+                        )
+                        .await;
+                    match drain {
+                        Ok(()) => match driver.wait_until_phase_timeout_error() {
+                            Some(error) => Err(error),
+                            None => Ok(response),
+                        },
+                        Err(error) => Err(driver.classify_wait_until_drain_error(error)),
                     }
                 } else {
                     Ok(response)
@@ -558,6 +586,12 @@ impl NimbusRuntime {
             record_replacement_on_error,
         })
     }
+}
+
+fn wait_until_drain_stalled_without_event_loop(message: &str) -> bool {
+    message.contains("waitUntil drain is still pending but the event loop has already resolved")
+        || message
+            .contains("Promise resolution is still pending but the event loop has already resolved")
 }
 
 fn realm_lease_condemnation_reason_from_flags(

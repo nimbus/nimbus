@@ -416,6 +416,52 @@ export {};
 }
 
 #[tokio::test]
+async fn pir4_wait_until_system_timeout_bounds_unreferenced_pending_background_work() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function () {
+  globalThis.__nimbusWaitUntil(new Promise(() => {}));
+  return { ok: true };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.execution_timeout = std::time::Duration::from_secs(1);
+    limits.system_timeout = std::time::Duration::from_millis(300);
+    let runtime = NimbusRuntime::with_limits(Arc::new(RecordingHost::default()), limits);
+    let error = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:get".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect_err("unreferenced pending waitUntil work should be bounded by system timeout");
+
+    match error {
+        NimbusRuntimeError::SystemTimeout(timeout) => {
+            assert_eq!(timeout, std::time::Duration::from_millis(300));
+        }
+        other => panic!("unexpected unreferenced waitUntil timeout error: {other}"),
+    }
+    assert_eq!(runtime.policy.metrics_snapshot().timed_out_invocations, 1);
+}
+
+#[tokio::test]
 async fn pir4_wait_until_drains_on_cooperative_queries() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");

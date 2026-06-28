@@ -6799,7 +6799,7 @@ async fn invoke_node_full_fresh_realm_with_driver(
                             Some(error) => Err(error),
                             None => Ok(response),
                         },
-                        Err(error) => Err(error),
+                        Err(error) => Err(driver.classify_wait_until_drain_error(error)),
                     }
                 } else {
                     Ok(response)
