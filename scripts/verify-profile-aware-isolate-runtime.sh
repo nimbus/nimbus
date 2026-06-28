@@ -1247,9 +1247,11 @@ if [ -f "${RUNTIME_CONSTRUCTION}" ] &&
     '__nimbusInstallPerformanceNowCoarsening' \
     '__nimbusDisableBlockingAtomicsWait' \
     '__nimbusHideSharedArrayBuffer' \
+    '__nimbusDisableSharedWebAssemblyMemory' \
     '__nimbusInstallSideChannelHardening' \
     'Atomics.waitAsync' \
     'SharedArrayBuffer' \
+    'WebAssembly.Memory' \
     '<nimbus-runtime:bootstrap:side-channel-hardening>' \
     'pir3_side_channel_hardening_source_coarsens_timers_and_removes_shared_memory' >/tmp/pir3-bootstrap-missing.txt &&
   contains 'SharedArrayBufferStore' "${RUNTIME_V8_EMBEDDER}" &&
@@ -1282,6 +1284,10 @@ if [ -f "${PIR3_SIDE_CHANNEL_TEST}" ] &&
     'RuntimeLimits::application_node26\(\)' \
     'RuntimeLimits::application_node22_local_development\(\)' \
     'SharedArrayBuffer' \
+    'wasmPlainMemory' \
+    'wasmSharedMemory' \
+    '\[object ArrayBuffer\]' \
+    'Nimbus disables shared WebAssembly memory' \
     'Atomics.wait' \
     'Atomics.waitAsync' \
     'Date.now' \
