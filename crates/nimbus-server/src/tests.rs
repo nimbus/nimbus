@@ -1430,6 +1430,8 @@ mod auth;
 mod convex_functions;
 #[path = "tests/convex_runtime.rs"]
 mod convex_runtime;
+#[path = "tests/convex_tenant_exposure.rs"]
+mod convex_tenant_exposure;
 #[path = "tests/core_http.rs"]
 mod core_http;
 #[path = "tests/cors.rs"]
