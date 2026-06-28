@@ -976,12 +976,12 @@ let nimbusRuntimeCurrentCwd = null;
 function seedNodeProcessCwd(nodeProcess) {
   if (
     !nodeProcess ||
-    typeof nodeProcess !== "object" ||
-    nodeProcess[nimbusProcessCwdPatched] === true
+    typeof nodeProcess !== "object"
   ) {
     return;
   }
 
+  const alreadyPatched = nodeProcess[nimbusProcessCwdPatched] === true;
   const originalCwd = typeof nodeProcess.cwd === "function"
     ? nodeProcess.cwd.bind(nodeProcess)
     : null;
@@ -1033,12 +1033,20 @@ function seedNodeProcessCwd(nodeProcess) {
     writable: true,
   });
 
-  Object.defineProperty(nodeProcess, nimbusProcessCwdPatched, {
-    value: true,
-    configurable: false,
-    enumerable: false,
-    writable: false,
-  });
+  if (!alreadyPatched) {
+    Object.defineProperty(nodeProcess, nimbusProcessCwdPatched, {
+      value: true,
+      configurable: false,
+      enumerable: false,
+      writable: false,
+    });
+  }
+}
+
+function refreshNodeProcessCwd() {
+  seedNodeProcessCwd(nodeProcessBuiltin);
+  seedNodeProcessCwd(internals.nodeGlobals?.process);
+  seedNodeProcessCwd(globalThis.process);
 }
 
 function seedNodeProcessPlatformMetadata(nodeProcess) {
@@ -4021,6 +4029,12 @@ seedNodeProcessFinalization(internals.nodeGlobals?.process);
 seedNodeProcessFatalGuards(internals.nodeGlobals?.process);
 installNimbusProcessDlopenErrorMapping(internals.nodeGlobals?.process);
 seedNodeProcessCwd(globalThis.process);
+Object.defineProperty(globalThis, "__nimbusRefreshNodeProcessCwd", {
+  value: refreshNodeProcessCwd,
+  configurable: true,
+  enumerable: false,
+  writable: true,
+});
 seedNodeProcessPlatformMetadata(globalThis.process);
 seedNodeProcessStdio(globalThis.process);
 seedNodeProcessExecPath(globalThis.process);

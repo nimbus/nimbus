@@ -1375,6 +1375,9 @@ const RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE: &str = r#"
 __nimbusNextHostCallSessionId = 1;
 __nimbusInvocationGeneration++;
 __nimbusResetWaitUntil();
+if (typeof globalThis.__nimbusRefreshNodeProcessCwd === "function") {
+  globalThis.__nimbusRefreshNodeProcessCwd();
+}
 {
   const __nimbusRuntimeExecPath = __nimbusCoreOps.op_nimbus_runtime_exec_path();
   if (
