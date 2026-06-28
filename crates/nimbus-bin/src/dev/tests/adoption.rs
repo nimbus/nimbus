@@ -559,7 +559,8 @@ async fn covered_app_round_trips_firestore_via_emulator_connection() {
         .firebase
         .take()
         .expect("dev-shaped Firestore client server must mount Firebase routes");
-    enablement.firebase = Some(firebase.with_emulator_mock_user_token_auth());
+    enablement.firebase =
+        Some(nimbus_server::enable_firebase_emulator_mock_user_token_auth(firebase));
     let engine = std::sync::Arc::new(
         nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"),
     );

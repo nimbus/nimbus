@@ -28,6 +28,17 @@ pub use adapters::cloud_functions::CloudFunctionsRegistry;
 pub use adapters::convex::ConvexRegistry;
 pub use adapters::dynamodb::DynamoDbConfig;
 pub use adapters::firebase::FirebaseConfig;
+/// Enables Firebase emulator mock-user-token auth for dev/test servers.
+///
+/// The default Firebase config still rejects emulator mock tokens; callers must
+/// opt into this explicitly when they are mounting an emulator-compatible
+/// surface.
+#[must_use]
+pub fn enable_firebase_emulator_mock_user_token_auth(
+    firebase_config: FirebaseConfig,
+) -> FirebaseConfig {
+    firebase_config.with_emulator_mock_user_token_auth()
+}
 pub use adapters::mongodb::{
     AuthConfig as MongoDbAuthConfig, CredentialRegistry as MongoDbCredentialRegistry, MongoDbConfig,
 };
