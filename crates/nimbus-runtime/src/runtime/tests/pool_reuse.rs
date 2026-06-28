@@ -6,7 +6,7 @@
 //!   the prebuilt rusty_v8 regardless of the cargo feature, so an in-process run would crash
 //!   the shared binary.
 //! - CONTROLS (`crash(N): ...`) abort BY DESIGN; the harness asserts they die with a cage
-//!   signature (vector.h:415 / Unknown external reference / SIGBUS). They do NOT run JS — they
+//!   signature (vector.h:415 / index<size / Unknown external reference / SIGBUS). They do NOT run JS — they
 //!   abort during construction, before JS would run.
 //! - FIXES (`fix: ...`) must SUCCEED; build-only fixes also execute `BUILTIN_SMOKE_JS` to
 //!   assert the isolate runs, not merely constructs.
@@ -33,7 +33,7 @@ use crate::limits::{
 /// cannot abort the shared test binary.
 ///
 /// `fix: parent => child` asserts the child SUCCEEDS; `crash(N): parent => child` asserts the
-/// child ABORTS by SIGABRT/SIGBUS within N attempts (the non-vacuousness controls — N>1 only
+/// child ABORTS by a cage signal within N attempts (the non-vacuousness controls — N>1 only
 /// for the racy concurrent races). Crash parents are feature-gated because feature-off there is
 /// no cage and the child cannot crash. Parents are named `isol_*` and are the runnable entries;
 /// the feature-on CI lane filters on `isol_`.
@@ -74,7 +74,7 @@ macro_rules! isolated_pool_reuse_tests {
 // aborts by signal (non-vacuous); fix/safety tests assert success. Feature-on CI runs these
 // `isol_*` parents (filter `isol_`); feature-off they pass trivially through a cage-less child.
 isolated_pool_reuse_tests! {
-    // crash-by-design controls (must ABORT by SIGABRT/SIGBUS; feature-on only):
+    // crash-by-design controls (must ABORT by cage signal; feature-on only):
     crash(6): isol_concurrent_cross_profile_crashes
         => concurrent_cross_profile_creation_without_drops_does_not_abort,
     crash(6): isol_concurrent_both_profile_crashes
@@ -1992,7 +1992,7 @@ fn anchor_ro_heap_persists_past_isolate_disposal_same_thread() {
 /// CONTROL — the parent asserts this child dies by signal. If this ever STOPS crashing,
 /// dispose-after-install just became safe and the parked anchor can be reclaimed.
 #[test]
-#[ignore = "CRASH CONTROL: aborts by SIGABRT/SIGBUS by design; run only via the crash harness"]
+#[ignore = "CRASH CONTROL: aborts by cage signal by design; run only via the crash harness"]
 fn disposed_anchor_thread_exit_makes_crash_return() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = std::sync::Arc::new(tempdir.path().join("bundle.mjs"));
