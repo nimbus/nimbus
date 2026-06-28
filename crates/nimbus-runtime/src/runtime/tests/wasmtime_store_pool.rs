@@ -108,6 +108,7 @@ fn nimbus_function_component_wat() -> &'static str {
             (global $heap (mut i32) (i32.const 64))
             (data (i32.const 0) "\10\00\00\00\0b\00\00\00")
             (data (i32.const 16) "{\"ok\":true}")
+            (data (i32.const 48) "store-pool")
             (func $cabi_realloc (type $realloc_t)
               (param $old_ptr i32)
               (param $old_size i32)
