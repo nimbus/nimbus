@@ -85,12 +85,31 @@ impl RuntimePolicy {
         self
     }
 
+    /// Carry an existing metrics handle onto this policy instead of the fresh
+    /// one allocated at construction.
+    ///
+    /// Observability-only: `RuntimeMetrics` is read solely through
+    /// `metrics_snapshot()` and never feeds a scheduling, admission, or
+    /// fairness decision. Build-time policy re-derivations
+    /// (`with_host_resource_governor`) allocate a fresh metrics `Arc` via
+    /// `from_parts`; threading the source lane's `Arc` through this builder keeps
+    /// the observer (which reads the pre-build handle) and the worker (which
+    /// increments the post-build executor's policy) pointed at the same counters
+    /// without altering any metric value or runtime behavior.
+    pub fn with_metrics(mut self, metrics: Arc<RuntimeMetrics>) -> Self {
+        self.metrics = metrics;
+        self
+    }
+
     pub fn clone_with_effective_scaling_plan(&self, plan: EffectiveRuntimeScalingPlan) -> Self {
         self.clone_with_effective_scaling_plans(RuntimeScalingPlanSet::single(plan))
     }
 
     pub fn clone_with_effective_scaling_plans(&self, plans: RuntimeScalingPlanSet) -> Self {
         Self {
+            // Clone derivations preserve runtime-owned handles. Rebuilding the
+            // policy here would silently detach metrics, concurrency permits,
+            // and injected filesystem authority from the source policy.
             runtime_instance_semaphore: self.runtime_instance_semaphore.clone(),
             metrics: self.metrics.clone(),
             limits: self.limits.clone(),

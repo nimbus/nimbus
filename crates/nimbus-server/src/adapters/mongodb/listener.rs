@@ -11,46 +11,84 @@ use nimbus_mongodb::commands;
 use nimbus_mongodb::connection::{ConnectionState, next_request_id};
 use nimbus_mongodb::error::MongoError;
 use nimbus_mongodb::wire::{self, WireError};
+use nimbus_mongodb::{CredentialRegistry, MongoAuth};
+
+/// The owned auth source a spawned MongoDB listener carries.
+///
+/// Two modes, matching [`MongoAuth`]: [`Unbound`](MongoAuthSource::Unbound) wraps
+/// the single tenant-agnostic credential (`$db` decides the tenant, loopback-only)
+/// and [`Bound`](MongoAuthSource::Bound) wraps a [`CredentialRegistry`]
+/// (authentication decides the tenant, non-loopback-capable). The listener owns
+/// this for the connection's lifetime and lends a borrowed [`MongoAuth`] to
+/// [`commands::dispatch_authed`] per command, so both modes serve through one
+/// dispatch path.
+#[derive(Debug, Clone)]
+pub enum MongoAuthSource {
+    /// The single tenant-agnostic credential (`$db` decides the tenant).
+    Unbound(Arc<AuthConfig>),
+    /// Per-username credential bindings (authentication decides the tenant).
+    Bound(Arc<CredentialRegistry>),
+}
+
+impl MongoAuthSource {
+    /// Whether authentication binds a specific tenant (bound mode).
+    ///
+    /// Mirrors [`MongoAuth::is_tenant_bound`]; the bind guard
+    /// ([`guard_bind_address`]) permits a non-loopback bind only when this is
+    /// `true`.
+    #[must_use]
+    pub fn is_tenant_bound(&self) -> bool {
+        matches!(self, MongoAuthSource::Bound(_))
+    }
+
+    /// Borrow this source as a [`MongoAuth`] for one dispatch call.
+    fn as_mongo_auth(&self) -> MongoAuth<'_> {
+        match self {
+            MongoAuthSource::Unbound(config) => MongoAuth::Unbound(config),
+            MongoAuthSource::Bound(registry) => MongoAuth::Bound(registry),
+        }
+    }
+}
 
 /// Fail-closed bind guard for the MongoDB listener.
 ///
 /// This guard is load-bearing for the adapter's security model, not a convenience
-/// default. The adapter authenticates against a single, tenant-agnostic SCRAM
-/// credential (`AuthConfig`) and selects the tenant from the requested database name
-/// (the wire `$db`) rather than from the authenticated user — so a network-reachable
-/// listener would let any holder of that one credential reach every tenant by varying
-/// `$db`. The invariant is therefore: **a non-loopback bind is permitted only when the
-/// credential authenticates a specific tenant** (`AuthConfig::is_tenant_bound`; the
-/// credential->TenantId binding is M9(a), issue #23). The refusal is derived from that
-/// binding state, not hardcoded, so there is no one-line path to a non-loopback bind
-/// without the binding.
+/// default. In **unbound** mode the adapter authenticates against a single,
+/// tenant-agnostic SCRAM credential and selects the tenant from the requested
+/// database name (the wire `$db`) rather than from the authenticated user — so a
+/// network-reachable listener would let any holder of that one credential reach
+/// every tenant by varying `$db`. The invariant is therefore: **a non-loopback
+/// bind is permitted only when authentication binds a specific tenant**
+/// (`tenant_bound`; the credential->TenantId binding is M9(a), issue #23). In
+/// **bound** mode each credential resolves to exactly one tenant and a cross-tenant
+/// `$db` is refused, so a non-loopback bind is safe and permitted. The refusal is
+/// derived from the auth mode, not hardcoded, so there is no one-line path to a
+/// non-loopback bind without the binding.
 ///
 /// The check runs at the bind seam (`WireProtocolAdapter::guard`), which ABORTS BOOT
-/// before the listener serves a byte (see `adapters::wire`): reconfiguring MongoDB to a
-/// non-loopback address yields an immediate, unmissable startup failure pointing at
-/// #23, not a server that comes up subtly exposed. Today no credential is tenant-bound,
-/// so every non-loopback bind is refused; the only future allow is a non-loopback bind
-/// whose credential is tenant-bound.
-pub(crate) fn guard_bind_address(addr: SocketAddr, auth: &AuthConfig) -> std::io::Result<()> {
+/// before the listener serves a byte (see `adapters::wire`): reconfiguring an unbound
+/// MongoDB listener to a non-loopback address yields an immediate, unmissable startup
+/// failure pointing at #23, not a server that comes up subtly exposed.
+pub(crate) fn guard_bind_address(addr: SocketAddr, tenant_bound: bool) -> std::io::Result<()> {
     if addr.ip().is_loopback() {
         return Ok(());
     }
-    if !auth.is_tenant_bound() {
+    if !tenant_bound {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!(
                 "MongoDB listener refuses to bind non-loopback address {addr}: the adapter selects \
                  the tenant from the wire $db under a single tenant-agnostic credential, so a \
                  non-loopback bind requires per-tenant credential binding (credential->TenantId). \
-                 Bind to a loopback address, or implement credential->TenantId binding first \
-                 (see issue #23)."
+                 Bind to a loopback address, or supply per-tenant credentials \
+                 (NIMBUS_MONGODB_CREDENTIALS) first (see issue #23)."
             ),
         ));
     }
     Ok(())
 }
 
-pub async fn run_listener(listener: TcpListener, engine: Arc<Engine>, auth: Arc<AuthConfig>) {
+pub async fn run_listener(listener: TcpListener, engine: Arc<Engine>, auth: MongoAuthSource) {
     let local_addr = listener.local_addr().ok();
     info!("MongoDB listener started on {:?}", local_addr);
 
@@ -58,10 +96,12 @@ pub async fn run_listener(listener: TcpListener, engine: Arc<Engine>, auth: Arc<
         match listener.accept().await {
             Ok((stream, addr)) => {
                 let engine_handle = engine.clone();
-                let auth_cfg = auth.clone();
+                let auth_source = auth.clone();
                 debug!("MongoDB connection from {addr}");
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, addr, engine_handle, auth_cfg).await {
+                    if let Err(e) =
+                        handle_connection(stream, addr, engine_handle, auth_source).await
+                    {
                         match e {
                             WireError::ConnectionClosed => {
                                 debug!("MongoDB connection from {addr} closed");
@@ -84,7 +124,7 @@ async fn handle_connection(
     stream: tokio::net::TcpStream,
     addr: SocketAddr,
     engine: Arc<Engine>,
-    auth: Arc<AuthConfig>,
+    auth: MongoAuthSource,
 ) -> Result<(), WireError> {
     let (read_half, write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
@@ -102,7 +142,18 @@ async fn handle_connection(
         let command_name = commands::extract_command_name(&body_doc);
         let response_doc = match &command_name {
             Some(name) => {
-                match commands::dispatch(name, &body_doc, &mut conn, &engine, &auth).await {
+                // Dispatch under the listener's auth mode. In bound mode this
+                // routes through `MongoAuth::Bound`, so authentication decides the
+                // tenant and a cross-tenant wire `$db` is refused.
+                match commands::dispatch_authed(
+                    name,
+                    &body_doc,
+                    &mut conn,
+                    &engine,
+                    &auth.as_mongo_auth(),
+                )
+                .await
+                {
                     Ok(doc) => doc,
                     Err(e) => e.to_error_doc(),
                 }
@@ -121,6 +172,7 @@ async fn handle_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nimbus_core::TenantId;
     use nimbus_testing::EngineFixture;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -185,7 +237,10 @@ mod tests {
         tokio::spawn(run_listener(
             listener,
             fixture.engine(),
-            Arc::new(AuthConfig::new("test-user".into(), "test-password".into())),
+            MongoAuthSource::Unbound(Arc::new(AuthConfig::new(
+                "test-user".into(),
+                "test-password".into(),
+            ))),
         ));
 
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -201,15 +256,18 @@ mod tests {
     #[test]
     fn listener_refuses_non_loopback_bind_while_credential_is_unbound() {
         let addr: SocketAddr = "0.0.0.0:27017".parse().unwrap();
-        let auth = AuthConfig::new("test-user".into(), "test-password".into());
+        let unbound = MongoAuthSource::Unbound(Arc::new(AuthConfig::new(
+            "test-user".into(),
+            "test-password".into(),
+        )));
         assert!(
-            !auth.is_tenant_bound(),
+            !unbound.is_tenant_bound(),
             "the shipped credential is tenant-agnostic; this test exercises the unbound path"
         );
         // Refusal is at the guard (bind seam), which aborts boot before the listener serves a
-        // byte — a startup failure, not a per-connection rejection. The only future allow is a
-        // non-loopback bind whose credential is tenant-bound (M9a, #23).
-        let error = guard_bind_address(addr, &auth)
+        // byte — a startup failure, not a per-connection rejection. The only allow is a
+        // non-loopback bind whose credentials are tenant-bound (M9a, #23).
+        let error = guard_bind_address(addr, unbound.is_tenant_bound())
             .expect_err("non-loopback MongoDB bind must be refused while credentials are unbound");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         assert!(error.to_string().contains("non-loopback"));
@@ -217,10 +275,26 @@ mod tests {
     }
 
     #[test]
-    fn listener_allows_loopback_bind() {
+    fn listener_permits_non_loopback_bind_when_credentials_are_bound() {
+        // The guard flip: bound (per-tenant) credentials make authentication
+        // decide the tenant, so a non-loopback bind is permitted.
+        let addr: SocketAddr = "0.0.0.0:27017".parse().unwrap();
+        let bound = MongoAuthSource::Bound(Arc::new(CredentialRegistry::new().bind(
+            "user-a",
+            TenantId::new("tenant-a").unwrap(),
+            "secret-a",
+        )));
+        assert!(bound.is_tenant_bound());
+        guard_bind_address(addr, bound.is_tenant_bound())
+            .expect("non-loopback MongoDB bind must be permitted with bound credentials");
+    }
+
+    #[test]
+    fn listener_allows_loopback_bind_in_either_mode() {
         let addr: SocketAddr = "127.0.0.1:27017".parse().unwrap();
-        let auth = AuthConfig::new("test-user".into(), "test-password".into());
-        guard_bind_address(addr, &auth).expect("loopback MongoDB bind must be permitted");
+        // Loopback is always permitted, bound or not.
+        guard_bind_address(addr, false).expect("loopback unbound bind must be permitted");
+        guard_bind_address(addr, true).expect("loopback bound bind must be permitted");
     }
 
     #[tokio::test]
@@ -232,7 +306,10 @@ mod tests {
         tokio::spawn(run_listener(
             listener,
             fixture.engine(),
-            Arc::new(AuthConfig::new("test-user".into(), "test-password".into())),
+            MongoAuthSource::Unbound(Arc::new(AuthConfig::new(
+                "test-user".into(),
+                "test-password".into(),
+            ))),
         ));
 
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -260,7 +337,10 @@ mod tests {
         tokio::spawn(run_listener(
             listener,
             fixture.engine(),
-            Arc::new(AuthConfig::new("test-user".into(), "test-password".into())),
+            MongoAuthSource::Unbound(Arc::new(AuthConfig::new(
+                "test-user".into(),
+                "test-password".into(),
+            ))),
         ));
 
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
