@@ -24,6 +24,8 @@ ignore = [
   # not enable `log`, and Nimbus uses `tracing_subscriber`.
   { id = "RUSTSEC-2026-0097", reason = "Requires rand log + thread_rng features plus a custom log::Log path; Nimbus does not enable rand log and uses tracing_subscriber." },
   { id = "RUSTSEC-2023-0071", reason = "RustCrypto rsa has no safe fixed release; exposure is limited to user-authored Deno/Node crypto operations, so keep the audit visible until upstream replaces the implementation." },
+  { id = "RUSTSEC-2026-0118", reason = "The pinned Deno 2.9 hickory-proto lane does not enable DNSSEC validation features where this path is reachable; track through the Deno fork upgrade lane." },
+  { id = "RUSTSEC-2026-0119", reason = "hickory-proto 0.26.x is outside the pinned Deno 2.9 hickory-resolver 0.25 lane and raises MSRV; track through the Deno fork upgrade lane rather than a Nimbus lock-only patch." },
 ]
 
 [licenses]
@@ -47,6 +49,8 @@ allow = [
   "BSL-1.0",
   "MPL-2.0",
   "CDLA-Permissive-2.0",
+  "0BSD",
+  "CC0-1.0",
 ]
 
 [[licenses.clarify]]
@@ -63,10 +67,12 @@ multiple-versions = "deny"
 wildcards = "allow"
 skip = [
     { crate = "base16ct@1.0.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "blake2@0.11.0-rc.6", reason = "Deno crypto currently carries argon2 on the RustCrypto 0.11 prerelease lane alongside the stable RustCrypto 0.10 lane." },
     { crate = "brotli@6.0.0", reason = "The pinned Deno HTTP/web stack carries brotli 6 while async-compression carries brotli 8." },
     { crate = "brotli-decompressor@4.0.3", reason = "The pinned Deno HTTP/web stack carries brotli-decompressor 4 while async-compression carries brotli-decompressor 5." },
     { crate = "compact_str@0.7.1", reason = "The pinned Deno SWC codegen stack carries compact_str 0.7 while the OXC code-index stack carries compact_str 0.9." },
-    { crate = "crypto-bigint@0.7.3", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "crypto-bigint@0.7.5", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "dashmap@5.5.3", reason = "The pinned Deno resolver stack carries dashmap 5 while the Nimbus KV fjall storage lane uses dashmap 6." },
     { crate = "der@0.8.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "elliptic-curve@0.14.0-rc.28", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "hashbrown@0.15.5", reason = "The pinned rusqlite/imara-diff lanes still carry hashbrown 0.15 while indexmap and OXC carry newer hashbrown lanes." },
@@ -80,6 +86,7 @@ skip = [
     { crate = "spki@0.8.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "tonic@0.12.3", reason = "The pinned Deno telemetry stack still carries tonic 0.12 while the server gRPC stack has moved forward." },
     { crate = "which@6.0.3", reason = "The rusty_v8 build stack carries which 6 while the current Deno permission stack uses which 8." },
+    { crate = "winnow@0.6.26", reason = "The pinned Deno resolver YAML parser carries winnow 0.6 while the Nimbus CLI TOML stack uses winnow 0.7." },
 ]
 skip-tree = [
     { crate = "aws-config@1.8.16", reason = "AWS SDK transport crates intentionally carry a parallel HTTP and crypto stack." },
@@ -90,7 +97,7 @@ skip-tree = [
     { crate = "bson@3.1.0", reason = "The MongoDB adapter stack currently carries its own BSON/rand support lane." },
     { crate = "bollard@0.20.2", reason = "The container/buildkit stack carries tonic 0.14 and related transport crates independently from server gRPC." },
     { crate = "testcontainers@0.27.2", reason = "The dev-only external-provider harness carries additional legacy utility crates." },
-    { crate = "deno_core@0.404.0", reason = "The embedded V8 runtime stack carries its own support-ecosystem crates." },
+    { crate = "deno_core@0.405.0", reason = "The embedded V8 runtime stack carries its own support-ecosystem crates." },
 ]
 
 [sources]
