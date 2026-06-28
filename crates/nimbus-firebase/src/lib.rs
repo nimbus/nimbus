@@ -6,6 +6,7 @@ pub mod firestore_model;
 pub mod grpc;
 pub mod list_collection_ids_request;
 pub mod operations;
+pub mod project_tenant_registry;
 pub mod resource_names;
 pub mod response;
 pub mod run_aggregation_query_request;
@@ -34,6 +35,10 @@ pub use operations::{
     list_collection_ids_for_database, resolve_write_key, rollback_transaction_session_for_database,
     run_aggregation_query_for_database, run_query_documents_for_database,
     tenant_context_for_database,
+};
+pub use project_tenant_registry::{
+    ProjectSpecError, ProjectTenantRegistry, firebase_project_from_issuer,
+    firebase_project_from_verified_principal,
 };
 pub use response::{
     batch_get_entry_json, batch_write_response_json, commit_response_json, firestore_document_name,

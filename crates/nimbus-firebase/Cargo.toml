@@ -36,3 +36,4 @@ tonic-build = "0.13.0"
 [dev-dependencies]
 nimbus-engine = { path = "../nimbus-engine", features = ["test-hooks"] }
 nimbus-testing = { path = "../nimbus-testing" }
+tempfile.workspace = true
