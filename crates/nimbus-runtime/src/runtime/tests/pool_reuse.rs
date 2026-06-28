@@ -137,8 +137,8 @@ isolated_pool_reuse_tests! {
     fix: isol_node_full_fresh_realm_lease_resets_opstate_auth_host_session_and_globals => node_full_fresh_realm_lease_resets_opstate_auth_host_session_and_globals,
     fix: isol_node_full_fresh_realm_lease_condemns_dirty_invocation_before_reuse => node_full_fresh_realm_lease_condemns_dirty_invocation_before_reuse,
     fix: isol_node_full_fresh_realm_lease_condemns_rejected_wait_until_before_reuse => node_full_fresh_realm_lease_condemns_rejected_wait_until_before_reuse,
-    // Known TerminateExecution/system-timeout timing transient (see the child fn's comment): a
-    // lone red here that clears on re-run is the known flake, not a regression.
+    // Stalled waitUntil drains must classify as system timeouts even when V8 reports the
+    // idle-pending promise before the watchdog interrupt is observed.
     fix: isol_node_full_fresh_realm_lease_condemns_stalled_wait_until_before_reuse => node_full_fresh_realm_lease_condemns_stalled_wait_until_before_reuse,
     fix: isol_node_full_fresh_realm_lease_abandons_uncertain_cleanup_before_reuse => node_full_fresh_realm_lease_abandons_uncertain_cleanup_before_reuse,
     fix: isol_node_full_fresh_realm_lease_condemns_execution_timeout_before_reuse => node_full_fresh_realm_lease_condemns_execution_timeout_before_reuse,
@@ -5061,16 +5061,10 @@ export {};
     );
 }
 
-// KNOWN TRANSIENT (labeled from observation, not root-caused): part of the
-// TerminateExecution / system-timeout timing family, NOT a cage cross-profile test. It asserts
-// an EXACT `SystemTimeout(system_timeout)` on a never-resolving waitUntil drain under a tight
-// budget (50ms local / 300ms CI) whose enforcement runs through TerminateExecution; under heavy
-// host load the timeout-fire and the interrupt can race, so it flakes (~1/12 standalone) and can
-// red the feature-on cage lane once while passing on re-run. A lone CI red on
-// `isol_node_full_fresh_realm_lease_condemns_stalled_wait_until_before_reuse` that CLEARS on a
-// re-run of that single parent is THIS known flake, not a fresh regression. The exact lost timing
-// window is not pinned. No retry wrapper: the `fix:` oracle harness is single-attempt by design
-// and adding retries would be new infrastructure, out of scope for a label.
+// A never-resolving waitUntil drain is bounded by the system timeout. V8 may report
+// "promise still pending but event loop resolved" before the watchdog interrupt is observed;
+// the runtime still classifies that stalled waitUntil drain as `SystemTimeout` and condemns the
+// retained substrate as timed out.
 #[tokio::test]
 #[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_condemns_stalled_wait_until_before_reuse() {
@@ -6799,7 +6793,7 @@ async fn invoke_node_full_fresh_realm_with_driver(
                             Some(error) => Err(error),
                             None => Ok(response),
                         },
-                        Err(error) => Err(error),
+                        Err(error) => Err(driver.classify_wait_until_phase_error(error)),
                     }
                 } else {
                     Ok(response)
