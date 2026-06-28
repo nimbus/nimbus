@@ -107,6 +107,35 @@ impl RuntimeExecutor {
             .map_err(|_| RuntimeWorkerRouter::closed_error())
     }
 
+    fn finish_canceled_queued_job_with_policy(policy: &RuntimePolicy, job: RuntimeWorkerJob) {
+        policy
+            .metrics()
+            .record_queued_canceled_invocation_for_tenant(
+                job.context.tenant_label.as_deref(),
+                job.cancellation
+                    .as_ref()
+                    .and_then(HostCallCancellation::cause),
+            );
+        job.result_tx.send(Err(NimbusRuntimeError::Cancelled));
+    }
+
+    fn register_queued_cancellation_listener(
+        &self,
+        invocation_id: u64,
+        cancellation: &Option<HostCallCancellation>,
+    ) {
+        let Some(cancellation) = cancellation else {
+            return;
+        };
+        let admission = self.inner.admission.clone();
+        let policy = self.inner.policy.clone();
+        cancellation.notify_on_cancel(move || {
+            if let Some(job) = admission.cancel_queued_job(invocation_id) {
+                Self::finish_canceled_queued_job_with_policy(policy.as_ref(), job);
+            }
+        });
+    }
+
     async fn invoke_job(invocation: DirectRuntimeInvocation) -> Result<Value> {
         let DirectRuntimeInvocation {
             watchdog,
@@ -221,6 +250,7 @@ impl RuntimeExecutor {
         let (result_tx, result_rx) = oneshot::channel();
         let execution_plan =
             execution_plan_for_invocation(self.inner.policy.as_ref(), &request, &context);
+        let invocation_id = context.invocation_id;
         let admission = self.inner.admission.admit_job(RuntimeWorkerJob {
             host: runtime.invocation_host(),
             bundle,
@@ -233,6 +263,10 @@ impl RuntimeExecutor {
             result_tx: RuntimeWorkerResultSender::Async(result_tx),
             dispatch_handle: None,
         })?;
+        let queued = matches!(&admission, RuntimeExecutorAdmissionDecision::Queued);
+        if queued {
+            self.register_queued_cancellation_listener(invocation_id, &cancellation);
+        }
         if let RuntimeExecutorAdmissionDecision::Dispatch(job) = admission {
             self.dispatch_admitted_job_async(*job).await?;
         }
@@ -286,6 +320,7 @@ impl RuntimeExecutor {
         let (response_ready_tx, response_ready_rx) = oneshot::channel();
         let execution_plan =
             execution_plan_for_invocation(self.inner.policy.as_ref(), &request, &context);
+        let invocation_id = context.invocation_id;
         let admission = self.inner.admission.admit_job(RuntimeWorkerJob {
             host: runtime.invocation_host(),
             bundle,
@@ -298,6 +333,10 @@ impl RuntimeExecutor {
             result_tx: RuntimeWorkerResultSender::Async(result_tx),
             dispatch_handle: None,
         })?;
+        let queued = matches!(&admission, RuntimeExecutorAdmissionDecision::Queued);
+        if queued {
+            self.register_queued_cancellation_listener(invocation_id, &cancellation);
+        }
         if let RuntimeExecutorAdmissionDecision::Dispatch(job) = admission {
             self.dispatch_admitted_job_async(*job).await?;
         }
@@ -418,6 +457,7 @@ impl RuntimeExecutor {
         let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
         let execution_plan =
             execution_plan_for_invocation(self.inner.policy.as_ref(), &request, &context);
+        let invocation_id = context.invocation_id;
         let admission = self.inner.admission.admit_job(RuntimeWorkerJob {
             host: runtime.invocation_host(),
             bundle,
@@ -430,6 +470,10 @@ impl RuntimeExecutor {
             result_tx: RuntimeWorkerResultSender::Blocking(result_tx),
             dispatch_handle: None,
         })?;
+        let queued = matches!(&admission, RuntimeExecutorAdmissionDecision::Queued);
+        if queued {
+            self.register_queued_cancellation_listener(invocation_id, &cancellation);
+        }
         if let RuntimeExecutorAdmissionDecision::Dispatch(job) = admission {
             self.dispatch_admitted_job_blocking(*job)?;
         }

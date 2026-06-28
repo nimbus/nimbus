@@ -184,6 +184,12 @@ impl TenantFairnessHost {
             .clone()
     }
 
+    pub(super) async fn wait_until_slow_started(&self) {
+        tokio::time::timeout(HOST_START_TIMEOUT, self.slow_started.notified())
+            .await
+            .expect("slow tenant fairness host request should start");
+    }
+
     pub(super) async fn assert_not_started_within(&self, document_id: &str, duration: Duration) {
         let deadline = tokio::time::Instant::now() + duration;
         loop {
