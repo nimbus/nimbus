@@ -39,7 +39,10 @@ fn router_for_queued_request_drop(engine: Arc<Engine>, registry: ConvexRegistry)
     build_router(
         RouterOptions::new(engine)
             .with_convex_registry(registry)
-            .with_runtime_host_resource_budget(queued_request_drop_host_budget()),
+            .with_runtime_host_resource_budget(queued_request_drop_host_budget())
+            .with_runtime_host_pressure_source(Arc::new(
+                nimbus_runtime::NominalRuntimeHostPressureSource,
+            )),
     )
 }
 

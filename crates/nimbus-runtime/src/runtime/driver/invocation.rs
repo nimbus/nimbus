@@ -12,7 +12,7 @@ use crate::limits::{RuntimePolicy, RuntimePoolKind};
 use crate::watchdog::WatchdogTimer;
 
 use super::super::bootstrap::{RuntimeCancellationState, take_runtime_wait_until_pending};
-use super::super::helpers::classify_runtime_error;
+use super::super::helpers::{classify_runtime_error, classify_wait_until_drain_error};
 use super::super::realm_lease::RuntimeRealmLeaseCondemnationReason;
 use super::super::realm_lifecycle::destroy_fresh_realm;
 use super::super::{
@@ -93,10 +93,14 @@ impl RuntimeInvocationDriver {
     }
 
     pub(crate) fn classify_wait_until_drain_result(&self, result: Result<()>) -> Result<()> {
-        match (result, self.wait_until_phase_timeout_error()) {
-            (Ok(()), Some(error)) | (Err(_), Some(error)) => Err(error),
-            (Ok(()), None) => Ok(()),
-            (Err(error), None) => Err(error),
+        match result {
+            Ok(()) => self.wait_until_phase_timeout_error().map_or(Ok(()), Err),
+            Err(error) => Err(classify_wait_until_drain_error(
+                error,
+                &self.timeout_triggered,
+                &self.system_timeout_triggered,
+                self.policy.limits(),
+            )),
         }
     }
 
