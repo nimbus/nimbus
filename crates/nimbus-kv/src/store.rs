@@ -68,6 +68,7 @@ struct NimbusKvStoreInner {
     engine: Arc<dyn TenantKvStore + Send + Sync>,
     tiering: TieringConfig,
     metrics: NimbusKvMetrics,
+    mutation: Mutex<()>,
     cache: Mutex<BTreeMap<Vec<u8>, CacheEntry>>,
 }
 
@@ -113,6 +114,7 @@ impl NimbusKvStore {
                 engine,
                 tiering,
                 metrics: NimbusKvMetrics::default(),
+                mutation: Mutex::new(()),
                 cache: Mutex::new(BTreeMap::new()),
             }),
         }
@@ -144,6 +146,7 @@ impl NimbusKvStore {
             metadata: BTreeMap::new(),
             expire_at_ms,
         };
+        let _mutation = self.mutation_lock()?;
         let _write = self.inner.metrics.start_durable_write();
         self.inner.engine.kv_put(put.clone())?;
         self.cache_put(&KvEntry {
@@ -156,6 +159,7 @@ impl NimbusKvStore {
     }
 
     pub fn delete(&self, key: &[u8]) -> Result<bool, KvError> {
+        let _mutation = self.mutation_lock()?;
         let _write = self.inner.metrics.start_durable_write();
         let deleted = self.inner.engine.kv_delete(key)?;
         self.cache_remove(key);
@@ -165,6 +169,7 @@ impl NimbusKvStore {
     pub fn flush_all(&self, now_ms: i64) -> Result<usize, KvError> {
         const BATCH_LIMIT: usize = 256;
 
+        let _mutation = self.mutation_lock()?;
         let _write = self.inner.metrics.start_durable_write();
         let mut cursor = None;
         let mut deleted = 0_usize;
@@ -217,6 +222,7 @@ impl NimbusKvStore {
                 expire_at_ms: Some(expire_at_ms),
             }))
         };
+        let _mutation = self.mutation_lock()?;
         let _write = self.inner.metrics.start_durable_write();
         let updated = self.inner.engine.kv_update(key, now_ms, &mut update)?;
         match updated {
@@ -257,6 +263,7 @@ impl NimbusKvStore {
                 expire_at_ms,
             }))
         };
+        let _mutation = self.mutation_lock()?;
         let _write = self.inner.metrics.start_durable_write();
         let updated = self.inner.engine.kv_update(key, now_ms, &mut update)?;
         if let Some(entry) = updated {
@@ -334,6 +341,14 @@ impl NimbusKvStore {
     ) -> Result<std::sync::MutexGuard<'_, BTreeMap<Vec<u8>, CacheEntry>>, KvError> {
         self.inner.cache.lock().map_err(|_| {
             KvError::Core(Error::Internal("nimbus-kv cache lock poisoned".to_string()))
+        })
+    }
+
+    fn mutation_lock(&self) -> Result<std::sync::MutexGuard<'_, ()>, KvError> {
+        self.inner.mutation.lock().map_err(|_| {
+            KvError::Core(Error::Internal(
+                "nimbus-kv mutation lock poisoned".to_string(),
+            ))
         })
     }
 }
