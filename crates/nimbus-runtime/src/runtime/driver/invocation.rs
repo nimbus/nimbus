@@ -6,7 +6,7 @@ use crate::backends::v8::embedder::JsRuntime;
 use crate::backends::v8::{ReusableV8Runtime, V8RuntimeConstructionMode, V8WorkerRuntimePool};
 use crate::error::Result;
 use crate::execution_plan::RuntimeExecutionPlan;
-use crate::executor::SharedInvocationPermit;
+use crate::executor::{SharedInvocationPermit, WorkerActivitySignal};
 use crate::host::HostCallCancellation;
 use crate::limits::{RuntimePolicy, RuntimePoolKind};
 use crate::watchdog::WatchdogTimer;
@@ -48,6 +48,7 @@ pub(crate) struct RuntimeInvocationDriverPrepare<'a> {
     pub(crate) context: &'a crate::context::RuntimeInvocationContext,
     pub(crate) execution_plan: Option<&'a RuntimeExecutionPlan>,
     pub(crate) record_replacement_on_error: bool,
+    pub(crate) activity_signal: Option<Arc<WorkerActivitySignal>>,
 }
 
 impl RuntimeInvocationDriver {
@@ -89,6 +90,14 @@ impl RuntimeInvocationDriver {
             ));
         }
         None
+    }
+
+    pub(crate) fn classify_wait_until_drain_result(&self, result: Result<()>) -> Result<()> {
+        match (result, self.wait_until_phase_timeout_error()) {
+            (Ok(()), Some(error)) | (Err(_), Some(error)) => Err(error),
+            (Ok(()), None) => Ok(()),
+            (Err(error), None) => Err(error),
+        }
     }
 
     pub(crate) fn record_fresh_realm_promise_resolve(&self, duration: Duration) {
@@ -252,6 +261,7 @@ impl NimbusRuntime {
                 context: &context,
                 execution_plan: Some(&execution_plan),
                 record_replacement_on_error: v8_runtime_pool.is_some(),
+                activity_signal: None,
             })?;
 
         let result = {
@@ -308,19 +318,19 @@ impl NimbusRuntime {
                             }
                             if take_runtime_wait_until_pending(&mut driver.runtime) {
                                 driver.begin_wait_until_phase().await?;
-                                self.drain_wait_until_with_trace(
-                                    &mut driver.runtime,
-                                    Some(&realm),
-                                    Some(&bundle),
-                                    &request,
-                                    driver.construction_mode,
-                                    Some(&context),
-                                )
-                                .await?;
-                                match driver.wait_until_phase_timeout_error() {
-                                    Some(error) => Err(error),
-                                    None => Ok(response),
-                                }
+                                let drain = self
+                                    .drain_wait_until_with_trace(
+                                        &mut driver.runtime,
+                                        Some(&realm),
+                                        Some(&bundle),
+                                        &request,
+                                        driver.construction_mode,
+                                        Some(&context),
+                                    )
+                                    .await;
+                                driver
+                                    .classify_wait_until_drain_result(drain)
+                                    .map(|()| response)
                             } else {
                                 Ok(response)
                             }
@@ -371,19 +381,19 @@ impl NimbusRuntime {
                 }
                 if take_runtime_wait_until_pending(&mut driver.runtime) {
                     driver.begin_wait_until_phase().await?;
-                    self.drain_wait_until_with_trace(
-                        &mut driver.runtime,
-                        None,
-                        Some(&bundle),
-                        &request,
-                        driver.construction_mode,
-                        Some(&context),
-                    )
-                    .await?;
-                    match driver.wait_until_phase_timeout_error() {
-                        Some(error) => Err(error),
-                        None => Ok(response),
-                    }
+                    let drain = self
+                        .drain_wait_until_with_trace(
+                            &mut driver.runtime,
+                            None,
+                            Some(&bundle),
+                            &request,
+                            driver.construction_mode,
+                            Some(&context),
+                        )
+                        .await;
+                    driver
+                        .classify_wait_until_drain_result(drain)
+                        .map(|()| response)
                 } else {
                     Ok(response)
                 }
@@ -435,6 +445,7 @@ impl NimbusRuntime {
             context,
             execution_plan,
             record_replacement_on_error,
+            activity_signal,
         } = prepare;
         let ReusableV8Runtime {
             mut runtime,
@@ -470,10 +481,14 @@ impl NimbusRuntime {
                 let isolate_handle = runtime.v8_isolate().thread_safe_handle();
                 let cancellation_signal = cancellation_signal.clone();
                 let external_cancellation_triggered = external_cancellation_triggered.clone();
+                let activity_signal = activity_signal.clone();
                 watchdog.register_cancellation(external, move || {
                     external_cancellation_triggered.store(true, Ordering::SeqCst);
                     cancellation_signal.cancel();
                     let _ = isolate_handle.terminate_execution();
+                    if let Some(activity_signal) = activity_signal {
+                        activity_signal.notify();
+                    }
                 })
             })
             .transpose()?;
@@ -482,10 +497,14 @@ impl NimbusRuntime {
             let heap_limit_triggered = heap_limit_triggered.clone();
             let cancellation_signal = cancellation_signal.clone();
             let isolate_handle = runtime.v8_isolate().thread_safe_handle();
+            let activity_signal = activity_signal.clone();
             runtime.add_near_heap_limit_callback(move |current_limit, _initial_limit| {
                 heap_limit_triggered.store(true, Ordering::SeqCst);
                 cancellation_signal.cancel();
                 let _ = isolate_handle.terminate_execution();
+                if let Some(activity_signal) = &activity_signal {
+                    activity_signal.notify();
+                }
                 current_limit.saturating_mul(2)
             });
         }
@@ -496,10 +515,14 @@ impl NimbusRuntime {
             let isolate_handle = runtime.v8_isolate().thread_safe_handle();
             let timeout_triggered = timeout_triggered.clone();
             let cancellation_signal = cancellation_signal.clone();
+            let activity_signal = activity_signal.clone();
             let callback: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
                 timeout_triggered.store(true, Ordering::SeqCst);
                 cancellation_signal.cancel();
                 let _ = isolate_handle.terminate_execution();
+                if let Some(activity_signal) = &activity_signal {
+                    activity_signal.notify();
+                }
             });
             Some(RuntimeInvocationTimeoutController::new(
                 watchdog.clone(),
@@ -518,10 +541,14 @@ impl NimbusRuntime {
                 let isolate_handle = runtime.v8_isolate().thread_safe_handle();
                 let system_timeout_triggered = system_timeout_triggered.clone();
                 let cancellation_signal = cancellation_signal.clone();
+                let activity_signal = activity_signal.clone();
                 Some(Arc::new(move || {
                     system_timeout_triggered.store(true, Ordering::SeqCst);
                     cancellation_signal.cancel();
                     let _ = isolate_handle.terminate_execution();
+                    if let Some(activity_signal) = &activity_signal {
+                        activity_signal.notify();
+                    }
                 }))
             };
 

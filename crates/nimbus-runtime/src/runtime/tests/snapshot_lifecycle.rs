@@ -182,6 +182,7 @@ export {};
                 context: &context,
                 execution_plan: None,
                 record_replacement_on_error: false,
+                activity_signal: None,
             })
             .expect("driver preparation should succeed for snapshot-seeded runtime");
 
@@ -306,6 +307,7 @@ export {};
                 context: &context,
                 execution_plan: None,
                 record_replacement_on_error: false,
+                activity_signal: None,
             })
             .expect("driver preparation should succeed for snapshot-seeded runtime");
 
@@ -433,6 +435,7 @@ export {};
                         context: &context,
                         execution_plan: None,
                         record_replacement_on_error: false,
+                        activity_signal: None,
                     })
                     .expect(
                         "driver preparation should succeed for snapshot-seeded delayed runtime",

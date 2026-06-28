@@ -14,10 +14,18 @@ const QUEUED_REQUEST_RECOVERY_CASE: DeterministicTestCase = DeterministicTestCas
     "runtime recovers and serves new work after queued request-drop pressure clears",
 );
 
-#[tokio::test]
-async fn dropped_queued_runtime_request_never_starts_mutation() {
+fn queued_request_drop_limits() -> nimbus_runtime::RuntimeLimits {
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 2;
+    limits.max_active_top_level_invocations_per_tenant = 1;
+    limits.max_in_flight_top_level_invocations_per_tenant = 2;
+    limits.max_queued_top_level_invocations_per_tenant = 2;
+    limits
+}
+
+#[tokio::test]
+async fn dropped_queued_runtime_request_never_starts_mutation() {
     let registry = runtime_request_drop_registry(json!([
         {
             "name": "messages:block",
@@ -34,7 +42,7 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
             "runtime_handler": "async (ctx, { body }) => await ctx.db.insert(\"messages\", { body })"
         }
     ]))
-    .with_runtime_limits(limits);
+    .with_runtime_limits(queued_request_drop_limits());
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();
     let server = ServerFixture::start(router_for_convex(service.clone(), registry.clone())).await;
@@ -143,8 +151,6 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
 
 #[tokio::test]
 async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_pressure_clears() {
-    let mut limits = run_to_completion_snapshot_runtime_test_limits();
-    limits.max_concurrent_runtime_instances = 1;
     let registry = runtime_request_drop_registry(json!([
         {
             "name": "messages:block",
@@ -161,7 +167,7 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
             "runtime_handler": "async (ctx, { body }) => await ctx.db.insert(\"messages\", { body })"
         }
     ]))
-    .with_runtime_limits(limits);
+    .with_runtime_limits(queued_request_drop_limits());
     let harness =
         DeterministicHarness::scenario("runtime-request-drop-recovery", 75, Timestamp(75_000));
     let fixture = EngineFixture::new_with_harness(harness.clone(), |path, harness| {

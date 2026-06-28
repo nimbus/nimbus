@@ -1710,6 +1710,7 @@ async fn invoke_node_compat_fixture_with_async_main_module(
         context: &context,
         execution_plan: None,
         record_replacement_on_error: false,
+        activity_signal: None,
     })?;
 
     let result = async {

@@ -187,7 +187,7 @@ impl CooperativeLockerRuntimeSlot {
         match event_loop_poll {
             Poll::Ready(Ok(())) => {
                 if let Some((wait_until, _response)) = self.wait_until.as_mut() {
-                    let result = match wait_until.as_mut().poll(&mut cx) {
+                    match wait_until.as_mut().poll(&mut cx) {
                         Poll::Ready(result) => {
                             let response = self
                                 .wait_until
@@ -199,24 +199,37 @@ impl CooperativeLockerRuntimeSlot {
                             });
                             drop(locked);
                             clear_runtime_wait_until_pending(&mut driver.runtime);
-                            let result = match drain_result {
-                                Ok(_) => driver
-                                    .wait_until_phase_timeout_error()
-                                    .map_or(response, Err),
+                            let result = match driver.classify_wait_until_drain_result(drain_result)
+                            {
+                                Ok(()) => response,
                                 Err(error) => Err(error),
                             };
                             self.destroy_fresh_realm(&mut driver);
                             self.completed = Some((driver, result));
                             return Ok(CooperativeRuntimeSlotPoll::Completed);
                         }
-                        Poll::Pending => Err(runtime_js_error(
-                            "waitUntil drain is still pending but the event loop has already resolved",
-                        )),
-                    };
-                    drop(locked);
-                    self.destroy_fresh_realm(&mut driver);
-                    self.completed = Some((driver, result));
-                    return Ok(CooperativeRuntimeSlotPoll::Completed);
+                        Poll::Pending => {
+                            drop(locked);
+                            if let Some(error) = driver.wait_until_phase_timeout_error() {
+                                let response = self
+                                    .wait_until
+                                    .take()
+                                    .expect("waitUntil phase should be present")
+                                    .1;
+                                drop(response);
+                                clear_runtime_wait_until_pending(&mut driver.runtime);
+                                self.destroy_fresh_realm(&mut driver);
+                                self.completed = Some((driver, Err(error)));
+                                return Ok(CooperativeRuntimeSlotPoll::Completed);
+                            }
+                            self.driver = Some(driver);
+                            return if self.wake_flag.take_woken() {
+                                Ok(CooperativeRuntimeSlotPoll::Runnable)
+                            } else {
+                                Ok(CooperativeRuntimeSlotPoll::Parked)
+                            };
+                        }
+                    }
                 }
 
                 let mut promise_resolve_elapsed = None;
@@ -464,6 +477,7 @@ impl NimbusRuntime {
                 context: &context,
                 execution_plan: Some(&execution_plan),
                 record_replacement_on_error: true,
+                activity_signal: Some(activity_signal.clone()),
             })?;
         let context_recycling = matches!(
             self.policy.limits().runtime_pool_kind,
