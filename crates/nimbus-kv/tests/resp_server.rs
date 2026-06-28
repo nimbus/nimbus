@@ -125,6 +125,24 @@ async fn unauthenticated_command_is_rejected() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn invalid_utf8_credentials_are_rejected_without_lossy_matching() {
+    let credentials = CredentialRegistry::new().bind("tenant-a", "\u{FFFD}", tenant("tenant-a"));
+    let (addr, server) = spawn_test_server(credentials).await;
+    let mut stream = TcpStream::connect(addr).await.expect("connects");
+    let invalid_password = [0xff];
+
+    let response = write_command(&mut stream, &[b"AUTH", invalid_password.as_slice()]).await;
+    assert!(
+        response.starts_with("-WRONGPASS"),
+        "invalid UTF-8 credential bytes must fail authentication, got {response:?}"
+    );
+
+    let response = write_command(&mut stream, &[b"PING"]).await;
+    assert_eq!(response, "-NOAUTH Authentication required\r\n");
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn tenant_a_credential_cannot_read_tenant_b_keys() {
     let (_, credential_a) = CredentialRegistry::generated_dev_for("tenant-a", tenant("tenant-a"));
     let (_, credential_b) = CredentialRegistry::generated_dev_for("tenant-b", tenant("tenant-b"));

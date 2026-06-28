@@ -625,11 +625,21 @@ fn auth_command(
     credentials: &CredentialRegistry,
 ) -> CommandOutcome {
     let authenticated = match args {
-        [_, password] => credentials.authenticate(None, &String::from_utf8_lossy(password)),
-        [_, username, password] => credentials.authenticate(
-            Some(&String::from_utf8_lossy(username)),
-            &String::from_utf8_lossy(password),
-        ),
+        [_, password] => match credential_text(password) {
+            Ok(password) => credentials.authenticate(None, password),
+            Err(response) => return command_response(response),
+        },
+        [_, username, password] => {
+            let username = match credential_text(username) {
+                Ok(username) => username,
+                Err(response) => return command_response(response),
+            };
+            let password = match credential_text(password) {
+                Ok(password) => password,
+                Err(response) => return command_response(response),
+            };
+            credentials.authenticate(Some(username), password)
+        }
         _ => {
             return CommandOutcome {
                 response: Response::Error("ERR wrong number of arguments for 'AUTH'".to_owned()),
@@ -717,16 +727,19 @@ fn parse_hello_auth(
             "ERR HELLO only supports AUTH username password".to_owned(),
         ));
     }
+    let username = credential_text(&args[3])?;
+    let password = credential_text(&args[4])?;
     credentials
-        .authenticate(
-            Some(&String::from_utf8_lossy(&args[3])),
-            &String::from_utf8_lossy(&args[4]),
-        )
-        .ok_or_else(|| {
-            Response::Error(
-                "WRONGPASS invalid username-password pair or user is disabled".to_owned(),
-            )
-        })
+        .authenticate(Some(username), password)
+        .ok_or_else(invalid_credentials_response)
+}
+
+fn credential_text(bytes: &[u8]) -> Result<&str, Response> {
+    std::str::from_utf8(bytes).map_err(|_| invalid_credentials_response())
+}
+
+fn invalid_credentials_response() -> Response {
+    Response::Error("WRONGPASS invalid username-password pair or user is disabled".to_owned())
 }
 
 fn ping_command(args: &[Vec<u8>]) -> CommandOutcome {

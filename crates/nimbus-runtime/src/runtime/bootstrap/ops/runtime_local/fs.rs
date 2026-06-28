@@ -38,8 +38,21 @@ fn checked_path_buf(path: PathBuf) -> CheckedPathBuf {
     CheckedPathBuf::unsafe_new(path)
 }
 
-fn write_file_options(mode: Option<u32>) -> OpenOptions {
-    OpenOptions::write(true, false, false, mode)
+fn write_file_options(payload: &RuntimeFsWriteFilePayload) -> OpenOptions {
+    OpenOptions::write(true, payload.append, payload.create_new, payload.mode)
+}
+
+fn write_file_data(payload: RuntimeFsWriteFilePayload) -> std::result::Result<Vec<u8>, JsErrorBox> {
+    match (payload.text, payload.bytes) {
+        (Some(text), None) => Ok(text.into_bytes()),
+        (None, Some(bytes)) => Ok(bytes),
+        (Some(_), Some(_)) => Err(JsErrorBox::generic(
+            "fs.writeFile payload may contain text or bytes, but not both",
+        )),
+        (None, None) => Err(JsErrorBox::generic(
+            "fs.writeFile payload must include text or bytes",
+        )),
+    }
 }
 
 fn runtime_dir_entry(entry: FsDirEntry) -> RuntimeFsDirEntryDescriptor {
@@ -147,24 +160,12 @@ pub(in super::super) async fn op_nimbus_runtime_fs_write_file(
     let path = path_policy
         .ensure_write_path(Path::new(&payload.path))
         .map_err(capability_denied_error)?;
-    let data = match (payload.text, payload.bytes) {
-        (Some(text), None) => text.into_bytes(),
-        (None, Some(bytes)) => bytes,
-        (Some(_), Some(_)) => {
-            return Err(JsErrorBox::generic(
-                "fs.writeFile payload may contain text or bytes, but not both",
-            ));
-        }
-        (None, None) => {
-            return Err(JsErrorBox::generic(
-                "fs.writeFile payload must include text or bytes",
-            ));
-        }
-    };
+    let options = write_file_options(&payload);
+    let data = write_file_data(payload)?;
     let response = match fs
         .write_file_async(
             checked_path_buf(path.clone()),
-            write_file_options(None),
+            options,
             data.into_boxed_slice(),
         )
         .await
@@ -174,6 +175,35 @@ pub(in super::super) async fn op_nimbus_runtime_fs_write_file(
         },
         Err(error) => RuntimeHostCallEnvelope::Error {
             error: runtime_fs_error_value(&path, "writeFile", &error),
+        },
+    };
+    Ok(response)
+}
+
+#[op2]
+#[serde]
+pub(in super::super) fn op_nimbus_runtime_fs_write_file_sync(
+    state: &mut OpState,
+    #[serde] payload: RuntimeFsWriteFilePayload,
+) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
+    let (path_policy, fs) = (
+        state
+            .borrow::<InstalledRuntimeCapabilityPolicy>()
+            .paths
+            .clone(),
+        runtime_file_system(state),
+    );
+    let path = path_policy
+        .ensure_write_path(Path::new(&payload.path))
+        .map_err(capability_denied_error)?;
+    let options = write_file_options(&payload);
+    let data = write_file_data(payload)?;
+    let response = match fs.write_file_sync(&checked_path(&path), options, &data) {
+        Ok(()) => RuntimeHostCallEnvelope::Ok {
+            value: serde_json::Value::Null,
+        },
+        Err(error) => RuntimeHostCallEnvelope::Error {
+            error: runtime_fs_error_value(&path, "writeFileSync", &error),
         },
     };
     Ok(response)

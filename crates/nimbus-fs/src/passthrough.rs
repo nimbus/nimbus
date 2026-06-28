@@ -28,16 +28,16 @@ pub struct PassthroughBackend {
 }
 
 impl PassthroughBackend {
-    pub fn new() -> Self {
+    pub fn new() -> io::Result<Self> {
         Self::rooted(PathBuf::from("/"))
     }
 
-    pub fn rooted(root: impl Into<PathBuf>) -> Self {
+    pub fn rooted(root: impl Into<PathBuf>) -> io::Result<Self> {
         let root = root.into();
-        Self {
+        Ok(Self {
             inner: deno_fs::RealFs,
-            root: RootCapability::open(root).expect("passthrough root must be openable"),
-        }
+            root: RootCapability::open(root)?,
+        })
     }
 
     fn relative_path(&self, path: &Path) -> FsResult<PathBuf> {
@@ -391,12 +391,6 @@ impl FsReadDir for CapReadDir {
             .next()
             .map(|entry| cap_dir_entry_to_fs_dir_entry(entry?))
             .transpose()
-    }
-}
-
-impl Default for PassthroughBackend {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

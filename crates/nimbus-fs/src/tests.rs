@@ -31,6 +31,14 @@ fn checked_buf(path: impl Into<PathBuf>) -> CheckedPathBuf {
     CheckedPathBuf::unsafe_new(path.into())
 }
 
+fn passthrough_backend() -> PassthroughBackend {
+    PassthroughBackend::new().expect("passthrough root should open in tests")
+}
+
+fn rooted_passthrough_backend(root: impl AsRef<Path>) -> PassthroughBackend {
+    PassthroughBackend::rooted(root.as_ref()).expect("test passthrough root should open")
+}
+
 #[test]
 fn passthrough_round_trip_matches_realfs_for_common_operations() {
     let dir = tempfile::tempdir().unwrap();
@@ -38,7 +46,7 @@ fn passthrough_round_trip_matches_realfs_for_common_operations() {
     let renamed = dir.path().join("renamed.txt");
     let nested = dir.path().join("nested");
 
-    let fs = NimbusFs::with_cwd(PassthroughBackend::new(), dir.path());
+    let fs = NimbusFs::with_cwd(passthrough_backend(), dir.path());
     fs.write_file_sync(
         &checked(&file),
         OpenOptions::write(true, false, false, None),
@@ -71,8 +79,8 @@ fn chdir_is_instance_local_and_does_not_touch_process_cwd() {
     let original = std::env::current_dir().unwrap();
     let a = tempfile::tempdir().unwrap();
     let b = tempfile::tempdir().unwrap();
-    let fs_a = NimbusFs::with_cwd(PassthroughBackend::new(), a.path());
-    let fs_b = NimbusFs::with_cwd(PassthroughBackend::new(), b.path());
+    let fs_a = NimbusFs::with_cwd(passthrough_backend(), a.path());
+    let fs_b = NimbusFs::with_cwd(passthrough_backend(), b.path());
 
     let child = a.path().join("child");
     std::fs::create_dir(&child).unwrap();
@@ -88,7 +96,7 @@ fn raw_passthrough_chdir_does_not_touch_process_cwd() {
     let original = std::env::current_dir().unwrap();
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir(root.path().join("child")).unwrap();
-    let backend = PassthroughBackend::rooted(root.path());
+    let backend = rooted_passthrough_backend(root.path());
 
     backend.chdir(&checked(Path::new("/child"))).unwrap();
 
@@ -110,7 +118,7 @@ fn rooted_passthrough_stays_under_configured_root() {
     #[cfg(windows)]
     std::os::windows::fs::symlink_dir(outside.path(), root.path().join("outside")).unwrap();
 
-    let fs = NimbusFs::with_cwd(PassthroughBackend::rooted(root.path()), "/");
+    let fs = NimbusFs::with_cwd(rooted_passthrough_backend(root.path()), "/");
     fs.write_file_sync(
         &checked(Path::new("/inside.txt")),
         OpenOptions::write(true, false, false, None),
@@ -139,7 +147,7 @@ fn rooted_passthrough_stays_under_configured_root() {
 #[test]
 fn rooted_passthrough_rejects_parent_escape_before_create() {
     let root = tempfile::tempdir().unwrap();
-    let backend = PassthroughBackend::rooted(root.path());
+    let backend = rooted_passthrough_backend(root.path());
     let escape_name = format!(
         "{}-escape.txt",
         root.path()
@@ -173,7 +181,7 @@ fn rooted_passthrough_rejects_parent_escape_before_create() {
 fn rooted_passthrough_rejects_absolute_symlink_targets() {
     let root = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
-    let backend = PassthroughBackend::rooted(root.path());
+    let backend = rooted_passthrough_backend(root.path());
 
     let error = backend
         .symlink_sync(
@@ -196,7 +204,7 @@ fn rooted_passthrough_cp_rejects_absolute_symlink_targets() {
     std::fs::create_dir(&source_dir).unwrap();
     std::os::unix::fs::symlink(outside.path().join("secret.txt"), source_dir.join("link")).unwrap();
 
-    let backend = PassthroughBackend::rooted(root.path());
+    let backend = rooted_passthrough_backend(root.path());
     let error = backend
         .cp_sync(
             &checked(Path::new("/source")),

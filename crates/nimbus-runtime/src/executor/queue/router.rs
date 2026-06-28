@@ -386,10 +386,11 @@ mod tests {
             services: Default::default(),
         };
         let context = RuntimeInvocationContext::top_level(&request);
-        let policy = RuntimePolicy::default();
+        let policy = Arc::new(RuntimePolicy::default());
         let execution_plan = RuntimeExecutionPlan::for_invocation(&policy, &request, &context);
         RuntimeWorkerJob {
             host: RuntimeHost::new(Arc::new(NoopHost)),
+            policy,
             bundle: RuntimeBundle::new(&bundle_path),
             request: request.clone(),
             context,

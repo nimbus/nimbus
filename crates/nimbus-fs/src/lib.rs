@@ -145,8 +145,8 @@ fn configured_process_cwd() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
 }
 
-pub fn default_file_system() -> deno_fs::FileSystemRc {
-    MaybeArc::new(NimbusFs::new(PassthroughBackend::new()))
+pub fn default_file_system() -> io::Result<deno_fs::FileSystemRc> {
+    Ok(MaybeArc::new(NimbusFs::new(PassthroughBackend::new()?)))
 }
 
 fn open_options_require_write(options: OpenOptions) -> bool {
