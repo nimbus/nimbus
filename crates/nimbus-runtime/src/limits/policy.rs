@@ -64,6 +64,14 @@ impl RuntimePolicy {
         }
     }
 
+    /// Re-derive this policy with an explicit host-resource governor while
+    /// preserving the source lane's metrics handle.
+    ///
+    /// Observability-only: `RuntimeMetrics` is read solely through
+    /// `metrics_snapshot()` and never feeds a scheduling, admission, or
+    /// fairness decision. Build-time policy overlays must keep the observer
+    /// (which can hold the pre-build policy) and worker (which increments the
+    /// post-build executor policy) pointed at the same counters.
     pub fn clone_with_host_resource_governor(
         &self,
         host_resource_budget: RuntimeHostResourceBudget,
@@ -110,6 +118,11 @@ impl RuntimePolicy {
             runtime_instance_semaphore: Arc::new(Semaphore::new(
                 self.limits.max_concurrent_runtime_instances,
             )),
+            // Preserve the source policy's metrics handle: this is a clone-with
+            // derivation (the build()-time scaling-plan transform), so the
+            // re-derived policy must observe the same counters the original
+            // handle exposes. Observability-only; no metric value or scheduling
+            // behavior changes.
             metrics: self.metrics.clone(),
             limits: self.limits.clone(),
             host_resource_budget: self.host_resource_budget,
