@@ -29,14 +29,16 @@
 //!
 //! [`ProjectTenantRegistry::identity`] is the **dev-only** mode: every project
 //! resolves to a same-named tenant. It is wired only behind the Firebase
-//! emulator-mock opt-in so `nimbus dev` stays zero-config; it does **not** relax
+//! **dev-mode token-verification bypass** opt-in (see `FirebaseConfig`), which is
+//! itself refused on any non-loopback bind. Identity mode does **not** relax
 //! verification (an anonymous caller still has no verified project and is still
-//! refused), it only relaxes the project→tenant *mapping* to today's 1:1.
+//! refused); it only relaxes the project→tenant *mapping* to today's 1:1.
 
 use std::collections::BTreeMap;
 use std::fmt;
 
 use nimbus_core::{Error, PrincipalContext, Result, TenantId};
+use serde_json::Value;
 
 /// Tenants whose id begins with this prefix are Nimbus-internal. A Firebase
 /// project must never resolve to one, or an authenticated request could reach an
@@ -87,25 +89,34 @@ pub fn firebase_project_from_issuer(issuer: &str) -> Option<String> {
 ///
 /// Reads only `verified_claims` (the cryptographically verified identity
 /// claims), never the unverified `claims` map — a caller must not be able to
-/// name a project by stuffing an `issuer` into an unverified claim. An anonymous
+/// name a project by stuffing an issuer into an unverified claim. An anonymous
 /// (no-token) principal has empty `verified_claims` and yields `None`, so it has
 /// no verified project and cannot select a tenant.
 ///
-/// The verified issuer is recorded under the `issuer` key by
-/// `nimbus_auth::normalize_principal_context` (the `VerifiedUserIdentity`
-/// `issuer` field, camelCase-serialized to `issuer`).
+/// Two trusted paths populate `verified_claims` under different issuer keys, so
+/// both are read:
+/// - the production verifier (`nimbus_auth::normalize_principal_context`) records
+///   the `VerifiedUserIdentity::issuer` field, camelCase-serialized to `issuer`;
+/// - the dev-mode token-verification bypass
+///   (`firebase_emulator_verification_bypass_principal_from_bearer`) copies the
+///   raw emulator token, where the JWT issuer claim is `iss`.
 #[must_use]
 pub fn firebase_project_from_verified_principal(principal: &PrincipalContext) -> Option<String> {
-    let issuer = principal.verified_claims.get("issuer")?.as_str()?;
+    let issuer = principal
+        .verified_claims
+        .get("issuer")
+        .or_else(|| principal.verified_claims.get("iss"))
+        .and_then(Value::as_str)?;
     firebase_project_from_issuer(issuer)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Mode {
     /// Production: only registered projects resolve; everything else is refused.
     Strict(BTreeMap<String, TenantId>),
-    /// Dev-only (behind the emulator-mock opt-in): every project resolves to a
-    /// same-named tenant. Does not relax verification, only the mapping.
+    /// Dev-only (behind the token-verification-bypass opt-in): every project
+    /// resolves to a same-named tenant. Does not relax verification, only the
+    /// mapping.
     Identity,
 }
 
@@ -115,7 +126,7 @@ enum Mode {
 /// [`ProjectTenantRegistry::bind`] / [`ProjectTenantRegistry::from_operator_spec`]
 /// to register projects, or [`ProjectTenantRegistry::identity`] for the dev-only
 /// 1:1 mode.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectTenantRegistry {
     mode: Mode,
 }
@@ -378,6 +389,22 @@ mod tests {
             verified_claims: serde_json::Map::new(),
         };
         assert_eq!(firebase_project_from_verified_principal(&spoofed), None);
+
+        // The dev-mode bypass populates verified_claims from the raw token, where
+        // the JWT issuer claim is `iss` (not the camelCase `issuer`); both keys
+        // are honored.
+        let bypass = PrincipalContext {
+            authenticated: true,
+            claims: serde_json::Map::new(),
+            verified_claims: serde_json::Map::from_iter([(
+                "iss".to_string(),
+                json!("https://securetoken.google.com/proj-b"),
+            )]),
+        };
+        assert_eq!(
+            firebase_project_from_verified_principal(&bypass),
+            Some("proj-b".to_string())
+        );
     }
 
     #[test]

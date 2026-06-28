@@ -29,6 +29,30 @@ pub(super) fn ensure_host_opt_in(host: &str, allow_network: bool) -> Result<(), 
     Ok(())
 }
 
+/// Refuse to enable the Firebase **dev-mode token-verification bypass** on any
+/// non-loopback host.
+///
+/// The bypass fabricates a *verified* Firebase project from an unsigned,
+/// caller-controlled emulator token (see
+/// `nimbus_auth::firebase_emulator_verification_bypass_principal_from_bearer`).
+/// On a network-reachable listener that is a verified-claim forgery primitive, so
+/// it is allowed only on loopback — the firebase analog of "an unbound credential
+/// may bind loopback-only" (`guard_bind_address`). This makes the forgery
+/// structurally unreachable on a public bind by construction, not by convention.
+/// Called at boot once the adapter configs are resolved. Loopback always passes;
+/// when the bypass is disabled there is nothing to guard.
+pub(super) fn ensure_firebase_bypass_loopback_only(
+    host: &str,
+    firebase_bypass_enabled: bool,
+) -> Result<(), NetworkBindError> {
+    if !firebase_bypass_enabled || host_is_loopback(host) {
+        return Ok(());
+    }
+    Err(NetworkBindError::FirebaseBypassRequiresLoopback {
+        host: host.to_string(),
+    })
+}
+
 /// Stage 2: refuse non-loopback hosts whose admin token has never been
 /// explicitly rotated (`rotated_at` absent or unparseable — the
 /// auto-minted first-boot token). A token rotated longer ago than
@@ -98,6 +122,7 @@ impl fmt::Display for StaleRotationWarning {
 pub(super) enum NetworkBindError {
     NonLoopbackRequiresOptIn { host: String },
     NeverRotatedAdminToken { host: String },
+    FirebaseBypassRequiresLoopback { host: String },
 }
 
 impl fmt::Display for NetworkBindError {
@@ -122,6 +147,19 @@ impl fmt::Display for NetworkBindError {
                      nimbus auth rotate-admin\n\
                  \n\
                  Then re-run `nimbus start --host {host} --allow-network`."
+            ),
+            NetworkBindError::FirebaseBypassRequiresLoopback { host } => write!(
+                f,
+                "refusing to enable the Firebase emulator token-verification bypass on\n\
+                 non-loopback host `{host}`.\n\
+                 \n\
+                 The bypass accepts unsigned emulator tokens and fabricates a verified\n\
+                 Firebase project from their (unverified) claims — a credential-forgery\n\
+                 primitive that must never be reachable over the network. It is allowed\n\
+                 only on a loopback address (127.0.0.1, ::1, or localhost) for local dev.\n\
+                 \n\
+                 Bind on loopback for emulator dev, or configure real project bindings\n\
+                 (NIMBUS_FIREBASE_PROJECTS) and drop the bypass for a public bind."
             ),
         }
     }
@@ -187,6 +225,53 @@ mod tests {
             .expect("--allow-network should let non-loopback through stage 1");
         ensure_host_opt_in("203.0.113.5", true)
             .expect("--allow-network should let non-loopback through stage 1");
+    }
+
+    // Firebase token-verification-bypass guard (#24).
+
+    #[test]
+    fn firebase_bypass_guard_passes_when_bypass_disabled_on_any_host() {
+        // No bypass -> nothing to guard, even on a public host (and even with
+        // --allow-network already granted for the admin surface).
+        for host in ["127.0.0.1", "0.0.0.0", "203.0.113.5"] {
+            ensure_firebase_bypass_loopback_only(host, false)
+                .unwrap_or_else(|error| panic!("disabled bypass should pass on {host}: {error}"));
+        }
+    }
+
+    #[test]
+    fn firebase_bypass_guard_passes_on_loopback_when_enabled() {
+        for host in ["127.0.0.1", "::1", "localhost", "LOCALHOST"] {
+            ensure_firebase_bypass_loopback_only(host, true).unwrap_or_else(|error| {
+                panic!("enabled bypass should pass on loopback {host}: {error}")
+            });
+        }
+    }
+
+    #[test]
+    fn firebase_bypass_guard_refuses_enabled_bypass_on_non_loopback() {
+        // The forgery primitive must be unreachable on a public bind even when
+        // --allow-network was granted — the guard is independent of that flag.
+        for host in ["0.0.0.0", "203.0.113.5", "::"] {
+            let error = ensure_firebase_bypass_loopback_only(host, true).expect_err(
+                "the verification bypass must be refused on a non-loopback bind",
+            );
+            match &error {
+                NetworkBindError::FirebaseBypassRequiresLoopback { host: h } => {
+                    assert_eq!(h, host)
+                }
+                other => panic!("expected FirebaseBypassRequiresLoopback, got {other:?}"),
+            }
+            let message = error.to_string();
+            assert!(
+                message.contains("loopback"),
+                "refusal must point to the loopback requirement, got: {message}"
+            );
+            assert!(
+                message.contains("NIMBUS_FIREBASE_PROJECTS"),
+                "refusal must point to the real-bindings alternative, got: {message}"
+            );
+        }
     }
 
     // Stage 2 — `ensure_admin_token_rotated_for_public_bind`

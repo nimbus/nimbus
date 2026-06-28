@@ -46,9 +46,29 @@ pub use response::{
     serialize_json_lines,
 };
 
+/// Firestore adapter configuration.
+///
+/// Carries the project→tenant [`ProjectTenantRegistry`] that decides which tenant
+/// a request reaches (#24), plus the **dev-mode token-verification bypass**
+/// opt-in.
+///
+/// The registry defaults to an empty *strict* registry, so a `FirebaseConfig`
+/// built without explicit project bindings **refuses all Firestore traffic**
+/// (every project is unregistered) — fail-closed by construction. An operator
+/// turns the adapter on by registering projects (`NIMBUS_FIREBASE_PROJECTS`), not
+/// by leaving it unconfigured.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct FirebaseConfig {
-    allow_emulator_mock_user_token_auth: bool,
+    /// Dev-mode token-verification bypass: when set, the Firebase Emulator path
+    /// fabricates a *verified* principal from an unsigned, unverified emulator
+    /// token (see
+    /// `nimbus_auth::firebase_emulator_verification_bypass_principal_from_bearer`).
+    /// Because that forges a verified Firebase project from caller-controlled
+    /// claims, it is refused on any non-loopback bind by the `nimbus-bin` boot
+    /// guard. Never enable it on a network-reachable listener.
+    allow_emulator_token_verification_bypass: bool,
+    /// Project→tenant bindings. Empty strict by default = refuse-all (fail-closed).
+    project_registry: project_tenant_registry::ProjectTenantRegistry,
 }
 
 impl FirebaseConfig {
@@ -56,13 +76,33 @@ impl FirebaseConfig {
         Self::default()
     }
 
-    pub fn with_emulator_mock_user_token_auth(mut self) -> Self {
-        self.allow_emulator_mock_user_token_auth = true;
+    /// Enable the dev-mode token-verification bypass (Firebase Emulator).
+    ///
+    /// DANGER: fabricates a *verified* project from an unverified token. Only
+    /// valid on a loopback bind — the `nimbus-bin` boot guard refuses it on any
+    /// non-loopback host. Pairs with an identity registry for zero-config local
+    /// dev.
+    pub fn with_emulator_token_verification_bypass(mut self) -> Self {
+        self.allow_emulator_token_verification_bypass = true;
         self
     }
 
-    pub fn allows_emulator_mock_user_token_auth(&self) -> bool {
-        self.allow_emulator_mock_user_token_auth
+    pub fn allows_emulator_token_verification_bypass(&self) -> bool {
+        self.allow_emulator_token_verification_bypass
+    }
+
+    /// Install the project→tenant registry. Builder style.
+    pub fn with_project_registry(
+        mut self,
+        registry: project_tenant_registry::ProjectTenantRegistry,
+    ) -> Self {
+        self.project_registry = registry;
+        self
+    }
+
+    /// The project→tenant registry this adapter resolves requests through.
+    pub fn project_registry(&self) -> &project_tenant_registry::ProjectTenantRegistry {
+        &self.project_registry
     }
 }
 
