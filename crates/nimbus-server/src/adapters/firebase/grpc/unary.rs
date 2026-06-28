@@ -8,7 +8,9 @@ use super::generated::google::firestore::v1::{
     ListDocumentsResponse, RollbackRequest, RunAggregationQueryRequest,
     RunAggregationQueryResponse, RunQueryRequest, RunQueryResponse, UpdateDocumentRequest,
 };
-use super::{FirestoreGrpcService, request_bearer, resolve_bearer_auth};
+use super::{
+    FirestoreGrpcService, firebase_config_for_request, request_bearer, resolve_bearer_auth,
+};
 
 pub(super) async fn handle_commit(
     service: &FirestoreGrpcService,
@@ -16,7 +18,10 @@ pub(super) async fn handle_commit(
 ) -> Result<Response<CommitResponse>, Status> {
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     nimbus_firebase::grpc::unary::handle_commit(
+        registry,
         &state.engine,
         &auth.principal,
         request.into_inner(),
@@ -30,7 +35,10 @@ pub(super) async fn handle_get_document(
 ) -> Result<Response<proto::Document>, Status> {
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     nimbus_firebase::grpc::unary::handle_get_document(
+        registry,
         &state.engine,
         &auth.principal,
         request.into_inner(),
@@ -44,7 +52,10 @@ pub(super) async fn handle_batch_get_documents(
 ) -> Result<Response<tonic::codegen::BoxStream<BatchGetDocumentsResponse>>, Status> {
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     nimbus_firebase::grpc::unary::handle_batch_get_documents(
+        registry,
         &state.engine,
         &auth.principal,
         request.into_inner(),
@@ -58,7 +69,10 @@ pub(super) async fn handle_batch_write(
 ) -> Result<Response<BatchWriteResponse>, Status> {
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     nimbus_firebase::grpc::unary::handle_batch_write(
+        registry,
         &state.engine,
         &auth.principal,
         request.into_inner(),
@@ -72,7 +86,10 @@ pub(super) async fn handle_list_documents(
 ) -> Result<Response<ListDocumentsResponse>, Status> {
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     nimbus_firebase::grpc::unary::handle_list_documents(
+        registry,
         &state.engine,
         &auth.principal,
         request.into_inner(),
@@ -86,7 +103,10 @@ pub(super) async fn handle_list_collection_ids(
 ) -> Result<Response<ListCollectionIdsResponse>, Status> {
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     nimbus_firebase::grpc::unary::handle_list_collection_ids(
+        registry,
         &state.engine,
         &auth.principal,
         request.into_inner(),
@@ -100,7 +120,10 @@ pub(super) async fn handle_create_document(
 ) -> Result<Response<proto::Document>, Status> {
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     nimbus_firebase::grpc::unary::handle_create_document(
+        registry,
         &state.engine,
         &auth.principal,
         request.into_inner(),
@@ -114,7 +137,10 @@ pub(super) async fn handle_begin_transaction(
 ) -> Result<Response<BeginTransactionResponse>, Status> {
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     nimbus_firebase::grpc::unary::handle_begin_transaction(
+        registry,
         &state.engine,
         &auth.principal,
         request.into_inner(),
@@ -128,7 +154,10 @@ pub(super) async fn handle_rollback(
 ) -> Result<Response<()>, Status> {
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     nimbus_firebase::grpc::unary::handle_rollback(
+        registry,
         &state.engine,
         &auth.principal,
         request.into_inner(),
@@ -142,7 +171,10 @@ pub(super) async fn handle_update_document(
 ) -> Result<Response<proto::Document>, Status> {
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     nimbus_firebase::grpc::unary::handle_update_document(
+        registry,
         &state.engine,
         &auth.principal,
         request.into_inner(),
@@ -156,7 +188,10 @@ pub(super) async fn handle_delete_document(
 ) -> Result<Response<()>, Status> {
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     nimbus_firebase::grpc::unary::handle_delete_document(
+        registry,
         &state.engine,
         &auth.principal,
         request.into_inner(),
@@ -170,7 +205,10 @@ pub(super) async fn handle_run_query(
 ) -> Result<Response<tonic::codegen::BoxStream<RunQueryResponse>>, Status> {
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     nimbus_firebase::grpc::unary::handle_run_query(
+        registry,
         &state.engine,
         &auth.principal,
         request.into_inner(),
@@ -184,7 +222,10 @@ pub(super) async fn handle_run_aggregation_query(
 ) -> Result<Response<tonic::codegen::BoxStream<RunAggregationQueryResponse>>, Status> {
     let bearer = request_bearer(&request)?;
     let (state, auth) = resolve_bearer_auth(service, bearer).await?;
+    let firebase_config = firebase_config_for_request(&state)?;
+    let registry = firebase_config.project_registry();
     nimbus_firebase::grpc::unary::handle_run_aggregation_query(
+        registry,
         &state.engine,
         &auth.principal,
         request.into_inner(),

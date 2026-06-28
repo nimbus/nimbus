@@ -17,13 +17,21 @@ async fn firebase_listen_websocket_streams_binary_protobuf_frames_and_remove_tar
         &["cities", "LA"],
         [("name", json!("Los Angeles"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut socket =
-        WebSocketFixture::connect_raw(&server.ws_url("/google.firestore.v1.Firestore/Listen"))
-            .await
-            .expect("Firestore Listen websocket should connect");
+    // An anonymous listen (no auth offer) has no verified project and is refused.
+    assert_firebase_listen_ws_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+
+    let mut socket = firebase_listen_ws_connect(&server, "user-123", "demo").await;
 
     socket
         .send_binary(
@@ -141,13 +149,20 @@ async fn firebase_listen_websocket_resume_token_reconnects_via_shared_transport_
         &["cities", "LA"],
         [("name", json!("Los Angeles"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut socket =
-        WebSocketFixture::connect_raw(&server.ws_url("/google.firestore.v1.Firestore/Listen"))
-            .await
-            .expect("Firestore Listen websocket should connect");
+    assert_firebase_listen_ws_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+
+    let mut socket = firebase_listen_ws_connect(&server, "user-123", "demo").await;
     socket
         .send_binary(
             grpc_listen_query_request(61, "projects/demo/databases/(default)/documents", "cities")
@@ -187,10 +202,7 @@ async fn firebase_listen_websocket_resume_token_reconnects_via_shared_transport_
         [("name", json!("San Francisco Updated"))],
     );
 
-    let mut resumed_socket =
-        WebSocketFixture::connect_raw(&server.ws_url("/google.firestore.v1.Firestore/Listen"))
-            .await
-            .expect("Firestore Listen websocket should reconnect");
+    let mut resumed_socket = firebase_listen_ws_connect(&server, "user-123", "demo").await;
     resumed_socket
         .send_binary(
             grpc_listen_query_request_with_resume_token(
@@ -260,20 +272,20 @@ async fn firebase_listen_websocket_accepts_loopback_browser_origin_and_bootstrap
         &["cities", "SF"],
         [("name", json!("San Francisco"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut request = server
-        .ws_url("/google.firestore.v1.Firestore/Listen")
-        .into_client_request()
-        .expect("browser websocket request should build");
-    request.headers_mut().insert(
-        header::ORIGIN,
-        axum::http::HeaderValue::from_static("http://localhost:5173"),
-    );
-    let mut socket = WebSocketFixture::connect_request(request)
-        .await
-        .expect("loopback browser websocket should connect");
+    assert_firebase_listen_ws_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+
+    let mut socket = firebase_listen_ws_connect(&server, "user-123", "demo").await;
 
     socket
         .send_binary(
@@ -349,13 +361,20 @@ async fn firebase_listen_websocket_backpressure_closes_with_error_code() {
         &["cities", "SF"],
         [("name", json!("San Francisco"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut socket =
-        WebSocketFixture::connect_raw(&server.ws_url("/google.firestore.v1.Firestore/Listen"))
-            .await
-            .expect("Firestore Listen websocket should connect");
+    assert_firebase_listen_ws_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)/documents",
+        "cities",
+    )
+    .await;
+
+    let mut socket = firebase_listen_ws_connect(&server, "user-123", "demo").await;
     socket
         .send_binary(
             grpc_listen_query_request(72, "projects/demo/databases/(default)/documents", "cities")

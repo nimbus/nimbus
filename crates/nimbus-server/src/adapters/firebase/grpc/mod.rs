@@ -10,6 +10,7 @@ pub(crate) use nimbus_firebase::grpc::generated;
 use std::sync::Arc;
 
 use nimbus_auth::ResolvedApplicationAuth;
+use nimbus_firebase::FirebaseConfig;
 use tonic::{Request, Response, Status};
 
 use crate::application_auth::{
@@ -111,6 +112,17 @@ async fn resolve_bearer_auth(
         .map_err(grpc_status_from_app_error)?;
     record_authenticated_usage(&state, auth.auth.as_ref()).await;
     Ok((state, auth))
+}
+
+/// The active deployment's Firebase config, or the same not-enabled error the
+/// REST surface answers with mapped to a gRPC `Status`. Callers hold the
+/// returned `Arc` in a binding so a borrow of its
+/// [`FirebaseConfig::project_registry`] lives long enough.
+fn firebase_config_for_request(state: &Arc<AppState>) -> Result<Arc<FirebaseConfig>, Status> {
+    state
+        .current_deployment()
+        .firebase_config()
+        .ok_or_else(|| Status::not_found("firebase adapter is disabled"))
 }
 
 #[tonic::async_trait]

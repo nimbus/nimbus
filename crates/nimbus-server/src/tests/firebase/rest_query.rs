@@ -5,11 +5,23 @@ async fn firebase_batch_write_reports_partial_success_and_rejects_duplicates() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let client = firebase_rest_client("user-123", "demo");
 
-    let response = server
-        .client()
+    // BatchWrite runs the #24 gate after parsing, so the refusal uses a body that
+    // parses; an anonymous caller is still refused with 403.
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents:batchWrite",
+        r#"{"database":"projects/demo/databases/(default)","writes":[{"delete":"projects/demo/databases/(default)/documents/cities/x"}]}"#,
+    )
+    .await;
+
+    let response = client
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:batchWrite"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
@@ -59,8 +71,7 @@ async fn firebase_batch_write_reports_partial_success_and_rejects_duplicates() {
         .expect("successful BatchWrite entries should persist");
     assert_eq!(stored.get_field("name"), Some(&json!("San Francisco")));
 
-    let duplicate = server
-        .client()
+    let duplicate = client
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:batchWrite"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
@@ -97,8 +108,12 @@ async fn firebase_run_query_executes_supported_subset_with_where_order_cursor_of
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let client = firebase_rest_client("user-123", "demo");
     let cities_table = crate::adapters::firebase::storage_table_for_collection_path(
         &CollectionPath::root(CollectionName::new("cities").expect("collection name should parse")),
     )
@@ -162,8 +177,14 @@ async fn firebase_run_query_executes_supported_subset_with_where_order_cursor_of
             .expect("seed document should insert");
     }
 
-    let response = server
-        .client()
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents:runQuery",
+        "{}",
+    )
+    .await;
+
+    let response = client
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:runQuery"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
@@ -229,8 +250,12 @@ async fn firebase_run_query_reports_missing_index_for_compound_query_without_mat
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let client = firebase_rest_client("user-123", "demo");
     let cities_table = crate::adapters::firebase::storage_table_for_collection_path(
         &CollectionPath::root(CollectionName::new("cities").expect("collection name should parse")),
     )
@@ -271,8 +296,14 @@ async fn firebase_run_query_reports_missing_index_for_compound_query_without_mat
         )
         .expect("single-field cities schema should install");
 
-    let response = server
-        .client()
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents:runQuery",
+        "{}",
+    )
+    .await;
+
+    let response = client
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:runQuery"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
@@ -322,11 +353,21 @@ async fn firebase_run_query_reports_missing_index_for_compound_query_without_mat
 async fn firebase_run_query_returns_read_time_only_when_no_documents_match() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let client = firebase_rest_client("user-123", "demo");
 
-    let response = server
-        .client()
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents:runQuery",
+        "{}",
+    )
+    .await;
+
+    let response = client
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:runQuery"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
@@ -378,11 +419,21 @@ async fn firebase_run_aggregation_query_counts_filtered_and_empty_results() {
         &["cities", "SEA"],
         [("state", json!("WA"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let client = firebase_rest_client("user-123", "demo");
 
-    let response = server
-        .client()
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents:runAggregationQuery",
+        "{}",
+    )
+    .await;
+
+    let response = client
         .post(
             server.http_url("/v1/projects/demo/databases/(default)/documents:runAggregationQuery"),
         )
@@ -418,8 +469,7 @@ async fn firebase_run_aggregation_query_counts_filtered_and_empty_results() {
     );
     assert!(entries[0]["readTime"].as_str().is_some());
 
-    let empty_response = server
-        .client()
+    let empty_response = client
         .post(
             server.http_url("/v1/projects/demo/databases/(default)/documents:runAggregationQuery"),
         )
@@ -478,11 +528,21 @@ async fn firebase_run_aggregation_query_under_parent_document_scopes_nested_coll
         &["cities", "LA", "landmarks", "sign"],
         [("name", json!("Hollywood Sign"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let client = firebase_rest_client("user-123", "demo");
 
-    let response = server
-        .client()
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents/cities/SF:runAggregationQuery",
+        "{}",
+    )
+    .await;
+
+    let response = client
         .post(server.http_url(
             "/v1/projects/demo/databases/(default)/documents/cities/SF:runAggregationQuery",
         ))
@@ -514,11 +574,21 @@ async fn firebase_run_aggregation_query_under_parent_document_scopes_nested_coll
 async fn firebase_run_aggregation_query_rejects_deferred_selectors_and_sum() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let client = firebase_rest_client("user-123", "demo");
 
-    let transaction_response = server
-        .client()
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents:runAggregationQuery",
+        "{}",
+    )
+    .await;
+
+    let transaction_response = client
         .post(
             server.http_url("/v1/projects/demo/databases/(default)/documents:runAggregationQuery"),
         )
@@ -549,8 +619,7 @@ async fn firebase_run_aggregation_query_rejects_deferred_selectors_and_sum() {
             .is_some_and(|message| message.contains("transaction"))
     );
 
-    let sum_response = server
-        .client()
+    let sum_response = client
         .post(
             server.http_url("/v1/projects/demo/databases/(default)/documents:runAggregationQuery"),
         )
@@ -592,8 +661,12 @@ async fn firebase_run_query_supports_composite_unary_filters_and_name_tiebreaks(
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let client = firebase_rest_client("user-123", "demo");
     for (document_id, rank, state) in [
         ("bravo", 1, json!("CA")),
         ("alpha", 1, serde_json::Value::Null),
@@ -617,8 +690,14 @@ async fn firebase_run_query_supports_composite_unary_filters_and_name_tiebreaks(
             .expect("seed document should insert");
     }
 
-    let response = server
-        .client()
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents:runQuery",
+        "{}",
+    )
+    .await;
+
+    let response = client
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:runQuery"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
@@ -680,8 +759,7 @@ async fn firebase_run_query_supports_composite_unary_filters_and_name_tiebreaks(
         json!("projects/demo/databases/(default)/documents/cities/bravo")
     );
 
-    let ordering_response = server
-        .client()
+    let ordering_response = client
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:runQuery"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
@@ -738,8 +816,12 @@ async fn firebase_run_query_under_parent_document_scopes_to_nested_collection_pa
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let client = firebase_rest_client("user-123", "demo");
 
     for (document_path, name) in [
         ("cities/SF/landmarks/golden-gate", "Golden Gate Bridge"),
@@ -761,8 +843,14 @@ async fn firebase_run_query_under_parent_document_scopes_to_nested_collection_pa
             .expect("seed nested document should insert");
     }
 
-    let response = server
-        .client()
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents/cities/SF:runQuery",
+        "{}",
+    )
+    .await;
+
+    let response = client
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents/cities/SF:runQuery"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
@@ -799,8 +887,12 @@ async fn firebase_run_query_collection_group_uses_path_metadata_for_scope_orderi
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let client = firebase_rest_client("user-123", "demo");
 
     for (document_path, rank) in [
         ("cities/SF/districts/1/landmarks/zz-top", 1),
@@ -816,8 +908,14 @@ async fn firebase_run_query_collection_group_uses_path_metadata_for_scope_orderi
         );
     }
 
-    let root_response = server
-        .client()
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents:runQuery",
+        "{}",
+    )
+    .await;
+
+    let root_response = client
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:runQuery"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
@@ -879,8 +977,7 @@ async fn firebase_run_query_collection_group_uses_path_metadata_for_scope_orderi
         "root collection-group query should use full document paths for __name__ filters"
     );
 
-    let scoped_cursor_response = server
-        .client()
+    let scoped_cursor_response = client
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents/cities/SF:runQuery"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
@@ -945,8 +1042,7 @@ async fn firebase_run_query_collection_group_uses_path_metadata_for_scope_orderi
         &["cities", "SF", "landmarks", "aa-top"],
     );
 
-    let post_delete_response = server
-        .client()
+    let post_delete_response = client
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents/cities/SF:runQuery"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
@@ -1004,11 +1100,21 @@ async fn firebase_run_query_collection_group_uses_path_metadata_for_scope_orderi
 async fn firebase_run_query_rejects_invalid_filter_combinations() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let client = firebase_rest_client("user-123", "demo");
 
-    let response = server
-        .client()
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents:runQuery",
+        "{}",
+    )
+    .await;
+
+    let response = client
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:runQuery"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
