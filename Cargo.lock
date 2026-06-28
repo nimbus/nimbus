@@ -6304,6 +6304,7 @@ dependencies = [
 name = "nimbus-runtime"
 version = "0.1.44"
 dependencies = [
+ "async-trait",
  "base64 0.22.1",
  "criterion",
  "deno_ast",

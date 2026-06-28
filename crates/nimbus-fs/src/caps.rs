@@ -27,7 +27,7 @@ pub struct FsMountCaps {
     pub directory_mutate: bool,
     pub metadata_mutate: bool,
     pub link_create: bool,
-    pub write_size_limit: Option<u64>,
+    pub max_write_size: Option<u64>,
     pub masked: bool,
     pub readonly: bool,
 }
@@ -117,6 +117,20 @@ impl FsCaps {
     }
 }
 
+pub(crate) fn capped_mount_backend(
+    backend: deno_fs::FileSystemRc,
+    caps: FsMountCaps,
+) -> (deno_fs::FileSystemRc, bool) {
+    let readonly = caps.readonly || !caps.file_write;
+    (
+        MaybeArc::new(CappedBackend {
+            inner: backend,
+            caps,
+        }),
+        readonly,
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FsOpenRequirement {
     pub file_read: bool,
@@ -137,7 +151,7 @@ impl FsMountCaps {
             directory_mutate: true,
             metadata_mutate: true,
             link_create: true,
-            write_size_limit: None,
+            max_write_size: None,
             masked: false,
             readonly: false,
         }
@@ -163,14 +177,14 @@ impl FsMountCaps {
             directory_mutate: false,
             metadata_mutate: false,
             link_create: false,
-            write_size_limit: None,
+            max_write_size: None,
             masked: true,
             readonly: true,
         }
     }
 
-    pub fn with_write_size_limit(mut self, limit: u64) -> Self {
-        self.write_size_limit = Some(limit);
+    pub fn with_max_write_size(mut self, limit: u64) -> Self {
+        self.max_write_size = Some(limit);
         self
     }
 
@@ -231,12 +245,12 @@ impl FsMountCaps {
     }
 
     fn check_write_size(&self, len: usize) -> FsResult<()> {
-        if let Some(limit) = self.write_size_limit
+        if let Some(limit) = self.max_write_size
             && len as u64 > limit
         {
             return Err(io::Error::new(
                 io::ErrorKind::StorageFull,
-                "FsCaps write-size quota exceeded",
+                "FsCaps maximum write size exceeded",
             )
             .into());
         }
@@ -544,7 +558,7 @@ impl FileSystem for CappedBackend {
 
     fn truncate_sync(&self, path: &CheckedPath<'_>, len: u64) -> FsResult<()> {
         self.caps.require_file_write()?;
-        if let Some(limit) = self.caps.write_size_limit
+        if let Some(limit) = self.caps.max_write_size
             && len > limit
         {
             return Err(io::ErrorKind::StorageFull.into());
@@ -554,7 +568,7 @@ impl FileSystem for CappedBackend {
 
     async fn truncate_async(&self, path: CheckedPathBuf, len: u64) -> FsResult<()> {
         self.caps.require_file_write()?;
-        if let Some(limit) = self.caps.write_size_limit
+        if let Some(limit) = self.caps.max_write_size
             && len > limit
         {
             return Err(io::ErrorKind::StorageFull.into());
@@ -758,7 +772,7 @@ impl File for CappedFile {
 
     fn truncate_sync(self: Rc<Self>, len: u64) -> FsResult<()> {
         self.caps.require_file_write()?;
-        if let Some(limit) = self.caps.write_size_limit
+        if let Some(limit) = self.caps.max_write_size
             && len > limit
         {
             return Err(io::ErrorKind::StorageFull.into());
@@ -768,7 +782,7 @@ impl File for CappedFile {
 
     async fn truncate_async(self: Rc<Self>, len: u64) -> FsResult<()> {
         self.caps.require_file_write()?;
-        if let Some(limit) = self.caps.write_size_limit
+        if let Some(limit) = self.caps.max_write_size
             && len > limit
         {
             return Err(io::ErrorKind::StorageFull.into());

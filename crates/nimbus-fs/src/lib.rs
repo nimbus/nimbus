@@ -11,7 +11,7 @@
 //! filesystem seam.
 
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Mutex;
 
@@ -144,16 +144,117 @@ fn configured_process_cwd() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct PassthroughBackend {
     inner: deno_fs::RealFs,
+    root: PathBuf,
 }
 
 impl PassthroughBackend {
     pub fn new() -> Self {
+        Self::rooted(PathBuf::from("/"))
+    }
+
+    pub fn rooted(root: impl Into<PathBuf>) -> Self {
         Self {
             inner: deno_fs::RealFs,
+            root: root.into(),
         }
+    }
+
+    fn host_path(&self, path: &Path) -> FsResult<PathBuf> {
+        let mut relative = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::Prefix(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "passthrough backend does not accept platform path prefixes",
+                    )
+                    .into());
+                }
+                Component::RootDir | Component::CurDir => {}
+                Component::ParentDir => {
+                    if !relative.pop() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            "passthrough path escapes backend root",
+                        )
+                        .into());
+                    }
+                }
+                Component::Normal(part) => relative.push(part),
+            }
+        }
+        let path = self.root.join(relative);
+        self.ensure_existing_ancestor_inside_root(&path)?;
+        Ok(path)
+    }
+
+    fn checked_path(&self, path: &CheckedPath<'_>) -> FsResult<CheckedPathBuf> {
+        Ok(CheckedPathBuf::unsafe_new(self.host_path(path)?))
+    }
+
+    fn checked_buf(&self, path: CheckedPathBuf) -> FsResult<CheckedPathBuf> {
+        Ok(CheckedPathBuf::unsafe_new(
+            self.host_path(&path.into_path_buf())?,
+        ))
+    }
+
+    fn symlink_target(&self, path: &CheckedPath<'_>) -> FsResult<CheckedPathBuf> {
+        if path.is_absolute() {
+            self.checked_path(path)
+        } else {
+            Ok(CheckedPathBuf::unsafe_new(path.to_path_buf()))
+        }
+    }
+
+    fn symlink_target_buf(&self, path: CheckedPathBuf) -> FsResult<CheckedPathBuf> {
+        if path.is_absolute() {
+            self.checked_buf(path)
+        } else {
+            Ok(path)
+        }
+    }
+
+    fn ensure_existing_ancestor_inside_root(&self, path: &Path) -> io::Result<()> {
+        let root = self.root.canonicalize()?;
+        let mut ancestor = path;
+        while !ancestor.exists() {
+            ancestor = ancestor.parent().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "passthrough path has no ancestor inside backend root",
+                )
+            })?;
+        }
+        let ancestor = ancestor.canonicalize()?;
+        if ancestor.starts_with(&root) {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "passthrough path resolves outside backend root",
+            ))
+        }
+    }
+
+    fn backend_path_for_host(&self, path: PathBuf) -> FsResult<PathBuf> {
+        let root = self.root.canonicalize()?;
+        let path = path.canonicalize()?;
+        let relative = path.strip_prefix(&root).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "passthrough path resolves outside backend root",
+            )
+        })?;
+        Ok(Path::new("/").join(relative))
+    }
+}
+
+impl Default for PassthroughBackend {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -677,15 +778,16 @@ impl FileSystem for NimbusFs {
 #[async_trait::async_trait(?Send)]
 impl FileSystem for PassthroughBackend {
     fn cwd(&self) -> FsResult<PathBuf> {
-        self.inner.cwd()
+        Ok(self.root.clone())
     }
 
     fn tmp_dir(&self) -> FsResult<PathBuf> {
-        self.inner.tmp_dir()
+        self.host_path(Path::new("/tmp"))
     }
 
     fn chdir(&self, path: &CheckedPath<'_>) -> FsResult<()> {
-        self.inner.chdir(path)
+        let path = self.checked_path(path)?;
+        self.inner.chdir(&path.as_checked_path())
     }
 
     fn umask(&self, mask: Option<u32>) -> FsResult<u32> {
@@ -693,7 +795,8 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn open_sync(&self, path: &CheckedPath<'_>, options: OpenOptions) -> FsResult<Rc<dyn File>> {
-        self.inner.open_sync(path, options)
+        let path = self.checked_path(path)?;
+        self.inner.open_sync(&path.as_checked_path(), options)
     }
 
     async fn open_async<'a>(
@@ -701,6 +804,7 @@ impl FileSystem for PassthroughBackend {
         path: CheckedPathBuf,
         options: OpenOptions,
     ) -> FsResult<Rc<dyn File>> {
+        let path = self.checked_buf(path)?;
         self.inner.open_async(path, options).await
     }
 
@@ -710,7 +814,9 @@ impl FileSystem for PassthroughBackend {
         recursive: bool,
         mode: Option<u32>,
     ) -> FsResult<()> {
-        self.inner.mkdir_sync(path, recursive, mode)
+        let path = self.checked_path(path)?;
+        self.inner
+            .mkdir_sync(&path.as_checked_path(), recursive, mode)
     }
 
     async fn mkdir_async(
@@ -719,26 +825,31 @@ impl FileSystem for PassthroughBackend {
         recursive: bool,
         mode: Option<u32>,
     ) -> FsResult<()> {
+        let path = self.checked_buf(path)?;
         self.inner.mkdir_async(path, recursive, mode).await
     }
 
     #[cfg(unix)]
     fn chmod_sync(&self, path: &CheckedPath<'_>, mode: u32) -> FsResult<()> {
-        self.inner.chmod_sync(path, mode)
+        let path = self.checked_path(path)?;
+        self.inner.chmod_sync(&path.as_checked_path(), mode)
     }
 
     #[cfg(not(unix))]
     fn chmod_sync(&self, path: &CheckedPath<'_>, mode: i32) -> FsResult<()> {
-        self.inner.chmod_sync(path, mode)
+        let path = self.checked_path(path)?;
+        self.inner.chmod_sync(&path.as_checked_path(), mode)
     }
 
     #[cfg(unix)]
     async fn chmod_async(&self, path: CheckedPathBuf, mode: u32) -> FsResult<()> {
+        let path = self.checked_buf(path)?;
         self.inner.chmod_async(path, mode).await
     }
 
     #[cfg(not(unix))]
     async fn chmod_async(&self, path: CheckedPathBuf, mode: i32) -> FsResult<()> {
+        let path = self.checked_buf(path)?;
         self.inner.chmod_async(path, mode).await
     }
 
@@ -748,7 +859,8 @@ impl FileSystem for PassthroughBackend {
         uid: Option<u32>,
         gid: Option<u32>,
     ) -> FsResult<()> {
-        self.inner.chown_sync(path, uid, gid)
+        let path = self.checked_path(path)?;
+        self.inner.chown_sync(&path.as_checked_path(), uid, gid)
     }
 
     async fn chown_async(
@@ -757,14 +869,17 @@ impl FileSystem for PassthroughBackend {
         uid: Option<u32>,
         gid: Option<u32>,
     ) -> FsResult<()> {
+        let path = self.checked_buf(path)?;
         self.inner.chown_async(path, uid, gid).await
     }
 
     fn lchmod_sync(&self, path: &CheckedPath<'_>, mode: u32) -> FsResult<()> {
-        self.inner.lchmod_sync(path, mode)
+        let path = self.checked_path(path)?;
+        self.inner.lchmod_sync(&path.as_checked_path(), mode)
     }
 
     async fn lchmod_async(&self, path: CheckedPathBuf, mode: u32) -> FsResult<()> {
+        let path = self.checked_buf(path)?;
         self.inner.lchmod_async(path, mode).await
     }
 
@@ -774,7 +889,8 @@ impl FileSystem for PassthroughBackend {
         uid: Option<u32>,
         gid: Option<u32>,
     ) -> FsResult<()> {
-        self.inner.lchown_sync(path, uid, gid)
+        let path = self.checked_path(path)?;
+        self.inner.lchown_sync(&path.as_checked_path(), uid, gid)
     }
 
     async fn lchown_async(
@@ -783,19 +899,25 @@ impl FileSystem for PassthroughBackend {
         uid: Option<u32>,
         gid: Option<u32>,
     ) -> FsResult<()> {
+        let path = self.checked_buf(path)?;
         self.inner.lchown_async(path, uid, gid).await
     }
 
     fn remove_sync(&self, path: &CheckedPath<'_>, recursive: bool) -> FsResult<()> {
-        self.inner.remove_sync(path, recursive)
+        let path = self.checked_path(path)?;
+        self.inner.remove_sync(&path.as_checked_path(), recursive)
     }
 
     async fn remove_async(&self, path: CheckedPathBuf, recursive: bool) -> FsResult<()> {
+        let path = self.checked_buf(path)?;
         self.inner.remove_async(path, recursive).await
     }
 
     fn copy_file_sync(&self, oldpath: &CheckedPath<'_>, newpath: &CheckedPath<'_>) -> FsResult<()> {
-        self.inner.copy_file_sync(oldpath, newpath)
+        let oldpath = self.checked_path(oldpath)?;
+        let newpath = self.checked_path(newpath)?;
+        self.inner
+            .copy_file_sync(&oldpath.as_checked_path(), &newpath.as_checked_path())
     }
 
     async fn copy_file_async(
@@ -803,78 +925,109 @@ impl FileSystem for PassthroughBackend {
         oldpath: CheckedPathBuf,
         newpath: CheckedPathBuf,
     ) -> FsResult<()> {
+        let oldpath = self.checked_buf(oldpath)?;
+        let newpath = self.checked_buf(newpath)?;
         self.inner.copy_file_async(oldpath, newpath).await
     }
 
     fn cp_sync(&self, path: &CheckedPath<'_>, new_path: &CheckedPath<'_>) -> FsResult<()> {
-        self.inner.cp_sync(path, new_path)
+        let path = self.checked_path(path)?;
+        let new_path = self.checked_path(new_path)?;
+        self.inner
+            .cp_sync(&path.as_checked_path(), &new_path.as_checked_path())
     }
 
     async fn cp_async(&self, path: CheckedPathBuf, new_path: CheckedPathBuf) -> FsResult<()> {
+        let path = self.checked_buf(path)?;
+        let new_path = self.checked_buf(new_path)?;
         self.inner.cp_async(path, new_path).await
     }
 
     fn stat_sync(&self, path: &CheckedPath<'_>) -> FsResult<FsStat> {
-        self.inner.stat_sync(path)
+        let path = self.checked_path(path)?;
+        self.inner.stat_sync(&path.as_checked_path())
     }
 
     async fn stat_async(&self, path: CheckedPathBuf) -> FsResult<FsStat> {
+        let path = self.checked_buf(path)?;
         self.inner.stat_async(path).await
     }
 
     fn lstat_sync(&self, path: &CheckedPath<'_>) -> FsResult<FsStat> {
-        self.inner.lstat_sync(path)
+        let path = self.checked_path(path)?;
+        self.inner.lstat_sync(&path.as_checked_path())
     }
 
     async fn lstat_async(&self, path: CheckedPathBuf) -> FsResult<FsStat> {
+        let path = self.checked_buf(path)?;
         self.inner.lstat_async(path).await
     }
 
     fn statfs_sync(&self, path: &CheckedPath<'_>, bigint: bool) -> FsResult<FsStatFs> {
-        self.inner.statfs_sync(path, bigint)
+        let path = self.checked_path(path)?;
+        self.inner.statfs_sync(&path.as_checked_path(), bigint)
     }
 
     async fn statfs_async(&self, path: CheckedPathBuf, bigint: bool) -> FsResult<FsStatFs> {
+        let path = self.checked_buf(path)?;
         self.inner.statfs_async(path, bigint).await
     }
 
     fn realpath_sync(&self, path: &CheckedPath<'_>) -> FsResult<PathBuf> {
-        self.inner.realpath_sync(path)
+        let path = self.checked_path(path)?;
+        let realpath = self.inner.realpath_sync(&path.as_checked_path())?;
+        self.backend_path_for_host(realpath)
     }
 
     async fn realpath_async(&self, path: CheckedPathBuf) -> FsResult<PathBuf> {
-        self.inner.realpath_async(path).await
+        let path = self.checked_buf(path)?;
+        let realpath = self.inner.realpath_async(path).await?;
+        self.backend_path_for_host(realpath)
     }
 
     fn read_dir_sync(&self, path: &CheckedPath<'_>) -> FsResult<Vec<FsDirEntry>> {
-        self.inner.read_dir_sync(path)
+        let path = self.checked_path(path)?;
+        self.inner.read_dir_sync(&path.as_checked_path())
     }
 
     async fn read_dir_async(&self, path: CheckedPathBuf) -> FsResult<FsReadDirRc> {
+        let path = self.checked_buf(path)?;
         self.inner.read_dir_async(path).await
     }
 
     fn rename_sync(&self, oldpath: &CheckedPath<'_>, newpath: &CheckedPath<'_>) -> FsResult<()> {
-        self.inner.rename_sync(oldpath, newpath)
+        let oldpath = self.checked_path(oldpath)?;
+        let newpath = self.checked_path(newpath)?;
+        self.inner
+            .rename_sync(&oldpath.as_checked_path(), &newpath.as_checked_path())
     }
 
     async fn rename_async(&self, oldpath: CheckedPathBuf, newpath: CheckedPathBuf) -> FsResult<()> {
+        let oldpath = self.checked_buf(oldpath)?;
+        let newpath = self.checked_buf(newpath)?;
         self.inner.rename_async(oldpath, newpath).await
     }
 
     fn rmdir_sync(&self, path: &CheckedPath<'_>) -> FsResult<()> {
-        self.inner.rmdir_sync(path)
+        let path = self.checked_path(path)?;
+        self.inner.rmdir_sync(&path.as_checked_path())
     }
 
     async fn rmdir_async(&self, path: CheckedPathBuf) -> FsResult<()> {
+        let path = self.checked_buf(path)?;
         self.inner.rmdir_async(path).await
     }
 
     fn link_sync(&self, oldpath: &CheckedPath<'_>, newpath: &CheckedPath<'_>) -> FsResult<()> {
-        self.inner.link_sync(oldpath, newpath)
+        let oldpath = self.checked_path(oldpath)?;
+        let newpath = self.checked_path(newpath)?;
+        self.inner
+            .link_sync(&oldpath.as_checked_path(), &newpath.as_checked_path())
     }
 
     async fn link_async(&self, oldpath: CheckedPathBuf, newpath: CheckedPathBuf) -> FsResult<()> {
+        let oldpath = self.checked_buf(oldpath)?;
+        let newpath = self.checked_buf(newpath)?;
         self.inner.link_async(oldpath, newpath).await
     }
 
@@ -884,7 +1037,13 @@ impl FileSystem for PassthroughBackend {
         newpath: &CheckedPath<'_>,
         file_type: Option<FsFileType>,
     ) -> FsResult<()> {
-        self.inner.symlink_sync(oldpath, newpath, file_type)
+        let oldpath = self.symlink_target(oldpath)?;
+        let newpath = self.checked_path(newpath)?;
+        self.inner.symlink_sync(
+            &oldpath.as_checked_path(),
+            &newpath.as_checked_path(),
+            file_type,
+        )
     }
 
     async fn symlink_async(
@@ -893,22 +1052,38 @@ impl FileSystem for PassthroughBackend {
         newpath: CheckedPathBuf,
         file_type: Option<FsFileType>,
     ) -> FsResult<()> {
+        let oldpath = self.symlink_target_buf(oldpath)?;
+        let newpath = self.checked_buf(newpath)?;
         self.inner.symlink_async(oldpath, newpath, file_type).await
     }
 
     fn read_link_sync(&self, path: &CheckedPath<'_>) -> FsResult<PathBuf> {
-        self.inner.read_link_sync(path)
+        let path = self.checked_path(path)?;
+        let target = self.inner.read_link_sync(&path.as_checked_path())?;
+        if target.is_absolute() {
+            self.backend_path_for_host(target)
+        } else {
+            Ok(target)
+        }
     }
 
     async fn read_link_async(&self, path: CheckedPathBuf) -> FsResult<PathBuf> {
-        self.inner.read_link_async(path).await
+        let path = self.checked_buf(path)?;
+        let target = self.inner.read_link_async(path).await?;
+        if target.is_absolute() {
+            self.backend_path_for_host(target)
+        } else {
+            Ok(target)
+        }
     }
 
     fn truncate_sync(&self, path: &CheckedPath<'_>, len: u64) -> FsResult<()> {
-        self.inner.truncate_sync(path, len)
+        let path = self.checked_path(path)?;
+        self.inner.truncate_sync(&path.as_checked_path(), len)
     }
 
     async fn truncate_async(&self, path: CheckedPathBuf, len: u64) -> FsResult<()> {
+        let path = self.checked_buf(path)?;
         self.inner.truncate_async(path, len).await
     }
 
@@ -920,8 +1095,14 @@ impl FileSystem for PassthroughBackend {
         mtime_secs: i64,
         mtime_nanos: u32,
     ) -> FsResult<()> {
-        self.inner
-            .utime_sync(path, atime_secs, atime_nanos, mtime_secs, mtime_nanos)
+        let path = self.checked_path(path)?;
+        self.inner.utime_sync(
+            &path.as_checked_path(),
+            atime_secs,
+            atime_nanos,
+            mtime_secs,
+            mtime_nanos,
+        )
     }
 
     async fn utime_async(
@@ -932,6 +1113,7 @@ impl FileSystem for PassthroughBackend {
         mtime_secs: i64,
         mtime_nanos: u32,
     ) -> FsResult<()> {
+        let path = self.checked_buf(path)?;
         self.inner
             .utime_async(path, atime_secs, atime_nanos, mtime_secs, mtime_nanos)
             .await
@@ -945,8 +1127,14 @@ impl FileSystem for PassthroughBackend {
         mtime_secs: i64,
         mtime_nanos: u32,
     ) -> FsResult<()> {
-        self.inner
-            .lutime_sync(path, atime_secs, atime_nanos, mtime_secs, mtime_nanos)
+        let path = self.checked_path(path)?;
+        self.inner.lutime_sync(
+            &path.as_checked_path(),
+            atime_secs,
+            atime_nanos,
+            mtime_secs,
+            mtime_nanos,
+        )
     }
 
     async fn lutime_async(
@@ -957,16 +1145,21 @@ impl FileSystem for PassthroughBackend {
         mtime_secs: i64,
         mtime_nanos: u32,
     ) -> FsResult<()> {
+        let path = self.checked_buf(path)?;
         self.inner
             .lutime_async(path, atime_secs, atime_nanos, mtime_secs, mtime_nanos)
             .await
     }
 
     fn exists_sync(&self, path: &CheckedPath<'_>) -> bool {
-        self.inner.exists_sync(path)
+        let Ok(path) = self.checked_path(path) else {
+            return false;
+        };
+        self.inner.exists_sync(&path.as_checked_path())
     }
 
     async fn exists_async(&self, path: CheckedPathBuf) -> FsResult<bool> {
+        let path = self.checked_buf(path)?;
         self.inner.exists_async(path).await
     }
 }

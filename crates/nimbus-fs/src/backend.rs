@@ -8,7 +8,7 @@ use deno_fs::sync::MaybeArc;
 use deno_io::fs::FsResult;
 use nimbus_runtime::NimbusFsBackend;
 
-use crate::caps::FsMountCaps;
+use crate::caps::{FsMountCaps, capped_mount_backend};
 use crate::mount::MountTable;
 
 #[derive(Debug, Clone)]
@@ -107,9 +107,15 @@ impl BackendRegistry {
                 format!("NimbusFS backend {name} is not registered"),
             )
         })?;
-        table
-            .mount(prefix.into(), registration.backend.clone())
-            .map_err(Into::into)
+        let (backend, readonly) =
+            capped_mount_backend(registration.backend.clone(), registration.caps.clone());
+        if readonly {
+            table
+                .mount_readonly(prefix.into(), backend)
+                .map_err(Into::into)
+        } else {
+            table.mount(prefix.into(), backend).map_err(Into::into)
+        }
     }
 }
 

@@ -346,10 +346,10 @@ fi
 if [ -d "${KV_TESTS}" ] && grep -rqE 'unauthenticated|NOAUTH|requires.*auth|auth.*reject|credential' "${KV_TESTS}" 2>/dev/null; then
   c9_auth_test=1
 fi
-if grep_dir 'AccessKeyRegistry|credential.*TenantId|TenantId.*credential|tenant.*credential|credential.*tenant|SELECT' "${KV_SRC}"; then
+if grep_dir 'authenticated_tenant|tenant_key|tenant_prefix|credential.*TenantId|TenantId.*credential|tenant.*credential|credential.*tenant' "${KV_SRC}"; then
   c9_tenant_binding=1
 fi
-if [ -d "${KV_TESTS}" ] && grep -rqE 'tenant.?A|tenant_a|cross.?tenant|SELECT|cannot.*read.*tenant|credential.*tenant' "${KV_TESTS}" 2>/dev/null; then
+if cargo test -p nimbus-kv --test resp_server tenant_a_credential_cannot_read_tenant_b_keys -- --nocapture >/dev/null 2>&1; then
   c9_tenant_test=1
 fi
 if [ "${c9_helper}" = "1" ] && [ "${c9_uses_helper}" = "1" ] && [ "${c9_bind_test}" = "1" ] && [ "${c9_auth}" = "1" ] && [ "${c9_auth_test}" = "1" ] && [ "${c9_tenant_binding}" = "1" ] && [ "${c9_tenant_test}" = "1" ]; then

@@ -1,7 +1,12 @@
 use super::*;
+use std::borrow::Cow;
 use std::num::NonZeroUsize;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+
+use deno_fs::OpenOptions;
+use deno_permissions::CheckedPath;
 
 #[derive(Debug)]
 struct FixedRuntimeHostPressureSource(RuntimeHostPressureSample);
@@ -607,6 +612,21 @@ fn runtime_policy_carries_adaptive_controller_settings_without_enabling_defaults
             .adaptive_controller_settings()
             .live_adaptive_defaults_enabled()
     );
+}
+
+#[test]
+fn runtime_policy_default_filesystem_has_no_host_authority() {
+    let policy = RuntimePolicy::new(RuntimeLimits::default());
+    let fs = policy.file_system();
+
+    let error = fs
+        .read_file_sync(
+            &CheckedPath::unsafe_new(Cow::Borrowed(Path::new("/etc/passwd"))),
+            OpenOptions::read(),
+        )
+        .expect_err("default runtime policy must not grant ambient host filesystem access");
+
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
 }
 
 #[test]

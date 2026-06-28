@@ -168,25 +168,40 @@ impl NimbusKvStore {
     }
 
     pub fn flush_all(&self, now_ms: i64) -> Result<usize, KvError> {
+        let _operation = self.operation_lock()?;
+        self.sweep_expired(now_ms)?;
+        self.flush_prefix_locked(b"", now_ms)
+    }
+
+    pub fn flush_prefix(&self, prefix: &[u8], now_ms: i64) -> Result<usize, KvError> {
+        let _operation = self.operation_lock()?;
+        self.flush_prefix_locked(prefix, now_ms)
+    }
+
+    fn sweep_expired(&self, now_ms: i64) -> Result<(), KvError> {
         const BATCH_LIMIT: usize = 256;
 
-        let _operation = self.operation_lock()?;
-        let _write = self.inner.metrics.start_durable_write();
-        let mut cursor = None;
-        let mut deleted = 0_usize;
         loop {
             let outcome = self.inner.engine.kv_sweep_expired(now_ms, BATCH_LIMIT)?;
-            deleted += outcome.deleted;
             if outcome.deleted == 0 && outcome.stale_index_entries == 0 {
                 break;
             }
         }
+        Ok(())
+    }
+
+    fn flush_prefix_locked(&self, prefix: &[u8], now_ms: i64) -> Result<usize, KvError> {
+        const BATCH_LIMIT: usize = 256;
+
+        let _write = self.inner.metrics.start_durable_write();
+        let mut cursor = None;
+        let mut deleted = 0_usize;
 
         loop {
             let page = self
                 .inner
                 .engine
-                .kv_scan(b"", cursor.as_deref(), BATCH_LIMIT, now_ms)?;
+                .kv_scan(prefix, cursor.as_deref(), BATCH_LIMIT, now_ms)?;
             if page.entries.is_empty() {
                 break;
             }
@@ -204,7 +219,12 @@ impl NimbusKvStore {
         }
 
         if self.cache_enabled() {
-            self.cache_lock()?.clear();
+            let mut cache = self.cache_lock()?;
+            if prefix.is_empty() {
+                cache.clear();
+            } else {
+                cache.retain(|key, _| !key.starts_with(prefix));
+            }
         }
         Ok(deleted)
     }

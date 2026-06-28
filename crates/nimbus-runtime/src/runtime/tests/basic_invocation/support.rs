@@ -1,7 +1,8 @@
 use super::*;
 use crate::{RuntimeCompatibilityTarget, RuntimeLimits};
+use deno_fs::sync::MaybeArc;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 pub(super) fn basic_invocation_suite_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -18,6 +19,10 @@ pub(super) async fn acquire_basic_invocation_suite_lock() -> tokio::sync::MutexG
     // harnesses instead of letting unrelated test interleavings make the lane
     // non-deterministic.
     basic_invocation_suite_lock().lock().await
+}
+
+pub(super) fn runtime_test_policy_with_real_fs(limits: RuntimeLimits) -> Arc<RuntimePolicy> {
+    Arc::new(RuntimePolicy::new(limits).clone_with_file_system(MaybeArc::new(deno_fs::RealFs)))
 }
 
 pub(super) fn write_app_style_bundle(source: &str) -> (tempfile::TempDir, std::path::PathBuf) {
@@ -397,7 +402,7 @@ pub(super) async fn run_application_networking_canary_bundle(
     stage_networking_canary_bundle(app, bundle_fixture_name);
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(limits)),
+        runtime_test_policy_with_real_fs(limits),
     );
     runtime
         .invoke_bundle(
@@ -426,7 +431,7 @@ pub(super) async fn run_application_sdk_canary_bundle(
     stage_sdk_canary_bundle(app, bundle_fixture_name);
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(limits)),
+        runtime_test_policy_with_real_fs(limits),
     );
     runtime
         .invoke_bundle(
@@ -453,7 +458,7 @@ pub(super) async fn run_application_host_heavy_canary_bundle(
     stage_host_heavy_canary_bundle(app, bundle_fixture_name);
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(limits)),
+        runtime_test_policy_with_real_fs(limits),
     );
     runtime
         .invoke_bundle(
@@ -482,7 +487,7 @@ pub(super) async fn run_tooling_canary_bundle(
     stage_tooling_canary_bundle(app, bundle_fixture_name);
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(limits)),
+        runtime_test_policy_with_real_fs(limits),
     );
     runtime
         .invoke_bundle(

@@ -83,6 +83,42 @@ fn chdir_is_instance_local_and_does_not_touch_process_cwd() {
     assert_eq!(std::env::current_dir().unwrap(), original);
 }
 
+#[test]
+fn rooted_passthrough_stays_under_configured_root() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("secret.txt"), b"secret").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.path(), root.path().join("outside")).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(outside.path(), root.path().join("outside")).unwrap();
+
+    let fs = NimbusFs::with_cwd(PassthroughBackend::rooted(root.path()), "/");
+    fs.write_file_sync(
+        &checked(Path::new("/inside.txt")),
+        OpenOptions::write(true, false, false, None),
+        b"inside",
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read(root.path().join("inside.txt")).unwrap(),
+        b"inside"
+    );
+    assert_eq!(
+        fs.realpath_sync(&checked(Path::new("/inside.txt")))
+            .unwrap(),
+        PathBuf::from("/inside.txt")
+    );
+
+    let escape = fs
+        .read_file_sync(
+            &checked(Path::new("/outside/secret.txt")),
+            OpenOptions::read(),
+        )
+        .expect_err("rooted passthrough must reject symlink escape");
+    assert_eq!(escape.kind(), io::ErrorKind::PermissionDenied);
+}
+
 fn memfs_rc() -> deno_fs::FileSystemRc {
     MaybeArc::new(MemFsBackend::new())
 }
@@ -557,10 +593,10 @@ fn fscaps_ungranted_mount_is_invisible_without_passthrough_fallthrough() {
 }
 
 #[test]
-fn fscaps_readonly_and_write_size_quota_are_enforced() {
+fn fscaps_readonly_and_max_write_size_are_enforced() {
     let backend = MemFsBackend::new();
     let gated = FsCaps::new()
-        .grant("/data", FsMountCaps::read_write().with_write_size_limit(4))
+        .grant("/data", FsMountCaps::read_write().with_max_write_size(4))
         .apply_to_mount_table(&table_with_mem_mount("/data", backend));
     let fs = fs_with_mounts(gated);
 
@@ -576,7 +612,7 @@ fn fscaps_readonly_and_write_size_quota_are_enforced() {
             OpenOptions::write(true, false, false, None),
             b"12345",
         )
-        .expect_err("write-size quota must reject oversized writes");
+        .expect_err("max write size must reject oversized writes");
     assert_eq!(quota.kind(), io::ErrorKind::StorageFull);
 
     let readonly_backend = MemFsBackend::new();
@@ -687,6 +723,50 @@ fn fscaps_open_and_mutation_matrix_is_fail_closed() {
         )
         .expect_err("symlink creation requires link-create");
     assert!(symlink.to_string().contains("link-create"));
+}
+
+#[test]
+fn backend_registry_mount_enforces_registered_caps() {
+    let backend = MemFsBackend::new();
+    backend
+        .write_file_sync(
+            &checked(Path::new("/seed.txt")),
+            OpenOptions::write(true, false, false, None),
+            b"seed",
+        )
+        .unwrap();
+    let mut registry = BackendRegistry::new();
+    registry
+        .register(
+            "readonly",
+            backend,
+            FsMountCaps::read_only(),
+            PersistenceMode::Ephemeral,
+        )
+        .unwrap();
+    let mut table = MountTable::new(memfs_rc());
+    registry
+        .mount_registered(&mut table, "/data", "readonly")
+        .unwrap();
+    let fs = fs_with_mounts(table);
+
+    assert_eq!(
+        fs.read_file_sync(&checked(Path::new("/data/seed.txt")), OpenOptions::read())
+            .unwrap()
+            .as_ref(),
+        b"seed"
+    );
+    let error = fs
+        .write_file_sync(
+            &checked(Path::new("/data/new.txt")),
+            OpenOptions::write(true, false, false, None),
+            b"nope",
+        )
+        .expect_err("registered read-only caps must gate writes after mounting");
+    assert!(
+        error.to_string().contains("EROFS"),
+        "unexpected registry cap error: {error}"
+    );
 }
 
 #[test]

@@ -140,10 +140,11 @@ async fn tenant_a_credential_cannot_read_tenant_b_keys() {
             credential_b.tenant.clone(),
         );
     let (addr, server) = spawn_test_server(credentials).await;
-    let mut stream = TcpStream::connect(addr).await.expect("connects");
+    let mut tenant_a_stream = TcpStream::connect(addr).await.expect("tenant A connects");
+    let mut tenant_b_stream = TcpStream::connect(addr).await.expect("tenant B connects");
 
     let auth = write_command(
-        &mut stream,
+        &mut tenant_a_stream,
         &[
             b"AUTH",
             credential_a.username.as_bytes(),
@@ -153,7 +154,39 @@ async fn tenant_a_credential_cannot_read_tenant_b_keys() {
     .await;
     assert_eq!(auth, "+OK\r\n");
 
-    let cross_tenant = write_command(&mut stream, &[b"SELECT", b"tenant-b"]).await;
+    let auth = write_command(
+        &mut tenant_b_stream,
+        &[
+            b"AUTH",
+            credential_b.username.as_bytes(),
+            credential_b.password.as_bytes(),
+        ],
+    )
+    .await;
+    assert_eq!(auth, "+OK\r\n");
+
+    let tenant_b_set = write_command(&mut tenant_b_stream, &[b"SET", b"shared", b"tenant-b"]).await;
+    assert_eq!(tenant_b_set, "+OK\r\n");
+
+    let tenant_a_set = write_command(&mut tenant_a_stream, &[b"SET", b"shared", b"tenant-a"]).await;
+    assert_eq!(tenant_a_set, "+OK\r\n");
+
+    let tenant_a_get = write_command(&mut tenant_a_stream, &[b"GET", b"shared"]).await;
+    assert_eq!(tenant_a_get, "$8\r\ntenant-a\r\n");
+
+    let tenant_b_get = write_command(&mut tenant_b_stream, &[b"GET", b"shared"]).await;
+    assert_eq!(tenant_b_get, "$8\r\ntenant-b\r\n");
+
+    let tenant_a_flush = write_command(&mut tenant_a_stream, &[b"FLUSHALL"]).await;
+    assert_eq!(tenant_a_flush, "+OK\r\n");
+
+    let tenant_a_after_flush = write_command(&mut tenant_a_stream, &[b"GET", b"shared"]).await;
+    assert_eq!(tenant_a_after_flush, "$-1\r\n");
+
+    let tenant_b_after_flush = write_command(&mut tenant_b_stream, &[b"GET", b"shared"]).await;
+    assert_eq!(tenant_b_after_flush, "$8\r\ntenant-b\r\n");
+
+    let cross_tenant = write_command(&mut tenant_a_stream, &[b"SELECT", b"tenant-b"]).await;
     assert!(
         cross_tenant.contains("cannot change tenant"),
         "credential bound to tenant A must not select tenant B, got {cross_tenant:?}"

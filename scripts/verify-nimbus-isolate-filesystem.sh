@@ -94,7 +94,8 @@ check_direct_bypass_scan() {
   local findings
   findings="$(rg -n '\\b(std::fs|tokio::fs)::|use std::fs|use tokio::fs' \
     crates/nimbus-fs crates/nimbus-runtime/src/runtime/bootstrap/extensions.rs \
-    crates/nimbus-runtime/src/fs crates/nimbus-server/src/execution/invocations \
+    crates/nimbus-runtime/src/fs crates/nimbus-runtime/src/runtime/bootstrap/ops/runtime_local \
+    crates/nimbus-server/src/execution/invocations \
     --glob '*.rs' 2>/dev/null \
     | grep -Ev 'crates/nimbus-fs/src/(passthrough|tests|test_support|memfs|cas_ro|cache)\\.rs|crates/nimbus-fs/src/.*/tests\\.rs' \
     || true)"
@@ -157,7 +158,7 @@ check_nfs4() {
     && grep_file "directory_mutate" "crates/nimbus-fs/src/caps.rs" \
     && grep_file "metadata_mutate" "crates/nimbus-fs/src/caps.rs" \
     && grep_file "link_create" "crates/nimbus-fs/src/caps.rs" \
-    && grep_file "quota|write_size" "crates/nimbus-fs/src/caps.rs" \
+    && grep_file "max_write_size|write-size" "crates/nimbus-fs/src/caps.rs" \
     && grep_file "TRUNCATE|append|rename|copy|chmod|chown|utime|symlink" "crates/nimbus-fs/src/caps.rs" \
     && has_file "$PROOF_DIR/nfs4-fscaps.md"; then
     pass "NFS4 fail-closed FsCaps rights matrix and proof are present"
