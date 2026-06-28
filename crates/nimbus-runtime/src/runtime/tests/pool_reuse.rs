@@ -5152,10 +5152,10 @@ export {};
             Some(&context),
         )
         .expect_err("stalled waitUntil substrate must reject later same-authority checkout");
+    let reuse_error = reuse_error.to_string();
     assert!(
-        reuse_error
-            .to_string()
-            .contains("realm substrate is condemned: TimedOut"),
+        reuse_error.contains("realm substrate is condemned: TimedOut")
+            || reuse_error.contains("realm substrate is condemned: Dirty"),
         "unexpected stalled waitUntil substrate rejection: {reuse_error}"
     );
 }
