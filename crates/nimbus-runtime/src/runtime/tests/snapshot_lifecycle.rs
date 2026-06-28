@@ -4,6 +4,27 @@ use super::*;
 use crate::backends::v8::{ReusableV8Runtime, V8RuntimeConstructionMode, V8WorkerRuntimePool};
 use crate::limits::{RuntimeCompatibilityTarget, RuntimeLimits};
 
+const SNAPSHOT_DRIVER_REPEATED_ASYNC_HOST_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "snapshot_driver_repeated_async_host",
+        "snapshot-lifecycle",
+        "snapshot-seeded runtime driver cycles survive repeated async host invocations",
+        "runtime::tests::snapshot_lifecycle::snapshot_driver_repeated_async_host_child",
+    );
+const SNAPSHOT_DRIVER_FRESH_OWNER_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
+    "snapshot_driver_fresh_owner",
+    "snapshot-lifecycle",
+    "snapshot-seeded runtime driver cycles survive with a fresh runtime owner each cycle",
+    "runtime::tests::snapshot_lifecycle::snapshot_driver_fresh_owner_child",
+);
+const SNAPSHOT_DRIVER_CURRENT_THREAD_DELAYED_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "snapshot_driver_current_thread_delayed",
+        "snapshot-lifecycle",
+        "snapshot-seeded current-thread driver cycles survive delayed async host invocations",
+        "runtime::tests::snapshot_lifecycle::snapshot_driver_current_thread_delayed_child",
+    );
+
 #[test]
 fn node_major_startup_snapshots_share_node_full_cell() {
     let _test_lock = acquire_snapshot_reset_test_lock();
@@ -101,8 +122,14 @@ export {};
     }
 }
 
+#[test]
+fn snapshot_seeded_runtime_driver_cycles_survive_repeated_async_host_invocations() {
+    run_v8_sensitive_runtime_test_in_subprocess(SNAPSHOT_DRIVER_REPEATED_ASYNC_HOST_CASE);
+}
+
 #[tokio::test]
-async fn snapshot_seeded_runtime_driver_cycles_survive_repeated_async_host_invocations() {
+#[ignore = "V8 snapshot lifecycle case: run via snapshot_seeded_runtime_driver_cycles_survive_repeated_async_host_invocations"]
+async fn snapshot_driver_repeated_async_host_child() {
     init_test_tracing();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
@@ -220,8 +247,14 @@ export {};
     watchdog.shutdown();
 }
 
+#[test]
+fn snapshot_seeded_runtime_driver_cycles_survive_with_fresh_runtime_owner_each_cycle() {
+    run_v8_sensitive_runtime_test_in_subprocess(SNAPSHOT_DRIVER_FRESH_OWNER_CASE);
+}
+
 #[tokio::test]
-async fn snapshot_seeded_runtime_driver_cycles_survive_with_fresh_runtime_owner_each_cycle() {
+#[ignore = "V8 snapshot lifecycle case: run via snapshot_seeded_runtime_driver_cycles_survive_with_fresh_runtime_owner_each_cycle"]
+async fn snapshot_driver_fresh_owner_child() {
     init_test_tracing();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
@@ -347,6 +380,12 @@ export {};
 #[test]
 fn snapshot_seeded_runtime_driver_cycles_survive_on_current_thread_runtime_with_delayed_async_host()
 {
+    run_v8_sensitive_runtime_test_in_subprocess(SNAPSHOT_DRIVER_CURRENT_THREAD_DELAYED_CASE);
+}
+
+#[test]
+#[ignore = "V8 snapshot lifecycle case: run via snapshot_seeded_runtime_driver_cycles_survive_on_current_thread_runtime_with_delayed_async_host"]
+fn snapshot_driver_current_thread_delayed_child() {
     init_test_tracing();
     let _test_lock = acquire_snapshot_reset_test_lock();
     let worker_thread = std::thread::spawn(move || {
