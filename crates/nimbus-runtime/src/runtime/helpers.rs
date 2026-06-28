@@ -158,9 +158,11 @@ mod tests {
     fn wait_until_pending_promise_race_maps_to_system_timeout() {
         let timeout_triggered = AtomicBool::new(false);
         let system_timeout_triggered = AtomicBool::new(false);
-        let mut limits = RuntimeLimits::default();
-        limits.execution_timeout = Duration::from_secs(5);
-        limits.system_timeout = Duration::from_millis(300);
+        let limits = RuntimeLimits {
+            execution_timeout: Duration::from_secs(5),
+            system_timeout: Duration::from_millis(300),
+            ..RuntimeLimits::default()
+        };
 
         let error = classify_wait_until_drain_error(
             NimbusRuntimeError::JavaScript(
@@ -186,9 +188,11 @@ mod tests {
     fn wait_until_pending_promise_race_uses_shorter_execution_timeout() {
         let timeout_triggered = AtomicBool::new(false);
         let system_timeout_triggered = AtomicBool::new(false);
-        let mut limits = RuntimeLimits::default();
-        limits.execution_timeout = Duration::from_millis(100);
-        limits.system_timeout = Duration::from_secs(5);
+        let limits = RuntimeLimits {
+            execution_timeout: Duration::from_millis(100),
+            system_timeout: Duration::from_secs(5),
+            ..RuntimeLimits::default()
+        };
 
         let error = classify_wait_until_drain_error(
             NimbusRuntimeError::JavaScript(
