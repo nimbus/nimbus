@@ -13,8 +13,9 @@ use nimbus_storage::{
 };
 use s3s::auth::{Credentials, SecretKey};
 use s3s::dto::{
-    ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart, CreateMultipartUploadInput,
-    GetObjectInput, ListObjectsV2Input, PutObjectInput, Range, StreamingBlob, UploadPartInput,
+    ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart, CreateMultipartUploadInput, ETag,
+    ETagCondition, GetObjectInput, HeadObjectInput, ListObjectsV2Input, PutObjectInput, Range,
+    StreamingBlob, UploadPartInput,
 };
 use s3s::{Body, S3, S3ErrorCode, S3Request};
 
@@ -373,6 +374,119 @@ async fn overwriting_object_with_same_bytes_keeps_blob_readable() {
         collect(response.output.body.unwrap()).await,
         Bytes::from_static(b"stable")
     );
+}
+
+#[tokio::test]
+async fn conditional_requests_enforce_s3_etag_preconditions() {
+    let service = service();
+    let original_etag = put(&service, ACCESS_KEY_A, "conditional.txt", b"original").await;
+
+    let created = service
+        .put_object(req(
+            PutObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "create-only.txt".to_string(),
+                body: Some(blob(b"new")),
+                content_length: Some(3),
+                if_none_match: Some(ETagCondition::Any),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("If-None-Match:* should create absent objects");
+    assert!(created.output.e_tag.is_some());
+
+    let create_conflict = service
+        .put_object(req(
+            PutObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "conditional.txt".to_string(),
+                body: Some(blob(b"blocked")),
+                content_length: Some(7),
+                if_none_match: Some(ETagCondition::Any),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect_err("If-None-Match:* must reject existing objects");
+    assert_eq!(create_conflict.code(), &S3ErrorCode::PreconditionFailed);
+
+    let weak_update = service
+        .put_object(req(
+            PutObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "conditional.txt".to_string(),
+                body: Some(blob(b"blocked")),
+                content_length: Some(7),
+                if_match: Some(ETagCondition::ETag(ETag::Weak(original_etag.clone()))),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect_err("If-Match must use strong ETag comparison");
+    assert_eq!(weak_update.code(), &S3ErrorCode::PreconditionFailed);
+
+    let updated = service
+        .put_object(req(
+            PutObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "conditional.txt".to_string(),
+                body: Some(blob(b"updated")),
+                content_length: Some(7),
+                if_match: Some(ETagCondition::ETag(ETag::Strong(original_etag.clone()))),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("matching strong If-Match should update");
+    let updated_etag = updated.output.e_tag.expect("updated etag").into_value();
+    assert_ne!(updated_etag, original_etag);
+
+    let not_modified = service
+        .get_object(req(
+            GetObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "conditional.txt".to_string(),
+                if_none_match: Some(ETagCondition::ETag(ETag::Weak(updated_etag.clone()))),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect_err("matching If-None-Match should return NotModified");
+    assert_eq!(not_modified.code(), &S3ErrorCode::NotModified);
+
+    let head_precondition = service
+        .head_object(req(
+            HeadObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "conditional.txt".to_string(),
+                if_match: Some(ETagCondition::ETag(ETag::Strong(original_etag))),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect_err("stale If-Match should reject HEAD");
+    assert_eq!(head_precondition.code(), &S3ErrorCode::PreconditionFailed);
+
+    let head = service
+        .head_object(req(
+            HeadObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "conditional.txt".to_string(),
+                if_match: Some(ETagCondition::ETag(ETag::Strong(updated_etag))),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("current If-Match should allow HEAD");
+    assert_eq!(head.output.content_length, Some(7));
 }
 
 #[tokio::test]

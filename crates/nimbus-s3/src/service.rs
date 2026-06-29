@@ -13,9 +13,10 @@ use s3s::dto::ChecksumAlgorithm;
 use s3s::dto::{
     AbortMultipartUploadInput, AbortMultipartUploadOutput, CommonPrefix,
     CompleteMultipartUploadInput, CompleteMultipartUploadOutput, CreateMultipartUploadInput,
-    CreateMultipartUploadOutput, DeleteObjectInput, DeleteObjectOutput, ETag, GetObjectInput,
-    GetObjectOutput, HeadObjectInput, HeadObjectOutput, ListObjectsV2Input, ListObjectsV2Output,
-    Object, PutObjectInput, PutObjectOutput, StreamingBlob, UploadPartInput, UploadPartOutput,
+    CreateMultipartUploadOutput, DeleteObjectInput, DeleteObjectOutput, ETag, ETagCondition,
+    GetObjectInput, GetObjectOutput, HeadObjectInput, HeadObjectOutput, ListObjectsV2Input,
+    ListObjectsV2Output, Object, PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp,
+    UploadPartInput, UploadPartOutput,
 };
 use s3s::{Body, S3Error, S3ErrorCode, S3Request, S3Response, S3Result, s3_error};
 use serde_json::{Map, Value};
@@ -95,6 +96,11 @@ impl s3s::S3 for NimbusS3 {
             .get_manifest(&tenant, &input.bucket, &input.key)
             .await
             .map_err(map_core_error)?;
+        verify_write_preconditions(
+            previous.as_ref(),
+            input.if_match.as_ref(),
+            input.if_none_match.as_ref(),
+        )?;
         let hash = self
             .backend
             .put_blob(&tenant, bytes)
@@ -144,6 +150,13 @@ impl s3s::S3 for NimbusS3 {
             .await
             .map_err(map_core_error)?
             .ok_or_else(|| s3_error!(NoSuchKey))?;
+        verify_read_preconditions(
+            &manifest,
+            input.if_match.as_ref(),
+            input.if_none_match.as_ref(),
+            input.if_modified_since.as_ref(),
+            input.if_unmodified_since.as_ref(),
+        )?;
         let mut bytes = self.read_manifest_bytes(&tenant, &manifest).await?;
         let mut status = None;
         let mut content_range = None;
@@ -190,6 +203,13 @@ impl s3s::S3 for NimbusS3 {
             .await
             .map_err(map_core_error)?
             .ok_or_else(|| s3_error!(NoSuchKey))?;
+        verify_read_preconditions(
+            &manifest,
+            input.if_match.as_ref(),
+            input.if_none_match.as_ref(),
+            input.if_modified_since.as_ref(),
+            input.if_unmodified_since.as_ref(),
+        )?;
         let mut content_length = manifest.size;
         let mut content_range = None;
         if let Some(range) = input.range {
@@ -591,6 +611,95 @@ fn verify_content_length(expected: Option<i64>, actual: usize) -> S3Result<()> {
         }
     }
     Ok(())
+}
+
+fn verify_write_preconditions(
+    existing: Option<&ObjectManifest>,
+    if_match: Option<&ETagCondition>,
+    if_none_match: Option<&ETagCondition>,
+) -> S3Result<()> {
+    let current = existing.map(manifest_etag);
+    if let Some(condition) = if_match
+        && !current
+            .as_ref()
+            .is_some_and(|etag| etag_condition_matches(condition, etag, true))
+    {
+        return Err(precondition_failed(
+            "If-Match did not match the current ETag",
+        ));
+    }
+    if let Some(condition) = if_none_match
+        && current
+            .as_ref()
+            .is_some_and(|etag| etag_condition_matches(condition, etag, false))
+    {
+        return Err(precondition_failed(
+            "If-None-Match matched the current ETag",
+        ));
+    }
+    Ok(())
+}
+
+fn verify_read_preconditions(
+    manifest: &ObjectManifest,
+    if_match: Option<&ETagCondition>,
+    if_none_match: Option<&ETagCondition>,
+    if_modified_since: Option<&Timestamp>,
+    if_unmodified_since: Option<&Timestamp>,
+) -> S3Result<()> {
+    let current_etag = manifest_etag(manifest);
+    let last_modified = timestamp_from_millis(manifest.last_modified_millis);
+    if let Some(condition) = if_match {
+        if !etag_condition_matches(condition, &current_etag, true) {
+            return Err(precondition_failed(
+                "If-Match did not match the current ETag",
+            ));
+        }
+    } else if let Some(unmodified_since) = if_unmodified_since
+        && &last_modified > unmodified_since
+    {
+        return Err(precondition_failed(
+            "object has been modified since If-Unmodified-Since",
+        ));
+    }
+
+    if let Some(condition) = if_none_match {
+        if etag_condition_matches(condition, &current_etag, false) {
+            return Err(S3Error::with_message(
+                S3ErrorCode::NotModified,
+                "If-None-Match matched the current ETag",
+            ));
+        }
+    } else if let Some(modified_since) = if_modified_since
+        && &last_modified <= modified_since
+    {
+        return Err(S3Error::with_message(
+            S3ErrorCode::NotModified,
+            "object has not been modified since If-Modified-Since",
+        ));
+    }
+    Ok(())
+}
+
+fn etag_condition_matches(condition: &ETagCondition, current: &ETag, strong: bool) -> bool {
+    if condition.is_any() {
+        return true;
+    }
+    condition.as_etag().is_some_and(|expected| {
+        if strong {
+            expected.strong_cmp(current)
+        } else {
+            expected.weak_cmp(current)
+        }
+    })
+}
+
+fn manifest_etag(manifest: &ObjectManifest) -> ETag {
+    ETag::Strong(manifest.etag.clone())
+}
+
+fn precondition_failed(message: &'static str) -> S3Error {
+    S3Error::with_message(S3ErrorCode::PreconditionFailed, message)
 }
 
 fn verify_supported_checksum_headers<const N: usize>(
