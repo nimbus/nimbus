@@ -50,6 +50,7 @@ const OBJECT_FIELD_KEY: &str = "key";
 const OBJECT_FIELD_SIZE: &str = "size";
 const OBJECT_FIELD_CONTENT_TYPE: &str = "content_type";
 const OBJECT_FIELD_USER_METADATA: &str = "user_metadata";
+const OBJECT_FIELD_SYSTEM_METADATA: &str = "system_metadata";
 const OBJECT_FIELD_ETAG: &str = "etag";
 const OBJECT_FIELD_BLOB_LAYOUT: &str = "blob_layout";
 const OBJECT_FIELD_CHECKSUMS: &str = "checksums";
@@ -81,6 +82,8 @@ pub struct ObjectChecksums {
     pub content_md5: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crc64nvme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
 }
 
 impl ObjectChecksums {
@@ -95,6 +98,11 @@ impl ObjectChecksums {
                 "{kind} crc64nvme checksum cannot be empty"
             )));
         }
+        if self.sha256.as_deref().is_some_and(str::is_empty) {
+            return Err(nimbus_core::Error::InvalidInput(format!(
+                "{kind} sha256 checksum cannot be empty"
+            )));
+        }
         Ok(())
     }
 }
@@ -106,6 +114,8 @@ pub struct ObjectManifestAttributes {
     pub content_type: Option<String>,
     #[serde(default)]
     pub user_metadata: Map<String, Value>,
+    #[serde(default)]
+    pub system_metadata: Map<String, Value>,
     pub etag: String,
     #[serde(default)]
     pub checksums: ObjectChecksums,
@@ -117,6 +127,7 @@ impl ObjectManifestAttributes {
         Self {
             content_type: None,
             user_metadata: Map::new(),
+            system_metadata: Map::new(),
             etag: etag.into(),
             checksums: ObjectChecksums::default(),
             last_modified_millis,
@@ -148,6 +159,8 @@ pub struct ObjectManifest {
     pub content_type: Option<String>,
     #[serde(default)]
     pub user_metadata: Map<String, Value>,
+    #[serde(default)]
+    pub system_metadata: Map<String, Value>,
     pub etag: String,
     #[serde(default)]
     pub checksums: ObjectChecksums,
@@ -204,6 +217,7 @@ impl ObjectManifest {
             blob_layout,
             content_type: attributes.content_type,
             user_metadata: attributes.user_metadata,
+            system_metadata: attributes.system_metadata,
             etag: attributes.etag,
             checksums: attributes.checksums,
             last_modified_millis: attributes.last_modified_millis,
@@ -297,6 +311,10 @@ impl ObjectManifest {
             Value::Object(self.user_metadata.clone()),
         );
         fields.insert(
+            OBJECT_FIELD_SYSTEM_METADATA.to_string(),
+            Value::Object(self.system_metadata.clone()),
+        );
+        fields.insert(
             OBJECT_FIELD_ETAG.to_string(),
             Value::String(self.etag.clone()),
         );
@@ -337,6 +355,15 @@ impl ObjectManifest {
             }
             None => Map::new(),
         };
+        let system_metadata = match document.fields.get(OBJECT_FIELD_SYSTEM_METADATA) {
+            Some(Value::Object(map)) => map.clone(),
+            Some(_) => {
+                return Err(nimbus_core::Error::Serialization(
+                    "object manifest system_metadata must be an object".to_string(),
+                ));
+            }
+            None => Map::new(),
+        };
         let etag = required_string(document, OBJECT_FIELD_ETAG)?;
         let checksums =
             optional_json::<ObjectChecksums>(document, OBJECT_FIELD_CHECKSUMS)?.unwrap_or_default();
@@ -359,6 +386,7 @@ impl ObjectManifest {
             blob_layout,
             content_type,
             user_metadata,
+            system_metadata,
             etag,
             checksums,
             last_modified_millis,

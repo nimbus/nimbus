@@ -548,9 +548,11 @@ fn resolve_s3(
     } else {
         command.s3_access_key.clone()
     };
+    let mut convex_download_secret = None;
     let access_keys = if raw_bindings.is_empty() {
         let credentials = store.get()?;
         let tenant = TenantId::new(DEFAULT_WIRE_TENANT)?;
+        convex_download_secret = Some(credentials.s3_secret_access_key.clone().into_bytes());
         S3AccessKeyRegistry::new().bind_signed(
             credentials.s3_access_key_id.clone(),
             tenant,
@@ -560,9 +562,12 @@ fn resolve_s3(
         S3AccessKeyRegistry::from_operator_spec(&raw_bindings.join(","))
             .map_err(|error| Error::InvalidInput(error.to_string()))?
     };
-    let config = S3Config::new(port)
+    let mut config = S3Config::new(port)
         .with_bind_addr(adapter_bind_addr(&command.s3_host, port, "--s3-host")?)
         .with_access_keys(access_keys);
+    if let Some(secret) = convex_download_secret {
+        config = config.with_convex_download_secret(secret);
+    }
     Ok(Some(config))
 }
 
@@ -692,6 +697,11 @@ mod tests {
         assert!(
             s3.access_keys.binding(&store.s3_access_key_id).is_ok(),
             "the store S3 access key must authenticate"
+        );
+        assert_eq!(
+            s3.convex_download_secret.as_deref(),
+            Some(store.s3_secret_access_key.as_bytes()),
+            "generated S3 credentials seed the local Convex storage download signer"
         );
         assert!(
             s3.access_keys
@@ -1094,6 +1104,10 @@ mod tests {
         assert_eq!(s3.bind_addr, "127.0.0.1:9000".parse().unwrap());
         assert!(s3.access_keys.binding("AKIAS3EXAMPLE").is_ok());
         assert!(
+            s3.convex_download_secret.is_none(),
+            "operator S3 bindings should not implicitly mint a Convex download signer"
+        );
+        assert!(
             !wire_credentials_path(temp.path()).exists(),
             "operator bindings must not touch the store"
         );
@@ -1112,6 +1126,10 @@ mod tests {
         let s3 = resolved.s3.expect("s3 config should resolve");
         assert!(s3.access_keys.binding("AKIAS3ONE").is_ok());
         assert!(s3.access_keys.binding("AKIAS3TWO").is_ok());
+        assert!(
+            s3.convex_download_secret.is_none(),
+            "env S3 bindings should not implicitly mint a Convex download signer"
+        );
     }
 
     #[test]

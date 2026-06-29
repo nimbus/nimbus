@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::io::Write as _;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -7,7 +8,8 @@ use futures::StreamExt;
 use nimbus_blob::{BlobHash, BlobStore, MemoryBlobStore};
 use nimbus_core::{CommitEntry, Result, SequenceNumber, TenantId, Timestamp};
 use nimbus_storage::{
-    ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMultipartUpload,
+    ObjectBlobLayout, ObjectChunkRef, ObjectManifest, ObjectManifestAttributes,
+    ObjectMultipartUpload,
 };
 use s3s::auth::{Credentials, SecretKey};
 use s3s::dto::{
@@ -16,6 +18,11 @@ use s3s::dto::{
 };
 use s3s::{Body, S3, S3ErrorCode, S3Request};
 
+use crate::checksum::ComputedChecksums;
+use crate::convex::{
+    CONVEX_STORAGE_BUCKET, ConvexObjectStorage, ConvexStorageError, ConvexStorageId,
+    DownloadTokenSigner,
+};
 use crate::{AccessKeyRegistry, NimbusS3, S3ObjectBackend};
 
 const ACCESS_KEY_A: &str = "AKIATESTANTA";
@@ -162,6 +169,18 @@ impl InMemoryBackend {
             .entry(tenant.clone())
             .or_insert_with(|| Arc::new(MemoryBlobStore::new()))
             .clone()
+    }
+
+    fn convex_manifest_keys(&self, tenant: &TenantId) -> Vec<String> {
+        self.manifests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|((entry_tenant, entry_bucket, _), manifest)| {
+                (entry_tenant == tenant && entry_bucket == CONVEX_STORAGE_BUCKET)
+                    .then_some(manifest.key.clone())
+            })
+            .collect()
     }
 }
 
@@ -331,6 +350,29 @@ async fn access_keys_isolate_tenants() {
             .expect("tenant get should succeed");
         assert_eq!(collect(response.output.body.unwrap()).await, expected);
     }
+}
+
+#[tokio::test]
+async fn overwriting_object_with_same_bytes_keeps_blob_readable() {
+    let service = service();
+    put(&service, ACCESS_KEY_A, "same-bytes.txt", b"stable").await;
+    put(&service, ACCESS_KEY_A, "same-bytes.txt", b"stable").await;
+
+    let response = service
+        .get_object(req(
+            GetObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "same-bytes.txt".to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("overwritten object should remain readable");
+    assert_eq!(
+        collect(response.output.body.unwrap()).await,
+        Bytes::from_static(b"stable")
+    );
 }
 
 #[tokio::test]
@@ -525,4 +567,197 @@ async fn chunked_manifest_read_rejects_blob_length_mismatch() {
             .unwrap_or_default()
             .contains("object manifest corruption")
     );
+}
+
+#[tokio::test]
+async fn convex_storage_projects_virtual_metadata_and_hides_internal_key() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let storage = ConvexObjectStorage::new(backend.clone());
+    let tenant = tenant("tenant-a");
+
+    let metadata = storage
+        .store(
+            &tenant,
+            Bytes::from_static(b"hello"),
+            Some("text/plain".to_string()),
+            1_776_960_000_000,
+        )
+        .await
+        .expect("Convex storage put should succeed");
+
+    assert!(metadata.id.as_str().starts_with("_storage:storage_"));
+    assert_eq!(
+        metadata.sha256,
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    );
+    let document = metadata.to_virtual_document();
+    assert_eq!(document["_id"], metadata.id.as_str());
+    assert_eq!(document["contentType"], "text/plain");
+    assert!(document.get("storage_key").is_none());
+    assert!(document.get("convex.storage_id").is_none());
+
+    let internal_keys = backend.convex_manifest_keys(&tenant);
+    assert_eq!(internal_keys.len(), 1);
+    assert!(internal_keys[0].starts_with("convex/objects/"));
+    assert_ne!(internal_keys[0], metadata.id.as_str());
+}
+
+#[tokio::test]
+async fn convex_hmac_download_serves_bytes_and_fails_closed_after_blob_loss() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let storage = ConvexObjectStorage::new(backend.clone());
+    let tenant = tenant("tenant-a");
+    let metadata = storage
+        .store(
+            &tenant,
+            Bytes::from_static(b"download me"),
+            Some("text/plain".to_string()),
+            1_000,
+        )
+        .await
+        .expect("Convex storage put should succeed");
+    let signer = DownloadTokenSigner::new(b"test-download-secret".to_vec()).unwrap();
+    let token = signer
+        .sign(&tenant, &metadata.id, 2_000)
+        .expect("token signs");
+
+    let downloaded = storage
+        .download_with_token(&signer, &token, 1_500)
+        .await
+        .expect("valid token should serve bytes");
+    assert_eq!(downloaded.bytes, Bytes::from_static(b"download me"));
+
+    let expired = storage
+        .download_with_token(&signer, &token, 2_001)
+        .await
+        .expect_err("expired token must fail");
+    assert!(matches!(expired, ConvexStorageError::ExpiredToken));
+
+    let manifest = backend
+        .list_manifests(&tenant, CONVEX_STORAGE_BUCKET, "", 1)
+        .await
+        .unwrap()
+        .pop()
+        .expect("manifest remains");
+    match manifest.blob_layout {
+        ObjectBlobLayout::Whole { blob_hash } => {
+            backend
+                .release_blob(&tenant, &BlobHash::from_hex(&blob_hash).unwrap())
+                .await
+                .unwrap();
+        }
+        ObjectBlobLayout::Chunked { .. } => panic!("Convex storage stores whole objects"),
+    }
+    let forbidden = storage
+        .download_with_token(&signer, &token, 1_500)
+        .await
+        .expect_err("missing bytes must fail closed");
+    assert!(matches!(forbidden, ConvexStorageError::Forbidden(_)));
+}
+
+#[tokio::test]
+async fn convex_export_import_zip_preserves_storage_ids_and_rotates_internal_keys() {
+    let source_backend = Arc::new(InMemoryBackend::default());
+    let source = ConvexObjectStorage::new(source_backend.clone());
+    let tenant = tenant("tenant-a");
+    let metadata = source
+        .store(
+            &tenant,
+            Bytes::from_static(br#"{"ok":true}"#),
+            Some("application/json".to_string()),
+            1_776_960_000_000,
+        )
+        .await
+        .expect("source object should store");
+    let source_key = source_backend.convex_manifest_keys(&tenant)[0].clone();
+
+    let archive = source
+        .export_zip(&tenant)
+        .await
+        .expect("export should produce zip bytes");
+
+    let target_backend = Arc::new(InMemoryBackend::default());
+    let target = ConvexObjectStorage::new(target_backend.clone());
+    let imported = target
+        .import_zip(&tenant, archive.clone(), 1_776_960_001_000)
+        .await
+        .expect("import should succeed");
+    assert_eq!(imported.len(), 1);
+    assert_eq!(imported[0].id, metadata.id);
+    assert_eq!(imported[0].sha256, metadata.sha256);
+
+    let read_back = target
+        .read(&tenant, &metadata.id)
+        .await
+        .expect("read should succeed")
+        .expect("imported object should exist");
+    assert_eq!(read_back.bytes, Bytes::from_static(br#"{"ok":true}"#));
+    let target_key = target_backend.convex_manifest_keys(&tenant)[0].clone();
+    assert_ne!(target_key, source_key);
+
+    let imported_again = target
+        .import_zip(&tenant, archive, 1_776_960_002_000)
+        .await
+        .expect("re-import with the same storage id should replace cleanly");
+    assert_eq!(imported_again[0].id, metadata.id);
+    let target_keys = target_backend.convex_manifest_keys(&tenant);
+    assert_eq!(target_keys.len(), 1);
+    assert_ne!(target_keys[0], target_key);
+    let read_again = target
+        .read(&tenant, &metadata.id)
+        .await
+        .expect("read should succeed after re-import")
+        .expect("re-imported object should exist");
+    assert_eq!(read_again.bytes, Bytes::from_static(br#"{"ok":true}"#));
+}
+
+#[tokio::test]
+async fn convex_import_zip_requires_content_type_extension_to_match_manifest() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let storage = ConvexObjectStorage::new(backend);
+    let tenant = tenant("tenant-a");
+    let id = ConvexStorageId::generate().expect("storage id should generate");
+    let bytes = Bytes::from_static(br#"{"ok":true}"#);
+    let checksums = ComputedChecksums::for_bytes(&bytes);
+    let document = serde_json::json!({
+        "_id": id.as_str(),
+        "_creationTime": 1_776_960_000_000_u64,
+        "_updateTime": 1_776_960_000_000_u64,
+        "contentType": "application/json",
+        "sha256": checksums.sha256_hex,
+        "size": bytes.len() as u64,
+    });
+
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    writer
+        .start_file("_storage/documents.jsonl", options)
+        .expect("manifest entry should start");
+    writer
+        .write_all(
+            format!(
+                "{}\n",
+                serde_json::to_string(&document).expect("document should encode")
+            )
+            .as_bytes(),
+        )
+        .expect("manifest entry should write");
+    writer
+        .start_file(format!("_storage/{}.txt", id.raw_id().as_str()), options)
+        .expect("mismatched object entry should start");
+    writer
+        .write_all(&bytes)
+        .expect("mismatched object entry should write");
+    let archive = Bytes::from(writer.finish().expect("archive should finish").into_inner());
+
+    let error = storage
+        .import_zip(&tenant, archive, 1_776_960_001_000)
+        .await
+        .expect_err("mismatched object extension must not import");
+    assert!(matches!(
+        error,
+        ConvexStorageError::Archive(message)
+            if message.contains("archive missing object bytes")
+    ));
 }

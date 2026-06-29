@@ -16,6 +16,9 @@ fn manifest(key: &str, blob_hash: &str) -> ObjectManifest {
     attributes.checksums = ObjectChecksums {
         content_md5: Some("CY9rzUYh03PK3k6DJie09g==".to_string()),
         crc64nvme: Some("AAAAAAAAAAA=".to_string()),
+        sha256: Some(
+            "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08".to_string(),
+        ),
     };
     ObjectManifest::whole(BUCKET, key, 12, blob_hash, attributes).expect("manifest should be valid")
 }
@@ -249,6 +252,9 @@ fn object_meta_store_round_trips_multipart_upload_through_redb() {
             checksums: ObjectChecksums {
                 content_md5: Some("AAAAAAAAAAAAAAAAAAAAAA==".to_string()),
                 crc64nvme: Some("AAAAAAAAAAA=".to_string()),
+                sha256: Some(
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                ),
             },
             last_modified_millis: 1_776_960_000_001,
         })

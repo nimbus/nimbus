@@ -4,6 +4,8 @@ mod auth;
 mod backend;
 mod checksum;
 mod config;
+pub mod convex;
+mod object_io;
 mod service;
 
 pub use auth::{AccessKeyRegistry, KeyBinding, S3_ACCESS_KEY_SPEC};

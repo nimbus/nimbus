@@ -28,7 +28,7 @@ impl WireProtocolAdapter for S3Config {
     }
 
     fn guard(&self, _addr: SocketAddr) -> std::io::Result<()> {
-        listener::guard_has_access_keys(&self.access_keys)
+        listener::guard_config(self)
     }
 
     fn spawn(
@@ -36,9 +36,9 @@ impl WireProtocolAdapter for S3Config {
         listener: tokio::net::TcpListener,
         engine: Arc<Engine>,
     ) -> Vec<tokio::task::JoinHandle<()>> {
-        let S3Config { access_keys, .. } = *self;
+        let config = *self;
         vec![tokio::spawn(async move {
-            listener::run_listener(listener, engine, access_keys).await;
+            listener::run_listener(listener, engine, config).await;
         })]
     }
 }

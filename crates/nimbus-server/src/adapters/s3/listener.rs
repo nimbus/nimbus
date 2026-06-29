@@ -7,16 +7,22 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use axum::Router;
 use axum::error_handling::HandleError;
-use axum::http::{Response, StatusCode};
+use axum::extract::{Path, State};
+use axum::http::{Response, StatusCode, header};
+use axum::routing::get;
 use bytes::Bytes;
 use nimbus_blob::{BlobHash, BlobStore, LocalPackStore};
 use nimbus_core::{CommitEntry, Error, Result, StorageErrorKind, TenantId};
 use nimbus_engine::Engine;
-use nimbus_s3::{AccessKeyRegistry, NimbusS3, S3ObjectBackend};
+use nimbus_s3::convex::{
+    CONVEX_DOWNLOAD_PATH_PREFIX, ConvexObjectStorage, ConvexStorageError, DownloadTokenSigner,
+};
+use nimbus_s3::{NimbusS3, S3Config, S3ObjectBackend};
 use nimbus_storage::{ObjectManifest, ObjectMultipartUpload};
 use s3s::service::S3ServiceBuilder;
 use s3s::{Body, HttpError};
@@ -156,33 +162,113 @@ impl S3ObjectBackend for EngineS3Backend {
     }
 }
 
-pub(crate) fn guard_has_access_keys(access_keys: &AccessKeyRegistry) -> std::io::Result<()> {
-    if access_keys.is_empty() {
+#[derive(Clone)]
+struct ConvexDownloadState {
+    storage: ConvexObjectStorage,
+    signer: DownloadTokenSigner,
+}
+
+pub(crate) fn guard_config(config: &S3Config) -> std::io::Result<()> {
+    if config.access_keys.is_empty() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "S3 listener requires at least one signed access key binding",
         ));
     }
+    if config
+        .convex_download_secret
+        .as_deref()
+        .is_some_and(<[u8]>::is_empty)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "S3 Convex download proxy secret cannot be empty",
+        ));
+    }
     Ok(())
 }
 
-pub fn router(engine: Arc<Engine>, access_keys: AccessKeyRegistry) -> Router {
-    let s3 = NimbusS3::new(Arc::new(EngineS3Backend::new(engine)), access_keys.clone());
+pub fn router(engine: Arc<Engine>, config: S3Config) -> Router {
+    let S3Config {
+        access_keys,
+        convex_download_secret,
+        ..
+    } = config;
+    let backend = Arc::new(EngineS3Backend::new(engine));
+    let s3 = NimbusS3::new(backend.clone(), access_keys.clone());
     let mut builder = S3ServiceBuilder::new(s3);
     builder.set_auth(access_keys);
     let s3_service = HandleError::new(builder.build(), handle_s3_error);
-    Router::new().fallback_service(s3_service)
+    let router = Router::new().fallback_service(s3_service);
+    match convex_download_secret {
+        Some(secret) => {
+            let state = ConvexDownloadState {
+                storage: ConvexObjectStorage::new(backend),
+                signer: DownloadTokenSigner::new(secret)
+                    .expect("S3Config guard rejects empty Convex download secrets"),
+            };
+            router.route(
+                &format!("{}{{token}}", CONVEX_DOWNLOAD_PATH_PREFIX),
+                get(convex_download).with_state(state),
+            )
+        }
+        None => router,
+    }
 }
 
-pub async fn run_listener(
-    listener: TcpListener,
-    engine: Arc<Engine>,
-    access_keys: AccessKeyRegistry,
-) {
+pub async fn run_listener(listener: TcpListener, engine: Arc<Engine>, config: S3Config) {
     info!("S3 listener started on {:?}", listener.local_addr().ok());
-    if let Err(error) = axum::serve(listener, router(engine, access_keys)).await {
+    if let Err(error) = axum::serve(listener, router(engine, config)).await {
         error!("S3 listener error: {error}");
     }
+}
+
+async fn convex_download(
+    State(state): State<ConvexDownloadState>,
+    Path(token): Path<String>,
+) -> Response<Body> {
+    match state
+        .storage
+        .download_with_token(&state.signer, &token, current_millis())
+        .await
+    {
+        Ok(object) => {
+            let mut builder = Response::builder().status(StatusCode::OK);
+            if let Some(content_type) = object.metadata.content_type {
+                builder = builder.header(header::CONTENT_TYPE, content_type);
+            }
+            builder
+                .header("x-nimbus-storage-id", object.metadata.id.to_string())
+                .header("x-nimbus-storage-sha256", object.metadata.sha256)
+                .body(Body::from(object.bytes))
+                .expect("static Convex download response builds")
+        }
+        Err(error) => convex_download_error(error),
+    }
+}
+
+fn convex_download_error(error: ConvexStorageError) -> Response<Body> {
+    let status = match error {
+        ConvexStorageError::MissingObject => StatusCode::NOT_FOUND,
+        ConvexStorageError::InvalidToken(_)
+        | ConvexStorageError::ExpiredToken
+        | ConvexStorageError::Forbidden(_) => StatusCode::FORBIDDEN,
+        ConvexStorageError::Core(Error::NotFound(_)) => StatusCode::NOT_FOUND,
+        ConvexStorageError::Core(_) | ConvexStorageError::Archive(_) => {
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    };
+    Response::builder()
+        .status(status)
+        .body(Body::empty())
+        .expect("static Convex download error response builds")
+}
+
+fn current_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
 }
 
 async fn handle_s3_error(err: HttpError) -> Response<Body> {
@@ -196,7 +282,10 @@ async fn handle_s3_error(err: HttpError) -> Response<Body> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::to_bytes;
+    use bytes::Bytes;
     use nimbus_core::TenantId;
+    use nimbus_s3::AccessKeyRegistry;
     use tower::ServiceExt;
 
     const ACCESS_KEY: &str = "AKIATESTS3";
@@ -211,21 +300,32 @@ mod tests {
 
     #[test]
     fn guard_refuses_empty_access_key_registry() {
-        let error = guard_has_access_keys(&AccessKeyRegistry::new())
+        let error = guard_config(&S3Config::default())
             .expect_err("S3 must not boot without explicit signed credentials");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
     }
 
     #[test]
     fn guard_accepts_signed_access_key_registry() {
-        assert!(guard_has_access_keys(&access_keys()).is_ok());
+        assert!(guard_config(&S3Config::default().with_access_keys(access_keys())).is_ok());
+    }
+
+    #[test]
+    fn guard_refuses_empty_convex_download_secret() {
+        let error = guard_config(
+            &S3Config::default()
+                .with_access_keys(access_keys())
+                .with_convex_download_secret(Vec::new()),
+        )
+        .expect_err("empty Convex download secret must fail closed");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
     }
 
     #[tokio::test]
     async fn unsigned_request_is_rejected_by_s3_service() {
         let temp = tempfile::tempdir().expect("tempdir should create");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-        let router = router(engine, access_keys());
+        let router = router(engine, S3Config::default().with_access_keys(access_keys()));
         let request = axum::http::Request::builder()
             .method("GET")
             .uri("/bucket/key")
@@ -233,5 +333,49 @@ mod tests {
             .expect("request builds");
         let response = router.oneshot(request).await.expect("route responds");
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn convex_download_route_serves_valid_hmac_token() {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+        let tenant = TenantId::new("tenant-s3").expect("tenant id");
+        let storage = ConvexObjectStorage::new(Arc::new(EngineS3Backend::new(engine.clone())));
+        let metadata = storage
+            .store(
+                &tenant,
+                Bytes::from_static(b"proxied bytes"),
+                Some("text/plain".to_string()),
+                1_776_960_000_000,
+            )
+            .await
+            .expect("object should store");
+        let secret = b"convex-download-secret".to_vec();
+        let signer = DownloadTokenSigner::new(secret.clone()).expect("signer should build");
+        let token = signer
+            .sign(&tenant, &metadata.id, current_millis() + 60_000)
+            .expect("token should sign");
+        let router = router(
+            engine,
+            S3Config::default()
+                .with_access_keys(access_keys())
+                .with_convex_download_secret(secret),
+        );
+        let request = axum::http::Request::builder()
+            .method("GET")
+            .uri(format!("{CONVEX_DOWNLOAD_PATH_PREFIX}{token}"))
+            .body(axum::body::Body::empty())
+            .expect("request builds");
+
+        let response = router.oneshot(request).await.expect("route responds");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/plain"
+        );
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        assert_eq!(bytes, Bytes::from_static(b"proxied bytes"));
     }
 }

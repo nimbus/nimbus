@@ -18,14 +18,18 @@ base64.workspace = true
 bytes.workspace = true
 futures.workspace = true
 hex.workspace = true
+hmac.workspace = true
 http.workspace = true
 nimbus-blob = { path = "../nimbus-blob" }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-storage = { path = "../nimbus-storage" }
 s3s.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 ulid.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

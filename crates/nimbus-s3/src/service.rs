@@ -4,11 +4,10 @@ use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use futures::StreamExt;
-use nimbus_blob::BlobHash;
 use nimbus_core::TenantId;
 use nimbus_storage::{
-    ObjectBlobLayout, ObjectChunkRef, ObjectManifest, ObjectManifestAttributes,
-    ObjectMultipartPart, ObjectMultipartUpload,
+    ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMultipartPart,
+    ObjectMultipartUpload,
 };
 use s3s::dto::ChecksumAlgorithm;
 use s3s::dto::{
@@ -24,6 +23,7 @@ use serde_json::{Map, Value};
 use crate::auth::AccessKeyRegistry;
 use crate::backend::S3ObjectBackend;
 use crate::checksum::{ComputedChecksums, decode_md5_base64, multipart_etag};
+use crate::object_io;
 
 const DEFAULT_MAX_KEYS: i32 = 1000;
 const MAX_MAX_KEYS: i32 = 1000;
@@ -114,12 +114,14 @@ impl s3s::S3 for NimbusS3 {
         )
         .map_err(map_core_error)?;
         let size = manifest.size;
+        let retained = manifest.clone();
         self.backend
             .put_manifest(&tenant, manifest)
             .await
             .map_err(map_core_error)?;
         if let Some(previous) = previous {
-            self.release_manifest_blobs(&tenant, &previous).await?;
+            self.release_manifest_blobs_except(&tenant, &previous, Some(&retained))
+                .await?;
         }
 
         Ok(S3Response::new(PutObjectOutput {
@@ -385,9 +387,14 @@ impl s3s::S3 for NimbusS3 {
             .put_multipart_upload(&tenant, upload)
             .await
             .map_err(map_core_error)?;
-        if let Some(replaced) = replaced {
+        if let Some(replaced) = replaced
+            && replaced.blob_hash != hash.to_hex()
+        {
             self.backend
-                .release_blob(&tenant, &parse_blob_hash(&replaced.blob_hash)?)
+                .release_blob(
+                    &tenant,
+                    &object_io::parse_blob_hash(&replaced.blob_hash).map_err(map_core_error)?,
+                )
                 .await
                 .map_err(map_core_error)?;
         }
@@ -475,6 +482,7 @@ impl s3s::S3 for NimbusS3 {
             attributes,
         )
         .map_err(map_core_error)?;
+        let retained = manifest.clone();
         let previous = self
             .backend
             .get_manifest(&tenant, &input.bucket, &input.key)
@@ -489,7 +497,8 @@ impl s3s::S3 for NimbusS3 {
             .await
             .map_err(map_core_error)?;
         if let Some(previous) = previous {
-            self.release_manifest_blobs(&tenant, &previous).await?;
+            self.release_manifest_blobs_except(&tenant, &previous, Some(&retained))
+                .await?;
         }
         Ok(S3Response::new(CompleteMultipartUploadOutput {
             bucket: Some(input.bucket.clone()),
@@ -515,7 +524,10 @@ impl s3s::S3 for NimbusS3 {
         {
             for part in upload.parts {
                 self.backend
-                    .release_blob(&tenant, &parse_blob_hash(&part.blob_hash)?)
+                    .release_blob(
+                        &tenant,
+                        &object_io::parse_blob_hash(&part.blob_hash).map_err(map_core_error)?,
+                    )
                     .await
                     .map_err(map_core_error)?;
             }
@@ -530,49 +542,9 @@ impl NimbusS3 {
         tenant: &TenantId,
         manifest: &ObjectManifest,
     ) -> S3Result<Bytes> {
-        match &manifest.blob_layout {
-            ObjectBlobLayout::Whole { blob_hash } => self
-                .backend
-                .get_blob(tenant, &parse_blob_hash(blob_hash)?)
-                .await
-                .map_err(map_core_error),
-            ObjectBlobLayout::Chunked { chunks } => {
-                let mut out = Vec::with_capacity(manifest.size as usize);
-                let mut expected_offset = 0_u64;
-                for chunk in chunks {
-                    if chunk.offset != expected_offset {
-                        return Err(corrupt_manifest(format!(
-                            "chunk offset {} does not match expected offset {expected_offset}",
-                            chunk.offset
-                        )));
-                    }
-                    let bytes = self
-                        .backend
-                        .get_blob(tenant, &parse_blob_hash(&chunk.blob_hash)?)
-                        .await
-                        .map_err(map_core_error)?;
-                    if bytes.len() as u64 != chunk.len {
-                        return Err(corrupt_manifest(format!(
-                            "chunk at offset {} expected {} bytes but blob returned {} bytes",
-                            chunk.offset,
-                            chunk.len,
-                            bytes.len()
-                        )));
-                    }
-                    out.extend_from_slice(&bytes);
-                    expected_offset = expected_offset.checked_add(chunk.len).ok_or_else(|| {
-                        corrupt_manifest("chunk offsets overflow u64".to_string())
-                    })?;
-                }
-                if expected_offset != manifest.size {
-                    return Err(corrupt_manifest(format!(
-                        "chunked object size {expected_offset} does not match manifest size {}",
-                        manifest.size
-                    )));
-                }
-                Ok(Bytes::from(out))
-            }
-        }
+        object_io::read_manifest_bytes(self.backend.as_ref(), tenant, manifest)
+            .await
+            .map_err(map_core_error)
     }
 
     async fn release_manifest_blobs(
@@ -580,23 +552,19 @@ impl NimbusS3 {
         tenant: &TenantId,
         manifest: &ObjectManifest,
     ) -> S3Result<()> {
-        match &manifest.blob_layout {
-            ObjectBlobLayout::Whole { blob_hash } => {
-                self.backend
-                    .release_blob(tenant, &parse_blob_hash(blob_hash)?)
-                    .await
-                    .map_err(map_core_error)?;
-            }
-            ObjectBlobLayout::Chunked { chunks } => {
-                for chunk in chunks {
-                    self.backend
-                        .release_blob(tenant, &parse_blob_hash(&chunk.blob_hash)?)
-                        .await
-                        .map_err(map_core_error)?;
-                }
-            }
-        }
-        Ok(())
+        self.release_manifest_blobs_except(tenant, manifest, None)
+            .await
+    }
+
+    async fn release_manifest_blobs_except(
+        &self,
+        tenant: &TenantId,
+        manifest: &ObjectManifest,
+        retained: Option<&ObjectManifest>,
+    ) -> S3Result<()> {
+        object_io::release_manifest_blobs_except(self.backend.as_ref(), tenant, manifest, retained)
+            .await
+            .map_err(map_core_error)
     }
 }
 
@@ -732,22 +700,15 @@ fn size_to_i64(size: u64) -> S3Result<i64> {
     })
 }
 
-fn parse_blob_hash(value: &str) -> S3Result<BlobHash> {
-    BlobHash::from_hex(value).map_err(map_core_error)
-}
-
-fn corrupt_manifest(message: String) -> S3Error {
-    S3Error::with_message(
-        S3ErrorCode::InternalError,
-        format!("object manifest corruption: {message}"),
-    )
-}
-
 fn map_core_error(error: nimbus_core::Error) -> S3Error {
     match error {
         nimbus_core::Error::InvalidInput(message) => {
             S3Error::with_message(S3ErrorCode::InvalidRequest, message)
         }
+        nimbus_core::Error::Storage {
+            kind: nimbus_core::StorageErrorKind::Corruption,
+            message,
+        } => S3Error::with_message(S3ErrorCode::InternalError, message),
         other => S3Error::internal_error(other),
     }
 }
