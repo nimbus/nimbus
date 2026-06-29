@@ -102,6 +102,7 @@ fn dev_banner_lists_detected_wire_endpoints() {
         wire_surfaces: surfaces::WireSurfaces {
             mongodb: true,
             dynamodb: true,
+            s3: true,
             aws_sdk_v2_hint: false,
         },
         wire: wire::WirePlan::fixture(),
@@ -133,11 +134,24 @@ fn dev_banner_lists_detected_wire_endpoints() {
             && line.contains("process.env.NIMBUS_DYNAMODB_SECRET_ACCESS_KEY")),
         "{lines:?}"
     );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line
+                == "S3:         http://127.0.0.1:9000 (NIMBUS_S3_ENDPOINT in .env.local)"),
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("new S3Client(")
+            && line.contains("process.env.NIMBUS_S3_SECRET_ACCESS_KEY")),
+        "{lines:?}"
+    );
     // The banner references env keys, never credential values.
     assert!(
         lines.iter().all(|line| {
             !line.contains(&plan.wire.credentials.mongodb_password)
                 && !line.contains(&plan.wire.credentials.dynamodb_secret_access_key)
+                && !line.contains(&plan.wire.credentials.s3_secret_access_key)
         }),
         "the banner must never print secrets: {lines:?}"
     );
@@ -147,6 +161,7 @@ fn dev_banner_lists_detected_wire_endpoints() {
     plan.wire_surfaces = surfaces::WireSurfaces {
         mongodb: false,
         dynamodb: false,
+        s3: false,
         aws_sdk_v2_hint: true,
     };
     let lines = dev_banner_lines(&plan);
@@ -158,6 +173,10 @@ fn dev_banner_lists_detected_wire_endpoints() {
     );
     assert!(
         lines.iter().all(|line| !line.starts_with("DynamoDB:")),
+        "an undetected surface must not be promoted: {lines:?}"
+    );
+    assert!(
+        lines.iter().all(|line| !line.starts_with("S3:")),
         "an undetected surface must not be promoted: {lines:?}"
     );
 }

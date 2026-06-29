@@ -40,9 +40,6 @@ pub enum ObjectUnsupportedOperation {
     DirectoryRename,
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct ObjectRwBackend;
-
 impl BackendRegistry {
     pub fn new() -> Self {
         Self {
@@ -127,33 +124,6 @@ impl BackendRegistration {
                 sync_required: true
             }
         )
-    }
-}
-
-impl ObjectRwBackend {
-    pub fn unsupported_operations() -> &'static [ObjectUnsupportedOperation] {
-        &[
-            ObjectUnsupportedOperation::RandomWrite,
-            ObjectUnsupportedOperation::Hardlink,
-            ObjectUnsupportedOperation::Symlink,
-            ObjectUnsupportedOperation::MutableOwnership,
-            ObjectUnsupportedOperation::DirectoryRename,
-        ]
-    }
-
-    pub fn reject_unsupported(operation: ObjectUnsupportedOperation) -> FsResult<()> {
-        let label = match operation {
-            ObjectUnsupportedOperation::RandomWrite => "random write",
-            ObjectUnsupportedOperation::Hardlink => "hardlink",
-            ObjectUnsupportedOperation::Symlink => "symlink",
-            ObjectUnsupportedOperation::MutableOwnership => "mutable ownership",
-            ObjectUnsupportedOperation::DirectoryRename => "directory rename",
-        };
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!("object-store backend slot unsupported POSIX operation: {label}"),
-        )
-        .into())
     }
 }
 

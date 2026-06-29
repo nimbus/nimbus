@@ -88,6 +88,23 @@ Provider adapters may request egress through the same runtime/tenant authority
 model, but they must not define provider-specific bypasses around the PDP/PEP
 split.
 
+### Object Storage Is Native; S3 Is An Edge Adapter
+
+Object storage follows the same adapter-boundary rule:
+
+- `nimbus-storage` owns object manifests and multipart metadata through
+  `ObjectMetaStore`.
+- `nimbus-blob` owns immutable bytes, local packs, object-store byte legs,
+  placement composition, GC, and backup chunks.
+- `nimbus-object-storage` owns placement-policy resolution and provider config.
+- `nimbus-s3` owns S3 protocol semantics only.
+- `crates/nimbus-server/src/adapters/s3` owns listener, guard, and router
+  integration only.
+
+Convex `_storage`, the S3 front door, backup/restore, future R2 compatibility,
+and the NimbusFS object mount must consume those native primitives. They must
+not each grow their own object model or make the S3 listener the placement owner.
+
 ### Translation And Execution Are Separate
 
 Provider shims may translate:

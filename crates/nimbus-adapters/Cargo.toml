@@ -13,6 +13,7 @@ convex = ["dep:nimbus-convex"]
 dynamodb = ["dep:nimbus-dynamodb"]
 firebase = ["dep:nimbus-firebase"]
 mongodb = ["dep:nimbus-mongodb"]
+s3 = ["dep:nimbus-s3"]
 
 [dependencies]
 nimbus-cloud-functions = { path = "../nimbus-cloud-functions", optional = true }
@@ -20,6 +21,7 @@ nimbus-convex = { path = "../nimbus-convex", optional = true }
 nimbus-dynamodb = { path = "../nimbus-dynamodb", optional = true }
 nimbus-firebase = { path = "../nimbus-firebase", optional = true }
 nimbus-mongodb = { path = "../nimbus-mongodb", optional = true }
+nimbus-s3 = { path = "../nimbus-s3", optional = true }
 
 [lints]
 workspace = true

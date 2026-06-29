@@ -32,6 +32,7 @@ async fn dev_serves_firestore_routes_without_firebase_markers() {
     assert!(enablement.firebase.is_some());
     assert!(enablement.mongodb.is_some());
     assert!(enablement.dynamodb.is_some());
+    assert!(enablement.s3.is_some());
 
     let engine = std::sync::Arc::new(
         nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"),
@@ -71,15 +72,16 @@ async fn dev_serves_firestore_routes_without_firebase_markers() {
 
 #[tokio::test]
 async fn pure_convex_dev_serves_wire_listeners_on_ephemeral_ports() {
-    // D6: a pure-Convex app (no driver deps) still gets both wire
+    // D6: a pure-Convex app (no driver deps) still gets wire
     // listeners — on ephemeral ports nothing in the app references, so
-    // a real mongod or DynamoDB Local beside it sees zero interference.
+    // a real mongod, DynamoDB Local, or S3-compatible service beside it sees
+    // zero interference.
     let temp = tempdir().expect("tempdir should build");
     create_source_root(temp.path(), "convex");
 
     let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
         .expect("dev plan should resolve");
-    assert!(!plan.wire_surfaces.mongodb && !plan.wire_surfaces.dynamodb);
+    assert!(!plan.wire_surfaces.mongodb && !plan.wire_surfaces.dynamodb && !plan.wire_surfaces.s3);
     let mongodb_port = plan
         .start_command
         .mongodb_port
@@ -88,6 +90,10 @@ async fn pure_convex_dev_serves_wire_listeners_on_ephemeral_ports() {
         .start_command
         .dynamodb_port
         .expect("dev plan pins the dynamodb port");
+    let s3_port = plan
+        .start_command
+        .s3_port
+        .expect("dev plan pins the s3 port");
 
     let enablement = crate::start::adapters::resolve_adapter_enablement_with_env(
         &plan.start_command,
@@ -101,6 +107,7 @@ async fn pure_convex_dev_serves_wire_listeners_on_ephemeral_ports() {
     .expect("dev enablement should resolve");
     assert!(enablement.mongodb.is_some());
     assert!(enablement.dynamodb.is_some());
+    assert!(enablement.s3.is_some());
 
     let engine = std::sync::Arc::new(
         nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"),
@@ -131,6 +138,12 @@ async fn pure_convex_dev_serves_wire_listeners_on_ephemeral_ports() {
             .await
             .is_ok(),
         "the dynamodb listener should accept connections on the plan's ephemeral port"
+    );
+    assert!(
+        tokio::net::TcpStream::connect(("127.0.0.1", s3_port))
+            .await
+            .is_ok(),
+        "the s3 listener should accept connections on the plan's ephemeral port"
     );
 
     task.abort();

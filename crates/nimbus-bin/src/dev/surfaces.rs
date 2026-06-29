@@ -20,8 +20,10 @@ pub(super) struct WireSurfaces {
     pub(super) mongodb: bool,
     /// `@aws-sdk/client-dynamodb` or `@aws-sdk/lib-dynamodb` declared.
     pub(super) dynamodb: bool,
+    /// `@aws-sdk/client-s3` or `@aws-sdk/lib-storage` declared.
+    pub(super) s3: bool,
     /// Bare `aws-sdk` (v2) declared without a v3 DynamoDB client. Too broad
-    /// to auto-enable — using AWS does not imply using DynamoDB — so this
+    /// to auto-enable — using AWS does not imply using DynamoDB or S3 — so this
     /// signal only feeds a banner hint, never enablement (decision D3).
     pub(super) aws_sdk_v2_hint: bool,
 }
@@ -31,10 +33,13 @@ pub(super) fn detect_wire_surfaces(app_dir: &Path) -> WireSurfaces {
         has_runtime_dependency(app_dir, "mongodb") || has_runtime_dependency(app_dir, "mongoose");
     let dynamodb = has_runtime_dependency(app_dir, "@aws-sdk/client-dynamodb")
         || has_runtime_dependency(app_dir, "@aws-sdk/lib-dynamodb");
-    let aws_sdk_v2_hint = !dynamodb && has_runtime_dependency(app_dir, "aws-sdk");
+    let s3 = has_runtime_dependency(app_dir, "@aws-sdk/client-s3")
+        || has_runtime_dependency(app_dir, "@aws-sdk/lib-storage");
+    let aws_sdk_v2_hint = !dynamodb && !s3 && has_runtime_dependency(app_dir, "aws-sdk");
     WireSurfaces {
         mongodb,
         dynamodb,
+        s3,
         aws_sdk_v2_hint,
     }
 }
@@ -73,6 +78,7 @@ mod tests {
         let surfaces = detect_wire_surfaces(dir.path());
         assert!(surfaces.mongodb);
         assert!(!surfaces.dynamodb);
+        assert!(!surfaces.s3);
         assert!(!surfaces.aws_sdk_v2_hint);
     }
 
@@ -83,6 +89,7 @@ mod tests {
         let surfaces = detect_wire_surfaces(dir.path());
         assert!(surfaces.mongodb);
         assert!(!surfaces.dynamodb);
+        assert!(!surfaces.s3);
         assert!(!surfaces.aws_sdk_v2_hint);
     }
 
@@ -95,6 +102,21 @@ mod tests {
         );
         let surfaces = detect_wire_surfaces(dir.path());
         assert!(surfaces.dynamodb);
+        assert!(!surfaces.s3);
+        assert!(!surfaces.mongodb);
+        assert!(!surfaces.aws_sdk_v2_hint);
+    }
+
+    #[test]
+    fn s3_sdk_dependency_enables_s3_surface() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_package_json(
+            dir.path(),
+            r#"{"dependencies": {"@aws-sdk/client-s3": "^3.0.0"}}"#,
+        );
+        let surfaces = detect_wire_surfaces(dir.path());
+        assert!(surfaces.s3);
+        assert!(!surfaces.dynamodb);
         assert!(!surfaces.mongodb);
         assert!(!surfaces.aws_sdk_v2_hint);
     }
@@ -112,6 +134,7 @@ mod tests {
             !surfaces.dynamodb,
             "the v2 hint must never enable the DynamoDB surface"
         );
+        assert!(!surfaces.s3, "the v2 hint must never enable S3");
         assert!(!surfaces.mongodb);
     }
 
@@ -124,9 +147,9 @@ mod tests {
         write_package_json(
             dir.path(),
             r#"{
-                "devDependencies": {"mongodb": "^6.0.0", "@aws-sdk/client-dynamodb": "^3.0.0"},
+                "devDependencies": {"mongodb": "^6.0.0", "@aws-sdk/client-dynamodb": "^3.0.0", "@aws-sdk/client-s3": "^3.0.0"},
                 "optionalDependencies": {"mongoose": "^8.0.0"},
-                "peerDependencies": {"@aws-sdk/lib-dynamodb": "^3.0.0", "aws-sdk": "^2.1500.0"}
+                "peerDependencies": {"@aws-sdk/lib-dynamodb": "^3.0.0", "@aws-sdk/lib-storage": "^3.0.0", "aws-sdk": "^2.1500.0"}
             }"#,
         );
         assert_eq!(detect_wire_surfaces(dir.path()), WireSurfaces::default());
@@ -146,11 +169,12 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         write_package_json(
             dir.path(),
-            r#"{"dependencies": {"mongodb": "^6.0.0", "@aws-sdk/lib-dynamodb": "^3.0.0"}}"#,
+            r#"{"dependencies": {"mongodb": "^6.0.0", "@aws-sdk/lib-dynamodb": "^3.0.0", "@aws-sdk/lib-storage": "^3.0.0"}}"#,
         );
         let surfaces = detect_wire_surfaces(dir.path());
         assert!(surfaces.mongodb);
         assert!(surfaces.dynamodb);
+        assert!(surfaces.s3);
         assert!(!surfaces.aws_sdk_v2_hint);
     }
 
@@ -163,9 +187,25 @@ mod tests {
         );
         let surfaces = detect_wire_surfaces(dir.path());
         assert!(surfaces.dynamodb);
+        assert!(!surfaces.s3);
         assert!(
             !surfaces.aws_sdk_v2_hint,
             "hint is redundant once the v3 client enables the surface"
+        );
+    }
+
+    #[test]
+    fn wire_surfaces_v3_s3_client_supersedes_bare_aws_sdk_hint() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_package_json(
+            dir.path(),
+            r#"{"dependencies": {"aws-sdk": "^2.1500.0", "@aws-sdk/client-s3": "^3.0.0"}}"#,
+        );
+        let surfaces = detect_wire_surfaces(dir.path());
+        assert!(surfaces.s3);
+        assert!(
+            !surfaces.aws_sdk_v2_hint,
+            "hint is redundant once the v3 S3 client enables the surface"
         );
     }
 
@@ -174,7 +214,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         write_package_json(
             dir.path(),
-            r#"{"dependencies": {"mongodb-memory-server": "^9.0.0", "@aws-sdk/client-s3": "^3.0.0"}}"#,
+            r#"{"dependencies": {"mongodb-memory-server": "^9.0.0", "s3": "^1.0.0"}}"#,
         );
         assert_eq!(detect_wire_surfaces(dir.path()), WireSurfaces::default());
     }

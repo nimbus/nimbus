@@ -20,13 +20,16 @@ bun-jsc-linked-adapter = ["nimbus-runtime/bun-jsc-linked-adapter"]
 v8-pointer-compression = ["nimbus-runtime/v8-pointer-compression"]
 
 [dependencies]
+async-trait.workspace = true
 axum.workspace = true
 base64.workspace = true
 bson.workspace = true
+bytes.workspace = true
 crc32c.workspace = true
 nimbus-artifacts = { path = "../nimbus-artifacts" }
 nimbus-assets = { path = "../nimbus-assets", features = ["ui"] }
 nimbus-auth = { path = "../nimbus-auth" }
+nimbus-blob = { path = "../nimbus-blob" }
 nimbus-bridge = { path = "../nimbus-bridge" }
 nimbus-cloud-functions = { path = "../nimbus-cloud-functions" }
 nimbus-code-index = { path = "../nimbus-code-index" }
@@ -37,11 +40,13 @@ nimbus-license = { path = "../nimbus-license" }
 nimbus-mongodb = { path = "../nimbus-mongodb" }
 nimbus-provenance = { path = "../nimbus-provenance" }
 nimbus-runtime = { path = "../nimbus-runtime" }
+nimbus-s3 = { path = "../nimbus-s3" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-services = { path = "../nimbus-services" }
 nimbus-storage = { path = "../nimbus-storage" }
 nimbus-machine = { path = "../nimbus-machine" }
 nimbus-node = { path = "../nimbus-node" }
+nimbus-object-storage = { path = "../nimbus-object-storage" }
 nimbus-operator = { path = "../nimbus-operator" }
 nimbus-system = { path = "../nimbus-system" }
 nimbus-tenant = { path = "../nimbus-tenant" }
@@ -59,6 +64,7 @@ prost = "0.13.1"
 prost-types = "0.13.1"
 reqwest.workspace = true
 ring.workspace = true
+s3s.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -90,8 +96,10 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_
 [dev-dependencies]
 # Official AWS Rust SDK — drives the dynamodb_spec parity runner against an
 # in-process listener via endpoint override (dev/test only; not shipped).
+aws-credential-types = "1.2.14"
 aws-sdk-dynamodb = { workspace = true }
 aws-sdk-dynamodbstreams = { workspace = true }
+aws-sigv4 = "=1.4.3"
 nimbus-engine = { path = "../nimbus-engine", features = ["test-hooks"] }
 nimbus-testing = { path = "../nimbus-testing" }
 serde_yaml.workspace = true

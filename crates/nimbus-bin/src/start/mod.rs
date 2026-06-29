@@ -149,6 +149,30 @@ pub(crate) struct StartCommand {
     #[arg(long = "dynamodb-access-key", value_name = "KEY_ID:SECRET:TENANT")]
     pub(crate) dynamodb_access_key: Vec<String>,
 
+    /// Disable the S3 HTTP listener (served by default on port 9000
+    /// when free, with the generated wire-credential store key bound to
+    /// the `default` tenant unless operator bindings are provided).
+    #[arg(long = "no-s3", action = clap::ArgAction::SetFalse, default_value_t = true)]
+    pub(crate) s3: bool,
+
+    /// Explicit port for the S3 HTTP listener (S3-compatible local
+    /// convention is 9000). Without this flag the listener serves on 9000
+    /// when free and is skipped (with a warning) when busy; an explicit
+    /// port fails loud instead.
+    #[arg(long)]
+    pub(crate) s3_port: Option<u16>,
+
+    /// Host interface for the S3 listener. Non-loopback hosts require
+    /// --allow-network.
+    #[arg(long, default_value = "127.0.0.1")]
+    pub(crate) s3_host: String,
+
+    /// S3 access-key binding as ACCESS_KEY_ID:SECRET:TENANT (repeatable).
+    /// Defaults to NIMBUS_S3_ACCESS_KEYS (comma-separated). S3 uses its
+    /// own credential registry and never reuses DynamoDB/KV credentials.
+    #[arg(long = "s3-access-key", value_name = "KEY_ID:SECRET:TENANT")]
+    pub(crate) s3_access_key: Vec<String>,
+
     /// Local data directory used for embedded tenant databases and, by default,
     /// the local redb control plane.
     #[arg(long)]
@@ -412,6 +436,10 @@ impl Default for StartCommand {
             dynamodb_port: None,
             dynamodb_host: "127.0.0.1".to_string(),
             dynamodb_access_key: Vec::new(),
+            s3: true,
+            s3_port: None,
+            s3_host: "127.0.0.1".to_string(),
+            s3_access_key: Vec::new(),
             data_dir: None,
             control_data_dir: None,
             tenant_provider: None,

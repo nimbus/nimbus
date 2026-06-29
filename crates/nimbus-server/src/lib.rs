@@ -32,6 +32,7 @@ pub use adapters::cloudflare::{
 pub use adapters::convex::ConvexRegistry;
 pub use adapters::dynamodb::DynamoDbConfig;
 pub use adapters::firebase::{FirebaseConfig, ProjectSpecError, ProjectTenantRegistry};
+pub use adapters::s3::S3Config;
 /// Enables Firebase Emulator token-verification bypass for dev/test servers.
 ///
 /// The default Firebase config rejects unverified emulator tokens and uses a
@@ -57,6 +58,7 @@ pub use artifact_verifier_effects::{
     admit_guest_executable_artifact, admit_runtime_bundle_artifact,
 };
 pub use nimbus_dynamodb::AccessKeyRegistry as DynamoDbAccessKeyRegistry;
+pub use nimbus_s3::AccessKeyRegistry as S3AccessKeyRegistry;
 pub mod adapters_mongodb {
     pub use super::adapters::mongodb::bson_bridge;
     pub use super::adapters::mongodb::listener;

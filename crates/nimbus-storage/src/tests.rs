@@ -34,6 +34,7 @@ mod crud_and_journal;
 mod generated_history;
 mod libsql_provider;
 mod mysql_provider;
+mod object_meta;
 mod postgres_provider;
 mod provider_fixtures;
 mod recovery;

@@ -9,7 +9,7 @@ const WIRE_CREDENTIALS_FILE_NAME: &str = "wire-credentials.json";
 const MONGODB_DEV_USERNAME: &str = "nimbus";
 
 /// Generated credentials for the wire-protocol listeners (MongoDB SCRAM,
-/// DynamoDB SigV4), persisted per data dir so connection strings survive
+/// DynamoDB/S3 SigV4), persisted per data dir so connection strings survive
 /// restarts (decision D5) and shared by `nimbus dev` and `nimbus start`
 /// (decision D7) — both commands load-or-generate the same store, so the
 /// same data dir always speaks with the same secrets. Rotation = delete
@@ -22,6 +22,8 @@ pub(crate) struct WireCredentials {
     pub(crate) mongodb_password: String,
     pub(crate) dynamodb_access_key_id: String,
     pub(crate) dynamodb_secret_access_key: String,
+    pub(crate) s3_access_key_id: String,
+    pub(crate) s3_secret_access_key: String,
 }
 
 pub(crate) fn wire_credentials_path(data_dir: &Path) -> PathBuf {
@@ -60,6 +62,8 @@ fn generate() -> WireCredentials {
         mongodb_password: random_hex(16),
         dynamodb_access_key_id: format!("AKIA{}", random_hex(8).to_uppercase()),
         dynamodb_secret_access_key: random_hex(20),
+        s3_access_key_id: format!("AKIA{}", random_hex(8).to_uppercase()),
+        s3_secret_access_key: random_hex(20),
     }
 }
 
@@ -128,6 +132,13 @@ mod tests {
         assert!(first.dynamodb_access_key_id.starts_with("AKIA"));
         assert_eq!(first.dynamodb_access_key_id.len(), 20);
         assert_eq!(first.dynamodb_secret_access_key.len(), 40);
+        assert!(first.s3_access_key_id.starts_with("AKIA"));
+        assert_eq!(first.s3_access_key_id.len(), 20);
+        assert_eq!(first.s3_secret_access_key.len(), 40);
+        assert_ne!(
+            first.dynamodb_access_key_id, first.s3_access_key_id,
+            "DynamoDB and S3 must not share access-key identities"
+        );
     }
 
     #[test]
@@ -140,6 +151,7 @@ mod tests {
             first.dynamodb_secret_access_key,
             second.dynamodb_secret_access_key
         );
+        assert_ne!(first.s3_secret_access_key, second.s3_secret_access_key);
     }
 
     #[cfg(unix)]

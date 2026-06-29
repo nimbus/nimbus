@@ -49,6 +49,8 @@ mod tests {
     use super::*;
     use crate::adapters::dynamodb::DynamoDbConfig;
     use crate::adapters::mongodb::{AuthConfig, MongoDbConfig};
+    use crate::adapters::s3::S3Config;
+    use nimbus_core::TenantId;
 
     fn mongodb_adapter(port: u16) -> Box<dyn WireProtocolAdapter> {
         Box::new(MongoDbConfig::localhost(
@@ -97,5 +99,27 @@ mod tests {
         assert!(lookup.guard(lookup.bind_addr()).is_ok());
         let strict: Box<dyn WireProtocolAdapter> = Box::new(DynamoDbConfig::new(8000));
         assert!(strict.guard(routable).is_ok());
+    }
+
+    #[test]
+    fn s3_adapter_reports_identity_and_bind_addr() {
+        let adapter: Box<dyn WireProtocolAdapter> = Box::new(S3Config::new(9000));
+        assert_eq!(adapter.name(), "s3");
+        assert_eq!(adapter.protocol(), "http");
+        assert_eq!(adapter.bind_addr(), "127.0.0.1:9000".parse().unwrap());
+    }
+
+    #[test]
+    fn s3_adapter_guard_requires_explicit_signed_keys() {
+        let adapter: Box<dyn WireProtocolAdapter> = Box::new(S3Config::new(9000));
+        let error = adapter
+            .guard(adapter.bind_addr())
+            .expect_err("empty S3 credentials must fail closed");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+
+        let tenant = TenantId::new("tenant-s3").expect("tenant id");
+        let adapter: Box<dyn WireProtocolAdapter> =
+            Box::new(S3Config::new(9000).with_signed_access_key("AKIATEST", tenant, "secret"));
+        assert!(adapter.guard(adapter.bind_addr()).is_ok());
     }
 }

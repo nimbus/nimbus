@@ -23,4 +23,8 @@ nimbus-core = { path = "../nimbus-core" }
 async-trait.workspace = true
 blake3.workspace = true
 bytes.workspace = true
+object_store.workspace = true
 tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile.workspace = true

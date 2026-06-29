@@ -26,9 +26,12 @@ pub use nimbus_storage::{
     ChangefeedBootstrap, ChangefeedCursor, ChangefeedEvent, ChangefeedHandle, ChangefeedPage,
     DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DurableJournalBootstrap, DurableJournalPage,
     LibsqlReplicaBarrierPath, LibsqlReplicaFreshnessStats, LibsqlReplicaRefreshCause,
-    LibsqlReplicaRefreshPath, MaterializedJournalSnapshot, PointInTimeRestoreArchive,
-    ShadowMaterializer, ShadowMaterializerConfig, ShadowMaterializerManifest,
-    TableIdentitySnapshotEntry,
+    LibsqlReplicaRefreshPath, MaterializedJournalSnapshot, ObjectBlobLayout, ObjectChecksums,
+    ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMultipartPart,
+    ObjectMultipartUpload, ObjectPlacement, ObjectPlacementStore, ObjectStorePlacementTarget,
+    ObjectStoreProviderCredentials, ObjectStoreProviderKind, PlacementPolicy,
+    PointInTimeRestoreArchive, ShadowMaterializer, ShadowMaterializerConfig,
+    ShadowMaterializerManifest, TableIdentitySnapshotEntry,
 };
 pub use persistence_config::{
     AwsKmsConfig, ControlPlaneConfig, EncryptionConfigDescriptor, EncryptionValidationError,

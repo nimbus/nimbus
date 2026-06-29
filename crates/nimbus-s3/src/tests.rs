@@ -1,0 +1,893 @@
+use std::collections::{BTreeMap, HashMap};
+use std::io::Write as _;
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+use bytes::Bytes;
+use futures::StreamExt;
+use nimbus_blob::{BlobHash, BlobStore, MemoryBlobStore};
+use nimbus_core::{CommitEntry, Result, SequenceNumber, TenantId, Timestamp};
+use nimbus_storage::{
+    ObjectBlobLayout, ObjectChunkRef, ObjectManifest, ObjectManifestAttributes,
+    ObjectMultipartUpload,
+};
+use s3s::auth::{Credentials, SecretKey};
+use s3s::dto::{
+    ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart, CreateMultipartUploadInput, ETag,
+    ETagCondition, GetObjectInput, HeadObjectInput, ListObjectsV2Input, PutObjectInput, Range,
+    StreamingBlob, UploadPartInput,
+};
+use s3s::{Body, S3, S3ErrorCode, S3Request};
+
+use crate::checksum::ComputedChecksums;
+use crate::convex::{
+    CONVEX_STORAGE_BUCKET, ConvexObjectStorage, ConvexStorageError, ConvexStorageId,
+    DownloadTokenSigner,
+};
+use crate::{AccessKeyRegistry, NimbusS3, S3ObjectBackend};
+
+const ACCESS_KEY_A: &str = "AKIATESTANTA";
+const ACCESS_KEY_B: &str = "AKIATESTANTB";
+const BUCKET: &str = "bucket";
+
+#[derive(Default)]
+struct InMemoryBackend {
+    blobs: Mutex<HashMap<TenantId, Arc<MemoryBlobStore>>>,
+    manifests: Mutex<BTreeMap<(TenantId, String, String), ObjectManifest>>,
+    uploads: Mutex<BTreeMap<(TenantId, String), ObjectMultipartUpload>>,
+}
+
+#[async_trait]
+impl S3ObjectBackend for InMemoryBackend {
+    async fn ensure_tenant(&self, tenant: &TenantId) -> Result<()> {
+        self.store(tenant);
+        Ok(())
+    }
+
+    async fn put_blob(&self, tenant: &TenantId, bytes: Bytes) -> Result<BlobHash> {
+        self.store(tenant).put(bytes).await
+    }
+
+    async fn get_blob(&self, tenant: &TenantId, hash: &BlobHash) -> Result<Bytes> {
+        self.store(tenant).get(hash).await
+    }
+
+    async fn release_blob(&self, tenant: &TenantId, hash: &BlobHash) -> Result<()> {
+        self.store(tenant).release(hash).await
+    }
+
+    async fn put_manifest(
+        &self,
+        tenant: &TenantId,
+        manifest: ObjectManifest,
+    ) -> Result<CommitEntry> {
+        self.manifests.lock().unwrap().insert(
+            (
+                tenant.clone(),
+                manifest.bucket.clone(),
+                manifest.key.clone(),
+            ),
+            manifest,
+        );
+        Ok(commit())
+    }
+
+    async fn get_manifest(
+        &self,
+        tenant: &TenantId,
+        bucket: &str,
+        key: &str,
+    ) -> Result<Option<ObjectManifest>> {
+        Ok(self
+            .manifests
+            .lock()
+            .unwrap()
+            .get(&(tenant.clone(), bucket.to_string(), key.to_string()))
+            .cloned())
+    }
+
+    async fn delete_manifest(
+        &self,
+        tenant: &TenantId,
+        bucket: &str,
+        key: &str,
+    ) -> Result<Option<(CommitEntry, ObjectManifest)>> {
+        Ok(self
+            .manifests
+            .lock()
+            .unwrap()
+            .remove(&(tenant.clone(), bucket.to_string(), key.to_string()))
+            .map(|manifest| (commit(), manifest)))
+    }
+
+    async fn list_manifests(
+        &self,
+        tenant: &TenantId,
+        bucket: &str,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<ObjectManifest>> {
+        let manifests_guard = self.manifests.lock().unwrap();
+        let mut manifests = manifests_guard
+            .iter()
+            .filter_map(|((entry_tenant, entry_bucket, _), manifest)| {
+                (entry_tenant == tenant
+                    && entry_bucket == bucket
+                    && manifest.key.starts_with(prefix))
+                .then_some(manifest.clone())
+            })
+            .collect::<Vec<_>>();
+        drop(manifests_guard);
+        manifests.sort_by(|left, right| left.key.cmp(&right.key));
+        manifests.truncate(limit);
+        Ok(manifests)
+    }
+
+    async fn put_multipart_upload(
+        &self,
+        tenant: &TenantId,
+        upload: ObjectMultipartUpload,
+    ) -> Result<CommitEntry> {
+        self.uploads
+            .lock()
+            .unwrap()
+            .insert((tenant.clone(), upload.upload_id.clone()), upload);
+        Ok(commit())
+    }
+
+    async fn get_multipart_upload(
+        &self,
+        tenant: &TenantId,
+        upload_id: &str,
+    ) -> Result<Option<ObjectMultipartUpload>> {
+        Ok(self
+            .uploads
+            .lock()
+            .unwrap()
+            .get(&(tenant.clone(), upload_id.to_string()))
+            .cloned())
+    }
+
+    async fn delete_multipart_upload(
+        &self,
+        tenant: &TenantId,
+        upload_id: &str,
+    ) -> Result<Option<(CommitEntry, ObjectMultipartUpload)>> {
+        Ok(self
+            .uploads
+            .lock()
+            .unwrap()
+            .remove(&(tenant.clone(), upload_id.to_string()))
+            .map(|upload| (commit(), upload)))
+    }
+}
+
+impl InMemoryBackend {
+    fn store(&self, tenant: &TenantId) -> Arc<MemoryBlobStore> {
+        self.blobs
+            .lock()
+            .unwrap()
+            .entry(tenant.clone())
+            .or_insert_with(|| Arc::new(MemoryBlobStore::new()))
+            .clone()
+    }
+
+    fn convex_manifest_keys(&self, tenant: &TenantId) -> Vec<String> {
+        self.manifests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|((entry_tenant, entry_bucket, _), manifest)| {
+                (entry_tenant == tenant && entry_bucket == CONVEX_STORAGE_BUCKET)
+                    .then_some(manifest.key.clone())
+            })
+            .collect()
+    }
+}
+
+fn commit() -> CommitEntry {
+    CommitEntry {
+        sequence: SequenceNumber(1),
+        timestamp: Timestamp::now(),
+        writes: Vec::new(),
+    }
+}
+
+fn service() -> NimbusS3 {
+    service_with_backend(Arc::new(InMemoryBackend::default()))
+}
+
+fn service_with_backend(backend: Arc<InMemoryBackend>) -> NimbusS3 {
+    let registry = AccessKeyRegistry::new()
+        .bind_signed(ACCESS_KEY_A, tenant("tenant-a"), "secret-a")
+        .bind_signed(ACCESS_KEY_B, tenant("tenant-b"), "secret-b");
+    NimbusS3::new(backend, registry)
+}
+
+fn tenant(value: &str) -> TenantId {
+    TenantId::new(value).expect("tenant id")
+}
+
+fn req<T>(input: T, access_key: &str) -> S3Request<T> {
+    S3Request {
+        input,
+        method: http::Method::GET,
+        uri: "/".parse().unwrap(),
+        headers: http::HeaderMap::new(),
+        extensions: http::Extensions::new(),
+        credentials: Some(Credentials {
+            access_key: access_key.to_string(),
+            secret_key: SecretKey::from("secret"),
+        }),
+        region: None,
+        service: None,
+        trailing_headers: None,
+    }
+}
+
+fn blob(bytes: &'static [u8]) -> StreamingBlob {
+    StreamingBlob::from(Body::from(Bytes::from_static(bytes)))
+}
+
+async fn collect(body: StreamingBlob) -> Bytes {
+    let mut out = Vec::new();
+    futures::pin_mut!(body);
+    while let Some(chunk) = body.next().await {
+        out.extend_from_slice(&chunk.expect("stream chunk"));
+    }
+    Bytes::from(out)
+}
+
+async fn put(service: &NimbusS3, access_key: &str, key: &str, bytes: &'static [u8]) -> String {
+    let response = service
+        .put_object(req(
+            PutObjectInput {
+                bucket: BUCKET.to_string(),
+                key: key.to_string(),
+                body: Some(blob(bytes)),
+                content_length: Some(bytes.len() as i64),
+                content_type: Some("text/plain".to_string()),
+                ..Default::default()
+            },
+            access_key,
+        ))
+        .await
+        .expect("put should succeed");
+    response.output.e_tag.expect("etag").into_value()
+}
+
+#[tokio::test]
+async fn put_get_range_and_list_are_s3_shaped() {
+    let service = service();
+    let etag = put(&service, ACCESS_KEY_A, "docs/readme.txt", b"hello world").await;
+    put(&service, ACCESS_KEY_A, "docs/archive/log.txt", b"archived").await;
+
+    let full = service
+        .get_object(req(
+            GetObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "docs/readme.txt".to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("get should succeed");
+    assert_eq!(
+        collect(full.output.body.expect("body")).await,
+        Bytes::from_static(b"hello world")
+    );
+    assert_eq!(full.output.e_tag.unwrap().into_value(), etag);
+
+    let ranged = service
+        .get_object(req(
+            GetObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "docs/readme.txt".to_string(),
+                range: Some(Range::Int {
+                    first: 6,
+                    last: Some(10),
+                }),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("range get should succeed");
+    assert_eq!(ranged.status, Some(http::StatusCode::PARTIAL_CONTENT));
+    assert_eq!(
+        collect(ranged.output.body.expect("range body")).await,
+        Bytes::from_static(b"world")
+    );
+
+    let listing = service
+        .list_objects_v2(req(
+            ListObjectsV2Input {
+                bucket: BUCKET.to_string(),
+                prefix: Some("docs/".to_string()),
+                delimiter: Some("/".to_string()),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("list should succeed");
+    assert_eq!(
+        listing
+            .output
+            .contents
+            .unwrap()
+            .iter()
+            .map(|object| object.key.as_deref().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["docs/readme.txt"]
+    );
+    assert_eq!(
+        listing.output.common_prefixes.unwrap()[0].prefix.as_deref(),
+        Some("docs/archive/")
+    );
+}
+
+#[tokio::test]
+async fn access_keys_isolate_tenants() {
+    let service = service();
+    put(&service, ACCESS_KEY_A, "same/key.txt", b"tenant-a").await;
+    put(&service, ACCESS_KEY_B, "same/key.txt", b"tenant-b").await;
+
+    for (access_key, expected) in [
+        (ACCESS_KEY_A, Bytes::from_static(b"tenant-a")),
+        (ACCESS_KEY_B, Bytes::from_static(b"tenant-b")),
+    ] {
+        let response = service
+            .get_object(req(
+                GetObjectInput {
+                    bucket: BUCKET.to_string(),
+                    key: "same/key.txt".to_string(),
+                    ..Default::default()
+                },
+                access_key,
+            ))
+            .await
+            .expect("tenant get should succeed");
+        assert_eq!(collect(response.output.body.unwrap()).await, expected);
+    }
+}
+
+#[tokio::test]
+async fn overwriting_object_with_same_bytes_keeps_blob_readable() {
+    let service = service();
+    put(&service, ACCESS_KEY_A, "same-bytes.txt", b"stable").await;
+    put(&service, ACCESS_KEY_A, "same-bytes.txt", b"stable").await;
+
+    let response = service
+        .get_object(req(
+            GetObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "same-bytes.txt".to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("overwritten object should remain readable");
+    assert_eq!(
+        collect(response.output.body.unwrap()).await,
+        Bytes::from_static(b"stable")
+    );
+}
+
+#[tokio::test]
+async fn conditional_requests_enforce_s3_etag_preconditions() {
+    let service = service();
+    let original_etag = put(&service, ACCESS_KEY_A, "conditional.txt", b"original").await;
+
+    let created = service
+        .put_object(req(
+            PutObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "create-only.txt".to_string(),
+                body: Some(blob(b"new")),
+                content_length: Some(3),
+                if_none_match: Some(ETagCondition::Any),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("If-None-Match:* should create absent objects");
+    assert!(created.output.e_tag.is_some());
+
+    let create_conflict = service
+        .put_object(req(
+            PutObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "conditional.txt".to_string(),
+                body: Some(blob(b"blocked")),
+                content_length: Some(7),
+                if_none_match: Some(ETagCondition::Any),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect_err("If-None-Match:* must reject existing objects");
+    assert_eq!(create_conflict.code(), &S3ErrorCode::PreconditionFailed);
+
+    let weak_update = service
+        .put_object(req(
+            PutObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "conditional.txt".to_string(),
+                body: Some(blob(b"blocked")),
+                content_length: Some(7),
+                if_match: Some(ETagCondition::ETag(ETag::Weak(original_etag.clone()))),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect_err("If-Match must use strong ETag comparison");
+    assert_eq!(weak_update.code(), &S3ErrorCode::PreconditionFailed);
+
+    let updated = service
+        .put_object(req(
+            PutObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "conditional.txt".to_string(),
+                body: Some(blob(b"updated")),
+                content_length: Some(7),
+                if_match: Some(ETagCondition::ETag(ETag::Strong(original_etag.clone()))),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("matching strong If-Match should update");
+    let updated_etag = updated.output.e_tag.expect("updated etag").into_value();
+    assert_ne!(updated_etag, original_etag);
+
+    let not_modified = service
+        .get_object(req(
+            GetObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "conditional.txt".to_string(),
+                if_none_match: Some(ETagCondition::ETag(ETag::Weak(updated_etag.clone()))),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect_err("matching If-None-Match should return NotModified");
+    assert_eq!(not_modified.code(), &S3ErrorCode::NotModified);
+
+    let head_precondition = service
+        .head_object(req(
+            HeadObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "conditional.txt".to_string(),
+                if_match: Some(ETagCondition::ETag(ETag::Strong(original_etag))),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect_err("stale If-Match should reject HEAD");
+    assert_eq!(head_precondition.code(), &S3ErrorCode::PreconditionFailed);
+
+    let head = service
+        .head_object(req(
+            HeadObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "conditional.txt".to_string(),
+                if_match: Some(ETagCondition::ETag(ETag::Strong(updated_etag))),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("current If-Match should allow HEAD");
+    assert_eq!(head.output.content_length, Some(7));
+}
+
+#[tokio::test]
+async fn put_object_rejects_unsupported_checksum_headers() {
+    let service = service();
+    let sha256 = service
+        .put_object(req(
+            PutObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "checksums/sha256.txt".to_string(),
+                body: Some(blob(b"payload")),
+                checksum_sha256: Some("unsupported".to_string()),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect_err("unsupported checksum must fail closed");
+    assert_eq!(sha256.code(), &S3ErrorCode::InvalidRequest);
+    assert!(sha256.message().unwrap_or_default().contains("SHA256"));
+
+    let missing_crc64 = service
+        .put_object(req(
+            PutObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "checksums/missing-crc64.txt".to_string(),
+                body: Some(blob(b"payload")),
+                checksum_algorithm: Some(ChecksumAlgorithm::from_static(
+                    ChecksumAlgorithm::CRC64NVME,
+                )),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect_err("CRC64NVME algorithm must include the checksum header");
+    assert_eq!(missing_crc64.code(), &S3ErrorCode::InvalidRequest);
+    assert!(
+        missing_crc64
+            .message()
+            .unwrap_or_default()
+            .contains("requires x-amz-checksum-crc64nvme")
+    );
+}
+
+#[test]
+fn crc64nvme_trailer_extraction_uses_verified_trailing_headers() {
+    let bytes = Bytes::from_static(b"payload");
+    let checksum = ComputedChecksums::for_bytes(&bytes).crc64nvme_base64;
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        "x-amz-checksum-crc64nvme",
+        checksum.parse().expect("checksum header value"),
+    );
+
+    assert_eq!(
+        crate::service::trailing_crc64nvme_from_headers(&headers).expect("trailer should parse"),
+        Some(checksum)
+    );
+}
+
+#[tokio::test]
+async fn multipart_upload_assembles_chunks_and_etag() {
+    let service = service();
+    let created = service
+        .create_multipart_upload(req(
+            CreateMultipartUploadInput {
+                bucket: BUCKET.to_string(),
+                key: "large/object.txt".to_string(),
+                content_type: Some("text/plain".to_string()),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("create multipart should succeed");
+    let upload_id = created.output.upload_id.expect("upload id");
+
+    let first = service
+        .upload_part(req(
+            UploadPartInput {
+                bucket: BUCKET.to_string(),
+                key: "large/object.txt".to_string(),
+                upload_id: upload_id.clone(),
+                part_number: 1,
+                body: Some(blob(b"hello ")),
+                content_length: Some(6),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("first part should upload")
+        .output
+        .e_tag
+        .expect("first part etag");
+    let second = service
+        .upload_part(req(
+            UploadPartInput {
+                bucket: BUCKET.to_string(),
+                key: "large/object.txt".to_string(),
+                upload_id: upload_id.clone(),
+                part_number: 2,
+                body: Some(blob(b"world")),
+                content_length: Some(5),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("second part should upload")
+        .output
+        .e_tag
+        .expect("second part etag");
+
+    let completed = service
+        .complete_multipart_upload(req(
+            s3s::dto::CompleteMultipartUploadInput {
+                bucket: BUCKET.to_string(),
+                key: "large/object.txt".to_string(),
+                upload_id,
+                multipart_upload: Some(CompletedMultipartUpload {
+                    parts: Some(vec![
+                        CompletedPart {
+                            part_number: Some(1),
+                            e_tag: Some(first),
+                            ..Default::default()
+                        },
+                        CompletedPart {
+                            part_number: Some(2),
+                            e_tag: Some(second),
+                            ..Default::default()
+                        },
+                    ]),
+                }),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("multipart complete should succeed");
+    assert!(
+        completed
+            .output
+            .e_tag
+            .expect("complete etag")
+            .into_value()
+            .ends_with("-2")
+    );
+
+    let fetched = service
+        .get_object(req(
+            GetObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "large/object.txt".to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("multipart object should read");
+    assert_eq!(
+        collect(fetched.output.body.unwrap()).await,
+        Bytes::from_static(b"hello world")
+    );
+}
+
+#[tokio::test]
+async fn chunked_manifest_read_rejects_blob_length_mismatch() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let service = service_with_backend(backend.clone());
+    let tenant = tenant("tenant-a");
+    backend.ensure_tenant(&tenant).await.unwrap();
+    let hash = backend
+        .put_blob(&tenant, Bytes::from_static(b"short"))
+        .await
+        .unwrap();
+    let manifest = ObjectManifest::chunked(
+        BUCKET,
+        "bad/chunked.bin",
+        9,
+        vec![ObjectChunkRef {
+            blob_hash: hash.to_hex(),
+            offset: 0,
+            len: 9,
+        }],
+        ObjectManifestAttributes::new("multipart-etag-1", 1),
+    )
+    .expect("manifest shape is valid; blob backend length is corrupt");
+    backend.put_manifest(&tenant, manifest).await.unwrap();
+
+    let error = service
+        .get_object(req(
+            GetObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "bad/chunked.bin".to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect_err("read must reject chunk length mismatch");
+
+    assert_eq!(error.code(), &S3ErrorCode::InternalError);
+    assert!(
+        error
+            .message()
+            .unwrap_or_default()
+            .contains("object manifest corruption")
+    );
+}
+
+#[tokio::test]
+async fn convex_storage_projects_virtual_metadata_and_hides_internal_key() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let storage = ConvexObjectStorage::new(backend.clone());
+    let tenant = tenant("tenant-a");
+
+    let metadata = storage
+        .store(
+            &tenant,
+            Bytes::from_static(b"hello"),
+            Some("text/plain".to_string()),
+            1_776_960_000_000,
+        )
+        .await
+        .expect("Convex storage put should succeed");
+
+    assert!(metadata.id.as_str().starts_with("_storage:storage_"));
+    assert_eq!(
+        metadata.sha256,
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    );
+    let document = metadata.to_virtual_document();
+    assert_eq!(document["_id"], metadata.id.as_str());
+    assert_eq!(document["contentType"], "text/plain");
+    assert!(document.get("storage_key").is_none());
+    assert!(document.get("convex.storage_id").is_none());
+
+    let internal_keys = backend.convex_manifest_keys(&tenant);
+    assert_eq!(internal_keys.len(), 1);
+    assert!(internal_keys[0].starts_with("convex/objects/"));
+    assert_ne!(internal_keys[0], metadata.id.as_str());
+}
+
+#[tokio::test]
+async fn convex_hmac_download_serves_bytes_and_fails_closed_after_blob_loss() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let storage = ConvexObjectStorage::new(backend.clone());
+    let tenant = tenant("tenant-a");
+    let metadata = storage
+        .store(
+            &tenant,
+            Bytes::from_static(b"download me"),
+            Some("text/plain".to_string()),
+            1_000,
+        )
+        .await
+        .expect("Convex storage put should succeed");
+    let signer = DownloadTokenSigner::new(b"test-download-secret".to_vec()).unwrap();
+    let token = signer
+        .sign(&tenant, &metadata.id, 2_000)
+        .expect("token signs");
+
+    let downloaded = storage
+        .download_with_token(&signer, &token, 1_500)
+        .await
+        .expect("valid token should serve bytes");
+    assert_eq!(downloaded.bytes, Bytes::from_static(b"download me"));
+
+    let expired = storage
+        .download_with_token(&signer, &token, 2_001)
+        .await
+        .expect_err("expired token must fail");
+    assert!(matches!(expired, ConvexStorageError::ExpiredToken));
+
+    let manifest = backend
+        .list_manifests(&tenant, CONVEX_STORAGE_BUCKET, "", 1)
+        .await
+        .unwrap()
+        .pop()
+        .expect("manifest remains");
+    match manifest.blob_layout {
+        ObjectBlobLayout::Whole { blob_hash } => {
+            backend
+                .release_blob(&tenant, &BlobHash::from_hex(&blob_hash).unwrap())
+                .await
+                .unwrap();
+        }
+        ObjectBlobLayout::Chunked { .. } => panic!("Convex storage stores whole objects"),
+    }
+    let forbidden = storage
+        .download_with_token(&signer, &token, 1_500)
+        .await
+        .expect_err("missing bytes must fail closed");
+    assert!(matches!(forbidden, ConvexStorageError::Forbidden(_)));
+}
+
+#[tokio::test]
+async fn convex_export_import_zip_preserves_storage_ids_and_rotates_internal_keys() {
+    let source_backend = Arc::new(InMemoryBackend::default());
+    let source = ConvexObjectStorage::new(source_backend.clone());
+    let tenant = tenant("tenant-a");
+    let metadata = source
+        .store(
+            &tenant,
+            Bytes::from_static(br#"{"ok":true}"#),
+            Some("application/json".to_string()),
+            1_776_960_000_000,
+        )
+        .await
+        .expect("source object should store");
+    let source_key = source_backend.convex_manifest_keys(&tenant)[0].clone();
+
+    let archive = source
+        .export_zip(&tenant)
+        .await
+        .expect("export should produce zip bytes");
+
+    let target_backend = Arc::new(InMemoryBackend::default());
+    let target = ConvexObjectStorage::new(target_backend.clone());
+    let imported = target
+        .import_zip(&tenant, archive.clone(), 1_776_960_001_000)
+        .await
+        .expect("import should succeed");
+    assert_eq!(imported.len(), 1);
+    assert_eq!(imported[0].id, metadata.id);
+    assert_eq!(imported[0].sha256, metadata.sha256);
+
+    let read_back = target
+        .read(&tenant, &metadata.id)
+        .await
+        .expect("read should succeed")
+        .expect("imported object should exist");
+    assert_eq!(read_back.bytes, Bytes::from_static(br#"{"ok":true}"#));
+    let target_key = target_backend.convex_manifest_keys(&tenant)[0].clone();
+    assert_ne!(target_key, source_key);
+
+    let imported_again = target
+        .import_zip(&tenant, archive, 1_776_960_002_000)
+        .await
+        .expect("re-import with the same storage id should replace cleanly");
+    assert_eq!(imported_again[0].id, metadata.id);
+    let target_keys = target_backend.convex_manifest_keys(&tenant);
+    assert_eq!(target_keys.len(), 1);
+    assert_ne!(target_keys[0], target_key);
+    let read_again = target
+        .read(&tenant, &metadata.id)
+        .await
+        .expect("read should succeed after re-import")
+        .expect("re-imported object should exist");
+    assert_eq!(read_again.bytes, Bytes::from_static(br#"{"ok":true}"#));
+}
+
+#[tokio::test]
+async fn convex_import_zip_requires_content_type_extension_to_match_manifest() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let storage = ConvexObjectStorage::new(backend);
+    let tenant = tenant("tenant-a");
+    let id = ConvexStorageId::generate().expect("storage id should generate");
+    let bytes = Bytes::from_static(br#"{"ok":true}"#);
+    let checksums = ComputedChecksums::for_bytes(&bytes);
+    let document = serde_json::json!({
+        "_id": id.as_str(),
+        "_creationTime": 1_776_960_000_000_u64,
+        "_updateTime": 1_776_960_000_000_u64,
+        "contentType": "application/json",
+        "sha256": checksums.sha256_hex,
+        "size": bytes.len() as u64,
+    });
+
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    writer
+        .start_file("_storage/documents.jsonl", options)
+        .expect("manifest entry should start");
+    writer
+        .write_all(
+            format!(
+                "{}\n",
+                serde_json::to_string(&document).expect("document should encode")
+            )
+            .as_bytes(),
+        )
+        .expect("manifest entry should write");
+    writer
+        .start_file(format!("_storage/{}.txt", id.raw_id().as_str()), options)
+        .expect("mismatched object entry should start");
+    writer
+        .write_all(&bytes)
+        .expect("mismatched object entry should write");
+    let archive = Bytes::from(writer.finish().expect("archive should finish").into_inner());
+
+    let error = storage
+        .import_zip(&tenant, archive, 1_776_960_001_000)
+        .await
+        .expect_err("mismatched object extension must not import");
+    assert!(matches!(
+        error,
+        ConvexStorageError::Archive(message)
+            if message.contains("archive missing object bytes")
+    ));
+}

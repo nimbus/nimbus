@@ -26,19 +26,20 @@ pub mod caps;
 pub mod cas_ro;
 pub mod memfs;
 pub mod mount;
+pub mod object;
 pub mod passthrough;
 pub mod resolver;
 pub mod wasi;
 
 pub use backend::{
-    BackendRegistration, BackendRegistry, ObjectRwBackend, ObjectUnsupportedOperation,
-    PersistenceMode,
+    BackendRegistration, BackendRegistry, ObjectUnsupportedOperation, PersistenceMode,
 };
 pub use cache::{CacheLookup, ChunkCache};
 pub use caps::{FsCaps, FsMountCaps};
 pub use cas_ro::{CasBlobChunk, CasManifestEntry, CasReadOnlyBackend, CasReadOnlyManifest};
 pub use memfs::MemFsBackend;
 pub use mount::MountTable;
+pub use object::{ExternalFuseObjectMount, ExternalFuseWrite, ObjectRwBackend, ObjectWriteSession};
 pub use passthrough::PassthroughBackend;
 pub use resolver::{MountResolver, ResolvedAccess, ResolvedPath};
 pub use wasi::{DirPerms, FilePerms, WasiPreopenBuilder, WasiPreopenDescriptor};

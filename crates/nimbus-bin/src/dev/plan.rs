@@ -132,10 +132,11 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         // start never re-probes or silently skips what dev advertised.
         mongodb_port: Some(wire.mongodb_port.port),
         dynamodb_port: Some(wire.dynamodb_port.port),
+        s3_port: Some(wire.s3_port.port),
         // The store credentials back the listeners directly: MongoDB via
         // the store-only marker (ambient NIMBUS_MONGODB_* env in the
         // developer's shell must not desync the listener from what
-        // `.env.local` advertises), DynamoDB via an explicit binding to
+        // `.env.local` advertises), DynamoDB/S3 via explicit bindings to
         // the dev auto-tenant (which shadows NIMBUS_DYNAMODB_ACCESS_KEYS).
         mongodb_credentials_from_store: true,
         dynamodb_access_key: vec![format!(
@@ -143,6 +144,10 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
             wire.credentials.dynamodb_access_key_id,
             wire.credentials.dynamodb_secret_access_key,
             auto_tenant
+        )],
+        s3_access_key: vec![format!(
+            "{}:{}:{}",
+            wire.credentials.s3_access_key_id, wire.credentials.s3_secret_access_key, auto_tenant
         )],
         data_dir: Some(data_dir.clone()),
         control_data_dir: Some(data_dir.clone()),

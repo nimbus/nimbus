@@ -15,7 +15,7 @@ use std::path::Path;
 use nimbus::{Error, TenantId};
 use nimbus_server::{
     CloudflareConfig, DynamoDbConfig, FirebaseConfig, MongoDbAuthConfig, MongoDbConfig,
-    MongoDbCredentialRegistry, ProjectTenantRegistry,
+    MongoDbCredentialRegistry, ProjectTenantRegistry, S3AccessKeyRegistry, S3Config,
 };
 
 use crate::wire_credentials::{WireCredentials, load_or_generate};
@@ -33,6 +33,7 @@ pub(super) const MONGODB_PASSWORD_ENV: &str = "NIMBUS_MONGODB_PASSWORD";
 /// loopback-only mode.
 pub(super) const MONGODB_CREDENTIALS_ENV: &str = "NIMBUS_MONGODB_CREDENTIALS";
 pub(super) const DYNAMODB_ACCESS_KEYS_ENV: &str = "NIMBUS_DYNAMODB_ACCESS_KEYS";
+pub(super) const S3_ACCESS_KEYS_ENV: &str = "NIMBUS_S3_ACCESS_KEYS";
 /// Per-tenant Firebase project->tenant bindings. Comma-separated
 /// `PROJECT:TENANT` entries, mirroring the MongoDB [`MONGODB_CREDENTIALS_ENV`]
 /// convention. When set the Firebase adapter resolves each request's project to
@@ -44,11 +45,12 @@ pub(super) const FIREBASE_PROJECTS_ENV: &str = "NIMBUS_FIREBASE_PROJECTS";
 
 pub(crate) const MONGODB_CONVENTIONAL_PORT: u16 = 27017;
 pub(crate) const DYNAMODB_CONVENTIONAL_PORT: u16 = 8000;
+pub(crate) const S3_CONVENTIONAL_PORT: u16 = 9000;
 
-/// Tenant the generated wire-credential DynamoDB key binds to when the
-/// operator provides no bindings. `nimbus dev` overrides this with its
-/// auto-tenant by passing an explicit binding.
-pub(super) const DEFAULT_DYNAMODB_TENANT: &str = "default";
+/// Tenant the generated wire credentials bind to when the operator provides no
+/// surface-specific bindings. `nimbus dev` overrides this with its auto-tenant
+/// by passing explicit bindings.
+pub(super) const DEFAULT_WIRE_TENANT: &str = "default";
 
 /// Adapter configs resolved from the start command. `None` means the
 /// surface does not serve this boot — opted out, or its conventional
@@ -59,6 +61,7 @@ pub(crate) struct AdapterEnablement {
     pub(crate) cloudflare: Option<CloudflareConfig>,
     pub(crate) mongodb: Option<MongoDbConfig>,
     pub(crate) dynamodb: Option<DynamoDbConfig>,
+    pub(crate) s3: Option<S3Config>,
 }
 
 impl AdapterEnablement {
@@ -91,11 +94,16 @@ impl AdapterEnablement {
             .dynamodb
             .as_ref()
             .map_or_else(|| "off".to_string(), |config| config.bind_addr.to_string());
+        let s3 = self
+            .s3
+            .as_ref()
+            .map_or_else(|| "off".to_string(), |config| config.bind_addr.to_string());
         vec![
             format!("firestore routes:\t{firestore}"),
             format!("cloudflare routes:\t{cloudflare}"),
             format!("mongodb listener:\t{mongodb}"),
             format!("dynamodb listener:\t{dynamodb}"),
+            format!("s3 listener:\t{s3}"),
         ]
     }
 
@@ -115,6 +123,9 @@ impl AdapterEnablement {
         }
         if let Some(dynamodb) = self.dynamodb {
             options = options.with_dynamodb(dynamodb);
+        }
+        if let Some(s3) = self.s3 {
+            options = options.with_s3(s3);
         }
         options
     }
@@ -199,12 +210,14 @@ pub(crate) fn resolve_adapter_enablement_with_env_and_app_dir(
     let mut store = CredentialStore::new(control_data_dir);
     let mongodb = resolve_mongodb(command, &env_lookup, &port_is_free, &mut store)?;
     let dynamodb = resolve_dynamodb(command, &env_lookup, &port_is_free, &mut store)?;
+    let s3 = resolve_s3(command, &env_lookup, &port_is_free, &mut store)?;
     let cloudflare = resolve_cloudflare(command, app_dir, &mut store)?;
     Ok(AdapterEnablement {
         firebase: resolve_firebase(command, &env_lookup)?,
         cloudflare,
         mongodb,
         dynamodb,
+        s3,
     })
 }
 
@@ -257,7 +270,7 @@ fn resolve_cloudflare(
         None => CloudflareConfig::default(),
     };
     let credentials = store.get()?;
-    let tenant = TenantId::new(DEFAULT_DYNAMODB_TENANT)?;
+    let tenant = TenantId::new(DEFAULT_WIRE_TENANT)?;
     config = config.with_signed_access_key(
         credentials.dynamodb_access_key_id.clone(),
         tenant,
@@ -475,7 +488,7 @@ fn resolve_dynamodb(
         // to the `default` tenant, so an unconfigured boot serves signed
         // requests instead of rejecting everything.
         let credentials = store.get()?;
-        let tenant = TenantId::new(DEFAULT_DYNAMODB_TENANT)?;
+        let tenant = TenantId::new(DEFAULT_WIRE_TENANT)?;
         config = config.with_signed_access_key(
             credentials.dynamodb_access_key_id.clone(),
             tenant,
@@ -486,6 +499,74 @@ fn resolve_dynamodb(
             let (key_id, secret, tenant) = parse_access_key_binding(binding)?;
             config = config.with_signed_access_key(key_id, tenant, secret);
         }
+    }
+    Ok(Some(config))
+}
+
+fn resolve_s3(
+    command: &StartCommand,
+    env_lookup: &impl Fn(&str) -> Option<String>,
+    port_is_free: &impl Fn(u16) -> bool,
+    store: &mut CredentialStore<'_>,
+) -> Result<Option<S3Config>, Error> {
+    if !command.s3 {
+        if command.s3_port.is_some() || !command.s3_access_key.is_empty() {
+            return Err(Error::InvalidInput(
+                "--no-s3 conflicts with --s3-port/--s3-access-key; \
+                 drop the configuration flags or re-enable the listener"
+                    .to_string(),
+            ));
+        }
+        return Ok(None);
+    }
+    ensure_host_opt_in(&command.s3_host, command.allow_network)
+        .map_err(|error| Error::InvalidInput(format!("--s3-host: {error}")))?;
+    let port = match command.s3_port {
+        Some(port) => port,
+        None => {
+            if !port_is_free(S3_CONVENTIONAL_PORT) {
+                tracing::warn!(
+                    "S3 conventional port {S3_CONVENTIONAL_PORT} is busy; \
+                     skipping the default S3 listener — pass --s3-port to \
+                     serve on another port"
+                );
+                return Ok(None);
+            }
+            S3_CONVENTIONAL_PORT
+        }
+    };
+    let raw_bindings: Vec<String> = if command.s3_access_key.is_empty() {
+        env_lookup(S3_ACCESS_KEYS_ENV)
+            .map(|raw| {
+                raw.split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        command.s3_access_key.clone()
+    };
+    let mut convex_download_secret = None;
+    let access_keys = if raw_bindings.is_empty() {
+        let credentials = store.get()?;
+        let tenant = TenantId::new(DEFAULT_WIRE_TENANT)?;
+        convex_download_secret = Some(credentials.s3_secret_access_key.clone().into_bytes());
+        S3AccessKeyRegistry::new().bind_signed(
+            credentials.s3_access_key_id.clone(),
+            tenant,
+            credentials.s3_secret_access_key.clone(),
+        )
+    } else {
+        S3AccessKeyRegistry::from_operator_spec(&raw_bindings.join(","))
+            .map_err(|error| Error::InvalidInput(error.to_string()))?
+    };
+    let mut config = S3Config::new(port)
+        .with_bind_addr(adapter_bind_addr(&command.s3_host, port, "--s3-host")?)
+        .with_access_keys(access_keys);
+    if let Some(secret) = convex_download_secret {
+        config = config.with_convex_download_secret(secret);
     }
     Ok(Some(config))
 }
@@ -585,10 +666,15 @@ mod tests {
                 .parse()
                 .unwrap()
         );
+        let s3 = resolved.s3.expect("s3 listener defaults on");
+        assert_eq!(
+            s3.bind_addr,
+            format!("127.0.0.1:{S3_CONVENTIONAL_PORT}").parse().unwrap()
+        );
 
         // Credentials came from the persisted store: the file now exists,
-        // its MongoDB user backs the listener auth, and its DynamoDB key
-        // is bound (to the `default` tenant).
+        // its MongoDB user backs the listener auth, and the DynamoDB/S3 keys
+        // are bound separately (to the `default` tenant).
         assert!(
             wire_credentials_path(temp.path()).exists(),
             "a default-on boot must persist the generated credentials"
@@ -607,6 +693,21 @@ mod tests {
                 .binding(&store.dynamodb_access_key_id)
                 .is_ok(),
             "the store access key must authenticate"
+        );
+        assert!(
+            s3.access_keys.binding(&store.s3_access_key_id).is_ok(),
+            "the store S3 access key must authenticate"
+        );
+        assert_eq!(
+            s3.convex_download_secret.as_deref(),
+            Some(store.s3_secret_access_key.as_bytes()),
+            "generated S3 credentials seed the local Convex storage download signer"
+        );
+        assert!(
+            s3.access_keys
+                .binding(&store.dynamodb_access_key_id)
+                .is_err(),
+            "S3 must not accept the DynamoDB access key"
         );
         assert!(
             resolved
@@ -661,6 +762,7 @@ mod tests {
                 "cloudflare routes:\tmounted on the main listener".to_string(),
                 format!("mongodb listener:\t127.0.0.1:{MONGODB_CONVENTIONAL_PORT}"),
                 format!("dynamodb listener:\t127.0.0.1:{DYNAMODB_CONVENTIONAL_PORT}"),
+                format!("s3 listener:\t127.0.0.1:{S3_CONVENTIONAL_PORT}"),
             ]
         );
         let store = load_or_generate(temp.path()).expect("reload the persisted store");
@@ -668,7 +770,9 @@ mod tests {
             assert!(
                 !line.contains(&store.mongodb_password)
                     && !line.contains(&store.dynamodb_access_key_id)
-                    && !line.contains(&store.dynamodb_secret_access_key),
+                    && !line.contains(&store.dynamodb_secret_access_key)
+                    && !line.contains(&store.s3_access_key_id)
+                    && !line.contains(&store.s3_secret_access_key),
                 "status lines must never carry credential material: {line}"
             );
         }
@@ -678,6 +782,7 @@ mod tests {
         command.cloudflare = false;
         command.mongodb = false;
         command.dynamodb = false;
+        command.s3 = false;
         let opted_out = resolve(&command, temp.path(), |_| None)
             .expect("a fully opted-out command should resolve");
         assert_eq!(
@@ -687,6 +792,7 @@ mod tests {
                 "cloudflare routes:\toff".to_string(),
                 "mongodb listener:\toff".to_string(),
                 "dynamodb listener:\toff".to_string(),
+                "s3 listener:\toff".to_string(),
             ]
         );
     }
@@ -699,12 +805,14 @@ mod tests {
         command.cloudflare = false;
         command.mongodb = false;
         command.dynamodb = false;
+        command.s3 = false;
         let resolved = resolve(&command, temp.path(), |_| None)
             .expect("a fully opted-out command should resolve");
         assert!(resolved.firebase.is_none());
         assert!(resolved.cloudflare.is_none());
         assert!(resolved.mongodb.is_none());
         assert!(resolved.dynamodb.is_none());
+        assert!(resolved.s3.is_none());
         assert!(
             !wire_credentials_path(temp.path()).exists(),
             "an opted-out boot must never touch the credential store"
@@ -725,6 +833,13 @@ mod tests {
         let error = resolve(&command, temp.path(), |_| None)
             .expect_err("--no-dynamodb with --dynamodb-access-key must conflict");
         assert!(error.to_string().contains("--no-dynamodb"));
+
+        let mut command = base_command();
+        command.s3 = false;
+        command.s3_access_key = vec!["AKIDEXAMPLE:secret:demo".to_string()];
+        let error = resolve(&command, temp.path(), |_| None)
+            .expect_err("--no-s3 with --s3-access-key must conflict");
+        assert!(error.to_string().contains("--no-s3"));
     }
 
     #[test]
@@ -778,17 +893,20 @@ mod tests {
         assert!(resolved.firebase.is_some(), "firestore routes are portless");
         assert!(resolved.mongodb.is_none(), "busy 27017 skips the listener");
         assert!(resolved.dynamodb.is_none(), "busy 8000 skips the listener");
+        assert!(resolved.s3.is_none(), "busy 9000 skips the listener");
 
         // An explicit port never probes: the operator asked for it, so a
         // conflict surfaces as a loud bind failure at serve time instead.
         let mut command = base_command();
         command.mongodb_port = Some(27017);
         command.dynamodb_port = Some(8000);
+        command.s3_port = Some(9000);
         let resolved =
             resolve_adapter_enablement_with_env(&command, temp.path(), |_| None, |_| false)
                 .expect("explicit ports must resolve regardless of the probe");
         assert!(resolved.mongodb.is_some());
         assert!(resolved.dynamodb.is_some());
+        assert!(resolved.s3.is_some());
     }
 
     #[test]
@@ -860,6 +978,7 @@ mod tests {
         // MongoDB-only assertion too.
         command.dynamodb = false;
         command.cloudflare = false;
+        command.s3 = false;
         command.mongodb_username = Some("ops".to_string());
         let resolved = resolve(&command, temp.path(), |name| {
             (name == MONGODB_PASSWORD_ENV).then(|| "secret".to_string())
@@ -918,6 +1037,7 @@ mod tests {
         let mut command = base_command();
         command.cloudflare = false;
         command.mongodb = false;
+        command.s3 = false;
         command.dynamodb_port = Some(8000);
         command.dynamodb_access_key = vec!["AKIDEXAMPLE:sEcr3t/Key+=:demo".to_string()];
         let resolved =
@@ -970,6 +1090,72 @@ mod tests {
     }
 
     #[test]
+    fn s3_listener_parses_access_key_bindings() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut command = base_command();
+        command.cloudflare = false;
+        command.mongodb = false;
+        command.dynamodb = false;
+        command.s3_port = Some(9000);
+        command.s3_access_key = vec!["AKIAS3EXAMPLE:s3-secret:demo".to_string()];
+        let resolved =
+            resolve(&command, temp.path(), |_| None).expect("valid binding should resolve");
+        let s3 = resolved.s3.expect("s3 config should resolve");
+        assert_eq!(s3.bind_addr, "127.0.0.1:9000".parse().unwrap());
+        assert!(s3.access_keys.binding("AKIAS3EXAMPLE").is_ok());
+        assert!(
+            s3.convex_download_secret.is_none(),
+            "operator S3 bindings should not implicitly mint a Convex download signer"
+        );
+        assert!(
+            !wire_credentials_path(temp.path()).exists(),
+            "operator bindings must not touch the store"
+        );
+    }
+
+    #[test]
+    fn s3_env_bindings_apply_without_flags() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut command = base_command();
+        command.s3_port = Some(9000);
+        let resolved = resolve(&command, temp.path(), |name| {
+            (name == S3_ACCESS_KEYS_ENV)
+                .then(|| "AKIAS3ONE:s1:alpha, AKIAS3TWO:s2:beta".to_string())
+        })
+        .expect("env bindings should resolve");
+        let s3 = resolved.s3.expect("s3 config should resolve");
+        assert!(s3.access_keys.binding("AKIAS3ONE").is_ok());
+        assert!(s3.access_keys.binding("AKIAS3TWO").is_ok());
+        assert!(
+            s3.convex_download_secret.is_none(),
+            "env S3 bindings should not implicitly mint a Convex download signer"
+        );
+    }
+
+    #[test]
+    fn s3_bindings_without_port_apply_to_the_default_listener() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut command = base_command();
+        command.s3_access_key = vec!["AKIAS3EXAMPLE:secret:demo".to_string()];
+        let resolved = resolve(&command, temp.path(), |_| None)
+            .expect("bindings should apply to the default listener");
+        let s3 = resolved.s3.expect("s3 config should resolve");
+        assert_eq!(s3.bind_addr.port(), S3_CONVENTIONAL_PORT);
+        assert!(s3.access_keys.binding("AKIAS3EXAMPLE").is_ok());
+    }
+
+    #[test]
+    fn s3_rejects_malformed_bindings() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut command = base_command();
+        command.s3_port = Some(9000);
+        command.s3_access_key = vec!["only-two:parts".to_string()];
+        let error =
+            resolve(&command, temp.path(), |_| None).expect_err("malformed binding must fail");
+        assert!(error.to_string().contains("ACCESS_KEY_ID:SECRET:TENANT"));
+    }
+
+    #[test]
     fn mongodb_host_is_loopback_only_even_with_allow_network() {
         let temp = tempfile::tempdir().expect("tempdir");
         let mut command = base_command();
@@ -1002,6 +1188,7 @@ mod tests {
         // MongoDB-only assertion too.
         command.dynamodb = false;
         command.cloudflare = false;
+        command.s3 = false;
         let resolved = resolve(&command, temp.path(), |name| {
             (name == MONGODB_CREDENTIALS_ENV)
                 .then(|| "user-a:tenant-a:secret-a,user-b:tenant-b:secret-b".to_string())
@@ -1134,6 +1321,26 @@ mod tests {
                 .expect("dynamodb should resolve")
                 .bind_addr,
             "0.0.0.0:8000".parse().unwrap()
+        );
+    }
+
+    #[test]
+    fn s3_listener_respects_the_network_opt_in_gate() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut command = base_command();
+        command.s3_port = Some(9000);
+        command.s3_host = "0.0.0.0".to_string();
+        command.s3_access_key = vec!["AKIAS3EXAMPLE:secret:demo".to_string()];
+        let error = resolve(&command, temp.path(), |_| None)
+            .expect_err("non-loopback s3 host without --allow-network must be refused");
+        assert!(error.to_string().contains("--allow-network"));
+
+        command.allow_network = true;
+        let resolved = resolve(&command, temp.path(), |_| None)
+            .expect("--allow-network should admit the non-loopback s3 host");
+        assert_eq!(
+            resolved.s3.expect("s3 should resolve").bind_addr,
+            "0.0.0.0:9000".parse().unwrap()
         );
     }
 }

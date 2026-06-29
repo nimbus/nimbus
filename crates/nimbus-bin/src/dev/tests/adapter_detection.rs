@@ -25,6 +25,7 @@ fn convex_app_with_mongodb_dep_resolves_adapter_and_surface() {
         "mongodb dependency must resolve the MongoDB wire surface"
     );
     assert!(!plan.wire_surfaces.dynamodb);
+    assert!(!plan.wire_surfaces.s3);
     assert!(!plan.wire_surfaces.aws_sdk_v2_hint);
 }
 

@@ -167,6 +167,15 @@ fn cli_supports_top_level_version_flag() {
     );
 }
 
+fn root_help_lists_command(rendered: &str, command: &str, description: &str) -> bool {
+    rendered.lines().any(|line| {
+        let line = line.trim_start();
+        line.strip_prefix(command).is_some_and(|rest| {
+            rest.split_whitespace().collect::<Vec<_>>().join(" ") == description
+        })
+    })
+}
+
 #[test]
 fn cli_help_describes_codegen_machine_and_compose_surface() {
     let error = Cli::try_parse_from(["nimbus", "--help"]).expect_err("help should short-circuit");
@@ -191,7 +200,18 @@ fn cli_help_describes_codegen_machine_and_compose_surface() {
     assert!(rendered.contains("sandbox"));
     assert!(rendered.contains("codegen"));
     assert!(rendered.contains("token"));
-    assert!(rendered.contains("machine     Manage local developer machines"));
+    assert!(
+        root_help_lists_command(
+            &rendered,
+            "object-storage",
+            "Manage Nimbus object-storage placement, backup, restore, and GC"
+        ),
+        "root help should describe the object-storage command:\n{rendered}"
+    );
+    assert!(
+        root_help_lists_command(&rendered, "machine", "Manage local developer machines"),
+        "root help should describe the machine command:\n{rendered}"
+    );
     assert!(rendered.contains("compose"));
     assert!(!rendered.contains("node-workload-executor"));
     assert!(!rendered.contains("sandbox-supervisor"));
@@ -553,6 +573,7 @@ fn adapterless_enablement() -> crate::start::adapters::AdapterEnablement {
         cloudflare: None,
         mongodb: None,
         dynamodb: None,
+        s3: None,
     }
 }
 

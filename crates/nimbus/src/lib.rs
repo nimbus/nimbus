@@ -76,10 +76,21 @@ pub use nimbus_server::{
     serve,
 };
 // Storage and encryption helpers.
+pub use nimbus_blob::{
+    BackupBundle, BackupRequest, BlobHash, KeyEscrow, LocalPackStore, ObjectBackup,
+};
+pub use nimbus_object_storage::{
+    ObjectStorageConfig, ObjectStorageEnv, ObjectStorageResolver, ObjectStoreCredentialResolver,
+    ObjectStoreSecret, object_backup_roots, object_blob_root,
+};
 pub use nimbus_storage::EmbeddedProviderKind;
 pub use nimbus_storage::PointInTimeRestoreArchive;
 pub use nimbus_storage::TenantStore;
 pub use nimbus_storage::{LOGICAL_PAGE_SIZE, PHYSICAL_PAGE_SIZE};
+pub use nimbus_storage::{
+    ObjectPlacement, ObjectPlacementStore, ObjectStorePlacementTarget,
+    ObjectStoreProviderCredentials, ObjectStoreProviderKind, PlacementPolicy,
+};
 pub use nimbus_storage::{
     checkpoint_encrypted_database_at_path, export_encrypted_to_plaintext,
     export_plaintext_to_encrypted, migrate_encrypted_to_plaintext, migrate_plaintext_to_encrypted,

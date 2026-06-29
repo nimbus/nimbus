@@ -183,6 +183,10 @@ impl UsageStore {
         values.sort();
         Ok(values)
     }
+
+    pub(crate) fn database(&self) -> &Database {
+        &self.db
+    }
 }
 
 fn read_u64_table_value(

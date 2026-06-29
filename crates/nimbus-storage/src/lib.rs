@@ -13,6 +13,7 @@ pub mod kv;
 pub mod libsql;
 pub mod materializer;
 pub mod mysql;
+pub mod object_placement;
 pub mod postgres;
 pub mod query_read;
 mod range_bound;
@@ -67,6 +68,10 @@ pub use mysql::{
     MySqlProvider, MySqlProviderConfig, MySqlReadSnapshot, MySqlTenantRegistration,
     MySqlTenantStorage, MySqlTenantStore, MySqlWriteTransaction,
 };
+pub use object_placement::{
+    ObjectPlacement, ObjectPlacementStore, ObjectStorePlacementTarget,
+    ObjectStoreProviderCredentials, ObjectStoreProviderKind, PlacementPolicy,
+};
 pub use postgres::{
     PostgresNotificationListener, PostgresProvider, PostgresProviderConfig,
     PostgresProviderNotification, PostgresReadSnapshot, PostgresTenantRegistration,
@@ -114,8 +119,11 @@ pub use table_identity::{
 };
 pub use traits::{
     ControlPlaneUsage, DurableJournal, KeyProviderSurface, KvBatchOp, KvBatchOutcome, KvEntry,
-    KvMutation, KvPut, KvScanPage, KvStorageEngine, KvSweepOutcome, SchedulerStore, StorageEngine,
-    TenantKvStore, TenantLifecycle, TenantPointRead, TenantPointWrite, TenantRangeScan,
+    KvMutation, KvPut, KvScanPage, KvStorageEngine, KvSweepOutcome, OBJECT_MANIFEST_TABLE,
+    OBJECT_MULTIPART_TABLE, ObjectBlobLayout, ObjectChecksums, ObjectChunkRef, ObjectManifest,
+    ObjectManifestAttributes, ObjectMetaStore, ObjectMultipartPart, ObjectMultipartUpload,
+    SchedulerStore, StorageEngine, TenantKvStore, TenantLifecycle, TenantPointRead,
+    TenantPointWrite, TenantRangeScan,
 };
 pub use usage_store::{MonthlyActiveUsersSnapshot, UsageStore};
 

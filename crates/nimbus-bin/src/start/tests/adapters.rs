@@ -21,6 +21,7 @@ fn cloudflare_routes_refuse_non_loopback_main_bind_without_allow_network() {
         firestore: false,
         mongodb: false,
         dynamodb: false,
+        s3: false,
         cloudflare: true,
         ..StartCommand::default()
     };
@@ -57,6 +58,7 @@ async fn cli_adapters_serve_store_backed_by_default_and_opt_outs_disable() {
     };
     let mongodb_port = reserve(()).await;
     let dynamodb_port = reserve(()).await;
+    let s3_port = reserve(()).await;
 
     // Opt-outs first: a fully opted-out server mounts none of the
     // surfaces. (Runs before the serving server because sibling adapter
@@ -67,6 +69,7 @@ async fn cli_adapters_serve_store_backed_by_default_and_opt_outs_disable() {
         cloudflare: false,
         mongodb: false,
         dynamodb: false,
+        s3: false,
         ..StartCommand::default()
     };
     let opted_out_enablement = super::super::adapters::resolve_adapter_enablement_with_env(
@@ -110,6 +113,12 @@ async fn cli_adapters_serve_store_backed_by_default_and_opt_outs_disable() {
             .is_err(),
         "mongodb listener must stay off under --no-mongodb"
     );
+    assert!(
+        tokio::net::TcpStream::connect(("127.0.0.1", s3_port))
+            .await
+            .is_err(),
+        "s3 listener must stay off under --no-s3"
+    );
     opted_out_task.abort();
     let _ = opted_out_task.await;
 
@@ -121,6 +130,7 @@ async fn cli_adapters_serve_store_backed_by_default_and_opt_outs_disable() {
     let command = StartCommand {
         mongodb_port: Some(mongodb_port),
         dynamodb_port: Some(dynamodb_port),
+        s3_port: Some(s3_port),
         ..StartCommand::default()
     };
     let enablement = super::super::adapters::resolve_adapter_enablement_with_env(
@@ -191,6 +201,19 @@ async fn cli_adapters_serve_store_backed_by_default_and_opt_outs_disable() {
     assert!(
         body.contains("__type") && body.contains("com.amazon"),
         "dynamodb should answer in its native error dialect, got: {body}"
+    );
+
+    // S3: the s3s listener is mounted and rejects unsigned requests before
+    // any object path can route.
+    let s3_response = client
+        .get(format!("http://127.0.0.1:{s3_port}/bucket/key"))
+        .send()
+        .await
+        .expect("s3 request should send");
+    assert_eq!(
+        s3_response.status(),
+        reqwest::StatusCode::FORBIDDEN,
+        "unsigned S3 request should be rejected"
     );
 
     server_task.abort();
