@@ -1,7 +1,8 @@
 //! Cloudflare-compatible adapter bootstrap.
 //!
-//! CFA1 only establishes the adapter surface and binding registry. Data-plane
-//! behavior lands in the later KV and Durable Object phases.
+//! The bootstrap owns adapter registration and binding configuration. KV and
+//! Durable Object data-plane behavior lives in concept-owned child modules over
+//! Nimbus storage and service primitives.
 //!
 //! Cloudflare non-loopback binds are refused during CLI startup unless the
 //! operator opts in with the shared network-bind guard.

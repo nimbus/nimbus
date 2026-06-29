@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
-use nimbus_core::{Error, Result, TenantId};
+use nimbus_core::{Error, Result, TenantId, Timestamp};
 use nimbus_engine::Engine;
 use nimbus_services::{
     DurableObjectActivationLease, DurableObjectId, DurableObjectInstanceKey, DurableObjectNamespace,
@@ -28,6 +28,7 @@ const WS_PREFIX: &str = "__system/ws/";
 #[derive(Clone)]
 pub struct DurableObjectSubstrate {
     engine: Arc<Engine>,
+    clock: Arc<dyn DurableObjectClock>,
     lanes: Arc<Mutex<BTreeMap<DurableObjectInstanceKey, Arc<AsyncMutex<()>>>>>,
 }
 
@@ -78,10 +79,28 @@ struct LeaseRecord {
     expires_at_millis: u64,
 }
 
+trait DurableObjectClock: Send + Sync {
+    fn now_millis(&self) -> u64;
+}
+
+#[derive(Debug, Default)]
+struct SystemDurableObjectClock;
+
+impl DurableObjectClock for SystemDurableObjectClock {
+    fn now_millis(&self) -> u64 {
+        Timestamp::now().0
+    }
+}
+
 impl DurableObjectSubstrate {
     pub fn new(engine: Arc<Engine>) -> Self {
+        Self::with_clock(engine, Arc::new(SystemDurableObjectClock))
+    }
+
+    fn with_clock(engine: Arc<Engine>, clock: Arc<dyn DurableObjectClock>) -> Self {
         Self {
             engine,
+            clock,
             lanes: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
@@ -145,6 +164,10 @@ impl DurableObjectSubstrate {
             .or_insert_with(|| Arc::new(AsyncMutex::new(())))
             .clone()
     }
+
+    fn now_millis(&self) -> u64 {
+        self.clock.now_millis()
+    }
 }
 
 impl DurableObjectStub {
@@ -155,7 +178,6 @@ impl DurableObjectStub {
     pub async fn claim_activation(
         &self,
         holder_id: impl Into<String>,
-        now_millis: u64,
         ttl_millis: u64,
     ) -> Result<DurableObjectActivationLease> {
         let holder_id = holder_id.into();
@@ -164,10 +186,16 @@ impl DurableObjectStub {
                 "Durable Object activation holder id must not be empty".to_string(),
             ));
         }
+        if ttl_millis == 0 {
+            return Err(Error::InvalidInput(
+                "Durable Object activation TTL must be greater than zero".to_string(),
+            ));
+        }
 
         let lane = self.substrate.lane_for(&self.key);
         let _guard = lane.lock().await;
         let next_epoch = self.current_lease_epoch()? + 1;
+        let now_millis = self.substrate.now_millis();
         let lease = DurableObjectActivationLease {
             instance_key: self.key.clone(),
             holder_id: holder_id.clone(),
@@ -192,6 +220,9 @@ impl DurableObjectStub {
         now_millis: i64,
     ) -> Result<Option<Vec<u8>>> {
         self.ensure_lease_belongs_to_stub(lease)?;
+        let lane = self.substrate.lane_for(&self.key);
+        let _guard = lane.lock().await;
+        self.ensure_current_lease(lease)?;
         let Some(entry) = self.substrate.engine.tenant_kv_get(
             &self.key.tenant_id,
             &storage_key(&self.key, key),
@@ -244,6 +275,8 @@ impl DurableObjectStub {
         statement: &str,
     ) -> Result<SqlStorageCursor> {
         self.ensure_lease_belongs_to_stub(lease)?;
+        let lane = self.substrate.lane_for(&self.key);
+        let _guard = lane.lock().await;
         self.ensure_current_lease(lease)?;
         if statement.trim().eq_ignore_ascii_case("select 1") {
             return Ok(SqlStorageCursor {
@@ -276,6 +309,9 @@ impl DurableObjectStub {
         now_millis: i64,
     ) -> Result<Option<DurableObjectAlarm>> {
         self.ensure_lease_belongs_to_stub(lease)?;
+        let lane = self.substrate.lane_for(&self.key);
+        let _guard = lane.lock().await;
+        self.ensure_current_lease(lease)?;
         self.get_system_json(ALARM_KEY, now_millis)
     }
 
@@ -356,6 +392,9 @@ impl DurableObjectStub {
         now_millis: i64,
     ) -> Result<Vec<HibernatedWebSocket>> {
         self.ensure_lease_belongs_to_stub(lease)?;
+        let lane = self.substrate.lane_for(&self.key);
+        let _guard = lane.lock().await;
+        self.ensure_current_lease(lease)?;
         let page = self.substrate.engine.tenant_kv_scan(
             &self.key.tenant_id,
             &storage_key(&self.key, WS_PREFIX),
@@ -386,7 +425,17 @@ impl DurableObjectStub {
 
     fn ensure_current_lease(&self, lease: &DurableObjectActivationLease) -> Result<()> {
         let current = self.read_lease_record()?;
-        if current.lease_epoch == lease.lease_epoch && current.holder_id == lease.holder_id {
+        if current.lease_epoch == lease.lease_epoch
+            && current.holder_id == lease.holder_id
+            && current.expires_at_millis == lease.expires_at_millis
+        {
+            let now_millis = self.substrate.now_millis();
+            if lease.expires_at_millis <= now_millis {
+                return Err(Error::PreconditionFailed(format!(
+                    "expired Durable Object activation lease epoch {} expired at {}",
+                    lease.lease_epoch, lease.expires_at_millis
+                )));
+            }
             return Ok(());
         }
         Err(Error::PreconditionFailed(format!(
@@ -519,6 +568,8 @@ fn storage_key(key: &DurableObjectInstanceKey, item: &str) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
     use nimbus_engine::{EmbeddedProviderKind, Engine};
@@ -528,7 +579,54 @@ mod tests {
 
     use super::*;
 
+    #[derive(Debug)]
+    struct ManualDurableObjectClock {
+        now_millis: AtomicU64,
+    }
+
+    impl ManualDurableObjectClock {
+        fn new(now_millis: u64) -> Self {
+            Self {
+                now_millis: AtomicU64::new(now_millis),
+            }
+        }
+
+        fn set(&self, now_millis: u64) {
+            self.now_millis.store(now_millis, Ordering::SeqCst);
+        }
+    }
+
+    impl DurableObjectClock for ManualDurableObjectClock {
+        fn now_millis(&self) -> u64 {
+            self.now_millis.load(Ordering::SeqCst)
+        }
+    }
+
     fn fixture() -> (EngineFixture<Engine>, DurableObjectSubstrate, TenantId) {
+        fixture_with_clock(Arc::new(ManualDurableObjectClock::new(1_000)))
+    }
+
+    fn fixture_with_clock(
+        clock: Arc<dyn DurableObjectClock>,
+    ) -> (EngineFixture<Engine>, DurableObjectSubstrate, TenantId) {
+        let fixture = EngineFixture::new(|path| {
+            Engine::new_with_embedded_provider(path, EmbeddedProviderKind::Redb)
+        });
+        let tenant = TenantId::new("tenant-a").expect("tenant id should build");
+        fixture
+            .engine()
+            .create_tenant(tenant.clone())
+            .expect("tenant should create");
+        let substrate = DurableObjectSubstrate::with_clock(fixture.engine(), clock);
+        (fixture, substrate, tenant)
+    }
+
+    fn namespace() -> DurableObjectNamespace {
+        DurableObjectNamespace::new("COUNTER").expect("namespace should build")
+    }
+
+    #[tokio::test]
+    async fn durable_object_substrate_default_clock_admits_fresh_system_time_lease() {
         let fixture = EngineFixture::new(|path| {
             Engine::new_with_embedded_provider(path, EmbeddedProviderKind::Redb)
         });
@@ -538,11 +636,24 @@ mod tests {
             .create_tenant(tenant.clone())
             .expect("tenant should create");
         let substrate = DurableObjectSubstrate::new(fixture.engine());
-        (fixture, substrate, tenant)
-    }
+        let stub = substrate.stub_by_name(tenant, namespace(), "default-clock");
+        let lease = stub
+            .claim_activation("owner", 60_000)
+            .await
+            .expect("system-time activation should claim");
 
-    fn namespace() -> DurableObjectNamespace {
-        DurableObjectNamespace::new("COUNTER").expect("namespace should build")
+        let outcome = stub
+            .transaction(
+                &lease,
+                vec![DurableObjectStorageOp::Put {
+                    key: "state".to_string(),
+                    value: b"fresh".to_vec(),
+                }],
+            )
+            .await
+            .expect("fresh default-clock lease should write");
+
+        assert_eq!(outcome.puts, 1);
     }
 
     #[tokio::test]
@@ -550,7 +661,7 @@ mod tests {
         let (_fixture, substrate, tenant) = fixture();
         let stub = substrate.stub_by_name(tenant, namespace(), "counter-a");
         let lease = stub
-            .claim_activation("owner-a", 1_000, 30_000)
+            .claim_activation("owner-a", 30_000)
             .await
             .expect("activation should claim");
 
@@ -615,7 +726,7 @@ mod tests {
         let object_id = DurableObjectId::from_name(&namespace(), "shared-name");
         let tenant_a_stub = substrate.stub_for_id(tenant_a, namespace(), object_id.clone());
         let tenant_a_lease = tenant_a_stub
-            .claim_activation("tenant_a_owner", 1_000, 30_000)
+            .claim_activation("tenant_a_owner", 30_000)
             .await
             .expect("tenant A activation should claim");
         tenant_a_stub
@@ -633,7 +744,7 @@ mod tests {
             .stub_from_string(tenant_b, namespace(), object_id.as_hex())
             .expect("idFromString 64-hex should parse for tenant B binding");
         let tenant_b_lease = tenant_b_stub
-            .claim_activation("tenant_b_owner", 1_000, 30_000)
+            .claim_activation("tenant_b_owner", 30_000)
             .await
             .expect("tenant B activation should claim");
 
@@ -666,11 +777,11 @@ mod tests {
         let first = substrate.stub_by_name(tenant.clone(), namespace(), "first");
         let second = substrate.stub_by_name(tenant, namespace(), "second");
         let first_lease = first
-            .claim_activation("first-owner", 1_000, 30_000)
+            .claim_activation("first-owner", 30_000)
             .await
             .expect("first activation should claim");
         let second_lease = second
-            .claim_activation("second-owner", 1_000, 30_000)
+            .claim_activation("second-owner", 30_000)
             .await
             .expect("second activation should claim");
         let (started_tx, started_rx) = oneshot::channel();
@@ -737,11 +848,11 @@ mod tests {
         let (_fixture, substrate, tenant) = fixture();
         let stub = substrate.stub_by_name(tenant, namespace(), "epoch");
         let loser = stub
-            .claim_activation("loser", 1_000, 30_000)
+            .claim_activation("loser", 30_000)
             .await
             .expect("loser activation should claim");
         let winner = stub
-            .claim_activation("winner", 1_001, 30_000)
+            .claim_activation("winner", 30_000)
             .await
             .expect("winner activation should claim");
 
@@ -791,11 +902,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn durable_object_expired_activation_lease_fences_reads_and_writes() {
+        let clock = Arc::new(ManualDurableObjectClock::new(1_000));
+        let (_fixture, substrate, tenant) = fixture_with_clock(clock.clone());
+        let stub = substrate.stub_by_name(tenant, namespace(), "expiry");
+        let lease = stub
+            .claim_activation("owner", 10)
+            .await
+            .expect("activation should claim");
+        clock.set(1_011);
+
+        let read_error = stub
+            .storage_get(&lease, "state", 1_011)
+            .await
+            .expect_err("expired lease must not read storage");
+        assert!(
+            matches!(read_error, Error::PreconditionFailed(ref message) if message.contains("expired")),
+            "unexpected read error: {read_error:?}"
+        );
+        let write_error = stub
+            .transaction(
+                &lease,
+                vec![DurableObjectStorageOp::Put {
+                    key: "state".to_string(),
+                    value: b"expired".to_vec(),
+                }],
+            )
+            .await
+            .expect_err("expired lease must not write storage");
+        assert!(
+            matches!(write_error, Error::PreconditionFailed(ref message) if message.contains("expired")),
+            "unexpected write error: {write_error:?}"
+        );
+
+        let replacement = stub
+            .claim_activation("replacement", 30_000)
+            .await
+            .expect("replacement activation should claim after expiry");
+        stub.transaction(
+            &replacement,
+            vec![DurableObjectStorageOp::Put {
+                key: "state".to_string(),
+                value: b"replacement".to_vec(),
+            }],
+        )
+        .await
+        .expect("fresh lease should write");
+        assert_eq!(
+            stub.storage_get(&replacement, "state", 1_011)
+                .await
+                .expect("fresh lease should read"),
+            Some(b"replacement".to_vec())
+        );
+    }
+
+    #[tokio::test]
     async fn durable_object_alarm_and_websocket_hibernation_round_trip() {
         let (_fixture, substrate, tenant) = fixture();
         let stub = substrate.stub_by_name(tenant, namespace(), "coordination");
         let lease = stub
-            .claim_activation("owner", 1_000, 30_000)
+            .claim_activation("owner", 30_000)
             .await
             .expect("activation should claim");
 
