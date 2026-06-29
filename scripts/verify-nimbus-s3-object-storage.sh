@@ -188,7 +188,7 @@ check_nos5_config_operator() {
 
 check_nos6_filesystem_binder() {
   if grep_rs "ObjectBlobFsBackend|BlobFsBackend|ObjectRwBackend" "crates/nimbus-blob/src" "crates/nimbus-fs/src/object" \
-    && grep_rs "impl .*NimbusFsBackend.*Object|impl .*Object.*NimbusFsBackend" "crates/nimbus-blob/src" "crates/nimbus-fs/src" \
+    && grep_rs "impl .*FileSystem.*ObjectRwBackend|impl .*ObjectRwBackend.*FileSystem" "crates/nimbus-fs/src/object" \
     && grep_rs "fuse3|fuser" "crates/nimbus-blob" "crates/nimbus-fs" "Cargo.toml"; then
     pass "NOS6 filesystem binder is present"
   else

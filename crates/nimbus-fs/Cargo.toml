@@ -9,10 +9,14 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+fuse = ["dep:fuser"]
+
 [dependencies]
 nimbus-blob = { path = "../nimbus-blob" }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-runtime = { path = "../nimbus-runtime" }
+nimbus-storage = { path = "../nimbus-storage" }
 async-trait.workspace = true
 bytes.workspace = true
 cap-std = "4.0.2"
@@ -20,6 +24,7 @@ deno_core.workspace = true
 deno_fs.workspace = true
 deno_io.workspace = true
 deno_permissions.workspace = true
+fuser = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio.workspace = true
 

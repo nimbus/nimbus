@@ -11,6 +11,7 @@ mod caps;
 mod cas_ro;
 mod delegation;
 mod mount;
+mod object;
 mod passthrough;
 
 fn checked(path: &Path) -> CheckedPath<'_> {
