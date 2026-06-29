@@ -47,6 +47,7 @@ nimbus-tenant = { path = "../nimbus-tenant" }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-engine = { path = "../nimbus-engine" }
 nimbus-firebase = { path = "../nimbus-firebase" }
+nimbus-fs = { path = "../nimbus-fs" }
 futures.workspace = true
 fs2.workspace = true
 hmac.workspace = true

@@ -3,6 +3,7 @@ use std::error::Error;
 use std::time::{Duration, Instant};
 
 use fjall::{KeyspaceCreateOptions, PersistMode, SingleWriterTxDatabase};
+use nimbus_core::TenantId;
 use nimbus_storage::{KvPut, RedbTenantKvStore, TenantKvStore};
 
 const DEFAULT_WRITES: usize = 2_000;
@@ -38,14 +39,18 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn measure_redb(writes: usize, value: &[u8]) -> Result<Duration, Box<dyn Error>> {
     let dir = tempfile::tempdir()?;
     let store = RedbTenantKvStore::open(dir.path().join("tenant.redb"))?;
+    let tenant = TenantId::new("tenant-a")?;
     let started = Instant::now();
     for index in 0..writes {
-        store.kv_put(KvPut {
-            key: bench_key(index),
-            value: value.to_vec(),
-            metadata: Default::default(),
-            expire_at_ms: Some(EXPIRE_AT_MS + i64::try_from(index)?),
-        })?;
+        store.kv_put(
+            &tenant,
+            KvPut {
+                key: bench_key(index),
+                value: value.to_vec(),
+                metadata: Default::default(),
+                expire_at_ms: Some(EXPIRE_AT_MS + i64::try_from(index)?),
+            },
+        )?;
     }
     Ok(started.elapsed())
 }

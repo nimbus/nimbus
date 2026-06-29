@@ -635,6 +635,31 @@ export {};
     (bundle_dir, bundle_path)
 }
 
+pub(super) fn write_node_fs_policy_bundle() -> (tempfile::TempDir, std::path::PathBuf) {
+    let bundle_dir = tempdir().expect("tempdir should build");
+    let generated_root = bundle_dir.path().join("app/.nimbus/convex");
+    std::fs::create_dir_all(&generated_root).expect("generated root should create");
+    let bundle_path = generated_root.join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+import fs from "node:fs";
+import path from "node:path";
+
+globalThis.__nimbusInvoke = function () {
+  const localDir = path.dirname(new URL(import.meta.url).pathname);
+  const file = path.join(localDir, "worker-policy-write.txt");
+  fs.writeFileSync(file, "job-policy-fs", "utf8");
+  return fs.readFileSync(file, "utf8");
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+    (bundle_dir, bundle_path)
+}
+
 pub(super) fn write_busy_loop_bundle() -> (tempfile::TempDir, std::path::PathBuf) {
     let bundle_dir = tempdir().expect("tempdir should build");
     let bundle_path = bundle_dir.path().join("bundle.mjs");

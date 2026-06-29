@@ -123,12 +123,12 @@ impl RuntimeExecutor {
         &self,
         invocation_id: u64,
         cancellation: &Option<HostCallCancellation>,
+        policy: Arc<RuntimePolicy>,
     ) {
         let Some(cancellation) = cancellation else {
             return;
         };
         let admission = self.inner.admission.clone();
-        let policy = self.inner.policy.clone();
         cancellation.notify_on_cancel(move || {
             if let Some(job) = admission.cancel_queued_job(invocation_id) {
                 Self::finish_canceled_queued_job_with_policy(policy.as_ref(), job);
@@ -204,14 +204,14 @@ impl RuntimeExecutor {
         context: RuntimeInvocationContext,
         cancellation: Option<HostCallCancellation>,
     ) -> Result<Value> {
-        self.inner
-            .policy
+        let runtime_policy = runtime.policy();
+        runtime_policy
             .metrics()
             .record_request_correlation(&context);
         Self::invoke_job(DirectRuntimeInvocation {
             watchdog: self.inner.watchdog.clone(),
             host: runtime.invocation_host(),
-            policy: self.inner.policy.clone(),
+            policy: runtime_policy,
             bundle,
             request,
             context,
@@ -229,16 +229,15 @@ impl RuntimeExecutor {
         context: RuntimeInvocationContext,
         cancellation: Option<HostCallCancellation>,
     ) -> Result<Value> {
-        self.inner
-            .policy
+        let runtime_policy = runtime.policy();
+        runtime_policy
             .metrics()
             .record_request_correlation(&context);
         if cancellation
             .as_ref()
             .is_some_and(HostCallCancellation::is_cancelled)
         {
-            self.inner
-                .policy
+            runtime_policy
                 .metrics()
                 .record_queued_canceled_invocation_for_tenant(
                     context.tenant_label.as_deref(),
@@ -248,11 +247,11 @@ impl RuntimeExecutor {
         }
 
         let (result_tx, result_rx) = oneshot::channel();
-        let execution_plan =
-            execution_plan_for_invocation(self.inner.policy.as_ref(), &request, &context);
+        let execution_plan = execution_plan_for_invocation(&runtime_policy, &request, &context);
         let invocation_id = context.invocation_id;
         let admission = self.inner.admission.admit_job(RuntimeWorkerJob {
             host: runtime.invocation_host(),
+            policy: runtime_policy.clone(),
             bundle,
             request,
             context,
@@ -265,7 +264,11 @@ impl RuntimeExecutor {
         })?;
         let queued = matches!(&admission, RuntimeExecutorAdmissionDecision::Queued);
         if queued {
-            self.register_queued_cancellation_listener(invocation_id, &cancellation);
+            self.register_queued_cancellation_listener(
+                invocation_id,
+                &cancellation,
+                runtime_policy,
+            );
         }
         if let RuntimeExecutorAdmissionDecision::Dispatch(job) = admission {
             self.dispatch_admitted_job_async(*job).await?;
@@ -298,16 +301,15 @@ impl RuntimeExecutor {
         context: RuntimeInvocationContext,
         cancellation: Option<HostCallCancellation>,
     ) -> Result<RuntimeInvocationResponse> {
-        self.inner
-            .policy
+        let runtime_policy = runtime.policy();
+        runtime_policy
             .metrics()
             .record_request_correlation(&context);
         if cancellation
             .as_ref()
             .is_some_and(HostCallCancellation::is_cancelled)
         {
-            self.inner
-                .policy
+            runtime_policy
                 .metrics()
                 .record_queued_canceled_invocation_for_tenant(
                     context.tenant_label.as_deref(),
@@ -318,11 +320,11 @@ impl RuntimeExecutor {
 
         let (result_tx, result_rx) = oneshot::channel();
         let (response_ready_tx, response_ready_rx) = oneshot::channel();
-        let execution_plan =
-            execution_plan_for_invocation(self.inner.policy.as_ref(), &request, &context);
+        let execution_plan = execution_plan_for_invocation(&runtime_policy, &request, &context);
         let invocation_id = context.invocation_id;
         let admission = self.inner.admission.admit_job(RuntimeWorkerJob {
             host: runtime.invocation_host(),
+            policy: runtime_policy.clone(),
             bundle,
             request,
             context,
@@ -335,7 +337,11 @@ impl RuntimeExecutor {
         })?;
         let queued = matches!(&admission, RuntimeExecutorAdmissionDecision::Queued);
         if queued {
-            self.register_queued_cancellation_listener(invocation_id, &cancellation);
+            self.register_queued_cancellation_listener(
+                invocation_id,
+                &cancellation,
+                runtime_policy,
+            );
         }
         if let RuntimeExecutorAdmissionDecision::Dispatch(job) = admission {
             self.dispatch_admitted_job_async(*job).await?;
@@ -436,16 +442,15 @@ impl RuntimeExecutor {
         context: RuntimeInvocationContext,
         cancellation: Option<HostCallCancellation>,
     ) -> Result<Value> {
-        self.inner
-            .policy
+        let runtime_policy = runtime.policy();
+        runtime_policy
             .metrics()
             .record_request_correlation(&context);
         if cancellation
             .as_ref()
             .is_some_and(HostCallCancellation::is_cancelled)
         {
-            self.inner
-                .policy
+            runtime_policy
                 .metrics()
                 .record_queued_canceled_invocation_for_tenant(
                     context.tenant_label.as_deref(),
@@ -455,11 +460,11 @@ impl RuntimeExecutor {
         }
 
         let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
-        let execution_plan =
-            execution_plan_for_invocation(self.inner.policy.as_ref(), &request, &context);
+        let execution_plan = execution_plan_for_invocation(&runtime_policy, &request, &context);
         let invocation_id = context.invocation_id;
         let admission = self.inner.admission.admit_job(RuntimeWorkerJob {
             host: runtime.invocation_host(),
+            policy: runtime_policy.clone(),
             bundle,
             request,
             context,
@@ -472,7 +477,11 @@ impl RuntimeExecutor {
         })?;
         let queued = matches!(&admission, RuntimeExecutorAdmissionDecision::Queued);
         if queued {
-            self.register_queued_cancellation_listener(invocation_id, &cancellation);
+            self.register_queued_cancellation_listener(
+                invocation_id,
+                &cancellation,
+                runtime_policy,
+            );
         }
         if let RuntimeExecutorAdmissionDecision::Dispatch(job) = admission {
             self.dispatch_admitted_job_blocking(*job)?;

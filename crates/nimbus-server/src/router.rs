@@ -665,7 +665,16 @@ impl RouterBuildConfig {
                         server_access_extract_middleware,
                     )),
             )
-            .merge(build_convex_router());
+            .merge(
+                // #41 fail-closed stopgap: the convex application surface selects
+                // the tenant from the URL with no verified binding, so refuse it
+                // on any non-loopback bind (covers all six route types by wrapping
+                // the whole convex router). Replaced by the real binding fix.
+                build_convex_router().route_layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    convex::convex_application_network_bind_guard,
+                )),
+            );
         if firebase_enabled {
             router = router.merge(build_firebase_router(state.clone()));
         }

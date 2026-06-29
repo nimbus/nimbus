@@ -18,6 +18,12 @@ pub(super) struct RuntimeFsWriteFilePayload {
     pub(super) text: Option<String>,
     #[serde(default)]
     pub(super) bytes: Option<Vec<u8>>,
+    #[serde(default)]
+    pub(super) append: bool,
+    #[serde(default)]
+    pub(super) create_new: bool,
+    #[serde(default)]
+    pub(super) mode: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]

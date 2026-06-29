@@ -38,9 +38,10 @@ pub(crate) fn invoke_runtime_bundle_blocking_with_host(
     request: InvocationRequest,
     options: RuntimeBundleInvocationOptions<'_>,
 ) -> std::result::Result<serde_json::Value, NimbusRuntimeError> {
+    let runtime = runtime_for_host(host_bridge, runtime_policy)?;
     invoke_runtime_bundle_blocking_with_cancellation(
         runtime_executor,
-        runtime_for_host(host_bridge, runtime_policy),
+        runtime,
         bundle,
         request,
         options,

@@ -139,19 +139,11 @@ impl ConvexRuntimeLane {
         adaptive_settings: RuntimeAdaptiveControllerSettings,
     ) -> Self {
         Self::from_policy(
-            Arc::new(
-                RuntimePolicy::with_host_resource_governor(
-                    self.policy.limits().clone(),
-                    budget,
-                    pressure_source,
-                )
-                .with_adaptive_controller_settings(adaptive_settings)
-                // Preserve the source lane's metrics handle across this
-                // build()-time governor re-derivation so the post-build
-                // executor increments the same counters the pre-build registry
-                // handle (read by observers) exposes. Observability-only.
-                .with_metrics(self.policy.metrics()),
-            ),
+            Arc::new(self.policy.clone_with_host_resource_governor(
+                budget,
+                pressure_source,
+                adaptive_settings,
+            )),
             self.execution_adapter_state,
             self.execution_adapter_artifact.clone(),
         )

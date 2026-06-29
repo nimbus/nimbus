@@ -44,10 +44,9 @@ impl CooperativeWorkerLoopFactory {
 }
 
 impl WorkerLoopFactory for CooperativeWorkerLoopFactory {
-    fn create(&self, worker_id: usize, policy: Arc<RuntimePolicy>) -> Box<dyn WorkerLoop> {
+    fn create(&self, worker_id: usize, _policy: Arc<RuntimePolicy>) -> Box<dyn WorkerLoop> {
         Box::new(CooperativeWorkerLoop::new(
             worker_id,
-            policy,
             self.watchdog.clone(),
             #[cfg(test)]
             self.test_state.clone(),
@@ -57,7 +56,6 @@ impl WorkerLoopFactory for CooperativeWorkerLoopFactory {
 
 struct CooperativeWorkerLoop {
     worker_id: usize,
-    policy: Arc<RuntimePolicy>,
     watchdog: WatchdogTimer,
     worker_runtime: tokio::runtime::Runtime,
     v8_runtime_pool: V8WorkerRuntimePool,
@@ -79,7 +77,6 @@ struct CooperativeInvocation {
 impl CooperativeWorkerLoop {
     fn new(
         worker_id: usize,
-        policy: Arc<RuntimePolicy>,
         watchdog: WatchdogTimer,
         #[cfg(test)] test_state: Option<Arc<crate::executor::RuntimeExecutorTestState>>,
     ) -> Self {
@@ -97,7 +94,6 @@ impl CooperativeWorkerLoop {
         let activity_generation = activity_signal.current_generation();
         Self {
             worker_id,
-            policy,
             watchdog,
             worker_runtime,
             v8_runtime_pool: V8WorkerRuntimePool::new(),

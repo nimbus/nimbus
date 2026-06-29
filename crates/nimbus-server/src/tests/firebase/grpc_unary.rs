@@ -5,9 +5,13 @@ async fn firebase_grpc_commit_executes_atomic_batch_and_consumes_transaction_tok
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
 
     let transaction = client
         .begin_transaction(GrpcBeginTransactionRequest {
@@ -76,9 +80,13 @@ async fn firebase_grpc_batch_get_documents_reads_found_missing_and_rolls_back_se
             ("state", json!("CA")),
         ],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
 
     let transaction = client
         .begin_transaction(GrpcBeginTransactionRequest {
@@ -187,9 +195,13 @@ async fn firebase_grpc_run_query_supports_transaction_selector_with_pinned_snaps
         &["cities", "SF"],
         [("name", json!("San Francisco")), ("visits", json!(1))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
 
     let transaction = client
         .begin_transaction(GrpcBeginTransactionRequest {
@@ -272,9 +284,13 @@ async fn firebase_grpc_batch_write_reports_partial_success_and_rejects_duplicate
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
 
     let response = client
         .batch_write(GrpcBatchWriteRequest {
@@ -351,9 +367,13 @@ async fn firebase_grpc_run_query_streams_documents_and_empty_results() {
         &["cities", "SEA"],
         [("name", json!("Seattle")), ("state", json!("WA"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
 
     let mut responses = client
         .run_query(grpc_run_query_request(
@@ -453,9 +473,13 @@ async fn firebase_grpc_run_query_supports_document_id_filters_and_implicit_name_
         &["cities", "charlie"],
         [("rank", json!(2))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
 
     let mut responses = client
         .run_query(grpc_run_query_request(
@@ -546,9 +570,13 @@ async fn firebase_grpc_run_query_supports_collection_group_cursors_with_full_doc
         &["cities", "SF", "landmarks", "bb-top"],
         [("rank", json!(2))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
 
     let mut responses = client
         .run_query(grpc_run_query_request(
@@ -618,8 +646,11 @@ async fn firebase_grpc_run_query_reports_missing_index_for_compound_query() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
     let cities_table = crate::adapters::firebase::storage_table_for_collection_path(
         &CollectionPath::root(CollectionName::new("cities").expect("collection name should parse")),
     )
@@ -659,7 +690,8 @@ async fn firebase_grpc_run_query_reports_missing_index_for_compound_query() {
             },
         )
         .expect("single-field cities schema should install");
-    let mut client = firestore_grpc_client(&server).await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
 
     let error = client
         .run_query(grpc_run_query_request(
@@ -723,9 +755,13 @@ async fn firebase_grpc_run_aggregation_query_counts_filtered_results_with_aliase
         &["cities", "SEA"],
         [("state", json!("WA"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
 
     let mut responses = client
         .run_aggregation_query(grpc_run_aggregation_query_request(
@@ -779,9 +815,13 @@ async fn firebase_grpc_run_aggregation_query_counts_filtered_results_with_aliase
 async fn firebase_grpc_unary_requests_reject_deferred_selectors() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
 
     let batch_get_error = client
         .batch_get_documents(GrpcBatchGetDocumentsRequest {
@@ -879,9 +919,13 @@ async fn firebase_grpc_get_document_returns_masked_fields_and_honors_transaction
             ("state", json!("CA")),
         ],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let transaction = client
         .begin_transaction(GrpcBeginTransactionRequest {
             database: "projects/demo/databases/(default)".to_string(),
@@ -929,9 +973,13 @@ async fn firebase_grpc_point_crud_handles_explicit_and_generated_ids_masks_and_p
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
 
     let explicit = client
         .create_document(GrpcCreateDocumentRequest {
@@ -1079,9 +1127,13 @@ async fn firebase_grpc_list_documents_lists_root_and_nested_collections_with_mas
         &["cities", "SF", "landmarks", "bridge"],
         [("label", json!("Golden Gate Bridge"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
 
     let root = client
         .list_documents(GrpcListDocumentsRequest {
@@ -1135,9 +1187,13 @@ async fn firebase_grpc_list_documents_lists_root_and_nested_collections_with_mas
 async fn firebase_grpc_list_documents_rejects_deferred_selectors() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
 
     let page_size_error = client
         .list_documents(GrpcListDocumentsRequest {
@@ -1218,9 +1274,13 @@ async fn firebase_grpc_list_collection_ids_lists_root_and_nested_parents_with_pa
         &["cities", "SF", "landmarks", "bridge", "photos", "p1"],
         [("label", json!("Photo"))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
 
     let root_first = client
         .list_collection_ids(GrpcListCollectionIdsRequest {
@@ -1278,9 +1338,13 @@ async fn firebase_grpc_list_collection_ids_lists_root_and_nested_parents_with_pa
 async fn firebase_grpc_list_collection_ids_rejects_invalid_page_tokens_and_read_time() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_unary_anonymous_refused(&server).await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
 
     let invalid_page_token_error = client
         .list_collection_ids(GrpcListCollectionIdsRequest {

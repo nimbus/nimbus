@@ -1,12 +1,14 @@
 use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use deno_fs::sync::MaybeArc;
 use serde_json::{Map, Value};
 use tokio::sync::Notify;
 use tokio::time::Instant;
 
 use super::*;
 use crate::host::{HostBridgeFuture, HostCallCancellation, HostCallOperation, HostCallRequest};
+use crate::limits::{RuntimeLimits, RuntimePolicy};
 
 pub(super) use tempfile::tempdir;
 
@@ -47,6 +49,10 @@ pub(super) fn ci_or_local_duration(
     } else {
         local
     }
+}
+
+pub(super) fn runtime_test_policy_with_real_fs(limits: RuntimeLimits) -> Arc<RuntimePolicy> {
+    Arc::new(RuntimePolicy::new(limits).clone_with_file_system(MaybeArc::new(deno_fs::RealFs)))
 }
 
 pub(super) async fn wait_for_condition<F, Fut>(

@@ -31,7 +31,7 @@ pub use adapters::cloudflare::{
 };
 pub use adapters::convex::ConvexRegistry;
 pub use adapters::dynamodb::DynamoDbConfig;
-pub use adapters::firebase::FirebaseConfig;
+pub use adapters::firebase::{FirebaseConfig, ProjectSpecError, ProjectTenantRegistry};
 pub use adapters::mongodb::{
     AuthConfig as MongoDbAuthConfig, CredentialRegistry as MongoDbCredentialRegistry, MongoDbConfig,
 };

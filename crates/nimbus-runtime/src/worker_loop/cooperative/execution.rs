@@ -106,8 +106,9 @@ impl CooperativeWorkerLoop {
         allow_blocking_acquire: bool,
     ) -> Option<RuntimeWorkerJob> {
         let cancellation_for_metrics = job.cancellation.clone();
+        let job_policy = job.policy.clone();
         let permit = SharedInvocationPermit::new(
-            self.policy.clone(),
+            job_policy.clone(),
             job.context.tenant_label.clone(),
             job.dispatch_handle.clone(),
             job.context.bypasses_concurrency_limit(),
@@ -119,7 +120,7 @@ impl CooperativeWorkerLoop {
             .as_ref()
             .is_some_and(HostCallCancellation::is_cancelled)
         {
-            self.policy
+            job_policy
                 .metrics()
                 .record_queued_canceled_invocation_for_tenant(
                     job.context.tenant_label.as_deref(),
@@ -130,7 +131,7 @@ impl CooperativeWorkerLoop {
             return None;
         }
 
-        let runtime = job.host.runtime_with_policy(self.policy.clone());
+        let runtime = job.host.runtime_with_policy(job_policy.clone());
         let worker_runtime = &self.worker_runtime;
         let v8_runtime_pool = &mut self.v8_runtime_pool;
         let watchdog = self.watchdog.clone();
@@ -158,7 +159,7 @@ impl CooperativeWorkerLoop {
                     }
                 }
             }
-            self.policy.metrics().record_worker_dispatch();
+            job_policy.metrics().record_worker_dispatch();
             debug!(
                 worker_id,
                 invocation_id = job.context.invocation_id,
@@ -219,7 +220,7 @@ impl CooperativeWorkerLoop {
             Ok((CooperativeAdmissionStart::DirectResult(result), execution_started_at)) => {
                 let (job, result, ready_jobs) =
                     self.worker_runtime.block_on(Self::finish_invocation(
-                        self.policy.clone(),
+                        job_policy.clone(),
                         self.worker_id,
                         job,
                         permit,
@@ -245,7 +246,7 @@ impl CooperativeWorkerLoop {
             Err((error, execution_started_at)) => {
                 let (job, result, ready_jobs) =
                     self.worker_runtime.block_on(Self::finish_invocation(
-                        self.policy.clone(),
+                        job_policy,
                         self.worker_id,
                         job,
                         permit,

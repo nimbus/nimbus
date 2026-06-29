@@ -21,7 +21,7 @@ use super::bootstrap::{clear_runtime_wait_until_pending, take_runtime_wait_until
 use super::helpers::{deserialize_json_value, ensure_wait_until_drain_succeeded, runtime_js_error};
 use super::realm_lifecycle::destroy_fresh_realm;
 use super::{
-    FreshRealmInvocationTrace, InvocationKind, InvocationRequest, NimbusRuntime, RuntimeBundle,
+    FreshRealmInvocationTrace, InvocationRequest, NimbusRuntime, RuntimeBundle,
     RuntimeInvocationDriver, RuntimeInvocationDriverPrepare,
 };
 
@@ -132,7 +132,7 @@ impl CooperativeLockerRuntimeSlot {
                     Ok(_) => driver
                         .wait_until_phase_timeout_error()
                         .map_or(response, Err),
-                    Err(error) => Err(driver.classify_wait_until_drain_error(error)),
+                    Err(error) => Err(driver.classify_wait_until_phase_error(error)),
                 };
                 self.destroy_fresh_realm(&mut driver);
                 self.completed = Some((driver, result));
@@ -187,7 +187,7 @@ impl CooperativeLockerRuntimeSlot {
         match event_loop_poll {
             Poll::Ready(Ok(())) => {
                 if let Some((wait_until, _response)) = self.wait_until.as_mut() {
-                    let result = match wait_until.as_mut().poll(&mut cx) {
+                    match wait_until.as_mut().poll(&mut cx) {
                         Poll::Ready(result) => {
                             let response = self
                                 .wait_until
@@ -203,22 +203,20 @@ impl CooperativeLockerRuntimeSlot {
                                 Ok(_) => driver
                                     .wait_until_phase_timeout_error()
                                     .map_or(response, Err),
-                                Err(error) => Err(driver.classify_wait_until_drain_error(error)),
+                                Err(error) => Err(driver.classify_wait_until_phase_error(error)),
                             };
                             self.destroy_fresh_realm(&mut driver);
                             self.completed = Some((driver, result));
                             return Ok(CooperativeRuntimeSlotPoll::Completed);
                         }
-                        Poll::Pending => Err(runtime_js_error(
-                            "waitUntil drain is still pending but the event loop has already resolved",
-                        )),
-                    };
-                    drop(locked);
-                    let result =
-                        result.map_err(|error| driver.classify_wait_until_drain_error(error));
-                    self.destroy_fresh_realm(&mut driver);
-                    self.completed = Some((driver, result));
-                    return Ok(CooperativeRuntimeSlotPoll::Completed);
+                        Poll::Pending => {
+                            drop(locked);
+                            let result = Err(driver.wait_until_phase_stalled_error());
+                            self.destroy_fresh_realm(&mut driver);
+                            self.completed = Some((driver, result));
+                            return Ok(CooperativeRuntimeSlotPoll::Completed);
+                        }
+                    }
                 }
 
                 let mut promise_resolve_elapsed = None;
@@ -271,8 +269,14 @@ impl CooperativeLockerRuntimeSlot {
             }
             Poll::Ready(Err(error)) => {
                 drop(locked);
+                let error = runtime_js_error(error);
+                let error = if self.wait_until.is_some() {
+                    driver.classify_wait_until_phase_error(error)
+                } else {
+                    error
+                };
                 self.destroy_fresh_realm(&mut driver);
-                self.completed = Some((driver, Err(runtime_js_error(error))));
+                self.completed = Some((driver, Err(error)));
                 Ok(CooperativeRuntimeSlotPoll::Completed)
             }
             Poll::Pending => {
@@ -507,13 +511,8 @@ impl NimbusRuntime {
                 .await?;
             (Ok(value), Some(realm))
         } else {
-            let module_specifier = if matches!(request.kind, InvocationKind::CloudflareWorkerFetch)
-            {
-                Some(bundle.module_specifier()?.to_string())
-            } else {
-                None
-            };
-            let expression = request.runtime_invoke_expression(module_specifier.as_deref())?;
+            let request_json = serde_json::to_string(&request)?;
+            let expression = format!("globalThis.__nimbusInvoke({request_json})");
             (
                 driver
                     .runtime

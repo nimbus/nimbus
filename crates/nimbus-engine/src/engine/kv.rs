@@ -12,15 +12,15 @@ impl Engine {
         key: &[u8],
         now_ms: i64,
     ) -> Result<Option<KvEntry>> {
-        self.with_tenant_kv_store(tenant_id, |store| store.kv_get(key, now_ms))
+        self.with_tenant_kv_store(tenant_id, |store| store.kv_get(tenant_id, key, now_ms))
     }
 
     pub fn tenant_kv_put(&self, tenant_id: &TenantId, put: KvPut) -> Result<()> {
-        self.with_tenant_kv_store(tenant_id, |store| store.kv_put(put))
+        self.with_tenant_kv_store(tenant_id, |store| store.kv_put(tenant_id, put))
     }
 
     pub fn tenant_kv_delete(&self, tenant_id: &TenantId, key: &[u8]) -> Result<bool> {
-        self.with_tenant_kv_store(tenant_id, |store| store.kv_delete(key))
+        self.with_tenant_kv_store(tenant_id, |store| store.kv_delete(tenant_id, key))
     }
 
     pub fn tenant_kv_apply_batch(
@@ -28,7 +28,7 @@ impl Engine {
         tenant_id: &TenantId,
         ops: &[KvBatchOp],
     ) -> Result<KvBatchOutcome> {
-        self.with_tenant_kv_store(tenant_id, |store| store.kv_apply_batch(ops))
+        self.with_tenant_kv_store(tenant_id, |store| store.kv_apply_batch(tenant_id, ops))
     }
 
     pub fn tenant_kv_scan(
@@ -40,7 +40,7 @@ impl Engine {
         now_ms: i64,
     ) -> Result<KvScanPage> {
         self.with_tenant_kv_store(tenant_id, |store| {
-            store.kv_scan(prefix, cursor, limit, now_ms)
+            store.kv_scan(tenant_id, prefix, cursor, limit, now_ms)
         })
     }
 

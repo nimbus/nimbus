@@ -1,23 +1,25 @@
 use std::collections::BTreeMap;
 
-use nimbus_core::Result;
+use nimbus_core::{Result, TenantId};
 
 /// Tenant-scoped flat key/value capability used by Redis/Valkey-compatible
 /// surfaces and future Workers KV adapters.
 pub trait TenantKvStore {
-    fn kv_get(&self, key: &[u8], now_ms: i64) -> Result<Option<KvEntry>>;
-    fn kv_put(&self, put: KvPut) -> Result<()>;
-    fn kv_delete(&self, key: &[u8]) -> Result<bool>;
+    fn kv_get(&self, tenant: &TenantId, key: &[u8], now_ms: i64) -> Result<Option<KvEntry>>;
+    fn kv_put(&self, tenant: &TenantId, put: KvPut) -> Result<()>;
+    fn kv_delete(&self, tenant: &TenantId, key: &[u8]) -> Result<bool>;
     fn kv_scan(
         &self,
+        tenant: &TenantId,
         prefix: &[u8],
         cursor: Option<&[u8]>,
         limit: usize,
         now_ms: i64,
     ) -> Result<KvScanPage>;
-    fn kv_apply_batch(&self, ops: &[KvBatchOp]) -> Result<KvBatchOutcome>;
+    fn kv_apply_batch(&self, tenant: &TenantId, ops: &[KvBatchOp]) -> Result<KvBatchOutcome>;
     fn kv_update(
         &self,
+        tenant: &TenantId,
         key: &[u8],
         now_ms: i64,
         update: &mut dyn FnMut(Option<KvEntry>) -> Result<KvMutation>,

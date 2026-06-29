@@ -12,10 +12,6 @@ fn tenant(id: &str) -> TenantId {
     TenantId::new(id).expect("valid tenant id")
 }
 
-fn test_password(label: &str) -> String {
-    format!("{}-{label}", std::process::id())
-}
-
 async fn spawn_test_server(credentials: CredentialRegistry) -> (SocketAddr, JoinHandle<()>) {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
@@ -57,11 +53,10 @@ async fn write_command(stream: &mut TcpStream, parts: &[&[u8]]) -> String {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn redis_rs_client_connects_and_ping_echo_round_trip() {
-    let password = test_password("redis-rs");
-    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), password.clone());
+    let (credentials, credential) = CredentialRegistry::generated_dev(tenant("tenant-a"));
     let (addr, server) = spawn_test_server(credentials).await;
 
-    let url = format!("redis://:{password}@{addr}/");
+    let url = format!("redis://:{}@{addr}/", credential.password);
     let result = tokio::task::spawn_blocking(move || {
         let client = redis::Client::open(url).expect("redis client should parse URL");
         let mut connection = client.get_connection().expect("redis-rs client connects");
@@ -83,12 +78,11 @@ async fn redis_rs_client_connects_and_ping_echo_round_trip() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn hello_3_negotiates_resp3() {
-    let password = test_password("hello");
-    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), password.clone());
+    let (credentials, credential) = CredentialRegistry::generated_dev(tenant("tenant-a"));
     let (addr, server) = spawn_test_server(credentials).await;
     let mut stream = TcpStream::connect(addr).await.expect("connects");
 
-    let auth = write_command(&mut stream, &[b"AUTH", password.as_bytes()]).await;
+    let auth = write_command(&mut stream, &[b"AUTH", credential.password.as_bytes()]).await;
     assert_eq!(auth, "+OK\r\n");
 
     let hello = write_command(&mut stream, &[b"HELLO", b"3"]).await;
@@ -107,7 +101,7 @@ async fn hello_3_negotiates_resp3() {
 async fn listener_rejects_non_loopback_bind() {
     let config = NimbusKvConfig::new(
         "0.0.0.0:0".parse().expect("addr parses"),
-        CredentialRegistry::single_dev(tenant("tenant-a"), test_password("bind")),
+        CredentialRegistry::generated_dev(tenant("tenant-a")).0,
     );
 
     let error = run_listener(config)
@@ -121,7 +115,7 @@ async fn listener_rejects_non_loopback_bind() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn unauthenticated_command_is_rejected() {
-    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), test_password("unauth"));
+    let (credentials, _) = CredentialRegistry::generated_dev(tenant("tenant-a"));
     let (addr, server) = spawn_test_server(credentials).await;
     let mut stream = TcpStream::connect(addr).await.expect("connects");
 
@@ -131,25 +125,62 @@ async fn unauthenticated_command_is_rejected() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn invalid_utf8_credentials_are_rejected_without_lossy_matching() {
+    let lossy_replacement = char::REPLACEMENT_CHARACTER.to_string();
+    let credentials =
+        CredentialRegistry::new().bind("tenant-a", lossy_replacement, tenant("tenant-a"));
+    let (addr, server) = spawn_test_server(credentials).await;
+    let mut stream = TcpStream::connect(addr).await.expect("connects");
+    let invalid_password = [0xff];
+
+    let response = write_command(&mut stream, &[b"AUTH", invalid_password.as_slice()]).await;
+    assert!(
+        response.starts_with("-WRONGPASS"),
+        "invalid UTF-8 credential bytes must fail authentication, got {response:?}"
+    );
+
+    let response = write_command(&mut stream, &[b"PING"]).await;
+    assert_eq!(response, "-NOAUTH Authentication required\r\n");
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn tenant_a_credential_cannot_read_tenant_b_keys() {
-    let tenant_a_password = test_password("tenant-a");
-    let tenant_b_password = test_password("tenant-b");
+    let (_, credential_a) = CredentialRegistry::generated_dev_for("tenant-a", tenant("tenant-a"));
+    let (_, credential_b) = CredentialRegistry::generated_dev_for("tenant-b", tenant("tenant-b"));
     let credentials = CredentialRegistry::new()
-        .bind("tenant-a", tenant_a_password.clone(), tenant("tenant-a"))
-        .bind("tenant-b", tenant_b_password.clone(), tenant("tenant-b"));
+        .bind(
+            credential_a.username.clone(),
+            credential_a.password.clone(),
+            credential_a.tenant.clone(),
+        )
+        .bind(
+            credential_b.username.clone(),
+            credential_b.password.clone(),
+            credential_b.tenant.clone(),
+        );
     let (addr, server) = spawn_test_server(credentials).await;
     let mut tenant_a_stream = TcpStream::connect(addr).await.expect("tenant A connects");
     let mut tenant_b_stream = TcpStream::connect(addr).await.expect("tenant B connects");
 
     let auth = write_command(
         &mut tenant_a_stream,
-        &[b"AUTH", b"tenant-a", tenant_a_password.as_bytes()],
+        &[
+            b"AUTH",
+            credential_a.username.as_bytes(),
+            credential_a.password.as_bytes(),
+        ],
     )
     .await;
     assert_eq!(auth, "+OK\r\n");
+
     let auth = write_command(
         &mut tenant_b_stream,
-        &[b"AUTH", b"tenant-b", tenant_b_password.as_bytes()],
+        &[
+            b"AUTH",
+            credential_b.username.as_bytes(),
+            credential_b.password.as_bytes(),
+        ],
     )
     .await;
     assert_eq!(auth, "+OK\r\n");
@@ -165,14 +196,19 @@ async fn tenant_a_credential_cannot_read_tenant_b_keys() {
 
     let tenant_a_set = write_command(&mut tenant_a_stream, &[b"SET", b"shared", b"tenant-a"]).await;
     assert_eq!(tenant_a_set, "+OK\r\n");
+
+    let tenant_a_get = write_command(&mut tenant_a_stream, &[b"GET", b"shared"]).await;
+    assert_eq!(tenant_a_get, "$8\r\ntenant-a\r\n");
+
     let tenant_b_get = write_command(&mut tenant_b_stream, &[b"GET", b"shared"]).await;
-    assert_eq!(
-        tenant_b_get, "$8\r\ntenant-b\r\n",
-        "tenant A writes must not overwrite tenant B's same-named key"
-    );
+    assert_eq!(tenant_b_get, "$8\r\ntenant-b\r\n");
 
     let tenant_a_flush = write_command(&mut tenant_a_stream, &[b"FLUSHALL"]).await;
     assert_eq!(tenant_a_flush, "+OK\r\n");
+
+    let tenant_a_after_flush = write_command(&mut tenant_a_stream, &[b"GET", b"shared"]).await;
+    assert_eq!(tenant_a_after_flush, "$-1\r\n");
+
     let tenant_b_after_flush = write_command(&mut tenant_b_stream, &[b"GET", b"shared"]).await;
     assert_eq!(
         tenant_b_after_flush, "$8\r\ntenant-b\r\n",
@@ -182,11 +218,11 @@ async fn tenant_a_credential_cannot_read_tenant_b_keys() {
     let metrics = write_command(&mut tenant_b_stream, &[b"NIMBUS.METRICS"]).await;
     assert!(
         metrics.contains("durable_writes_started:3"),
-        "operator metrics must include writes routed through every tenant store, got {metrics:?}"
+        "operator metrics must include writes routed through every tenant, got {metrics:?}"
     );
     assert!(
         metrics.contains("durable_writes_completed:3"),
-        "operator metrics must include completed writes routed through every tenant store, got {metrics:?}"
+        "operator metrics must include completed writes routed through every tenant, got {metrics:?}"
     );
 
     let cross_tenant = write_command(&mut tenant_a_stream, &[b"SELECT", b"tenant-b"]).await;
@@ -199,11 +235,10 @@ async fn tenant_a_credential_cannot_read_tenant_b_keys() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn resp_get_set_del_expire_ttl_incr_round_trip() {
-    let password = test_password("commands");
-    let credentials = CredentialRegistry::single_dev(tenant("tenant-a"), password.clone());
+    let (credentials, credential) = CredentialRegistry::generated_dev(tenant("tenant-a"));
     let (addr, server) = spawn_test_server(credentials).await;
 
-    let url = format!("redis://:{password}@{addr}/");
+    let url = format!("redis://:{}@{addr}/", credential.password);
     let result = tokio::task::spawn_blocking(move || {
         let client = redis::Client::open(url).expect("redis client should parse URL");
         let mut connection = client.get_connection().expect("redis-rs client connects");

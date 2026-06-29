@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -140,13 +140,6 @@ impl CredentialRegistry {
             }
         }
     }
-
-    fn tenants(&self) -> BTreeSet<TenantId> {
-        self.bindings
-            .values()
-            .map(|binding| binding.tenant.clone())
-            .collect()
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -237,82 +230,6 @@ struct CommandOutcome {
     close: bool,
 }
 
-#[derive(Debug, Clone)]
-struct TenantStoreRouter {
-    stores: BTreeMap<TenantId, NimbusKvStore>,
-    metrics: NimbusKvMetrics,
-}
-
-impl TenantStoreRouter {
-    fn from_config(
-        credentials: &CredentialRegistry,
-        configured_store: Option<NimbusKvStore>,
-        configured_metrics: Option<NimbusKvMetrics>,
-    ) -> Result<Self, KvError> {
-        let tenants = credentials.tenants();
-        if tenants.is_empty() {
-            return Err(nimbus_core::Error::InvalidInput(
-                "nimbus-kv requires at least one credential binding".to_string(),
-            )
-            .into());
-        }
-
-        let (stores, metrics) = match configured_store {
-            Some(store) => {
-                if configured_metrics.is_some() {
-                    return Err(nimbus_core::Error::InvalidInput(
-                        "NimbusKvConfig::with_metrics cannot be combined with a prebuilt NimbusKvStore"
-                            .to_string(),
-                    )
-                    .into());
-                }
-                if tenants.len() != 1 {
-                    return Err(nimbus_core::Error::InvalidInput(
-                        "a single configured NimbusKvStore can only serve one credential-bound tenant"
-                            .to_string(),
-                    )
-                    .into());
-                }
-                let tenant = tenants
-                    .into_iter()
-                    .next()
-                    .expect("non-empty tenant set has a first tenant");
-                let metrics = store.metrics();
-                (BTreeMap::from([(tenant, store)]), metrics)
-            }
-            None => {
-                let metrics = configured_metrics.unwrap_or_default();
-                let stores = tenants
-                    .into_iter()
-                    .map(|tenant| {
-                        NimbusKvStore::no_disk_with_metrics(
-                            TieringConfig::no_disk(),
-                            metrics.clone(),
-                        )
-                        .map(|store| (tenant, store))
-                    })
-                    .collect::<Result<BTreeMap<_, _>, _>>()?;
-                (stores, metrics)
-            }
-        };
-
-        Ok(Self { stores, metrics })
-    }
-
-    fn store_for(&self, tenant: &TenantId) -> Result<&NimbusKvStore, KvError> {
-        self.stores.get(tenant).ok_or_else(|| {
-            nimbus_core::Error::PermissionDenied(format!(
-                "no nimbus-kv store is configured for credential-bound tenant {tenant}"
-            ))
-            .into()
-        })
-    }
-
-    fn metrics(&self) -> NimbusKvMetrics {
-        self.metrics.clone()
-    }
-}
-
 /// Bind and run the RESP listener until the process is interrupted.
 pub async fn run_listener(config: NimbusKvConfig) -> Result<(), KvError> {
     refuse_non_loopback_bind(config.bind_addr)?;
@@ -329,22 +246,31 @@ pub async fn serve(listener: TcpListener, config: NimbusKvConfig) -> Result<(), 
         store,
         metrics,
     } = config;
-    let stores = Arc::new(TenantStoreRouter::from_config(
-        &credentials,
-        store,
-        metrics,
-    )?);
-    let metrics = stores.metrics();
+    let store = match (store, metrics) {
+        (Some(_), Some(_)) => {
+            return Err(nimbus_core::Error::InvalidInput(
+                "NimbusKvConfig::with_metrics cannot be combined with a prebuilt NimbusKvStore"
+                    .to_string(),
+            )
+            .into());
+        }
+        (Some(store), None) => store,
+        (None, Some(metrics)) => {
+            NimbusKvStore::no_disk_with_metrics(TieringConfig::no_disk(), metrics)?
+        }
+        (None, None) => NimbusKvStore::no_disk(TieringConfig::no_disk())?,
+    };
     let credentials = Arc::new(credentials);
+    let metrics = store.metrics();
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;
         let credentials = Arc::clone(&credentials);
-        let stores = Arc::clone(&stores);
+        let store = store.clone();
         let metrics = metrics.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_connection(stream, credentials, stores, metrics).await {
-                tracing::warn!(%peer_addr, %error, "nimbus-kv connection ended with error");
+            if let Err(error) = handle_connection(stream, credentials, store, metrics).await {
+                tracing::warn!(%peer_addr, error = %error, "nimbus-kv connection ended with error");
             }
         });
     }
@@ -353,7 +279,7 @@ pub async fn serve(listener: TcpListener, config: NimbusKvConfig) -> Result<(), 
 async fn handle_connection(
     mut stream: TcpStream,
     credentials: Arc<CredentialRegistry>,
-    stores: Arc<TenantStoreRouter>,
+    store: NimbusKvStore,
     metrics: NimbusKvMetrics,
 ) -> Result<(), KvError> {
     let _client = metrics.client_connected();
@@ -368,7 +294,7 @@ async fn handle_connection(
                     let name = command.name();
                     let started_at = Instant::now();
                     let outcome =
-                        execute_command(command, &mut state, &credentials, &stores, &metrics);
+                        execute_command(command, &mut state, &credentials, &store, &metrics);
                     metrics.record_command(
                         &name,
                         started_at.elapsed(),
@@ -504,7 +430,7 @@ fn execute_command(
     command: CommandRequest,
     state: &mut ConnectionState,
     credentials: &CredentialRegistry,
-    stores: &TenantStoreRouter,
+    store: &NimbusKvStore,
     metrics: &NimbusKvMetrics,
 ) -> CommandOutcome {
     let name = command.name();
@@ -527,16 +453,14 @@ fn execute_command(
         },
         "CLIENT" => client_command(&command.args),
         "SELECT" => select_command(&command.args, state),
-        "GET" => with_tenant_store(state, stores, |store| get_command(&command.args, store)),
-        "SET" => with_tenant_store(state, stores, |store| set_command(&command.args, store)),
-        "DEL" => with_tenant_store(state, stores, |store| del_command(&command.args, store)),
-        "FLUSHALL" => with_tenant_store(state, stores, |store| {
-            flushall_command(&command.args, store)
-        }),
+        "GET" => get_command(&command.args, authenticated_tenant(state), store),
+        "SET" => set_command(&command.args, authenticated_tenant(state), store),
+        "DEL" => del_command(&command.args, authenticated_tenant(state), store),
+        "FLUSHALL" => flushall_command(&command.args, authenticated_tenant(state), store),
         "FUNCTION" => function_command(&command.args),
-        "EXPIRE" => with_tenant_store(state, stores, |store| expire_command(&command.args, store)),
-        "TTL" => with_tenant_store(state, stores, |store| ttl_command(&command.args, store)),
-        "INCR" => with_tenant_store(state, stores, |store| incr_command(&command.args, store)),
+        "EXPIRE" => expire_command(&command.args, authenticated_tenant(state), store),
+        "TTL" => ttl_command(&command.args, authenticated_tenant(state), store),
+        "INCR" => incr_command(&command.args, authenticated_tenant(state), store),
         "NIMBUS.READY" => ready_command(&command.args),
         "NIMBUS.METRICS" => metrics_command(&command.args, metrics),
         _ => CommandOutcome {
@@ -547,23 +471,17 @@ fn execute_command(
     }
 }
 
-fn with_tenant_store(
-    state: &ConnectionState,
-    stores: &TenantStoreRouter,
-    command: impl FnOnce(&NimbusKvStore) -> CommandOutcome,
-) -> CommandOutcome {
-    let Some(binding) = &state.binding else {
-        return noauth();
-    };
-    match stores.store_for(&binding.tenant) {
-        Ok(store) => command(store),
-        Err(error) => command_response(storage_error(error)),
-    }
+fn authenticated_tenant(state: &ConnectionState) -> &TenantId {
+    &state
+        .binding
+        .as_ref()
+        .expect("authenticated commands are gated before dispatch")
+        .tenant
 }
 
-fn get_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
+fn get_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> CommandOutcome {
     let response = match args {
-        [_, key] => match store.get(key, now_ms()) {
+        [_, key] => match store.get(tenant, key, now_ms()) {
             Ok(Some(value)) => Response::Bulk(value),
             Ok(None) => Response::Null,
             Err(error) => storage_error(error),
@@ -573,9 +491,9 @@ fn get_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
     command_response(response)
 }
 
-fn set_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
+fn set_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> CommandOutcome {
     let response = match args {
-        [_, key, value] => match store.set(key.clone(), value.clone(), None) {
+        [_, key, value] => match store.set(tenant, key.clone(), value.clone(), None) {
             Ok(()) => Response::SimpleString("OK".to_owned()),
             Err(error) => storage_error(error),
         },
@@ -583,11 +501,12 @@ fn set_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
             match parse_expire_seconds(ttl)
                 .and_then(|seconds| expire_at_from_now(seconds, now_ms()))
             {
-                Ok(expire_at_ms) => match store.set(key.clone(), value.clone(), Some(expire_at_ms))
-                {
-                    Ok(()) => Response::SimpleString("OK".to_owned()),
-                    Err(error) => storage_error(error),
-                },
+                Ok(expire_at_ms) => {
+                    match store.set(tenant, key.clone(), value.clone(), Some(expire_at_ms)) {
+                        Ok(()) => Response::SimpleString("OK".to_owned()),
+                        Err(error) => storage_error(error),
+                    }
+                }
                 Err(response) => response,
             }
         }
@@ -595,11 +514,12 @@ fn set_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
             match parse_expire_millis(ttl)
                 .and_then(|millis| expire_at_ms_from_now(millis, now_ms()))
             {
-                Ok(expire_at_ms) => match store.set(key.clone(), value.clone(), Some(expire_at_ms))
-                {
-                    Ok(()) => Response::SimpleString("OK".to_owned()),
-                    Err(error) => storage_error(error),
-                },
+                Ok(expire_at_ms) => {
+                    match store.set(tenant, key.clone(), value.clone(), Some(expire_at_ms)) {
+                        Ok(()) => Response::SimpleString("OK".to_owned()),
+                        Err(error) => storage_error(error),
+                    }
+                }
                 Err(response) => response,
             }
         }
@@ -608,7 +528,7 @@ fn set_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
     command_response(response)
 }
 
-fn del_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
+fn del_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> CommandOutcome {
     if args.len() < 2 {
         return command_response(Response::Error(
             "ERR wrong number of arguments for 'DEL'".to_owned(),
@@ -616,7 +536,7 @@ fn del_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
     }
     let mut deleted = 0_i64;
     for key in &args[1..] {
-        match store.delete(key) {
+        match store.delete(tenant, key) {
             Ok(true) => deleted += 1,
             Ok(false) => {}
             Err(error) => return command_response(storage_error(error)),
@@ -625,16 +545,16 @@ fn del_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
     command_response(Response::Integer(deleted))
 }
 
-fn flushall_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
+fn flushall_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> CommandOutcome {
     let response = match args {
-        [_] => match store.flush_all(now_ms()) {
+        [_] => match store.flush_all(tenant, now_ms()) {
             Ok(_) => Response::SimpleString("OK".to_owned()),
             Err(error) => storage_error(error),
         },
         [_, option]
             if option.eq_ignore_ascii_case(b"SYNC") || option.eq_ignore_ascii_case(b"ASYNC") =>
         {
-            match store.flush_all(now_ms()) {
+            match store.flush_all(tenant, now_ms()) {
                 Ok(_) => Response::SimpleString("OK".to_owned()),
                 Err(error) => storage_error(error),
             }
@@ -677,12 +597,12 @@ fn metrics_command(args: &[Vec<u8>], metrics: &NimbusKvMetrics) -> CommandOutcom
     command_response(response)
 }
 
-fn expire_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
+fn expire_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> CommandOutcome {
     let response = match args {
         [_, key, seconds] => match parse_expire_seconds(seconds)
             .and_then(|seconds| expire_at_from_now(seconds, now_ms()))
         {
-            Ok(expire_at_ms) => match store.expire(key, expire_at_ms, now_ms()) {
+            Ok(expire_at_ms) => match store.expire(tenant, key, expire_at_ms, now_ms()) {
                 Ok(true) => Response::Integer(1),
                 Ok(false) => Response::Integer(0),
                 Err(error) => storage_error(error),
@@ -694,9 +614,9 @@ fn expire_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
     command_response(response)
 }
 
-fn ttl_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
+fn ttl_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> CommandOutcome {
     let response = match args {
-        [_, key] => match store.ttl(key, now_ms()) {
+        [_, key] => match store.ttl(tenant, key, now_ms()) {
             Ok(ttl) => Response::Integer(ttl),
             Err(error) => storage_error(error),
         },
@@ -705,9 +625,9 @@ fn ttl_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
     command_response(response)
 }
 
-fn incr_command(args: &[Vec<u8>], store: &NimbusKvStore) -> CommandOutcome {
+fn incr_command(args: &[Vec<u8>], tenant: &TenantId, store: &NimbusKvStore) -> CommandOutcome {
     let response = match args {
-        [_, key] => match store.incr(key, now_ms()) {
+        [_, key] => match store.incr(tenant, key, now_ms()) {
             Ok(value) => Response::Integer(value),
             Err(error) => storage_error(error),
         },
@@ -722,11 +642,21 @@ fn auth_command(
     credentials: &CredentialRegistry,
 ) -> CommandOutcome {
     let authenticated = match args {
-        [_, password] => credentials.authenticate(None, &String::from_utf8_lossy(password)),
-        [_, username, password] => credentials.authenticate(
-            Some(&String::from_utf8_lossy(username)),
-            &String::from_utf8_lossy(password),
-        ),
+        [_, password] => match credential_text(password) {
+            Ok(password) => credentials.authenticate(None, password),
+            Err(response) => return command_response(response),
+        },
+        [_, username, password] => {
+            let username = match credential_text(username) {
+                Ok(username) => username,
+                Err(response) => return command_response(response),
+            };
+            let password = match credential_text(password) {
+                Ok(password) => password,
+                Err(response) => return command_response(response),
+            };
+            credentials.authenticate(Some(username), password)
+        }
         _ => {
             return CommandOutcome {
                 response: Response::Error("ERR wrong number of arguments for 'AUTH'".to_owned()),
@@ -814,16 +744,19 @@ fn parse_hello_auth(
             "ERR HELLO only supports AUTH username password".to_owned(),
         ));
     }
+    let username = credential_text(&args[3])?;
+    let password = credential_text(&args[4])?;
     credentials
-        .authenticate(
-            Some(&String::from_utf8_lossy(&args[3])),
-            &String::from_utf8_lossy(&args[4]),
-        )
-        .ok_or_else(|| {
-            Response::Error(
-                "WRONGPASS invalid username-password pair or user is disabled".to_owned(),
-            )
-        })
+        .authenticate(Some(username), password)
+        .ok_or_else(invalid_credentials_response)
+}
+
+fn credential_text(bytes: &[u8]) -> Result<&str, Response> {
+    std::str::from_utf8(bytes).map_err(|_| invalid_credentials_response())
+}
+
+fn invalid_credentials_response() -> Response {
+    Response::Error("WRONGPASS invalid username-password pair or user is disabled".to_owned())
 }
 
 fn ping_command(args: &[Vec<u8>]) -> CommandOutcome {

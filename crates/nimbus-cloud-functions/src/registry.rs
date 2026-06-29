@@ -87,19 +87,11 @@ impl CloudFunctionsRegistry {
         pressure_source: Arc<dyn RuntimeHostPressureSource>,
         adaptive_settings: RuntimeAdaptiveControllerSettings,
     ) -> Self {
-        let runtime_policy = Arc::new(
-            RuntimePolicy::with_host_resource_governor(
-                self.runtime_policy.limits().clone(),
-                budget,
-                pressure_source,
-            )
-            .with_adaptive_controller_settings(adaptive_settings)
-            // Preserve the source policy's metrics handle across this
-            // build()-time governor re-derivation so the post-build executor
-            // increments the same counters the pre-build handle exposes.
-            // Observability-only; no scheduling/admission behavior changes.
-            .with_metrics(self.runtime_policy.metrics()),
-        );
+        let runtime_policy = Arc::new(self.runtime_policy.clone_with_host_resource_governor(
+            budget,
+            pressure_source,
+            adaptive_settings,
+        ));
         self.runtime_policy = runtime_policy.clone();
         self.runtime_executor = Arc::new(RuntimeExecutor::new(runtime_policy));
         self
