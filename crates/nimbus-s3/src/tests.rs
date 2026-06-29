@@ -532,6 +532,22 @@ async fn put_object_rejects_unsupported_checksum_headers() {
     );
 }
 
+#[test]
+fn crc64nvme_trailer_extraction_uses_verified_trailing_headers() {
+    let bytes = Bytes::from_static(b"payload");
+    let checksum = ComputedChecksums::for_bytes(&bytes).crc64nvme_base64;
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        "x-amz-checksum-crc64nvme",
+        checksum.parse().expect("checksum header value"),
+    );
+
+    assert_eq!(
+        crate::service::trailing_crc64nvme_from_headers(&headers).expect("trailer should parse"),
+        Some(checksum)
+    );
+}
+
 #[tokio::test]
 async fn multipart_upload_assembles_chunks_and_etag() {
     let service = service();

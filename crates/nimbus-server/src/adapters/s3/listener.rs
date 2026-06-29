@@ -282,20 +282,73 @@ async fn handle_s3_error(err: HttpError) -> Response<Body> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aws_credential_types::Credentials as AwsCredentials;
+    use aws_sigv4::http_request::{
+        SignableBody, SignableRequest, SignatureLocation, SigningSettings,
+        UriPathNormalizationMode, sign,
+    };
+    use aws_sigv4::sign::v4;
     use axum::body::to_bytes;
     use bytes::Bytes;
     use nimbus_core::TenantId;
     use nimbus_s3::AccessKeyRegistry;
+    use nimbus_storage::{ObjectManifest, ObjectManifestAttributes};
+    use std::time::Duration;
     use tower::ServiceExt;
 
     const ACCESS_KEY: &str = "AKIATESTS3";
+    const SECRET_KEY: &str = "secret";
 
     fn access_keys() -> AccessKeyRegistry {
         AccessKeyRegistry::new().bind_signed(
             ACCESS_KEY,
             TenantId::new("tenant-s3").expect("tenant id"),
-            "secret",
+            SECRET_KEY,
         )
+    }
+
+    fn presigned_get_uri(path: &str) -> String {
+        let identity =
+            AwsCredentials::new(ACCESS_KEY, SECRET_KEY, None, None, "nimbus-s3-presign-test")
+                .into();
+        let mut settings = SigningSettings::default();
+        settings.signature_location = SignatureLocation::QueryParams;
+        settings.expires_in = Some(Duration::from_secs(60));
+        settings.uri_path_normalization_mode = UriPathNormalizationMode::Disabled;
+        let signing_params = v4::SigningParams::builder()
+            .identity(&identity)
+            .region("us-east-1")
+            .name("s3")
+            .time(SystemTime::now())
+            .settings(settings)
+            .build()
+            .expect("signing params should build")
+            .into();
+        let signing_uri = format!("http://localhost{path}");
+        let headers = [("host", "localhost")];
+        let signable = SignableRequest::new(
+            "GET",
+            signing_uri.as_str(),
+            headers.iter().copied(),
+            SignableBody::UnsignedPayload,
+        )
+        .expect("signable request should build");
+        let (instructions, _) = sign(signable, &signing_params)
+            .expect("request should sign")
+            .into_parts();
+        let mut request = axum::http::Request::builder()
+            .method("GET")
+            .uri(signing_uri)
+            .header(header::HOST, "localhost")
+            .body(())
+            .expect("signed request shell should build");
+        instructions.apply_to_request_http1x(&mut request);
+        request
+            .uri()
+            .path_and_query()
+            .expect("presigned uri should have path and query")
+            .as_str()
+            .to_string()
     }
 
     #[test]
@@ -377,5 +430,43 @@ mod tests {
             .await
             .expect("body should read");
         assert_eq!(bytes, Bytes::from_static(b"proxied bytes"));
+    }
+
+    #[tokio::test]
+    async fn s3_route_accepts_v4_presigned_get_urls() {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+        let tenant = TenantId::new("tenant-s3").expect("tenant id");
+        let backend = EngineS3Backend::new(engine.clone());
+        backend.ensure_tenant(&tenant).await.expect("tenant exists");
+        let hash = backend
+            .put_blob(&tenant, Bytes::from_static(b"presigned bytes"))
+            .await
+            .expect("blob should store");
+        let mut attributes = ObjectManifestAttributes::new("presigned-etag", current_millis());
+        attributes.content_type = Some("text/plain".to_string());
+        backend
+            .put_manifest(
+                &tenant,
+                ObjectManifest::whole("bucket", "presigned.txt", 15, hash.to_hex(), attributes)
+                    .expect("manifest should build"),
+            )
+            .await
+            .expect("manifest should store");
+
+        let router = router(engine, S3Config::default().with_access_keys(access_keys()));
+        let request = axum::http::Request::builder()
+            .method("GET")
+            .uri(presigned_get_uri("/bucket/presigned.txt"))
+            .header(header::HOST, "localhost")
+            .body(axum::body::Body::empty())
+            .expect("request builds");
+
+        let response = router.oneshot(request).await.expect("route responds");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        assert_eq!(bytes, Bytes::from_static(b"presigned bytes"));
     }
 }

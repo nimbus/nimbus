@@ -6837,8 +6837,10 @@ name = "nimbus-server"
 version = "0.1.44"
 dependencies = [
  "async-trait",
+ "aws-credential-types",
  "aws-sdk-dynamodb",
  "aws-sdk-dynamodbstreams",
+ "aws-sigv4",
  "axum",
  "base64 0.22.1",
  "bson",

@@ -4,6 +4,7 @@ use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use futures::StreamExt;
+use http::HeaderMap;
 use nimbus_core::TenantId;
 use nimbus_storage::{
     ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMultipartPart,
@@ -18,7 +19,7 @@ use s3s::dto::{
     ListObjectsV2Output, Object, PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp,
     UploadPartInput, UploadPartOutput,
 };
-use s3s::{Body, S3Error, S3ErrorCode, S3Request, S3Response, S3Result, s3_error};
+use s3s::{Body, S3Error, S3ErrorCode, S3Request, S3Response, S3Result, TrailingHeaders, s3_error};
 use serde_json::{Map, Value};
 
 use crate::auth::AccessKeyRegistry;
@@ -28,6 +29,7 @@ use crate::object_io;
 
 const DEFAULT_MAX_KEYS: i32 = 1000;
 const MAX_MAX_KEYS: i32 = 1000;
+const CRC64NVME_HEADER: &str = "x-amz-checksum-crc64nvme";
 
 #[derive(Clone)]
 pub struct NimbusS3 {
@@ -73,10 +75,10 @@ impl s3s::S3 for NimbusS3 {
     ) -> S3Result<S3Response<PutObjectOutput>> {
         let tenant = self.tenant(&req)?;
         self.ensure_tenant(&tenant).await?;
+        let trailing_headers = req.trailing_headers.clone();
         let input = req.input;
-        verify_supported_checksum_headers(
+        reject_unsupported_checksum_headers(
             input.checksum_algorithm.as_ref(),
-            input.checksum_crc64nvme.as_deref(),
             [
                 ("CRC32", input.checksum_crc32.is_some()),
                 ("CRC32C", input.checksum_crc32c.is_some()),
@@ -85,11 +87,19 @@ impl s3s::S3 for NimbusS3 {
             ],
         )?;
         let bytes = collect_body(input.body).await?;
+        let checksum_crc64nvme = checksum_crc64nvme(
+            input.checksum_crc64nvme.as_deref(),
+            trailing_headers.as_ref(),
+        )?;
+        verify_required_checksum_headers(
+            input.checksum_algorithm.as_ref(),
+            checksum_crc64nvme.as_deref(),
+        )?;
         verify_content_length(input.content_length, bytes.len())?;
         let byte_len = bytes.len() as u64;
         let computed = ComputedChecksums::for_bytes(&bytes);
         computed.verify_content_md5(input.content_md5.as_deref())?;
-        computed.verify_crc64nvme(input.checksum_crc64nvme.as_deref())?;
+        computed.verify_crc64nvme(checksum_crc64nvme.as_deref())?;
 
         let previous = self
             .backend
@@ -356,6 +366,7 @@ impl s3s::S3 for NimbusS3 {
         req: S3Request<UploadPartInput>,
     ) -> S3Result<S3Response<UploadPartOutput>> {
         let tenant = self.tenant(&req)?;
+        let trailing_headers = req.trailing_headers.clone();
         let input = req.input;
         let mut upload = self
             .backend
@@ -372,9 +383,8 @@ impl s3s::S3 for NimbusS3 {
                 "part number must be between 1 and 10000",
             ));
         }
-        verify_supported_checksum_headers(
+        reject_unsupported_checksum_headers(
             input.checksum_algorithm.as_ref(),
-            input.checksum_crc64nvme.as_deref(),
             [
                 ("CRC32", input.checksum_crc32.is_some()),
                 ("CRC32C", input.checksum_crc32c.is_some()),
@@ -383,11 +393,19 @@ impl s3s::S3 for NimbusS3 {
             ],
         )?;
         let bytes = collect_body(input.body).await?;
+        let checksum_crc64nvme = checksum_crc64nvme(
+            input.checksum_crc64nvme.as_deref(),
+            trailing_headers.as_ref(),
+        )?;
+        verify_required_checksum_headers(
+            input.checksum_algorithm.as_ref(),
+            checksum_crc64nvme.as_deref(),
+        )?;
         verify_content_length(input.content_length, bytes.len())?;
         let byte_len = bytes.len() as u64;
         let computed = ComputedChecksums::for_bytes(&bytes);
         computed.verify_content_md5(input.content_md5.as_deref())?;
-        computed.verify_crc64nvme(input.checksum_crc64nvme.as_deref())?;
+        computed.verify_crc64nvme(checksum_crc64nvme.as_deref())?;
         let hash = self
             .backend
             .put_blob(&tenant, bytes)
@@ -613,6 +631,36 @@ fn verify_content_length(expected: Option<i64>, actual: usize) -> S3Result<()> {
     Ok(())
 }
 
+fn checksum_crc64nvme(
+    header_value: Option<&str>,
+    trailing_headers: Option<&TrailingHeaders>,
+) -> S3Result<Option<String>> {
+    if let Some(value) = header_value {
+        return Ok(Some(value.to_string()));
+    }
+    let Some(trailing_headers) = trailing_headers else {
+        return Ok(None);
+    };
+    trailing_headers
+        .read(trailing_crc64nvme_from_headers)
+        .unwrap_or(Ok(None))
+}
+
+pub(crate) fn trailing_crc64nvme_from_headers(headers: &HeaderMap) -> S3Result<Option<String>> {
+    let Some(value) = headers.get(CRC64NVME_HEADER) else {
+        return Ok(None);
+    };
+    value
+        .to_str()
+        .map(|value| Some(value.to_string()))
+        .map_err(|_| {
+            S3Error::with_message(
+                S3ErrorCode::InvalidRequest,
+                "trailing x-amz-checksum-crc64nvme is not valid ASCII",
+            )
+        })
+}
+
 fn verify_write_preconditions(
     existing: Option<&ObjectManifest>,
     if_match: Option<&ETagCondition>,
@@ -702,9 +750,8 @@ fn precondition_failed(message: &'static str) -> S3Error {
     S3Error::with_message(S3ErrorCode::PreconditionFailed, message)
 }
 
-fn verify_supported_checksum_headers<const N: usize>(
+fn reject_unsupported_checksum_headers<const N: usize>(
     algorithm: Option<&ChecksumAlgorithm>,
-    checksum_crc64nvme: Option<&str>,
     unsupported_headers: [(&str, bool); N],
 ) -> S3Result<()> {
     for (name, present) in unsupported_headers {
@@ -719,21 +766,31 @@ fn verify_supported_checksum_headers<const N: usize>(
     let Some(algorithm) = algorithm else {
         return Ok(());
     };
-    match algorithm.as_str() {
-        ChecksumAlgorithm::CRC64NVME => {
-            if checksum_crc64nvme.is_none() {
-                return Err(S3Error::with_message(
-                    S3ErrorCode::InvalidRequest,
-                    "checksum algorithm CRC64NVME requires x-amz-checksum-crc64nvme",
-                ));
-            }
-            Ok(())
-        }
-        other => Err(S3Error::with_message(
+    if algorithm.as_str() != ChecksumAlgorithm::CRC64NVME {
+        return Err(S3Error::with_message(
             S3ErrorCode::InvalidRequest,
-            format!("checksum algorithm {other} is not supported; use CRC64NVME or Content-MD5"),
-        )),
+            format!(
+                "checksum algorithm {} is not supported; use CRC64NVME or Content-MD5",
+                algorithm.as_str()
+            ),
+        ));
     }
+    Ok(())
+}
+
+fn verify_required_checksum_headers(
+    algorithm: Option<&ChecksumAlgorithm>,
+    checksum_crc64nvme: Option<&str>,
+) -> S3Result<()> {
+    if algorithm.is_some_and(|algorithm| algorithm.as_str() == ChecksumAlgorithm::CRC64NVME)
+        && checksum_crc64nvme.is_none()
+    {
+        return Err(S3Error::with_message(
+            S3ErrorCode::InvalidRequest,
+            "checksum algorithm CRC64NVME requires x-amz-checksum-crc64nvme",
+        ));
+    }
+    Ok(())
 }
 
 fn manifest_attributes(
