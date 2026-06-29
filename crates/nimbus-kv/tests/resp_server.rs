@@ -126,7 +126,9 @@ async fn unauthenticated_command_is_rejected() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_utf8_credentials_are_rejected_without_lossy_matching() {
-    let credentials = CredentialRegistry::new().bind("tenant-a", "\u{FFFD}", tenant("tenant-a"));
+    let lossy_replacement = char::REPLACEMENT_CHARACTER.to_string();
+    let credentials =
+        CredentialRegistry::new().bind("tenant-a", lossy_replacement, tenant("tenant-a"));
     let (addr, server) = spawn_test_server(credentials).await;
     let mut stream = TcpStream::connect(addr).await.expect("connects");
     let invalid_password = [0xff];

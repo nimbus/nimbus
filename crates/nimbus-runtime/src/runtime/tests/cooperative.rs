@@ -324,6 +324,11 @@ async fn wait_until_active_runtime_instances(
     context: &str,
 ) {
     let timeout = cooperative_slot_progress_timeout();
+    let failure_context = format!(
+        "{}; {}",
+        case.failure_context("cooperative slot active-runtime metric did not settle"),
+        context
+    );
     tokio::time::timeout(timeout, async {
         loop {
             if policy.metrics_snapshot().active_runtime_instances == expected {
@@ -336,8 +341,8 @@ async fn wait_until_active_runtime_instances(
     .unwrap_or_else(|_| {
         let observed = policy.metrics_snapshot().active_runtime_instances;
         let message = format!(
-            "{} after {timeout:?}: expected active_runtime_instances={expected}, observed {observed}; {context}",
-            case.failure_context("cooperative slot active-runtime metric did not settle"),
+            "{} after {:?}: expected active_runtime_instances={}, observed {}",
+            failure_context, timeout, expected, observed
         );
         std::panic::panic_any(message);
     });

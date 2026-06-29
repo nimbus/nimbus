@@ -86,7 +86,7 @@ fn chown_id(value: i64, label: &str) -> std::result::Result<Option<u32>, JsError
     }
     u32::try_from(value)
         .map(Some)
-        .map_err(|_| JsErrorBox::generic(format!("{label} is out of range")))
+        .map_err(|_| JsErrorBox::generic(format!("{} is out of range", label)))
 }
 
 #[op2]
