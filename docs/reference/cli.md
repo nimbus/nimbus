@@ -19,6 +19,8 @@ nimbus <command> [subcommand] [flags]
 | [`start`](#nimbus-start) | Start a Nimbus server in the foreground |
 | [`dev`](#nimbus-dev) | Start a local development server with watched codegen |
 | [`deploy`](#nimbus-deploy) | Push app artifacts to a self-hosted Nimbus instance |
+| [`run`](#nimbus-run) | Invoke functions and reserve target-scoped workload execution |
+| [`sandbox`](#nimbus-sandbox) | Reserve target-scoped sandbox lifecycle commands |
 | [`codegen`](#nimbus-codegen) | Generate app artifacts from `nimbus/` or `convex/` source |
 | [`init`](#nimbus-init) | Scaffold a new Nimbus project |
 | [`token`](#nimbus-token) | Local admin token management |
@@ -145,6 +147,47 @@ automatically; for a remote server, pass `--admin-token` or set
 | `--dry-run` | — | `false` | Validate and diff without activating the new generation. |
 | `--skip-codegen` | — | `false` | Skip codegen and package already-generated artifacts. |
 | `--verbose` | — | `false` | Show packaging and deploy phase detail. |
+
+## nimbus run
+
+```bash
+nimbus run [--local|--target TARGET|--url URL] functions <selector> [jsonArgs] [flags]
+```
+
+Invokes a Nimbus function on a selected target. `--local`, `--target`, and
+`--url` are mutually exclusive target sources. If none is provided, `nimbus run
+functions` discovers a running local Nimbus server. `NIMBUS_TARGET` and
+`NIMBUS_DEPLOY_URL` are also accepted as target sources.
+
+Most-used flags:
+
+| Flag | Env var | Default | What it does |
+| --- | --- | --- | --- |
+| `--local` | — | `false` | Resolve against the currently running local Nimbus server. |
+| `--target` | `NIMBUS_TARGET` | unset | Named Nimbus target configured for this machine. |
+| `--url` | `NIMBUS_DEPLOY_URL` | unset | Explicit Nimbus server URL. |
+| `--kind` | — | inferred | Function kind: `query`, `paginated-query`, `mutation`, or `action`. |
+| `--tenant` | — | `demo` | Tenant id to invoke. |
+| `--app` | — | current directory | App directory used for generated function-kind inference. |
+| `--config` | — | unset | Path to `nimbus.yaml` / `nimbus.json` for function-scaling admission. |
+| `--policy` | — | unset | Path to `nimbus.policy.yaml` for operator quota admission. |
+
+`nimbus run exec -- <argv...>` is parsed as reserved vocabulary, but raw command
+execution is not shipped yet. It resolves the target and then exits with an
+actionable error instead of bypassing the service/sandbox/node workload-control
+path.
+
+## nimbus sandbox
+
+```bash
+nimbus sandbox create [--local|--target TARGET|--url URL] --template NAME
+nimbus sandbox list [--local|--target TARGET|--url URL]
+```
+
+Reserves the top-level sandbox resource namespace and target-resolution contract.
+The commands parse and resolve targets through the same `TargetContext` seam as
+`nimbus run`, then fail actionably until sandbox lifecycle execution is owned by
+the service/sandbox/node workload-control path.
 
 ## nimbus codegen
 

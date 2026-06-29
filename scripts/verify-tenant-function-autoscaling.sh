@@ -49,7 +49,13 @@ require_absent() {
   fi
 }
 
-PLAN="docs/private/plans/tenant-function-autoscaling-plan.md"
+PLAN_ACTIVE="docs/private/plans/tenant-function-autoscaling-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/tenant-function-autoscaling-plan.md"
+if [[ -f "$PLAN_ACTIVE" ]]; then
+  PLAN="$PLAN_ACTIVE"
+else
+  PLAN="$PLAN_ARCHIVED"
+fi
 PROOF_DIR="docs/private/plans/proof/tenant-function-autoscaling"
 PROOF="$PROOF_DIR/README.md"
 SCALING="crates/nimbus-runtime/src/limits/scaling.rs"

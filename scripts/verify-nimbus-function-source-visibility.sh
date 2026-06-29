@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the Function Source Visibility plan
-# (`docs/private/plans/nimbus-function-source-visibility-plan.md`).
+# (`docs/private/plans/archive/nimbus-function-source-visibility-plan.md`).
 #
 # Ships in FSV0 so the plan can be audited from day one. Most conditions are
 # expected to FAIL until FSV1-FSV7 land.
@@ -12,7 +12,13 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/private/plans/nimbus-function-source-visibility-plan.md"
+PLAN_ACTIVE="docs/private/plans/nimbus-function-source-visibility-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/nimbus-function-source-visibility-plan.md"
+if [ -f "${PLAN_ACTIVE}" ]; then
+  PLAN="${PLAN_ACTIVE}"
+else
+  PLAN="${PLAN_ARCHIVED}"
+fi
 SYS_SCHEMA="crates/nimbus-system/src/schema.rs"
 SYS_RECORDS="crates/nimbus-system/src/records.rs"
 UI_SCHEMA="packages/nimbus-ui/convex/schema.ts"
