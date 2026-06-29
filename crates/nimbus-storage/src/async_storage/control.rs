@@ -9,7 +9,7 @@ use nimbus_crypto::{
 use parking_lot::Mutex;
 use tokio::runtime::Handle as TokioRuntimeHandle;
 
-use crate::UsageStore;
+use crate::{ObjectPlacementStore, UsageStore};
 
 use super::engine::EmbeddedProviderKind;
 use super::read::RedbUsageStorage;
@@ -40,6 +40,7 @@ struct ControlPlaneEncryption {
 struct OpenedControlPlane {
     usage_store: Arc<UsageStore>,
     usage_storage: Arc<RedbUsageStorage>,
+    object_placement_store: Arc<ObjectPlacementStore>,
 }
 
 impl EmbeddedRedbControlPlaneProvider {
@@ -84,6 +85,10 @@ impl EmbeddedRedbControlPlaneProvider {
         Ok(self.opened()?.usage_storage)
     }
 
+    pub fn object_placement_store(&self) -> Result<Arc<ObjectPlacementStore>> {
+        Ok(self.opened()?.object_placement_store)
+    }
+
     fn opened(&self) -> Result<OpenedControlPlane> {
         let mut opened = self.state.opened.lock();
         if let Some(opened) = opened.as_ref() {
@@ -113,6 +118,7 @@ impl EmbeddedRedbControlPlaneProvider {
             usage_store.clone(),
             self.state.storage_handle.clone(),
         ));
+        let object_placement_store = Arc::new(ObjectPlacementStore::new(usage_store.clone()));
 
         maybe_emit_profile(
             &self.state.path,
@@ -123,6 +129,7 @@ impl EmbeddedRedbControlPlaneProvider {
         Ok(OpenedControlPlane {
             usage_store,
             usage_storage,
+            object_placement_store,
         })
     }
 }

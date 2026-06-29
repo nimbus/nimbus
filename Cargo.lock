@@ -6326,10 +6326,12 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 name = "nimbus"
 version = "0.1.44"
 dependencies = [
+ "nimbus-blob",
  "nimbus-core",
  "nimbus-crypto",
  "nimbus-egress",
  "nimbus-engine",
+ "nimbus-object-storage",
  "nimbus-runtime",
  "nimbus-sandbox",
  "nimbus-server",
@@ -6719,6 +6721,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "nimbus-object-storage"
+version = "0.1.44"
+dependencies = [
+ "bytes",
+ "nimbus-blob",
+ "nimbus-core",
+ "nimbus-engine",
+ "nimbus-storage",
+ "object_store",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "nimbus-operator"
 version = "0.1.44"
 dependencies = [
@@ -6887,6 +6904,7 @@ dependencies = [
  "nimbus-machine",
  "nimbus-mongodb",
  "nimbus-node",
+ "nimbus-object-storage",
  "nimbus-operator",
  "nimbus-provenance",
  "nimbus-runtime",
@@ -7299,20 +7317,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "765784b4390c6bcf80316e5a22f4e3661b639c9d8c83246856643c27d8ce9dbe"
 dependencies = [
  "async-trait",
+ "aws-lc-rs",
+ "base64 0.22.1",
  "bytes",
  "chrono",
+ "crc-fast",
+ "form_urlencoded",
  "futures-channel",
  "futures-core",
  "futures-util",
  "http 1.4.2",
+ "http-body-util",
  "humantime",
+ "hyper 1.10.1",
  "itertools 0.15.0",
+ "md-5 0.11.0",
+ "nix 0.31.2",
  "parking_lot",
  "percent-encoding",
+ "quick-xml",
+ "rand 0.10.1",
+ "reqwest 0.13.2",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
  "thiserror 2.0.18",
+ "tokio",
+ "tracing",
  "url",
+ "walkdir",
  "wasm-bindgen-futures",
  "web-time",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9095,6 +9132,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-util",
+ "h2 0.4.15",
  "http 1.4.2",
  "http-body 1.0.1",
  "http-body-util",

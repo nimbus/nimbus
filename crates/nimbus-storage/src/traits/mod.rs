@@ -287,7 +287,7 @@ impl ObjectManifest {
         object_document_id(&self.bucket, &self.key)
     }
 
-    fn to_document(&self) -> Result<Document> {
+    pub fn to_document(&self) -> Result<Document> {
         self.validate()?;
         let mut fields = Map::new();
         fields.insert(
@@ -341,7 +341,7 @@ impl ObjectManifest {
         ))
     }
 
-    fn from_document(document: &Document) -> Result<Self> {
+    pub fn from_document(document: &Document) -> Result<Self> {
         let bucket = required_string(document, OBJECT_FIELD_BUCKET)?;
         let key = required_string(document, OBJECT_FIELD_KEY)?;
         let size = required_u64(document, OBJECT_FIELD_SIZE)?;

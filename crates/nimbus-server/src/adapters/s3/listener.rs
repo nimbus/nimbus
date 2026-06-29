@@ -3,10 +3,9 @@
 //! The listener delegates HTTP/S3 parsing, SigV4 verification, and XML/REST
 //! response shaping to `s3s` through `nimbus-s3`. The server-owned work here is
 //! binding that protocol surface to the Engine's object metadata seam and the
-//! local byte plane rooted under the Engine data directory.
+//! native object-storage byte-plane resolver.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -16,9 +15,10 @@ use axum::extract::{Path, State};
 use axum::http::{Response, StatusCode, header};
 use axum::routing::get;
 use bytes::Bytes;
-use nimbus_blob::{BlobHash, BlobStore, LocalPackStore};
-use nimbus_core::{CommitEntry, Error, Result, StorageErrorKind, TenantId};
+use nimbus_blob::BlobHash;
+use nimbus_core::{CommitEntry, Error, Result, TenantId};
 use nimbus_engine::Engine;
+use nimbus_object_storage::ObjectStorageResolver;
 use nimbus_s3::convex::{
     CONVEX_DOWNLOAD_PATH_PREFIX, ConvexObjectStorage, ConvexStorageError, DownloadTokenSigner,
 };
@@ -32,35 +32,15 @@ use tracing::{error, info};
 #[derive(Clone)]
 struct EngineS3Backend {
     engine: Arc<Engine>,
-    stores: Arc<Mutex<HashMap<TenantId, Arc<LocalPackStore>>>>,
+    objects: ObjectStorageResolver,
 }
 
 impl EngineS3Backend {
     fn new(engine: Arc<Engine>) -> Self {
         Self {
+            objects: ObjectStorageResolver::new(engine.clone()),
             engine,
-            stores: Arc::new(Mutex::new(HashMap::new())),
         }
-    }
-
-    fn store(&self, tenant: &TenantId) -> Result<Arc<LocalPackStore>> {
-        let mut stores = self.stores.lock().map_err(|_| {
-            Error::storage(
-                StorageErrorKind::Other,
-                "S3 local pack store cache lock poisoned",
-            )
-        })?;
-        if let Some(store) = stores.get(tenant) {
-            return Ok(store.clone());
-        }
-        let root = self
-            .engine
-            .data_dir()
-            .join("object-blobs")
-            .join(tenant.as_str());
-        let store = Arc::new(LocalPackStore::open(root)?);
-        stores.insert(tenant.clone(), store.clone());
-        Ok(store)
     }
 }
 
@@ -71,15 +51,15 @@ impl S3ObjectBackend for EngineS3Backend {
     }
 
     async fn put_blob(&self, tenant: &TenantId, bytes: Bytes) -> Result<BlobHash> {
-        self.store(tenant)?.put(bytes).await
+        self.objects.blob_store(tenant)?.put(bytes).await
     }
 
     async fn get_blob(&self, tenant: &TenantId, hash: &BlobHash) -> Result<Bytes> {
-        self.store(tenant)?.get(hash).await
+        self.objects.blob_store(tenant)?.get(hash).await
     }
 
     async fn release_blob(&self, tenant: &TenantId, hash: &BlobHash) -> Result<()> {
-        self.store(tenant)?.release(hash).await
+        self.objects.blob_store(tenant)?.release(hash).await
     }
 
     async fn put_manifest(

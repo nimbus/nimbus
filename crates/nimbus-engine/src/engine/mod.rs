@@ -7,6 +7,7 @@ mod execution_units;
 mod kv;
 mod latency;
 mod mutations;
+mod object_placement;
 mod objects;
 mod provider_hints;
 mod queries;

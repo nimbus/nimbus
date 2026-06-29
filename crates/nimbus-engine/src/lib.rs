@@ -28,7 +28,9 @@ pub use nimbus_storage::{
     LibsqlReplicaBarrierPath, LibsqlReplicaFreshnessStats, LibsqlReplicaRefreshCause,
     LibsqlReplicaRefreshPath, MaterializedJournalSnapshot, ObjectBlobLayout, ObjectChecksums,
     ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMultipartPart,
-    ObjectMultipartUpload, PointInTimeRestoreArchive, ShadowMaterializer, ShadowMaterializerConfig,
+    ObjectMultipartUpload, ObjectPlacement, ObjectPlacementStore, ObjectStorePlacementTarget,
+    ObjectStoreProviderCredentials, ObjectStoreProviderKind, PlacementPolicy,
+    PointInTimeRestoreArchive, ShadowMaterializer, ShadowMaterializerConfig,
     ShadowMaterializerManifest, TableIdentitySnapshotEntry,
 };
 pub use persistence_config::{

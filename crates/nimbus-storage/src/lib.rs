@@ -13,6 +13,7 @@ pub mod kv;
 pub mod libsql;
 pub mod materializer;
 pub mod mysql;
+pub mod object_placement;
 pub mod postgres;
 pub mod query_read;
 mod range_bound;
@@ -66,6 +67,10 @@ pub use materializer::{ShadowMaterializer, ShadowMaterializerConfig, ShadowMater
 pub use mysql::{
     MySqlProvider, MySqlProviderConfig, MySqlReadSnapshot, MySqlTenantRegistration,
     MySqlTenantStorage, MySqlTenantStore, MySqlWriteTransaction,
+};
+pub use object_placement::{
+    ObjectPlacement, ObjectPlacementStore, ObjectStorePlacementTarget,
+    ObjectStoreProviderCredentials, ObjectStoreProviderKind, PlacementPolicy,
 };
 pub use postgres::{
     PostgresNotificationListener, PostgresProvider, PostgresProviderConfig,

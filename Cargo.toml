@@ -20,6 +20,7 @@ members = [
     "crates/nimbus-machine",
     "crates/nimbus-mongodb",
     "crates/nimbus-node",
+    "crates/nimbus-object-storage",
     "crates/nimbus-operator",
     "crates/nimbus-provenance",
     "crates/nimbus-proxy",
@@ -138,7 +139,7 @@ serial_test = "3"
 # oxc — JS/TS parser + semantic analysis for the deploy-time code-navigation
 # index (FSV7). Pinned exactly: oxc has no semver stability pre-1.0.
 oxc = "=0.136.0"
-object_store = { version = "0.14.0", default-features = false }
+object_store = { version = "0.14.0", default-features = false, features = ["aws", "fs"] }
 serde = { version = "1", features = ["derive"] }
 # `raw_value` is additive-only (exposes `serde_json::value::RawValue`); it does
 # NOT change Map ordering or any existing serialization behavior. Used by the

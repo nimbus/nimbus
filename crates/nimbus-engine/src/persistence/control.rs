@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use nimbus_core::Result;
-use nimbus_storage::{EmbeddedRedbControlPlaneProvider, MonthlyActiveUsersSnapshot, UsageStorage};
+use nimbus_storage::{
+    EmbeddedRedbControlPlaneProvider, MonthlyActiveUsersSnapshot, ObjectPlacement,
+    ObjectPlacementStore, UsageStorage,
+};
 
 #[derive(Clone)]
 pub(crate) enum ControlPlaneProvider {
@@ -64,5 +67,33 @@ impl ControlPlaneProvider {
                     .await
             }
         }
+    }
+
+    pub(crate) fn object_placement_store(&self) -> Result<Arc<ObjectPlacementStore>> {
+        match self {
+            Self::EmbeddedRedb(provider) => provider.object_placement_store(),
+        }
+    }
+
+    pub(crate) fn set_object_placement(&self, placement: &ObjectPlacement) -> Result<()> {
+        self.object_placement_store()?.set(placement)
+    }
+
+    pub(crate) fn get_object_placement(
+        &self,
+        tenant_id: &nimbus_core::TenantId,
+    ) -> Result<Option<ObjectPlacement>> {
+        self.object_placement_store()?.get(tenant_id)
+    }
+
+    pub(crate) fn delete_object_placement(
+        &self,
+        tenant_id: &nimbus_core::TenantId,
+    ) -> Result<Option<ObjectPlacement>> {
+        self.object_placement_store()?.delete(tenant_id)
+    }
+
+    pub(crate) fn list_object_placements(&self) -> Result<Vec<ObjectPlacement>> {
+        self.object_placement_store()?.list()
     }
 }

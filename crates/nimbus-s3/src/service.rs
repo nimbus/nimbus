@@ -620,13 +620,13 @@ async fn collect_body(body: Option<StreamingBlob>) -> S3Result<Bytes> {
 }
 
 fn verify_content_length(expected: Option<i64>, actual: usize) -> S3Result<()> {
-    if let Some(expected) = expected {
-        if expected < 0 || expected as usize != actual {
-            return Err(S3Error::with_message(
-                S3ErrorCode::InvalidRequest,
-                "Content-Length does not match the uploaded bytes",
-            ));
-        }
+    if let Some(expected) = expected
+        && (expected < 0 || expected as usize != actual)
+    {
+        return Err(S3Error::with_message(
+            S3ErrorCode::InvalidRequest,
+            "Content-Length does not match the uploaded bytes",
+        ));
     }
     Ok(())
 }

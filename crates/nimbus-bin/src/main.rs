@@ -21,6 +21,7 @@ mod machine;
 mod node;
 mod node_service;
 mod node_workload_executor;
+mod object_storage;
 mod path_boundary;
 mod policy;
 mod provision;
@@ -52,6 +53,7 @@ use crate::kv::{KvCommand, run_kv_command};
 use crate::list::{ListCommand, run_list_command};
 use crate::machine::{MachineCommand, run_machine_command};
 use crate::node_service::{NodeCommand, run_node_command};
+use crate::object_storage::{ObjectStorageCommand, run_object_storage_command};
 use crate::policy::{PolicyCommand, run_policy_command};
 use crate::provision::{PackagesCommand, run_packages_command};
 use crate::run::{RunCommand, run_run_command};
@@ -100,6 +102,9 @@ enum Command {
     Init(InitCommand),
     /// Run the Nimbus KV RESP listener.
     Kv(KvCommand),
+    /// Manage Nimbus object-storage placement, backup, restore, and GC.
+    #[command(name = "object-storage", subcommand)]
+    ObjectStorage(ObjectStorageCommand),
     /// Local admin token management commands.
     #[command(subcommand)]
     Token(TokenCommand),
@@ -157,6 +162,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Codegen(command) => run_codegen_command(command).await?,
         Command::Init(command) => run_init_command(command).await?,
         Command::Kv(command) => run_kv_command(command).await?,
+        Command::ObjectStorage(command) => run_object_storage_command(command).await?,
         Command::Token(command) => run_token_command(command).await?,
         Command::Auth(command) => run_auth_command(command).await?,
         Command::Backup(command) => run_backup_command(command).await?,

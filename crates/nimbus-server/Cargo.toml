@@ -46,6 +46,7 @@ nimbus-services = { path = "../nimbus-services" }
 nimbus-storage = { path = "../nimbus-storage" }
 nimbus-machine = { path = "../nimbus-machine" }
 nimbus-node = { path = "../nimbus-node" }
+nimbus-object-storage = { path = "../nimbus-object-storage" }
 nimbus-operator = { path = "../nimbus-operator" }
 nimbus-system = { path = "../nimbus-system" }
 nimbus-tenant = { path = "../nimbus-tenant" }

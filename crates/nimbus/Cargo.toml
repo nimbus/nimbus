@@ -19,8 +19,10 @@ v8-pointer-compression = ["nimbus-runtime/v8-pointer-compression"]
 
 [dependencies]
 nimbus-egress = { path = "../nimbus-egress" }
+nimbus-blob = { path = "../nimbus-blob" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
+nimbus-object-storage = { path = "../nimbus-object-storage" }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-crypto = { path = "../nimbus-crypto" }
 nimbus-engine = { path = "../nimbus-engine" }
