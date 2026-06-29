@@ -53,17 +53,23 @@ pub(in crate::adapters::convex) async fn dispatch_http_route(
         }
     };
     crate::state::record_authenticated_usage(&state, request_auth.as_ref()).await;
-    let tenant_context = TenantIsolationContext::application(
-        tenant_id.clone(),
-        normalize_principal_context(request_auth.as_ref()),
-        "convex.http_action",
-    )
-    .with_deployment_generation(deployment.generation);
+    let principal = normalize_principal_context(request_auth.as_ref());
+    // #41 team-binding gate (all-fail-closed) — the http-action path's copy of the
+    // same gate as `registry_and_auth`: a principal may only select a silo owned
+    // by its team. Replaces the `admit_if` Admit hole and supersedes the #43
+    // stopgap (cross-team refused on every bind).
+    deployment
+        .convex_tenancy()
+        .unwrap_or_default()
+        .authorize_silo_selection(&tenant_id, &principal)
+        .map_err(|error| AppError::forbidden(error.to_string()))?;
+    let tenant_context =
+        TenantIsolationContext::application(tenant_id.clone(), principal, "convex.http_action")
+            .with_deployment_generation(deployment.generation);
     tenant_context.ensure_deployment_generation_matches(
         deployment.generation,
         "convex http action active deployment",
     )?;
-    tenant_context.admit_if_principal_claim_absent_or_matching("convex http action tenant")?;
     let route = registry
         .resolve_http_route(&route_request.method, &route_request.request_path)
         .cloned();

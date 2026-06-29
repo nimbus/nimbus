@@ -50,12 +50,20 @@ async fn convex_websocket_auth_message_sets_runtime_identity() {
         })),
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
+    let server = ServerFixture::start(router_for_convex_with_tenancy(
+        fixture.engine(),
+        registry,
+        convex_team_tenancy_binding("demo", "user-123"),
+    ))
+    .await;
     let api = HttpApiFixture::new(&server);
     assert_eq!(
         api.create_tenant("demo").await.status(),
         StatusCode::CREATED
     );
+    // #41 non-vacuous: an anonymous Convex WS upgrade for this silo is refused;
+    // the upgrade is admitted only with a team-bound bearer presented below.
+    assert_convex_anonymous_ws_refused(&server, "demo").await;
     assert_eq!(
         api.insert_document("demo", "messages", json!({ "body": "Hello" }))
             .await
@@ -63,9 +71,13 @@ async fn convex_websocket_auth_message_sets_runtime_identity() {
         StatusCode::CREATED
     );
 
-    let mut socket = WebSocketFixture::connect_for_browser(&api.ws_url("/convex/demo/ws"), "demo")
-        .await
-        .expect("browser-style websocket connection should succeed");
+    let mut socket = WebSocketFixture::connect_for_browser_with_bearer(
+        &api.ws_url("/convex/demo/ws"),
+        "demo",
+        &format!("Bearer {token}"),
+    )
+    .await
+    .expect("browser-style websocket connection should succeed");
     socket
         .send_text(
             json!({
@@ -128,13 +140,16 @@ pub(crate) async fn convex_websocket_disconnect_releases_runtime_subscription_ch
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();
-    let server = ServerFixture::start(router_for_convex(service.clone(), registry)).await;
+    let server = ServerFixture::start(router_for_convex_team(service.clone(), registry)).await;
     let api = HttpApiFixture::new(&server);
     let tenant_id = nimbus_core::TenantId::new("demo").expect("tenant id should be valid");
     assert_eq!(
         api.create_tenant("demo").await.status(),
         StatusCode::CREATED
     );
+    // #41 non-vacuous: an anonymous Convex WS upgrade for this silo is refused;
+    // the upgrade is admitted only with a team-bound bearer presented below.
+    assert_convex_anonymous_ws_refused(&server, "demo").await;
     assert_eq!(
         api.insert_document("demo", "messages", json!({ "body": "Hello" }))
             .await
@@ -142,9 +157,13 @@ pub(crate) async fn convex_websocket_disconnect_releases_runtime_subscription_ch
         StatusCode::CREATED
     );
 
-    let mut socket = WebSocketFixture::connect_for_browser(&api.ws_url("/convex/demo/ws"), "demo")
-        .await
-        .expect("browser-style websocket connection should succeed");
+    let mut socket = WebSocketFixture::connect_for_browser_with_bearer(
+        &api.ws_url("/convex/demo/ws"),
+        "demo",
+        &convex_team_bearer(),
+    )
+    .await
+    .expect("browser-style websocket connection should succeed");
     socket
         .subscribe_named("req-1", "auth:watchIdentity", json!({}))
         .await;
@@ -218,13 +237,21 @@ pub(crate) async fn convex_websocket_auth_change_drops_active_subscriptions_unti
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();
-    let server = ServerFixture::start(router_for_convex(service.clone(), registry)).await;
+    let server = ServerFixture::start(router_for_convex_with_tenancy(
+        service.clone(),
+        registry,
+        convex_team_tenancy_binding("demo", "user-123"),
+    ))
+    .await;
     let api = HttpApiFixture::new(&server);
     let tenant_id = nimbus_core::TenantId::new("demo").expect("tenant id should be valid");
     assert_eq!(
         api.create_tenant("demo").await.status(),
         StatusCode::CREATED
     );
+    // #41 non-vacuous: an anonymous Convex WS upgrade for this silo is refused;
+    // the upgrade is admitted only with a team-bound bearer presented below.
+    assert_convex_anonymous_ws_refused(&server, "demo").await;
     assert_eq!(
         api.insert_document("demo", "messages", json!({ "body": "Before auth change" }))
             .await
@@ -232,9 +259,13 @@ pub(crate) async fn convex_websocket_auth_change_drops_active_subscriptions_unti
         StatusCode::CREATED
     );
 
-    let mut socket = WebSocketFixture::connect_for_browser(&api.ws_url("/convex/demo/ws"), "demo")
-        .await
-        .expect("browser-style websocket connection should succeed");
+    let mut socket = WebSocketFixture::connect_for_browser_with_bearer(
+        &api.ws_url("/convex/demo/ws"),
+        "demo",
+        &format!("Bearer {first_token}"),
+    )
+    .await
+    .expect("browser-style websocket connection should succeed");
     socket
         .send_text(
             json!({

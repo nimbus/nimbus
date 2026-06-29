@@ -75,8 +75,11 @@ async fn convex_named_action_can_compose_query_mutation_and_action_calls() {
         }
     ]));
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
-    let api = HttpApiFixture::new(&server);
+    let server = ServerFixture::start(router_for_convex_team(fixture.engine(), registry)).await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+    // #41 non-vacuous: an anonymous (no-bearer) selection of this silo is refused
+    // by the all-fail-closed team gate; only the team-bound bearer is admitted.
+    assert_convex_anonymous_query_refused(&server, "demo").await;
 
     assert_eq!(
         api.create_tenant("demo").await.status(),

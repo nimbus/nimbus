@@ -355,12 +355,22 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, local_admin_token) = local_server_security(temp.path());
     let issuer = "https://issuer.example.com";
+    let issuer_a = "https://issuer-a.example.com";
     let application_id = "nimbus-test";
     let (tenant_b_jwt, jwks_data_url) = auth::issue_es256_test_token(
         issuer,
         application_id,
         "user-tenant-b",
         json!({ "tenant_id": "tenant-b", "email": "tenant-b@example.com" }),
+    );
+    // #41: a separately-keyed verified principal for tenant-a's team, so the
+    // cross-tenant swap below is a genuine CrossTeam refusal (a verified team-b
+    // principal targeting a team-a silo), not an unverified-principal refusal.
+    let (tenant_a_jwt, jwks_a_data_url) = auth::issue_es256_test_token(
+        issuer_a,
+        application_id,
+        "user-tenant-a",
+        json!({ "tenant_id": "tenant-a", "email": "tenant-a@example.com" }),
     );
     let registry = convex_registry_with_routes_and_bundle_and_auth(
         json!([
@@ -396,6 +406,13 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
                     "jwks": jwks_data_url,
                     "algorithm": "ES256",
                     "applicationID": application_id
+                },
+                {
+                    "type": "customJwt",
+                    "issuer": issuer_a,
+                    "jwks": jwks_a_data_url,
+                    "algorithm": "ES256",
+                    "applicationID": application_id
                 }
             ]
         })),
@@ -416,12 +433,35 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
     crate::system_tenant::prepare_system_tenant_async(&service, None)
         .await
         .expect("system tenant should prepare");
+    // #41: tenant-a→team-a, tenant-b→team-b, each verified principal bound to its
+    // own team. A principal may reach its own tenant but is refused (CrossTeam) at
+    // the other tenant — the team-binding form of cross-tenant isolation.
+    let tenant_isolation_tenancy = {
+        let team_a = nimbus_convex::TeamId::new("team-a").expect("team id");
+        let team_b = nimbus_convex::TeamId::new("team-b").expect("team id");
+        let silos = nimbus_convex::SiloTeamRegistry::new()
+            .bind(
+                &TenantId::new("tenant-a").expect("tenant id"),
+                team_a.clone(),
+            )
+            .bind(
+                &TenantId::new("tenant-b").expect("tenant id"),
+                team_b.clone(),
+            );
+        let principals = nimbus_convex::PrincipalTeamRegistry::new()
+            .bind("user-tenant-a", team_a)
+            .bind("user-tenant-b", team_b);
+        nimbus_convex::ConvexTenancyConfig::new()
+            .with_silo_teams(silos)
+            .with_principal_teams(principals)
+    };
     let server = ServerFixture::start(
         RouterBuildConfig::core(service)
             .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
                 &registry,
             ))
             .with_convex(registry)
+            .with_convex_tenancy(tenant_isolation_tenancy)
             .with_system_convex_registry(system_registry)
             .with_service_manager(service_manager.clone())
             .with_local_server_security(local_server_security)
@@ -532,7 +572,7 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
     let tenant_a_services = convex_query_json(
         &server,
         "tenant-a",
-        None,
+        Some(&tenant_a_jwt),
         "services:proof",
         json!({ "probeUrl": format!("http://127.0.0.1:{}/", tenant_service_port("tenant-a")) }),
     )
@@ -623,15 +663,27 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
         StatusCode::FORBIDDEN,
         "swapped tenant body: {swapped_body}"
     );
-    assert!(swapped_body.contains("authorizes tenant `tenant-b`"));
-    assert!(swapped_body.contains("targeted tenant `tenant-a`"));
+    assert!(
+        swapped_body.contains("tenant-a") && swapped_body.contains("belongs to team `team-a`"),
+        "swapped tenant error should name the rejected target silo and its team: {swapped_body}"
+    );
+    assert!(
+        swapped_body.contains("authorized for team `team-b`"),
+        "swapped tenant error should name the principal's verified team: {swapped_body}"
+    );
     conformance.denied(
         "runtime.auth.bearer_tenant_claim_swap_denied",
         "tenant-b bearer cannot target tenant-a path",
     );
 
-    let application_system_routes =
-        convex_query_json(&server, "tenant-a", None, "system:routes", json!({})).await;
+    let application_system_routes = convex_query_json(
+        &server,
+        "tenant-a",
+        Some(&tenant_a_jwt),
+        "system:routes",
+        json!({}),
+    )
+    .await;
     assert_eq!(
         application_system_routes,
         json!([]),

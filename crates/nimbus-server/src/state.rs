@@ -13,7 +13,7 @@ use tracing::warn;
 
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
 use crate::adapters::cloudflare::CloudflareConfig;
-use crate::adapters::convex::ConvexRegistry;
+use crate::adapters::convex::{ConvexRegistry, ConvexTenancyConfig};
 use crate::adapters::firebase::FirebaseConfig;
 use crate::error_envelope::StructuredHttpError;
 use crate::license::LicenseState;
@@ -35,6 +35,7 @@ pub(crate) struct AppStateConfig {
     pub(crate) cloud_functions_registry: Option<CloudFunctionsRegistry>,
     pub(crate) cloudflare_config: Option<CloudflareConfig>,
     pub(crate) firebase_config: Option<FirebaseConfig>,
+    pub(crate) convex_tenancy: Option<ConvexTenancyConfig>,
     pub(crate) license_state: LicenseState,
     pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     pub(crate) service_manager: Option<Arc<ServiceManager>>,
@@ -80,6 +81,7 @@ impl AppState {
             cloud_functions_registry,
             cloudflare_config,
             firebase_config,
+            convex_tenancy,
             license_state,
             runtime_service_registry,
             service_manager,
@@ -105,6 +107,7 @@ impl AppState {
             cloud_functions_registry: cloud_functions_registry.map(Arc::new),
             cloudflare_config: cloudflare_config.map(Arc::new),
             firebase_config: firebase_config.map(Arc::new),
+            convex_tenancy: convex_tenancy.map(Arc::new),
         };
         Self {
             engine,
@@ -214,6 +217,7 @@ pub(crate) struct DeploymentState {
     pub(crate) cloud_functions_registry: Option<Arc<CloudFunctionsRegistry>>,
     pub(crate) cloudflare_config: Option<Arc<CloudflareConfig>>,
     pub(crate) firebase_config: Option<Arc<FirebaseConfig>>,
+    pub(crate) convex_tenancy: Option<Arc<ConvexTenancyConfig>>,
 }
 
 impl DeploymentState {
@@ -235,6 +239,10 @@ impl DeploymentState {
 
     pub(crate) fn firebase_config(&self) -> Option<Arc<FirebaseConfig>> {
         self.firebase_config.clone()
+    }
+
+    pub(crate) fn convex_tenancy(&self) -> Option<Arc<ConvexTenancyConfig>> {
+        self.convex_tenancy.clone()
     }
 }
 
@@ -352,6 +360,7 @@ mod tests {
             cloud_functions_registry: None,
             cloudflare_config: None,
             firebase_config: Some(Arc::new(FirebaseConfig::new())),
+            convex_tenancy: None,
         });
         let previous = deployment.current();
         let previous_ptr = Arc::as_ptr(&previous);
@@ -363,6 +372,7 @@ mod tests {
             cloud_functions_registry: None,
             cloudflare_config: previous.cloudflare_config(),
             firebase_config: previous.firebase_config(),
+            convex_tenancy: previous.convex_tenancy(),
         });
         let current = deployment.current();
 
@@ -384,6 +394,7 @@ mod tests {
             cloud_functions_registry: None,
             cloudflare_config: None,
             firebase_config: None,
+            convex_tenancy: None,
             license_state: LicenseState::community(),
             runtime_service_registry: Arc::new(
                 nimbus_services::ServiceInstanceBindingRegistry::new(Arc::new(
@@ -445,6 +456,7 @@ mod tests {
             cloud_functions_registry: None,
             cloudflare_config: None,
             firebase_config: None,
+            convex_tenancy: None,
             license_state: LicenseState::community(),
             runtime_service_registry: Arc::new(
                 nimbus_services::ServiceInstanceBindingRegistry::new(Arc::new(

@@ -19,7 +19,7 @@ use tower_http::services::ServeDir;
 use crate::adapters::cloud_functions;
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
 use crate::adapters::cloudflare::{self, CloudflareConfig};
-use crate::adapters::convex::{self, ConvexRegistry};
+use crate::adapters::convex::{self, ConvexRegistry, ConvexTenancyConfig};
 use crate::adapters::firebase::{self, FirebaseConfig};
 use crate::license::LicenseState;
 use crate::local_server::{
@@ -78,6 +78,7 @@ pub struct RouterOptions {
     cloud_functions_registry: Option<CloudFunctionsRegistry>,
     cloudflare_config: Option<CloudflareConfig>,
     firebase_config: Option<FirebaseConfig>,
+    convex_tenancy: Option<ConvexTenancyConfig>,
     license_state: LicenseState,
     service_instances: Option<Arc<dyn ServiceInstanceCatalog>>,
     service_manager: Option<Arc<ServiceManager>>,
@@ -101,6 +102,7 @@ impl RouterOptions {
             cloud_functions_registry: None,
             cloudflare_config: None,
             firebase_config: None,
+            convex_tenancy: None,
             license_state: LicenseState::community(),
             service_instances: None,
             service_manager: None,
@@ -141,6 +143,11 @@ impl RouterOptions {
 
     pub fn with_cloudflare_config(mut self, cloudflare_config: CloudflareConfig) -> Self {
         self.cloudflare_config = Some(cloudflare_config);
+        self
+    }
+
+    pub fn with_convex_tenancy(mut self, convex_tenancy: ConvexTenancyConfig) -> Self {
+        self.convex_tenancy = Some(convex_tenancy);
         self
     }
 
@@ -256,6 +263,9 @@ impl RouterOptions {
         if let Some(firebase_config) = self.firebase_config {
             config = config.with_firebase(firebase_config);
         }
+        if let Some(convex_tenancy) = self.convex_tenancy {
+            config = config.with_convex_tenancy(convex_tenancy);
+        }
         if let Some(deploy_admin_token) = self.deploy_admin_token {
             config = config.with_deploy_admin_token(deploy_admin_token);
         }
@@ -289,6 +299,7 @@ pub(crate) struct RouterBuildConfig {
     cloud_functions_registry: Option<CloudFunctionsRegistry>,
     cloudflare_config: Option<CloudflareConfig>,
     firebase_config: Option<FirebaseConfig>,
+    convex_tenancy: Option<ConvexTenancyConfig>,
     license_state: LicenseState,
     runtime_service_source: RuntimeServiceSource,
     machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
@@ -314,6 +325,7 @@ impl RouterBuildConfig {
             cloud_functions_registry: None,
             cloudflare_config: None,
             firebase_config: None,
+            convex_tenancy: None,
             license_state: LicenseState::community(),
             runtime_service_source: RuntimeServiceSource::ServiceInstanceCatalog(Arc::new(
                 EmptyServiceInstanceCatalog,
@@ -405,6 +417,11 @@ impl RouterBuildConfig {
 
     pub(crate) fn with_cloudflare(mut self, cloudflare_config: CloudflareConfig) -> Self {
         self.cloudflare_config = Some(cloudflare_config);
+        self
+    }
+
+    pub(crate) fn with_convex_tenancy(mut self, convex_tenancy: ConvexTenancyConfig) -> Self {
+        self.convex_tenancy = Some(convex_tenancy);
         self
     }
 
@@ -575,6 +592,7 @@ impl RouterBuildConfig {
             cloud_functions_registry,
             cloudflare_config: self.cloudflare_config,
             firebase_config: self.firebase_config,
+            convex_tenancy: self.convex_tenancy,
             license_state: self.license_state,
             runtime_service_registry: self
                 .runtime_service_source
@@ -665,16 +683,11 @@ impl RouterBuildConfig {
                         server_access_extract_middleware,
                     )),
             )
-            .merge(
-                // #41 fail-closed stopgap: the convex application surface selects
-                // the tenant from the URL with no verified binding, so refuse it
-                // on any non-loopback bind (covers all six route types by wrapping
-                // the whole convex router). Replaced by the real binding fix.
-                build_convex_router().route_layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    convex::convex_application_network_bind_guard,
-                )),
-            );
+            // The #43 network-bind stopgap (a route-layer refusing the convex
+            // surface on non-loopback) is gone: the #41 team-binding gate in the
+            // convex admission funnel (`registry_and_auth` + `dispatch.rs`) now
+            // refuses cross-team selection on every bind, superseding it.
+            .merge(build_convex_router());
         if firebase_enabled {
             router = router.merge(build_firebase_router(state.clone()));
         }

@@ -103,6 +103,7 @@ pub(crate) async fn deploy_app(
             cloud_functions_registry: next_cloud_functions_registry.clone(),
             cloudflare_config: previous_deployment.cloudflare_config(),
             firebase_config: previous_deployment.firebase_config(),
+            convex_tenancy: previous_deployment.convex_tenancy(),
         };
         state.active_deployment.activate(next_deployment);
         if let Some(registry) = next_cloud_functions_registry {

@@ -45,27 +45,33 @@ async fn convex_runtime_query_exposes_authenticated_identity_from_bearer_token()
         })),
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
+    let server = ServerFixture::start(router_for_convex_with_tenancy(
+        fixture.engine(),
+        registry,
+        convex_team_tenancy_binding("demo", "user-123"),
+    ))
+    .await;
     let api = HttpApiFixture::new(&server);
     assert_eq!(
         api.create_tenant("demo").await.status(),
         StatusCode::CREATED
     );
 
+    // #41: the pre-#41 anonymous-success hole is closed — an unauthenticated
+    // selection of the silo is now refused (was: 200 with a null identity). This
+    // is the non-vacuous refusal half; the authenticated request below is the
+    // success half.
     let unauthenticated = server
         .client()
         .post(api.convex_url("demo", "/query"))
         .json(&json!({ "name": "auth:whoami", "args": {} }))
         .send()
         .await
-        .expect("unauthenticated auth query should succeed");
-    assert_eq!(unauthenticated.status(), StatusCode::OK);
+        .expect("unauthenticated auth query should send");
     assert_eq!(
-        unauthenticated
-            .json::<serde_json::Value>()
-            .await
-            .expect("unauthenticated auth body should parse"),
-        json!(null)
+        unauthenticated.status(),
+        StatusCode::FORBIDDEN,
+        "an anonymous caller must not select the silo (#41 gate)"
     );
 
     let authenticated = server
@@ -143,7 +149,12 @@ async fn convex_runtime_query_accepts_custom_jwt_issuer_without_scheme() {
         })),
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
+    let server = ServerFixture::start(router_for_convex_with_tenancy(
+        fixture.engine(),
+        registry,
+        convex_team_tenancy_binding("demo", "user-123"),
+    ))
+    .await;
     let api = HttpApiFixture::new(&server);
     assert_eq!(
         api.create_tenant("demo").await.status(),

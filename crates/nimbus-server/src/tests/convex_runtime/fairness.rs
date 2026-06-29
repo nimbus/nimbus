@@ -8,8 +8,9 @@ use serde_json::json;
 
 use crate::ConvexRegistry;
 use crate::tests::{
-    HeldJsonPostRequest, convex_registry_with_routes_and_bundle, open_json_post_stream,
-    router_for_convex, wait_for_runtime_metrics, wait_for_runtime_metrics_case,
+    HeldJsonPostRequest, assert_convex_anonymous_query_refused,
+    convex_registry_with_routes_and_bundle, convex_team_bearer, open_json_post_stream,
+    router_for_convex_team, wait_for_runtime_metrics, wait_for_runtime_metrics_case,
 };
 
 pub(crate) const FAIRNESS_HTTP_REJECTION_CASE: DeterministicTestCase = DeterministicTestCase::new(
@@ -138,8 +139,12 @@ async fn convex_runtime_http_rejections_return_too_many_requests() {
 pub(crate) async fn convex_runtime_http_rejections_return_too_many_requests_inner() {
     let registry = fairness_runtime_registry();
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
-    let api = HttpApiFixture::new(&server);
+    let server =
+        ServerFixture::start(router_for_convex_team(fixture.engine(), registry.clone())).await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+    // #41 non-vacuous: an anonymous (no-bearer) selection of this silo is refused
+    // by the all-fail-closed team gate; only the team-bound bearer is admitted.
+    assert_convex_anonymous_query_refused(&server, "demo").await;
 
     assert_eq!(
         api.create_tenant("demo").await.status(),
@@ -226,8 +231,12 @@ async fn convex_runtime_websocket_bootstrap_rejections_send_error_frames() {
 pub(crate) async fn convex_runtime_websocket_bootstrap_rejections_send_error_frames_inner() {
     let registry = fairness_runtime_registry();
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
-    let api = HttpApiFixture::new(&server);
+    let server =
+        ServerFixture::start(router_for_convex_team(fixture.engine(), registry.clone())).await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+    // #41 non-vacuous: an anonymous (no-bearer) selection of this silo is refused
+    // by the all-fail-closed team gate; only the team-bound bearer is admitted.
+    assert_convex_anonymous_query_refused(&server, "demo").await;
 
     assert_eq!(
         api.create_tenant("demo").await.status(),
@@ -272,9 +281,12 @@ pub(crate) async fn convex_runtime_websocket_bootstrap_rejections_send_error_fra
     )
     .await;
 
-    let mut socket = WebSocketFixture::connect_raw(&api.ws_url("/convex/demo/ws"))
-        .await
-        .expect("convex websocket should connect");
+    let mut socket = WebSocketFixture::connect_raw_with_bearer(
+        &api.ws_url("/convex/demo/ws"),
+        &convex_team_bearer(),
+    )
+    .await
+    .expect("convex websocket should connect");
     socket
         .subscribe_named("tenant-fairness", "messages:list", json!({}))
         .await;

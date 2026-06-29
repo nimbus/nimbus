@@ -635,8 +635,11 @@ async fn execute_convex_use_node_real_app(
     let service = fixture.engine();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let scheduler_handle = tokio::spawn(run_scheduler(service.clone(), shutdown_rx));
-    let server = ServerFixture::start(router_for_convex(service, app.registry.clone())).await;
-    let api = HttpApiFixture::new(&server);
+    // #41: the canary drives `/convex/demo/…` application routes, now behind the
+    // team gate — use the team router + team-bound bearer (the canary uses no
+    // deploy/activation, so the router's static verifier stays in effect).
+    let server = ServerFixture::start(router_for_convex_team(service, app.registry.clone())).await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
 
     assert_eq!(
         api.create_tenant("demo").await.status(),
@@ -866,8 +869,9 @@ async fn run_convex_use_node_dangling_promise_canary(
         expected_node_major as u16
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), app.registry)).await;
-    let api = HttpApiFixture::new(&server);
+    // #41: see above — team router + team-bound bearer for the gated routes.
+    let server = ServerFixture::start(router_for_convex_team(fixture.engine(), app.registry)).await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
 
     assert_eq!(
         api.create_tenant("demo").await.status(),

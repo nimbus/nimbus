@@ -117,14 +117,23 @@ pub(super) async fn registry_and_auth(
         }
     };
     record_authenticated_usage(state, auth.as_ref()).await;
-    let tenant_context = TenantIsolationContext::application(
-        tenant_id.clone(),
-        normalize_principal_context(auth.as_ref()),
-        route_family.as_str(),
-    )
-    .with_deployment_generation(deployment.generation);
+    let principal = normalize_principal_context(auth.as_ref());
+    // #41 team-binding gate (all-fail-closed): a principal may only select a silo
+    // owned by its team. Replaces the pre-#41 `admit_if` Admit hole (which
+    // admitted a no-tenant-claim principal to any silo) AND supersedes the #43
+    // network-bind stopgap — it refuses cross-team selection on every bind,
+    // loopback included. An unconfigured deployment (no tenancy) defaults to the
+    // empty config → every silo is unregistered → refuse. The system-tenant path
+    // returns earlier (operator-gated) and is not affected.
+    deployment
+        .convex_tenancy()
+        .unwrap_or_default()
+        .authorize_silo_selection(tenant_id, &principal)
+        .map_err(|error| AppError::forbidden(error.to_string()))?;
+    let tenant_context =
+        TenantIsolationContext::application(tenant_id.clone(), principal, route_family.as_str())
+            .with_deployment_generation(deployment.generation);
     tenant_context
         .ensure_deployment_generation_matches(deployment.generation, "convex active deployment")?;
-    tenant_context.admit_if_principal_claim_absent_or_matching("convex route tenant")?;
     Ok((registry, auth, tenant_context))
 }

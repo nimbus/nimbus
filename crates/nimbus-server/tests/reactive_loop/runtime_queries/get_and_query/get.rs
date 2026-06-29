@@ -47,7 +47,7 @@ async fn convex_named_get_subscription_returns_single_document_and_null_on_delet
     ]));
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
-    let api = HttpApiFixture::new(&server);
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
 
     assert!(api.create_tenant("demo").await.status().is_success());
     let inserted = api
@@ -63,9 +63,14 @@ async fn convex_named_get_subscription_returns_single_document_and_null_on_delet
         .to_string();
     let raw_document_id = decode_messages_raw_id(&document_id);
 
-    let mut socket = WebSocketFixture::connect_raw(&api.ws_url("/convex/demo/ws"))
-        .await
-        .expect("convex websocket should connect");
+    // #41 non-vacuous: an anonymous Convex WS upgrade for this silo is refused.
+    assert_convex_anonymous_ws_refused(&server, "demo").await;
+    let mut socket = WebSocketFixture::connect_raw_with_bearer(
+        &api.ws_url("/convex/demo/ws"),
+        &convex_team_bearer(),
+    )
+    .await
+    .expect("convex websocket should connect");
     socket
         .subscribe_named("convex-get", "messages:byId", json!({ "id": document_id }))
         .await;
@@ -140,7 +145,7 @@ export {};
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
-    let api = HttpApiFixture::new(&server);
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
 
     assert!(api.create_tenant("demo").await.status().is_success());
     let tracked = api
@@ -157,9 +162,14 @@ export {};
         .to_string();
     let tracked_convex_id = encode_messages_convex_id(&tracked_id);
 
-    let mut socket = WebSocketFixture::connect_raw(&api.ws_url("/convex/demo/ws"))
-        .await
-        .expect("convex websocket should connect");
+    // #41 non-vacuous: an anonymous Convex WS upgrade for this silo is refused.
+    assert_convex_anonymous_ws_refused(&server, "demo").await;
+    let mut socket = WebSocketFixture::connect_raw_with_bearer(
+        &api.ws_url("/convex/demo/ws"),
+        &convex_team_bearer(),
+    )
+    .await
+    .expect("convex websocket should connect");
     socket
         .subscribe_named(
             "convex-runtime-get",

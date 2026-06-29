@@ -67,8 +67,11 @@ export {};
         ),
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
-    let api = HttpApiFixture::new(&server);
+    let server = ServerFixture::start(router_for_convex_team(fixture.engine(), registry)).await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+    // #41 non-vacuous: an anonymous Convex WS upgrade for this silo is refused;
+    // only the team-bound bearer offered at the upgrade is admitted.
+    assert_convex_anonymous_ws_refused(&server, "demo").await;
 
     assert_eq!(
         api.create_tenant("demo").await.status(),
@@ -85,9 +88,12 @@ export {};
         StatusCode::CREATED
     );
 
-    let mut socket = WebSocketFixture::connect_raw(&api.ws_url("/convex/demo/ws"))
-        .await
-        .expect("convex websocket should connect");
+    let mut socket = WebSocketFixture::connect_raw_with_bearer(
+        &api.ws_url("/convex/demo/ws"),
+        &convex_team_bearer(),
+    )
+    .await
+    .expect("convex websocket should connect");
     socket
         .subscribe_named(
             "convex-runtime-correlation",
@@ -290,17 +296,23 @@ export {};
         ),
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
-    let api = HttpApiFixture::new(&server);
+    let server = ServerFixture::start(router_for_convex_team(fixture.engine(), registry)).await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+    // #41 non-vacuous: an anonymous Convex WS upgrade for this silo is refused;
+    // only the team-bound bearer offered at the upgrade is admitted.
+    assert_convex_anonymous_ws_refused(&server, "demo").await;
 
     assert_eq!(
         api.create_tenant("demo").await.status(),
         StatusCode::CREATED
     );
 
-    let mut socket = WebSocketFixture::connect_raw(&api.ws_url("/convex/demo/ws"))
-        .await
-        .expect("convex websocket should connect");
+    let mut socket = WebSocketFixture::connect_raw_with_bearer(
+        &api.ws_url("/convex/demo/ws"),
+        &convex_team_bearer(),
+    )
+    .await
+    .expect("convex websocket should connect");
     socket
         .subscribe_named(
             "convex-runtime-subscription-named-mutation",
@@ -571,8 +583,11 @@ export {};
         ),
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
-    let api = HttpApiFixture::new(&server);
+    let server = ServerFixture::start(router_for_convex_team(fixture.engine(), registry)).await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+    // #41 non-vacuous: an anonymous Convex WS upgrade for this silo is refused;
+    // only the team-bound bearer offered at the upgrade is admitted.
+    assert_convex_anonymous_ws_refused(&server, "demo").await;
 
     assert_eq!(
         api.create_tenant("demo").await.status(),
@@ -664,9 +679,12 @@ export {};
         .expect("second page should parse");
     assert_eq!(second_page_body["page"].as_array().map(Vec::len), Some(1));
 
-    let mut socket = WebSocketFixture::connect_raw(&api.ws_url("/convex/demo/ws"))
-        .await
-        .expect("convex websocket should connect");
+    let mut socket = WebSocketFixture::connect_raw_with_bearer(
+        &api.ws_url("/convex/demo/ws"),
+        &convex_team_bearer(),
+    )
+    .await
+    .expect("convex websocket should connect");
     socket
         .subscribe_named(
             "convex-runtime-differential-order",

@@ -100,6 +100,10 @@ aws-credential-types = "1.2.14"
 aws-sdk-dynamodb = { workspace = true }
 aws-sdk-dynamodbstreams = { workspace = true }
 aws-sigv4 = "=1.4.3"
+# Mint ES256 JWTs + JWKS for the reactive_loop integration test's #41
+# team-binding bearer (a public-API test target with no crate-internal verifier).
+base64.workspace = true
+ring.workspace = true
 nimbus-engine = { path = "../nimbus-engine", features = ["test-hooks"] }
 nimbus-testing = { path = "../nimbus-testing" }
 serde_yaml.workspace = true

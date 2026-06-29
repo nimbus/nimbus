@@ -3,9 +3,12 @@ use super::*;
 #[tokio::test]
 async fn convex_query_returns_documents_as_plain_json() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server =
-        ServerFixture::start(router_for_convex(fixture.engine(), ConvexRegistry::empty())).await;
-    let api = HttpApiFixture::new(&server);
+    let server = ServerFixture::start(router_for_convex_team(
+        fixture.engine(),
+        ConvexRegistry::empty(),
+    ))
+    .await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
 
     assert_eq!(
         api.create_tenant("demo").await.status(),
@@ -17,6 +20,10 @@ async fn convex_query_returns_documents_as_plain_json() {
             .status(),
         StatusCode::CREATED
     );
+
+    // #41 non-vacuous: an anonymous (no-bearer) selection of this silo is refused
+    // by the all-fail-closed gate; only the team-bound bearer below is admitted.
+    assert_convex_anonymous_query_refused(&server, "demo").await;
 
     let response = api
         .convex_query(

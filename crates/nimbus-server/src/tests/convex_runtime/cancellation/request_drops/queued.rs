@@ -36,14 +36,22 @@ fn queued_request_drop_host_budget() -> nimbus_runtime::RuntimeHostResourceBudge
 }
 
 fn router_for_queued_request_drop(engine: Arc<Engine>, registry: ConvexRegistry) -> axum::Router {
-    build_router(
-        RouterOptions::new(engine)
-            .with_convex_registry(registry)
-            .with_runtime_host_resource_budget(queued_request_drop_host_budget())
-            .with_runtime_host_pressure_source(Arc::new(
-                nimbus_runtime::NominalRuntimeHostPressureSource,
-            )),
-    )
+    // #41: the application-convex team gate now guards every `/convex/<silo>`
+    // route, so this specialized queued-drop router must install the same test
+    // verifier + team tenancy as `router_for_convex_team_for` (so the team-bound
+    // bearer is admitted) while keeping its own host budget + nominal pressure
+    // source. Going through `build_router` instead binds the *production* convex
+    // verifier, which rejects the test bearer and would silently refuse the
+    // blocking query before it can start — so build the config directly.
+    crate::router::RouterBuildConfig::core(engine)
+        .with_application_auth_verifier(Arc::new(crate::tests::StaticConvexTeamVerifier))
+        .with_convex(registry)
+        .with_convex_tenancy(convex_team_tenancy_for("demo"))
+        .with_runtime_host_resource_budget(queued_request_drop_host_budget())
+        .with_runtime_host_pressure_source(Arc::new(
+            nimbus_runtime::NominalRuntimeHostPressureSource,
+        ))
+        .build()
 }
 
 #[tokio::test]
@@ -72,7 +80,10 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         registry.clone(),
     ))
     .await;
-    let api = HttpApiFixture::new(&server);
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+    // #41 non-vacuous: an anonymous (no-bearer) selection of this silo is refused
+    // by the all-fail-closed team gate; only the team-bound bearer is admitted.
+    assert_convex_anonymous_query_refused(&server, "demo").await;
 
     assert_eq!(
         api.create_tenant("demo").await.status(),
@@ -231,7 +242,10 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         registry.clone(),
     ))
     .await;
-    let api = HttpApiFixture::new(&server);
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+    // #41 non-vacuous: an anonymous (no-bearer) selection of this silo is refused
+    // by the all-fail-closed team gate; only the team-bound bearer is admitted.
+    assert_convex_anonymous_query_refused(&server, "demo").await;
 
     assert_eq!(
         api.create_tenant("demo").await.status(),

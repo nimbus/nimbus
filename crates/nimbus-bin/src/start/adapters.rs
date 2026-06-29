@@ -14,8 +14,9 @@ use std::path::Path;
 
 use nimbus::{Error, ObjectStorageConfig, ObjectStorageEnv, TenantId};
 use nimbus_server::{
-    CloudflareConfig, DynamoDbConfig, FirebaseConfig, MongoDbAuthConfig, MongoDbConfig,
-    MongoDbCredentialRegistry, ProjectTenantRegistry, S3AccessKeyRegistry, S3Config,
+    CloudflareConfig, ConvexTenancyConfig, DynamoDbConfig, FirebaseConfig, MongoDbAuthConfig,
+    MongoDbConfig, MongoDbCredentialRegistry, PrincipalTeamRegistry, ProjectTenantRegistry,
+    S3AccessKeyRegistry, S3Config, SiloTeamRegistry,
 };
 
 use crate::wire_credentials::{WireCredentials, load_or_generate};
@@ -42,6 +43,22 @@ pub(super) const S3_ACCESS_KEYS_ENV: &str = "NIMBUS_S3_ACCESS_KEYS";
 /// request because no project maps to a tenant. A malformed entry is a hard
 /// boot error, never a silent permissive default.
 pub(super) const FIREBASE_PROJECTS_ENV: &str = "NIMBUS_FIREBASE_PROJECTS";
+/// Per-silo team bindings (#41 application-Convex team-binding gate).
+/// Comma-separated `SILO_TENANT:TEAM` entries, parsed by
+/// [`SiloTeamRegistry::from_operator_spec`]. When set, the application-Convex
+/// admission funnel authorizes a request's silo selection against the
+/// principal's team. When unset the deployment keeps the empty, fail-closed
+/// [`ConvexTenancyConfig::default`], which refuses every silo selection because
+/// no silo maps to a team. A malformed spec is a hard boot error, never a
+/// silent permissive default.
+pub(super) const CONVEX_SILO_TEAMS_ENV: &str = "NIMBUS_CONVEX_SILO_TEAMS";
+/// Verified-principal team bindings (#41 application-Convex team-binding gate).
+/// Comma-separated `SUBJECT@ISSUER:TEAM` entries, parsed by
+/// [`PrincipalTeamRegistry::from_operator_spec`]. Pairs with
+/// [`CONVEX_SILO_TEAMS_ENV`]: a principal may only select a silo owned by its
+/// bound team. When unset the deployment keeps the empty, fail-closed
+/// [`ConvexTenancyConfig::default`]. A malformed spec is a hard boot error.
+pub(super) const CONVEX_PRINCIPAL_TEAMS_ENV: &str = "NIMBUS_CONVEX_PRINCIPAL_TEAMS";
 
 pub(crate) const MONGODB_CONVENTIONAL_PORT: u16 = 27017;
 pub(crate) const DYNAMODB_CONVENTIONAL_PORT: u16 = 8000;
@@ -59,6 +76,7 @@ pub(super) const DEFAULT_WIRE_TENANT: &str = "default";
 pub(crate) struct AdapterEnablement {
     pub(crate) firebase: Option<FirebaseConfig>,
     pub(crate) cloudflare: Option<CloudflareConfig>,
+    pub(crate) convex_tenancy: Option<ConvexTenancyConfig>,
     pub(crate) mongodb: Option<MongoDbConfig>,
     pub(crate) dynamodb: Option<DynamoDbConfig>,
     pub(crate) s3: Option<S3Config>,
@@ -117,6 +135,9 @@ impl AdapterEnablement {
         }
         if let Some(cloudflare) = self.cloudflare {
             options = options.with_cloudflare(cloudflare);
+        }
+        if let Some(convex_tenancy) = self.convex_tenancy {
+            options = options.with_convex_tenancy(convex_tenancy);
         }
         if let Some(mongodb) = self.mongodb {
             options = options.with_mongodb(mongodb);
@@ -228,10 +249,44 @@ pub(crate) fn resolve_adapter_enablement_with_env_and_app_dir(
     Ok(AdapterEnablement {
         firebase: resolve_firebase(command, &env_lookup)?,
         cloudflare,
+        convex_tenancy: resolve_convex_tenancy(&env_lookup)?,
         mongodb,
         dynamodb,
         s3,
     })
+}
+
+/// Resolve the application-Convex team-binding tenancy config (#41), ingesting
+/// the silo->team and principal->team registries from [`CONVEX_SILO_TEAMS_ENV`]
+/// and [`CONVEX_PRINCIPAL_TEAMS_ENV`] when present.
+///
+/// When neither env is set this returns `Ok(None)`: the deployment keeps the
+/// fail-closed [`ConvexTenancyConfig::default`] (no `convex_tenancy` plumbed),
+/// so the admission funnel refuses every application-Convex silo selection. When
+/// at least one env is set the registries are parsed by the same
+/// `from_operator_spec` the gate uses elsewhere. A malformed spec is a hard
+/// `InvalidInput` boot error, mirroring the Firebase project ingestion; an unset
+/// env never falls back to a permissive registry.
+fn resolve_convex_tenancy(
+    env_lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<Option<ConvexTenancyConfig>, Error> {
+    let silo_raw = env_lookup(CONVEX_SILO_TEAMS_ENV);
+    let principal_raw = env_lookup(CONVEX_PRINCIPAL_TEAMS_ENV);
+    if silo_raw.is_none() && principal_raw.is_none() {
+        return Ok(None);
+    }
+    let mut config = ConvexTenancyConfig::new();
+    if let Some(raw) = silo_raw {
+        let registry = SiloTeamRegistry::from_operator_spec(&raw)
+            .map_err(|error| Error::InvalidInput(error.to_string()))?;
+        config = config.with_silo_teams(registry);
+    }
+    if let Some(raw) = principal_raw {
+        let registry = PrincipalTeamRegistry::from_operator_spec(&raw)
+            .map_err(|error| Error::InvalidInput(error.to_string()))?;
+        config = config.with_principal_teams(registry);
+    }
+    Ok(Some(config))
 }
 
 /// Resolve the Firebase adapter config, ingesting the project->tenant registry

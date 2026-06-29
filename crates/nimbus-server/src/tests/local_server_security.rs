@@ -393,6 +393,10 @@ async fn convex_routes_keep_application_auth_and_reject_local_admin_bearers() {
                 &registry,
             ))
             .with_convex(registry)
+            // #41: provision the verified `user-123` principal onto the team that
+            // owns `demo`, so the application JWT is admitted by the gate while
+            // an unbound bearer (the local-admin token below) is refused.
+            .with_convex_tenancy(convex_team_tenancy_binding("demo", "user-123"))
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -481,6 +485,10 @@ async fn convex_route_rejects_application_bearer_for_different_tenant() {
                 &registry,
             ))
             .with_convex(registry)
+            // #41: tenant-a→team-a, tenant-b→team-b, verified `user-123`→team-b.
+            // The verified bearer reaches tenant-b but is refused (CrossTeam) at
+            // tenant-a — the team-binding form of the cross-tenant rejection.
+            .with_convex_tenancy(convex_cross_tenant_tenancy())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -536,12 +544,12 @@ async fn convex_route_rejects_application_bearer_for_different_tenant() {
         "swapped-tenant query body: {rejected_body}"
     );
     assert!(
-        rejected_body.contains("authorizes tenant `tenant-b`"),
-        "swapped-tenant error should name the verified tenant claim: {rejected_body}"
+        rejected_body.contains("tenant-a") && rejected_body.contains("belongs to team `team-a`"),
+        "swapped-tenant error should name the rejected target silo and its team: {rejected_body}"
     );
     assert!(
-        rejected_body.contains("targeted tenant `tenant-a`"),
-        "swapped-tenant error should name the rejected target tenant: {rejected_body}"
+        rejected_body.contains("authorized for team `team-b`"),
+        "swapped-tenant error should name the principal's verified team: {rejected_body}"
     );
 }
 
@@ -599,6 +607,9 @@ async fn convex_http_action_rejects_application_bearer_for_different_tenant() {
                 &registry,
             ))
             .with_convex(registry)
+            // #41: same cross-tenant team binding as the query case, exercised
+            // through the Convex HTTP-action surface.
+            .with_convex_tenancy(convex_cross_tenant_tenancy())
             .build(),
     )
     .await;
@@ -639,12 +650,12 @@ async fn convex_http_action_rejects_application_bearer_for_different_tenant() {
         "swapped-tenant convex http action body: {rejected_body}"
     );
     assert!(
-        rejected_body.contains("authorizes tenant `tenant-b`"),
-        "swapped-tenant convex http action error should name the verified tenant claim: {rejected_body}"
+        rejected_body.contains("tenant-a") && rejected_body.contains("belongs to team `team-a`"),
+        "swapped-tenant convex http action error should name the rejected target silo and its team: {rejected_body}"
     );
     assert!(
-        rejected_body.contains("targeted tenant `tenant-a`"),
-        "swapped-tenant convex http action error should name the rejected target tenant: {rejected_body}"
+        rejected_body.contains("authorized for team `team-b`"),
+        "swapped-tenant convex http action error should name the principal's verified team: {rejected_body}"
     );
 }
 
@@ -658,13 +669,19 @@ async fn system_tenant_convex_routes_use_system_registry_not_application_registr
         .await
         .expect("system tenant should prepare");
     let server = ServerFixture::start(
-        RouterBuildConfig::core(service)
-            .with_system_convex_registry(system_registry)
-            .with_convex(application_registry)
-            .build(),
+        with_convex_team_binding(
+            RouterBuildConfig::core(service)
+                .with_system_convex_registry(system_registry)
+                .with_convex(application_registry),
+            "demo",
+        )
+        .build(),
     )
     .await;
+    // `api` stays anonymous for the native and operator-gated `_nimbus` routes;
+    // `app_api` carries the team bearer for the gated application surface.
     let api = HttpApiFixture::new(&server);
+    let app_api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
 
     assert_eq!(
         api.create_tenant("demo").await.status(),
@@ -680,6 +697,8 @@ async fn system_tenant_convex_routes_use_system_registry_not_application_registr
         .status(),
         StatusCode::CREATED
     );
+    // #41 non-vacuous: an anonymous selection of the application silo is refused.
+    assert_convex_anonymous_query_refused(&server, "demo").await;
 
     let system_routes = api
         .convex_named_query("_nimbus", "routes:list", json!({}))
@@ -696,7 +715,7 @@ async fn system_tenant_convex_routes_use_system_registry_not_application_registr
         "system Convex registry should read the seeded _nimbus route inventory: {routes}"
     );
 
-    let application_notes = api
+    let application_notes = app_api
         .convex_named_query("demo", "notes:list", json!({}))
         .await;
     assert_eq!(application_notes.status(), StatusCode::OK);
@@ -801,16 +820,23 @@ export {};
         .await
         .expect("system tenant should prepare");
     let server = ServerFixture::start(
-        RouterBuildConfig::core(service)
-            .with_system_convex_registry(system_registry)
-            .with_convex(application_registry)
-            .with_local_server_security(local_server_security)
-            .build(),
+        with_convex_team_binding(
+            RouterBuildConfig::core(service)
+                .with_system_convex_registry(system_registry)
+                .with_convex(application_registry)
+                .with_local_server_security(local_server_security),
+            "demo",
+        )
+        .build(),
     )
     .await;
-    let api = HttpApiFixture::new(&server);
+    let app_api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
 
-    let application_routes = api
+    // #41 non-vacuous: an anonymous selection of the application silo is refused;
+    // the verified team bearer below is admitted and still cannot read _nimbus.
+    assert_convex_anonymous_query_refused(&server, "demo").await;
+
+    let application_routes = app_api
         .convex_named_query("demo", "notes:systemRoutes", json!({}))
         .await;
     let application_status = application_routes.status();

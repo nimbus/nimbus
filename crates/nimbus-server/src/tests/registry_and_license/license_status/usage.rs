@@ -49,7 +49,35 @@ async fn license_status_route_tracks_global_monthly_active_users_across_tenants(
         })),
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
+    // #41: the application-Convex team gate guards `/convex/{alpha,beta}`. Bind
+    // both silos to one team and bind the two custom-JWT issuers (token-one and
+    // token-two) to that same team, so both verified users may select either
+    // silo. MAU still counts the two distinct verified *subjects*; the gate
+    // admits on the verified *issuer*. Anonymous selection stays refused below.
+    let team = nimbus_convex::TeamId::new(crate::tests::CONVEX_TEAM).expect("team id valid");
+    let tenancy = nimbus_convex::ConvexTenancyConfig::new()
+        .with_silo_teams(
+            nimbus_convex::SiloTeamRegistry::new()
+                .bind(
+                    &nimbus_core::TenantId::new("alpha").expect("alpha silo id valid"),
+                    team.clone(),
+                )
+                .bind(
+                    &nimbus_core::TenantId::new("beta").expect("beta silo id valid"),
+                    team.clone(),
+                ),
+        )
+        .with_principal_teams(
+            nimbus_convex::PrincipalTeamRegistry::new()
+                .bind(issuer_one, team.clone())
+                .bind(issuer_two, team),
+        );
+    let server = ServerFixture::start(router_for_convex_with_tenancy(
+        fixture.engine(),
+        registry,
+        tenancy,
+    ))
+    .await;
     let api = HttpApiFixture::new(&server);
     assert_eq!(
         api.create_tenant("alpha").await.status(),
@@ -60,6 +88,9 @@ async fn license_status_route_tracks_global_monthly_active_users_across_tenants(
         StatusCode::CREATED
     );
 
+    // #41 non-vacuous: with the team gate active, an *anonymous* selection of a
+    // silo is refused (the accepted dev-UX consequence) — so it never reaches
+    // the function and never inflates the monthly-active-user count below.
     assert_eq!(
         server
             .client()
@@ -67,9 +98,9 @@ async fn license_status_route_tracks_global_monthly_active_users_across_tenants(
             .json(&json!({ "name": "auth:whoami", "args": {} }))
             .send()
             .await
-            .expect("unauthenticated alpha query should succeed")
+            .expect("anonymous alpha query should receive a response")
             .status(),
-        StatusCode::OK
+        StatusCode::FORBIDDEN
     );
 
     for tenant_id in ["alpha", "beta"] {

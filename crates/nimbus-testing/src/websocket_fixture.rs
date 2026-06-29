@@ -65,6 +65,34 @@ impl WebSocketFixture {
         Self::connect_request(connector).await
     }
 
+    /// Connect a raw socket that presents `bearer` (e.g. `"Bearer <token>"`) as
+    /// the `Authorization` header at the WebSocket upgrade. The #41 team-binding
+    /// gate runs at upgrade time and reads this header, so an authenticated
+    /// application-Convex subscription must offer the bearer here, not only in a
+    /// post-connect `authenticate` message.
+    pub async fn connect_raw_with_bearer(url: &str, bearer: &str) -> Result<Self, WebSocketError> {
+        let mut request = url
+            .into_client_request()
+            .expect("websocket request should build");
+        request.headers_mut().insert(
+            http::header::AUTHORIZATION,
+            http::HeaderValue::from_str(bearer).expect("authorization header should be valid"),
+        );
+        Self::connect_request(request).await
+    }
+
+    /// Browser-style connect (`?tenant_id=…`) that also presents `bearer` as the
+    /// `Authorization` header at the upgrade, so the #41 gate admits the
+    /// principal before the upgrade completes.
+    pub async fn connect_for_browser_with_bearer(
+        url: &str,
+        tenant_id: &str,
+        bearer: &str,
+    ) -> Result<Self, WebSocketError> {
+        let connector = format!("{url}?tenant_id={tenant_id}");
+        Self::connect_raw_with_bearer(&connector, bearer).await
+    }
+
     pub async fn subscribe_all(&mut self, request_id: &str, table: &str) {
         self.send_text(
             json!({

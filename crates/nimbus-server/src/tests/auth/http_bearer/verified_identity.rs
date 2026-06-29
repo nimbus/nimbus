@@ -45,12 +45,20 @@ async fn convex_runtime_query_exposes_nimbus_verified_identity_extension() {
         })),
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
+    let server = ServerFixture::start(router_for_convex_with_tenancy(
+        fixture.engine(),
+        registry,
+        convex_team_tenancy_binding("demo", "user-123"),
+    ))
+    .await;
     let api = HttpApiFixture::new(&server);
     assert_eq!(
         api.create_tenant("demo").await.status(),
         StatusCode::CREATED
     );
+    // #41 non-vacuous: an anonymous (no-bearer) selection of this silo is refused;
+    // only the verified `user-123` principal bound to the team is admitted below.
+    assert_convex_anonymous_query_refused(&server, "demo").await;
 
     let authenticated = server
         .client()
