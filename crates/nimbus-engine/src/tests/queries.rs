@@ -810,7 +810,7 @@ async fn subscription_re_evaluation_uses_materialized_serving_path_for_full_scan
         .expect("materialized surface stats should load");
     assert_eq!(surface_stats.loaded_table_count, 1);
     assert!(
-        surface_stats.evaluation_count >= initial_surface_stats.evaluation_count + 1,
+        surface_stats.evaluation_count > initial_surface_stats.evaluation_count,
         "subscription re-evaluation should use the materialized surface at least once after the initial evaluation; got {}",
         surface_stats.evaluation_count
     );
