@@ -28,11 +28,12 @@
 //!
 //! The currently shipped backing adapter is [`MemoryBlobStore`]. It is a
 //! deterministic in-memory implementation for seam tests and consumers such as
-//! the CAS read-only filesystem backend. The durable `LocalPackStore` name is
-//! reserved for NOS-A1's append-only encrypted pack implementation.
+//! the CAS read-only filesystem backend. The durable [`LocalPackStore`] is the
+//! local append-only pack implementation.
 
 mod encrypted;
 mod hash;
+mod local;
 mod memory;
 mod placement;
 mod store;
@@ -41,6 +42,7 @@ pub use encrypted::EncryptedBlobStore;
 pub use hash::{BLAKE3_HASH_LEN, BlobHash};
 #[cfg(feature = "cluster")]
 pub use hash::{BlobTicket, PeerAddr};
+pub use local::{CompactionStats, LocalPackStore};
 pub use memory::MemoryBlobStore;
 pub use nimbus_crypto::{FRAME_PLAINTEXT_LEN, FramedBlobKey, KEY_SEED_LEN, NONCE_LEN};
 pub use placement::{PlacementBlobStore, PlacementMode};

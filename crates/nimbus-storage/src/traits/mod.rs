@@ -14,7 +14,9 @@ use nimbus_core::{
     TenantEventRecord, TenantId, Timestamp,
 };
 use nimbus_crypto::LocalKeyProvider;
-use serde_json::{Map, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::async_storage::{
     EmbeddedPersistenceProvider, EmbeddedRedbProvider, EmbeddedSqliteProvider,
@@ -35,6 +37,198 @@ pub use kv::{
     KvBatchOp, KvBatchOutcome, KvEntry, KvMutation, KvPut, KvScanPage, KvStorageEngine,
     KvSweepOutcome, TenantKvStore,
 };
+
+/// Reserved table where object manifests are stored.
+///
+/// The byte plane (`nimbus-blob`) never depends on storage; this table is the
+/// named metadata plane consumed by the S3 surface and object filesystem binder.
+pub const OBJECT_MANIFEST_TABLE: &str = "_nimbus_objects";
+
+const OBJECT_FIELD_KEY: &str = "key";
+const OBJECT_FIELD_SIZE: &str = "size";
+const OBJECT_FIELD_CONTENT_TYPE: &str = "content_type";
+const OBJECT_FIELD_USER_METADATA: &str = "user_metadata";
+const OBJECT_FIELD_ETAG: &str = "etag";
+const OBJECT_FIELD_BLOB_LAYOUT: &str = "blob_layout";
+
+/// A blob reference inside an object manifest.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectChunkRef {
+    pub blob_hash: String,
+    pub offset: u64,
+    pub len: u64,
+}
+
+/// Object byte layout recorded in the metadata plane.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ObjectBlobLayout {
+    Whole { blob_hash: String },
+    Chunked { chunks: Vec<ObjectChunkRef> },
+}
+
+/// Protocol-neutral object manifest.
+///
+/// `key` is the S3/developer-visible object key. It is not used directly as a
+/// `DocumentId`, because object keys may contain `/`; storage uses a stable
+/// derived document id and stores the original key as data.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ObjectManifest {
+    pub key: String,
+    pub size: u64,
+    pub blob_layout: ObjectBlobLayout,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    #[serde(default)]
+    pub user_metadata: Map<String, Value>,
+    pub etag: String,
+}
+
+impl ObjectManifest {
+    pub fn whole(
+        key: impl Into<String>,
+        size: u64,
+        blob_hash: impl Into<String>,
+        content_type: Option<String>,
+        user_metadata: Map<String, Value>,
+        etag: impl Into<String>,
+    ) -> Result<Self> {
+        let manifest = Self {
+            key: key.into(),
+            size,
+            blob_layout: ObjectBlobLayout::Whole {
+                blob_hash: blob_hash.into(),
+            },
+            content_type,
+            user_metadata,
+            etag: etag.into(),
+        };
+        manifest.validate()?;
+        Ok(manifest)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_object_key(&self.key)?;
+        if self.etag.is_empty() {
+            return Err(nimbus_core::Error::InvalidInput(
+                "object manifest etag cannot be empty".to_string(),
+            ));
+        }
+        match &self.blob_layout {
+            ObjectBlobLayout::Whole { blob_hash } if blob_hash.is_empty() => {
+                Err(nimbus_core::Error::InvalidInput(
+                    "object manifest whole blob hash cannot be empty".to_string(),
+                ))
+            }
+            ObjectBlobLayout::Chunked { chunks } if chunks.is_empty() => {
+                Err(nimbus_core::Error::InvalidInput(
+                    "object manifest chunked layout cannot be empty".to_string(),
+                ))
+            }
+            ObjectBlobLayout::Chunked { chunks } => {
+                for chunk in chunks {
+                    if chunk.blob_hash.is_empty() {
+                        return Err(nimbus_core::Error::InvalidInput(
+                            "object manifest chunk blob hash cannot be empty".to_string(),
+                        ));
+                    }
+                    if chunk.len == 0 {
+                        return Err(nimbus_core::Error::InvalidInput(
+                            "object manifest chunk length cannot be zero".to_string(),
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn document_id(&self) -> Result<DocumentId> {
+        object_document_id(&self.key)
+    }
+
+    fn to_document(&self) -> Result<Document> {
+        self.validate()?;
+        let mut fields = Map::new();
+        fields.insert(
+            OBJECT_FIELD_KEY.to_string(),
+            Value::String(self.key.clone()),
+        );
+        fields.insert(OBJECT_FIELD_SIZE.to_string(), json!(self.size));
+        fields.insert(
+            OBJECT_FIELD_CONTENT_TYPE.to_string(),
+            self.content_type
+                .clone()
+                .map(Value::String)
+                .unwrap_or(Value::Null),
+        );
+        fields.insert(
+            OBJECT_FIELD_USER_METADATA.to_string(),
+            Value::Object(self.user_metadata.clone()),
+        );
+        fields.insert(
+            OBJECT_FIELD_ETAG.to_string(),
+            Value::String(self.etag.clone()),
+        );
+        fields.insert(
+            OBJECT_FIELD_BLOB_LAYOUT.to_string(),
+            serde_json::to_value(&self.blob_layout).map_err(|err| {
+                nimbus_core::Error::Serialization(format!("encode object blob layout: {err}"))
+            })?,
+        );
+        Ok(Document::with_id(
+            self.document_id()?,
+            object_manifest_table()?,
+            fields,
+        ))
+    }
+
+    fn from_document(document: &Document) -> Result<Self> {
+        let key = required_string(document, OBJECT_FIELD_KEY)?;
+        let size = required_u64(document, OBJECT_FIELD_SIZE)?;
+        let content_type = optional_string(document, OBJECT_FIELD_CONTENT_TYPE)?;
+        let user_metadata = match document.fields.get(OBJECT_FIELD_USER_METADATA) {
+            Some(Value::Object(map)) => map.clone(),
+            Some(_) => {
+                return Err(nimbus_core::Error::Serialization(
+                    "object manifest user_metadata must be an object".to_string(),
+                ));
+            }
+            None => Map::new(),
+        };
+        let etag = required_string(document, OBJECT_FIELD_ETAG)?;
+        let layout_value = document
+            .fields
+            .get(OBJECT_FIELD_BLOB_LAYOUT)
+            .ok_or_else(|| {
+                nimbus_core::Error::Serialization("object manifest missing blob_layout".to_string())
+            })?
+            .clone();
+        let blob_layout: ObjectBlobLayout =
+            serde_json::from_value(layout_value).map_err(|err| {
+                nimbus_core::Error::Serialization(format!("decode object blob layout: {err}"))
+            })?;
+        let manifest = Self {
+            key,
+            size,
+            blob_layout,
+            content_type,
+            user_metadata,
+            etag,
+        };
+        manifest.validate()?;
+        Ok(manifest)
+    }
+}
+
+/// Metadata-plane capability for named object manifests.
+pub trait ObjectMetaStore {
+    fn put_object_manifest(&self, manifest: &ObjectManifest) -> Result<CommitEntry>;
+    fn get_object_manifest(&self, key: &str) -> Result<Option<ObjectManifest>>;
+    fn delete_object_manifest(&self, key: &str) -> Result<Option<(CommitEntry, ObjectManifest)>>;
+    fn list_object_manifests(&self, prefix: &str, limit: usize) -> Result<Vec<ObjectManifest>>;
+}
 
 /// Tenant lifecycle and discovery for provider families that can own tenants.
 pub trait TenantLifecycle {
@@ -174,6 +368,137 @@ pub trait SchedulerStore {
     fn next_scheduled_work_at(&self) -> Result<Option<Timestamp>>;
 }
 
+fn validate_object_key(key: &str) -> Result<()> {
+    if key.is_empty() {
+        return Err(nimbus_core::Error::InvalidInput(
+            "object key cannot be empty".to_string(),
+        ));
+    }
+    if key.len() > 1_024 {
+        return Err(nimbus_core::Error::InvalidInput(
+            "object key cannot exceed 1024 bytes".to_string(),
+        ));
+    }
+    if key.bytes().any(|byte| byte == 0) {
+        return Err(nimbus_core::Error::InvalidInput(
+            "object key cannot contain NUL bytes".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn object_manifest_table() -> Result<TableName> {
+    TableName::new(OBJECT_MANIFEST_TABLE)
+}
+
+fn object_document_id(key: &str) -> Result<DocumentId> {
+    validate_object_key(key)?;
+    let digest = Sha256::digest(key.as_bytes());
+    DocumentId::from_key(format!("object_{}", hex::encode(digest)))
+}
+
+fn required_string(document: &Document, field: &str) -> Result<String> {
+    match document.fields.get(field) {
+        Some(Value::String(value)) => Ok(value.clone()),
+        Some(_) => Err(nimbus_core::Error::Serialization(format!(
+            "object manifest field {field} must be a string"
+        ))),
+        None => Err(nimbus_core::Error::Serialization(format!(
+            "object manifest missing field {field}"
+        ))),
+    }
+}
+
+fn optional_string(document: &Document, field: &str) -> Result<Option<String>> {
+    match document.fields.get(field) {
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(Value::Null) | None => Ok(None),
+        Some(_) => Err(nimbus_core::Error::Serialization(format!(
+            "object manifest field {field} must be a string or null"
+        ))),
+    }
+}
+
+fn required_u64(document: &Document, field: &str) -> Result<u64> {
+    match document.fields.get(field).and_then(Value::as_u64) {
+        Some(value) => Ok(value),
+        None => Err(nimbus_core::Error::Serialization(format!(
+            "object manifest field {field} must be an unsigned integer"
+        ))),
+    }
+}
+
+fn put_object_manifest_for_store<S>(store: &S, manifest: &ObjectManifest) -> Result<CommitEntry>
+where
+    S: TenantPointRead + TenantPointWrite,
+{
+    let document = manifest.to_document()?;
+    if store.get(&document.table, &document.id)?.is_some() {
+        store.update_document_validated(&document.table, &document.id, &document.fields, |_, _| {
+            Ok(())
+        })
+    } else {
+        store.insert_document(&document)
+    }
+}
+
+fn get_object_manifest_for_store<S>(store: &S, key: &str) -> Result<Option<ObjectManifest>>
+where
+    S: TenantPointRead,
+{
+    let table = object_manifest_table()?;
+    let id = object_document_id(key)?;
+    store
+        .get(&table, &id)?
+        .as_ref()
+        .map(ObjectManifest::from_document)
+        .transpose()
+}
+
+fn delete_object_manifest_for_store<S>(
+    store: &S,
+    key: &str,
+) -> Result<Option<(CommitEntry, ObjectManifest)>>
+where
+    S: TenantPointRead + TenantPointWrite,
+{
+    let table = object_manifest_table()?;
+    let id = object_document_id(key)?;
+    let Some(existing) = store.get(&table, &id)? else {
+        return Ok(None);
+    };
+    let manifest = ObjectManifest::from_document(&existing)?;
+    let (commit, _) = store.delete_document_validated(&table, &id, |_| Ok(()))?;
+    Ok(Some((commit, manifest)))
+}
+
+fn list_object_manifests_for_store<S>(
+    store: &S,
+    prefix: &str,
+    limit: usize,
+) -> Result<Vec<ObjectManifest>>
+where
+    S: TenantRangeScan,
+{
+    let table = object_manifest_table()?;
+    let mut check_cancel = || Ok(());
+    let mut manifests = store
+        .scan_table_matching_with_filters_cancellable(&table, &[], &mut check_cancel, |document| {
+            match document.fields.get(OBJECT_FIELD_KEY) {
+                Some(Value::String(key)) => Ok(key.starts_with(prefix)),
+                _ => Ok(false),
+            }
+        })?
+        .iter()
+        .map(ObjectManifest::from_document)
+        .collect::<Result<Vec<_>>>()?;
+    manifests.sort_by(|left, right| left.key.cmp(&right.key));
+    if manifests.len() > limit {
+        manifests.truncate(limit);
+    }
+    Ok(manifests)
+}
+
 /// Control-plane usage storage.
 pub trait ControlPlaneUsage: UsageStorage {}
 
@@ -183,7 +508,12 @@ pub trait KeyProviderSurface: LocalKeyProvider {}
 /// Composite convenience trait for tenant data stores that support the core
 /// engine read, write, journal, and scheduler capabilities.
 pub trait StorageEngine:
-    TenantPointRead + TenantPointWrite + TenantRangeScan + DurableJournal + SchedulerStore
+    TenantPointRead
+    + TenantPointWrite
+    + TenantRangeScan
+    + DurableJournal
+    + SchedulerStore
+    + ObjectMetaStore
 {
 }
 
@@ -532,6 +862,45 @@ impl_scheduler_store!(
     LibsqlReplicaTenantStore,
 );
 
+macro_rules! impl_object_meta_store {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl ObjectMetaStore for $ty {
+                fn put_object_manifest(&self, manifest: &ObjectManifest) -> Result<CommitEntry> {
+                    put_object_manifest_for_store(self, manifest)
+                }
+
+                fn get_object_manifest(&self, key: &str) -> Result<Option<ObjectManifest>> {
+                    get_object_manifest_for_store(self, key)
+                }
+
+                fn delete_object_manifest(
+                    &self,
+                    key: &str,
+                ) -> Result<Option<(CommitEntry, ObjectManifest)>> {
+                    delete_object_manifest_for_store(self, key)
+                }
+
+                fn list_object_manifests(
+                    &self,
+                    prefix: &str,
+                    limit: usize,
+                ) -> Result<Vec<ObjectManifest>> {
+                    list_object_manifests_for_store(self, prefix, limit)
+                }
+            }
+        )+
+    };
+}
+
+impl_object_meta_store!(
+    TenantStore,
+    SqliteTenantStore,
+    PostgresTenantStore,
+    MySqlTenantStore,
+    LibsqlReplicaTenantStore,
+);
+
 impl ControlPlaneUsage for RedbUsageStorage {}
 
 impl KeyProviderSurface for nimbus_crypto::MasterKeyFileProvider {}
@@ -539,7 +908,13 @@ impl KeyProviderSurface for nimbus_crypto::KeyDirectoryProvider {}
 #[cfg(feature = "aws-kms")]
 impl KeyProviderSurface for nimbus_crypto::AwsKmsKeyProvider {}
 
+/// StorageEngine includes ObjectMetaStore so object manifests use the same stores.
 impl<T> StorageEngine for T where
-    T: TenantPointRead + TenantPointWrite + TenantRangeScan + DurableJournal + SchedulerStore
+    T: TenantPointRead
+        + TenantPointWrite
+        + TenantRangeScan
+        + DurableJournal
+        + SchedulerStore
+        + ObjectMetaStore
 {
 }

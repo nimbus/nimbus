@@ -6366,6 +6366,7 @@ dependencies = [
  "bytes",
  "nimbus-core",
  "nimbus-crypto",
+ "tempfile",
  "tokio",
 ]
 

@@ -24,3 +24,6 @@ async-trait.workspace = true
 blake3.workspace = true
 bytes.workspace = true
 tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile.workspace = true
