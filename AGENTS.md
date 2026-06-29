@@ -162,23 +162,40 @@ If you find yourself writing compatibility code, stop and make the breaking chan
 - Krun microVM egress enforcement (lifting the fail-closed Linux-production
   execute path): `docs/private/plans/krun-microvm-egress-enforcement-plan.md`
   (KME0..KME6). The conmon/crun `KrunSandboxBackend` execute mode is
-  fail-closed at `crates/nimbus-sandbox/src/backends/krun/vm/start.rs:155`
-  because libkrun **TSI** (transparent socket impersonation) has no host-side
-  packet path for `SandboxEgressPolicy` to attach to. Owner-ratified decision
-  (2026-06-22): **retire TSI-outbound for passt** and make the microVM the
-  **fourth NEG enforcement point** (container/isolate/wasm/microVM, one PDP
-  decision; HTTP(S) forwarded through `nimbus-proxy`). KME **consumes** NEG's
-  `nimbus-egress` PDP + `nimbus-proxy` PEP (sequence after NEG1/NEG4) and
-  shares the passt PEP + passt-mode bind-address hook with
-  `nimbus-sandbox-plan.md` Band B/D — build once, two consumers. The existing
-  TSI *inbound* bind-address patch (`15bcf49`) is kept; passt needs its own
-  inbound hook (fork-inventory §8 item 1). KME lifts the *execute gate* only;
-  "thousands of microVMs" still needs Band S snapshot/fork. Gated on
+  fail-closed at `crates/nimbus-sandbox/src/backends/krun/vm/start.rs`
+  (`ensure_execute_egress_enforcement_available`) because Nimbus's egress PEP
+  is interface/packet-oriented and libkrun **TSI** (transparent socket
+  impersonation) exposes no virtio-net tap in the host netns to bind it to.
+  **That is a PEP-shape limitation, not unenforceability.** Under TSI the guest
+  has no network stack; its `connect()`/`sendto()` are issued as **real host
+  sockets by the VMM process** (`tsi_stream.rs`/`tsi_dgram.rs`), so confining
+  the VMM to a Linux **network namespace** confines the guest's egress.
+  Owner-ratified decision (2026-06-22), **re-verified 2026-06-29** (source +
+  adversarial-refuter workflow; libkrun's own README prescribes namespaces as
+  "the primary mechanism"): **TSI + netns is the primary path — zero libkrun
+  patch**, proven on real KVM (KME1/KME1b: routeless netns → ENETUNREACH;
+  container and krun microVM enforced identically through forked crun). The
+  microVM becomes the **fourth NEG enforcement point** (container/isolate/wasm/
+  microVM, one PDP decision) by reusing the **container backend's netns +
+  netavark chain**, NOT a libkrun fork. The pivot is enforcement
+  **granularity**: L3/L4 allow-deny works today via nftables on the VMM's
+  netns; L7 credential injection needs `nat OUTPUT redirect` → `nimbus-proxy`
+  inside that netns (redsocks-style, exempt the proxy by uid). **passt is a
+  fallback only** (interface-bound tooling); it is itself netns-confined, NOT
+  an escape from netns, and is opt-in while TSI is the auto-default. KME
+  **consumes** NEG's `nimbus-egress` PDP + `nimbus-proxy` PEP (sequence after
+  NEG1/NEG4). **Caveat:** TSI also impersonates AF_UNIX, governed by the mount
+  namespace not netns — if the VMM shares host `/` (`krun_set_root`) a guest
+  can reach host AF_UNIX services a netns firewall won't block, so confine the
+  VMM's mount-ns/virtiofs too. The existing TSI *inbound* bind-address patch
+  (`15bcf49`) is kept. KME lifts the *execute gate* only; "thousands of
+  microVMs" still needs Band S snapshot/fork. Gated on
   `bash scripts/verify-krun-microvm-egress-enforcement.sh` (10 conditions,
   created by KME0; before it lands a missing verifier is expected, not green).
-  Touches the `nimbus-crun` fork (passt selection in `handlers/krun.c`) and
-  possibly `nimbus-libkrun` — add the `nimbus-crun` fork-health budget row
-  first. LOCAL-ONLY plan; only the verifier + this routing pointer are tracked.
+  The TSI+netns primary path needs no `nimbus-crun`/`nimbus-libkrun` fork
+  patch; only an interface-mode fallback would touch the forks (add the
+  `nimbus-crun` fork-health budget row first). LOCAL-ONLY plan; only the
+  verifier + this routing pointer are tracked.
 - Node-side systemd D-Bus binding (`SystemdDbusClient` /
   `SystemdTransientUnitBackend` / `NodeWorkloadReconciler`):
   `docs/private/operating/node-dbus-binding.md` for the canonical contract,
