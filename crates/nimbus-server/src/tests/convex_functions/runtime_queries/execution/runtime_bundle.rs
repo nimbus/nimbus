@@ -7,18 +7,8 @@ async fn convex_named_query_uses_runtime_bundle_when_available() {
             {
                 "name": "messages:byAuthor",
                 "kind": "query",
-                "plan": {
-                    "table": "messages",
-                    "filters": [
-                        {
-                            "field": "author",
-                            "op": "eq",
-                            "value": { "$arg": "author" }
-                        }
-                    ],
-                    "order": null,
-                    "limit": null
-                }
+                "plan": null,
+                "runtime_handler": "async () => null"
             }
         ]),
         json!([]),

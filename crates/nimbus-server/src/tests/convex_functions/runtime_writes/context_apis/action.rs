@@ -7,15 +7,8 @@ async fn convex_named_action_can_use_ctx_action_host_binding() {
             {
                 "name": "tasks:titles",
                 "kind": "action",
-                "plan": {
-                    "type": "query",
-                    "query": {
-                        "table": "tasks",
-                        "filters": [],
-                        "order": { "field": "title", "direction": "asc" },
-                        "limit": null
-                    }
-                }
+                "plan": null,
+                "runtime_handler": "async () => null"
             }
         ]),
         json!([]),

@@ -7,18 +7,8 @@ async fn convex_named_query_can_use_ctx_query_host_binding() {
             {
                 "name": "messages:byAuthor",
                 "kind": "query",
-                "plan": {
-                    "table": "messages",
-                    "filters": [
-                        {
-                            "field": "author",
-                            "op": "eq",
-                            "value": { "$arg": "author" }
-                        }
-                    ],
-                    "order": null,
-                    "limit": null
-                }
+                "plan": null,
+                "runtime_handler": "async () => null"
             }
         ]),
         json!([]),

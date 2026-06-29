@@ -20,15 +20,8 @@ async fn convex_named_mutation_can_use_bootstrapped_ctx_scheduler_api() {
             {
                 "name": "messages:scheduleInternal",
                 "kind": "mutation",
-                "plan": {
-                    "type": "schedule_run_after",
-                    "delay_ms": { "$arg": "delayMs" },
-                    "name": "messages:sendInternal",
-                    "visibility": "internal",
-                    "args": {
-                        "body": { "$arg": "body" }
-                    }
-                }
+                "plan": null,
+                "runtime_handler": "async () => null"
             }
         ]),
         json!([]),

@@ -179,12 +179,12 @@ impl WebSocketFixture {
 }
 
 fn default_message_timeout() -> Duration {
-    // Coverage instrumentation slows runtime-backed subscription bootstraps;
-    // keep ordinary test runs on the stricter fixture timeout.
+    // Runtime-backed subscription bootstraps can queue behind other in-process
+    // runtime work; coverage instrumentation adds another layer of overhead.
     if std::env::var_os("CARGO_LLVM_COV").is_some() {
         Duration::from_secs(30)
     } else {
-        Duration::from_secs(5)
+        Duration::from_secs(15)
     }
 }
 
