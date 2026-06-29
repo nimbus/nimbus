@@ -28,6 +28,7 @@ members = [
     "crates/nimbus-tenant",
     "crates/nimbus-runtime",
     "crates/nimbus-sandbox",
+    "crates/nimbus-s3",
     "crates/nimbus-core",
     "crates/nimbus-egress",
     "crates/nimbus-engine",
@@ -145,6 +146,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 serde_yaml = "0.9"
 semver = "1"
+s3s = "0.14.0"
 shell-words = "1"
 sha2 = "0.10"
 tar = "0.4"

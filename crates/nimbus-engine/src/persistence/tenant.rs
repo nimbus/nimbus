@@ -62,6 +62,7 @@ impl TenantPersistence {
 }
 
 mod journal;
+mod objects;
 mod provider_state;
 mod reads;
 mod resource_paths;

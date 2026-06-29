@@ -43,13 +43,20 @@ pub use kv::{
 /// The byte plane (`nimbus-blob`) never depends on storage; this table is the
 /// named metadata plane consumed by the S3 surface and object filesystem binder.
 pub const OBJECT_MANIFEST_TABLE: &str = "_nimbus_objects";
+pub const OBJECT_MULTIPART_TABLE: &str = "_nimbus_object_uploads";
 
+const OBJECT_FIELD_BUCKET: &str = "bucket";
 const OBJECT_FIELD_KEY: &str = "key";
 const OBJECT_FIELD_SIZE: &str = "size";
 const OBJECT_FIELD_CONTENT_TYPE: &str = "content_type";
 const OBJECT_FIELD_USER_METADATA: &str = "user_metadata";
 const OBJECT_FIELD_ETAG: &str = "etag";
 const OBJECT_FIELD_BLOB_LAYOUT: &str = "blob_layout";
+const OBJECT_FIELD_CHECKSUMS: &str = "checksums";
+const OBJECT_FIELD_LAST_MODIFIED_MILLIS: &str = "last_modified_millis";
+const OBJECT_FIELD_UPLOAD_ID: &str = "upload_id";
+const OBJECT_FIELD_INITIATED_AT_MILLIS: &str = "initiated_at_millis";
+const OBJECT_FIELD_PARTS: &str = "parts";
 
 /// A blob reference inside an object manifest.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,13 +74,73 @@ pub enum ObjectBlobLayout {
     Chunked { chunks: Vec<ObjectChunkRef> },
 }
 
+/// Checksums recorded in the protocol-neutral metadata plane.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectChecksums {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_md5: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crc64nvme: Option<String>,
+}
+
+impl ObjectChecksums {
+    fn validate(&self, kind: &str) -> Result<()> {
+        if self.content_md5.as_deref().is_some_and(str::is_empty) {
+            return Err(nimbus_core::Error::InvalidInput(format!(
+                "{kind} content_md5 checksum cannot be empty"
+            )));
+        }
+        if self.crc64nvme.as_deref().is_some_and(str::is_empty) {
+            return Err(nimbus_core::Error::InvalidInput(format!(
+                "{kind} crc64nvme checksum cannot be empty"
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Protocol-neutral object metadata beside its blob layout.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ObjectManifestAttributes {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    #[serde(default)]
+    pub user_metadata: Map<String, Value>,
+    pub etag: String,
+    #[serde(default)]
+    pub checksums: ObjectChecksums,
+    pub last_modified_millis: u64,
+}
+
+impl ObjectManifestAttributes {
+    pub fn new(etag: impl Into<String>, last_modified_millis: u64) -> Self {
+        Self {
+            content_type: None,
+            user_metadata: Map::new(),
+            etag: etag.into(),
+            checksums: ObjectChecksums::default(),
+            last_modified_millis,
+        }
+    }
+
+    fn validate(&self, kind: &str) -> Result<()> {
+        if self.etag.is_empty() {
+            return Err(nimbus_core::Error::InvalidInput(format!(
+                "{kind} etag cannot be empty"
+            )));
+        }
+        self.checksums.validate(kind)
+    }
+}
+
 /// Protocol-neutral object manifest.
 ///
-/// `key` is the S3/developer-visible object key. It is not used directly as a
-/// `DocumentId`, because object keys may contain `/`; storage uses a stable
-/// derived document id and stores the original key as data.
+/// `bucket` and `key` are the S3/developer-visible identity. They are not used
+/// directly as a `DocumentId`, because object keys may contain `/`; storage uses
+/// a stable derived document id and stores the original identity as data.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ObjectManifest {
+    pub bucket: String,
     pub key: String,
     pub size: u64,
     pub blob_layout: ObjectBlobLayout,
@@ -82,38 +149,78 @@ pub struct ObjectManifest {
     #[serde(default)]
     pub user_metadata: Map<String, Value>,
     pub etag: String,
+    #[serde(default)]
+    pub checksums: ObjectChecksums,
+    pub last_modified_millis: u64,
 }
 
 impl ObjectManifest {
     pub fn whole(
+        bucket: impl Into<String>,
         key: impl Into<String>,
         size: u64,
         blob_hash: impl Into<String>,
-        content_type: Option<String>,
-        user_metadata: Map<String, Value>,
-        etag: impl Into<String>,
+        attributes: ObjectManifestAttributes,
     ) -> Result<Self> {
-        let manifest = Self {
-            key: key.into(),
+        Self::with_layout(
+            bucket,
+            key,
             size,
-            blob_layout: ObjectBlobLayout::Whole {
+            ObjectBlobLayout::Whole {
                 blob_hash: blob_hash.into(),
             },
-            content_type,
-            user_metadata,
-            etag: etag.into(),
+            attributes,
+        )
+    }
+
+    pub fn chunked(
+        bucket: impl Into<String>,
+        key: impl Into<String>,
+        size: u64,
+        chunks: Vec<ObjectChunkRef>,
+        attributes: ObjectManifestAttributes,
+    ) -> Result<Self> {
+        Self::with_layout(
+            bucket,
+            key,
+            size,
+            ObjectBlobLayout::Chunked { chunks },
+            attributes,
+        )
+    }
+
+    fn with_layout(
+        bucket: impl Into<String>,
+        key: impl Into<String>,
+        size: u64,
+        blob_layout: ObjectBlobLayout,
+        attributes: ObjectManifestAttributes,
+    ) -> Result<Self> {
+        attributes.validate("object manifest")?;
+        let manifest = Self {
+            bucket: bucket.into(),
+            key: key.into(),
+            size,
+            blob_layout,
+            content_type: attributes.content_type,
+            user_metadata: attributes.user_metadata,
+            etag: attributes.etag,
+            checksums: attributes.checksums,
+            last_modified_millis: attributes.last_modified_millis,
         };
         manifest.validate()?;
         Ok(manifest)
     }
 
     pub fn validate(&self) -> Result<()> {
+        validate_object_bucket(&self.bucket)?;
         validate_object_key(&self.key)?;
         if self.etag.is_empty() {
             return Err(nimbus_core::Error::InvalidInput(
                 "object manifest etag cannot be empty".to_string(),
             ));
         }
+        self.checksums.validate("object manifest")?;
         match &self.blob_layout {
             ObjectBlobLayout::Whole { blob_hash } if blob_hash.is_empty() => {
                 Err(nimbus_core::Error::InvalidInput(
@@ -126,6 +233,7 @@ impl ObjectManifest {
                 ))
             }
             ObjectBlobLayout::Chunked { chunks } => {
+                let mut expected_offset = 0_u64;
                 for chunk in chunks {
                     if chunk.blob_hash.is_empty() {
                         return Err(nimbus_core::Error::InvalidInput(
@@ -137,6 +245,23 @@ impl ObjectManifest {
                             "object manifest chunk length cannot be zero".to_string(),
                         ));
                     }
+                    if chunk.offset != expected_offset {
+                        return Err(nimbus_core::Error::InvalidInput(format!(
+                            "object manifest chunk offset {} does not match expected offset {expected_offset}",
+                            chunk.offset
+                        )));
+                    }
+                    expected_offset = expected_offset.checked_add(chunk.len).ok_or_else(|| {
+                        nimbus_core::Error::InvalidInput(
+                            "object manifest chunk offsets overflow u64".to_string(),
+                        )
+                    })?;
+                }
+                if expected_offset != self.size {
+                    return Err(nimbus_core::Error::InvalidInput(format!(
+                        "object manifest chunked size {expected_offset} does not match object size {}",
+                        self.size
+                    )));
                 }
                 Ok(())
             }
@@ -145,12 +270,16 @@ impl ObjectManifest {
     }
 
     fn document_id(&self) -> Result<DocumentId> {
-        object_document_id(&self.key)
+        object_document_id(&self.bucket, &self.key)
     }
 
     fn to_document(&self) -> Result<Document> {
         self.validate()?;
         let mut fields = Map::new();
+        fields.insert(
+            OBJECT_FIELD_BUCKET.to_string(),
+            Value::String(self.bucket.clone()),
+        );
         fields.insert(
             OBJECT_FIELD_KEY.to_string(),
             Value::String(self.key.clone()),
@@ -172,6 +301,16 @@ impl ObjectManifest {
             Value::String(self.etag.clone()),
         );
         fields.insert(
+            OBJECT_FIELD_CHECKSUMS.to_string(),
+            serde_json::to_value(&self.checksums).map_err(|err| {
+                nimbus_core::Error::Serialization(format!("encode object checksums: {err}"))
+            })?,
+        );
+        fields.insert(
+            OBJECT_FIELD_LAST_MODIFIED_MILLIS.to_string(),
+            json!(self.last_modified_millis),
+        );
+        fields.insert(
             OBJECT_FIELD_BLOB_LAYOUT.to_string(),
             serde_json::to_value(&self.blob_layout).map_err(|err| {
                 nimbus_core::Error::Serialization(format!("encode object blob layout: {err}"))
@@ -185,6 +324,7 @@ impl ObjectManifest {
     }
 
     fn from_document(document: &Document) -> Result<Self> {
+        let bucket = required_string(document, OBJECT_FIELD_BUCKET)?;
         let key = required_string(document, OBJECT_FIELD_KEY)?;
         let size = required_u64(document, OBJECT_FIELD_SIZE)?;
         let content_type = optional_string(document, OBJECT_FIELD_CONTENT_TYPE)?;
@@ -198,6 +338,9 @@ impl ObjectManifest {
             None => Map::new(),
         };
         let etag = required_string(document, OBJECT_FIELD_ETAG)?;
+        let checksums =
+            optional_json::<ObjectChecksums>(document, OBJECT_FIELD_CHECKSUMS)?.unwrap_or_default();
+        let last_modified_millis = required_u64(document, OBJECT_FIELD_LAST_MODIFIED_MILLIS)?;
         let layout_value = document
             .fields
             .get(OBJECT_FIELD_BLOB_LAYOUT)
@@ -210,24 +353,230 @@ impl ObjectManifest {
                 nimbus_core::Error::Serialization(format!("decode object blob layout: {err}"))
             })?;
         let manifest = Self {
+            bucket,
             key,
             size,
             blob_layout,
             content_type,
             user_metadata,
             etag,
+            checksums,
+            last_modified_millis,
         };
         manifest.validate()?;
         Ok(manifest)
     }
 }
 
+/// One uploaded multipart part.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ObjectMultipartPart {
+    pub part_number: u32,
+    pub blob_hash: String,
+    pub size: u64,
+    pub etag: String,
+    #[serde(default)]
+    pub checksums: ObjectChecksums,
+    pub last_modified_millis: u64,
+}
+
+impl ObjectMultipartPart {
+    pub fn validate(&self) -> Result<()> {
+        if !(1..=10_000).contains(&self.part_number) {
+            return Err(nimbus_core::Error::InvalidInput(
+                "multipart part number must be between 1 and 10000".to_string(),
+            ));
+        }
+        if self.blob_hash.is_empty() {
+            return Err(nimbus_core::Error::InvalidInput(
+                "multipart part blob hash cannot be empty".to_string(),
+            ));
+        }
+        if self.etag.is_empty() {
+            return Err(nimbus_core::Error::InvalidInput(
+                "multipart part etag cannot be empty".to_string(),
+            ));
+        }
+        self.checksums.validate("multipart part")
+    }
+}
+
+/// Durable state for an in-progress multipart upload.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ObjectMultipartUpload {
+    pub upload_id: String,
+    pub bucket: String,
+    pub key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    #[serde(default)]
+    pub user_metadata: Map<String, Value>,
+    pub initiated_at_millis: u64,
+    #[serde(default)]
+    pub parts: Vec<ObjectMultipartPart>,
+}
+
+impl ObjectMultipartUpload {
+    pub fn new(
+        upload_id: impl Into<String>,
+        bucket: impl Into<String>,
+        key: impl Into<String>,
+        content_type: Option<String>,
+        user_metadata: Map<String, Value>,
+        initiated_at_millis: u64,
+    ) -> Result<Self> {
+        let upload = Self {
+            upload_id: upload_id.into(),
+            bucket: bucket.into(),
+            key: key.into(),
+            content_type,
+            user_metadata,
+            initiated_at_millis,
+            parts: Vec::new(),
+        };
+        upload.validate()?;
+        Ok(upload)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_upload_id(&self.upload_id)?;
+        validate_object_bucket(&self.bucket)?;
+        validate_object_key(&self.key)?;
+        let mut previous = None;
+        for part in &self.parts {
+            part.validate()?;
+            if previous.is_some_and(|number| number >= part.part_number) {
+                return Err(nimbus_core::Error::InvalidInput(
+                    "multipart parts must be strictly ordered by part number".to_string(),
+                ));
+            }
+            previous = Some(part.part_number);
+        }
+        Ok(())
+    }
+
+    pub fn replace_part(
+        &mut self,
+        part: ObjectMultipartPart,
+    ) -> Result<Option<ObjectMultipartPart>> {
+        part.validate()?;
+        match self
+            .parts
+            .binary_search_by_key(&part.part_number, |entry| entry.part_number)
+        {
+            Ok(index) => Ok(Some(std::mem::replace(&mut self.parts[index], part))),
+            Err(index) => {
+                self.parts.insert(index, part);
+                Ok(None)
+            }
+        }
+    }
+
+    fn document_id(&self) -> Result<DocumentId> {
+        upload_document_id(&self.upload_id)
+    }
+
+    fn to_document(&self) -> Result<Document> {
+        self.validate()?;
+        let mut fields = Map::new();
+        fields.insert(
+            OBJECT_FIELD_UPLOAD_ID.to_string(),
+            Value::String(self.upload_id.clone()),
+        );
+        fields.insert(
+            OBJECT_FIELD_BUCKET.to_string(),
+            Value::String(self.bucket.clone()),
+        );
+        fields.insert(
+            OBJECT_FIELD_KEY.to_string(),
+            Value::String(self.key.clone()),
+        );
+        fields.insert(
+            OBJECT_FIELD_CONTENT_TYPE.to_string(),
+            self.content_type
+                .clone()
+                .map(Value::String)
+                .unwrap_or(Value::Null),
+        );
+        fields.insert(
+            OBJECT_FIELD_USER_METADATA.to_string(),
+            Value::Object(self.user_metadata.clone()),
+        );
+        fields.insert(
+            OBJECT_FIELD_INITIATED_AT_MILLIS.to_string(),
+            json!(self.initiated_at_millis),
+        );
+        fields.insert(
+            OBJECT_FIELD_PARTS.to_string(),
+            serde_json::to_value(&self.parts).map_err(|err| {
+                nimbus_core::Error::Serialization(format!("encode multipart parts: {err}"))
+            })?,
+        );
+        Ok(Document::with_id(
+            self.document_id()?,
+            object_multipart_table()?,
+            fields,
+        ))
+    }
+
+    fn from_document(document: &Document) -> Result<Self> {
+        let upload_id = required_string(document, OBJECT_FIELD_UPLOAD_ID)?;
+        let bucket = required_string(document, OBJECT_FIELD_BUCKET)?;
+        let key = required_string(document, OBJECT_FIELD_KEY)?;
+        let content_type = optional_string(document, OBJECT_FIELD_CONTENT_TYPE)?;
+        let user_metadata = match document.fields.get(OBJECT_FIELD_USER_METADATA) {
+            Some(Value::Object(map)) => map.clone(),
+            Some(_) => {
+                return Err(nimbus_core::Error::Serialization(
+                    "multipart upload user_metadata must be an object".to_string(),
+                ));
+            }
+            None => Map::new(),
+        };
+        let initiated_at_millis = required_u64(document, OBJECT_FIELD_INITIATED_AT_MILLIS)?;
+        let parts = optional_json::<Vec<ObjectMultipartPart>>(document, OBJECT_FIELD_PARTS)?
+            .unwrap_or_default();
+        let upload = Self {
+            upload_id,
+            bucket,
+            key,
+            content_type,
+            user_metadata,
+            initiated_at_millis,
+            parts,
+        };
+        upload.validate()?;
+        Ok(upload)
+    }
+}
+
 /// Metadata-plane capability for named object manifests.
 pub trait ObjectMetaStore {
     fn put_object_manifest(&self, manifest: &ObjectManifest) -> Result<CommitEntry>;
-    fn get_object_manifest(&self, key: &str) -> Result<Option<ObjectManifest>>;
-    fn delete_object_manifest(&self, key: &str) -> Result<Option<(CommitEntry, ObjectManifest)>>;
-    fn list_object_manifests(&self, prefix: &str, limit: usize) -> Result<Vec<ObjectManifest>>;
+    fn get_object_manifest(&self, bucket: &str, key: &str) -> Result<Option<ObjectManifest>>;
+    fn delete_object_manifest(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<Option<(CommitEntry, ObjectManifest)>>;
+    fn list_object_manifests(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<ObjectManifest>>;
+    fn put_multipart_upload(&self, upload: &ObjectMultipartUpload) -> Result<CommitEntry>;
+    fn get_multipart_upload(&self, upload_id: &str) -> Result<Option<ObjectMultipartUpload>>;
+    fn delete_multipart_upload(
+        &self,
+        upload_id: &str,
+    ) -> Result<Option<(CommitEntry, ObjectMultipartUpload)>>;
+    fn list_multipart_uploads(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<ObjectMultipartUpload>>;
 }
 
 /// Tenant lifecycle and discovery for provider families that can own tenants.
@@ -391,10 +740,63 @@ fn object_manifest_table() -> Result<TableName> {
     TableName::new(OBJECT_MANIFEST_TABLE)
 }
 
-fn object_document_id(key: &str) -> Result<DocumentId> {
+fn object_multipart_table() -> Result<TableName> {
+    TableName::new(OBJECT_MULTIPART_TABLE)
+}
+
+fn object_document_id(bucket: &str, key: &str) -> Result<DocumentId> {
+    validate_object_bucket(bucket)?;
     validate_object_key(key)?;
-    let digest = Sha256::digest(key.as_bytes());
+    let mut hasher = Sha256::new();
+    hasher.update(bucket.as_bytes());
+    hasher.update([0]);
+    hasher.update(key.as_bytes());
+    let digest = hasher.finalize();
     DocumentId::from_key(format!("object_{}", hex::encode(digest)))
+}
+
+fn upload_document_id(upload_id: &str) -> Result<DocumentId> {
+    validate_upload_id(upload_id)?;
+    let digest = Sha256::digest(upload_id.as_bytes());
+    DocumentId::from_key(format!("upload_{}", hex::encode(digest)))
+}
+
+fn validate_object_bucket(bucket: &str) -> Result<()> {
+    if bucket.is_empty() {
+        return Err(nimbus_core::Error::InvalidInput(
+            "object bucket cannot be empty".to_string(),
+        ));
+    }
+    if bucket.len() > 63 {
+        return Err(nimbus_core::Error::InvalidInput(
+            "object bucket cannot exceed 63 bytes".to_string(),
+        ));
+    }
+    if bucket.bytes().any(|byte| byte == 0 || byte == b'/') {
+        return Err(nimbus_core::Error::InvalidInput(
+            "object bucket cannot contain NUL bytes or slashes".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_upload_id(upload_id: &str) -> Result<()> {
+    if upload_id.is_empty() {
+        return Err(nimbus_core::Error::InvalidInput(
+            "multipart upload id cannot be empty".to_string(),
+        ));
+    }
+    if upload_id.len() > 256 {
+        return Err(nimbus_core::Error::InvalidInput(
+            "multipart upload id cannot exceed 256 bytes".to_string(),
+        ));
+    }
+    if upload_id.bytes().any(|byte| byte == 0) {
+        return Err(nimbus_core::Error::InvalidInput(
+            "multipart upload id cannot contain NUL bytes".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn required_string(document: &Document, field: &str) -> Result<String> {
@@ -416,6 +818,20 @@ fn optional_string(document: &Document, field: &str) -> Result<Option<String>> {
         Some(_) => Err(nimbus_core::Error::Serialization(format!(
             "object manifest field {field} must be a string or null"
         ))),
+    }
+}
+
+fn optional_json<T>(document: &Document, field: &str) -> Result<Option<T>>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    match document.fields.get(field) {
+        Some(Value::Null) | None => Ok(None),
+        Some(value) => serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|err| {
+                nimbus_core::Error::Serialization(format!("decode object field {field}: {err}"))
+            }),
     }
 }
 
@@ -442,12 +858,16 @@ where
     }
 }
 
-fn get_object_manifest_for_store<S>(store: &S, key: &str) -> Result<Option<ObjectManifest>>
+fn get_object_manifest_for_store<S>(
+    store: &S,
+    bucket: &str,
+    key: &str,
+) -> Result<Option<ObjectManifest>>
 where
     S: TenantPointRead,
 {
     let table = object_manifest_table()?;
-    let id = object_document_id(key)?;
+    let id = object_document_id(bucket, key)?;
     store
         .get(&table, &id)?
         .as_ref()
@@ -457,13 +877,14 @@ where
 
 fn delete_object_manifest_for_store<S>(
     store: &S,
+    bucket: &str,
     key: &str,
 ) -> Result<Option<(CommitEntry, ObjectManifest)>>
 where
     S: TenantPointRead + TenantPointWrite,
 {
     let table = object_manifest_table()?;
-    let id = object_document_id(key)?;
+    let id = object_document_id(bucket, key)?;
     let Some(existing) = store.get(&table, &id)? else {
         return Ok(None);
     };
@@ -474,20 +895,27 @@ where
 
 fn list_object_manifests_for_store<S>(
     store: &S,
+    bucket: &str,
     prefix: &str,
     limit: usize,
 ) -> Result<Vec<ObjectManifest>>
 where
     S: TenantRangeScan,
 {
+    validate_object_bucket(bucket)?;
     let table = object_manifest_table()?;
     let mut check_cancel = || Ok(());
     let mut manifests = store
         .scan_table_matching_with_filters_cancellable(&table, &[], &mut check_cancel, |document| {
-            match document.fields.get(OBJECT_FIELD_KEY) {
-                Some(Value::String(key)) => Ok(key.starts_with(prefix)),
-                _ => Ok(false),
-            }
+            let bucket_matches = matches!(
+                document.fields.get(OBJECT_FIELD_BUCKET),
+                Some(Value::String(document_bucket)) if document_bucket == bucket
+            );
+            let key_matches = matches!(
+                document.fields.get(OBJECT_FIELD_KEY),
+                Some(Value::String(key)) if key.starts_with(prefix)
+            );
+            Ok(bucket_matches && key_matches)
         })?
         .iter()
         .map(ObjectManifest::from_document)
@@ -497,6 +925,95 @@ where
         manifests.truncate(limit);
     }
     Ok(manifests)
+}
+
+fn put_multipart_upload_for_store<S>(
+    store: &S,
+    upload: &ObjectMultipartUpload,
+) -> Result<CommitEntry>
+where
+    S: TenantPointRead + TenantPointWrite,
+{
+    let document = upload.to_document()?;
+    if store.get(&document.table, &document.id)?.is_some() {
+        store.update_document_validated(&document.table, &document.id, &document.fields, |_, _| {
+            Ok(())
+        })
+    } else {
+        store.insert_document(&document)
+    }
+}
+
+fn get_multipart_upload_for_store<S>(
+    store: &S,
+    upload_id: &str,
+) -> Result<Option<ObjectMultipartUpload>>
+where
+    S: TenantPointRead,
+{
+    let table = object_multipart_table()?;
+    let id = upload_document_id(upload_id)?;
+    store
+        .get(&table, &id)?
+        .as_ref()
+        .map(ObjectMultipartUpload::from_document)
+        .transpose()
+}
+
+fn delete_multipart_upload_for_store<S>(
+    store: &S,
+    upload_id: &str,
+) -> Result<Option<(CommitEntry, ObjectMultipartUpload)>>
+where
+    S: TenantPointRead + TenantPointWrite,
+{
+    let table = object_multipart_table()?;
+    let id = upload_document_id(upload_id)?;
+    let Some(existing) = store.get(&table, &id)? else {
+        return Ok(None);
+    };
+    let upload = ObjectMultipartUpload::from_document(&existing)?;
+    let (commit, _) = store.delete_document_validated(&table, &id, |_| Ok(()))?;
+    Ok(Some((commit, upload)))
+}
+
+fn list_multipart_uploads_for_store<S>(
+    store: &S,
+    bucket: &str,
+    prefix: &str,
+    limit: usize,
+) -> Result<Vec<ObjectMultipartUpload>>
+where
+    S: TenantRangeScan,
+{
+    validate_object_bucket(bucket)?;
+    let table = object_multipart_table()?;
+    let mut check_cancel = || Ok(());
+    let mut uploads = store
+        .scan_table_matching_with_filters_cancellable(&table, &[], &mut check_cancel, |document| {
+            let bucket_matches = matches!(
+                document.fields.get(OBJECT_FIELD_BUCKET),
+                Some(Value::String(document_bucket)) if document_bucket == bucket
+            );
+            let key_matches = matches!(
+                document.fields.get(OBJECT_FIELD_KEY),
+                Some(Value::String(key)) if key.starts_with(prefix)
+            );
+            Ok(bucket_matches && key_matches)
+        })?
+        .iter()
+        .map(ObjectMultipartUpload::from_document)
+        .collect::<Result<Vec<_>>>()?;
+    uploads.sort_by(|left, right| {
+        left.key
+            .cmp(&right.key)
+            .then_with(|| left.initiated_at_millis.cmp(&right.initiated_at_millis))
+            .then_with(|| left.upload_id.cmp(&right.upload_id))
+    });
+    if uploads.len() > limit {
+        uploads.truncate(limit);
+    }
+    Ok(uploads)
 }
 
 /// Control-plane usage storage.
@@ -870,23 +1387,59 @@ macro_rules! impl_object_meta_store {
                     put_object_manifest_for_store(self, manifest)
                 }
 
-                fn get_object_manifest(&self, key: &str) -> Result<Option<ObjectManifest>> {
-                    get_object_manifest_for_store(self, key)
+                fn get_object_manifest(
+                    &self,
+                    bucket: &str,
+                    key: &str,
+                ) -> Result<Option<ObjectManifest>> {
+                    get_object_manifest_for_store(self, bucket, key)
                 }
 
                 fn delete_object_manifest(
                     &self,
+                    bucket: &str,
                     key: &str,
                 ) -> Result<Option<(CommitEntry, ObjectManifest)>> {
-                    delete_object_manifest_for_store(self, key)
+                    delete_object_manifest_for_store(self, bucket, key)
                 }
 
                 fn list_object_manifests(
                     &self,
+                    bucket: &str,
                     prefix: &str,
                     limit: usize,
                 ) -> Result<Vec<ObjectManifest>> {
-                    list_object_manifests_for_store(self, prefix, limit)
+                    list_object_manifests_for_store(self, bucket, prefix, limit)
+                }
+
+                fn put_multipart_upload(
+                    &self,
+                    upload: &ObjectMultipartUpload,
+                ) -> Result<CommitEntry> {
+                    put_multipart_upload_for_store(self, upload)
+                }
+
+                fn get_multipart_upload(
+                    &self,
+                    upload_id: &str,
+                ) -> Result<Option<ObjectMultipartUpload>> {
+                    get_multipart_upload_for_store(self, upload_id)
+                }
+
+                fn delete_multipart_upload(
+                    &self,
+                    upload_id: &str,
+                ) -> Result<Option<(CommitEntry, ObjectMultipartUpload)>> {
+                    delete_multipart_upload_for_store(self, upload_id)
+                }
+
+                fn list_multipart_uploads(
+                    &self,
+                    bucket: &str,
+                    prefix: &str,
+                    limit: usize,
+                ) -> Result<Vec<ObjectMultipartUpload>> {
+                    list_multipart_uploads_for_store(self, bucket, prefix, limit)
                 }
             }
         )+

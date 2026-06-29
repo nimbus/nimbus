@@ -553,6 +553,7 @@ fn adapterless_enablement() -> crate::start::adapters::AdapterEnablement {
         cloudflare: None,
         mongodb: None,
         dynamodb: None,
+        s3: None,
     }
 }
 

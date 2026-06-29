@@ -2,7 +2,9 @@ use std::io;
 use std::net::TcpListener;
 use std::path::Path;
 
-use crate::start::adapters::{DYNAMODB_CONVENTIONAL_PORT, MONGODB_CONVENTIONAL_PORT};
+use crate::start::adapters::{
+    DYNAMODB_CONVENTIONAL_PORT, MONGODB_CONVENTIONAL_PORT, S3_CONVENTIONAL_PORT,
+};
 use crate::wire_credentials::{WireCredentials, load_or_generate};
 
 use super::surfaces::WireSurfaces;
@@ -34,12 +36,11 @@ pub(super) const AWS_SDK_V2_HINT: &str = "aws-sdk v2 detected; @aws-sdk/client-d
 /// port-fallback notices, the dev banner, and the redetect notices all
 /// render from this list instead of hand-listing surfaces.
 pub(super) struct SurfacePresentation {
-    /// Display name in banners and notices ("MongoDB", "DynamoDB").
+    /// Display name in banners and notices ("MongoDB", "DynamoDB", "S3").
     pub(super) display_name: &'static str,
     /// What detection saw, for redetect notices ("mongodb dependency").
     pub(super) dependency_label: &'static str,
-    /// Which `.env.local` keys the surface advertises, for notices
-    /// ("NIMBUS_MONGODB_URL", "NIMBUS_DYNAMODB_ENDPOINT and access keys").
+    /// Which `.env.local` keys the surface advertises, for notices.
     pub(super) env_keys_label: &'static str,
     /// True when the app's dependency set references this surface.
     pub(super) detected: bool,
@@ -64,6 +65,7 @@ pub(super) struct SurfacePresentation {
 pub(super) struct WirePlan {
     pub(super) mongodb_port: WireListenerPort,
     pub(super) dynamodb_port: WireListenerPort,
+    pub(super) s3_port: WireListenerPort,
     pub(super) credentials: WireCredentials,
 }
 
@@ -121,6 +123,35 @@ impl WirePlan {
                      process.env.NIMBUS_DYNAMODB_ACCESS_KEY_ID, secretAccessKey: \
                      process.env.NIMBUS_DYNAMODB_SECRET_ACCESS_KEY } })",
             },
+            SurfacePresentation {
+                display_name: "S3",
+                dependency_label: "S3 SDK dependency",
+                env_keys_label: "NIMBUS_S3_ENDPOINT and access keys",
+                detected: surfaces.s3,
+                port: self.s3_port,
+                conventional_port: S3_CONVENTIONAL_PORT,
+                endpoint: format!("http://127.0.0.1:{}", self.s3_port.port),
+                primary_env_key: "NIMBUS_S3_ENDPOINT",
+                env_entries: vec![
+                    (
+                        "NIMBUS_S3_ENDPOINT",
+                        format!("http://127.0.0.1:{}", self.s3_port.port),
+                    ),
+                    ("NIMBUS_S3_REGION", "us-east-1".to_string()),
+                    (
+                        "NIMBUS_S3_ACCESS_KEY_ID",
+                        self.credentials.s3_access_key_id.clone(),
+                    ),
+                    (
+                        "NIMBUS_S3_SECRET_ACCESS_KEY",
+                        self.credentials.s3_secret_access_key.clone(),
+                    ),
+                ],
+                client_snippet: "new S3Client({ endpoint: process.env.NIMBUS_S3_ENDPOINT, \
+                     region: process.env.NIMBUS_S3_REGION, forcePathStyle: true, credentials: { \
+                     accessKeyId: process.env.NIMBUS_S3_ACCESS_KEY_ID, secretAccessKey: \
+                     process.env.NIMBUS_S3_SECRET_ACCESS_KEY } })",
+            },
         ]
     }
 
@@ -147,11 +178,17 @@ impl WirePlan {
                 port: DYNAMODB_CONVENTIONAL_PORT,
                 conventional_fallback: false,
             },
+            s3_port: WireListenerPort {
+                port: S3_CONVENTIONAL_PORT,
+                conventional_fallback: false,
+            },
             credentials: WireCredentials {
                 mongodb_username: "nimbus".to_owned(),
                 mongodb_password: "0123456789abcdef0123456789abcdef".to_owned(),
                 dynamodb_access_key_id: "AKIA0123456789ABCDEF".to_owned(),
                 dynamodb_secret_access_key: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+                s3_access_key_id: "AKIAFEDCBA9876543210".to_owned(),
+                s3_secret_access_key: "76543210fedcba9876543210fedcba9876543210".to_owned(),
             },
         }
     }
@@ -162,6 +199,7 @@ pub(super) fn resolve_wire_plan(surfaces: WireSurfaces, data_dir: &Path) -> io::
     Ok(WirePlan {
         mongodb_port: resolve_listener_port(surfaces.mongodb, MONGODB_CONVENTIONAL_PORT)?,
         dynamodb_port: resolve_listener_port(surfaces.dynamodb, DYNAMODB_CONVENTIONAL_PORT)?,
+        s3_port: resolve_listener_port(surfaces.s3, S3_CONVENTIONAL_PORT)?,
         credentials,
     })
 }
@@ -215,10 +253,11 @@ fn ephemeral_port() -> io::Result<u16> {
 mod tests {
     use super::*;
 
-    fn surfaces(mongodb: bool, dynamodb: bool) -> WireSurfaces {
+    fn surfaces(mongodb: bool, dynamodb: bool, s3: bool) -> WireSurfaces {
         WireSurfaces {
             mongodb,
             dynamodb,
+            s3,
             aws_sdk_v2_hint: false,
         }
     }
@@ -244,7 +283,7 @@ mod tests {
 
         let mut plan = WirePlan::fixture();
         plan.mongodb_port = resolved;
-        let entries = plan.env_local_entries(surfaces(true, false));
+        let entries = plan.env_local_entries(surfaces(true, false, false));
         let (key, url) = &entries[0];
         assert_eq!(*key, "NIMBUS_MONGODB_URL");
         assert!(
@@ -256,7 +295,7 @@ mod tests {
             "env key must not carry the busy conventional port: {url}"
         );
 
-        let notices = port_fallback_notices(&plan, surfaces(true, false));
+        let notices = port_fallback_notices(&plan, surfaces(true, false, false));
         assert_eq!(notices.len(), 1);
         assert!(notices[0].contains(&resolved.port.to_string()));
     }
@@ -278,15 +317,18 @@ mod tests {
     fn env_entries_cover_only_detected_surfaces() {
         let plan = WirePlan::fixture();
 
-        assert!(plan.env_local_entries(surfaces(false, false)).is_empty());
+        assert!(
+            plan.env_local_entries(surfaces(false, false, false))
+                .is_empty()
+        );
 
-        let mongo_only = plan.env_local_entries(surfaces(true, false));
+        let mongo_only = plan.env_local_entries(surfaces(true, false, false));
         assert_eq!(
             mongo_only.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
             vec!["NIMBUS_MONGODB_URL"]
         );
 
-        let both = plan.env_local_entries(surfaces(true, true));
+        let both = plan.env_local_entries(surfaces(true, true, true));
         let keys: Vec<_> = both.iter().map(|(key, _)| *key).collect();
         assert_eq!(
             keys,
@@ -295,6 +337,10 @@ mod tests {
                 "NIMBUS_DYNAMODB_ENDPOINT",
                 "NIMBUS_DYNAMODB_ACCESS_KEY_ID",
                 "NIMBUS_DYNAMODB_SECRET_ACCESS_KEY",
+                "NIMBUS_S3_ENDPOINT",
+                "NIMBUS_S3_REGION",
+                "NIMBUS_S3_ACCESS_KEY_ID",
+                "NIMBUS_S3_SECRET_ACCESS_KEY",
             ]
         );
         assert!(keys.iter().all(|key| key.starts_with("NIMBUS_")));
@@ -305,14 +351,15 @@ mod tests {
         let mut plan = WirePlan::fixture();
         plan.mongodb_port.conventional_fallback = true;
         plan.dynamodb_port.conventional_fallback = true;
+        plan.s3_port.conventional_fallback = true;
 
         // An undetected surface's fallback flag can't be set in practice
         // (undetected → ephemeral, never fallback), but the notice filter
         // must still scope to detected surfaces only.
-        let notices = port_fallback_notices(&plan, surfaces(true, false));
+        let notices = port_fallback_notices(&plan, surfaces(true, false, false));
         assert_eq!(notices.len(), 1);
         assert!(notices[0].starts_with("MongoDB"));
 
-        assert!(port_fallback_notices(&plan, surfaces(false, false)).is_empty());
+        assert!(port_fallback_notices(&plan, surfaces(false, false, false)).is_empty());
     }
 }

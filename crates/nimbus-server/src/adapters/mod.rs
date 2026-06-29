@@ -5,4 +5,5 @@ pub mod dynamodb;
 pub(crate) mod firebase;
 #[allow(dead_code, clippy::approx_constant, clippy::collapsible_if)]
 pub mod mongodb;
+pub mod s3;
 pub(crate) mod wire;

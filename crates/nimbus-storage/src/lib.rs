@@ -115,9 +115,10 @@ pub use table_identity::{
 pub use traits::{
     ControlPlaneUsage, DurableJournal, KeyProviderSurface, KvBatchOp, KvBatchOutcome, KvEntry,
     KvMutation, KvPut, KvScanPage, KvStorageEngine, KvSweepOutcome, OBJECT_MANIFEST_TABLE,
-    ObjectBlobLayout, ObjectChunkRef, ObjectManifest, ObjectMetaStore, SchedulerStore,
-    StorageEngine, TenantKvStore, TenantLifecycle, TenantPointRead, TenantPointWrite,
-    TenantRangeScan,
+    OBJECT_MULTIPART_TABLE, ObjectBlobLayout, ObjectChecksums, ObjectChunkRef, ObjectManifest,
+    ObjectManifestAttributes, ObjectMetaStore, ObjectMultipartPart, ObjectMultipartUpload,
+    SchedulerStore, StorageEngine, TenantKvStore, TenantLifecycle, TenantPointRead,
+    TenantPointWrite, TenantRangeScan,
 };
 pub use usage_store::{MonthlyActiveUsersSnapshot, UsageStore};
 

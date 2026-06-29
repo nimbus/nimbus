@@ -30,3 +30,8 @@ pub mod firebase {
 pub mod mongodb {
     pub use nimbus_mongodb::*;
 }
+
+#[cfg(feature = "s3")]
+pub mod s3 {
+    pub use nimbus_s3::*;
+}

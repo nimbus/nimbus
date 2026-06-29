@@ -12,6 +12,7 @@ use crate::adapters::convex::ConvexRegistry;
 use crate::adapters::dynamodb::DynamoDbConfig;
 use crate::adapters::firebase::FirebaseConfig;
 use crate::adapters::mongodb::MongoDbConfig;
+use crate::adapters::s3::S3Config;
 use crate::adapters::wire::WireProtocolAdapter;
 use crate::license::LicenseState;
 use crate::local_server::LocalServerSecurityState;
@@ -87,6 +88,13 @@ impl ServeOptions {
     /// call at most once per adapter.
     pub fn with_dynamodb(mut self, dynamodb_config: DynamoDbConfig) -> Self {
         self.wire_adapters.push(Box::new(dynamodb_config));
+        self
+    }
+
+    /// Register a sibling S3 HTTP listener. Each call adds a listener;
+    /// call at most once per adapter.
+    pub fn with_s3(mut self, s3_config: S3Config) -> Self {
+        self.wire_adapters.push(Box::new(s3_config));
         self
     }
 

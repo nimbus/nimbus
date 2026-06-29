@@ -1,0 +1,31 @@
+[package]
+name = "nimbus-s3"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+bytes.workspace = true
+futures.workspace = true
+hex.workspace = true
+http.workspace = true
+nimbus-blob = { path = "../nimbus-blob" }
+nimbus-core = { path = "../nimbus-core" }
+nimbus-storage = { path = "../nimbus-storage" }
+s3s.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+ulid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
