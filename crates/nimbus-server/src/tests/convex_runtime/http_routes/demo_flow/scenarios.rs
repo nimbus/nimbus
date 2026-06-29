@@ -7,8 +7,11 @@ async fn convex_http_demo_flow_matches_generated_app_behavior() {
     let service = fixture.engine();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let scheduler_handle = tokio::spawn(run_scheduler(service.clone(), shutdown_rx));
-    let server = ServerFixture::start(router_for_convex(service.clone(), registry)).await;
-    let api = HttpApiFixture::new(&server);
+    let server = ServerFixture::start(router_for_convex_team(service.clone(), registry)).await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+    // #41 non-vacuous: an anonymous (no-bearer) selection of this silo is refused
+    // by the all-fail-closed team gate; only the team-bound bearer is admitted.
+    assert_convex_anonymous_query_refused(&server, "demo").await;
 
     assert_eq!(
         api.create_tenant("demo").await.status(),
@@ -226,8 +229,11 @@ async fn convex_http_demo_flow_matches_generated_app_behavior() {
 async fn convex_http_demo_action_then_http_post_and_follow_up_action_all_complete() {
     let registry = http_demo_registry(1_000);
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
-    let api = HttpApiFixture::new(&server);
+    let server = ServerFixture::start(router_for_convex_team(fixture.engine(), registry)).await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+    // #41 non-vacuous: an anonymous (no-bearer) selection of this silo is refused
+    // by the all-fail-closed team gate; only the team-bound bearer is admitted.
+    assert_convex_anonymous_query_refused(&server, "demo").await;
 
     assert_eq!(
         api.create_tenant("demo").await.status(),
@@ -255,6 +261,7 @@ async fn convex_http_demo_action_then_http_post_and_follow_up_action_all_complet
             reqwest::Method::POST,
             api.convex_http_url("demo", "/messages"),
         )
+        .header(reqwest::header::AUTHORIZATION, convex_team_bearer())
         .json(&json!({ "author": author, "body": http_body }))
         .send()
         .await
@@ -263,7 +270,9 @@ async fn convex_http_demo_action_then_http_post_and_follow_up_action_all_complet
     wait_for_message(&api, author, http_body).await;
 
     let second_action = timeout(
-        Duration::from_secs(1),
+        // Match the sibling scenario's 5s action-resolution deadline (line ~420):
+        // 1s is brittle for a V8 runtime action under full-parallel CI load.
+        Duration::from_secs(5),
         api.convex_named_action(
             "demo",
             "messages:sendViaAction",
@@ -293,8 +302,11 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
         Engine::new_with_simulation(path, harness.clock(), harness.fault_injector())
     });
     let service = fixture.engine();
-    let server = ServerFixture::start(router_for_convex(service.clone(), registry)).await;
-    let api = HttpApiFixture::new(&server);
+    let server = ServerFixture::start(router_for_convex_team(service.clone(), registry)).await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+    // #41 non-vacuous: an anonymous (no-bearer) selection of this silo is refused
+    // by the all-fail-closed team gate; only the team-bound bearer is admitted.
+    assert_convex_anonymous_query_refused(&server, "demo").await;
 
     assert_eq!(
         api.create_tenant("demo").await.status(),
@@ -312,6 +324,7 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
         async move {
             client
                 .post(url)
+                .header(reqwest::header::AUTHORIZATION, convex_team_bearer())
                 .json(&json!({
                     "name": "messages:sendViaAction",
                     "args": { "author": author, "body": action_body }
@@ -338,6 +351,7 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
         async move {
             client
                 .post(url)
+                .header(reqwest::header::AUTHORIZATION, convex_team_bearer())
                 .json(&json!({
                     "name": "messages:byAuthor",
                     "args": { "author": author }
@@ -360,6 +374,7 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
         async move {
             client
                 .post(url)
+                .header(reqwest::header::AUTHORIZATION, convex_team_bearer())
                 .json(&json!({ "author": author, "body": http_body }))
                 .send()
                 .await

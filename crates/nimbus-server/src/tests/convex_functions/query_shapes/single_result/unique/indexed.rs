@@ -41,8 +41,11 @@ async fn convex_named_indexed_filter_unique_query_resolves_exact_match() {
         }
     ]));
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
-    let api = HttpApiFixture::new(&server);
+    let server = ServerFixture::start(router_for_convex_team(fixture.engine(), registry)).await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+    // #41 non-vacuous: an anonymous (no-bearer) selection of this silo is refused
+    // by the all-fail-closed team gate; only the team-bound bearer is admitted.
+    assert_convex_anonymous_query_refused(&server, "demo").await;
 
     assert_eq!(
         api.create_tenant("demo").await.status(),
@@ -177,8 +180,11 @@ async fn convex_app_schema_manifest_bootstraps_indexed_queries_for_new_tenants()
         })),
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
-    let api = HttpApiFixture::new(&server);
+    let server = ServerFixture::start(router_for_convex_team(fixture.engine(), registry)).await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+    // #41 non-vacuous: an anonymous (no-bearer) selection of this silo is refused
+    // by the all-fail-closed team gate; only the team-bound bearer is admitted.
+    assert_convex_anonymous_query_refused(&server, "demo").await;
 
     assert_eq!(
         api.create_tenant("demo").await.status(),

@@ -50,7 +50,9 @@ impl TeamId {
             )));
         }
         if value.contains(':') {
-            return Err(TeamIdError(format!("team id `{value}` must not contain `:`")));
+            return Err(TeamIdError(format!(
+                "team id `{value}` must not contain `:`"
+            )));
         }
         Ok(Self(value))
     }
@@ -116,7 +118,9 @@ impl SiloTeamRegistry {
         let mut registry = Self::new();
         for entry in spec.split(',').map(str::trim).filter(|e| !e.is_empty()) {
             let (silo, team) = entry.rsplit_once(':').ok_or_else(|| {
-                spec_error(format!("invalid silo→team binding `{entry}`: expected SILO:TEAM"))
+                spec_error(format!(
+                    "invalid silo→team binding `{entry}`: expected SILO:TEAM"
+                ))
             })?;
             if silo.is_empty() || team.is_empty() {
                 return Err(spec_error(format!(
@@ -246,6 +250,46 @@ impl fmt::Display for ConvexTeamAuthzError {
 
 impl std::error::Error for ConvexTeamAuthzError {}
 
+/// The two #41 registries bundled for the convex adapter. Travels in deployment
+/// state and is read at the convex admission gate. **Defaults to empty** — an
+/// unconfigured deployment refuses every application-convex request (fail-closed
+/// by construction; the operator turns convex on by provisioning teams, not by
+/// leaving it unconfigured).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConvexTenancyConfig {
+    silo_teams: SiloTeamRegistry,
+    principal_teams: PrincipalTeamRegistry,
+}
+
+impl ConvexTenancyConfig {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn with_silo_teams(mut self, silo_teams: SiloTeamRegistry) -> Self {
+        self.silo_teams = silo_teams;
+        self
+    }
+
+    #[must_use]
+    pub fn with_principal_teams(mut self, principal_teams: PrincipalTeamRegistry) -> Self {
+        self.principal_teams = principal_teams;
+        self
+    }
+
+    /// All-fail-closed authorization for an application-convex silo selection
+    /// (see [`authorize_silo_selection`]).
+    pub fn authorize_silo_selection(
+        &self,
+        url_silo: &TenantId,
+        principal: &PrincipalContext,
+    ) -> Result<(), ConvexTeamAuthzError> {
+        authorize_silo_selection(&self.silo_teams, &self.principal_teams, url_silo, principal)
+    }
+}
+
 /// The #41 admission decision — **all-fail-closed**. Admit iff the URL silo
 /// resolves to a team, the principal resolves to a team, and the two match.
 ///
@@ -346,7 +390,10 @@ mod tests {
             &PrincipalContext::anonymous(),
         )
         .expect_err("anonymous must be refused");
-        assert!(matches!(error, ConvexTeamAuthzError::PrincipalHasNoTeam { .. }));
+        assert!(matches!(
+            error,
+            ConvexTeamAuthzError::PrincipalHasNoTeam { .. }
+        ));
     }
 
     #[test]
@@ -391,9 +438,13 @@ mod tests {
     fn unregistered_silo_is_refused() {
         let (silos, principals) = registries();
         let principal = verified_principal("user-a", "https://idp.example.com");
-        let error = authorize_silo_selection(&silos, &principals, &tenant("silo-unknown"), &principal)
-            .expect_err("unregistered silo must be refused");
-        assert!(matches!(error, ConvexTeamAuthzError::UnregisteredSilo { .. }));
+        let error =
+            authorize_silo_selection(&silos, &principals, &tenant("silo-unknown"), &principal)
+                .expect_err("unregistered silo must be refused");
+        assert!(matches!(
+            error,
+            ConvexTeamAuthzError::UnregisteredSilo { .. }
+        ));
     }
 
     #[test]
@@ -403,7 +454,10 @@ mod tests {
         let principal = verified_principal("user-unknown", "https://idp.unknown.com");
         let error = authorize_silo_selection(&silos, &principals, &tenant("silo-1"), &principal)
             .expect_err("unprovisioned principal must be refused");
-        assert!(matches!(error, ConvexTeamAuthzError::PrincipalHasNoTeam { .. }));
+        assert!(matches!(
+            error,
+            ConvexTeamAuthzError::PrincipalHasNoTeam { .. }
+        ));
     }
 
     #[test]
@@ -429,7 +483,10 @@ mod tests {
         };
         let error = authorize_silo_selection(&silos, &principals, &tenant("silo-1"), &spoofed)
             .expect_err("an unverified subject must not resolve a team");
-        assert!(matches!(error, ConvexTeamAuthzError::PrincipalHasNoTeam { .. }));
+        assert!(matches!(
+            error,
+            ConvexTeamAuthzError::PrincipalHasNoTeam { .. }
+        ));
     }
 
     #[test]
@@ -437,9 +494,18 @@ mod tests {
         let silos =
             SiloTeamRegistry::from_operator_spec("silo-1:team-a, silo-2:team-a , silo-3:team-b,")
                 .expect("silo spec should parse");
-        assert_eq!(silos.team_for_silo(&tenant("silo-1")), Some(&team("team-a")));
-        assert_eq!(silos.team_for_silo(&tenant("silo-2")), Some(&team("team-a")));
-        assert_eq!(silos.team_for_silo(&tenant("silo-3")), Some(&team("team-b")));
+        assert_eq!(
+            silos.team_for_silo(&tenant("silo-1")),
+            Some(&team("team-a"))
+        );
+        assert_eq!(
+            silos.team_for_silo(&tenant("silo-2")),
+            Some(&team("team-a"))
+        );
+        assert_eq!(
+            silos.team_for_silo(&tenant("silo-3")),
+            Some(&team("team-b"))
+        );
         assert_eq!(silos.team_for_silo(&tenant("silo-x")), None);
 
         // Issuer keys contain `:` (https://…) — rsplit on the last `:` keeps them whole.
@@ -448,7 +514,10 @@ mod tests {
         )
         .expect("principal spec should parse");
         let by_issuer = verified_principal("whoever", "https://idp.example.com");
-        assert_eq!(principals.team_for_principal(&by_issuer), Some(&team("team-a")));
+        assert_eq!(
+            principals.team_for_principal(&by_issuer),
+            Some(&team("team-a"))
+        );
     }
 
     #[test]

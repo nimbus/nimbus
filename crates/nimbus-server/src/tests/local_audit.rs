@@ -359,6 +359,9 @@ async fn tenant_application_auth_audit_keeps_application_scope() {
                 &registry,
             ))
             .with_convex(registry)
+            // #41: bind the verified `user-123` principal to the team that owns
+            // `demo` so the application bearer is admitted by the gate.
+            .with_convex_tenancy(convex_team_tenancy_binding("demo", "user-123"))
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -373,6 +376,10 @@ async fn tenant_application_auth_audit_keeps_application_scope() {
         .await
         .expect("tenant create request should send");
     assert_eq!(create_tenant.status(), StatusCode::CREATED);
+
+    // #41 non-vacuous: an anonymous selection of the silo is refused (and audited
+    // under the application scope, not admitted).
+    assert_convex_anonymous_query_refused(&server, "demo").await;
 
     let application_auth = server
         .client()

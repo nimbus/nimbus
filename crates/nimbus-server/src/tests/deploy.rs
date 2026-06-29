@@ -3,13 +3,18 @@ use super::*;
 const DEPLOY_TOKEN: &str = "test-deploy-token";
 
 fn deploy_router(engine: Arc<Engine>, registry: Option<ConvexRegistry>) -> axum::Router {
-    let mut config =
-        crate::router::RouterBuildConfig::core(engine).with_deploy_admin_token(DEPLOY_TOKEN);
+    // #41: the team gate guards every `/convex/<silo>` route these tests query
+    // after deploying, and `convex_tenancy` is carried forward to *every*
+    // activated generation — so provision the `demo` team tenancy
+    // unconditionally (even when no initial registry is supplied). The static
+    // verifier only matters for the initial deployment, so it stays gated on the
+    // initial registry; post-activation the deployed bundle is its own verifier.
+    let mut config = crate::router::RouterBuildConfig::core(engine)
+        .with_deploy_admin_token(DEPLOY_TOKEN)
+        .with_convex_tenancy(convex_team_tenancy_for("demo"));
     if let Some(registry) = registry {
         config = config
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &registry,
-            ))
+            .with_application_auth_verifier(std::sync::Arc::new(StaticConvexTeamVerifier))
             .with_convex(registry);
     }
     config.build()
@@ -19,17 +24,18 @@ fn deploy_router_with_system_registry(
     engine: Arc<Engine>,
     registry: Option<ConvexRegistry>,
 ) -> axum::Router {
+    // #41: see `deploy_router` — provision the `demo` team tenancy
+    // unconditionally so every activated generation is admissible.
     let mut config = crate::router::RouterBuildConfig::core(engine)
         .with_deploy_admin_token(DEPLOY_TOKEN)
+        .with_convex_tenancy(convex_team_tenancy_for("demo"))
         .with_system_convex_registry(
             ConvexRegistry::from_embedded_system_bundle()
                 .expect("embedded system Convex registry should load"),
         );
     if let Some(registry) = registry {
         config = config
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &registry,
-            ))
+            .with_application_auth_verifier(std::sync::Arc::new(StaticConvexTeamVerifier))
             .with_convex(registry);
     }
     config.build()
@@ -183,7 +189,7 @@ async fn deploy_dry_run_validates_and_diffs_without_activation() {
         )]))),
     ))
     .await;
-    let api = HttpApiFixture::new(&server);
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
     assert_eq!(
         api.create_tenant("demo").await.status(),
         StatusCode::CREATED
@@ -236,6 +242,12 @@ async fn deploy_dry_run_validates_and_diffs_without_activation() {
 
 #[tokio::test]
 async fn deploy_activation_swaps_new_requests_to_new_generation() {
+    // #41: this test queries the silo *after* activation, where the verifier is
+    // the deployed bundle (not the router's static verifier). So carry a real
+    // custom-JWT bearer and deploy its matching auth config inside the bundle —
+    // the activated generation verifies the token itself and the team tenancy
+    // admits it on the verified issuer.
+    let (team_bearer, team_auth_config) = convex_team_real_auth();
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(deploy_router_with_system_registry(
         fixture.engine(),
@@ -245,7 +257,7 @@ async fn deploy_activation_swaps_new_requests_to_new_generation() {
         )]))),
     ))
     .await;
-    let api = HttpApiFixture::new(&server);
+    let api = HttpApiFixture::with_convex_bearer(&server, team_bearer);
     assert_eq!(
         api.create_tenant("demo").await.status(),
         StatusCode::CREATED
@@ -253,7 +265,11 @@ async fn deploy_activation_swaps_new_requests_to_new_generation() {
 
     let response = deploy(
         &server,
-        deploy_request(json!([query_function("notes:list", "notes")])),
+        {
+            let mut request = deploy_request(json!([query_function("notes:list", "notes")]));
+            request["artifacts"]["convex"]["auth_config_json"] = team_auth_config;
+            request
+        },
         Some(DEPLOY_TOKEN),
     )
     .await;
@@ -359,7 +375,7 @@ async fn deploy_validation_failure_leaves_previous_generation_live() {
         )]))),
     ))
     .await;
-    let api = HttpApiFixture::new(&server);
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
     assert_eq!(
         api.create_tenant("demo").await.status(),
         StatusCode::CREATED
@@ -435,7 +451,7 @@ async fn deploy_schema_validation_failure_leaves_previous_generation_live() {
         )]))),
     ))
     .await;
-    let api = HttpApiFixture::new(&server);
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
     assert_eq!(
         api.create_tenant("demo").await.status(),
         StatusCode::CREATED
@@ -505,6 +521,11 @@ async fn deploy_schema_validation_failure_leaves_previous_generation_live() {
 #[tokio::test]
 async fn deploy_persists_across_engine_restart_without_app_dir() {
     let data_dir = tempfile::tempdir().expect("data dir tempdir should create");
+    // #41: the post-activation (and post-restart) queries hit the deployed
+    // bundle's own verifier, so mint one real custom-JWT bearer + auth config and
+    // deploy that config inside *both* bundles. Reusing the same config keeps the
+    // two deploy artifacts byte-identical, which the sha256 dedup below relies on.
+    let (team_bearer, team_auth_config) = convex_team_real_auth();
 
     {
         let engine_a = Arc::new(
@@ -512,7 +533,7 @@ async fn deploy_persists_across_engine_restart_without_app_dir() {
         );
         let server_a =
             ServerFixture::start(deploy_router_with_system_registry(engine_a.clone(), None)).await;
-        let api_a = HttpApiFixture::new(&server_a);
+        let api_a = HttpApiFixture::with_convex_bearer(&server_a, team_bearer.clone());
         assert_eq!(
             api_a.create_tenant("demo").await.status(),
             StatusCode::CREATED
@@ -520,7 +541,11 @@ async fn deploy_persists_across_engine_restart_without_app_dir() {
 
         let response = deploy(
             &server_a,
-            deploy_request(json!([query_function("notes:list", "notes")])),
+            {
+                let mut request = deploy_request(json!([query_function("notes:list", "notes")]));
+                request["artifacts"]["convex"]["auth_config_json"] = team_auth_config.clone();
+                request
+            },
             Some(DEPLOY_TOKEN),
         )
         .await;
@@ -570,7 +595,7 @@ async fn deploy_persists_across_engine_restart_without_app_dir() {
     );
     let server_b =
         ServerFixture::start(deploy_router_with_system_registry(engine_b.clone(), None)).await;
-    let api_b = HttpApiFixture::new(&server_b);
+    let api_b = HttpApiFixture::with_convex_bearer(&server_b, team_bearer);
 
     // The deploy record written on engine A is durable in shared storage.
     // (Tenant durability is exercised implicitly: the redeploy below targets
@@ -616,7 +641,11 @@ async fn deploy_persists_across_engine_restart_without_app_dir() {
     // of any source-tree state on disk.
     let response = deploy(
         &server_b,
-        deploy_request(json!([query_function("notes:list", "notes")])),
+        {
+            let mut request = deploy_request(json!([query_function("notes:list", "notes")]));
+            request["artifacts"]["convex"]["auth_config_json"] = team_auth_config;
+            request
+        },
         Some(DEPLOY_TOKEN),
     )
     .await;

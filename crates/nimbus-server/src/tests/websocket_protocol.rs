@@ -187,16 +187,16 @@ async fn convex_websocket_subscription_projects_live_system_subscription_state()
         .await
         .expect("system tenant should prepare");
     let server = ServerFixture::start(
-        RouterBuildConfig::core(service.clone())
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &user_registry,
-            ))
-            .with_convex(user_registry)
-            .with_system_convex_registry(system_registry)
-            .build(),
+        with_convex_team_binding(
+            RouterBuildConfig::core(service.clone())
+                .with_convex(user_registry)
+                .with_system_convex_registry(system_registry),
+            "demo",
+        )
+        .build(),
     )
     .await;
-    let api = HttpApiFixture::new(&server);
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
 
     assert_eq!(
         api.create_tenant("demo").await.status(),
@@ -208,6 +208,9 @@ async fn convex_websocket_subscription_projects_live_system_subscription_state()
             .status(),
         StatusCode::CREATED
     );
+    // #41 non-vacuous: an anonymous Convex WS upgrade for this silo is refused;
+    // the subscription below connects only with the team-bound bearer.
+    assert_convex_anonymous_ws_refused(&server, "demo").await;
 
     let (system_tx, mut system_rx) =
         tokio_mpsc::channel(nimbus_engine::DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
@@ -232,9 +235,12 @@ async fn convex_websocket_subscription_projects_live_system_subscription_state()
         "system subscription table should start empty: {initial:?}"
     );
 
-    let mut socket = WebSocketFixture::connect_raw(&api.ws_url("/convex/demo/ws"))
-        .await
-        .expect("convex websocket should connect");
+    let mut socket = WebSocketFixture::connect_raw_with_bearer(
+        &api.ws_url("/convex/demo/ws"),
+        &convex_team_bearer(),
+    )
+    .await
+    .expect("convex websocket should connect");
     socket
         .subscribe_named("messages-watch", "messages:list", json!({}))
         .await;

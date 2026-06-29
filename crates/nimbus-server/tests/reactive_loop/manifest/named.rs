@@ -27,13 +27,18 @@ async fn convex_named_subscription_resolves_through_manifest() {
     ]));
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
-    let api = HttpApiFixture::new(&server);
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
 
     assert!(api.create_tenant("demo").await.status().is_success());
 
-    let mut socket = WebSocketFixture::connect_raw(&api.ws_url("/convex/demo/ws"))
-        .await
-        .expect("convex websocket should connect");
+    // #41 non-vacuous: an anonymous Convex WS upgrade for this silo is refused.
+    assert_convex_anonymous_ws_refused(&server, "demo").await;
+    let mut socket = WebSocketFixture::connect_raw_with_bearer(
+        &api.ws_url("/convex/demo/ws"),
+        &convex_team_bearer(),
+    )
+    .await
+    .expect("convex websocket should connect");
     socket
         .subscribe_named("convex-named", "tasks:all", json!({}))
         .await;
@@ -120,13 +125,18 @@ export {};
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
-    let api = HttpApiFixture::new(&server);
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
 
     assert!(api.create_tenant("demo").await.status().is_success());
 
-    let mut socket = WebSocketFixture::connect_raw(&api.ws_url("/convex/demo/ws"))
-        .await
-        .expect("convex websocket should connect");
+    // #41 non-vacuous: an anonymous Convex WS upgrade for this silo is refused.
+    assert_convex_anonymous_ws_refused(&server, "demo").await;
+    let mut socket = WebSocketFixture::connect_raw_with_bearer(
+        &api.ws_url("/convex/demo/ws"),
+        &convex_team_bearer(),
+    )
+    .await
+    .expect("convex websocket should connect");
     socket
         .subscribe_named("convex-runtime", "tasks:all", json!({}))
         .await;

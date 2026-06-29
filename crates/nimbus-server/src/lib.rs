@@ -30,6 +30,7 @@ pub use adapters::cloudflare::{
     KvNamespaceBinding, R2BucketBinding, WranglerConfigError,
 };
 pub use adapters::convex::ConvexRegistry;
+pub use adapters::convex::{ConvexTenancyConfig, PrincipalTeamRegistry, SiloTeamRegistry, TeamId};
 pub use adapters::dynamodb::DynamoDbConfig;
 pub use adapters::firebase::{FirebaseConfig, ProjectSpecError, ProjectTenantRegistry};
 pub use adapters::s3::S3Config;

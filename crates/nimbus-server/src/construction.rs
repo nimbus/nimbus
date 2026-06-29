@@ -8,7 +8,7 @@ use nimbus_runtime::{
 
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
 use crate::adapters::cloudflare::CloudflareConfig;
-use crate::adapters::convex::ConvexRegistry;
+use crate::adapters::convex::{ConvexRegistry, ConvexTenancyConfig};
 use crate::adapters::dynamodb::DynamoDbConfig;
 use crate::adapters::firebase::FirebaseConfig;
 use crate::adapters::mongodb::MongoDbConfig;
@@ -45,6 +45,11 @@ impl ServeOptions {
 
     pub fn with_convex_registry(mut self, convex_registry: ConvexRegistry) -> Self {
         self.router_options = self.router_options.with_convex_registry(convex_registry);
+        self
+    }
+
+    pub fn with_convex_tenancy(mut self, convex_tenancy: ConvexTenancyConfig) -> Self {
+        self.router_options = self.router_options.with_convex_tenancy(convex_tenancy);
         self
     }
 

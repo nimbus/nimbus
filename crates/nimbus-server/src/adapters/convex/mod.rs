@@ -9,6 +9,7 @@ use axum::http::{HeaderMap, Method};
 use futures::{SinkExt, StreamExt};
 pub use nimbus_convex::ConvexRegistry;
 pub(crate) use nimbus_convex::*;
+pub use nimbus_convex::{ConvexTenancyConfig, PrincipalTeamRegistry, SiloTeamRegistry, TeamId};
 use nimbus_core::{
     Cursor, DocumentId, Error, Filter, FilterOp, Mutation, OrderBy, PaginatedQuery, Query,
     ScheduleRequest, TableName, TenantId, Timestamp,
@@ -27,7 +28,6 @@ mod execution;
 mod handlers;
 mod host_bridge;
 mod http_actions;
-mod network_guard;
 mod subscriptions;
 #[cfg(test)]
 mod tests;
@@ -40,7 +40,6 @@ pub(crate) use self::handlers::{
 pub(crate) use self::host_bridge::{
     ConvexHostBridge, ConvexHostBridgeInvocation, ConvexHostBridgeScope,
 };
-pub(crate) use self::network_guard::convex_application_network_bind_guard;
 
 use crate::protocol::ServerMessage;
 use crate::state::{AppError, AppState};

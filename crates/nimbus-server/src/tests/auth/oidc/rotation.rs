@@ -28,12 +28,20 @@ async fn convex_oidc_jwks_are_refetched_after_rotation() {
         })),
     );
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_convex(fixture.engine(), registry)).await;
+    let server = ServerFixture::start(router_for_convex_with_tenancy(
+        fixture.engine(),
+        registry,
+        convex_team_tenancy_binding("demo", provider.issuer()),
+    ))
+    .await;
     let api = HttpApiFixture::new(&server);
     assert_eq!(
         api.create_tenant("demo").await.status(),
         StatusCode::CREATED
     );
+    // #41 non-vacuous: an anonymous (no-bearer) selection of this silo is refused;
+    // both rotated tokens are admitted only because their verified issuer is bound.
+    assert_convex_anonymous_query_refused(&server, "demo").await;
 
     let first_response = server
         .client()

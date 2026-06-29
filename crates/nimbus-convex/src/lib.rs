@@ -75,6 +75,10 @@ pub use templates::{
     empty_args, method_name, normalize_http_request_path, parse_job_id, resolve_http_template,
     resolve_template,
 };
+pub use tenancy::{
+    ConvexTeamAuthzError, ConvexTenancyConfig, PrincipalTeamRegistry, SiloTeamRegistry, TeamId,
+    TenancySpecError,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConvexHttpRequestContext {
