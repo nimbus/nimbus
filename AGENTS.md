@@ -119,19 +119,21 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   the container-only `SandboxEgressProxy`, binding isolate/wasm `fetch`), or
   at-rest crypto extraction (`nimbus-crypto`):
   the isolate substrate portfolio from the `/tmp/nimbus-isolate-architecture.html`
-  deep-dive plus `docs/private/plans/nimbus-crypto-extraction-plan.md`.
-  Read `docs/private/plans/nimbus-crypto-extraction-plan.md` (NC0..NC4),
+  deep-dive plus
+  `docs/private/plans/archive/nimbus-crypto-extraction-plan.md`.
+  Read `docs/private/plans/archive/nimbus-crypto-extraction-plan.md` (NC0..NC4),
   `docs/private/plans/nimbus-isolate-filesystem-plan.md` (NFS0..NFS7),
   `docs/private/plans/nimbus-s3-object-storage-plan.md` (NOS0..NOS7), and
-  `docs/private/plans/archive/nimbus-egress-gateway-extraction-plan.md`
-  (completed NEG0..NEG7).
-  NC is the practical predecessor for NOS byte-plane crypto; NOS may do
+  `docs/private/plans/nimbus-egress-gateway-extraction-plan.md` (NEG0..NEG7).
+  NC is the archived completed predecessor for NOS byte-plane crypto; NOS may do
   metadata/interface design before NC, but do not duplicate the encryption
-  stack instead of sourcing it from `nimbus-crypto`. NFS/NOS/NEG/NC verifier
-  scripts are created by their phase-0 scaffold bands; before those bands land,
-  a missing verifier is expected, not a green signal. Honor the `nimbus-runtime`
-  zero-workspace-dep and `nimbus-core` zero-I/O invariants via injected traits
-  (`NimbusFsBackend`, `EgressGateway` — both the HostBridge pattern). If NFS and
+  stack instead of sourcing it from `nimbus-crypto`. The NC verifier exists at
+  `bash scripts/verify-nimbus-crypto-extraction.sh` and is green; NFS/NOS/NEG
+  verifier scripts are created by their phase-0 scaffold bands, so before those
+  bands land, a missing verifier is expected, not a green signal. Honor the
+  `nimbus-runtime` zero-workspace-dep and `nimbus-core` zero-I/O invariants via
+  injected traits (`NimbusFsBackend`, `EgressGateway` — both the HostBridge
+  pattern). If NFS and
   NEG are active together, land a small runtime bootstrap extension registry
   first so both plans do not hand-edit `extensions.rs` independently. Coordinate
   the NimbusFS WASI binder and the egress wasm binding with
@@ -325,8 +327,8 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `docs/private/adapters/convex/compatibility.md`
 - Function source visibility, source packages, module code navigation, console
   Source tab, or deploy-time type hover/typecheck:
-  `docs/private/plans/nimbus-function-source-visibility-plan.md` is a completed
-  local baseline, not active roadmap work. The verifier is
+  `docs/private/plans/archive/nimbus-function-source-visibility-plan.md` is a
+  completed local baseline, not active roadmap work. The verifier is
   `bash scripts/verify-nimbus-function-source-visibility.sh` and was green at
   21 passed / 0 failed on 2026-06-18. New work needs a follow-on plan.
 - Node-compatible runtime / `deno_core` / `rusty_v8` / embedded-codegen:
