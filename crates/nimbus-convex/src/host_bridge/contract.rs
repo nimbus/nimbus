@@ -60,6 +60,14 @@ pub enum ConvexHostCallOperation {
     CtxServiceLookup,
     #[serde(rename = "convex.ctx.runtime.enter_nested_call")]
     CtxRuntimeEnterNestedCall,
+    #[serde(rename = "cloudflare.kv.get")]
+    CfKvGet,
+    #[serde(rename = "cloudflare.kv.put")]
+    CfKvPut,
+    #[serde(rename = "cloudflare.kv.delete")]
+    CfKvDelete,
+    #[serde(rename = "cloudflare.kv.list")]
+    CfKvList,
     #[serde(rename = "adapter.runtime_extension_call")]
     RuntimeExtensionCall,
 }
@@ -102,7 +110,11 @@ impl ConvexHostCallOperation {
             Self::CtxSchedulerRunAfter | Self::CtxSchedulerRunAt | Self::CtxSchedulerCancel => {
                 ConvexHostCallFamily::Scheduler
             }
-            Self::RuntimeExtensionCall => ConvexHostCallFamily::AdapterExtension,
+            Self::CfKvGet
+            | Self::CfKvPut
+            | Self::CfKvDelete
+            | Self::CfKvList
+            | Self::RuntimeExtensionCall => ConvexHostCallFamily::AdapterExtension,
         }
     }
 
@@ -134,6 +146,10 @@ impl ConvexHostCallOperation {
             Self::CtxSchedulerCancel => "convex.ctx.scheduler.cancel",
             Self::CtxServiceLookup => "convex.ctx.service.lookup",
             Self::CtxRuntimeEnterNestedCall => "convex.ctx.runtime.enter_nested_call",
+            Self::CfKvGet => "cloudflare.kv.get",
+            Self::CfKvPut => "cloudflare.kv.put",
+            Self::CfKvDelete => "cloudflare.kv.delete",
+            Self::CfKvList => "cloudflare.kv.list",
             Self::RuntimeExtensionCall => "adapter.runtime_extension_call",
         }
     }
@@ -168,6 +184,10 @@ impl From<HostCallOperation> for ConvexHostCallOperation {
             HostCallOperation::CtxSchedulerCancel => Self::CtxSchedulerCancel,
             HostCallOperation::CtxServiceLookup => Self::CtxServiceLookup,
             HostCallOperation::CtxRuntimeEnterNestedCall => Self::CtxRuntimeEnterNestedCall,
+            HostCallOperation::CfKvGet => Self::CfKvGet,
+            HostCallOperation::CfKvPut => Self::CfKvPut,
+            HostCallOperation::CfKvDelete => Self::CfKvDelete,
+            HostCallOperation::CfKvList => Self::CfKvList,
             HostCallOperation::RuntimeExtensionCall => Self::RuntimeExtensionCall,
         }
     }
@@ -202,6 +222,10 @@ impl From<ConvexHostCallOperation> for HostCallOperation {
             ConvexHostCallOperation::CtxSchedulerCancel => Self::CtxSchedulerCancel,
             ConvexHostCallOperation::CtxServiceLookup => Self::CtxServiceLookup,
             ConvexHostCallOperation::CtxRuntimeEnterNestedCall => Self::CtxRuntimeEnterNestedCall,
+            ConvexHostCallOperation::CfKvGet => Self::CfKvGet,
+            ConvexHostCallOperation::CfKvPut => Self::CfKvPut,
+            ConvexHostCallOperation::CfKvDelete => Self::CfKvDelete,
+            ConvexHostCallOperation::CfKvList => Self::CfKvList,
             ConvexHostCallOperation::RuntimeExtensionCall => Self::RuntimeExtensionCall,
         }
     }

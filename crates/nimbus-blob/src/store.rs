@@ -7,7 +7,7 @@
 //! the tenant binding, so no method takes a `tenant` argument. This mirrors the
 //! per-tenant capability traits in `nimbus-storage/src/traits/mod.rs` and spec
 //! §19: a tenant is provisioned by constructing its own store (its own
-//! `LocalPackStore`, its own `EncryptedBlobStore` holding that tenant's DEK).
+//! `MemoryBlobStore`, its own `EncryptedBlobStore` holding that tenant's DEK).
 //! Cross-tenant isolation is structural, not a per-call check.
 //!
 //! Both traits use `#[async_trait]` because they are consumed as

@@ -87,11 +87,11 @@ impl CloudFunctionsRegistry {
         pressure_source: Arc<dyn RuntimeHostPressureSource>,
         adaptive_settings: RuntimeAdaptiveControllerSettings,
     ) -> Self {
-        let runtime_policy = Arc::new(
-            self.runtime_policy
-                .clone_with_host_resource_governor(budget, pressure_source)
-                .with_adaptive_controller_settings(adaptive_settings),
-        );
+        let runtime_policy = Arc::new(self.runtime_policy.clone_with_host_resource_governor(
+            budget,
+            pressure_source,
+            adaptive_settings,
+        ));
         self.runtime_policy = runtime_policy.clone();
         self.runtime_executor = Arc::new(RuntimeExecutor::new(runtime_policy));
         self

@@ -4,6 +4,7 @@ mod context;
 mod error;
 mod execution_plan;
 mod executor;
+pub mod fs;
 mod host;
 mod limits;
 mod metrics;
@@ -39,13 +40,15 @@ pub use runtime::driver::anchor::smoke_install_committed_embedded_anchor;
 pub use context::RuntimeInvocationContext;
 pub use error::{NimbusRuntimeError, Result};
 pub use executor::{RuntimeExecutor, RuntimeInvocationResponse};
+pub use fs::{NimbusFsBackend, RuntimeFileSystem};
 pub use host::{
     HOST_CALL_ABI_VERSION, HostBridge, HostBridgeFuture, HostCallCancellation,
     HostCallCancellationCause, HostCallEnvelope, HostCallOperation, HostCallPayload,
-    HostCallRequest, RuntimeAsyncActionPayload, RuntimeAsyncDbDeletePayload,
-    RuntimeAsyncDbGetPayload, RuntimeAsyncDbInsertPayload, RuntimeAsyncDbPatchPayload,
-    RuntimeAsyncExtensionPayload, RuntimeAsyncFunctionCallPayload, RuntimeAsyncHttpRoutePayload,
-    RuntimeAsyncMutationPayload, RuntimeAsyncPaginatedQueryPayload,
+    HostCallRequest, RuntimeAsyncActionPayload, RuntimeAsyncCfKvDeletePayload,
+    RuntimeAsyncCfKvGetPayload, RuntimeAsyncCfKvListPayload, RuntimeAsyncCfKvPutPayload,
+    RuntimeAsyncDbDeletePayload, RuntimeAsyncDbGetPayload, RuntimeAsyncDbInsertPayload,
+    RuntimeAsyncDbPatchPayload, RuntimeAsyncExtensionPayload, RuntimeAsyncFunctionCallPayload,
+    RuntimeAsyncHttpRoutePayload, RuntimeAsyncMutationPayload, RuntimeAsyncPaginatedQueryPayload,
     RuntimeAsyncQueryPaginatePayload, RuntimeAsyncQueryPayload, RuntimeAsyncQueryTakePayload,
     RuntimeAsyncQueryTerminalPayload, RuntimeAsyncSchedulerCancelPayload,
     RuntimeAsyncSchedulerRunAfterPayload, RuntimeAsyncSchedulerRunAtPayload,

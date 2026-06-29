@@ -88,7 +88,9 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
                 },
             })
         }
-        InvocationKind::Mutation | InvocationKind::Action => Err(Error::InvalidInput(
+        InvocationKind::Mutation
+        | InvocationKind::Action
+        | InvocationKind::CloudflareWorkerFetch => Err(Error::InvalidInput(
             "runtime subscription bootstrap only supports queries".to_string(),
         )),
     }

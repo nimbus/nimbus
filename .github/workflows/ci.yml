@@ -175,13 +175,15 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Run isolated runtime test lane
-        # V8-sensitive runtime tests are subprocess-isolated in the harness, so
-        # CI keeps a dedicated runtime lane instead of falling back to a global
-        # single-thread workaround. The official Node compatibility corpus is a
-        # conformance signal with its own dedicated workflow; keep required
-        # runtime tests focused on product runtime behavior and lightweight
-        # manifest/unit checks. nimbus-runtime has zero workspace deps (per
-        # CLAUDE.md) so this lane intentionally has no Node/UI prerequisites.
+        # V8-sensitive runtime tests live in a dedicated serial runtime lane:
+        # subprocess isolation protects child cases, while --test-threads=1
+        # prevents unignored in-process V8 constructors from overlapping those
+        # parents and poisoning process-global cage / RO-heap state. The
+        # official Node compatibility corpus is a conformance signal with its
+        # own dedicated workflow; keep required runtime tests focused on product
+        # runtime behavior and lightweight manifest/unit checks. nimbus-runtime
+        # has zero workspace deps (per CLAUDE.md) so this lane intentionally has
+        # no Node/UI prerequisites.
         run: make test-rust-runtime
 
   rust-runtime-ptrcomp-check:

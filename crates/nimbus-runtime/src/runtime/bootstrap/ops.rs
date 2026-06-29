@@ -1,3 +1,4 @@
+mod async_cloudflare;
 mod async_effects;
 mod async_query;
 mod async_runtime_extension;
@@ -10,6 +11,9 @@ mod sync_query_builder;
 mod test_runtime;
 mod worker_threads;
 
+use self::async_cloudflare::{
+    op_nimbus_cf_kv_delete, op_nimbus_cf_kv_get, op_nimbus_cf_kv_list, op_nimbus_cf_kv_put,
+};
 use self::async_effects::{
     op_nimbus_ctx_action, op_nimbus_ctx_mutation, op_nimbus_ctx_scheduler_cancel,
     op_nimbus_ctx_scheduler_run_after, op_nimbus_ctx_scheduler_run_at, op_nimbus_document_delete,
@@ -31,18 +35,19 @@ use self::runtime_local::{
     op_nimbus_runtime_chmod_sync, op_nimbus_runtime_chown, op_nimbus_runtime_chown_sync,
     op_nimbus_runtime_copy_file, op_nimbus_runtime_copy_file_sync, op_nimbus_runtime_cwd,
     op_nimbus_runtime_env_get, op_nimbus_runtime_env_snapshot, op_nimbus_runtime_exec_path,
-    op_nimbus_runtime_fs_read_file, op_nimbus_runtime_fs_write_file, op_nimbus_runtime_lchmod,
-    op_nimbus_runtime_lchmod_sync, op_nimbus_runtime_link, op_nimbus_runtime_link_sync,
-    op_nimbus_runtime_mkdir, op_nimbus_runtime_mkdir_sync, op_nimbus_runtime_read_dir,
-    op_nimbus_runtime_read_dir_sync, op_nimbus_runtime_read_link, op_nimbus_runtime_read_link_sync,
-    op_nimbus_runtime_remove, op_nimbus_runtime_remove_sync, op_nimbus_runtime_rename,
-    op_nimbus_runtime_rename_sync, op_nimbus_runtime_require_read_file,
-    op_nimbus_runtime_require_resolve, op_nimbus_runtime_shared_env_delete,
-    op_nimbus_runtime_shared_env_get, op_nimbus_runtime_shared_env_seed,
-    op_nimbus_runtime_shared_env_set, op_nimbus_runtime_shared_env_snapshot,
-    op_nimbus_runtime_stat, op_nimbus_runtime_stat_sync, op_nimbus_runtime_symlink,
-    op_nimbus_runtime_symlink_sync, op_nimbus_runtime_target_triple, op_nimbus_runtime_utime,
-    op_nimbus_runtime_utime_sync, op_nimbus_runtime_validate_open_path, op_set_raw,
+    op_nimbus_runtime_fs_read_file, op_nimbus_runtime_fs_write_file,
+    op_nimbus_runtime_fs_write_file_sync, op_nimbus_runtime_lchmod, op_nimbus_runtime_lchmod_sync,
+    op_nimbus_runtime_link, op_nimbus_runtime_link_sync, op_nimbus_runtime_mkdir,
+    op_nimbus_runtime_mkdir_sync, op_nimbus_runtime_read_dir, op_nimbus_runtime_read_dir_sync,
+    op_nimbus_runtime_read_link, op_nimbus_runtime_read_link_sync, op_nimbus_runtime_remove,
+    op_nimbus_runtime_remove_sync, op_nimbus_runtime_rename, op_nimbus_runtime_rename_sync,
+    op_nimbus_runtime_require_read_file, op_nimbus_runtime_require_resolve,
+    op_nimbus_runtime_shared_env_delete, op_nimbus_runtime_shared_env_get,
+    op_nimbus_runtime_shared_env_seed, op_nimbus_runtime_shared_env_set,
+    op_nimbus_runtime_shared_env_snapshot, op_nimbus_runtime_stat, op_nimbus_runtime_stat_sync,
+    op_nimbus_runtime_symlink, op_nimbus_runtime_symlink_sync, op_nimbus_runtime_target_triple,
+    op_nimbus_runtime_utime, op_nimbus_runtime_utime_sync, op_nimbus_runtime_validate_open_path,
+    op_set_raw,
 };
 use self::shared::{
     op_nimbus_runtime_contract, op_nimbus_runtime_host_call_session_id,
@@ -86,6 +91,10 @@ extension!(
         op_nimbus_document_patch,
         op_nimbus_document_delete,
         op_nimbus_runtime_extension_call,
+        op_nimbus_cf_kv_get,
+        op_nimbus_cf_kv_put,
+        op_nimbus_cf_kv_delete,
+        op_nimbus_cf_kv_list,
         op_nimbus_ctx_query_collect,
         op_nimbus_ctx_query_take,
         op_nimbus_ctx_query_paginate,
@@ -103,6 +112,7 @@ extension!(
         op_nimbus_runtime_wait_until_pending,
         op_nimbus_runtime_fs_read_file,
         op_nimbus_runtime_fs_write_file,
+        op_nimbus_runtime_fs_write_file_sync,
         op_nimbus_runtime_validate_open_path,
         op_nimbus_runtime_copy_file,
         op_nimbus_runtime_copy_file_sync,

@@ -1,7 +1,12 @@
 use super::*;
+use std::borrow::Cow;
 use std::num::NonZeroUsize;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+
+use deno_fs::OpenOptions;
+use deno_permissions::CheckedPath;
 
 #[derive(Debug)]
 struct FixedRuntimeHostPressureSource(RuntimeHostPressureSample);
@@ -552,6 +557,37 @@ fn runtime_policy_records_low_cardinality_host_pressure_metrics() {
 }
 
 #[test]
+fn runtime_policy_host_dispatch_seats_follow_worker_threads() {
+    let policy = RuntimePolicy::with_host_resource_governor(
+        RuntimeLimits {
+            max_concurrent_runtime_instances: 1,
+            worker_threads: 4,
+            max_active_top_level_invocations_per_tenant: 1,
+            max_in_flight_top_level_invocations_per_tenant: 4,
+            max_queued_top_level_invocations_per_tenant: 4,
+            ..RuntimeLimits::default()
+        },
+        RuntimeHostResourceBudget {
+            host_millicpus: 4000,
+            system_reserved_millicpus: 0,
+            nimbus_control_plane_reserved_millicpus: 0,
+            runtime_hard_ceiling_millicpus: None,
+            runtime_seat_millicpus: std::num::NonZeroU32::new(1000)
+                .expect("one CPU seat is nonzero"),
+        },
+        Arc::new(FixedRuntimeHostPressureSource(
+            RuntimeHostPressureSample::nominal(),
+        )),
+    );
+
+    let decision = policy.host_resource_decision();
+    assert_eq!(
+        decision.effective_dispatch_seats, 4,
+        "host admission gates dispatch workers; the runtime semaphore gates active runtime instances"
+    );
+}
+
+#[test]
 fn runtime_policy_carries_adaptive_controller_settings_without_enabling_defaults() {
     let policy = RuntimePolicy::new(RuntimeLimits::default());
     assert!(
@@ -576,6 +612,21 @@ fn runtime_policy_carries_adaptive_controller_settings_without_enabling_defaults
             .adaptive_controller_settings()
             .live_adaptive_defaults_enabled()
     );
+}
+
+#[test]
+fn runtime_policy_default_filesystem_has_no_host_authority() {
+    let policy = RuntimePolicy::new(RuntimeLimits::default());
+    let fs = policy.file_system();
+
+    let error = fs
+        .read_file_sync(
+            &CheckedPath::unsafe_new(Cow::Borrowed(Path::new("/etc/passwd"))),
+            OpenOptions::read(),
+        )
+        .expect_err("default runtime policy must not grant ambient host filesystem access");
+
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
 }
 
 #[test]
@@ -618,6 +669,12 @@ fn runtime_policy_clone_with_effective_plan_preserves_operational_controls() {
     plans.insert_function_override(plan.clone());
 
     let cloned = policy.clone_with_effective_scaling_plans(plans);
+    cloned.metrics().record_worker_dispatch();
+    assert_eq!(
+        policy.metrics_snapshot().worker_dispatched_invocations,
+        1,
+        "runtime policy configuration clones must preserve metric observers"
+    );
 
     assert_eq!(cloned.effective_scaling_plan().function, "__default__");
     assert_eq!(
@@ -648,6 +705,28 @@ fn runtime_policy_clone_with_effective_plan_preserves_operational_controls() {
         1,
         "policy overlays must keep reporting into the original lane metrics"
     );
+
+    let redecorated = cloned.clone_with_host_resource_governor(
+        budget,
+        Arc::new(FixedRuntimeHostPressureSource(
+            RuntimeHostPressureSample::observed(
+                RuntimeHostPressureLevel::Critical,
+                RuntimeMemoryPressureSample::observed(mib(700), mib(768), mib(960)).classify(),
+                false,
+            ),
+        )),
+        adaptive,
+    );
+    redecorated.metrics().record_worker_dispatch();
+    assert_eq!(
+        policy.metrics_snapshot().worker_dispatched_invocations,
+        2,
+        "runtime policy host-governor clones must preserve metric observers"
+    );
+    assert_eq!(
+        redecorated.host_resource_decision().host_pressure_level,
+        RuntimeHostPressureLevel::Critical
+    );
 }
 
 #[test]
@@ -664,6 +743,7 @@ fn runtime_policy_clone_with_host_governor_preserves_lane_metrics() {
                 RuntimeMemoryPressureSample::unavailable().classify(),
             ),
         )),
+        RuntimeAdaptiveControllerSettings::default(),
     );
 
     assert_eq!(

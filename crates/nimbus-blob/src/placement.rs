@@ -190,7 +190,7 @@ impl BlobStore for PlacementBlobStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::local::LocalPackStore;
+    use crate::memory::MemoryBlobStore;
     use nimbus_core::{Error, StorageErrorKind};
 
     struct FailsPut;
@@ -228,8 +228,8 @@ mod tests {
 
     #[tokio::test]
     async fn mirror_writes_both_legs() {
-        let local: Arc<dyn BlobStore> = Arc::new(LocalPackStore::new());
-        let mirror_inner = Arc::new(LocalPackStore::new());
+        let local: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
+        let mirror_inner = Arc::new(MemoryBlobStore::new());
         let mirror: Arc<dyn BlobStore> = mirror_inner.clone();
         let store = PlacementBlobStore::new(
             local.clone(),
@@ -250,13 +250,13 @@ mod tests {
     #[tokio::test]
     async fn cloud_primary_get_falls_through_on_local_miss() {
         // Seed the cloud leg directly; the local cache is empty.
-        let cloud_inner = Arc::new(LocalPackStore::new());
+        let cloud_inner = Arc::new(MemoryBlobStore::new());
         let hash = cloud_inner
             .put(Bytes::from_static(b"in the cloud"))
             .await
             .unwrap();
 
-        let local: Arc<dyn BlobStore> = Arc::new(LocalPackStore::new());
+        let local: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
         let cloud: Arc<dyn BlobStore> = cloud_inner.clone();
         let store = PlacementBlobStore::new(local.clone(), PlacementMode::CloudPrimary { cloud });
 
@@ -267,15 +267,15 @@ mod tests {
 
     #[tokio::test]
     async fn local_only_does_not_fall_through() {
-        let store = PlacementBlobStore::local_only(Arc::new(LocalPackStore::new()));
+        let store = PlacementBlobStore::local_only(Arc::new(MemoryBlobStore::new()));
         let err = store.get(&BlobHash::of(b"absent")).await.unwrap_err();
         assert!(matches!(err, nimbus_core::Error::NotFound(_)));
     }
 
     #[tokio::test]
     async fn tier_write_lands_in_cold_and_reads_back_on_cache_miss() {
-        let local: Arc<dyn BlobStore> = Arc::new(LocalPackStore::new());
-        let cold_inner = Arc::new(LocalPackStore::new());
+        let local: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
+        let cold_inner = Arc::new(MemoryBlobStore::new());
         let cold: Arc<dyn BlobStore> = cold_inner.clone();
         let store = PlacementBlobStore::new(local.clone(), PlacementMode::Tier { cold });
         let hash = store.put(Bytes::from_static(b"cold data")).await.unwrap();
@@ -290,7 +290,7 @@ mod tests {
 
     #[tokio::test]
     async fn tier_write_failure_does_not_warm_local_cache() {
-        let local_inner = Arc::new(LocalPackStore::new());
+        let local_inner = Arc::new(MemoryBlobStore::new());
         let local: Arc<dyn BlobStore> = local_inner.clone();
         let cold: Arc<dyn BlobStore> = Arc::new(FailsPut);
         let store = PlacementBlobStore::new(local, PlacementMode::Tier { cold });
@@ -309,7 +309,7 @@ mod tests {
 
     #[tokio::test]
     async fn cloud_primary_write_failure_does_not_warm_local_cache() {
-        let local_inner = Arc::new(LocalPackStore::new());
+        let local_inner = Arc::new(MemoryBlobStore::new());
         let local: Arc<dyn BlobStore> = local_inner.clone();
         let cloud: Arc<dyn BlobStore> = Arc::new(FailsPut);
         let store = PlacementBlobStore::new(local, PlacementMode::CloudPrimary { cloud });
@@ -329,7 +329,7 @@ mod tests {
     #[tokio::test]
     async fn mirror_without_ack_tolerates_unreachable_mirror() {
         // A mirror that always errors should not fail a best-effort write.
-        let local: Arc<dyn BlobStore> = Arc::new(LocalPackStore::new());
+        let local: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
         let store = PlacementBlobStore::new(
             local.clone(),
             PlacementMode::Mirror {

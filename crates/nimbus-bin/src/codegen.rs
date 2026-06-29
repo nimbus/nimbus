@@ -357,10 +357,10 @@ async fn run_embedded_codegen_for_app_dir(
     let mut limits = RuntimeLimits::tooling_node22();
     limits.execution_model = RuntimeExecutionModel::RunToCompletion;
     limits.runtime_pool_kind = RuntimePoolKind::StartupSnapshotCache;
-    let runtime = NimbusRuntime::with_policy(
-        Arc::new(EmbeddedCodegenHost),
-        Arc::new(RuntimePolicy::new(limits)),
-    );
+    let runtime_policy =
+        RuntimePolicy::new(limits).clone_with_file_system(nimbus_fs::default_file_system()?);
+    let runtime =
+        NimbusRuntime::with_policy(Arc::new(EmbeddedCodegenHost), Arc::new(runtime_policy));
     let result = runtime
         .invoke_bundle(&bundle, &request)
         .await

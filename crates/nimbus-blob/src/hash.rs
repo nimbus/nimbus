@@ -96,8 +96,8 @@ impl fmt::Display for BlobHash {
 /// Cluster-leg fetch ticket announcing where a blob can be retrieved.
 ///
 /// Gated behind the `cluster` feature ([`ReplicatingBlobStore`] seam).
-// TODO: rewire to nimbus-cluster — the real ticket carries iroh blob/node
-// addressing (`iroh_blobs::ticket::BlobTicket`) once the cluster leg lands.
+/// The current seam type is an opaque locator. The NOS-A8 cluster leg replaces
+/// the locator payload with iroh blob/node addressing once that leg lands.
 //
 // [`ReplicatingBlobStore`]: crate::ReplicatingBlobStore
 #[cfg(feature = "cluster")]
@@ -120,8 +120,8 @@ impl BlobTicket {
 /// Address of a cluster peer that can serve a [`BlobTicket`].
 ///
 /// Gated behind the `cluster` feature ([`ReplicatingBlobStore`] seam).
-// TODO: rewire to nimbus-cluster — the real peer address is an iroh
-// `EndpointId` (renamed from `NodeId` per the iroh substrate notes).
+/// The current seam type is an opaque peer locator. The NOS-A8 cluster leg maps
+/// it to the iroh endpoint identity named by the cluster substrate.
 //
 // [`ReplicatingBlobStore`]: crate::ReplicatingBlobStore
 #[cfg(feature = "cluster")]

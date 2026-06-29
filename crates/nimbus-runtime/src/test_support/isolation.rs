@@ -181,6 +181,7 @@ pub(crate) fn run_v8_crash_control_in_subprocess(case: IsolatedRuntimeTestCase, 
             // first now abort via the guard (deterministic) instead of the racy V8_Fatal.
             let has_cage_signature = [
                 "vector.h:415",
+                "Check failed: index < size().",
                 "Hardening",
                 "Unknown external reference",
                 "DeserializeStringTable",
@@ -225,7 +226,7 @@ pub(crate) fn run_v8_crash_control_in_subprocess(case: IsolatedRuntimeTestCase, 
              guarded cross-profile RO-heap crash REGRESSED (the bug returned and should crash) \
              or the control was defanged. A control that can pass without crashing is the \
              vacuous oracle this guards against.\n{last_observation}",
-            case.failure_context("crash control must abort by cage-crash signal"),
+            case.failure_context("crash control must abort by cage signal"),
             max_attempts.max(1),
         );
     }

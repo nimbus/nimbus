@@ -27,6 +27,7 @@ mod execution;
 mod handlers;
 mod host_bridge;
 mod http_actions;
+mod network_guard;
 mod subscriptions;
 #[cfg(test)]
 mod tests;
@@ -39,6 +40,7 @@ pub(crate) use self::handlers::{
 pub(crate) use self::host_bridge::{
     ConvexHostBridge, ConvexHostBridgeInvocation, ConvexHostBridgeScope,
 };
+pub(crate) use self::network_guard::convex_application_network_bind_guard;
 
 use crate::protocol::ServerMessage;
 use crate::state::{AppError, AppState};

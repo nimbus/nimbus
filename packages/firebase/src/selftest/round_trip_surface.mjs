@@ -50,6 +50,13 @@ export async function testRoundTripSurface(bundleDir, baseUrlText, projectId) {
       mockUserToken = roundTripAuthToken;
     }
     emulatorOptions = { mockUserToken };
+  } else {
+    emulatorOptions = {
+      mockUserToken: {
+        sub: "round-trip-user",
+        iss: `https://securetoken.google.com/${projectId}`,
+      },
+    };
   }
 
   const app = appModule.initializeApp({ projectId }, "round-trip");

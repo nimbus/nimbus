@@ -139,11 +139,11 @@ impl ConvexRuntimeLane {
         adaptive_settings: RuntimeAdaptiveControllerSettings,
     ) -> Self {
         Self::from_policy(
-            Arc::new(
-                self.policy
-                    .clone_with_host_resource_governor(budget, pressure_source)
-                    .with_adaptive_controller_settings(adaptive_settings),
-            ),
+            Arc::new(self.policy.clone_with_host_resource_governor(
+                budget,
+                pressure_source,
+                adaptive_settings,
+            )),
             self.execution_adapter_state,
             self.execution_adapter_artifact.clone(),
         )

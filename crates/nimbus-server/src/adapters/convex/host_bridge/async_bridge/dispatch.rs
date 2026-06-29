@@ -55,6 +55,10 @@ impl ConvexHostBridge {
                 self.dispatch_scheduler_host_call_async(payload, cancellation)
                     .await
             }
+            payload @ (HostCallPayload::CfKvGet(_)
+            | HostCallPayload::CfKvPut(_)
+            | HostCallPayload::CfKvDelete(_)
+            | HostCallPayload::CfKvList(_)) => unsupported_adapter_owned_host_call(payload),
         }
     }
 
@@ -105,6 +109,10 @@ impl ConvexHostBridge {
             | HostCallPayload::CtxSchedulerCancel(_)) => {
                 self.dispatch_scheduler_host_call_cancellable(payload, cancellation)
             }
+            payload @ (HostCallPayload::CfKvGet(_)
+            | HostCallPayload::CfKvPut(_)
+            | HostCallPayload::CfKvDelete(_)
+            | HostCallPayload::CfKvList(_)) => unsupported_adapter_owned_host_call(payload),
         }
     }
 
@@ -148,6 +156,19 @@ impl ConvexHostBridge {
             payload @ (HostCallPayload::CtxSchedulerRunAfter(_)
             | HostCallPayload::CtxSchedulerRunAt(_)
             | HostCallPayload::CtxSchedulerCancel(_)) => self.dispatch_scheduler_host_call(payload),
+            payload @ (HostCallPayload::CfKvGet(_)
+            | HostCallPayload::CfKvPut(_)
+            | HostCallPayload::CfKvDelete(_)
+            | HostCallPayload::CfKvList(_)) => unsupported_adapter_owned_host_call(payload),
         }
     }
+}
+
+fn unsupported_adapter_owned_host_call(
+    payload: HostCallPayload,
+) -> std::result::Result<Value, NimbusRuntimeError> {
+    Err(NimbusRuntimeError::Contract(format!(
+        "convex host bridge does not own `{}` runtime compatibility; that host call is adapter-owned",
+        convex_host_operation_name(payload.operation())
+    )))
 }

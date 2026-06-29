@@ -669,6 +669,39 @@ function normalizeWriteFileOptions(path, options, defaultFlag) {
   };
 }
 
+function runtimeHostWriteFileSyncFlag(flag) {
+  if (typeof flag !== "string" || !/^(?:a|w)x?\+?$/.test(flag)) {
+    return null;
+  }
+  return {
+    append: flag.startsWith("a"),
+    createNew: flag.includes("x"),
+  };
+}
+
+function writeFileSyncThroughRuntimeHost(path, data, flag, mode) {
+  const descriptor = runtimeHostWriteFileSyncFlag(flag);
+  if (descriptor === null) {
+    return false;
+  }
+  try {
+    globalThis.__nimbusSyncHostValue("op_nimbus_runtime_fs_write_file_sync", {
+      path: String(path),
+      text: data,
+      append: descriptor.append,
+      create_new: descriptor.createNew,
+      mode: parseWriteFileMode(mode, 0o666),
+    });
+    return true;
+  } catch (error) {
+    throw mapRuntimeFsHostError(error, "writeFileSync");
+  }
+}
+
+function isOpaqueRuntimeFsWriteFallbackError(error) {
+  return error === undefined || error?.message === "undefined:undefined";
+}
+
 function writeFileSyncWithCurrentFsBindings(fsModule, path, data, options, defaultFlag) {
   const {
     flag,
@@ -684,12 +717,28 @@ function writeFileSyncWithCurrentFsBindings(fsModule, path, data, options, defau
     typeof internalFsBinding?.writeFileUtf8 === "function" &&
     !isUserFd
   ) {
-    return internalFsBinding.writeFileUtf8(
-      validatedPath,
-      data,
-      stringToFlags(flag, "options.flag"),
-      parseWriteFileMode(normalizedOptions.mode, 0o666),
-    );
+    try {
+      return internalFsBinding.writeFileUtf8(
+        validatedPath,
+        data,
+        stringToFlags(flag, "options.flag"),
+        parseWriteFileMode(normalizedOptions.mode, 0o666),
+      );
+    } catch (error) {
+      if (!isOpaqueRuntimeFsWriteFallbackError(error)) {
+        throw error;
+      }
+      if (
+        writeFileSyncThroughRuntimeHost(
+          validatedPath,
+          data,
+          flag,
+          normalizedOptions.mode,
+        )
+      ) {
+        return;
+      }
+    }
   }
 
   if (!ArrayBuffer.isView(data)) {

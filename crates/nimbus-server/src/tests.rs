@@ -46,9 +46,9 @@ use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 
 use crate::{
-    ConvexRegistry, FirebaseConfig, LicenseDocument, LicenseEntitlements, LicenseKind,
-    LicenseSourceInfo, LicenseSourceKind, LicenseState, ProjectTenantRegistry, RouterOptions,
-    ServeOptions, build_router, serve,
+    CloudflareConfig, ConvexRegistry, FirebaseConfig, LicenseDocument, LicenseEntitlements,
+    LicenseKind, LicenseSourceInfo, LicenseSourceKind, LicenseState, ProjectTenantRegistry,
+    RouterOptions, ServeOptions, build_router, serve,
 };
 use crate::router::RouterBuildConfig;
 use crate::adapters::firebase::grpc::generated::google::firestore::v1::document_transform::FieldTransform as GrpcFieldTransform;
@@ -113,7 +113,17 @@ fn router_for_engine(engine: Arc<Engine>) -> Router {
 }
 
 fn router_for_convex(engine: Arc<Engine>, convex_registry: ConvexRegistry) -> Router {
-    build_router(RouterOptions::new(engine).with_convex_registry(convex_registry))
+    let test_host_parallelism =
+        std::num::NonZeroUsize::new(64).expect("test host parallelism is nonzero");
+    build_router(
+        RouterOptions::new(engine)
+            .with_convex_registry(convex_registry)
+            .with_runtime_host_resource_budget(
+                nimbus_runtime::RuntimeHostResourceBudget::conservative_for_logical_cpus(
+                    test_host_parallelism,
+                ),
+            ),
+    )
 }
 
 fn router_for_firebase(engine: Arc<Engine>, firebase_config: FirebaseConfig) -> Router {
@@ -217,6 +227,7 @@ async fn router_prepare_system_tenant_records_enabled_adapter_listeners() {
     RouterBuildConfig::core(fixture.engine())
         .with_system_convex_registry(convex_registry(json!([])))
         .with_firebase(FirebaseConfig::new())
+        .with_cloudflare(CloudflareConfig::default())
         .with_listen_addr(listen_addr)
         .prepare_system_tenant()
         .await
@@ -241,6 +252,7 @@ async fn router_prepare_system_tenant_records_enabled_adapter_listeners() {
     assert!(has_listener("native", "http"));
     assert!(has_listener("convex", "websocket"));
     assert!(has_listener("firebase", "http+websocket"));
+    assert!(has_listener("cloudflare", "http"));
 }
 
 fn header_csv_values(response: &reqwest::Response, header_name: &str) -> BTreeSet<String> {
@@ -1490,6 +1502,8 @@ mod auth;
 mod convex_functions;
 #[path = "tests/convex_runtime.rs"]
 mod convex_runtime;
+#[path = "tests/convex_tenant_exposure.rs"]
+mod convex_tenant_exposure;
 #[path = "tests/core_http.rs"]
 mod core_http;
 #[path = "tests/cors.rs"]

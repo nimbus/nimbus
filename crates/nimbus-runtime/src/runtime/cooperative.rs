@@ -132,7 +132,7 @@ impl CooperativeLockerRuntimeSlot {
                     Ok(_) => driver
                         .wait_until_phase_timeout_error()
                         .map_or(response, Err),
-                    Err(error) => Err(error),
+                    Err(error) => Err(driver.classify_wait_until_phase_error(error)),
                 };
                 self.destroy_fresh_realm(&mut driver);
                 self.completed = Some((driver, result));
@@ -187,7 +187,7 @@ impl CooperativeLockerRuntimeSlot {
         match event_loop_poll {
             Poll::Ready(Ok(())) => {
                 if let Some((wait_until, _response)) = self.wait_until.as_mut() {
-                    let result = match wait_until.as_mut().poll(&mut cx) {
+                    match wait_until.as_mut().poll(&mut cx) {
                         Poll::Ready(result) => {
                             let response = self
                                 .wait_until
@@ -203,20 +203,20 @@ impl CooperativeLockerRuntimeSlot {
                                 Ok(_) => driver
                                     .wait_until_phase_timeout_error()
                                     .map_or(response, Err),
-                                Err(error) => Err(error),
+                                Err(error) => Err(driver.classify_wait_until_phase_error(error)),
                             };
                             self.destroy_fresh_realm(&mut driver);
                             self.completed = Some((driver, result));
                             return Ok(CooperativeRuntimeSlotPoll::Completed);
                         }
-                        Poll::Pending => Err(runtime_js_error(
-                            "waitUntil drain is still pending but the event loop has already resolved",
-                        )),
-                    };
-                    drop(locked);
-                    self.destroy_fresh_realm(&mut driver);
-                    self.completed = Some((driver, result));
-                    return Ok(CooperativeRuntimeSlotPoll::Completed);
+                        Poll::Pending => {
+                            drop(locked);
+                            let result = Err(driver.wait_until_phase_stalled_error());
+                            self.destroy_fresh_realm(&mut driver);
+                            self.completed = Some((driver, result));
+                            return Ok(CooperativeRuntimeSlotPoll::Completed);
+                        }
+                    }
                 }
 
                 let mut promise_resolve_elapsed = None;
@@ -269,8 +269,14 @@ impl CooperativeLockerRuntimeSlot {
             }
             Poll::Ready(Err(error)) => {
                 drop(locked);
+                let error = runtime_js_error(error);
+                let error = if self.wait_until.is_some() {
+                    driver.classify_wait_until_phase_error(error)
+                } else {
+                    error
+                };
                 self.destroy_fresh_realm(&mut driver);
-                self.completed = Some((driver, Err(runtime_js_error(error))));
+                self.completed = Some((driver, Err(error)));
                 Ok(CooperativeRuntimeSlotPoll::Completed)
             }
             Poll::Pending => {
