@@ -6,6 +6,12 @@ impl ConvexRegistry {
     }
 
     pub fn has_runtime_bundle_for_function(&self, function_name: &str) -> bool {
+        let Some(definition) = self.functions.get(function_name) else {
+            return false;
+        };
+        if definition.runtime_handler.is_none() || !definition.plan.is_null() {
+            return false;
+        }
         if matches!(
             self.selected_runtime_lane(function_name)
                 .limits()
@@ -226,6 +232,69 @@ mod tests {
                 false,
             ),
         ))
+    }
+
+    #[test]
+    fn convex_registry_routes_only_runtime_only_functions_to_runtime_bundle() {
+        let tempdir = tempdir().expect("convex manifest tempdir should build");
+        let convex_dir = tempdir.path().join(".nimbus").join("convex");
+        fs::create_dir_all(&convex_dir).expect("convex manifest directory should build");
+        fs::write(
+            convex_dir.join("functions.json"),
+            serde_json::to_vec_pretty(&json!({
+                "functions": [
+                    {
+                        "name": "messages:compiledPlan",
+                        "kind": "query",
+                        "visibility": "public",
+                        "plan": {
+                            "table": "messages",
+                            "filters": [],
+                            "order": null,
+                            "limit": 20
+                        },
+                        "runtime_handler": null
+                    },
+                    {
+                        "name": "messages:runtimeOnly",
+                        "kind": "query",
+                        "visibility": "public",
+                        "plan": null,
+                        "runtime_handler": "async () => []"
+                    }
+                ]
+            }))
+            .expect("convex manifest json should serialize"),
+        )
+        .expect("convex manifest should write");
+        fs::write(
+            convex_dir.join("http_routes.json"),
+            serde_json::to_vec_pretty(&json!({ "routes": [] }))
+                .expect("convex http route manifest should serialize"),
+        )
+        .expect("convex http route manifest should write");
+        let bundle_path = convex_dir.join("bundle.mjs");
+        fs::write(
+            &bundle_path,
+            "globalThis.__nimbusInvoke = async function () { return { status: \"ok\", value: [] }; }; export {};",
+        )
+        .expect("convex runtime bundle should write");
+        let bundle_hash = RuntimeBundle::compute_sha256_for_path(&bundle_path)
+            .expect("convex runtime bundle hash should compute");
+        fs::write(bundle_path.with_extension("sha256"), bundle_hash)
+            .expect("convex runtime bundle hash should write");
+
+        let registry =
+            ConvexRegistry::from_app_dir(tempdir.path()).expect("convex registry should load");
+
+        assert!(
+            !registry.has_runtime_bundle_for_function("messages:compiledPlan"),
+            "compiled plan functions should stay on the compiled operation path"
+        );
+        assert!(
+            registry.has_runtime_bundle_for_function("messages:runtimeOnly"),
+            "runtime-only functions should use the runtime bundle"
+        );
     }
 
     #[test]

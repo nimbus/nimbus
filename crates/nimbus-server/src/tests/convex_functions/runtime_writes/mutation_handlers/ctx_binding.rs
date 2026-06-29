@@ -7,14 +7,8 @@ async fn convex_named_mutation_can_use_ctx_mutation_host_binding() {
             {
                 "name": "messages:send",
                 "kind": "mutation",
-                "plan": {
-                    "type": "insert",
-                    "table": "messages",
-                    "fields": {
-                        "author": { "$arg": "author" },
-                        "body": { "$arg": "body" }
-                    }
-                }
+                "plan": null,
+                "runtime_handler": "async () => null"
             }
         ]),
         json!([]),

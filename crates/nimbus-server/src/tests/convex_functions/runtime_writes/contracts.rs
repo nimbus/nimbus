@@ -7,12 +7,8 @@ async fn convex_named_query_reports_runtime_bundle_contract_errors() {
             {
                 "name": "messages:byAuthor",
                 "kind": "query",
-                "plan": {
-                    "table": "messages",
-                    "filters": [],
-                    "order": null,
-                    "limit": null
-                }
+                "plan": null,
+                "runtime_handler": "async () => null"
             }
         ]),
         json!([]),

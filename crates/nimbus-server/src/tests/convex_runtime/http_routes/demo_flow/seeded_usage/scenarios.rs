@@ -40,7 +40,7 @@ async fn execute_faulted_seeded_convex_demo_overlap<F>(
                 }))
                 .send()
                 .await
-                .expect("runtime-backed action should resolve")
+                .expect("plan-backed action should resolve")
         }
     });
 
@@ -56,7 +56,7 @@ async fn execute_faulted_seeded_convex_demo_overlap<F>(
             .is_err(),
         "{}",
         context(
-            "faulted seeded action should remain pending while apply is blocked",
+            "faulted seeded plan-backed action should remain pending while apply is blocked",
             Some(step_index),
         )
     );
@@ -117,7 +117,7 @@ async fn execute_faulted_seeded_convex_demo_overlap<F>(
 
     let action = timeout(seeded_convex_demo_fault_recovery_timeout(), action)
         .await
-        .expect("runtime-backed action should resolve after apply resumes")
+        .expect("plan-backed action should resolve after apply resumes")
         .expect("action task should join");
     assert_eq!(
         action.status(),
@@ -205,7 +205,7 @@ async fn execute_faulted_seeded_convex_demo_overlap<F>(
         ),
     )
     .await
-    .expect("follow-up runtime-backed action should resolve after the faulted overlap");
+    .expect("follow-up plan-backed action should resolve after the faulted overlap");
     assert_eq!(
         second_action.status(),
         StatusCode::OK,

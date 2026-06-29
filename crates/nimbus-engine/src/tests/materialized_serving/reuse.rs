@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn full_scan_queries_warm_materialized_surface_and_warm_table_gets_reuse_it() {
+fn full_scan_queries_warm_materialized_surface_and_follow_up_full_scans_reuse_it() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
@@ -17,7 +17,7 @@ fn full_scan_queries_warm_materialized_surface_and_warm_table_gets_reuse_it() {
             ]),
         )
         .expect("first insert should succeed");
-    let warm_only_id = engine
+    let _warm_only_id = engine
         .insert_document(
             &tenant_id,
             table.clone(),
@@ -47,6 +47,15 @@ fn full_scan_queries_warm_materialized_surface_and_warm_table_gets_reuse_it() {
         }),
         limit: None,
     };
+    let skip_query = Query {
+        table: table.clone(),
+        filters: vec![filter("status", FilterOp::Eq, json!("skip"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
 
     let first = engine
         .query_documents(&tenant_id, &query)
@@ -65,19 +74,19 @@ fn full_scan_queries_warm_materialized_surface_and_warm_table_gets_reuse_it() {
 
     let stats = warm_query_until_publication_covers_head(&engine, &tenant_id, &table, &query);
     let baseline_table_load_count = stats.table_load_count;
-    let baseline_get_hit_count = stats.get_hit_count;
+    let baseline_evaluation_count = stats.evaluation_count;
 
     let warm_only = engine
-        .get_document(&tenant_id, &table, warm_only_id)
-        .expect("warm-table get should succeed from the materialized surface");
-    assert_eq!(warm_only.get_field("body"), Some(&json!("Hidden")));
+        .query_documents(&tenant_id, &skip_query)
+        .expect("follow-up full-scan query should reuse the warmed materialized table");
+    assert_eq!(document_bodies(&warm_only), vec!["Hidden"]);
 
     let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
     assert_eq!(stats.loaded_table_count, 1);
     assert_eq!(stats.table_load_count, baseline_table_load_count);
-    assert_eq!(stats.get_hit_count, baseline_get_hit_count + 1);
+    assert_eq!(stats.evaluation_count, baseline_evaluation_count + 1);
 }
 
 fn warm_query_until_publication_covers_head(

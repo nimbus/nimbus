@@ -318,7 +318,7 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
                 }))
                 .send()
                 .await
-                .expect("runtime-backed action should resolve")
+                .expect("plan-backed action should resolve")
         }
     });
 
@@ -329,7 +329,7 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
         timeout(Duration::from_millis(100), &mut action)
             .await
             .is_err(),
-        "blocked runtime-backed action should remain pending until apply resumes"
+        "blocked plan-backed action should remain pending until apply resumes"
     );
 
     let mut blocked_query = tokio::spawn({
@@ -377,7 +377,7 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
 
     let action = timeout(Duration::from_secs(5), action)
         .await
-        .expect("runtime-backed action should resolve after apply resumes")
+        .expect("plan-backed action should resolve after apply resumes")
         .expect("action task should join");
     assert_eq!(action.status(), StatusCode::OK);
 
@@ -390,11 +390,14 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
         .json::<serde_json::Value>()
         .await
         .expect("blocked query response should parse");
-    assert!(blocked_query_body.as_array().is_some_and(|items| {
-        items.iter().any(|message| {
-            message["author"] == json!(author) && message["body"] == json!(action_body)
-        })
-    }));
+    assert!(
+        blocked_query_body.as_array().is_some_and(|items| {
+            items.iter().any(|message| {
+                message["author"] == json!(author) && message["body"] == json!(action_body)
+            })
+        }),
+        "{blocked_query_body}"
+    );
 
     let http_post = timeout(Duration::from_secs(5), &mut http_post)
         .await
@@ -412,7 +415,7 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
         ),
     )
     .await
-    .expect("follow-up runtime-backed action should resolve after the faulted overlap");
+    .expect("follow-up plan-backed action should resolve after the faulted overlap");
     assert_eq!(second_action.status(), StatusCode::OK);
     wait_for_message(&api, author, second_action_body).await;
 }
