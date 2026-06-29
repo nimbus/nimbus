@@ -188,6 +188,7 @@ pub(crate) fn run_v8_crash_control_in_subprocess(case: IsolatedRuntimeTestCase, 
                 "ReadReadOnlyHeapRef",
                 "SharedHeapDeserializer",
                 "CAGE INVARIANT VIOLATED",
+                "Check failed: index < size()",
             ]
             .iter()
             .any(|sig| stdout.contains(sig) || stderr.contains(sig));

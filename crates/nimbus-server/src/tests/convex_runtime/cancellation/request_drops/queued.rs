@@ -24,6 +24,27 @@ fn queued_request_drop_runtime_limits() -> nimbus_runtime::RuntimeLimits {
     limits
 }
 
+fn queued_request_drop_host_budget() -> nimbus_runtime::RuntimeHostResourceBudget {
+    nimbus_runtime::RuntimeHostResourceBudget {
+        host_millicpus: 2_000,
+        system_reserved_millicpus: 0,
+        nimbus_control_plane_reserved_millicpus: 0,
+        runtime_hard_ceiling_millicpus: None,
+        runtime_seat_millicpus: std::num::NonZeroU32::new(1_000)
+            .expect("one runtime seat should be nonzero"),
+    }
+}
+
+fn router_for_queued_request_drop(engine: Arc<Engine>, registry: ConvexRegistry) -> axum::Router {
+    build_router(
+        RouterOptions::new(engine)
+            .with_convex_registry(registry)
+            .with_runtime_host_resource_budget(queued_request_drop_host_budget())
+            .with_runtime_host_pressure_source(Arc::new(
+                nimbus_runtime::NominalRuntimeHostPressureSource,
+            )),
+    )
+}
 #[tokio::test]
 async fn dropped_queued_runtime_request_never_starts_mutation() {
     let registry = runtime_request_drop_registry(json!([
@@ -45,7 +66,11 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
     .with_runtime_limits(queued_request_drop_runtime_limits());
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();
-    let server = ServerFixture::start(router_for_convex(service.clone(), registry.clone())).await;
+    let server = ServerFixture::start(router_for_queued_request_drop(
+        service.clone(),
+        registry.clone(),
+    ))
+    .await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -191,7 +216,11 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         Engine::new_with_simulation(path, harness.clock(), harness.fault_injector())
     });
     let service = fixture.engine();
-    let server = ServerFixture::start(router_for_convex(service.clone(), registry.clone())).await;
+    let server = ServerFixture::start(router_for_queued_request_drop(
+        service.clone(),
+        registry.clone(),
+    ))
+    .await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

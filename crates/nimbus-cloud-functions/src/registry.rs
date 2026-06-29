@@ -394,6 +394,31 @@ export {};
     }
 
     #[test]
+    fn cloud_functions_registry_host_governor_preserves_runtime_metrics_identity() {
+        let app_dir = tempdir().expect("app tempdir should build");
+        write_cloud_functions_artifact(app_dir.path(), &[], "export {};");
+        let registry =
+            CloudFunctionsRegistry::from_app_dir(app_dir.path()).expect("registry should load");
+        let source_policy = registry.runtime_policy();
+        source_policy.metrics().record_worker_dispatch();
+
+        let governed = registry.with_runtime_host_governor(
+            two_seat_runtime_host_budget(),
+            critical_runtime_host_pressure_source(),
+            nimbus_runtime::RuntimeAdaptiveControllerSettings::default(),
+        );
+        governed.runtime_policy().metrics().record_worker_dispatch();
+
+        assert_eq!(
+            source_policy
+                .metrics_snapshot()
+                .worker_dispatched_invocations,
+            2,
+            "server-side Cloud Functions registry overlays must not fork runtime metrics"
+        );
+    }
+
+    #[test]
     fn cloud_functions_registry_applies_effective_runtime_scaling_plan_to_runtime_policy() {
         let app_dir = tempdir().expect("app tempdir should build");
         write_cloud_functions_artifact(app_dir.path(), &[], "export {};");

@@ -1543,11 +1543,41 @@ const __nimbusHideSharedArrayBuffer = function __nimbusHideSharedArrayBuffer() {
   }
 };
 
+const __nimbusDisableSharedWebAssemblyMemory = function __nimbusDisableSharedWebAssemblyMemory() {
+  const webAssembly = globalThis.WebAssembly;
+  if (
+    typeof webAssembly !== "object" ||
+    webAssembly === null ||
+    typeof webAssembly.Memory !== "function"
+  ) {
+    return;
+  }
+  const NativeMemory = webAssembly.Memory;
+  const HardenedMemory = function Memory(descriptor) {
+    if (new.target === undefined) {
+      throw new TypeError("WebAssembly.Memory must be invoked with new");
+    }
+    if (descriptor && descriptor.shared) {
+      throw new TypeError("Nimbus disables shared WebAssembly memory");
+    }
+    return Reflect.construct(NativeMemory, arguments, new.target);
+  };
+  Object.setPrototypeOf(HardenedMemory, NativeMemory);
+  HardenedMemory.prototype = NativeMemory.prototype;
+  Object.defineProperty(webAssembly, "Memory", {
+    configurable: true,
+    enumerable: false,
+    value: HardenedMemory,
+    writable: true,
+  });
+};
+
 const __nimbusInstallSideChannelHardening = function __nimbusInstallSideChannelHardening() {
   __nimbusInstallDateNowCoarsening();
   __nimbusInstallPerformanceNowCoarsening();
   __nimbusDisableBlockingAtomicsWait();
   __nimbusHideSharedArrayBuffer();
+  __nimbusDisableSharedWebAssemblyMemory();
 };
 
 __nimbusInstallSideChannelHardening();
@@ -1875,5 +1905,9 @@ mod tests {
         assert!(NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE.contains("Atomics.wait"));
         assert!(NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE.contains("Atomics.waitAsync"));
         assert!(NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE.contains("SharedArrayBuffer"));
+        assert!(NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE.contains("WebAssembly.Memory"));
+        assert!(
+            NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE.contains("__nimbusDisableSharedWebAssemblyMemory")
+        );
     }
 }

@@ -545,7 +545,7 @@ async fn covered_app_round_trips_firestore_via_emulator_connection() {
         "the auto-created tenant must be the discovered project id"
     );
 
-    let enablement = crate::start::adapters::resolve_adapter_enablement_with_env(
+    let mut enablement = crate::start::adapters::resolve_adapter_enablement_with_env(
         &plan.start_command,
         plan.start_command
             .control_data_dir
@@ -555,6 +555,12 @@ async fn covered_app_round_trips_firestore_via_emulator_connection() {
         |_| true,
     )
     .expect("dev enablement should resolve");
+    let firebase = enablement
+        .firebase
+        .take()
+        .expect("dev-shaped Firestore client server must mount Firebase routes");
+    enablement.firebase =
+        Some(nimbus_server::enable_firebase_emulator_token_verification_bypass(firebase));
     let engine = std::sync::Arc::new(
         nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"),
     );
@@ -584,6 +590,10 @@ async fn covered_app_round_trips_firestore_via_emulator_connection() {
         .arg(format!("http://{addr}/"))
         .arg("--round-trip-project-id")
         .arg("dxf4-round-trip")
+        .env(
+            "NIMBUS_FIREBASE_ROUND_TRIP_MOCK_USER_TOKEN",
+            r#"{"sub":"round-trip-user","iss":"https://securetoken.google.com/dxf4-round-trip"}"#,
+        )
         .output()
         .await
         .expect("firestore round-trip selftest should run");

@@ -28,6 +28,10 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
         }
     ]))
     .with_runtime_limits(limits);
+    assert!(
+        registry.has_runtime_bundle_for_function("messages:spin"),
+        "request-drop fixture must route messages:spin through the runtime bundle"
+    );
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
