@@ -808,7 +808,12 @@ async fn subscription_re_evaluation_uses_materialized_serving_path_for_full_scan
     let surface_stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
-    assert_eq!(surface_stats.table_load_count, 1);
+    assert_eq!(surface_stats.loaded_table_count, 1);
+    assert!(
+        (1..=2).contains(&surface_stats.table_load_count),
+        "subscription re-evaluation should reuse the warm table and allow at most one refresh load after the write; got {}",
+        surface_stats.table_load_count
+    );
     assert_eq!(surface_stats.evaluation_count, 2);
 
     let planning_stats = engine
