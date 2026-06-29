@@ -32,6 +32,7 @@
 //! local append-only pack implementation.
 
 mod encrypted;
+mod gc;
 mod hash;
 mod local;
 mod memory;
@@ -39,10 +40,11 @@ mod placement;
 mod store;
 
 pub use encrypted::EncryptedBlobStore;
+pub use gc::{BlobGc, BlobGcReport, BlobGcRoots, StaticBlobRoots};
 pub use hash::{BLAKE3_HASH_LEN, BlobHash};
 #[cfg(feature = "cluster")]
 pub use hash::{BlobTicket, PeerAddr};
-pub use local::{CompactionStats, LocalPackStore};
+pub use local::{CompactionStats, LocalBlobEntry, LocalPackStore};
 pub use memory::MemoryBlobStore;
 pub use nimbus_crypto::{FRAME_PLAINTEXT_LEN, FramedBlobKey, KEY_SEED_LEN, NONCE_LEN};
 pub use placement::{PlacementBlobStore, PlacementMode};

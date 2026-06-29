@@ -11,6 +11,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -22,7 +23,7 @@ use crate::store::{BlobStore, ByteStream};
 
 const PACK_MAGIC: &[u8] = b"NBLPACK1\n";
 const RECORD_MAGIC: &[u8] = b"NBLR";
-const INDEX_MAGIC: &[u8] = b"NBLIDX1\n";
+const INDEX_MAGIC: &[u8] = b"NBLIDX2\n";
 const INDEX_PUT: u8 = 1;
 const INDEX_RELEASE: u8 = 2;
 const DEFAULT_PACK_TARGET_BYTES: u64 = 128 * 1024 * 1024;
@@ -39,11 +40,19 @@ pub struct CompactionStats {
     pub bytes_rewritten: u64,
 }
 
+/// Live local blob metadata used by the GC seam.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LocalBlobEntry {
+    pub hash: BlobHash,
+    pub written_at_millis: u64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PackEntry {
     pack_id: u64,
     offset: u64,
     len: u64,
+    written_at_millis: u64,
 }
 
 struct LocalPackState {
@@ -132,6 +141,20 @@ impl LocalPackStore {
     /// Whether the local index contains no live blobs.
     pub fn is_empty(&self) -> Result<bool> {
         Ok(self.len()? == 0)
+    }
+
+    /// Returns a stable snapshot of live local blob entries.
+    pub fn live_entries(&self) -> Result<Vec<LocalBlobEntry>> {
+        let mut entries = lock(&self.state)?
+            .index
+            .iter()
+            .map(|(hash, entry)| LocalBlobEntry {
+                hash: *hash,
+                written_at_millis: entry.written_at_millis,
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.hash);
+        Ok(entries)
     }
 
     /// Rewrites live blobs into fresh packs and removes packs no live index entry
@@ -315,12 +338,14 @@ fn load_index(index_path: &Path) -> Result<HashMap<BlobHash, PackEntry>> {
                 let pack_id = read_u64(index_path, &bytes, &mut cursor)?;
                 let offset = read_u64(index_path, &bytes, &mut cursor)?;
                 let len = read_u64(index_path, &bytes, &mut cursor)?;
+                let written_at_millis = read_u64(index_path, &bytes, &mut cursor)?;
                 index.insert(
                     hash,
                     PackEntry {
                         pack_id,
                         offset,
                         len,
+                        written_at_millis,
                     },
                 );
             }
@@ -370,7 +395,7 @@ fn put_locked(state: &mut LocalPackState, bytes: Bytes) -> Result<BlobHash> {
         return Ok(hash);
     }
 
-    let entry = append_pack_record(state, &hash, &bytes)?;
+    let entry = append_pack_record(state, &hash, &bytes, now_millis())?;
     append_put_index_record(&state.index_path, &hash, entry)?;
     state.index.insert(hash, entry);
     Ok(hash)
@@ -380,6 +405,7 @@ fn append_pack_record(
     state: &mut LocalPackState,
     hash: &BlobHash,
     bytes: &[u8],
+    written_at_millis: u64,
 ) -> Result<PackEntry> {
     let record_len =
         RECORD_MAGIC.len() as u64 + crate::BLAKE3_HASH_LEN as u64 + 8 + bytes.len() as u64;
@@ -416,6 +442,7 @@ fn append_pack_record(
         pack_id: state.active_pack_id,
         offset,
         len: bytes.len() as u64,
+        written_at_millis,
     })
 }
 
@@ -426,6 +453,7 @@ fn append_put_index_record(index_path: &Path, hash: &BlobHash, entry: PackEntry)
         file.write_all(&entry.pack_id.to_le_bytes())?;
         file.write_all(&entry.offset.to_le_bytes())?;
         file.write_all(&entry.len.to_le_bytes())?;
+        file.write_all(&entry.written_at_millis.to_le_bytes())?;
         Ok(())
     })
 }
@@ -530,11 +558,11 @@ fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
         return Ok(stats);
     }
 
-    let live: Vec<(BlobHash, Bytes)> = state
+    let live: Vec<(BlobHash, PackEntry, Bytes)> = state
         .index
         .iter()
         .map(|(hash, entry)| {
-            read_pack_entry(&state.packs_dir, hash, *entry).map(|bytes| (*hash, bytes))
+            read_pack_entry(&state.packs_dir, hash, *entry).map(|bytes| (*hash, *entry, bytes))
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -542,8 +570,8 @@ fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
     state.active_pack_bytes = ensure_pack_file(&state.packs_dir, state.active_pack_id)?;
 
     let mut stats = CompactionStats::default();
-    for (hash, bytes) in live {
-        let entry = append_pack_record(state, &hash, &bytes)?;
+    for (hash, old_entry, bytes) in live {
+        let entry = append_pack_record(state, &hash, &bytes, old_entry.written_at_millis)?;
         append_put_index_record(&state.index_path, &hash, entry)?;
         state.index.insert(hash, entry);
         stats.blobs_rewritten += 1;
@@ -593,6 +621,13 @@ fn pack_ids_on_disk(packs_dir: &Path) -> Result<BTreeSet<u64>> {
     Ok(pack_ids)
 }
 
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -627,6 +662,7 @@ mod tests {
         let second = store.put(Bytes::from_static(b"same")).await.unwrap();
         assert_eq!(first, second);
         assert_eq!(store.len().unwrap(), 1);
+        assert_eq!(store.live_entries().unwrap().len(), 1);
     }
 
     #[tokio::test]

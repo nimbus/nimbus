@@ -286,4 +286,25 @@ mod tests {
             Some(nimbus_core::StorageErrorKind::Corruption)
         );
     }
+
+    #[tokio::test]
+    async fn crypto_shred_by_losing_tenant_dek_makes_blob_unreadable() {
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("tenant-before-rm"));
+        let hash = store
+            .put(Bytes::from_static(b"tenant secret"))
+            .await
+            .unwrap();
+        let framed = store.inner().get(&hash).await.unwrap();
+
+        let raw_after_rm = MemoryBlobStore::new();
+        let copied_hash = raw_after_rm.put(framed).await.unwrap();
+        assert_eq!(copied_hash, hash);
+
+        let after_shred = EncryptedBlobStore::new(raw_after_rm, key("tenant-after-rm"));
+        let err = after_shred.get(&hash).await.unwrap_err();
+        assert_eq!(
+            err.storage_kind(),
+            Some(nimbus_core::StorageErrorKind::Corruption)
+        );
+    }
 }
