@@ -135,7 +135,7 @@ impl WebSocketFixture {
     }
 
     pub async fn next_message(&mut self) -> Message {
-        self.next_message_with_timeout(Duration::from_secs(5))
+        self.next_message_with_timeout(default_message_timeout())
             .await
             .expect("timed out waiting for websocket message")
     }
@@ -148,7 +148,7 @@ impl WebSocketFixture {
     }
 
     pub async fn next_json(&mut self) -> Value {
-        self.next_json_with_timeout(Duration::from_secs(5))
+        self.next_json_with_timeout(default_message_timeout())
             .await
             .expect("timed out waiting for websocket message")
     }
@@ -164,7 +164,7 @@ impl WebSocketFixture {
     }
 
     pub async fn next_binary(&mut self) -> Vec<u8> {
-        self.next_binary_with_timeout(Duration::from_secs(5))
+        self.next_binary_with_timeout(default_message_timeout())
             .await
             .expect("timed out waiting for websocket binary message")
     }
@@ -175,6 +175,16 @@ impl WebSocketFixture {
             Message::Binary(bytes) => Some(bytes.to_vec()),
             other => panic!("unexpected websocket message: {other:?}"),
         }
+    }
+}
+
+fn default_message_timeout() -> Duration {
+    // Coverage instrumentation slows runtime-backed subscription bootstraps;
+    // keep ordinary test runs on the stricter fixture timeout.
+    if std::env::var_os("CARGO_LLVM_COV").is_some() {
+        Duration::from_secs(30)
+    } else {
+        Duration::from_secs(5)
     }
 }
 
