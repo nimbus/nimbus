@@ -18,16 +18,18 @@ use bytes::Bytes;
 use nimbus_blob::BlobHash;
 use nimbus_core::{CommitEntry, Error, Result, TenantId};
 use nimbus_engine::Engine;
-use nimbus_object_storage::ObjectStorageResolver;
+use nimbus_object_storage::{ObjectStorageConfig, ObjectStorageResolver};
 use nimbus_s3::convex::{
     CONVEX_DOWNLOAD_PATH_PREFIX, ConvexObjectStorage, ConvexStorageError, DownloadTokenSigner,
 };
-use nimbus_s3::{NimbusS3, S3Config, S3ObjectBackend};
+use nimbus_s3::{NimbusS3, S3ObjectBackend};
 use nimbus_storage::{ObjectManifest, ObjectMultipartUpload};
 use s3s::service::S3ServiceBuilder;
 use s3s::{Body, HttpError};
 use tokio::net::TcpListener;
 use tracing::{error, info};
+
+use super::S3Config;
 
 #[derive(Clone)]
 struct EngineS3Backend {
@@ -36,9 +38,9 @@ struct EngineS3Backend {
 }
 
 impl EngineS3Backend {
-    fn new(engine: Arc<Engine>) -> Self {
+    fn new(engine: Arc<Engine>, object_storage: ObjectStorageConfig) -> Self {
         Self {
-            objects: ObjectStorageResolver::new(engine.clone()),
+            objects: ObjectStorageResolver::with_config(engine.clone(), object_storage),
             engine,
         }
     }
@@ -172,9 +174,10 @@ pub fn router(engine: Arc<Engine>, config: S3Config) -> Router {
     let S3Config {
         access_keys,
         convex_download_secret,
+        object_storage,
         ..
     } = config;
-    let backend = Arc::new(EngineS3Backend::new(engine));
+    let backend = Arc::new(EngineS3Backend::new(engine, object_storage));
     let s3 = NimbusS3::new(backend.clone(), access_keys.clone());
     let mut builder = S3ServiceBuilder::new(s3);
     builder.set_auth(access_keys);
@@ -272,7 +275,10 @@ mod tests {
     use bytes::Bytes;
     use nimbus_core::TenantId;
     use nimbus_s3::AccessKeyRegistry;
-    use nimbus_storage::{ObjectManifest, ObjectManifestAttributes};
+    use nimbus_storage::{
+        ObjectManifest, ObjectManifestAttributes, ObjectStorePlacementTarget,
+        ObjectStoreProviderCredentials, ObjectStoreProviderKind, PlacementPolicy,
+    };
     use std::time::Duration;
     use tower::ServiceExt;
 
@@ -285,6 +291,32 @@ mod tests {
             TenantId::new("tenant-s3").expect("tenant id"),
             SECRET_KEY,
         )
+    }
+
+    #[test]
+    fn backend_uses_configured_default_placement() {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+        let tenant = TenantId::new("tenant-s3").expect("tenant id");
+        let target = ObjectStorePlacementTarget::new(
+            ObjectStoreProviderKind::Memory,
+            "tenant-mirror",
+            ObjectStoreProviderCredentials::Anonymous,
+        )
+        .expect("target should build");
+        let policy = PlacementPolicy::Mirror {
+            target,
+            require_ack: true,
+        };
+        let backend = EngineS3Backend::new(engine, ObjectStorageConfig::new(policy.clone()));
+
+        assert_eq!(
+            backend
+                .objects
+                .effective_policy(&tenant)
+                .expect("policy should resolve"),
+            policy
+        );
     }
 
     fn presigned_get_uri(path: &str) -> String {
@@ -373,7 +405,10 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir should create");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
         let tenant = TenantId::new("tenant-s3").expect("tenant id");
-        let storage = ConvexObjectStorage::new(Arc::new(EngineS3Backend::new(engine.clone())));
+        let storage = ConvexObjectStorage::new(Arc::new(EngineS3Backend::new(
+            engine.clone(),
+            ObjectStorageConfig::default(),
+        )));
         let metadata = storage
             .store(
                 &tenant,
@@ -417,7 +452,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir should create");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
         let tenant = TenantId::new("tenant-s3").expect("tenant id");
-        let backend = EngineS3Backend::new(engine.clone());
+        let backend = EngineS3Backend::new(engine.clone(), ObjectStorageConfig::default());
         backend.ensure_tenant(&tenant).await.expect("tenant exists");
         let hash = backend
             .put_blob(&tenant, Bytes::from_static(b"presigned bytes"))

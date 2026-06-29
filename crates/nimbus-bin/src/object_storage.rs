@@ -1,14 +1,15 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Args, Subcommand, ValueEnum};
 use nimbus::{
     BackupBundle, BackupRequest, EmbeddedProviderKind, Engine, EnginePersistenceConfig,
     Error as NimbusError, KeyEscrow, LocalPackStore, ObjectBackup, ObjectPlacement,
-    ObjectStorageResolver, ObjectStorePlacementTarget, ObjectStoreProviderCredentials,
-    ObjectStoreProviderKind, PlacementPolicy, PointInTimeRestoreArchive, TenantId,
-    object_backup_roots, object_blob_root,
+    ObjectStorageConfig, ObjectStorageResolver, ObjectStorePlacementTarget,
+    ObjectStoreProviderCredentials, ObjectStoreProviderKind, PlacementPolicy,
+    PointInTimeRestoreArchive, TenantId, object_backup_roots, object_blob_root,
 };
 use rand::RngCore;
 
@@ -245,7 +246,7 @@ async fn run_backup_object_store(command: BackupObjectStoreCommand) -> Result<()
     let archive = engine.export_latest_point_in_time_restore_archive(&tenant)?;
     let archive_bytes = serde_json::to_vec(&archive)?;
     let roots = backup_roots_from_archive_or_local(&archive, &command.data_dir, &tenant)?;
-    let source = ObjectStorageResolver::new(engine.clone()).blob_store(&tenant)?;
+    let source = object_storage_resolver(engine.clone())?.blob_store(&tenant)?;
     let key_escrow = read_key_escrow(&command.key_escrow_id, &command.key_escrow_file)?;
     let request = BackupRequest::new(
         roots,
@@ -280,7 +281,7 @@ async fn run_restore_object_store(
     let bundle = BackupBundle::decode(raw.into())?;
     let key_escrow = read_key_escrow(&command.key_escrow_id, &command.key_escrow_file)?;
     let engine = open_engine(&command.data_dir, command.provider).await?;
-    let target = ObjectStorageResolver::new(engine.clone()).blob_store(&tenant)?;
+    let target = object_storage_resolver(engine.clone())?.blob_store(&tenant)?;
     let report = ObjectBackup::restore_bundle(target.as_ref(), &bundle, Some(&key_escrow)).await?;
     let archive = serde_json::from_slice(bundle.manifest_snapshot())?;
     match engine.create_tenant(tenant.clone()) {
@@ -400,10 +401,15 @@ fn credentials_from_command(
 async fn open_engine(
     data_dir: &Path,
     provider: ObjectStorageProvider,
-) -> Result<std::sync::Arc<Engine>, Box<dyn Error>> {
+) -> Result<Arc<Engine>, Box<dyn Error>> {
     let config = EnginePersistenceConfig::embedded(data_dir, provider.embedded_kind());
-    Ok(std::sync::Arc::new(
-        Engine::new_with_persistence_config(config).await?,
+    Ok(Arc::new(Engine::new_with_persistence_config(config).await?))
+}
+
+fn object_storage_resolver(engine: Arc<Engine>) -> Result<ObjectStorageResolver, Box<dyn Error>> {
+    Ok(ObjectStorageResolver::with_config(
+        engine,
+        ObjectStorageConfig::from_env(None)?,
     ))
 }
 
