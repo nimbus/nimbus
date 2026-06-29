@@ -12,7 +12,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 
-use nimbus::{Error, TenantId};
+use nimbus::{Error, ObjectStorageConfig, ObjectStorageEnv, TenantId};
 use nimbus_server::{
     CloudflareConfig, DynamoDbConfig, FirebaseConfig, MongoDbAuthConfig, MongoDbConfig,
     MongoDbCredentialRegistry, ProjectTenantRegistry, S3AccessKeyRegistry, S3Config,
@@ -156,6 +156,19 @@ impl<'a> CredentialStore<'a> {
             .cached
             .as_ref()
             .expect("credentials cached by the branch above"))
+    }
+}
+
+struct AdapterObjectStorageEnv<'a, F> {
+    lookup: &'a F,
+}
+
+impl<F> ObjectStorageEnv for AdapterObjectStorageEnv<'_, F>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    fn get(&self, key: &str) -> Option<String> {
+        (self.lookup)(key)
     }
 }
 
@@ -562,9 +575,12 @@ fn resolve_s3(
         S3AccessKeyRegistry::from_operator_spec(&raw_bindings.join(","))
             .map_err(|error| Error::InvalidInput(error.to_string()))?
     };
+    let object_storage =
+        ObjectStorageConfig::from_sources(None, &AdapterObjectStorageEnv { lookup: env_lookup })?;
     let mut config = S3Config::new(port)
         .with_bind_addr(adapter_bind_addr(&command.s3_host, port, "--s3-host")?)
-        .with_access_keys(access_keys);
+        .with_access_keys(access_keys)
+        .with_object_storage_config(object_storage);
     if let Some(secret) = convex_download_secret {
         config = config.with_convex_download_secret(secret);
     }
@@ -1130,6 +1146,39 @@ mod tests {
             s3.convex_download_secret.is_none(),
             "env S3 bindings should not implicitly mint a Convex download signer"
         );
+    }
+
+    #[test]
+    fn s3_listener_consumes_object_storage_env_default() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut command = base_command();
+        command.s3_port = Some(9000);
+        let resolved = resolve(&command, temp.path(), |name| match name {
+            S3_ACCESS_KEYS_ENV => Some("AKIAS3ONE:s1:alpha".to_string()),
+            "NIMBUS_OBJECT_STORAGE_MODE" => Some("mirror".to_string()),
+            "NIMBUS_OBJECT_STORAGE_PROVIDER" => Some("memory".to_string()),
+            "NIMBUS_OBJECT_STORAGE_BUCKET" => Some("tenant-mirror".to_string()),
+            "NIMBUS_OBJECT_STORAGE_CREDENTIALS" => Some("anonymous".to_string()),
+            "NIMBUS_OBJECT_STORAGE_REQUIRE_ACK" => Some("true".to_string()),
+            _ => None,
+        })
+        .expect("object-storage env should resolve into S3 listener config");
+        let s3 = resolved.s3.expect("s3 config should resolve");
+        match s3.object_storage.default_policy() {
+            nimbus::PlacementPolicy::Mirror {
+                target,
+                require_ack,
+            } => {
+                assert!(*require_ack);
+                assert_eq!(target.bucket, "tenant-mirror");
+                assert_eq!(target.provider, nimbus::ObjectStoreProviderKind::Memory);
+                assert_eq!(
+                    target.credentials,
+                    nimbus::ObjectStoreProviderCredentials::Anonymous
+                );
+            }
+            other => panic!("expected mirror default placement, got {other:?}"),
+        }
     }
 
     #[test]
