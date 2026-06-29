@@ -1821,7 +1821,7 @@ fn execute_upstream_node_compat_test_with_extra_files(
     let lane_name = lane.map(node_compat_lane_name).unwrap_or("unspecified");
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(limits)),
+        runtime_test_policy_with_real_fs(limits),
     );
     let request = InvocationRequest {
         kind: InvocationKind::Query,

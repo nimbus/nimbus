@@ -708,9 +708,7 @@ pub(crate) async fn tenant_queue_limit_rejections_record_metrics_inner() {
                 .await
         }
     });
-    tokio::time::timeout(Duration::from_secs(1), host.slow_started.notified())
-        .await
-        .expect("slow runtime invocation should start");
+    host.wait_until_slow_started().await;
 
     let queued_request = test_request("slow-2");
     let queued_task = tokio::spawn({
@@ -833,9 +831,7 @@ pub(crate) async fn tenant_fairness_prevents_one_tenant_from_starving_another_in
                 .await
         }
     });
-    tokio::time::timeout(Duration::from_secs(1), host.slow_started.notified())
-        .await
-        .expect("slow tenant-a invocation should start");
+    host.wait_until_slow_started().await;
 
     let queued_request = test_request("slow-2");
     let queued_task = tokio::spawn({

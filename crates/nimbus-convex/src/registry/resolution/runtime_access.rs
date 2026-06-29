@@ -247,6 +247,27 @@ mod tests {
     }
 
     #[test]
+    fn convex_registry_host_governor_preserves_runtime_metrics_identity() {
+        let registry = ConvexRegistry::empty();
+        registry.runtime_policy().metrics().record_worker_dispatch();
+
+        let governed = registry.clone().with_runtime_host_governor(
+            two_seat_runtime_host_budget(),
+            critical_runtime_host_pressure_source(),
+            nimbus_runtime::RuntimeAdaptiveControllerSettings::default(),
+        );
+        governed.runtime_policy().metrics().record_worker_dispatch();
+
+        assert_eq!(
+            registry
+                .runtime_metrics_snapshot()
+                .worker_dispatched_invocations,
+            2,
+            "server-side Convex registry overlays must not fork runtime metrics"
+        );
+    }
+
+    #[test]
     fn convex_registry_applies_effective_runtime_scaling_plan_to_runtime_policy() {
         let plan = nimbus_runtime::EffectiveRuntimeScalingPlan::baked_standard("messages:send", 6);
         let registry = ConvexRegistry::empty().with_effective_runtime_scaling_plan(plan.clone());

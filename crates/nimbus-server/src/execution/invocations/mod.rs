@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use nimbus_core::TenantId;
 use nimbus_provenance::RuntimeBundleProvenanceConfig;
 use nimbus_runtime::{
-    HostBridge, HostCallCancellation, InvocationRequest, NimbusRuntime, RuntimeInvocationContext,
-    RuntimePolicy,
+    HostBridge, HostCallCancellation, InvocationRequest, NimbusRuntime, NimbusRuntimeError,
+    RuntimeInvocationContext, RuntimePolicy,
 };
 
 mod blocking;
@@ -120,8 +120,10 @@ pub(crate) fn runtime_invocation_context(
 fn runtime_for_host(
     host_bridge: Arc<dyn HostBridge>,
     runtime_policy: Arc<RuntimePolicy>,
-) -> NimbusRuntime {
-    NimbusRuntime::with_policy(host_bridge, runtime_policy)
+) -> std::result::Result<NimbusRuntime, NimbusRuntimeError> {
+    let runtime_policy =
+        Arc::new(runtime_policy.clone_with_file_system(nimbus_fs::default_file_system()?));
+    Ok(NimbusRuntime::with_policy(host_bridge, runtime_policy))
 }
 
 pub(crate) use blocking::invoke_runtime_bundle_blocking_with_host;

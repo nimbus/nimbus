@@ -280,25 +280,32 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `docs/private/adapters/cloud-functions/migration.md`,
   `docs/private/architecture/runtime/adapter-boundary.md`,
   `docs/private/architecture/server/auth-runtime-trust.md`
+- Data / KV substrate (`nimbus-kv` Foundation, RESP/Valkey-compatible KV
+  primitive, `TenantKvStore`, or Cloudflare Workers KV prerequisite work):
+  `docs/private/plans/nimbus-kv-foundation-plan.md` is the active control plane
+  (NKV0 F0..F5), gated on
+  `bash scripts/verify-nimbus-kv-foundation.sh` (9 conditions). Contract source
+  of truth is `docs/private/plans/research/nimbus-kv-architecture-2026.md`.
+  Start with NKV0 F0-F2 before Cloudflare CFA3/CFA5: F0 creates the verifier
+  and baseline proof, F1 creates the RESP server, and F2 lands `TenantKvStore`
+  in `nimbus-storage` with the redb implementation plus the required
+  redb-vs-fjall proof.
 - Cloudflare adapters (inbound Workers / Workers KV / D1 / R2 / Durable Objects
-  compatibility): `docs/private/plans/cloudflare-adapters-plan.md` is the active
-  control plane (CFA0..CFA9), gated on
-  `bash scripts/verify-cloudflare-adapters.sh` (11 conditions). Contract source
+  compatibility): `docs/private/plans/archive/cloudflare-adapters-plan.md`
+  (formerly `docs/private/plans/cloudflare-adapters-plan.md`) is the completed
+  CFA0..CFA9 baseline, gated on
+  `bash scripts/verify-cloudflare-adapters.sh` (12 conditions). Contract source
   of truth is `docs/private/plans/research/cloudflare-adapters-2026.md` (do not
   re-derive Cloudflare API contracts from memory). **Primitives-first** (owner
-  decision 2026-06-22): adapters are thin compat surfaces over Nimbus primitives,
-  not foreign-runtime embeds — build the KV primitive (`TenantKvStore` seam in
-  `nimbus-storage`, NOT a standalone crate) and the durable-object substrate
-  (`nimbus-services` single-instance resource + engine + scheduler + WS), and
-  reimplement the Workers runtime as a V8 profile on `nimbus-runtime` (NOT embed
-  `workerd` — it locks DO storage to its own SQLite). Build wedge: Workers KV →
-  Durable Objects, with the bar raised to **`env.NS` running end-to-end inside a
-  real Worker** (pulls a minimal Workers-runtime slice forward). Cross-lane deps:
-  **R2 is gated on NOS Phase 3** (`nimbus-s3-object-storage` S3 surface);
-  cluster-scale single-instance DO routing is **HS5**'s (`horizontal-scaling`),
-  CFA6 is single-node MVP; D1 over the existing SQLite/libSQL family is an
-  independent follow-on. `workerd`/`miniflare`/`workers-types`/`lol-html` are
-  Apache-2.0/MIT/BSD-3 and freely incorporable. Also read
+  decision 2026-06-22): adapters are thin compat surfaces over Nimbus
+  primitives, not foreign-runtime embeds. Landed baseline: `TenantKvStore`
+  prerequisite from NKV0, Workers KV REST, `env.NS` in a real Worker, minimal
+  Workers runtime slice, and single-node Durable Object substrate. Future R2,
+  D1, full Workers-runtime API, production auth, or cluster-scale DO routing
+  needs a new active follow-on plan. Cross-lane deps remain: **R2 is gated on
+  NOS Phase 3** (`nimbus-s3-object-storage` S3 surface); cluster-scale
+  single-instance DO routing is **HS5**'s (`horizontal-scaling`); D1 over the
+  existing SQLite/libSQL family is an independent follow-on. Also read
   `docs/private/architecture/storage-seams-architecture.md`,
   `docs/private/architecture/runtime/adapter-boundary.md`, and
   `docs/private/architecture/server/auth-runtime-trust.md`.

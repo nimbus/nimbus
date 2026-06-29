@@ -6,10 +6,14 @@ async fn application_node22_reads_local_files_hides_non_allowlisted_env_and_deni
     let _guard = acquire_basic_invocation_suite_lock().await;
     let (tempdir, bundle_path) = write_app_style_bundle(
         r#"
+	import { mkdirSync } from "node:fs";
 	import { readFile, stat, writeFile } from "node:fs/promises";
 
 	globalThis.__nimbusInvoke = async function () {
 	  const config = await readFile("./config.txt", "utf8");
+	  mkdirSync("./sync-created", { recursive: true });
+	  await writeFile("./sync-created/file.txt", "sync-data");
+	  const syncRoundTrip = await readFile("./sync-created/file.txt", "utf8");
 	  const nodeEnv = process.env.NODE_ENV ?? null;
 	  let writeDenied = null;
 	  let metadataDenied = null;
@@ -26,6 +30,7 @@ async fn application_node22_reads_local_files_hides_non_allowlisted_env_and_deni
 	  return {
 	    cwd: process.cwd(),
 	    config,
+	    syncRoundTrip,
 	    nodeEnv,
 	    writeDenied,
 	    metadataDenied,
@@ -46,7 +51,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
         .invoke_bundle(
@@ -74,6 +79,7 @@ export {};
         serde_json::json!(expected_cwd.display().to_string())
     );
     assert_eq!(result["config"], serde_json::json!("hello from bundle"));
+    assert_eq!(result["syncRoundTrip"], serde_json::json!("sync-data"));
     assert_eq!(result["nodeEnv"], serde_json::json!(null));
     let write_denied = result["writeDenied"]
         .as_str()
@@ -124,7 +130,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
         .invoke_bundle(
@@ -163,9 +169,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(
-            RuntimeLimits::application_node22_local_development(),
-        )),
+        runtime_test_policy_with_real_fs(RuntimeLimits::application_node22_local_development()),
     );
     let result = runtime
         .invoke_bundle(
@@ -283,7 +287,7 @@ export {};
 
     let writer_runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(read_write_limits.clone())),
+        runtime_test_policy_with_real_fs(read_write_limits.clone()),
     );
     let written = writer_runtime
         .invoke_bundle(
@@ -323,7 +327,7 @@ export {};
         .push("NIMBUS_C1_3_SHARED_ENV".to_string());
     let worker_runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(worker_limits)),
+        runtime_test_policy_with_real_fs(worker_limits),
     );
     let worker_shared = worker_runtime
         .invoke_bundle(
@@ -357,7 +361,7 @@ export {};
 
     let reader_runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(read_write_limits)),
+        runtime_test_policy_with_real_fs(read_write_limits),
     );
     let read = reader_runtime
         .invoke_bundle(
@@ -391,7 +395,7 @@ export {};
         .push("NIMBUS_C1_3_SHARED_ENV".to_string());
     let read_only_runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(read_only_limits)),
+        runtime_test_policy_with_real_fs(read_only_limits),
     );
     let denied = read_only_runtime
         .invoke_bundle(
@@ -444,7 +448,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::tooling_node22())),
+        runtime_test_policy_with_real_fs(RuntimeLimits::tooling_node22()),
     );
     let result = runtime
         .invoke_bundle(
@@ -522,7 +526,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
         .invoke_bundle(
@@ -578,7 +582,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
         .invoke_bundle(
@@ -667,7 +671,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
         .invoke_bundle(
@@ -760,7 +764,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::tooling_node22())),
+        runtime_test_policy_with_real_fs(RuntimeLimits::tooling_node22()),
     );
     let result = runtime
         .invoke_bundle(

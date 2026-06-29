@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::backends::v8::embedder::JsRuntime;
 use crate::backends::v8::{ReusableV8Runtime, V8RuntimeConstructionMode, V8WorkerRuntimePool};
-use crate::error::Result;
+use crate::error::{NimbusRuntimeError, Result};
 use crate::execution_plan::RuntimeExecutionPlan;
 use crate::executor::{SharedInvocationPermit, WorkerActivitySignal};
 use crate::host::HostCallCancellation;
@@ -75,17 +75,13 @@ impl RuntimeInvocationDriver {
         Ok(())
     }
 
-    pub(crate) fn wait_until_phase_timeout_error(
-        &self,
-    ) -> Option<crate::error::NimbusRuntimeError> {
+    pub(crate) fn wait_until_phase_timeout_error(&self) -> Option<NimbusRuntimeError> {
         let limits = self.policy.limits();
         if self.system_timeout_triggered.load(Ordering::SeqCst) {
-            return Some(crate::error::NimbusRuntimeError::SystemTimeout(
-                limits.system_timeout,
-            ));
+            return Some(NimbusRuntimeError::SystemTimeout(limits.system_timeout));
         }
         if self.timeout_triggered.load(Ordering::SeqCst) {
-            return Some(crate::error::NimbusRuntimeError::ExecutionTimeout(
+            return Some(NimbusRuntimeError::ExecutionTimeout(
                 limits.execution_timeout,
             ));
         }
@@ -95,13 +91,44 @@ impl RuntimeInvocationDriver {
     pub(crate) fn classify_wait_until_drain_result(&self, result: Result<()>) -> Result<()> {
         match result {
             Ok(()) => self.wait_until_phase_timeout_error().map_or(Ok(()), Err),
-            Err(error) => Err(classify_wait_until_drain_error(
-                error,
-                &self.timeout_triggered,
-                &self.system_timeout_triggered,
-                self.policy.limits(),
-            )),
+            Err(error) => Err(self.classify_wait_until_phase_error(error)),
         }
+    }
+
+    pub(crate) fn wait_until_phase_stalled_error(&self) -> NimbusRuntimeError {
+        if let Some(error) = self.wait_until_phase_timeout_error() {
+            return error;
+        }
+
+        classify_wait_until_drain_error(
+            NimbusRuntimeError::JavaScript(
+                "Promise resolution is still pending but the event loop has already resolved"
+                    .to_string(),
+            ),
+            &self.timeout_triggered,
+            &self.system_timeout_triggered,
+            self.policy.limits(),
+        )
+    }
+
+    pub(crate) fn classify_wait_until_phase_error(
+        &self,
+        error: NimbusRuntimeError,
+    ) -> NimbusRuntimeError {
+        if let Some(timeout_error) = self.wait_until_phase_timeout_error() {
+            return timeout_error;
+        }
+
+        if wait_until_idle_pending_error(&error) {
+            return self.wait_until_phase_stalled_error();
+        }
+
+        classify_wait_until_drain_error(
+            error,
+            &self.timeout_triggered,
+            &self.system_timeout_triggered,
+            self.policy.limits(),
+        )
     }
 
     pub(crate) fn record_fresh_realm_promise_resolve(&self, duration: Duration) {
@@ -608,4 +635,13 @@ fn realm_lease_condemnation_reason_from_flags(
         return RuntimeRealmLeaseCondemnationReason::ExternalPressure;
     }
     RuntimeRealmLeaseCondemnationReason::Dirty
+}
+
+fn wait_until_idle_pending_error(error: &NimbusRuntimeError) -> bool {
+    let NimbusRuntimeError::JavaScript(message) = error else {
+        return false;
+    };
+    message.contains("Promise resolution is still pending but the event loop has already resolved")
+        || message
+            .contains("waitUntil drain is still pending but the event loop has already resolved")
 }

@@ -45,8 +45,46 @@ function timerSamples(fn) {
 }
 
 function probeSideChannelSurface() {
+  const wasmPlainMemory = (() => {
+    try {
+      const memory = new WebAssembly.Memory({ initial: 1 });
+      return {
+        created: true,
+        bufferTag: Object.prototype.toString.call(memory.buffer),
+        message: null,
+      };
+    } catch (error) {
+      return {
+        created: false,
+        bufferTag: null,
+        message: error?.message ?? String(error),
+      };
+    }
+  })();
+  const wasmSharedMemory = (() => {
+    try {
+      const memory = new WebAssembly.Memory({
+        initial: 1,
+        maximum: 1,
+        shared: true,
+      });
+      return {
+        created: true,
+        bufferTag: Object.prototype.toString.call(memory.buffer),
+        message: null,
+      };
+    } catch (error) {
+      return {
+        created: false,
+        bufferTag: null,
+        message: error?.message ?? String(error),
+      };
+    }
+  })();
   return {
     sharedArrayBufferType: typeof globalThis.SharedArrayBuffer,
+    wasmPlainMemory,
+    wasmSharedMemory,
     atomicsWaitType: typeof Atomics?.wait,
     atomicsWait: assertAtomicsWaitDisabled("wait"),
     atomicsWaitAsyncType: typeof Atomics?.waitAsync,
@@ -92,6 +130,42 @@ globalThis.__nimbusInvoke = async function () {
 
     parentPort.postMessage({
       sharedArrayBufferType: typeof globalThis.SharedArrayBuffer,
+      wasmPlainMemory: (() => {
+        try {
+          const memory = new WebAssembly.Memory({ initial: 1 });
+          return {
+            created: true,
+            bufferTag: Object.prototype.toString.call(memory.buffer),
+            message: null,
+          };
+        } catch (error) {
+          return {
+            created: false,
+            bufferTag: null,
+            message: error?.message ?? String(error),
+          };
+        }
+      })(),
+      wasmSharedMemory: (() => {
+        try {
+          const memory = new WebAssembly.Memory({
+            initial: 1,
+            maximum: 1,
+            shared: true,
+          });
+          return {
+            created: true,
+            bufferTag: Object.prototype.toString.call(memory.buffer),
+            message: null,
+          };
+        } catch (error) {
+          return {
+            created: false,
+            bufferTag: null,
+            message: error?.message ?? String(error),
+          };
+        }
+      })(),
       atomicsWaitType: typeof Atomics?.wait,
       atomicsWait: assertAtomicsWaitDisabled("wait"),
       dateNowModulo: Date.now() % 10,
@@ -113,6 +187,26 @@ fn assert_side_channel_surface(result: &Value) {
     assert_eq!(
         result["sharedArrayBufferType"],
         serde_json::json!("undefined")
+    );
+    assert_eq!(
+        result["wasmPlainMemory"]["created"],
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        result["wasmPlainMemory"]["bufferTag"],
+        serde_json::json!("[object ArrayBuffer]")
+    );
+    assert_eq!(
+        result["wasmSharedMemory"]["created"],
+        serde_json::json!(false)
+    );
+    assert!(
+        result["wasmSharedMemory"]["message"]
+            .as_str()
+            .expect("shared WebAssembly memory denial should serialize a message")
+            .contains("Nimbus disables shared WebAssembly memory"),
+        "unexpected shared WebAssembly memory result: {}",
+        result["wasmSharedMemory"]
     );
     assert_eq!(result["atomicsWaitType"], serde_json::json!("function"));
     assert_eq!(result["atomicsWait"]["available"], serde_json::json!(true));
@@ -288,6 +382,26 @@ async fn pir3_node_worker_thread_side_channel_surface_is_hardened_inner() {
     assert_eq!(
         result["sharedArrayBufferType"],
         serde_json::json!("undefined")
+    );
+    assert_eq!(
+        result["wasmPlainMemory"]["created"],
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        result["wasmPlainMemory"]["bufferTag"],
+        serde_json::json!("[object ArrayBuffer]")
+    );
+    assert_eq!(
+        result["wasmSharedMemory"]["created"],
+        serde_json::json!(false)
+    );
+    assert!(
+        result["wasmSharedMemory"]["message"]
+            .as_str()
+            .expect("worker shared WebAssembly memory denial should serialize a message")
+            .contains("Nimbus disables shared WebAssembly memory"),
+        "unexpected worker shared WebAssembly memory result: {}",
+        result["wasmSharedMemory"]
     );
     assert_eq!(result["atomicsWaitType"], serde_json::json!("function"));
     assert_eq!(result["atomicsWait"]["available"], serde_json::json!(true));

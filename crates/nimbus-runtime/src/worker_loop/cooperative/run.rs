@@ -27,10 +27,16 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
             .worker_runtime
             .block_on(slot.finish_with_result_and_runtime(result));
         if let Some(runtime) = reusable_runtime {
-            self.retain_or_defer_runtime_drop(&job.host, &job.bundle, &job.context, runtime);
+            self.retain_or_defer_runtime_drop(
+                &job.host,
+                &job.policy,
+                &job.bundle,
+                &job.context,
+                runtime,
+            );
         }
         let (job, result, ready_jobs) = self.worker_runtime.block_on(Self::finish_invocation(
-            self.policy.clone(),
+            job.policy.clone(),
             self.worker_id,
             job,
             permit,
@@ -181,6 +187,7 @@ where
                     if let Some(runtime) = reusable_runtime {
                         self.retain_or_defer_runtime_drop(
                             &job.host,
+                            &job.policy,
                             &job.bundle,
                             &job.context,
                             runtime,
@@ -188,7 +195,7 @@ where
                     }
                     let (job, result, ready_jobs) =
                         self.worker_runtime.block_on(Self::finish_invocation(
-                            self.policy.clone(),
+                            job.policy.clone(),
                             self.worker_id,
                             job,
                             permit,

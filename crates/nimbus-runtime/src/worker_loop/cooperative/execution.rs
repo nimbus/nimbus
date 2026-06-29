@@ -104,8 +104,9 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
         allow_blocking_acquire: bool,
     ) -> Option<RuntimeWorkerJob> {
         let cancellation_for_metrics = job.cancellation.clone();
+        let job_policy = job.policy.clone();
         let permit = SharedInvocationPermit::new(
-            self.policy.clone(),
+            job_policy.clone(),
             job.context.tenant_label.clone(),
             job.dispatch_handle.clone(),
             job.context.bypasses_concurrency_limit(),
@@ -117,7 +118,7 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
             .as_ref()
             .is_some_and(HostCallCancellation::is_cancelled)
         {
-            self.policy
+            job_policy
                 .metrics()
                 .record_queued_canceled_invocation_for_tenant(
                     job.context.tenant_label.as_deref(),
@@ -154,7 +155,7 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
                     }
                 }
             }
-            self.policy.metrics().record_worker_dispatch();
+            job_policy.metrics().record_worker_dispatch();
             debug!(
                 worker_id,
                 invocation_id = job.context.invocation_id,
@@ -168,7 +169,7 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
             let start = CooperativeBackendInvocationStart {
                 watchdog,
                 host: job.host.clone(),
-                policy: self.policy.clone(),
+                policy: job_policy.clone(),
                 bundle: job.bundle.clone(),
                 request: job.request.clone(),
                 context: job.context.clone(),
@@ -211,7 +212,7 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
             Ok((CooperativeAdmissionStart::DirectResult(result), execution_started_at)) => {
                 let (job, result, ready_jobs) =
                     self.worker_runtime.block_on(Self::finish_invocation(
-                        self.policy.clone(),
+                        job_policy.clone(),
                         self.worker_id,
                         job,
                         permit,
@@ -237,7 +238,7 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
             Err((error, execution_started_at)) => {
                 let (job, result, ready_jobs) =
                     self.worker_runtime.block_on(Self::finish_invocation(
-                        self.policy.clone(),
+                        job_policy,
                         self.worker_id,
                         job,
                         permit,

@@ -22,7 +22,10 @@ use super::config::{
     runtime_config_from_start_command,
 };
 use super::first_boot::{is_first_boot, spawn_first_boot_announce};
-use super::network_bind::{ensure_admin_token_rotated_for_public_bind, ensure_host_opt_in};
+use super::network_bind::{
+    ensure_admin_token_rotated_for_public_bind, ensure_firebase_bypass_loopback_only,
+    ensure_host_opt_in,
+};
 use super::runtime_limits::{
     runtime_adaptive_controller_settings_from_command, runtime_host_resource_budget_from_command,
     runtime_limits_from_command,
@@ -75,10 +78,28 @@ pub(crate) async fn run_start_command(
     let runtime_config = runtime_config_from_start_command(&command)?;
     let compose_control_data_dir =
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
+    let resolved_app_dir = resolve_start_app_dir(&command)?;
     // Adapter enablement resolves after the control data dir: default-on
     // listeners without operator credentials load (or generate) theirs
-    // from the wire-credential store under that dir.
-    let adapter_enablement = resolve_adapter_enablement(&command, &compose_control_data_dir)?;
+    // from the wire-credential store under that dir. App-dir-backed adapters
+    // may also inspect local framework config such as wrangler.*.
+    let adapter_enablement = resolve_adapter_enablement(
+        &command,
+        &compose_control_data_dir,
+        resolved_app_dir.as_ref().map(ResolvedStartAppDir::path),
+    )?;
+    // Refuse the Firebase dev-mode token-verification bypass on a non-loopback
+    // bind: it fabricates verified Firebase projects from unsigned emulator
+    // tokens (#24), so it must be unreachable over the network by construction.
+    // Mirrors `ensure_host_opt_in`; the systemd-activation path re-checks against
+    // the activated host below.
+    let firebase_bypass_enabled = adapter_enablement
+        .firebase
+        .as_ref()
+        .is_some_and(|firebase| firebase.allows_emulator_token_verification_bypass());
+    if !command.systemd_socket_activation {
+        ensure_firebase_bypass_loopback_only(&command.host, firebase_bypass_enabled)?;
+    }
     // Snapshot first-boot before `Engine::new_with_persistence_config`
     // touches the data dir; otherwise the marker landscape we observe
     // would always say "second boot" because Engine initialization
@@ -86,7 +107,6 @@ pub(crate) async fn run_start_command(
     // after the listener is up and the discovery lease is held so the
     // launch ticket can mint against the live server.
     let is_first_boot_run = is_first_boot(&compose_control_data_dir);
-    let resolved_app_dir = resolve_start_app_dir(&command)?;
     run_codegen_preflight(&command, resolved_app_dir.as_ref()).await?;
     let runtime_limits = runtime_limits_from_command(&command);
     let runtime_host_resource_budget = runtime_host_resource_budget_from_command(&command);
@@ -150,6 +170,7 @@ pub(crate) async fn run_start_command(
         let listener = start_listener(&command).await?;
         let activated_host = listener.local_addr()?.ip().to_string();
         ensure_host_opt_in(&activated_host, command.allow_network)?;
+        ensure_firebase_bypass_loopback_only(&activated_host, firebase_bypass_enabled)?;
         let rotation_warning = ensure_admin_token_rotated_for_public_bind(
             &activated_host,
             &local_admin_token,

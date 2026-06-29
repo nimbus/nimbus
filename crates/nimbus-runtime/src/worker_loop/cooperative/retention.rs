@@ -1,4 +1,6 @@
+use crate::limits::RuntimePolicy;
 use crate::runtime::RuntimeHost;
+use std::sync::Arc;
 
 use super::CooperativeWorkerLoop;
 use super::backend::CooperativeBackendDriver;
@@ -7,12 +9,13 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
     pub(super) fn retain_or_defer_runtime_drop(
         &mut self,
         host: &RuntimeHost,
+        policy: &Arc<RuntimePolicy>,
         bundle: &crate::runtime::RuntimeBundle,
         context: &crate::RuntimeInvocationContext,
         reusable_runtime: <D::Slot as super::backend::CooperativeBackendSlot>::ReusableRuntime,
     ) {
         self.driver.retain_reusable_runtime(
-            self.policy.clone(),
+            policy.clone(),
             host,
             bundle,
             context,

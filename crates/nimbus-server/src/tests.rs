@@ -19,7 +19,7 @@ use nimbus_core::{
     TypedScalarValue,
 };
 use nimbus_engine::{Engine, run_scheduler};
-use nimbus_runtime::RuntimeBundle;
+use nimbus_runtime::{RuntimeBundle, RuntimeMetricsSnapshot};
 pub(crate) use nimbus_testing::{
     DeterministicHarness, DeterministicTestCase, EngineFixture, GeneratedTaskHistory,
     GeneratedTaskHistorySeedCase, GeneratedTaskPageExpectation, GeneratedTaskRecord,
@@ -34,11 +34,10 @@ use ring::rand::SystemRandom;
 use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, Ed25519KeyPair, KeyPair};
 use serde_json::json;
 use tempfile::tempdir;
-use tokio::io::AsyncWriteExt;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio::sync::watch;
-use tokio::time::{Duration, Instant, timeout};
+use tokio::time::{Duration, timeout};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode as WsCloseCode;
@@ -47,9 +46,9 @@ use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 
 use crate::{
-    ConvexRegistry, FirebaseConfig, LicenseDocument, LicenseEntitlements, LicenseKind,
-    LicenseSourceInfo, LicenseSourceKind, LicenseState, RouterOptions, ServeOptions, build_router,
-    serve,
+    CloudflareConfig, ConvexRegistry, FirebaseConfig, LicenseDocument, LicenseEntitlements,
+    LicenseKind, LicenseSourceInfo, LicenseSourceKind, LicenseState, ProjectTenantRegistry,
+    RouterOptions, ServeOptions, build_router, serve,
 };
 use crate::router::RouterBuildConfig;
 use crate::adapters::firebase::grpc::generated::google::firestore::v1::document_transform::FieldTransform as GrpcFieldTransform;
@@ -114,7 +113,17 @@ fn router_for_engine(engine: Arc<Engine>) -> Router {
 }
 
 fn router_for_convex(engine: Arc<Engine>, convex_registry: ConvexRegistry) -> Router {
-    build_router(RouterOptions::new(engine).with_convex_registry(convex_registry))
+    let test_host_parallelism =
+        std::num::NonZeroUsize::new(64).expect("test host parallelism is nonzero");
+    build_router(
+        RouterOptions::new(engine)
+            .with_convex_registry(convex_registry)
+            .with_runtime_host_resource_budget(
+                nimbus_runtime::RuntimeHostResourceBudget::conservative_for_logical_cpus(
+                    test_host_parallelism,
+                ),
+            ),
+    )
 }
 
 fn router_for_firebase(engine: Arc<Engine>, firebase_config: FirebaseConfig) -> Router {
@@ -218,6 +227,7 @@ async fn router_prepare_system_tenant_records_enabled_adapter_listeners() {
     RouterBuildConfig::core(fixture.engine())
         .with_system_convex_registry(convex_registry(json!([])))
         .with_firebase(FirebaseConfig::new())
+        .with_cloudflare(CloudflareConfig::default())
         .with_listen_addr(listen_addr)
         .prepare_system_tenant()
         .await
@@ -242,6 +252,7 @@ async fn router_prepare_system_tenant_records_enabled_adapter_listeners() {
     assert!(has_listener("native", "http"));
     assert!(has_listener("convex", "websocket"));
     assert!(has_listener("firebase", "http+websocket"));
+    assert!(has_listener("cloudflare", "http"));
 }
 
 fn header_csv_values(response: &reqwest::Response, header_name: &str) -> BTreeSet<String> {
@@ -778,6 +789,280 @@ fn seed_firebase_document(
     );
 }
 
+/// A genuine Firebase ID-token issuer for `project`
+/// (`securetoken.google.com/<project>`). The #24 gate derives the verified
+/// project from this issuer.
+fn firebase_securetoken_issuer(project: &str) -> String {
+    format!("https://securetoken.google.com/{project}")
+}
+
+/// A dev-mode Firebase Emulator bearer token: a JSON object (not a signed JWT)
+/// carrying the subject and the Firebase project issuer. The token-verification
+/// bypass fabricates a *verified* principal from it, so `iss` selects the
+/// project the #24 registry binds to a tenant. `sub` becomes the principal's
+/// `subject`/`sub` claim (owner-based access policies match on it).
+fn firebase_verified_token(subject: &str, project: &str) -> String {
+    json!({
+        "sub": subject,
+        "iss": firebase_securetoken_issuer(project),
+    })
+    .to_string()
+}
+
+/// The `Authorization: Bearer` value for a verified-path Firestore request to
+/// `project` as `subject`.
+fn firebase_verified_bearer(subject: &str, project: &str) -> String {
+    format!("Bearer {}", firebase_verified_token(subject, project))
+}
+
+/// `FirebaseConfig` for the verified-path tests: the dev-mode
+/// token-verification bypass on (so a JSON emulator token fabricates a verified
+/// project) plus the identity registry (project -> same-named tenant), so a
+/// token for project `demo` reaches tenant `demo`. The `ServerFixture` binds
+/// loopback, so the bypass is allowed (the boot guard only refuses it on a
+/// public bind).
+fn firebase_verified_config() -> FirebaseConfig {
+    FirebaseConfig::new()
+        .with_emulator_token_verification_bypass()
+        .with_project_registry(ProjectTenantRegistry::identity())
+}
+
+/// The exact [`PrincipalContext`] the dev-mode bypass fabricates for the
+/// verified-path token. Use it when a test seeds engine state under the same
+/// principal a verified-path request carries (e.g. a transaction session, which
+/// the engine binds to its creating principal), so the engine's principal-bound
+/// checks match the later verified-path request.
+fn firebase_verified_principal(subject: &str, project: &str) -> PrincipalContext {
+    nimbus_auth::firebase_emulator_verification_bypass_principal_from_bearer(
+        &firebase_verified_token(subject, project),
+    )
+    .expect("verified-path bypass principal should build")
+}
+
+/// The browser WebSocket subprotocol header value that offers the dev-mode
+/// verified bearer for `project` alongside the Firestore Listen subprotocol.
+fn firebase_listen_ws_auth_protocol(subject: &str, project: &str) -> String {
+    let encoded = URL_SAFE_NO_PAD.encode(firebase_verified_token(subject, project).as_bytes());
+    format!("nimbus.firebase.listen.v1,nimbus.firebase.auth.{encoded}")
+}
+
+/// A reqwest client that sends the dev-mode verified-path bearer for `project`
+/// on every request, for the verified-path Firestore REST tests. Pair it with
+/// [`assert_firebase_rest_anonymous_refused`] (which uses the fixture's
+/// unauthenticated client) to keep each test non-vacuous.
+fn firebase_rest_client(subject: &str, project: &str) -> reqwest::Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        firebase_verified_bearer(subject, project)
+            .parse()
+            .expect("verified-path bearer should be a valid header value"),
+    );
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .expect("verified-path reqwest client should build")
+}
+
+/// Wrap a unary or client-streaming gRPC payload in a request carrying the
+/// dev-mode verified bearer for `project`, so the #24 gate resolves the project
+/// to its tenant.
+fn firebase_grpc_request<T>(message: T, subject: &str, project: &str) -> tonic::Request<T> {
+    let mut request = tonic::Request::new(message);
+    request.metadata_mut().insert(
+        "authorization",
+        MetadataValue::try_from(firebase_verified_bearer(subject, project))
+            .expect("grpc authorization metadata should build"),
+    );
+    request
+}
+
+/// A tonic interceptor that attaches the dev-mode verified bearer to every
+/// outgoing Firestore gRPC request, so the #24 gate resolves the project to its
+/// tenant without wrapping each call site.
+#[derive(Clone)]
+struct FirebaseBearerInterceptor {
+    bearer: MetadataValue<tonic::metadata::Ascii>,
+}
+
+impl tonic::service::Interceptor for FirebaseBearerInterceptor {
+    fn call(
+        &mut self,
+        mut request: tonic::Request<()>,
+    ) -> std::result::Result<tonic::Request<()>, tonic::Status> {
+        request
+            .metadata_mut()
+            .insert("authorization", self.bearer.clone());
+        Ok(request)
+    }
+}
+
+/// A Firestore gRPC client whose every request carries the dev-mode verified
+/// bearer for `project` as `subject` (the #24 verified-path client). Pair it
+/// with the matching `assert_firebase_grpc_*_anonymous_refused` helper to keep
+/// each test non-vacuous.
+async fn firestore_grpc_authed_client(
+    server: &ServerFixture,
+    subject: &str,
+    project: &str,
+) -> FirestoreClient<
+    tonic::service::interceptor::InterceptedService<Channel, FirebaseBearerInterceptor>,
+> {
+    let channel = Channel::from_shared(server.http_url(""))
+        .expect("Firestore gRPC channel URI should parse")
+        .connect()
+        .await
+        .expect("Firestore gRPC channel should connect");
+    let bearer = MetadataValue::try_from(firebase_verified_bearer(subject, project))
+        .expect("grpc authorization metadata should build");
+    FirestoreClient::with_interceptor(channel, FirebaseBearerInterceptor { bearer })
+}
+
+/// Assert an anonymous (no-metadata) gRPC unary request is refused at the #24
+/// gate with `PermissionDenied`. The non-vacuous half of every migrated gRPC
+/// unary test (the gate runs before any document access, so a fixed read path
+/// proves the refusal).
+async fn assert_firebase_grpc_unary_anonymous_refused(server: &ServerFixture) {
+    let mut client = firestore_grpc_client(server).await;
+    let error = client
+        .get_document(GrpcGetDocumentRequest {
+            name: "projects/demo/databases/(default)/documents/cities/SF".to_string(),
+            mask: None,
+            consistency_selector: None,
+        })
+        .await
+        .expect_err("anonymous gRPC unary request must be refused by the #24 gate");
+    assert_eq!(error.code(), Code::PermissionDenied);
+}
+
+/// Assert the Firestore REST endpoint refuses an anonymous (no-bearer) request
+/// with HTTP 403 — the #24 verified-project gate refuses a caller with no
+/// verified Firebase project. The non-vacuous half of every migrated REST test.
+async fn assert_firebase_rest_anonymous_refused(server: &ServerFixture, path: &str, body: &str) {
+    let response = server
+        .client()
+        .post(server.http_url(path))
+        .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+        .body(body.to_string())
+        .send()
+        .await
+        .expect("anonymous firebase request should send");
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "anonymous Firestore REST request must be refused by the #24 verified-project gate: {path}"
+    );
+}
+
+/// Assert an anonymous (no-metadata) gRPC write-stream handshake is refused at
+/// the #24 gate (the gate runs on the handshake, so the first response is the
+/// refusal). The non-vacuous half of every migrated write-stream test.
+async fn assert_firebase_grpc_write_stream_anonymous_refused(
+    server: &ServerFixture,
+    database: &str,
+) {
+    let mut client = firestore_grpc_client(server).await;
+    let (sender, receiver) = mpsc::unbounded();
+    let mut responses = client
+        .write(receiver)
+        .await
+        .expect("anonymous write stream should open")
+        .into_inner();
+    sender
+        .unbounded_send(GrpcWriteRequest {
+            database: database.to_string(),
+            ..Default::default()
+        })
+        .expect("anonymous write handshake should send");
+    let error = responses
+        .message()
+        .await
+        .expect_err("anonymous write-stream handshake must be refused by the #24 gate");
+    assert_eq!(error.code(), Code::PermissionDenied);
+}
+
+/// Assert an anonymous (no-metadata) gRPC Listen add-target is refused at the
+/// #24 gate. The non-vacuous half of every migrated gRPC Listen test.
+async fn assert_firebase_grpc_listen_anonymous_refused(
+    server: &ServerFixture,
+    parent: &str,
+    collection_id: &str,
+) {
+    let mut client = firestore_grpc_client(server).await;
+    let (sender, receiver) = mpsc::unbounded();
+    let mut responses = client
+        .listen(receiver)
+        .await
+        .expect("anonymous Listen stream should open")
+        .into_inner();
+    sender
+        .unbounded_send(grpc_listen_query_request(0, parent, collection_id))
+        .expect("anonymous Listen add_target should send");
+    let error = responses
+        .message()
+        .await
+        .expect_err("anonymous Listen add_target must be refused by the #24 gate");
+    assert_eq!(error.code(), Code::PermissionDenied);
+}
+
+/// Connect a browser WebSocket Listen socket that offers the dev-mode verified
+/// bearer for `project` as `subject` (the #24 verified-path WebSocket client).
+async fn firebase_listen_ws_connect(
+    server: &ServerFixture,
+    subject: &str,
+    project: &str,
+) -> WebSocketFixture {
+    let mut request = server
+        .ws_url("/google.firestore.v1.Firestore/Listen")
+        .into_client_request()
+        .expect("listen websocket request should build");
+    request.headers_mut().insert(
+        header::ORIGIN,
+        axum::http::HeaderValue::from_static("http://localhost:5173"),
+    );
+    request.headers_mut().insert(
+        header::SEC_WEBSOCKET_PROTOCOL,
+        axum::http::HeaderValue::from_str(&firebase_listen_ws_auth_protocol(subject, project))
+            .expect("listen auth subprotocol header should build"),
+    );
+    WebSocketFixture::connect_request(request)
+        .await
+        .expect("authenticated listen websocket should connect")
+}
+
+/// Assert an anonymous browser WebSocket Listen (no auth offer) is refused at
+/// the #24 gate: the connection opens but the add-target closes with a policy
+/// frame. The non-vacuous half of every migrated WebSocket Listen test.
+async fn assert_firebase_listen_ws_anonymous_refused(
+    server: &ServerFixture,
+    parent: &str,
+    collection_id: &str,
+) {
+    let mut request = server
+        .ws_url("/google.firestore.v1.Firestore/Listen")
+        .into_client_request()
+        .expect("anonymous browser websocket request should build");
+    request.headers_mut().insert(
+        header::ORIGIN,
+        axum::http::HeaderValue::from_static("http://localhost:5173"),
+    );
+    request.headers_mut().insert(
+        header::SEC_WEBSOCKET_PROTOCOL,
+        axum::http::HeaderValue::from_static("nimbus.firebase.listen.v1"),
+    );
+    let mut socket = WebSocketFixture::connect_request(request)
+        .await
+        .expect("anonymous browser websocket should connect before target admission");
+    socket
+        .send_binary(grpc_listen_query_request(91, parent, collection_id).encode_to_vec())
+        .await;
+    let close = socket.next_message().await;
+    let WsMessage::Close(Some(frame)) = close else {
+        panic!("anonymous WebSocket Listen must close with a policy frame, got {close:?}");
+    };
+    assert_eq!(frame.code, WsCloseCode::Policy);
+}
+
 fn firebase_owner_access_rule() -> AccessRule {
     AccessRule {
         require_authenticated: true,
@@ -862,24 +1147,6 @@ fn firebase_owner_schema_for_collection(
         }],
         access_policy: Some(access_policy),
     }
-}
-
-fn firebase_test_auth_config(
-    issuer: &str,
-    application_id: &str,
-    jwks_data_url: &str,
-) -> serde_json::Value {
-    json!({
-        "providers": [
-            {
-                "type": "customJwt",
-                "issuer": issuer,
-                "jwks": jwks_data_url,
-                "algorithm": "ES256",
-                "applicationID": application_id
-            }
-        ]
-    })
 }
 
 fn seed_firebase_document_with_principal(
@@ -1099,29 +1366,40 @@ fn convex_registry_with_routes_and_bundle_and_auth_and_schema(
     registry
 }
 
+struct HeldJsonPostRequest {
+    handle: tokio::task::JoinHandle<Result<StatusCode, reqwest::Error>>,
+}
+
+impl Drop for HeldJsonPostRequest {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
 async fn open_json_post_stream(
     server: &ServerFixture,
     path: &str,
     body: &serde_json::Value,
-) -> TcpStream {
-    let addr = server
-        .http_url("")
-        .trim_start_matches("http://")
-        .to_string();
-    let body = serde_json::to_string(body).expect("request body should serialize");
-    let mut stream = TcpStream::connect(&addr)
-        .await
-        .expect("raw HTTP client should connect");
-    let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    stream
-        .write_all(request.as_bytes())
-        .await
-        .expect("raw HTTP request should write");
-    stream.flush().await.expect("raw HTTP request should flush");
-    stream
+) -> HeldJsonPostRequest {
+    let client = server.client().clone();
+    let url = server.http_url(path);
+    let body = body.clone();
+    let handle = tokio::spawn(async move {
+        client
+            .post(url)
+            .json(&body)
+            .send()
+            .await
+            .map(|response| response.status())
+    });
+    tokio::task::yield_now().await;
+    if handle.is_finished() {
+        let outcome = handle
+            .await
+            .expect("held JSON POST task should not panic before returning");
+        panic!("JSON POST request completed before test could hold it open: {outcome:?}");
+    }
+    HeldJsonPostRequest { handle }
 }
 
 async fn wait_for_runtime_metrics(
@@ -1144,35 +1422,75 @@ async fn wait_for_runtime_metrics_case(
 async fn wait_for_runtime_metrics_case_impl(
     registry: &ConvexRegistry,
     description: String,
-    predicate: impl Fn(&nimbus_runtime::RuntimeMetricsSnapshot) -> bool,
-) -> nimbus_runtime::RuntimeMetricsSnapshot {
-    // Synchronization budget for a runtime-metrics condition (e.g. "the
-    // blocking query has dispatched onto a worker"), NOT an assertion. The
-    // first dispatch pays a cold-start cost -- worker-thread spawn + per-job
-    // tokio runtime build + first V8 isolate warm-up -- that lands around
-    // ~3s on a resource-contended CI host, so the previous 3s budget flaked
-    // (timeouts at ~3.0-3.02s). This loop only ever awaits a positive
-    // condition and panics on timeout, so a wider budget buys slack on a
-    // loaded host, costs nothing on a healthy one, and never weakens the
-    // post-conditions these tests assert once the condition is met.
-    let timeout = Duration::from_secs(20);
+    predicate: impl Fn(&RuntimeMetricsSnapshot) -> bool,
+) -> RuntimeMetricsSnapshot {
+    // Synchronization budget for a runtime-metrics condition, not a behavioral
+    // assertion. The first dispatch can pay multi-shard CI cold-start costs
+    // (worker-thread spawn, per-job tokio runtime build, and first V8 isolate
+    // warm-up). Timeout diagnostics include the last snapshot so failures show
+    // whether work was never routed, merely queued, or rejected early.
+    let timeout = Duration::from_secs(60);
     let poll_interval = Duration::from_millis(25);
-    let started_at = Instant::now();
+    let started_at = tokio::time::Instant::now();
     let mut attempts = 0_u64;
     loop {
         attempts += 1;
-        let snapshot = registry.runtime_metrics_snapshot();
-        if predicate(&snapshot) {
-            return snapshot;
+        let metrics = registry.runtime_metrics_snapshot();
+        if predicate(&metrics) {
+            return metrics;
         }
         let elapsed = started_at.elapsed();
         if elapsed >= timeout {
+            let lanes = registry
+                .runtime_lane_diagnostics()
+                .into_iter()
+                .map(|lane| {
+                    let metrics = lane.metrics;
+                    format!(
+                        "{}: default={}, linked={:?}, started={}, active={}, queued={}, dispatched={}, completed={}, canceled={}, rejected={}, correlations={}",
+                        lane.lane_name,
+                        lane.default_lane,
+                        lane.execution_adapter_state,
+                        lane.executor_started,
+                        metrics.active_runtime_instances,
+                        metrics.queued_invocations,
+                        metrics.worker_dispatched_invocations,
+                        metrics.completed_invocations,
+                        metrics.canceled_invocations,
+                        metrics.rejected_invocations,
+                        metrics.request_correlation_records
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
             panic!(
-                "timed out waiting for {description} after {elapsed:?} (budget {timeout:?}, poll interval {poll_interval:?}, attempts {attempts}); last runtime metrics snapshot: {snapshot:#?}"
+                "timed out waiting for {description} after {elapsed:?} \
+                 (budget {timeout:?}, poll interval {poll_interval:?}, attempts {attempts}, \
+                 last runtime metrics: {}, runtime lanes: {lanes})",
+                runtime_metrics_test_summary(&metrics)
             );
         }
         tokio::time::sleep(poll_interval).await;
     }
+}
+
+fn runtime_metrics_test_summary(metrics: &RuntimeMetricsSnapshot) -> String {
+    format!(
+        "active={}, queued={}, dispatched={}, router_dispatches={}, started={}, completed={}, canceled={}, rejected={}, pool_hits={}, pool_misses={}, pool_replacements={}, correlations={}, tenants={:?}",
+        metrics.active_runtime_instances,
+        metrics.queued_invocations,
+        metrics.worker_dispatched_invocations,
+        metrics.worker_router_dispatches,
+        metrics.started_invocations,
+        metrics.completed_invocations,
+        metrics.canceled_invocations,
+        metrics.rejected_invocations,
+        metrics.runtime_pool_hits,
+        metrics.runtime_pool_misses,
+        metrics.runtime_pool_replacements,
+        metrics.request_correlation_records,
+        metrics.tenants.keys().collect::<Vec<_>>()
+    )
 }
 
 #[path = "tests/auth_fixtures/mod.rs"]
@@ -1184,6 +1502,8 @@ mod auth;
 mod convex_functions;
 #[path = "tests/convex_runtime.rs"]
 mod convex_runtime;
+#[path = "tests/convex_tenant_exposure.rs"]
+mod convex_tenant_exposure;
 #[path = "tests/core_http.rs"]
 mod core_http;
 #[path = "tests/cors.rs"]

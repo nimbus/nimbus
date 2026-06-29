@@ -14,13 +14,13 @@ const QUEUED_REQUEST_RECOVERY_CASE: DeterministicTestCase = DeterministicTestCas
     "runtime recovers and serves new work after queued request-drop pressure clears",
 );
 
-fn queued_request_drop_limits() -> nimbus_runtime::RuntimeLimits {
+fn queued_request_drop_runtime_limits() -> nimbus_runtime::RuntimeLimits {
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
-    limits.max_concurrent_runtime_instances = 2;
-    limits.worker_threads = 2;
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
     limits.max_active_top_level_invocations_per_tenant = 1;
-    limits.max_in_flight_top_level_invocations_per_tenant = 2;
-    limits.max_queued_top_level_invocations_per_tenant = 2;
+    limits.max_in_flight_top_level_invocations_per_tenant = 1;
+    limits.max_queued_top_level_invocations_per_tenant = 1;
     limits
 }
 
@@ -45,7 +45,6 @@ fn router_for_queued_request_drop(engine: Arc<Engine>, registry: ConvexRegistry)
             )),
     )
 }
-
 #[tokio::test]
 async fn dropped_queued_runtime_request_never_starts_mutation() {
     let registry = runtime_request_drop_registry(json!([
@@ -64,7 +63,7 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
             "runtime_handler": "async (ctx, { body }) => await ctx.db.insert(\"messages\", { body })"
         }
     ]))
-    .with_runtime_limits(queued_request_drop_limits());
+    .with_runtime_limits(queued_request_drop_runtime_limits());
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();
     let server = ServerFixture::start(router_for_queued_request_drop(
@@ -104,19 +103,36 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
     let queued_snapshot = wait_for_runtime_metrics_case(
         &registry,
         QUEUED_REQUEST_DROP_CASE,
-        "queued runtime mutation to be admitted but not started",
+        "queued runtime mutation to be admitted at the executor queue",
         |metrics| {
             metrics.active_runtime_instances == 1
-                && metrics.worker_dispatched_invocations == 2
+                && metrics.admission_decisions >= 2
+                && metrics.worker_dispatched_invocations == 1
                 && metrics.started_invocations == 1
         },
     )
     .await;
     assert_eq!(queued_snapshot.active_runtime_instances, 1);
-    assert_eq!(queued_snapshot.worker_dispatched_invocations, 2);
+    assert_eq!(queued_snapshot.worker_dispatched_invocations, 1);
     assert_eq!(queued_snapshot.started_invocations, 1);
+    assert_eq!(queued_snapshot.queued_canceled_invocations, 0);
 
     drop(queued_mutation);
+    let queued_canceled = wait_for_runtime_metrics_case(
+        &registry,
+        QUEUED_REQUEST_DROP_CASE,
+        "queued runtime mutation cancellation before worker dispatch",
+        |metrics| {
+            metrics.active_runtime_instances == 1
+                && metrics.worker_dispatched_invocations == 1
+                && metrics.queued_canceled_invocations == 1
+                && metrics.in_flight_canceled_invocations == 0
+        },
+    )
+    .await;
+    assert_eq!(queued_canceled.canceled_invocations, 1);
+    assert_eq!(queued_canceled.disconnect_canceled_invocations, 1);
+
     drop(blocker);
 
     let metrics = wait_for_runtime_metrics_case(
@@ -126,9 +142,9 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         |metrics| metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 2,
     )
     .await;
-    assert_eq!(metrics.worker_dispatched_invocations, 2);
-    assert_eq!(metrics.queued_canceled_invocations, 0);
-    assert_eq!(metrics.in_flight_canceled_invocations, 2);
+    assert_eq!(metrics.worker_dispatched_invocations, 1);
+    assert_eq!(metrics.queued_canceled_invocations, 1);
+    assert_eq!(metrics.in_flight_canceled_invocations, 1);
     assert_eq!(metrics.disconnect_canceled_invocations, 2);
     assert_eq!(metrics.explicit_canceled_invocations, 0);
     assert_eq!(metrics.runtime_pool_misses, 1);
@@ -140,8 +156,8 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         .expect("tenant runtime metrics should be present");
     assert_eq!(tenant_metrics.started_invocations, 1);
     assert_eq!(tenant_metrics.completed_invocations, 1);
-    assert_eq!(tenant_metrics.queued_canceled_invocations, 0);
-    assert_eq!(tenant_metrics.in_flight_canceled_invocations, 2);
+    assert_eq!(tenant_metrics.queued_canceled_invocations, 1);
+    assert_eq!(tenant_metrics.in_flight_canceled_invocations, 1);
     assert_eq!(tenant_metrics.disconnect_canceled_invocations, 2);
     assert_eq!(tenant_metrics.explicit_canceled_invocations, 0);
     assert!(
@@ -193,7 +209,7 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
             "runtime_handler": "async (ctx, { body }) => await ctx.db.insert(\"messages\", { body })"
         }
     ]))
-    .with_runtime_limits(queued_request_drop_limits());
+    .with_runtime_limits(queued_request_drop_runtime_limits());
     let harness =
         DeterministicHarness::scenario("runtime-request-drop-recovery", 75, Timestamp(75_000));
     let fixture = EngineFixture::new_with_harness(harness.clone(), |path, harness| {
@@ -237,19 +253,36 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
     let queued_snapshot = wait_for_runtime_metrics_case(
         &registry,
         QUEUED_REQUEST_RECOVERY_CASE,
-        "queued runtime mutation recovery request to be admitted but not started",
+        "queued runtime mutation recovery request to be admitted at the executor queue",
         |metrics| {
             metrics.active_runtime_instances == 1
-                && metrics.worker_dispatched_invocations == 2
+                && metrics.admission_decisions >= 2
+                && metrics.worker_dispatched_invocations == 1
                 && metrics.started_invocations == 1
         },
     )
     .await;
     assert_eq!(queued_snapshot.active_runtime_instances, 1);
-    assert_eq!(queued_snapshot.worker_dispatched_invocations, 2);
+    assert_eq!(queued_snapshot.worker_dispatched_invocations, 1);
     assert_eq!(queued_snapshot.started_invocations, 1);
+    assert_eq!(queued_snapshot.queued_canceled_invocations, 0);
 
     drop(queued_mutation);
+    let queued_canceled = wait_for_runtime_metrics_case(
+        &registry,
+        QUEUED_REQUEST_RECOVERY_CASE,
+        "queued runtime mutation recovery cancellation before worker dispatch",
+        |metrics| {
+            metrics.active_runtime_instances == 1
+                && metrics.worker_dispatched_invocations == 1
+                && metrics.queued_canceled_invocations == 1
+                && metrics.in_flight_canceled_invocations == 0
+        },
+    )
+    .await;
+    assert_eq!(queued_canceled.canceled_invocations, 1);
+    assert_eq!(queued_canceled.disconnect_canceled_invocations, 1);
+
     drop(blocker);
 
     let canceled = wait_for_runtime_metrics_case(
@@ -259,9 +292,9 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         |metrics| metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 2,
     )
     .await;
-    assert_eq!(canceled.worker_dispatched_invocations, 2);
-    assert_eq!(canceled.queued_canceled_invocations, 0);
-    assert_eq!(canceled.in_flight_canceled_invocations, 2);
+    assert_eq!(canceled.worker_dispatched_invocations, 1);
+    assert_eq!(canceled.queued_canceled_invocations, 1);
+    assert_eq!(canceled.in_flight_canceled_invocations, 1);
 
     let recovery_response = api
         .convex_named_mutation(
@@ -278,7 +311,7 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         "runtime recovery after queued request drop",
         |metrics| {
             metrics.active_runtime_instances == 0
-                && metrics.worker_dispatched_invocations == 3
+                && metrics.worker_dispatched_invocations == 2
                 && metrics.started_invocations == 2
                 && metrics.completed_invocations == 2
         },
@@ -289,8 +322,8 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         2,
         "two started invocations should account for two pool outcomes"
     );
-    assert_eq!(recovered.queued_canceled_invocations, 0);
-    assert_eq!(recovered.in_flight_canceled_invocations, 2);
+    assert_eq!(recovered.queued_canceled_invocations, 1);
+    assert_eq!(recovered.in_flight_canceled_invocations, 1);
     assert_eq!(recovered.disconnect_canceled_invocations, 2);
     assert_eq!(recovered.runtime_pool_replacements, 1);
 

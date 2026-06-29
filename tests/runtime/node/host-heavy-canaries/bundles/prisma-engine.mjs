@@ -1,12 +1,17 @@
 import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 globalThis.__nimbusInvoke = function () {
-  mkdirSync("./node_modules/.prisma/client", { recursive: true });
-  writeFileSync("./node_modules/.prisma/client/query_engine.node", "not a prisma engine");
+  const bundleDir = dirname(fileURLToPath(import.meta.url));
+  const engineDir = join(bundleDir, "node_modules/.prisma/client");
+  const enginePath = join(engineDir, "query_engine.node");
   const require = createRequire(import.meta.url);
   try {
-    require("./node_modules/.prisma/client/query_engine.node");
+    mkdirSync(engineDir, { recursive: true });
+    writeFileSync(enginePath, "not a prisma engine");
+    require(enginePath);
     return {
       surface: "prisma_engine",
       supportStatus: "service_microvm_required",

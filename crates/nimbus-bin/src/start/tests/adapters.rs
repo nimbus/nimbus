@@ -13,6 +13,33 @@ fn adapter_serve_options(
     enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone()))
 }
 
+#[test]
+fn cloudflare_routes_refuse_non_loopback_main_bind_without_allow_network() {
+    let temp = tempfile::tempdir().expect("tempdir should build");
+    let command = StartCommand {
+        host: "0.0.0.0".to_string(),
+        firestore: false,
+        mongodb: false,
+        dynamodb: false,
+        cloudflare: true,
+        ..StartCommand::default()
+    };
+
+    let error = super::super::adapters::resolve_adapter_enablement_with_env(
+        &command,
+        temp.path(),
+        |_| None,
+        |_| true,
+    )
+    .expect_err("Cloudflare routes should share the main non-loopback bind guard");
+
+    assert!(
+        error.to_string().contains("Cloudflare routes")
+            && error.to_string().contains("non-loopback"),
+        "Cloudflare non-loopback refusal should name the shared bind guard: {error}"
+    );
+}
+
 #[tokio::test]
 async fn cli_adapters_serve_store_backed_by_default_and_opt_outs_disable() {
     let temp = tempfile::tempdir().expect("tempdir should build");
@@ -37,6 +64,7 @@ async fn cli_adapters_serve_store_backed_by_default_and_opt_outs_disable() {
     let client = reqwest::Client::new();
     let opted_out_command = StartCommand {
         firestore: false,
+        cloudflare: false,
         mongodb: false,
         dynamodb: false,
         ..StartCommand::default()

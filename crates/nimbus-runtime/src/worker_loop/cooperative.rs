@@ -70,10 +70,9 @@ impl CooperativeWorkerLoopFactory {
 }
 
 impl WorkerLoopFactory for CooperativeWorkerLoopFactory {
-    fn create(&self, worker_id: usize, policy: Arc<RuntimePolicy>) -> Box<dyn WorkerLoop> {
+    fn create(&self, worker_id: usize, _policy: Arc<RuntimePolicy>) -> Box<dyn WorkerLoop> {
         Box::new(CooperativeWorkerLoop::new(
             worker_id,
-            policy,
             self.watchdog.clone(),
             V8LockerDriver::new(),
             #[cfg(test)]
@@ -83,10 +82,9 @@ impl WorkerLoopFactory for CooperativeWorkerLoopFactory {
 }
 
 impl WorkerLoopFactory for WasmtimeFuelWorkerLoopFactory {
-    fn create(&self, worker_id: usize, policy: Arc<RuntimePolicy>) -> Box<dyn WorkerLoop> {
+    fn create(&self, worker_id: usize, _policy: Arc<RuntimePolicy>) -> Box<dyn WorkerLoop> {
         Box::new(CooperativeWorkerLoop::new(
             worker_id,
-            policy,
             self.watchdog.clone(),
             WasmtimeFuelDriver::new(),
             #[cfg(test)]
@@ -97,7 +95,6 @@ impl WorkerLoopFactory for WasmtimeFuelWorkerLoopFactory {
 
 struct CooperativeWorkerLoop<D: CooperativeBackendDriver> {
     worker_id: usize,
-    policy: Arc<RuntimePolicy>,
     watchdog: WatchdogTimer,
     worker_runtime: tokio::runtime::Runtime,
     driver: D,
@@ -118,7 +115,6 @@ struct CooperativeInvocation<S: CooperativeBackendSlot> {
 impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
     fn new(
         worker_id: usize,
-        policy: Arc<RuntimePolicy>,
         watchdog: WatchdogTimer,
         driver: D,
         #[cfg(test)] test_state: Option<Arc<crate::executor::RuntimeExecutorTestState>>,
@@ -137,7 +133,6 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
         let activity_generation = activity_signal.current_generation();
         Self {
             worker_id,
-            policy,
             watchdog,
             worker_runtime,
             driver,

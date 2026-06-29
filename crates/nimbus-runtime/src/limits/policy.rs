@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tokio::sync::Semaphore;
 
+use crate::fs::RuntimeFileSystem;
 use crate::metrics::{RuntimeMetrics, RuntimeMetricsSnapshot};
 
 use super::{
@@ -21,6 +22,7 @@ pub struct RuntimePolicy {
     host_resource_governor_enabled: bool,
     adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
     effective_scaling_plans: RuntimeScalingPlanSet,
+    file_system: RuntimeFileSystem,
 }
 
 impl RuntimePolicy {
@@ -61,6 +63,7 @@ impl RuntimePolicy {
             host_resource_governor_enabled,
             adaptive_controller_settings: RuntimeAdaptiveControllerSettings::default(),
             effective_scaling_plans: RuntimeScalingPlanSet::default(),
+            file_system: RuntimeFileSystem::default(),
         }
     }
 
@@ -82,36 +85,16 @@ impl RuntimePolicy {
         self
     }
 
-    /// Carry an existing metrics handle onto this policy instead of the fresh
-    /// one allocated at construction.
-    ///
-    /// Observability-only: `RuntimeMetrics` is read solely through
-    /// `metrics_snapshot()` and never feeds a scheduling, admission, or
-    /// fairness decision. Build-time policy re-derivations
-    /// (`with_host_resource_governor`) allocate a fresh metrics `Arc` via
-    /// `from_parts`; threading the source lane's `Arc` through this builder keeps
-    /// the observer (which reads the pre-build handle) and the worker (which
-    /// increments the post-build executor's policy) pointed at the same counters
-    /// without altering any metric value or runtime behavior.
-    pub fn with_metrics(mut self, metrics: Arc<RuntimeMetrics>) -> Self {
-        self.metrics = metrics;
-        self
-    }
-
     pub fn clone_with_effective_scaling_plan(&self, plan: EffectiveRuntimeScalingPlan) -> Self {
         self.clone_with_effective_scaling_plans(RuntimeScalingPlanSet::single(plan))
     }
 
     pub fn clone_with_effective_scaling_plans(&self, plans: RuntimeScalingPlanSet) -> Self {
         Self {
-            runtime_instance_semaphore: Arc::new(Semaphore::new(
-                self.limits.max_concurrent_runtime_instances,
-            )),
-            // Preserve the source policy's metrics handle: this is a clone-with
-            // derivation (the build()-time scaling-plan transform), so the
-            // re-derived policy must observe the same counters the original
-            // handle exposes. Observability-only; no metric value or scheduling
-            // behavior changes.
+            // Clone derivations preserve runtime-owned handles. Rebuilding the
+            // policy here would silently detach metrics, concurrency permits,
+            // and injected filesystem authority from the source policy.
+            runtime_instance_semaphore: self.runtime_instance_semaphore.clone(),
             metrics: self.metrics.clone(),
             limits: self.limits.clone(),
             host_resource_budget: self.host_resource_budget,
@@ -119,11 +102,52 @@ impl RuntimePolicy {
             host_resource_governor_enabled: self.host_resource_governor_enabled,
             adaptive_controller_settings: self.adaptive_controller_settings,
             effective_scaling_plans: plans,
+            file_system: self.file_system.clone(),
+        }
+    }
+
+    pub fn clone_with_host_resource_governor(
+        &self,
+        host_resource_budget: RuntimeHostResourceBudget,
+        host_pressure_source: Arc<dyn RuntimeHostPressureSource>,
+        adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
+    ) -> Self {
+        Self {
+            // Runtime policy overlays must preserve all runtime-owned handles.
+            // Rebuilding these here would silently detach metrics, concurrency
+            // permits, and injected filesystem authority from the source lane.
+            runtime_instance_semaphore: self.runtime_instance_semaphore.clone(),
+            metrics: self.metrics.clone(),
+            limits: self.limits.clone(),
+            host_resource_budget,
+            host_pressure_source,
+            host_resource_governor_enabled: true,
+            adaptive_controller_settings,
+            effective_scaling_plans: self.effective_scaling_plans.clone(),
+            file_system: self.file_system.clone(),
+        }
+    }
+
+    pub fn clone_with_file_system(&self, file_system: deno_fs::FileSystemRc) -> Self {
+        Self {
+            runtime_instance_semaphore: self.runtime_instance_semaphore.clone(),
+            metrics: self.metrics.clone(),
+            limits: self.limits.clone(),
+            host_resource_budget: self.host_resource_budget,
+            host_pressure_source: self.host_pressure_source.clone(),
+            host_resource_governor_enabled: self.host_resource_governor_enabled,
+            adaptive_controller_settings: self.adaptive_controller_settings,
+            effective_scaling_plans: self.effective_scaling_plans.clone(),
+            file_system: RuntimeFileSystem::new(file_system),
         }
     }
 
     pub fn limits(&self) -> &RuntimeLimits {
         &self.limits
+    }
+
+    pub fn file_system(&self) -> deno_fs::FileSystemRc {
+        self.file_system.clone_inner()
     }
 
     pub(crate) fn validate_bundle_content_kind(
@@ -161,7 +185,7 @@ impl RuntimePolicy {
 
     pub fn host_resource_decision(&self) -> RuntimeHostResourceDecision {
         let decision = self.host_resource_budget.decide(
-            self.limits.max_concurrent_runtime_instances,
+            self.limits.worker_threads,
             self.host_pressure_source.sample(),
         );
         if self.host_resource_governor_enabled {

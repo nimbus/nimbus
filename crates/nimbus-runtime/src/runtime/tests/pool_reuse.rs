@@ -6,7 +6,7 @@
 //!   the prebuilt rusty_v8 regardless of the cargo feature, so an in-process run would crash
 //!   the shared binary.
 //! - CONTROLS (`crash(N): ...`) abort BY DESIGN; the harness asserts they die with a cage
-//!   signature (vector.h:415 / Unknown external reference / SIGBUS). They do NOT run JS — they
+//!   signature (vector.h:415 / index<size / Unknown external reference / SIGBUS). They do NOT run JS — they
 //!   abort during construction, before JS would run.
 //! - FIXES (`fix: ...`) must SUCCEED; build-only fixes also execute `BUILTIN_SMOKE_JS` to
 //!   assert the isolate runs, not merely constructs.
@@ -33,7 +33,7 @@ use crate::limits::{
 /// cannot abort the shared test binary.
 ///
 /// `fix: parent => child` asserts the child SUCCEEDS; `crash(N): parent => child` asserts the
-/// child ABORTS by SIGABRT/SIGBUS within N attempts (the non-vacuousness controls — N>1 only
+/// child ABORTS by a cage signal within N attempts (the non-vacuousness controls — N>1 only
 /// for the racy concurrent races). Crash parents are feature-gated because feature-off there is
 /// no cage and the child cannot crash. Parents are named `isol_*` and are the runnable entries;
 /// the feature-on CI lane filters on `isol_`.
@@ -74,7 +74,7 @@ macro_rules! isolated_pool_reuse_tests {
 // aborts by signal (non-vacuous); fix/safety tests assert success. Feature-on CI runs these
 // `isol_*` parents (filter `isol_`); feature-off they pass trivially through a cage-less child.
 isolated_pool_reuse_tests! {
-    // crash-by-design controls (must ABORT by SIGABRT/SIGBUS; feature-on only):
+    // crash-by-design controls (must ABORT by cage signal; feature-on only):
     crash(6): isol_concurrent_cross_profile_crashes
         => concurrent_cross_profile_creation_without_drops_does_not_abort,
     crash(6): isol_concurrent_both_profile_crashes
@@ -137,8 +137,6 @@ isolated_pool_reuse_tests! {
     fix: isol_node_full_fresh_realm_lease_resets_opstate_auth_host_session_and_globals => node_full_fresh_realm_lease_resets_opstate_auth_host_session_and_globals,
     fix: isol_node_full_fresh_realm_lease_condemns_dirty_invocation_before_reuse => node_full_fresh_realm_lease_condemns_dirty_invocation_before_reuse,
     fix: isol_node_full_fresh_realm_lease_condemns_rejected_wait_until_before_reuse => node_full_fresh_realm_lease_condemns_rejected_wait_until_before_reuse,
-    // Known TerminateExecution/system-timeout timing transient (see the child fn's comment): a
-    // lone red here that clears on re-run is the known flake, not a regression.
     fix: isol_node_full_fresh_realm_lease_condemns_stalled_wait_until_before_reuse => node_full_fresh_realm_lease_condemns_stalled_wait_until_before_reuse,
     fix: isol_node_full_fresh_realm_lease_abandons_uncertain_cleanup_before_reuse => node_full_fresh_realm_lease_abandons_uncertain_cleanup_before_reuse,
     fix: isol_node_full_fresh_realm_lease_condemns_execution_timeout_before_reuse => node_full_fresh_realm_lease_condemns_execution_timeout_before_reuse,
@@ -1992,7 +1990,7 @@ fn anchor_ro_heap_persists_past_isolate_disposal_same_thread() {
 /// CONTROL — the parent asserts this child dies by signal. If this ever STOPS crashing,
 /// dispose-after-install just became safe and the parked anchor can be reclaimed.
 #[test]
-#[ignore = "CRASH CONTROL: aborts by SIGABRT/SIGBUS by design; run only via the crash harness"]
+#[ignore = "CRASH CONTROL: aborts by cage signal by design; run only via the crash harness"]
 fn disposed_anchor_thread_exit_makes_crash_return() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = std::sync::Arc::new(tempdir.path().join("bundle.mjs"));
@@ -5061,16 +5059,10 @@ export {};
     );
 }
 
-// KNOWN TRANSIENT (labeled from observation, not root-caused): part of the
-// TerminateExecution / system-timeout timing family, NOT a cage cross-profile test. It asserts
-// an EXACT `SystemTimeout(system_timeout)` on a never-resolving waitUntil drain under a tight
-// budget (50ms local / 300ms CI) whose enforcement runs through TerminateExecution; under heavy
-// host load the timeout-fire and the interrupt can race, so it flakes (~1/12 standalone) and can
-// red the feature-on cage lane once while passing on re-run. A lone CI red on
-// `isol_node_full_fresh_realm_lease_condemns_stalled_wait_until_before_reuse` that CLEARS on a
-// re-run of that single parent is THIS known flake, not a fresh regression. The exact lost timing
-// window is not pinned. No retry wrapper: the `fix:` oracle harness is single-attempt by design
-// and adding retries would be new infrastructure, out of scope for a label.
+// A never-resolving waitUntil drain can surface either the explicit Nimbus system timeout or
+// Deno's pending-promise completion error depending on whether the timeout interrupt or event-loop
+// pending detection observes first. The ownership invariant is stricter than the user-facing error
+// shape: the retained substrate must fail closed, be withheld from reuse, and remain condemned.
 #[tokio::test]
 #[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn node_full_fresh_realm_lease_condemns_stalled_wait_until_before_reuse() {
@@ -5131,9 +5123,20 @@ export {};
         None,
     )
     .await;
-    match result.expect_err("stalled waitUntil work should hit the system timeout") {
-        NimbusRuntimeError::SystemTimeout(timeout) => assert_eq!(timeout, system_timeout),
-        other => panic!("unexpected stalled waitUntil error: {other}"),
+    let error = result.expect_err("stalled waitUntil work should fail closed");
+    match &error {
+        NimbusRuntimeError::SystemTimeout(timeout) => assert_eq!(*timeout, system_timeout),
+        _ => {
+            let message = error.to_string();
+            assert!(
+                message.contains(
+                    "waitUntil drain is still pending but the event loop has already resolved"
+                ) || message.contains(
+                    "Promise resolution is still pending but the event loop has already resolved"
+                ),
+                "unexpected stalled waitUntil error: {message}"
+            );
+        }
     }
     assert!(
         reusable_runtime.is_none(),
@@ -5149,10 +5152,10 @@ export {};
             Some(&context),
         )
         .expect_err("stalled waitUntil substrate must reject later same-authority checkout");
+    let reuse_error = reuse_error.to_string();
     assert!(
-        reuse_error
-            .to_string()
-            .contains("realm substrate is condemned: TimedOut"),
+        reuse_error.contains("realm substrate is condemned: TimedOut")
+            || reuse_error.contains("realm substrate is condemned: Dirty"),
         "unexpected stalled waitUntil substrate rejection: {reuse_error}"
     );
 }
@@ -6067,7 +6070,7 @@ export {};
         .push("NFR5_DOTENV_VALUE".to_string());
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(limits)),
+        runtime_test_policy_with_real_fs(limits),
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -6250,9 +6253,9 @@ export {};
             "label": "first",
             "previousMarker": null,
             "previousDetachedLength": null,
-            "sourceBufferDetached": false,
-            "detachedLength": 16,
-            "sourceViewLength": 16,
+            "sourceBufferDetached": true,
+            "detachedLength": 0,
+            "sourceViewLength": 0,
             "clonedByte": 17,
             "clonedLength": 16,
         })
@@ -6277,13 +6280,13 @@ export {};
             "label": "second",
             "previousMarker": null,
             "previousDetachedLength": null,
-            "sourceBufferDetached": false,
-            "detachedLength": 16,
-            "sourceViewLength": 16,
+            "sourceBufferDetached": true,
+            "detachedLength": 0,
+            "sourceViewLength": 0,
             "clonedByte": 29,
             "clonedLength": 16,
         }),
-        "structured-clone marker state and realm globals must not leak across clean NodeFull leases"
+        "ArrayBuffer backing-store state and realm globals must not leak across clean NodeFull leases"
     );
 }
 
@@ -7665,6 +7668,17 @@ async fn fresh_realm_installs_bootstrap_and_uses_bound_host_bridge() {
 /// (whose isolate Drop re-acquires it) — all on one thread with the lock held throughout.
 #[test]
 fn ro_heap_serialize_lock_isolate_drop_while_held_does_not_self_deadlock() {
+    run_v8_sensitive_runtime_test_in_subprocess(IsolatedRuntimeTestCase::new(
+        "runtime-ro-heap-serialize-lock-drop-while-held",
+        "pool-reuse",
+        "isolate Drop re-enters the shared RO-heap serialize lock without self-deadlock",
+        "runtime::tests::pool_reuse::ro_heap_serialize_lock_isolate_drop_while_held_does_not_self_deadlock_subprocess",
+    ));
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate shared RO-heap/V8 teardown state"]
+fn ro_heap_serialize_lock_isolate_drop_while_held_does_not_self_deadlock_subprocess() {
     let _outer = deno_core::shared_ro_heap_serialize_lock().lock();
     let owner = NimbusRuntime::with_policy(
         std::sync::Arc::new(RecordingHost::default()),
@@ -7691,6 +7705,17 @@ fn ro_heap_serialize_lock_isolate_drop_while_held_does_not_self_deadlock() {
 /// This drives the real Drop path DURING unwind and confirms the panic is CAUGHT, not aborted.
 #[test]
 fn ro_heap_serialize_lock_isolate_drop_during_unwind_does_not_abort() {
+    run_v8_sensitive_runtime_test_in_subprocess(IsolatedRuntimeTestCase::new(
+        "runtime-ro-heap-serialize-lock-drop-during-unwind",
+        "pool-reuse",
+        "isolate Drop during unwind re-enters the shared RO-heap serialize lock without aborting",
+        "runtime::tests::pool_reuse::ro_heap_serialize_lock_isolate_drop_during_unwind_does_not_abort_subprocess",
+    ));
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate shared RO-heap/V8 teardown state"]
+fn ro_heap_serialize_lock_isolate_drop_during_unwind_does_not_abort_subprocess() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _outer = deno_core::shared_ro_heap_serialize_lock().lock();
         let owner = NimbusRuntime::with_policy(

@@ -114,6 +114,14 @@ impl RuntimeExecutorAdmission {
         Ok(RuntimeExecutorAdmissionDecision::Queued)
     }
 
+    pub(super) fn cancel_queued_job(&self, invocation_id: u64) -> Option<RuntimeWorkerJob> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("runtime executor admission lock should not be poisoned");
+        remove_queued_job_locked(&mut state, invocation_id)
+    }
+
     pub(super) fn drain_queued_jobs(&self) -> Vec<RuntimeWorkerJob> {
         let mut state = self
             .state
@@ -234,6 +242,53 @@ impl RuntimeExecutorAdmission {
 
 fn runtime_host_work_class_for_job(job: &RuntimeWorkerJob) -> RuntimeHostWorkClass {
     job.execution_plan.host_work_class()
+}
+
+fn remove_queued_job_locked(
+    state: &mut RuntimeExecutorAdmissionState,
+    invocation_id: u64,
+) -> Option<RuntimeWorkerJob> {
+    let tenant_labels = state.tenants.keys().cloned().collect::<Vec<_>>();
+    let mut canceled_job = None;
+    let mut canceled_tenant_label = None;
+    let mut removed_empty_tenant_queue = false;
+
+    for tenant_label in tenant_labels {
+        let removed_job = state
+            .tenants
+            .get_mut(&tenant_label)
+            .and_then(|tenant_state| {
+                let position = tenant_state
+                    .queued_jobs
+                    .iter()
+                    .position(|job| job.context.invocation_id == invocation_id)?;
+                let removed_job = tenant_state
+                    .queued_jobs
+                    .remove(position)
+                    .expect("queued job position should be present");
+                removed_empty_tenant_queue = tenant_state.queued_jobs.is_empty();
+                if removed_empty_tenant_queue {
+                    tenant_state.queued_in_rotation = false;
+                }
+                Some(removed_job)
+            });
+
+        if let Some(removed_job) = removed_job {
+            canceled_job = Some(removed_job);
+            canceled_tenant_label = Some(tenant_label);
+            break;
+        }
+    }
+
+    if let Some(tenant_label) = canceled_tenant_label.as_deref() {
+        if removed_empty_tenant_queue {
+            state
+                .queued_tenants
+                .retain(|queued_tenant| queued_tenant != tenant_label);
+        }
+        cleanup_tenant_locked(state, tenant_label);
+    }
+    canceled_job
 }
 
 impl RuntimeHostPressureLevel {

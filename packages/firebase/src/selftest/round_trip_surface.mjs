@@ -36,9 +36,28 @@ export async function testRoundTripSurface(bundleDir, baseUrlText, projectId) {
     pathToFileURL(path.join(bundleDir, "firestore.mjs")).href,
   );
   const baseUrl = new URL(baseUrlText);
+  const roundTripAuthToken = process.env.NIMBUS_FIREBASE_ROUND_TRIP_MOCK_USER_TOKEN;
   assert.ok(baseUrl.hostname, "Round-trip base URL must include a hostname.");
   assert.ok(baseUrl.port, "Round-trip base URL must include an explicit port.");
   assert.ok(projectId, "Round-trip project id is required.");
+
+  let emulatorOptions;
+  if (roundTripAuthToken) {
+    let mockUserToken;
+    try {
+      mockUserToken = JSON.parse(roundTripAuthToken);
+    } catch {
+      mockUserToken = roundTripAuthToken;
+    }
+    emulatorOptions = { mockUserToken };
+  } else {
+    emulatorOptions = {
+      mockUserToken: {
+        sub: "round-trip-user",
+        iss: `https://securetoken.google.com/${projectId}`,
+      },
+    };
+  }
 
   const app = appModule.initializeApp({ projectId }, "round-trip");
   const firestore = firestoreModule.getFirestore(app);
@@ -46,6 +65,7 @@ export async function testRoundTripSurface(bundleDir, baseUrlText, projectId) {
     firestore,
     baseUrl.hostname,
     Number.parseInt(baseUrl.port, 10),
+    emulatorOptions,
   );
 
   const notes = firestoreModule.collection(firestore, "notes");

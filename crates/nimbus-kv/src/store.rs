@@ -1,0 +1,480 @@
+use std::collections::BTreeMap;
+use std::fmt;
+use std::path::Path;
+use std::sync::{Arc, Mutex, MutexGuard};
+
+use nimbus_core::{Error, TenantId};
+use nimbus_storage::{KvBatchOp, KvEntry, KvMutation, KvPut, RedbTenantKvStore, TenantKvStore};
+
+use crate::{KvError, NimbusKvMetrics};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TieringMode {
+    Durable,
+    NoDisk,
+    NoCache,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TieringConfig {
+    pub mode: TieringMode,
+    pub maxmemory: Option<usize>,
+}
+
+impl TieringConfig {
+    #[must_use]
+    pub fn durable() -> Self {
+        Self {
+            mode: TieringMode::Durable,
+            maxmemory: None,
+        }
+    }
+
+    #[must_use]
+    pub fn no_disk() -> Self {
+        Self {
+            mode: TieringMode::NoDisk,
+            maxmemory: None,
+        }
+    }
+
+    #[must_use]
+    pub fn no_cache() -> Self {
+        Self {
+            mode: TieringMode::NoCache,
+            maxmemory: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_maxmemory(mut self, maxmemory: usize) -> Self {
+        self.maxmemory = Some(maxmemory);
+        self
+    }
+}
+
+impl Default for TieringConfig {
+    fn default() -> Self {
+        Self::durable()
+    }
+}
+
+#[derive(Clone)]
+pub struct NimbusKvStore {
+    inner: Arc<NimbusKvStoreInner>,
+}
+
+struct NimbusKvStoreInner {
+    engine: Arc<dyn TenantKvStore + Send + Sync>,
+    tiering: TieringConfig,
+    metrics: NimbusKvMetrics,
+    operation: Mutex<()>,
+    cache: Mutex<BTreeMap<CacheKey, CacheEntry>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct CacheKey {
+    tenant: TenantId,
+    key: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CacheEntry {
+    value: Vec<u8>,
+    expire_at_ms: Option<i64>,
+}
+
+impl NimbusKvStore {
+    pub fn durable_at(path: impl AsRef<Path>, tiering: TieringConfig) -> Result<Self, KvError> {
+        let tiering = TieringConfig {
+            mode: if tiering.mode == TieringMode::NoDisk {
+                TieringMode::Durable
+            } else {
+                tiering.mode
+            },
+            ..tiering
+        };
+        let engine = Arc::new(RedbTenantKvStore::open(path)?);
+        Ok(Self::from_engine(engine, tiering))
+    }
+
+    pub fn no_disk(tiering: TieringConfig) -> Result<Self, KvError> {
+        Self::no_disk_with_metrics(tiering, NimbusKvMetrics::default())
+    }
+
+    pub fn no_disk_with_metrics(
+        tiering: TieringConfig,
+        metrics: NimbusKvMetrics,
+    ) -> Result<Self, KvError> {
+        let tiering = TieringConfig {
+            mode: TieringMode::NoDisk,
+            ..tiering
+        };
+        let engine = Arc::new(RedbTenantKvStore::create_in_memory()?);
+        Ok(Self::from_engine_with_metrics(engine, tiering, metrics))
+    }
+
+    pub fn no_cache_at(path: impl AsRef<Path>) -> Result<Self, KvError> {
+        Self::durable_at(path, TieringConfig::no_cache())
+    }
+
+    pub fn from_engine(
+        engine: Arc<dyn TenantKvStore + Send + Sync>,
+        tiering: TieringConfig,
+    ) -> Self {
+        Self::from_engine_with_metrics(engine, tiering, NimbusKvMetrics::default())
+    }
+
+    pub fn from_engine_with_metrics(
+        engine: Arc<dyn TenantKvStore + Send + Sync>,
+        tiering: TieringConfig,
+        metrics: NimbusKvMetrics,
+    ) -> Self {
+        Self {
+            inner: Arc::new(NimbusKvStoreInner {
+                engine,
+                tiering,
+                metrics,
+                operation: Mutex::new(()),
+                cache: Mutex::new(BTreeMap::new()),
+            }),
+        }
+    }
+
+    #[must_use]
+    pub fn metrics(&self) -> NimbusKvMetrics {
+        self.inner.metrics.clone()
+    }
+
+    #[must_use]
+    pub fn tiering(&self) -> &TieringConfig {
+        &self.inner.tiering
+    }
+
+    pub fn get(
+        &self,
+        tenant: &TenantId,
+        key: &[u8],
+        now_ms: i64,
+    ) -> Result<Option<Vec<u8>>, KvError> {
+        let _operation = self.operation_lock()?;
+        Ok(self
+            .get_entry(tenant, key, now_ms)?
+            .map(|entry| entry.value))
+    }
+
+    pub fn set(
+        &self,
+        tenant: &TenantId,
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+        expire_at_ms: Option<i64>,
+    ) -> Result<(), KvError> {
+        let _operation = self.operation_lock()?;
+        let put = KvPut {
+            key: key.into(),
+            value: value.into(),
+            metadata: BTreeMap::new(),
+            expire_at_ms,
+        };
+        let _write = self.inner.metrics.start_durable_write();
+        self.inner.engine.kv_put(tenant, put.clone())?;
+        self.cache_put(
+            &KvEntry {
+                key: put.key,
+                value: put.value,
+                metadata: put.metadata,
+                expire_at_ms: put.expire_at_ms,
+            },
+            tenant,
+        );
+        Ok(())
+    }
+
+    pub fn delete(&self, tenant: &TenantId, key: &[u8]) -> Result<bool, KvError> {
+        let _operation = self.operation_lock()?;
+        let _write = self.inner.metrics.start_durable_write();
+        let deleted = self.inner.engine.kv_delete(tenant, key)?;
+        self.cache_remove(tenant, key);
+        Ok(deleted)
+    }
+
+    pub fn flush_all(&self, tenant: &TenantId, now_ms: i64) -> Result<usize, KvError> {
+        let _operation = self.operation_lock()?;
+        self.sweep_expired(now_ms)?;
+        self.flush_prefix_locked(tenant, b"", now_ms)
+    }
+
+    pub fn flush_prefix(
+        &self,
+        tenant: &TenantId,
+        prefix: &[u8],
+        now_ms: i64,
+    ) -> Result<usize, KvError> {
+        let _operation = self.operation_lock()?;
+        self.flush_prefix_locked(tenant, prefix, now_ms)
+    }
+
+    fn sweep_expired(&self, now_ms: i64) -> Result<(), KvError> {
+        const BATCH_LIMIT: usize = 256;
+
+        loop {
+            let outcome = self.inner.engine.kv_sweep_expired(now_ms, BATCH_LIMIT)?;
+            if outcome.deleted == 0 && outcome.stale_index_entries == 0 {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn flush_prefix_locked(
+        &self,
+        tenant: &TenantId,
+        prefix: &[u8],
+        now_ms: i64,
+    ) -> Result<usize, KvError> {
+        const BATCH_LIMIT: usize = 256;
+
+        let _write = self.inner.metrics.start_durable_write();
+        let mut cursor = None;
+        let mut deleted = 0_usize;
+
+        loop {
+            let page = self.inner.engine.kv_scan(
+                tenant,
+                prefix,
+                cursor.as_deref(),
+                BATCH_LIMIT,
+                now_ms,
+            )?;
+            if page.entries.is_empty() {
+                break;
+            }
+
+            let ops = page
+                .entries
+                .iter()
+                .map(|entry| KvBatchOp::Delete(entry.key.clone()))
+                .collect::<Vec<_>>();
+            deleted += self.inner.engine.kv_apply_batch(tenant, &ops)?.deletes;
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+
+        if self.cache_enabled() {
+            let mut cache = self.cache_lock()?;
+            if prefix.is_empty() {
+                cache.retain(|cache_key, _| cache_key.tenant != *tenant);
+            } else {
+                cache.retain(|cache_key, _| {
+                    cache_key.tenant != *tenant || !cache_key.key.starts_with(prefix)
+                });
+            }
+        }
+        Ok(deleted)
+    }
+
+    pub fn expire(
+        &self,
+        tenant: &TenantId,
+        key: &[u8],
+        expire_at_ms: i64,
+        now_ms: i64,
+    ) -> Result<bool, KvError> {
+        let _operation = self.operation_lock()?;
+        let mut found = false;
+        let mut update = |previous: Option<KvEntry>| {
+            let Some(previous) = previous else {
+                return Ok(KvMutation::Keep);
+            };
+            found = true;
+            Ok(KvMutation::Put(KvPut {
+                key: previous.key,
+                value: previous.value,
+                metadata: previous.metadata,
+                expire_at_ms: Some(expire_at_ms),
+            }))
+        };
+        let _write = self.inner.metrics.start_durable_write();
+        let updated = self
+            .inner
+            .engine
+            .kv_update(tenant, key, now_ms, &mut update)?;
+        match updated {
+            Some(entry) => self.cache_put(&entry, tenant),
+            None => self.cache_remove(tenant, key),
+        }
+        Ok(found)
+    }
+
+    pub fn ttl(&self, tenant: &TenantId, key: &[u8], now_ms: i64) -> Result<i64, KvError> {
+        let _operation = self.operation_lock()?;
+        let Some(entry) = self.get_entry(tenant, key, now_ms)? else {
+            return Ok(-2);
+        };
+        let Some(expire_at_ms) = entry.expire_at_ms else {
+            return Ok(-1);
+        };
+        Ok(((expire_at_ms - now_ms).max(0) + 999) / 1_000)
+    }
+
+    pub fn incr(&self, tenant: &TenantId, key: &[u8], now_ms: i64) -> Result<i64, KvError> {
+        let _operation = self.operation_lock()?;
+        let mut next = None;
+        let mut update = |previous: Option<KvEntry>| {
+            let (previous_value, expire_at_ms, metadata) = match previous {
+                Some(previous) => {
+                    let value = parse_i64(&previous.value)?;
+                    (value, previous.expire_at_ms, previous.metadata)
+                }
+                None => (0, None, BTreeMap::new()),
+            };
+            let value = previous_value
+                .checked_add(1)
+                .ok_or_else(|| Error::InvalidInput("increment would overflow".to_string()))?;
+            next = Some(value);
+            Ok(KvMutation::Put(KvPut {
+                key: key.to_vec(),
+                value: value.to_string().into_bytes(),
+                metadata,
+                expire_at_ms,
+            }))
+        };
+        let _write = self.inner.metrics.start_durable_write();
+        let updated = self
+            .inner
+            .engine
+            .kv_update(tenant, key, now_ms, &mut update)?;
+        if let Some(entry) = updated {
+            self.cache_put(&entry, tenant);
+        }
+        next.ok_or_else(|| {
+            KvError::Core(Error::Internal("INCR did not produce a value".to_string()))
+        })
+    }
+
+    fn get_entry(
+        &self,
+        tenant: &TenantId,
+        key: &[u8],
+        now_ms: i64,
+    ) -> Result<Option<KvEntry>, KvError> {
+        if self.cache_enabled() {
+            let mut cache = self.cache_lock()?;
+            let cache_key = CacheKey {
+                tenant: tenant.clone(),
+                key: key.to_vec(),
+            };
+            if let Some(entry) = cache.get(&cache_key)
+                && !cache_entry_expired(entry, now_ms)
+            {
+                self.inner.metrics.record_cache_hit();
+                return Ok(Some(KvEntry {
+                    key: key.to_vec(),
+                    value: entry.value.clone(),
+                    metadata: BTreeMap::new(),
+                    expire_at_ms: entry.expire_at_ms,
+                }));
+            }
+            cache.remove(&cache_key);
+            self.inner.metrics.record_cache_miss();
+        }
+
+        let entry = self.inner.engine.kv_get(tenant, key, now_ms)?;
+        if let Some(entry) = &entry {
+            self.cache_put(entry, tenant);
+        }
+        Ok(entry)
+    }
+
+    fn cache_enabled(&self) -> bool {
+        self.inner.tiering.mode != TieringMode::NoCache
+    }
+
+    fn cache_put(&self, entry: &KvEntry, tenant: &TenantId) {
+        if !self.cache_enabled() {
+            return;
+        }
+        let Ok(mut cache) = self.cache_lock() else {
+            return;
+        };
+        cache.insert(
+            CacheKey {
+                tenant: tenant.clone(),
+                key: entry.key.clone(),
+            },
+            CacheEntry {
+                value: entry.value.clone(),
+                expire_at_ms: entry.expire_at_ms,
+            },
+        );
+        if let Some(maxmemory) = self.inner.tiering.maxmemory {
+            while cache_footprint(&cache) > maxmemory {
+                let Some(first_key) = cache.keys().next().cloned() else {
+                    break;
+                };
+                cache.remove(&first_key);
+            }
+        }
+    }
+
+    fn cache_remove(&self, tenant: &TenantId, key: &[u8]) {
+        if !self.cache_enabled() {
+            return;
+        }
+        if let Ok(mut cache) = self.cache_lock() {
+            cache.remove(&CacheKey {
+                tenant: tenant.clone(),
+                key: key.to_vec(),
+            });
+        }
+    }
+
+    fn cache_lock(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, BTreeMap<CacheKey, CacheEntry>>, KvError> {
+        self.inner.cache.lock().map_err(|_| {
+            KvError::Core(Error::Internal("nimbus-kv cache lock poisoned".to_string()))
+        })
+    }
+
+    fn operation_lock(&self) -> Result<MutexGuard<'_, ()>, KvError> {
+        self.inner.operation.lock().map_err(|_| {
+            KvError::Core(Error::Internal(
+                "nimbus-kv operation lock poisoned".to_string(),
+            ))
+        })
+    }
+}
+
+impl fmt::Debug for NimbusKvStore {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NimbusKvStore")
+            .field("tiering", &self.inner.tiering)
+            .finish_non_exhaustive()
+    }
+}
+
+fn cache_entry_expired(entry: &CacheEntry, now_ms: i64) -> bool {
+    entry
+        .expire_at_ms
+        .is_some_and(|expire_at_ms| expire_at_ms <= now_ms)
+}
+
+fn cache_footprint(cache: &BTreeMap<CacheKey, CacheEntry>) -> usize {
+    cache
+        .iter()
+        .map(|(key, value)| key.tenant.as_str().len() + key.key.len() + value.value.len() + 16)
+        .sum()
+}
+
+fn parse_i64(value: &[u8]) -> Result<i64, Error> {
+    let value = std::str::from_utf8(value)
+        .map_err(|_| Error::InvalidInput("value is not an integer".to_string()))?;
+    value
+        .parse::<i64>()
+        .map_err(|_| Error::InvalidInput("value is not an integer".to_string()))
+}
