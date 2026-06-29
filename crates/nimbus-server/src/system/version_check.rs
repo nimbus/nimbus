@@ -539,17 +539,22 @@ mod tests {
         std::fs::write(&cache_path, serde_json::to_vec(&prior).unwrap()).unwrap();
 
         let url = format!("{}/repos/nimbus/nimbus/releases/latest", server.uri());
-        let mut cfg = config_with(Some(cache_path.clone()), url, false);
-        cfg.ttl = Duration::from_millis(10);
+        let cfg = config_with(Some(cache_path.clone()), url, false);
         let check = VersionCheck::new(Version::parse("0.1.31").unwrap(), cfg);
 
         // First snapshot returns Fresh from disk.
         let snap = check.snapshot().await;
         assert!(matches!(snap.check_status, CheckStatus::Fresh));
 
-        tokio::time::sleep(Duration::from_millis(40)).await;
-        // Now a refresh attempt should fail (503), preserving the cached value.
-        let _ = check.refresh_blocking().await; // returns Err but we don't unwrap
+        // An explicit refresh attempt should fail (503), preserving the cached value.
+        let error = check
+            .refresh_blocking()
+            .await
+            .expect_err("503 response should fail the refresh");
+        assert!(
+            error.contains("503"),
+            "refresh error should preserve the HTTP status, got: {error}"
+        );
         let snap = check.snapshot().await;
         assert!(matches!(snap.check_status, CheckStatus::Error));
         assert_eq!(snap.latest, Some(Version::parse("0.1.40").unwrap()));
