@@ -16,8 +16,10 @@ all-features = true
 unmaintained = "workspace"
 # Lint level for crates with unsound API
 unsound = "all"
-# Lint level for crates that have been yanked
-yanked = "deny"
+# Lint level for crates that have been yanked. Keep this at warn while the
+# pinned Deno crypto prerelease lane carries crypto-bigint 0.7.3 and local
+# execution policy blocks `cargo update -p crypto-bigint --precise 0.7.5`.
+yanked = "warn"
 ignore = [
   # Requires `rand`'s `log` + `thread_rng` features plus a custom `log` logger
   # path. The remaining transitive `rand 0.8.5` lane in this workspace does
@@ -44,6 +46,7 @@ private = { ignore = true }
 allow = [
   "MIT",
   "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
   "BSD-2-Clause",
   "BSD-3-Clause",
   "ISC",
@@ -69,6 +72,7 @@ wildcards = "allow"
 skip = [
     { crate = "base16ct@1.0.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "blake2@0.10.6", reason = "The pinned Deno Node crypto stack still carries blake2 0.10 while Deno argon2 has moved to the RustCrypto 0.11 prerelease lane." },
+    { crate = "blake2@0.11.0-rc.6", reason = "Deno crypto carries the Argon2 prerelease blake2 lane alongside deno_node_crypto's stable blake2 lane." },
     { crate = "brotli@6.0.0", reason = "The pinned Deno HTTP/web stack carries brotli 6 while async-compression carries brotli 8." },
     { crate = "brotli-decompressor@4.0.3", reason = "The pinned Deno HTTP/web stack carries brotli-decompressor 4 while async-compression carries brotli-decompressor 5." },
     { crate = "compact_str@0.7.1", reason = "The pinned Deno SWC codegen stack carries compact_str 0.7 while the OXC code-index stack carries compact_str 0.9." },
@@ -76,17 +80,22 @@ skip = [
     { crate = "dashmap@5.5.3", reason = "The pinned Deno resolver/config stack carries dashmap 5 while the fjall storage lane uses dashmap 6." },
     { crate = "der@0.8.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "elliptic-curve@0.14.0-rc.28", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "fixedbitset@0.4.2", reason = "Wasmtime wasm-compose carries petgraph 0.6/fixedbitset 0.4 while tonic-build carries petgraph 0.7/fixedbitset 0.5." },
     { crate = "hashbrown@0.15.5", reason = "The pinned rusqlite/imara-diff lanes still carry hashbrown 0.15 while indexmap and OXC carry newer hashbrown lanes." },
     { crate = "hashbrown@0.17.1", reason = "The OXC code-index stack carries hashbrown 0.17 while the broader indexmap stack carries hashbrown 0.16." },
     { crate = "io-lifetimes@2.0.4", reason = "cap-std 4.0.2 pulls fs-set-times on io-lifetimes 2 while cap-std/io-extras use io-lifetimes 3; keep the duplicate visible until cap-std aligns upstream." },
     { crate = "keccak@0.2.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "nix@0.30.1", reason = "The pinned Deno filesystem and permission stack still carries nix 0.30 while newer workspace stacks use nix 0.31." },
     { crate = "object@0.36.7", reason = "The pinned Deno N-API stack carries object 0.36 while the SWC/stacker support lane carries object 0.37." },
+    { crate = "object@0.39.1", reason = "Wasmtime JIT/unwinder support carries object 0.39 while the SWC/stacker support lane carries object 0.37." },
+    { crate = "petgraph@0.6.5", reason = "Wasmtime wasm-compose pins petgraph 0.6 while tonic-build carries petgraph 0.7." },
     { crate = "pkcs8@0.11.0-rc.11", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "redox_users@0.4.6", reason = "Wasmtime internal cache's directories-next stack uses redox_users 0.4 while rust-embed's dirs stack uses redox_users 0.5." },
     { crate = "sec1@0.8.1", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "sha3@0.11.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "spki@0.8.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "tonic@0.12.3", reason = "The pinned Deno telemetry stack still carries tonic 0.12 while the server gRPC stack has moved forward." },
+    { crate = "wasm-encoder@0.252.0", reason = "Wasmtime component tooling carries wasm-encoder 0.251 directly and wat/wast 0.252 transitively." },
     { crate = "which@6.0.3", reason = "The rusty_v8 build stack carries which 6 while the current Deno permission stack uses which 8." },
     { crate = "winnow@0.6.26", reason = "The pinned Deno resolver YAML parser still carries winnow 0.6 while the workspace TOML parser uses winnow 0.7." },
 ]

@@ -8,7 +8,30 @@ use tokio::sync::{Mutex as TokioMutex, Notify};
 use super::*;
 use crate::host::{HostBridge, HostBridgeFuture, HostCallOperation, HostCallRequest};
 
-const HOST_START_TIMEOUT: Duration = Duration::from_secs(15);
+fn duration_ms_env_or(name: &str, default: Duration) -> Duration {
+    let default_ms = default.as_millis().min(u64::MAX as u128) as u64;
+    Duration::from_millis(
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(default_ms),
+    )
+}
+
+fn ci_or_local_duration(local: Duration, ci: Duration) -> Duration {
+    if std::env::var_os("CI").is_some() {
+        ci
+    } else {
+        local
+    }
+}
+
+fn host_start_timeout() -> Duration {
+    duration_ms_env_or(
+        "NIMBUS_EXECUTOR_HOST_START_TIMEOUT_MS",
+        ci_or_local_duration(Duration::from_secs(15), Duration::from_secs(60)),
+    )
+}
 
 pub(super) struct NoopHost;
 
@@ -51,7 +74,7 @@ impl ControlledAsyncWorkerRuntimeIdHost {
     }
 
     pub(super) async fn wait_until_started(&self, document_id: &str) {
-        tokio::time::timeout(HOST_START_TIMEOUT, async {
+        tokio::time::timeout(host_start_timeout(), async {
             loop {
                 let notified = self.started_notify.notified();
                 if self
@@ -184,6 +207,12 @@ impl TenantFairnessHost {
             .clone()
     }
 
+    pub(super) async fn wait_until_slow_started(&self) {
+        tokio::time::timeout(host_start_timeout(), self.slow_started.notified())
+            .await
+            .expect("slow tenant fairness host request should start");
+    }
+
     pub(super) async fn assert_not_started_within(&self, document_id: &str, duration: Duration) {
         let deadline = tokio::time::Instant::now() + duration;
         loop {
@@ -270,7 +299,7 @@ struct StepControlledAsyncGetHostState {
 
 impl StepControlledAsyncGetHost {
     pub(super) async fn wait_until_started(&self, document_id: &str) {
-        tokio::time::timeout(HOST_START_TIMEOUT, async {
+        tokio::time::timeout(host_start_timeout(), async {
             loop {
                 let notified = self.started_notify.notified();
                 if self
@@ -429,7 +458,7 @@ impl ControlledAsyncGetHost {
     }
 
     pub(super) async fn wait_until_started(&self, document_id: &str) {
-        tokio::time::timeout(HOST_START_TIMEOUT, async {
+        tokio::time::timeout(host_start_timeout(), async {
             loop {
                 let notified = self.started_notify.notified();
                 if self
@@ -577,7 +606,7 @@ impl SlowSyncQueryHost {
     }
 
     pub(super) async fn wait_until_started(&self) {
-        tokio::time::timeout(HOST_START_TIMEOUT, self.started.notified())
+        tokio::time::timeout(host_start_timeout(), self.started.notified())
             .await
             .expect("slow sync query host should start");
     }

@@ -240,11 +240,28 @@ pub async fn run_listener(config: NimbusKvConfig) -> Result<(), KvError> {
 /// Serve an already-bound listener.
 pub async fn serve(listener: TcpListener, config: NimbusKvConfig) -> Result<(), KvError> {
     refuse_non_loopback_bind(listener.local_addr()?)?;
-    let credentials = Arc::new(config.credentials);
-    let store = config
-        .store
-        .unwrap_or(NimbusKvStore::no_disk(TieringConfig::no_disk())?);
-    let metrics = config.metrics.unwrap_or_else(|| store.metrics());
+    let NimbusKvConfig {
+        bind_addr: _,
+        credentials,
+        store,
+        metrics,
+    } = config;
+    let store = match (store, metrics) {
+        (Some(_), Some(_)) => {
+            return Err(nimbus_core::Error::InvalidInput(
+                "NimbusKvConfig::with_metrics cannot be combined with a prebuilt NimbusKvStore"
+                    .to_string(),
+            )
+            .into());
+        }
+        (Some(store), None) => store,
+        (None, Some(metrics)) => {
+            NimbusKvStore::no_disk_with_metrics(TieringConfig::no_disk(), metrics)?
+        }
+        (None, None) => NimbusKvStore::no_disk(TieringConfig::no_disk())?,
+    };
+    let credentials = Arc::new(credentials);
+    let metrics = store.metrics();
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;

@@ -148,4 +148,9 @@ impl DeferredV8RuntimeDropQueue {
     pub(crate) fn clear(&mut self) {
         self.pending.clear();
     }
+
+    #[cfg(test)]
+    pub(crate) fn pending_len_for_test(&self) -> usize {
+        self.pending.len()
+    }
 }

@@ -25,9 +25,27 @@ mod tls;
 mod ws;
 
 pub use adapters::cloud_functions::CloudFunctionsRegistry;
+pub use adapters::cloudflare::{
+    CloudflareBindingRegistry, CloudflareConfig, D1DatabaseBinding, DurableObjectBinding,
+    KvNamespaceBinding, R2BucketBinding, WranglerConfigError,
+};
 pub use adapters::convex::ConvexRegistry;
 pub use adapters::dynamodb::DynamoDbConfig;
 pub use adapters::firebase::{FirebaseConfig, ProjectSpecError, ProjectTenantRegistry};
+/// Enables Firebase Emulator token-verification bypass for dev/test servers.
+///
+/// The default Firebase config rejects unverified emulator tokens and uses a
+/// strict empty project registry. This helper opts into the loopback-only
+/// dev-mode bypass and identity project registry together, matching local
+/// emulator semantics without weakening production defaults.
+#[must_use]
+pub fn enable_firebase_emulator_token_verification_bypass(
+    firebase_config: FirebaseConfig,
+) -> FirebaseConfig {
+    firebase_config
+        .with_emulator_token_verification_bypass()
+        .with_project_registry(ProjectTenantRegistry::identity())
+}
 pub use adapters::mongodb::{
     AuthConfig as MongoDbAuthConfig, CredentialRegistry as MongoDbCredentialRegistry, MongoDbConfig,
 };

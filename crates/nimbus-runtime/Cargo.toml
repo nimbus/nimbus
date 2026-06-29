@@ -40,6 +40,7 @@ deno_tls.workspace = true
 deno_web.workspace = true
 deno_webidl.workspace = true
 deno_websocket.workspace = true
+futures.workspace = true
 libc.workspace = true
 libloading.workspace = true
 node_resolver.workspace = true
@@ -53,6 +54,7 @@ tokio.workspace = true
 tracing.workspace = true
 twox-hash.workspace = true
 url.workspace = true
+wasmtime.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }

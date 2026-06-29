@@ -1,3 +1,4 @@
+mod async_cloudflare;
 mod async_effects;
 mod async_query;
 mod async_runtime_extension;
@@ -10,6 +11,9 @@ mod sync_query_builder;
 mod test_runtime;
 mod worker_threads;
 
+use self::async_cloudflare::{
+    op_nimbus_cf_kv_delete, op_nimbus_cf_kv_get, op_nimbus_cf_kv_list, op_nimbus_cf_kv_put,
+};
 use self::async_effects::{
     op_nimbus_ctx_action, op_nimbus_ctx_mutation, op_nimbus_ctx_scheduler_cancel,
     op_nimbus_ctx_scheduler_run_after, op_nimbus_ctx_scheduler_run_at, op_nimbus_document_delete,
@@ -87,6 +91,10 @@ extension!(
         op_nimbus_document_patch,
         op_nimbus_document_delete,
         op_nimbus_runtime_extension_call,
+        op_nimbus_cf_kv_get,
+        op_nimbus_cf_kv_put,
+        op_nimbus_cf_kv_delete,
+        op_nimbus_cf_kv_list,
         op_nimbus_ctx_query_collect,
         op_nimbus_ctx_query_take,
         op_nimbus_ctx_query_paginate,

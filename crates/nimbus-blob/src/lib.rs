@@ -4,14 +4,14 @@
 //! object-safe [`BlobStore`] seam (spec §16b, seam A), its cluster extension
 //! [`ReplicatingBlobStore`] (feature `cluster`), and the composable decorators
 //! that layer encryption ([`EncryptedBlobStore`]) and placement
-//! ([`PlacementBlobStore`]) over a backing store ([`LocalPackStore`]).
+//! ([`PlacementBlobStore`]) over a backing store ([`MemoryBlobStore`]).
 //!
 //! ## Per-tenant store
 //!
 //! One store instance serves one tenant — the store **is** the tenant, matching
 //! the per-tenant capability traits in `nimbus-storage/src/traits/mod.rs` and
 //! spec §19. No [`BlobStore`] method takes a `tenant` argument; a tenant is
-//! provisioned by constructing its own store (its own [`LocalPackStore`], its
+//! provisioned by constructing its own store (its own [`MemoryBlobStore`], its
 //! own [`EncryptedBlobStore`] holding that tenant's DEK).
 //!
 //! Blobs are opaque content-addressed bytes (BLAKE3); the *named* object plane
@@ -23,17 +23,17 @@
 //! stores identical ciphertext under the same content address:
 //!
 //! ```text
-//! PlacementBlobStore { local: EncryptedBlobStore<LocalPackStore>, mode: ... }
+//! PlacementBlobStore { local: EncryptedBlobStore<MemoryBlobStore>, mode: ... }
 //! ```
 //!
-//! This is a compiling skeleton: the traits and routing are real, the backing
-//! store is an in-memory map, and the framed AEAD primitive is sourced from
-//! `nimbus-crypto`. Search for `// TODO:` markers for the rewire points to
-//! `nimbus-fs`, `nimbus-cluster`, and the real pack format.
+//! The currently shipped backing adapter is [`MemoryBlobStore`]. It is a
+//! deterministic in-memory implementation for seam tests and consumers such as
+//! the CAS read-only filesystem backend. The durable `LocalPackStore` name is
+//! reserved for NOS-A1's append-only encrypted pack implementation.
 
 mod encrypted;
 mod hash;
-mod local;
+mod memory;
 mod placement;
 mod store;
 
@@ -41,7 +41,7 @@ pub use encrypted::EncryptedBlobStore;
 pub use hash::{BLAKE3_HASH_LEN, BlobHash};
 #[cfg(feature = "cluster")]
 pub use hash::{BlobTicket, PeerAddr};
-pub use local::LocalPackStore;
+pub use memory::MemoryBlobStore;
 pub use nimbus_crypto::{FRAME_PLAINTEXT_LEN, FramedBlobKey, KEY_SEED_LEN, NONCE_LEN};
 pub use placement::{PlacementBlobStore, PlacementMode};
 #[cfg(feature = "cluster")]
@@ -67,11 +67,11 @@ mod object_safety_tests {
     /// Each store instance is one tenant's byte plane.
     #[tokio::test]
     async fn every_impl_is_object_safe() {
-        let local: Arc<dyn BlobStore> = Arc::new(LocalPackStore::new());
+        let local: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new());
         let encrypted: Arc<dyn BlobStore> =
-            Arc::new(EncryptedBlobStore::new(LocalPackStore::new(), key()));
+            Arc::new(EncryptedBlobStore::new(MemoryBlobStore::new(), key()));
         let placement: Arc<dyn BlobStore> = Arc::new(PlacementBlobStore::local_only(Arc::new(
-            LocalPackStore::new(),
+            MemoryBlobStore::new(),
         )));
 
         for store in [local, encrypted, placement] {
@@ -97,7 +97,7 @@ mod cluster_tests {
 
     /// A minimal `ReplicatingBlobStore` for the upcast test.
     struct ReplicatingStub {
-        inner: LocalPackStore,
+        inner: MemoryBlobStore,
     }
 
     #[async_trait]
@@ -207,7 +207,7 @@ mod cluster_tests {
     #[tokio::test]
     async fn replicating_upcasts_to_blob_store() {
         let replicating: Arc<dyn ReplicatingBlobStore> = Arc::new(ReplicatingStub {
-            inner: LocalPackStore::new(),
+            inner: MemoryBlobStore::new(),
         });
 
         // Use the cluster-leg methods through the subtrait handle.
@@ -235,7 +235,7 @@ mod cluster_tests {
     async fn fetch_from_verifies_content_address() {
         // Honest peer: bytes match the announced hash.
         let honest = ReplicatingStub {
-            inner: LocalPackStore::new(),
+            inner: MemoryBlobStore::new(),
         };
         let hash = honest
             .put(Bytes::from_static(b"honest bytes"))

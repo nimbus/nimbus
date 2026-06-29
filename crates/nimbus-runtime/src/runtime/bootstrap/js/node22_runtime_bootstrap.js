@@ -985,13 +985,12 @@ const nimbusProcessCwdState = Symbol("nimbus.processCwdState");
 const nimbusProcessStdioPatched = Symbol("nimbus.processStdioPatched");
 let nimbusRuntimeCurrentCwd = null;
 
-function runtimePolicyCwd() {
-  const policyCwd = typeof core.ops.op_nimbus_runtime_cwd === "function"
-    ? core.ops.op_nimbus_runtime_cwd()
-    : null;
-  return typeof policyCwd === "string" && policyCwd.length > 0
-    ? policyCwd
-    : null;
+function nimbusRuntimePolicyCwd() {
+  if (typeof core.ops.op_nimbus_runtime_cwd !== "function") {
+    return null;
+  }
+  const cwd = core.ops.op_nimbus_runtime_cwd();
+  return typeof cwd === "string" && cwd.length > 0 ? cwd : null;
 }
 
 function seedNodeProcessCwd(nodeProcess) {
@@ -1002,16 +1001,20 @@ function seedNodeProcessCwd(nodeProcess) {
     return;
   }
 
-  const policyCwd = runtimePolicyCwd();
+  const policyCwd = nimbusRuntimePolicyCwd();
   const existingState = nodeProcess[nimbusProcessCwdState];
   if (existingState && typeof existingState === "object") {
-    if (policyCwd !== null) {
+    if (!existingState.pinnedByChdir && policyCwd !== null) {
       existingState.currentCwd = policyCwd;
       nimbusRuntimeCurrentCwd = policyCwd;
     }
     return;
   }
 
+  const alreadyPatched = nodeProcess[nimbusProcessCwdPatched] === true;
+  if (alreadyPatched && policyCwd === null && existingState) {
+    return;
+  }
   const originalCwd = typeof nodeProcess.cwd === "function"
     ? nodeProcess.cwd.bind(nodeProcess)
     : null;
@@ -1021,15 +1024,16 @@ function seedNodeProcessCwd(nodeProcess) {
       : nimbusRuntimeCurrentCwd ??
         (nodeProcess !== globalThis.process &&
             globalThis.process?.[nimbusProcessCwdPatched] === true &&
-          typeof globalThis.process?.cwd === "function"
-        ? globalThis.process.cwd()
-        : null) ??
-      (originalCwd !== null &&
-          nodeProcess === globalThis.process &&
-          nodeProcess[nimbusProcessCwdPatched] === true
-          ? originalCwd()
+            typeof globalThis.process?.cwd === "function"
+          ? globalThis.process.cwd()
           : null) ??
-        "/",
+        (originalCwd !== null &&
+            nodeProcess === globalThis.process &&
+            nodeProcess[nimbusProcessCwdPatched] === true
+            ? originalCwd()
+            : null) ??
+          "/",
+    pinnedByChdir: false,
   };
   nimbusRuntimeCurrentCwd = cwdState.currentCwd;
 
@@ -1042,6 +1046,13 @@ function seedNodeProcessCwd(nodeProcess) {
 
   Object.defineProperty(nodeProcess, "cwd", {
     value() {
+      if (!cwdState.pinnedByChdir) {
+        const latestPolicyCwd = nimbusRuntimePolicyCwd();
+        if (latestPolicyCwd !== null && latestPolicyCwd !== cwdState.currentCwd) {
+          cwdState.currentCwd = latestPolicyCwd;
+          nimbusRuntimeCurrentCwd = cwdState.currentCwd;
+        }
+      }
       return cwdState.currentCwd;
     },
     configurable: true,
@@ -1062,6 +1073,7 @@ function seedNodeProcessCwd(nodeProcess) {
         throw error;
       }
       cwdState.currentCwd = nextCwd;
+      cwdState.pinnedByChdir = true;
       nimbusRuntimeCurrentCwd = cwdState.currentCwd;
     },
     configurable: true,
@@ -1069,7 +1081,7 @@ function seedNodeProcessCwd(nodeProcess) {
     writable: true,
   });
 
-  if (nodeProcess[nimbusProcessCwdPatched] !== true) {
+  if (!alreadyPatched) {
     Object.defineProperty(nodeProcess, nimbusProcessCwdPatched, {
       value: true,
       configurable: false,
@@ -1077,6 +1089,12 @@ function seedNodeProcessCwd(nodeProcess) {
       writable: false,
     });
   }
+}
+
+function refreshNodeProcessCwd() {
+  seedNodeProcessCwd(nodeProcessBuiltin);
+  seedNodeProcessCwd(internals.nodeGlobals?.process);
+  seedNodeProcessCwd(globalThis.process);
 }
 
 function seedNodeProcessPlatformMetadata(nodeProcess) {
@@ -4062,6 +4080,12 @@ seedNodeProcessFinalization(internals.nodeGlobals?.process);
 seedNodeProcessFatalGuards(internals.nodeGlobals?.process);
 installNimbusProcessDlopenErrorMapping(internals.nodeGlobals?.process);
 seedNodeProcessCwd(globalThis.process);
+Object.defineProperty(globalThis, "__nimbusRefreshNodeProcessCwd", {
+  value: refreshNodeProcessCwd,
+  configurable: true,
+  enumerable: false,
+  writable: true,
+});
 seedNodeProcessPlatformMetadata(globalThis.process);
 seedNodeProcessStdio(globalThis.process);
 seedNodeProcessExecPath(globalThis.process);

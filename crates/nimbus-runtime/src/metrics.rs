@@ -109,6 +109,17 @@ pub struct RuntimeMetricsSnapshot {
     pub warm_pool_misses: u64,
     pub warm_pool_retirements: u64,
     pub warm_pool_discard_unquiesced: u64,
+    pub wasmtime_module_cache_hits: u64,
+    pub wasmtime_module_cache_misses: u64,
+    pub wasmtime_module_compilations: u64,
+    pub wasmtime_module_compilation_nanos_total: u64,
+    pub wasmtime_fuel_consumed_total: u64,
+    pub wasmtime_fuel_exhaustions: u64,
+    pub wasmtime_store_pool_hits: u64,
+    pub wasmtime_store_pool_misses: u64,
+    pub wasmtime_store_pool_authority_mismatches: u64,
+    pub wasmtime_store_pool_evictions: u64,
+    pub wasmtime_store_pool_retirements: u64,
     pub host_pressure: RuntimeHostPressureMetricsSnapshot,
     pub adaptive_controller: RuntimeAdaptiveControllerMetricsSnapshot,
     pub profiles: RuntimeProfileTelemetrySnapshot,
@@ -269,6 +280,47 @@ impl RuntimeMetrics {
 
     pub fn record_warm_pool_discard_unquiesced(&self) {
         self.global.record_warm_pool_discard_unquiesced();
+    }
+
+    pub fn record_wasmtime_module_cache_hit(&self) {
+        self.global.record_wasmtime_module_cache_hit();
+    }
+
+    pub fn record_wasmtime_module_cache_miss(&self) {
+        self.global.record_wasmtime_module_cache_miss();
+    }
+
+    pub fn record_wasmtime_module_compilation_time(&self, duration: Duration) {
+        self.global
+            .record_wasmtime_module_compilation_time(duration);
+    }
+
+    pub fn record_wasmtime_fuel_consumed(&self, fuel: u64) {
+        self.global.record_wasmtime_fuel_consumed(fuel);
+    }
+
+    pub fn record_wasmtime_fuel_exhaustion(&self) {
+        self.global.record_wasmtime_fuel_exhaustion();
+    }
+
+    pub fn record_wasmtime_store_pool_hit(&self) {
+        self.global.record_wasmtime_store_pool_hit();
+    }
+
+    pub fn record_wasmtime_store_pool_miss(&self) {
+        self.global.record_wasmtime_store_pool_miss();
+    }
+
+    pub fn record_wasmtime_store_pool_authority_mismatch(&self) {
+        self.global.record_wasmtime_store_pool_authority_mismatch();
+    }
+
+    pub fn record_wasmtime_store_pool_eviction(&self) {
+        self.global.record_wasmtime_store_pool_eviction();
+    }
+
+    pub fn record_wasmtime_store_pool_retirement(&self) {
+        self.global.record_wasmtime_store_pool_retirement();
     }
 
     pub fn record_bundle_load(&self, duration: Duration) {
@@ -575,6 +627,18 @@ impl RuntimeMetrics {
             warm_pool_misses: global.warm_pool_misses,
             warm_pool_retirements: global.warm_pool_retirements,
             warm_pool_discard_unquiesced: global.warm_pool_discard_unquiesced,
+            wasmtime_module_cache_hits: global.wasmtime_module_cache_hits,
+            wasmtime_module_cache_misses: global.wasmtime_module_cache_misses,
+            wasmtime_module_compilations: global.wasmtime_module_compilations,
+            wasmtime_module_compilation_nanos_total: global.wasmtime_module_compilation_nanos_total,
+            wasmtime_fuel_consumed_total: global.wasmtime_fuel_consumed_total,
+            wasmtime_fuel_exhaustions: global.wasmtime_fuel_exhaustions,
+            wasmtime_store_pool_hits: global.wasmtime_store_pool_hits,
+            wasmtime_store_pool_misses: global.wasmtime_store_pool_misses,
+            wasmtime_store_pool_authority_mismatches: global
+                .wasmtime_store_pool_authority_mismatches,
+            wasmtime_store_pool_evictions: global.wasmtime_store_pool_evictions,
+            wasmtime_store_pool_retirements: global.wasmtime_store_pool_retirements,
             host_pressure: global.host_pressure,
             adaptive_controller: global.adaptive_controller,
             profiles: self.profiles.snapshot(),
@@ -930,6 +994,39 @@ mod tests {
     }
 
     #[test]
+    fn wasmtime_metrics_snapshot_is_low_cardinality_global_state() {
+        let metrics = RuntimeMetrics::default();
+
+        metrics.record_wasmtime_module_cache_hit();
+        metrics.record_wasmtime_module_cache_miss();
+        metrics.record_wasmtime_module_compilation_time(Duration::from_micros(42));
+        metrics.record_wasmtime_fuel_consumed(17);
+        metrics.record_wasmtime_fuel_exhaustion();
+        metrics.record_wasmtime_store_pool_hit();
+        metrics.record_wasmtime_store_pool_miss();
+        metrics.record_wasmtime_store_pool_authority_mismatch();
+        metrics.record_wasmtime_store_pool_eviction();
+        metrics.record_wasmtime_store_pool_retirement();
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.wasmtime_module_cache_hits, 1);
+        assert_eq!(snapshot.wasmtime_module_cache_misses, 1);
+        assert_eq!(snapshot.wasmtime_module_compilations, 1);
+        assert_eq!(snapshot.wasmtime_module_compilation_nanos_total, 42_000);
+        assert_eq!(snapshot.wasmtime_fuel_consumed_total, 17);
+        assert_eq!(snapshot.wasmtime_fuel_exhaustions, 1);
+        assert_eq!(snapshot.wasmtime_store_pool_hits, 1);
+        assert_eq!(snapshot.wasmtime_store_pool_misses, 1);
+        assert_eq!(snapshot.wasmtime_store_pool_authority_mismatches, 1);
+        assert_eq!(snapshot.wasmtime_store_pool_evictions, 1);
+        assert_eq!(snapshot.wasmtime_store_pool_retirements, 1);
+        assert!(
+            snapshot.tenants.is_empty(),
+            "Wasmtime backend metrics must not add tenant-cardinality labels"
+        );
+    }
+
+    #[test]
     fn unattributed_metrics_do_not_create_tenant_entries() {
         let metrics = RuntimeMetrics::default();
 
@@ -1049,6 +1146,17 @@ mod tests {
                 warm_pool_misses: 0,
                 warm_pool_retirements: 0,
                 warm_pool_discard_unquiesced: 0,
+                wasmtime_module_cache_hits: 0,
+                wasmtime_module_cache_misses: 0,
+                wasmtime_module_compilations: 0,
+                wasmtime_module_compilation_nanos_total: 0,
+                wasmtime_fuel_consumed_total: 0,
+                wasmtime_fuel_exhaustions: 0,
+                wasmtime_store_pool_hits: 0,
+                wasmtime_store_pool_misses: 0,
+                wasmtime_store_pool_authority_mismatches: 0,
+                wasmtime_store_pool_evictions: 0,
+                wasmtime_store_pool_retirements: 0,
                 host_pressure: RuntimeHostPressureMetricsSnapshot::default(),
                 adaptive_controller: RuntimeAdaptiveControllerMetricsSnapshot::default(),
                 profiles: RuntimeProfileTelemetrySnapshot::default(),

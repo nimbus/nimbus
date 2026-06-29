@@ -70,6 +70,9 @@ impl ConvexHostBridge {
                 )
                 .await
             }
+            InvocationKind::CloudflareWorkerFetch => Err(Error::InvalidInput(
+                "ctx.runAction does not support Cloudflare Worker fetch invocations".to_string(),
+            )),
         }
     }
 
@@ -132,6 +135,9 @@ impl ConvexHostBridge {
                     cancellation,
                 )
             }
+            InvocationKind::CloudflareWorkerFetch => Err(Error::InvalidInput(
+                "ctx.runAction does not support Cloudflare Worker fetch invocations".to_string(),
+            )),
         }
     }
 

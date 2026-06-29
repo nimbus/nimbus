@@ -14,6 +14,7 @@ use crate::watchdog::WatchdogTimer;
 
 pub(crate) mod bun_jsc;
 pub(crate) mod v8;
+pub(crate) mod wasmtime;
 
 pub(crate) trait RuntimeBackendFactory: Send + Sync + 'static {
     fn create(&self) -> Box<dyn RuntimeBackend>;
@@ -41,5 +42,6 @@ pub(crate) fn create_runtime_backend_for_policy(policy: &RuntimePolicy) -> Box<d
     match policy.limits().backend_kind {
         RuntimeBackendKind::V8 => v8::V8RuntimeBackendFactory.create(),
         RuntimeBackendKind::BunJsc => bun_jsc::BunJscRuntimeBackendFactory.create(),
+        RuntimeBackendKind::Wasmtime => wasmtime::WasmtimeBackendFactory::new().create(),
     }
 }

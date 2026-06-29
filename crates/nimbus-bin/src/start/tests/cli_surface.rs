@@ -550,6 +550,7 @@ fn start_command_default_has_conservative_runtime_host_budget() {
 fn adapterless_enablement() -> crate::start::adapters::AdapterEnablement {
     crate::start::adapters::AdapterEnablement {
         firebase: None,
+        cloudflare: None,
         mongodb: None,
         dynamodb: None,
     }

@@ -6,10 +6,14 @@ async fn application_node22_reads_local_files_hides_non_allowlisted_env_and_deni
     let _guard = acquire_basic_invocation_suite_lock().await;
     let (tempdir, bundle_path) = write_app_style_bundle(
         r#"
+	import { mkdirSync } from "node:fs";
 	import { readFile, stat, writeFile } from "node:fs/promises";
 
 	globalThis.__nimbusInvoke = async function () {
 	  const config = await readFile("./config.txt", "utf8");
+	  mkdirSync("./sync-created", { recursive: true });
+	  await writeFile("./sync-created/file.txt", "sync-data");
+	  const syncRoundTrip = await readFile("./sync-created/file.txt", "utf8");
 	  const nodeEnv = process.env.NODE_ENV ?? null;
 	  let writeDenied = null;
 	  let metadataDenied = null;
@@ -26,6 +30,7 @@ async fn application_node22_reads_local_files_hides_non_allowlisted_env_and_deni
 	  return {
 	    cwd: process.cwd(),
 	    config,
+	    syncRoundTrip,
 	    nodeEnv,
 	    writeDenied,
 	    metadataDenied,
@@ -74,6 +79,7 @@ export {};
         serde_json::json!(expected_cwd.display().to_string())
     );
     assert_eq!(result["config"], serde_json::json!("hello from bundle"));
+    assert_eq!(result["syncRoundTrip"], serde_json::json!("sync-data"));
     assert_eq!(result["nodeEnv"], serde_json::json!(null));
     let write_denied = result["writeDenied"]
         .as_str()

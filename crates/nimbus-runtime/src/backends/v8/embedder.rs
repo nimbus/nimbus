@@ -11,7 +11,7 @@ pub(crate) use deno_core::{
     JsRuntime, JsRuntimeForSnapshot, ModuleCodeString, ModuleLoadOptions, ModuleLoadReferrer,
     ModuleLoadResponse, ModuleLoader, ModuleName, ModuleSource, ModuleSourceCode, ModuleSpecifier,
     ModuleType, OpState, PollEventLoopOptions, RequestedModuleType, ResolutionKind, RuntimeOptions,
-    SourceCodeCacheInfo, SourceMapData, ValidateImportAttributesCb, ascii_str_include, extension,
-    op2, resolve_import, scope, serde_v8, v8,
+    SharedArrayBufferStore, SourceCodeCacheInfo, SourceMapData, ValidateImportAttributesCb,
+    ascii_str_include, extension, op2, resolve_import, scope, serde_v8, v8,
 };
 pub(crate) use deno_error::JsErrorBox;

@@ -94,6 +94,11 @@ pub(crate) struct StartCommand {
     #[arg(long = "no-firestore", action = clap::ArgAction::SetFalse, default_value_t = true)]
     pub(crate) firestore: bool,
 
+    /// Disable the Cloudflare-compatible routes and binding registry
+    /// (mounted on the main HTTP listener by default).
+    #[arg(long = "no-cloudflare", action = clap::ArgAction::SetFalse, default_value_t = true)]
+    pub(crate) cloudflare: bool,
+
     /// Disable the MongoDB wire-protocol listener (served by default on
     /// port 27017 when free, with SCRAM credentials from the data dir's
     /// wire-credential store unless operator credentials are provided).
@@ -398,6 +403,7 @@ impl Default for StartCommand {
             tls_cert: None,
             tls_key: None,
             firestore: true,
+            cloudflare: true,
             mongodb: true,
             mongodb_port: None,
             mongodb_host: "127.0.0.1".to_string(),

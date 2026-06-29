@@ -4,6 +4,7 @@ mod committed_mutations;
 mod diagnostics;
 mod encryption;
 mod execution_units;
+mod kv;
 mod latency;
 mod mutations;
 mod provider_hints;

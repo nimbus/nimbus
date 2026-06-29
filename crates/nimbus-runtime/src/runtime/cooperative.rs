@@ -199,11 +199,10 @@ impl CooperativeLockerRuntimeSlot {
                             });
                             drop(locked);
                             clear_runtime_wait_until_pending(&mut driver.runtime);
-                            let result = match drain_result {
-                                Ok(_) => driver
-                                    .wait_until_phase_timeout_error()
-                                    .map_or(response, Err),
-                                Err(error) => Err(driver.classify_wait_until_phase_error(error)),
+                            let result = match driver.classify_wait_until_drain_result(drain_result)
+                            {
+                                Ok(()) => response,
+                                Err(error) => Err(error),
                             };
                             self.destroy_fresh_realm(&mut driver);
                             self.completed = Some((driver, result));
@@ -212,6 +211,7 @@ impl CooperativeLockerRuntimeSlot {
                         Poll::Pending => {
                             drop(locked);
                             let result = Err(driver.wait_until_phase_stalled_error());
+                            clear_runtime_wait_until_pending(&mut driver.runtime);
                             self.destroy_fresh_realm(&mut driver);
                             self.completed = Some((driver, result));
                             return Ok(CooperativeRuntimeSlotPoll::Completed);
@@ -470,6 +470,7 @@ impl NimbusRuntime {
                 context: &context,
                 execution_plan: Some(&execution_plan),
                 record_replacement_on_error: true,
+                activity_signal: Some(activity_signal.clone()),
             })?;
         let context_recycling = matches!(
             self.policy.limits().runtime_pool_kind,

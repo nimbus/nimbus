@@ -1,0 +1,37 @@
+package nimbus:host@0.1.0;
+
+interface database {
+  get: func(table: string, id: string) -> result<string, string>;
+  insert: func(table: string, fields-json: string) -> result<string, string>;
+  patch: func(table: string, id: string, patch-json: string) -> result<string, string>;
+  delete: func(table: string, id: string) -> result<string, string>;
+}
+
+interface scheduler {
+  run-after: func(delay-ms: u64, name: string, visibility: string, args-json: string) -> result<string, string>;
+  run-at: func(timestamp-ms: u64, name: string, visibility: string, args-json: string) -> result<string, string>;
+  cancel: func(job-id: string) -> result<string, string>;
+}
+
+interface runtime {
+  run-query: func(name: string, visibility: string, args-json: string) -> result<string, string>;
+  run-mutation: func(name: string, visibility: string, args-json: string) -> result<string, string>;
+  run-action: func(name: string, visibility: string, args-json: string) -> result<string, string>;
+}
+
+interface context {
+  tenant-id: func() -> string;
+  function-name: func() -> string;
+  invocation-id: func() -> string;
+  invocation-kind: func() -> string;
+  identity: func() -> string;
+}
+
+world nimbus-function {
+  import database;
+  import scheduler;
+  import runtime;
+  import context;
+
+  export handler: func(args: string) -> result<string, string>;
+}

@@ -46,6 +46,10 @@ pub(super) fn seeded_convex_demo_request_timeout() -> Duration {
     Duration::from_secs(3)
 }
 
+pub(super) fn seeded_convex_demo_fault_recovery_timeout() -> Duration {
+    Duration::from_secs(5)
+}
+
 pub(super) fn seeded_convex_demo_operation_count(step_count: usize) -> usize {
     (6 + step_count / 12).min(14)
 }

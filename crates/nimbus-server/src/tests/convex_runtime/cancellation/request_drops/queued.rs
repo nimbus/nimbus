@@ -14,12 +14,40 @@ const QUEUED_REQUEST_RECOVERY_CASE: DeterministicTestCase = DeterministicTestCas
     "runtime recovers and serves new work after queued request-drop pressure clears",
 );
 
-#[tokio::test]
-async fn dropped_queued_runtime_request_never_starts_mutation() {
+fn queued_request_drop_runtime_limits() -> nimbus_runtime::RuntimeLimits {
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.max_concurrent_runtime_instances = 1;
-    limits.execution_timeout = std::time::Duration::from_secs(120);
-    limits.system_timeout = std::time::Duration::from_secs(120);
+    limits.worker_threads = 1;
+    limits.max_active_top_level_invocations_per_tenant = 1;
+    limits.max_in_flight_top_level_invocations_per_tenant = 1;
+    limits.max_queued_top_level_invocations_per_tenant = 1;
+    limits
+}
+
+fn queued_request_drop_host_budget() -> nimbus_runtime::RuntimeHostResourceBudget {
+    nimbus_runtime::RuntimeHostResourceBudget {
+        host_millicpus: 2_000,
+        system_reserved_millicpus: 0,
+        nimbus_control_plane_reserved_millicpus: 0,
+        runtime_hard_ceiling_millicpus: None,
+        runtime_seat_millicpus: std::num::NonZeroU32::new(1_000)
+            .expect("one runtime seat should be nonzero"),
+    }
+}
+
+fn router_for_queued_request_drop(engine: Arc<Engine>, registry: ConvexRegistry) -> axum::Router {
+    build_router(
+        RouterOptions::new(engine)
+            .with_convex_registry(registry)
+            .with_runtime_host_resource_budget(queued_request_drop_host_budget())
+            .with_runtime_host_pressure_source(Arc::new(
+                nimbus_runtime::NominalRuntimeHostPressureSource,
+            )),
+    )
+}
+
+#[tokio::test]
+async fn dropped_queued_runtime_request_never_starts_mutation() {
     let registry = runtime_request_drop_registry(json!([
         {
             "name": "messages:block",
@@ -36,10 +64,14 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
             "runtime_handler": "async (ctx, { body }) => await ctx.db.insert(\"messages\", { body })"
         }
     ]))
-    .with_runtime_limits(limits);
+    .with_runtime_limits(queued_request_drop_runtime_limits());
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();
-    let server = ServerFixture::start(router_for_convex(service.clone(), registry.clone())).await;
+    let server = ServerFixture::start(router_for_queued_request_drop(
+        service.clone(),
+        registry.clone(),
+    ))
+    .await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -53,8 +85,8 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         &json!({ "name": "messages:block", "args": {} }),
     )
     .await;
-    wait_for_server_runtime_metrics_case(
-        &server,
+    wait_for_runtime_metrics_case(
+        &registry,
         QUEUED_REQUEST_DROP_CASE,
         "blocking runtime query to start",
         |metrics| {
@@ -69,12 +101,14 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         &json!({ "name": "messages:insertQueued", "args": { "body": "queued" } }),
     )
     .await;
-    let queued_snapshot = wait_for_server_runtime_metrics_case(
-        &server,
+    let queued_snapshot = wait_for_runtime_metrics_case(
+        &registry,
         QUEUED_REQUEST_DROP_CASE,
-        "queued runtime mutation to be admitted but not started",
+        "queued runtime mutation to be admitted at the executor queue",
         |metrics| {
             metrics.active_runtime_instances == 1
+                && metrics.admission_decisions >= 2
+                && metrics.worker_dispatched_invocations == 1
                 && metrics.started_invocations == 1
                 && metrics
                     .recent_request_correlations
@@ -89,38 +123,38 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
     )
     .await;
     assert_eq!(queued_snapshot.active_runtime_instances, 1);
-    assert!(
-        (1..=2).contains(&queued_snapshot.worker_dispatched_invocations),
-        "queued request may already be worker-dispatched while waiting for the runtime semaphore: \
-         {queued_snapshot:#?}"
-    );
+    assert_eq!(queued_snapshot.worker_dispatched_invocations, 1);
     assert_eq!(queued_snapshot.started_invocations, 1);
+    assert_eq!(queued_snapshot.queued_canceled_invocations, 0);
 
     drop(queued_mutation);
+    let queued_canceled = wait_for_runtime_metrics_case(
+        &registry,
+        QUEUED_REQUEST_DROP_CASE,
+        "queued runtime mutation cancellation before worker dispatch",
+        |metrics| {
+            metrics.active_runtime_instances == 1
+                && metrics.worker_dispatched_invocations == 1
+                && metrics.queued_canceled_invocations == 1
+                && metrics.in_flight_canceled_invocations == 0
+        },
+    )
+    .await;
+    assert_eq!(queued_canceled.canceled_invocations, 1);
+    assert_eq!(queued_canceled.disconnect_canceled_invocations, 1);
+
     drop(blocker);
 
-    let metrics = wait_for_server_runtime_metrics_case(
-        &server,
+    let metrics = wait_for_runtime_metrics_case(
+        &registry,
         QUEUED_REQUEST_DROP_CASE,
         "queued runtime mutation cancellation",
         |metrics| metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 2,
     )
     .await;
-    assert!(
-        metrics.worker_dispatched_invocations >= queued_snapshot.worker_dispatched_invocations
-            && metrics.worker_dispatched_invocations
-                <= queued_snapshot.worker_dispatched_invocations + 1,
-        "a canceled queued request may be observed before or after worker dispatch, \
-         but must not dispatch more than once: queued={queued_snapshot:#?}, canceled={metrics:#?}"
-    );
-    assert_eq!(
-        metrics.started_invocations, 1,
-        "the canceled queued mutation must not start user runtime execution"
-    );
-    assert_eq!(
-        metrics.queued_canceled_invocations + metrics.in_flight_canceled_invocations,
-        2
-    );
+    assert_eq!(metrics.worker_dispatched_invocations, 1);
+    assert_eq!(metrics.queued_canceled_invocations, 1);
+    assert_eq!(metrics.in_flight_canceled_invocations, 1);
     assert_eq!(metrics.disconnect_canceled_invocations, 2);
     assert_eq!(metrics.explicit_canceled_invocations, 0);
     assert_eq!(metrics.runtime_pool_misses, 1);
@@ -132,10 +166,8 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
         .expect("tenant runtime metrics should be present");
     assert_eq!(tenant_metrics.started_invocations, 1);
     assert_eq!(tenant_metrics.completed_invocations, 1);
-    assert_eq!(
-        tenant_metrics.queued_canceled_invocations + tenant_metrics.in_flight_canceled_invocations,
-        2
-    );
+    assert_eq!(tenant_metrics.queued_canceled_invocations, 1);
+    assert_eq!(tenant_metrics.in_flight_canceled_invocations, 1);
     assert_eq!(tenant_metrics.disconnect_canceled_invocations, 2);
     assert_eq!(tenant_metrics.explicit_canceled_invocations, 0);
     assert!(
@@ -171,10 +203,6 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
 
 #[tokio::test]
 async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_pressure_clears() {
-    let mut limits = run_to_completion_snapshot_runtime_test_limits();
-    limits.max_concurrent_runtime_instances = 1;
-    limits.execution_timeout = std::time::Duration::from_secs(120);
-    limits.system_timeout = std::time::Duration::from_secs(120);
     let registry = runtime_request_drop_registry(json!([
         {
             "name": "messages:block",
@@ -191,14 +219,18 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
             "runtime_handler": "async (ctx, { body }) => await ctx.db.insert(\"messages\", { body })"
         }
     ]))
-    .with_runtime_limits(limits);
+    .with_runtime_limits(queued_request_drop_runtime_limits());
     let harness =
         DeterministicHarness::scenario("runtime-request-drop-recovery", 75, Timestamp(75_000));
     let fixture = EngineFixture::new_with_harness(harness.clone(), |path, harness| {
         Engine::new_with_simulation(path, harness.clock(), harness.fault_injector())
     });
     let service = fixture.engine();
-    let server = ServerFixture::start(router_for_convex(service.clone(), registry.clone())).await;
+    let server = ServerFixture::start(router_for_queued_request_drop(
+        service.clone(),
+        registry.clone(),
+    ))
+    .await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -212,8 +244,8 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         &json!({ "name": "messages:block", "args": {} }),
     )
     .await;
-    wait_for_server_runtime_metrics_case(
-        &server,
+    wait_for_runtime_metrics_case(
+        &registry,
         QUEUED_REQUEST_RECOVERY_CASE,
         "blocking runtime query to start",
         |metrics| {
@@ -228,12 +260,14 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         &json!({ "name": "messages:insertQueued", "args": { "body": "queued" } }),
     )
     .await;
-    let queued_snapshot = wait_for_server_runtime_metrics_case(
-        &server,
+    let queued_snapshot = wait_for_runtime_metrics_case(
+        &registry,
         QUEUED_REQUEST_RECOVERY_CASE,
-        "queued runtime mutation recovery request to be admitted but not started",
+        "queued runtime mutation recovery request to be admitted at the executor queue",
         |metrics| {
             metrics.active_runtime_instances == 1
+                && metrics.admission_decisions >= 2
+                && metrics.worker_dispatched_invocations == 1
                 && metrics.started_invocations == 1
                 && metrics
                     .recent_request_correlations
@@ -248,38 +282,38 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
     )
     .await;
     assert_eq!(queued_snapshot.active_runtime_instances, 1);
-    assert!(
-        (1..=2).contains(&queued_snapshot.worker_dispatched_invocations),
-        "queued request may already be worker-dispatched while waiting for the runtime semaphore: \
-         {queued_snapshot:#?}"
-    );
+    assert_eq!(queued_snapshot.worker_dispatched_invocations, 1);
     assert_eq!(queued_snapshot.started_invocations, 1);
+    assert_eq!(queued_snapshot.queued_canceled_invocations, 0);
 
     drop(queued_mutation);
+    let queued_canceled = wait_for_runtime_metrics_case(
+        &registry,
+        QUEUED_REQUEST_RECOVERY_CASE,
+        "queued runtime mutation recovery cancellation before worker dispatch",
+        |metrics| {
+            metrics.active_runtime_instances == 1
+                && metrics.worker_dispatched_invocations == 1
+                && metrics.queued_canceled_invocations == 1
+                && metrics.in_flight_canceled_invocations == 0
+        },
+    )
+    .await;
+    assert_eq!(queued_canceled.canceled_invocations, 1);
+    assert_eq!(queued_canceled.disconnect_canceled_invocations, 1);
+
     drop(blocker);
 
-    let canceled = wait_for_server_runtime_metrics_case(
-        &server,
+    let canceled = wait_for_runtime_metrics_case(
+        &registry,
         QUEUED_REQUEST_RECOVERY_CASE,
         "queued runtime mutation cancellation",
         |metrics| metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 2,
     )
     .await;
-    assert!(
-        canceled.worker_dispatched_invocations >= queued_snapshot.worker_dispatched_invocations
-            && canceled.worker_dispatched_invocations
-                <= queued_snapshot.worker_dispatched_invocations + 1,
-        "a canceled queued request may be observed before or after worker dispatch, \
-         but must not dispatch more than once: queued={queued_snapshot:#?}, canceled={canceled:#?}"
-    );
-    assert_eq!(
-        canceled.started_invocations, 1,
-        "the canceled queued mutation must not start user runtime execution"
-    );
-    assert_eq!(
-        canceled.queued_canceled_invocations + canceled.in_flight_canceled_invocations,
-        2
-    );
+    assert_eq!(canceled.worker_dispatched_invocations, 1);
+    assert_eq!(canceled.queued_canceled_invocations, 1);
+    assert_eq!(canceled.in_flight_canceled_invocations, 1);
 
     let recovery_response = api
         .convex_named_mutation(
@@ -290,15 +324,15 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         .await;
     assert_eq!(recovery_response.status(), StatusCode::OK);
 
-    let recovered = wait_for_server_runtime_metrics_case(
-        &server,
+    let recovered = wait_for_runtime_metrics_case(
+        &registry,
         QUEUED_REQUEST_RECOVERY_CASE,
         "runtime recovery after queued request drop",
         |metrics| {
             metrics.active_runtime_instances == 0
-                && metrics.worker_dispatched_invocations > canceled.worker_dispatched_invocations
-                && metrics.started_invocations == canceled.started_invocations + 1
-                && metrics.completed_invocations == canceled.completed_invocations + 1
+                && metrics.worker_dispatched_invocations == 2
+                && metrics.started_invocations == 2
+                && metrics.completed_invocations == 2
         },
     )
     .await;
@@ -307,10 +341,8 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         2,
         "two started invocations should account for two pool outcomes"
     );
-    assert_eq!(
-        recovered.queued_canceled_invocations + recovered.in_flight_canceled_invocations,
-        2
-    );
+    assert_eq!(recovered.queued_canceled_invocations, 1);
+    assert_eq!(recovered.in_flight_canceled_invocations, 1);
     assert_eq!(recovered.disconnect_canceled_invocations, 2);
     assert_eq!(recovered.runtime_pool_replacements, 1);
 

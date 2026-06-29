@@ -1,16 +1,13 @@
-//! [`LocalPackStore`] — the local backing [`BlobStore`].
+//! [`MemoryBlobStore`] — an in-memory backing [`BlobStore`].
 //!
-//! This skeleton backs blobs with an in-memory, content-addressed map keyed by
-//! [`BlobHash`]. One [`LocalPackStore`] instance serves one tenant (the store
+//! This adapter backs blobs with an in-memory, content-addressed map keyed by
+//! [`BlobHash`]. One [`MemoryBlobStore`] instance serves one tenant (the store
 //! *is* the tenant — see the tenancy note on [`BlobStore`]), so there is no
 //! tenant component in the key. It is a real, correct [`BlobStore`]: addressing
 //! is BLAKE3 over the stored bytes, `put` is idempotent, and reads verify the
-//! content address before returning.
-//
-// TODO: real append-only pack format (spec NOS-A1) — the production store seals
-// chunks into a handful of append-only pack files (not thousands of
-// chunk-files) with a `HashSeq`-style manifest (spec §17 D3). The in-memory map
-// here stands in for that pack store so the seam compiles and round-trips now.
+//! content address before returning. The production local adapter is
+//! `LocalPackStore`, owned by NOS-A1; that adapter seals blobs into a small set
+//! of append-only encrypted pack files with a `HashSeq`-style manifest.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -27,11 +24,11 @@ use crate::store::{BlobStore, ByteStream};
 
 /// In-memory, per-tenant, content-addressed blob store.
 #[derive(Default)]
-pub struct LocalPackStore {
+pub struct MemoryBlobStore {
     blobs: Mutex<HashMap<BlobHash, Bytes>>,
 }
 
-impl LocalPackStore {
+impl MemoryBlobStore {
     /// Creates an empty store for one tenant.
     pub fn new() -> Self {
         Self::default()
@@ -77,7 +74,7 @@ impl LocalPackStore {
 }
 
 #[async_trait]
-impl BlobStore for LocalPackStore {
+impl BlobStore for MemoryBlobStore {
     async fn put(&self, bytes: Bytes) -> Result<BlobHash> {
         let hash = BlobHash::of(&bytes);
         // Idempotent: identical bytes hash identically, so re-inserting under
@@ -120,8 +117,8 @@ impl BlobStore for LocalPackStore {
     }
 
     async fn release(&self, hash: &BlobHash) -> Result<()> {
-        // Skeleton: single-reference semantics — release removes the blob.
-        // TODO: real refcounting + GC (spec store/gc.rs lane).
+        // MemoryBlobStore has single-reference semantics; the durable store's
+        // mark-and-sweep GC is owned by NOS-A2.
         self.lock().remove(hash);
         Ok(())
     }
@@ -133,7 +130,7 @@ mod tests {
 
     #[tokio::test]
     async fn put_then_get_round_trips() {
-        let store = LocalPackStore::new();
+        let store = MemoryBlobStore::new();
         let hash = store.put(Bytes::from_static(b"payload")).await.unwrap();
         let got = store.get(&hash).await.unwrap();
         assert_eq!(got, Bytes::from_static(b"payload"));
@@ -142,7 +139,7 @@ mod tests {
 
     #[tokio::test]
     async fn put_is_idempotent_and_stores_once() {
-        let store = LocalPackStore::new();
+        let store = MemoryBlobStore::new();
         let first = store.put(Bytes::from_static(b"dup")).await.unwrap();
         let second = store.put(Bytes::from_static(b"dup")).await.unwrap();
         assert_eq!(first, second);
@@ -153,8 +150,8 @@ mod tests {
     async fn distinct_tenant_stores_are_independent() {
         // One store per tenant: the store *is* the tenant. Two tenants are two
         // separate instances and share nothing.
-        let tenant_a = LocalPackStore::new();
-        let tenant_b = LocalPackStore::new();
+        let tenant_a = MemoryBlobStore::new();
+        let tenant_b = MemoryBlobStore::new();
         let hash = tenant_a.put(Bytes::from_static(b"shared")).await.unwrap();
         assert!(tenant_a.has(&hash).await.unwrap());
         assert!(
@@ -167,7 +164,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_range_slices_stored_bytes() {
-        let store = LocalPackStore::new();
+        let store = MemoryBlobStore::new();
         let hash = store.put(Bytes::from_static(b"0123456789")).await.unwrap();
         let mid = store.get_range(&hash, 2..5).await.unwrap();
         assert_eq!(mid, Bytes::from_static(b"234"));
@@ -175,7 +172,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_range_rejects_out_of_bounds() {
-        let store = LocalPackStore::new();
+        let store = MemoryBlobStore::new();
         let hash = store.put(Bytes::from_static(b"short")).await.unwrap();
         let err = store.get_range(&hash, 0..99).await.unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
@@ -183,14 +180,14 @@ mod tests {
 
     #[tokio::test]
     async fn get_missing_is_not_found() {
-        let store = LocalPackStore::new();
+        let store = MemoryBlobStore::new();
         let err = store.get(&BlobHash::of(b"absent")).await.unwrap_err();
         assert!(matches!(err, Error::NotFound(_)));
     }
 
     #[tokio::test]
     async fn release_removes_the_blob() {
-        let store = LocalPackStore::new();
+        let store = MemoryBlobStore::new();
         let hash = store.put(Bytes::from_static(b"temp")).await.unwrap();
         store.release(&hash).await.unwrap();
         assert!(!store.has(&hash).await.unwrap());
@@ -200,7 +197,7 @@ mod tests {
     async fn put_stream_and_get_stream_round_trip() {
         use tokio::io::AsyncReadExt as _;
 
-        let store = LocalPackStore::new();
+        let store = MemoryBlobStore::new();
         let src: ByteStream = Box::new(Cursor::new(Bytes::from_static(b"streamed")));
         let hash = store.put_stream(src).await.unwrap();
 

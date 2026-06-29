@@ -115,9 +115,10 @@ impl ConvexRegistry {
             }) => &self.node26_runtime_lane,
             Some(ConvexRuntimeSelection {
                 engine: nimbus_runtime::RuntimeBackendKind::V8,
-                compatibility_target: RuntimeCompatibilityTarget::BunJsc,
+                compatibility_target:
+                    RuntimeCompatibilityTarget::BunJsc | RuntimeCompatibilityTarget::WasmComponent,
                 ..
-            }) => unreachable!("V8/BunJsc target manifests are rejected at registry load"),
+            }) => unreachable!("V8 non-V8-target manifests are rejected at registry load"),
             Some(ConvexRuntimeSelection {
                 engine: nimbus_runtime::RuntimeBackendKind::V8,
                 compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
@@ -128,6 +129,10 @@ impl ConvexRegistry {
                 engine: nimbus_runtime::RuntimeBackendKind::BunJsc,
                 ..
             }) => &self.bun_jsc_runtime_lane,
+            Some(ConvexRuntimeSelection {
+                engine: nimbus_runtime::RuntimeBackendKind::Wasmtime,
+                ..
+            }) => unreachable!("Wasmtime Convex manifests are rejected at registry load"),
         }
     }
 
@@ -239,6 +244,27 @@ mod tests {
             RuntimeHostPressureLevel::Critical
         );
         assert_eq!(policy.host_resource_decision().effective_dispatch_seats, 0);
+    }
+
+    #[test]
+    fn convex_registry_host_governor_preserves_runtime_metrics_identity() {
+        let registry = ConvexRegistry::empty();
+        registry.runtime_policy().metrics().record_worker_dispatch();
+
+        let governed = registry.clone().with_runtime_host_governor(
+            two_seat_runtime_host_budget(),
+            critical_runtime_host_pressure_source(),
+            nimbus_runtime::RuntimeAdaptiveControllerSettings::default(),
+        );
+        governed.runtime_policy().metrics().record_worker_dispatch();
+
+        assert_eq!(
+            registry
+                .runtime_metrics_snapshot()
+                .worker_dispatched_invocations,
+            2,
+            "server-side Convex registry overlays must not fork runtime metrics"
+        );
     }
 
     #[test]

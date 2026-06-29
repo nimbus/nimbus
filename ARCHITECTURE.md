@@ -137,6 +137,10 @@ store uses a MessagePack document codec — behind the same provider traits.
 with watchdogs, limits, metrics, and Node-compatibility layers. The default
 backend is V8; a feature-gated Bun/JSC backend exists under
 `crates/nimbus-runtime/src/backends/bun_jsc/` (non-default, fail-closed).
+Wasmtime runs WASM component bundles under the same `RuntimePolicy` and
+`HostBridge` authority model; filesystem and egress bindings remain owned by
+the NFS and NEG plans, respectively
+(`docs/private/operating/wasmtime-backend.md`).
 Host calls cross the `HostBridge` trait into `nimbus-bridge`, which routes
 them to the engine.
 → <https://nimbusdocs.com/concepts/architecture/runtime-isolates/>

@@ -1,7 +1,7 @@
 //! RESP-native Nimbus KV listener foundation.
 //!
 //! The listener is authenticated and tenant-bound. String storage routes through
-//! the F3 tiering layer; conformance expansion lands in later NKV0 bands.
+//! the tenant-aware storage tiering seam.
 
 mod metrics;
 mod server;

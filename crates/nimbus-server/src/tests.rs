@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
 use std::sync::{
@@ -19,10 +19,7 @@ use nimbus_core::{
     TypedScalarValue,
 };
 use nimbus_engine::{Engine, run_scheduler};
-use nimbus_runtime::{
-    RuntimeBundle, RuntimeMetricsSnapshot, RuntimeRequestCorrelationSnapshot,
-    RuntimeTenantMetricsSnapshot,
-};
+use nimbus_runtime::{RuntimeBundle, RuntimeMetricsSnapshot};
 pub(crate) use nimbus_testing::{
     DeterministicHarness, DeterministicTestCase, EngineFixture, GeneratedTaskHistory,
     GeneratedTaskHistorySeedCase, GeneratedTaskPageExpectation, GeneratedTaskRecord,
@@ -37,11 +34,10 @@ use ring::rand::SystemRandom;
 use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, Ed25519KeyPair, KeyPair};
 use serde_json::json;
 use tempfile::tempdir;
-use tokio::io::AsyncWriteExt;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio::sync::watch;
-use tokio::time::{Duration, Instant, timeout};
+use tokio::time::{Duration, timeout};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode as WsCloseCode;
@@ -50,9 +46,9 @@ use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 
 use crate::{
-    ConvexRegistry, FirebaseConfig, LicenseDocument, LicenseEntitlements, LicenseKind,
-    LicenseSourceInfo, LicenseSourceKind, LicenseState, ProjectTenantRegistry, RouterOptions,
-    ServeOptions, build_router, serve,
+    CloudflareConfig, ConvexRegistry, FirebaseConfig, LicenseDocument, LicenseEntitlements,
+    LicenseKind, LicenseSourceInfo, LicenseSourceKind, LicenseState, ProjectTenantRegistry,
+    RouterOptions, ServeOptions, build_router, serve,
 };
 use crate::router::RouterBuildConfig;
 use crate::adapters::firebase::grpc::generated::google::firestore::v1::document_transform::FieldTransform as GrpcFieldTransform;
@@ -231,6 +227,7 @@ async fn router_prepare_system_tenant_records_enabled_adapter_listeners() {
     RouterBuildConfig::core(fixture.engine())
         .with_system_convex_registry(convex_registry(json!([])))
         .with_firebase(FirebaseConfig::new())
+        .with_cloudflare(CloudflareConfig::default())
         .with_listen_addr(listen_addr)
         .prepare_system_tenant()
         .await
@@ -255,6 +252,7 @@ async fn router_prepare_system_tenant_records_enabled_adapter_listeners() {
     assert!(has_listener("native", "http"));
     assert!(has_listener("convex", "websocket"));
     assert!(has_listener("firebase", "http+websocket"));
+    assert!(has_listener("cloudflare", "http"));
 }
 
 fn header_csv_values(response: &reqwest::Response, header_name: &str) -> BTreeSet<String> {
@@ -1368,194 +1366,131 @@ fn convex_registry_with_routes_and_bundle_and_auth_and_schema(
     registry
 }
 
-struct PendingHttpRequest {
-    _stream: TcpStream,
+struct HeldJsonPostRequest {
+    handle: tokio::task::JoinHandle<Result<StatusCode, reqwest::Error>>,
+}
+
+impl Drop for HeldJsonPostRequest {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
 }
 
 async fn open_json_post_stream(
     server: &ServerFixture,
     path: &str,
     body: &serde_json::Value,
-) -> PendingHttpRequest {
-    let addr = server
-        .http_url("")
-        .trim_start_matches("http://")
-        .to_string();
-    let body = serde_json::to_string(body).expect("request body should serialize");
-    let mut stream = TcpStream::connect(&addr)
-        .await
-        .expect("raw HTTP client should connect");
-    let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    stream
-        .write_all(request.as_bytes())
-        .await
-        .expect("raw HTTP request should write");
-    stream.flush().await.expect("raw HTTP request should flush");
-    PendingHttpRequest { _stream: stream }
+) -> HeldJsonPostRequest {
+    let client = server.client().clone();
+    let url = server.http_url(path);
+    let body = body.clone();
+    let handle = tokio::spawn(async move {
+        client
+            .post(url)
+            .json(&body)
+            .send()
+            .await
+            .map(|response| response.status())
+    });
+    tokio::task::yield_now().await;
+    if handle.is_finished() {
+        let outcome = handle
+            .await
+            .expect("held JSON POST task should not panic before returning");
+        panic!("JSON POST request completed before test could hold it open: {outcome:?}");
+    }
+    HeldJsonPostRequest { handle }
 }
 
-async fn wait_for_server_runtime_metrics(
-    server: &ServerFixture,
+async fn wait_for_runtime_metrics(
+    registry: &ConvexRegistry,
     description: &str,
-    predicate: impl Fn(&RuntimeMetricsSnapshot) -> bool,
+    predicate: impl Fn(&nimbus_runtime::RuntimeMetricsSnapshot) -> bool,
 ) -> RuntimeMetricsSnapshot {
-    wait_for_server_runtime_metrics_case_impl(server, description.to_string(), predicate).await
+    wait_for_runtime_metrics_case_impl(registry, description.to_string(), predicate).await
 }
 
-async fn wait_for_server_runtime_metrics_case(
-    server: &ServerFixture,
+async fn wait_for_runtime_metrics_case(
+    registry: &ConvexRegistry,
     case: DeterministicTestCase,
     description: &str,
-    predicate: impl Fn(&RuntimeMetricsSnapshot) -> bool,
+    predicate: impl Fn(&nimbus_runtime::RuntimeMetricsSnapshot) -> bool,
 ) -> RuntimeMetricsSnapshot {
-    wait_for_server_runtime_metrics_case_impl(server, case.failure_context(description), predicate)
-        .await
+    wait_for_runtime_metrics_case_impl(registry, case.failure_context(description), predicate).await
 }
 
-async fn wait_for_server_runtime_metrics_case_impl(
-    server: &ServerFixture,
+async fn wait_for_runtime_metrics_case_impl(
+    registry: &ConvexRegistry,
     description: String,
     predicate: impl Fn(&RuntimeMetricsSnapshot) -> bool,
 ) -> RuntimeMetricsSnapshot {
-    // Synchronization budget for a runtime-metrics condition (e.g. "the
-    // blocking query has dispatched onto a worker"), NOT an assertion. The
-    // first dispatch pays a cold-start cost -- worker-thread spawn + per-job
-    // tokio runtime build + first V8 isolate warm-up -- that has crossed 20s
-    // on a resource-contended CI shard. This loop only ever awaits a positive
-    // condition and panics on timeout, so a wider budget buys slack on a loaded
-    // host, costs nothing on a healthy one, and never weakens the
-    // post-conditions these tests assert once the condition is met.
-    let timeout = Duration::from_secs(45);
+    // Synchronization budget for a runtime-metrics condition, not a behavioral
+    // assertion. The first dispatch can pay multi-shard CI cold-start costs
+    // (worker-thread spawn, per-job tokio runtime build, and first V8 isolate
+    // warm-up). Timeout diagnostics include the last snapshot so failures show
+    // whether work was never routed, merely queued, or rejected early.
+    let timeout = Duration::from_secs(60);
     let poll_interval = Duration::from_millis(25);
-    let started_at = Instant::now();
+    let started_at = tokio::time::Instant::now();
     let mut attempts = 0_u64;
     loop {
         attempts += 1;
-        let snapshots = server_runtime_metric_snapshots(server).await;
-        for snapshot in &snapshots {
-            if predicate(snapshot) {
-                return snapshot.clone();
-            }
+        let metrics = registry.runtime_metrics_snapshot();
+        if predicate(&metrics) {
+            return metrics;
         }
         let elapsed = started_at.elapsed();
         if elapsed >= timeout {
+            let lanes = registry
+                .runtime_lane_diagnostics()
+                .into_iter()
+                .map(|lane| {
+                    let metrics = lane.metrics;
+                    format!(
+                        "{}: default={}, linked={:?}, started={}, active={}, queued={}, dispatched={}, completed={}, canceled={}, rejected={}, correlations={}",
+                        lane.lane_name,
+                        lane.default_lane,
+                        lane.execution_adapter_state,
+                        lane.executor_started,
+                        metrics.active_runtime_instances,
+                        metrics.queued_invocations,
+                        metrics.worker_dispatched_invocations,
+                        metrics.completed_invocations,
+                        metrics.canceled_invocations,
+                        metrics.rejected_invocations,
+                        metrics.request_correlation_records
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
             panic!(
-                "timed out waiting for {description} after {elapsed:?} (budget {timeout:?}, \
-                 poll interval {poll_interval:?}, attempts {attempts}); last runtime metrics \
-                 snapshots by lane: {snapshots:#?}"
+                "timed out waiting for {description} after {elapsed:?} \
+                 (budget {timeout:?}, poll interval {poll_interval:?}, attempts {attempts}, \
+                 last runtime metrics: {}, runtime lanes: {lanes})",
+                runtime_metrics_test_summary(&metrics)
             );
         }
         tokio::time::sleep(poll_interval).await;
     }
 }
 
-async fn server_runtime_metric_snapshots(server: &ServerFixture) -> Vec<RuntimeMetricsSnapshot> {
-    let response = server
-        .client()
-        .get(server.http_url("/debug/runtime/metrics"))
-        .send()
-        .await
-        .expect("runtime diagnostics request should send");
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = response
-        .json::<serde_json::Value>()
-        .await
-        .expect("runtime diagnostics body should parse");
-    let lanes = body["lanes"]
-        .as_array()
-        .expect("runtime diagnostics should include lane snapshots");
-    lanes
-        .iter()
-        .map(|lane| runtime_metrics_snapshot_from_json(&lane["metrics"]))
-        .collect()
-}
-
-fn runtime_metrics_snapshot_from_json(metrics: &serde_json::Value) -> RuntimeMetricsSnapshot {
-    RuntimeMetricsSnapshot {
-        active_runtime_instances: json_usize(metrics, "active_runtime_instances"),
-        queued_invocations: json_usize(metrics, "queued_invocations"),
-        worker_dispatched_invocations: json_u64(metrics, "worker_dispatched_invocations"),
-        runtime_pool_hits: json_u64(metrics, "runtime_pool_hits"),
-        runtime_pool_misses: json_u64(metrics, "runtime_pool_misses"),
-        runtime_pool_replacements: json_u64(metrics, "runtime_pool_replacements"),
-        started_invocations: json_u64(metrics, "started_invocations"),
-        completed_invocations: json_u64(metrics, "completed_invocations"),
-        timed_out_invocations: json_u64(metrics, "timed_out_invocations"),
-        canceled_invocations: json_u64(metrics, "canceled_invocations"),
-        rejected_invocations: json_u64(metrics, "rejected_invocations"),
-        queued_canceled_invocations: json_u64(metrics, "queued_canceled_invocations"),
-        in_flight_canceled_invocations: json_u64(metrics, "in_flight_canceled_invocations"),
-        disconnect_canceled_invocations: json_u64(metrics, "disconnect_canceled_invocations"),
-        explicit_canceled_invocations: json_u64(metrics, "explicit_canceled_invocations"),
-        tenants: runtime_tenant_metrics_from_json(metrics),
-        recent_request_correlations: runtime_request_correlations_from_json(metrics),
-        ..Default::default()
-    }
-}
-
-fn runtime_tenant_metrics_from_json(
-    metrics: &serde_json::Value,
-) -> BTreeMap<String, RuntimeTenantMetricsSnapshot> {
-    let Some(tenants) = metrics["tenants"].as_object() else {
-        return BTreeMap::new();
-    };
-    tenants
-        .iter()
-        .map(|(tenant_id, metrics)| {
-            let snapshot = RuntimeTenantMetricsSnapshot {
-                active_runtime_instances: json_usize(metrics, "active_runtime_instances"),
-                started_invocations: json_u64(metrics, "started_invocations"),
-                completed_invocations: json_u64(metrics, "completed_invocations"),
-                rejected_invocations: json_u64(metrics, "rejected_invocations"),
-                queued_canceled_invocations: json_u64(metrics, "queued_canceled_invocations"),
-                in_flight_canceled_invocations: json_u64(metrics, "in_flight_canceled_invocations"),
-                disconnect_canceled_invocations: json_u64(
-                    metrics,
-                    "disconnect_canceled_invocations",
-                ),
-                explicit_canceled_invocations: json_u64(metrics, "explicit_canceled_invocations"),
-                ..Default::default()
-            };
-            (tenant_id.clone(), snapshot)
-        })
-        .collect()
-}
-
-fn runtime_request_correlations_from_json(
-    metrics: &serde_json::Value,
-) -> Vec<RuntimeRequestCorrelationSnapshot> {
-    let Some(correlations) = metrics["recent_request_correlations"].as_array() else {
-        return Vec::new();
-    };
-    correlations
-        .iter()
-        .map(|correlation| RuntimeRequestCorrelationSnapshot {
-            invocation_id: json_u64(correlation, "invocation_id"),
-            server_request_id: json_string(correlation, "server_request_id"),
-            tenant_label: correlation["tenant_label"].as_str().map(ToOwned::to_owned),
-            function_name: json_string(correlation, "function_name"),
-            kind: json_string(correlation, "kind"),
-            is_top_level: correlation["is_top_level"].as_bool().unwrap_or(false),
-            bypasses_concurrency_limit: correlation["bypasses_concurrency_limit"]
-                .as_bool()
-                .unwrap_or(false),
-        })
-        .collect()
-}
-
-fn json_u64(value: &serde_json::Value, field: &str) -> u64 {
-    value[field].as_u64().unwrap_or(0)
-}
-
-fn json_usize(value: &serde_json::Value, field: &str) -> usize {
-    json_u64(value, field) as usize
-}
-
-fn json_string(value: &serde_json::Value, field: &str) -> String {
-    value[field].as_str().unwrap_or_default().to_owned()
+fn runtime_metrics_test_summary(metrics: &RuntimeMetricsSnapshot) -> String {
+    format!(
+        "active={}, queued={}, dispatched={}, router_dispatches={}, started={}, completed={}, canceled={}, rejected={}, pool_hits={}, pool_misses={}, pool_replacements={}, correlations={}, tenants={:?}",
+        metrics.active_runtime_instances,
+        metrics.queued_invocations,
+        metrics.worker_dispatched_invocations,
+        metrics.worker_router_dispatches,
+        metrics.started_invocations,
+        metrics.completed_invocations,
+        metrics.canceled_invocations,
+        metrics.rejected_invocations,
+        metrics.runtime_pool_hits,
+        metrics.runtime_pool_misses,
+        metrics.runtime_pool_replacements,
+        metrics.request_correlation_records,
+        metrics.tenants.keys().collect::<Vec<_>>()
+    )
 }
 
 #[path = "tests/auth_fixtures/mod.rs"]

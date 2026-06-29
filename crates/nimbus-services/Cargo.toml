@@ -19,6 +19,7 @@ nimbus-node = { path = "../nimbus-node" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-tenant = { path = "../nimbus-tenant" }
+sha2.workspace = true
 tokio.workspace = true
 ulid.workspace = true
 url.workspace = true

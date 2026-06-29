@@ -167,6 +167,7 @@ ulid = { version = "1", features = ["serde"] }
 sys_traits = "0.1.28"
 url = "2"
 v8 = { version = "149.4.0", default-features = false, features = ["simdutf"] }
+wasmtime = "46.0.1"
 # Direct zbus is required for the session/system test-bus utilities and any
 # hand-rolled `#[proxy]` escape hatch; pin the latest 5.x (the line
 # `zbus_systemd 0.26000.0` selects via its own `zbus = "5.3"` floor) so the

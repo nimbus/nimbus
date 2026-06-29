@@ -188,6 +188,12 @@ async fn tenant_a_credential_cannot_read_tenant_b_keys() {
     let tenant_b_set = write_command(&mut tenant_b_stream, &[b"SET", b"shared", b"tenant-b"]).await;
     assert_eq!(tenant_b_set, "+OK\r\n");
 
+    let tenant_a_get = write_command(&mut tenant_a_stream, &[b"GET", b"shared"]).await;
+    assert_eq!(
+        tenant_a_get, "$-1\r\n",
+        "tenant A credential must not read tenant B's same-named key"
+    );
+
     let tenant_a_set = write_command(&mut tenant_a_stream, &[b"SET", b"shared", b"tenant-a"]).await;
     assert_eq!(tenant_a_set, "+OK\r\n");
 
@@ -204,7 +210,20 @@ async fn tenant_a_credential_cannot_read_tenant_b_keys() {
     assert_eq!(tenant_a_after_flush, "$-1\r\n");
 
     let tenant_b_after_flush = write_command(&mut tenant_b_stream, &[b"GET", b"shared"]).await;
-    assert_eq!(tenant_b_after_flush, "$8\r\ntenant-b\r\n");
+    assert_eq!(
+        tenant_b_after_flush, "$8\r\ntenant-b\r\n",
+        "tenant A FLUSHALL must only clear tenant A's keyspace"
+    );
+
+    let metrics = write_command(&mut tenant_b_stream, &[b"NIMBUS.METRICS"]).await;
+    assert!(
+        metrics.contains("durable_writes_started:3"),
+        "operator metrics must include writes routed through every tenant, got {metrics:?}"
+    );
+    assert!(
+        metrics.contains("durable_writes_completed:3"),
+        "operator metrics must include completed writes routed through every tenant, got {metrics:?}"
+    );
 
     let cross_tenant = write_command(&mut tenant_a_stream, &[b"SELECT", b"tenant-b"]).await;
     assert!(

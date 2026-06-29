@@ -18,7 +18,7 @@ use crate::limits::{
     RuntimePolicy, RuntimePoolKind, RuntimePreset, RuntimeProfile, RuntimeRoutingAffinity,
     RuntimeTenantBudget,
 };
-use crate::runtime::{InvocationKind, InvocationRequest, RuntimeBundle};
+use crate::runtime::{InvocationKind, InvocationRequest, RuntimeBundle, RuntimeComponentWorld};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -214,6 +214,7 @@ impl RuntimePoolStrictAuthorityFacts {
 struct RuntimePoolBundleAuthorityFacts {
     tenant_label: Option<String>,
     content_kind: RuntimeBundleContentKind,
+    target_world: Option<RuntimeComponentWorld>,
     entrypoint_kind: &'static str,
     entrypoint: PathBuf,
     module_root: PathBuf,
@@ -226,6 +227,7 @@ impl RuntimePoolBundleAuthorityFacts {
         Ok(Self {
             tenant_label: identity.tenant_label().map(str::to_owned),
             content_kind: identity.content_kind(),
+            target_world: identity.target_world(),
             entrypoint_kind: match bundle.entrypoint_kind() {
                 crate::runtime::RuntimeBundleEntrypointKind::Main => "main",
                 crate::runtime::RuntimeBundleEntrypointKind::Side => "side",
@@ -582,7 +584,9 @@ fn effect_class_for_invocation_kind(kind: &InvocationKind) -> RuntimeEffectClass
             RuntimeEffectClass::ObservableRead
         }
         InvocationKind::Mutation => RuntimeEffectClass::Write,
-        InvocationKind::Action => RuntimeEffectClass::ServiceExternal,
+        InvocationKind::Action | InvocationKind::CloudflareWorkerFetch => {
+            RuntimeEffectClass::ServiceExternal
+        }
     }
 }
 
@@ -663,7 +667,9 @@ fn scheduling_class_for_invocation_kind(kind: &InvocationKind) -> RuntimeSchedul
         InvocationKind::Query | InvocationKind::PaginatedQuery => {
             RuntimeSchedulingClass::LatencySensitiveRead
         }
-        InvocationKind::Mutation | InvocationKind::Action => RuntimeSchedulingClass::Effectful,
+        InvocationKind::Mutation
+        | InvocationKind::Action
+        | InvocationKind::CloudflareWorkerFetch => RuntimeSchedulingClass::Effectful,
     }
 }
 

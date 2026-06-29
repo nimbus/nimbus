@@ -30,6 +30,10 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
         }
     ]))
     .with_runtime_limits(limits);
+    assert!(
+        registry.has_runtime_bundle_for_function("messages:spin"),
+        "request-drop fixture must route messages:spin through the runtime bundle"
+    );
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(router_for_convex(fixture.engine(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
@@ -45,8 +49,8 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
         &json!({ "name": "messages:spin", "args": {} }),
     )
     .await;
-    wait_for_server_runtime_metrics_case(
-        &server,
+    wait_for_runtime_metrics_case(
+        &registry,
         IN_FLIGHT_REQUEST_DROP_CASE,
         "runtime invocation to start",
         |metrics| {
@@ -57,8 +61,8 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
 
     drop(request);
 
-    let metrics = wait_for_server_runtime_metrics_case(
-        &server,
+    let metrics = wait_for_runtime_metrics_case(
+        &registry,
         IN_FLIGHT_REQUEST_DROP_CASE,
         "dropped runtime request cancellation",
         |metrics| metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 1,
@@ -94,8 +98,8 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
         .expect("recovery runtime query response should parse");
     assert_eq!(recovery_body, json!("after-cancel"));
 
-    let recovery_metrics = wait_for_server_runtime_metrics_case(
-        &server,
+    let recovery_metrics = wait_for_runtime_metrics_case(
+        &registry,
         IN_FLIGHT_REQUEST_DROP_CASE,
         "recovery runtime invocation after cancellation",
         |metrics| {

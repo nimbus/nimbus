@@ -187,6 +187,44 @@ impl ConvexFunctionDefinition {
                     ));
                 }
             }
+            RuntimeBackendKind::Wasmtime => {
+                if !matches!(
+                    selection.bundle_content_kind,
+                    RuntimeBundleContentKind::WasmComponent
+                ) {
+                    return Err(format!(
+                        "function {} selects Wasmtime with {:?} bundle content; Wasmtime supports only WASM component bundles",
+                        self.name, selection.bundle_content_kind
+                    ));
+                }
+                if !matches!(
+                    selection.javascript_evaluation_format,
+                    RuntimeJavaScriptEvaluationFormat::EsModule
+                ) {
+                    return Err(format!(
+                        "function {} selects Wasmtime with {:?} JavaScript evaluation format; Wasmtime does not use JavaScript program-wrapper evaluation",
+                        self.name, selection.javascript_evaluation_format
+                    ));
+                }
+                if !matches!(
+                    selection.compatibility_target,
+                    RuntimeCompatibilityTarget::WasmComponent
+                ) {
+                    return Err(format!(
+                        "function {} selects Wasmtime with {:?} compatibility target; Wasmtime functions must use WasmComponent",
+                        self.name, selection.compatibility_target
+                    ));
+                }
+                if !matches!(
+                    selection.package_resolution,
+                    ConvexRuntimePackageResolution::Bundled
+                ) {
+                    return Err(format!(
+                        "function {} selects Wasmtime with {:?} package resolution; Wasmtime component bundles must use bundled package resolution",
+                        self.name, selection.package_resolution
+                    ));
+                }
+            }
         }
 
         match self.runtime_environment {

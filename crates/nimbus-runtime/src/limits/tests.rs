@@ -142,6 +142,11 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
             .node_lts_metadata()
             .is_none()
     );
+    assert!(
+        RuntimeCompatibilityTarget::WasmComponent
+            .node_lts_metadata()
+            .is_none()
+    );
 }
 
 #[test]
@@ -169,6 +174,13 @@ fn runtime_profile_is_derived_from_v8_javascript_surface_only() {
         RuntimeProfile::for_limits(&bun_limits),
         None,
         "Bun/JSC is not silently collapsed into a V8 runtime efficiency profile"
+    );
+
+    let wasm_limits = RuntimeLimits::application_wasm_component().normalized();
+    assert_eq!(
+        RuntimeProfile::for_limits(&wasm_limits),
+        None,
+        "Wasmtime components require their own density evidence before using a V8 profile"
     );
 }
 
@@ -700,6 +712,11 @@ fn runtime_policy_clone_with_effective_plan_preserves_operational_controls() {
         cloned.host_resource_decision().host_pressure_level,
         RuntimeHostPressureLevel::High
     );
+    assert_eq!(
+        policy.metrics_snapshot().host_pressure.decisions,
+        1,
+        "policy overlays must keep reporting into the original lane metrics"
+    );
 
     let redecorated = cloned.clone_with_host_resource_governor(
         budget,
@@ -721,6 +738,36 @@ fn runtime_policy_clone_with_effective_plan_preserves_operational_controls() {
     assert_eq!(
         redecorated.host_resource_decision().host_pressure_level,
         RuntimeHostPressureLevel::Critical
+    );
+}
+
+#[test]
+fn runtime_policy_clone_with_host_governor_preserves_lane_metrics() {
+    let policy = RuntimePolicy::new(RuntimeLimits {
+        max_concurrent_runtime_instances: 2,
+        ..RuntimeLimits::default()
+    });
+    policy.metrics().record_worker_dispatch();
+    let governed = policy.clone_with_host_resource_governor(
+        RuntimeHostResourceBudget::conservative_for_logical_cpus(NonZeroUsize::new(2).unwrap()),
+        Arc::new(FixedRuntimeHostPressureSource(
+            RuntimeHostPressureSample::unavailable(
+                RuntimeMemoryPressureSample::unavailable().classify(),
+            ),
+        )),
+        RuntimeAdaptiveControllerSettings::default(),
+    );
+
+    assert_eq!(
+        governed.metrics_snapshot().worker_dispatched_invocations,
+        1,
+        "host-governor overlays must not fork lane dispatch metrics"
+    );
+    governed.metrics().record_worker_dispatch();
+    assert_eq!(
+        policy.metrics_snapshot().worker_dispatched_invocations,
+        2,
+        "host-governor overlay metrics must remain visible through the source policy"
     );
 }
 
@@ -1185,6 +1232,54 @@ fn runtime_policy_accepts_bun_jsc_only_with_proven_lockdown_profile() {
 }
 
 #[test]
+fn runtime_policy_accepts_wasmtime_component_run_to_completion_profile() {
+    let policy = RuntimePolicy::new(RuntimeLimits::application_wasm_component());
+    let limits = policy.limits();
+    assert_eq!(limits.backend_kind, RuntimeBackendKind::Wasmtime);
+    assert_eq!(
+        limits.backend_trust_tier,
+        RuntimeBackendTrustTier::InProcessUntrusted
+    );
+    assert_eq!(
+        limits.backend_lockdown_profile,
+        RuntimeBackendLockdownProfile::WasmtimeComponentModel
+    );
+    assert_eq!(
+        limits.backend_lifecycle_policy,
+        RuntimeBackendLifecyclePolicy::WasmtimePrecompiledModuleCache
+    );
+    assert_eq!(
+        limits.bundle_content_kind,
+        RuntimeBundleContentKind::WasmComponent
+    );
+    assert_eq!(
+        limits.javascript_evaluation_format,
+        RuntimeJavaScriptEvaluationFormat::EsModule
+    );
+    assert_eq!(
+        limits.compatibility_target,
+        RuntimeCompatibilityTarget::WasmComponent
+    );
+    assert_eq!(
+        limits.execution_model,
+        RuntimeExecutionModel::RunToCompletion
+    );
+    assert_eq!(limits.language, RuntimeLanguage::WasmComponent);
+    assert_eq!(
+        limits.runtime_pool_kind,
+        RuntimePoolKind::PrecompiledModuleCache
+    );
+    assert_eq!(
+        limits.memory_enforcement,
+        RuntimeMemoryEnforcement::WasmtimeResourceLimiter
+    );
+    assert!(limits.grants.run.is_empty());
+    assert!(limits.grants.ffi.is_empty());
+    assert!(limits.grants.net_connect.is_empty());
+    assert!(limits.grants.net_listen.is_empty());
+}
+
+#[test]
 fn runtime_pool_kind_exposes_engine_owned_diagnostics() {
     assert_eq!(
         serde_json::to_value(RuntimePoolKind::StartupSnapshotCache).unwrap(),
@@ -1207,12 +1302,24 @@ fn runtime_pool_kind_exposes_engine_owned_diagnostics() {
         serde_json::json!("bun_jsc_fresh_discard")
     );
     assert_eq!(
+        serde_json::to_value(RuntimePoolKind::PrecompiledModuleCache).unwrap(),
+        serde_json::json!("precompiled_module_cache")
+    );
+    assert_eq!(
+        serde_json::to_value(RuntimePoolKind::RetainedStorePool).unwrap(),
+        serde_json::json!("retained_store_pool")
+    );
+    assert_eq!(
         serde_json::to_value(RuntimeMemoryEnforcement::V8IsolateHeapLimit).unwrap(),
         serde_json::json!("v8_isolate_heap_limit")
     );
     assert_eq!(
         serde_json::to_value(RuntimeMemoryEnforcement::OuterQuotaRequired).unwrap(),
         serde_json::json!("outer_quota_required")
+    );
+    assert_eq!(
+        serde_json::to_value(RuntimeMemoryEnforcement::WasmtimeResourceLimiter).unwrap(),
+        serde_json::json!("wasmtime_resource_limiter")
     );
 
     let bun_trusted_retained = RuntimeLimits {
@@ -1259,6 +1366,23 @@ fn runtime_pool_kind_exposes_engine_owned_diagnostics() {
     );
     assert_eq!(
         v8_warm_context_recycle.reset_capabilities(),
+        RuntimeResetCapabilities {
+            op_state_per_invocation: true,
+            bootstrap_state_per_invocation: true,
+            user_module_state_per_invocation: true,
+        }
+    );
+
+    let wasmtime_precompiled_cache = RuntimeLimits {
+        runtime_pool_kind: RuntimePoolKind::PrecompiledModuleCache,
+        ..RuntimeLimits::application_wasm_component()
+    };
+    assert_eq!(
+        wasmtime_precompiled_cache.module_state_semantics(),
+        RuntimeModuleStateSemantics::FreshPerInvocation
+    );
+    assert_eq!(
+        wasmtime_precompiled_cache.reset_capabilities(),
         RuntimeResetCapabilities {
             op_state_per_invocation: true,
             bootstrap_state_per_invocation: true,
@@ -1361,6 +1485,8 @@ fn runtime_policy_rejects_unsupported_engine_axis_combinations() {
     for runtime_pool_kind in [
         RuntimePoolKind::BunJscTrustedRetained,
         RuntimePoolKind::BunJscFreshDiscard,
+        RuntimePoolKind::PrecompiledModuleCache,
+        RuntimePoolKind::RetainedStorePool,
     ] {
         let bun_pool_on_v8 = std::panic::catch_unwind(|| {
             RuntimePolicy::new(RuntimeLimits {
@@ -1385,6 +1511,18 @@ fn runtime_policy_rejects_unsupported_engine_axis_combinations() {
     assert!(
         bun_target_on_v8.is_err(),
         "V8 must reject Bun/JSC compatibility target"
+    );
+
+    let wasm_target_on_v8 = std::panic::catch_unwind(|| {
+        RuntimePolicy::new(RuntimeLimits {
+            backend_kind: RuntimeBackendKind::V8,
+            compatibility_target: RuntimeCompatibilityTarget::WasmComponent,
+            ..RuntimeLimits::default()
+        })
+    });
+    assert!(
+        wasm_target_on_v8.is_err(),
+        "V8 must reject WASM component compatibility target"
     );
 
     let outer_quota_on_v8 = std::panic::catch_unwind(|| {
@@ -1521,6 +1659,33 @@ fn runtime_policy_rejects_unsupported_engine_axis_combinations() {
         bun_jsc_trusted_profile_with_v8_pool.is_err(),
         "Bun/JSC must reject V8/Deno pool kinds"
     );
+
+    let wasmtime_with_javascript_content = std::panic::catch_unwind(|| {
+        RuntimePolicy::new(RuntimeLimits {
+            bundle_content_kind: RuntimeBundleContentKind::JavaScript,
+            ..RuntimeLimits::application_wasm_component()
+        })
+    });
+    assert!(
+        wasmtime_with_javascript_content.is_err(),
+        "Wasmtime must require WASM component bundle content"
+    );
+
+    let wasmtime_with_cooperative_fuel =
+        RuntimePolicy::new(RuntimeLimits::application_wasm_component_cooperative_fuel());
+    assert_eq!(
+        wasmtime_with_cooperative_fuel.limits().execution_model,
+        RuntimeExecutionModel::CooperativeFuel,
+        "Wasmtime W5 wires cooperative fuel through the generic park/resume scheduler"
+    );
+
+    let wasmtime_with_retained_store =
+        RuntimePolicy::new(RuntimeLimits::application_wasm_component_retained_store_pool());
+    assert_eq!(
+        wasmtime_with_retained_store.limits().runtime_pool_kind,
+        RuntimePoolKind::RetainedStorePool,
+        "Wasmtime W6 wires retained Store pooling with authority reset"
+    );
 }
 
 #[test]
@@ -1540,5 +1705,21 @@ fn runtime_policy_rejects_bundle_content_kind_mismatches() {
             .to_string()
             .contains("runtime bundle content kind WasmComponent does not match"),
         "unexpected content-kind mismatch error: {error}"
+    );
+
+    let wasm_policy = RuntimePolicy::new(RuntimeLimits::application_wasm_component());
+    assert!(
+        wasm_policy
+            .validate_bundle_content_kind(RuntimeBundleContentKind::WasmComponent)
+            .is_ok()
+    );
+    let error = wasm_policy
+        .validate_bundle_content_kind(RuntimeBundleContentKind::JavaScript)
+        .expect_err("Wasmtime policy should reject JavaScript content");
+    assert!(
+        error
+            .to_string()
+            .contains("runtime bundle content kind JavaScript does not match"),
+        "unexpected Wasmtime content-kind mismatch error: {error}"
     );
 }

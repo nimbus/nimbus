@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use super::CooperativeWorkerLoop;
+use super::backend::{CooperativeBackendDriver, CooperativeBackendSlot};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CooperativeSlotState {
@@ -29,7 +30,7 @@ pub(super) struct CooperativeScheduler<T> {
     parked: BTreeSet<usize>,
 }
 
-impl CooperativeWorkerLoop {
+impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
     pub(super) fn drain_ready_parked_slots(&mut self) {
         self.scheduler
             .resume_parked_where(|invocation| invocation.slot.is_ready_to_resume());

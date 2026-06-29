@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
-use crate::backends::v8::embedder::{JsRuntime, RuntimeOptions, ValidateImportAttributesCb, v8};
+use crate::backends::v8::embedder::{
+    JsRuntime, RuntimeOptions, SharedArrayBufferStore, ValidateImportAttributesCb, v8,
+};
 use crate::backends::v8::{
     RuntimeStartupSnapshotKey, V8RuntimeConstructionMode, V8StartupSnapshot,
     create_v8_startup_snapshot,
@@ -249,7 +251,7 @@ impl NimbusRuntime {
             residual_lazy_esm_sources,
             extension_replay_js_sources,
             extension_replay_esm_sources,
-            shared_array_buffer_store: None,
+            shared_array_buffer_store: Some(SharedArrayBufferStore::default()),
             validate_import_attributes_cb: node_import_attribute_validator(
                 self.policy.limits().compatibility_target,
             ),

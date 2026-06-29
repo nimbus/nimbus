@@ -81,6 +81,17 @@ pub(super) struct RuntimeGlobalCounters {
     warm_pool_misses: AtomicU64,
     warm_pool_retirements: AtomicU64,
     warm_pool_discard_unquiesced: AtomicU64,
+    wasmtime_module_cache_hits: AtomicU64,
+    wasmtime_module_cache_misses: AtomicU64,
+    wasmtime_module_compilations: AtomicU64,
+    wasmtime_module_compilation_nanos_total: AtomicU64,
+    wasmtime_fuel_consumed_total: AtomicU64,
+    wasmtime_fuel_exhaustions: AtomicU64,
+    wasmtime_store_pool_hits: AtomicU64,
+    wasmtime_store_pool_misses: AtomicU64,
+    wasmtime_store_pool_authority_mismatches: AtomicU64,
+    wasmtime_store_pool_evictions: AtomicU64,
+    wasmtime_store_pool_retirements: AtomicU64,
     host_pressure_decisions: AtomicU64,
     host_pressure_nominal_decisions: AtomicU64,
     host_pressure_high_decisions: AtomicU64,
@@ -178,6 +189,17 @@ pub(super) struct RuntimeGlobalCountersSnapshot {
     pub warm_pool_misses: u64,
     pub warm_pool_retirements: u64,
     pub warm_pool_discard_unquiesced: u64,
+    pub wasmtime_module_cache_hits: u64,
+    pub wasmtime_module_cache_misses: u64,
+    pub wasmtime_module_compilations: u64,
+    pub wasmtime_module_compilation_nanos_total: u64,
+    pub wasmtime_fuel_consumed_total: u64,
+    pub wasmtime_fuel_exhaustions: u64,
+    pub wasmtime_store_pool_hits: u64,
+    pub wasmtime_store_pool_misses: u64,
+    pub wasmtime_store_pool_authority_mismatches: u64,
+    pub wasmtime_store_pool_evictions: u64,
+    pub wasmtime_store_pool_retirements: u64,
     pub host_pressure: RuntimeHostPressureMetricsSnapshot,
     pub adaptive_controller: RuntimeAdaptiveControllerMetricsSnapshot,
 }
@@ -485,6 +507,58 @@ impl RuntimeGlobalCounters {
             .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
+    pub(super) fn record_wasmtime_module_cache_hit(&self) {
+        self.wasmtime_module_cache_hits
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(super) fn record_wasmtime_module_cache_miss(&self) {
+        self.wasmtime_module_cache_misses
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(super) fn record_wasmtime_module_compilation_time(&self, duration: Duration) {
+        self.wasmtime_module_compilations
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+        self.wasmtime_module_compilation_nanos_total
+            .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(super) fn record_wasmtime_fuel_consumed(&self, fuel: u64) {
+        self.wasmtime_fuel_consumed_total
+            .fetch_add(fuel, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(super) fn record_wasmtime_fuel_exhaustion(&self) {
+        self.wasmtime_fuel_exhaustions
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(super) fn record_wasmtime_store_pool_hit(&self) {
+        self.wasmtime_store_pool_hits
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(super) fn record_wasmtime_store_pool_miss(&self) {
+        self.wasmtime_store_pool_misses
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(super) fn record_wasmtime_store_pool_authority_mismatch(&self) {
+        self.wasmtime_store_pool_authority_mismatches
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(super) fn record_wasmtime_store_pool_eviction(&self) {
+        self.wasmtime_store_pool_evictions
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(super) fn record_wasmtime_store_pool_retirement(&self) {
+        self.wasmtime_store_pool_retirements
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
     pub(super) fn record_host_resource_decision(&self, decision: RuntimeHostResourceDecision) {
         self.host_pressure_decisions
             .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
@@ -764,6 +838,39 @@ impl RuntimeGlobalCounters {
             warm_pool_retirements: self.warm_pool_retirements.load(DIAGNOSTIC_COUNTER_ORDERING),
             warm_pool_discard_unquiesced: self
                 .warm_pool_discard_unquiesced
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            wasmtime_module_cache_hits: self
+                .wasmtime_module_cache_hits
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            wasmtime_module_cache_misses: self
+                .wasmtime_module_cache_misses
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            wasmtime_module_compilations: self
+                .wasmtime_module_compilations
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            wasmtime_module_compilation_nanos_total: self
+                .wasmtime_module_compilation_nanos_total
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            wasmtime_fuel_consumed_total: self
+                .wasmtime_fuel_consumed_total
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            wasmtime_fuel_exhaustions: self
+                .wasmtime_fuel_exhaustions
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            wasmtime_store_pool_hits: self
+                .wasmtime_store_pool_hits
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            wasmtime_store_pool_misses: self
+                .wasmtime_store_pool_misses
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            wasmtime_store_pool_authority_mismatches: self
+                .wasmtime_store_pool_authority_mismatches
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            wasmtime_store_pool_evictions: self
+                .wasmtime_store_pool_evictions
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            wasmtime_store_pool_retirements: self
+                .wasmtime_store_pool_retirements
                 .load(DIAGNOSTIC_COUNTER_ORDERING),
             host_pressure: RuntimeHostPressureMetricsSnapshot {
                 decisions: self

@@ -7,7 +7,13 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/private/plans/node-full-substrate-realm-plan.md"
+PLAN_ACTIVE="docs/private/plans/node-full-substrate-realm-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/node-full-substrate-realm-plan.md"
+if [ -f "${PLAN_ACTIVE}" ]; then
+  PLAN="${PLAN_ACTIVE}"
+else
+  PLAN="${PLAN_ARCHIVED}"
+fi
 CARGO_MANIFEST="Cargo.toml"
 CARGO_LOCK="Cargo.lock"
 NFR1_PROOF="docs/private/plans/proof/node-full-substrate-realm/nfr1-profile-keyed-startup-snapshot.md"
@@ -39,6 +45,7 @@ DENO_JSRUNTIME="/Users/jack/src/github.com/nimbus/deno/libs/core/runtime/jsrunti
 DENO_JSREALM_TESTS="/Users/jack/src/github.com/nimbus/deno/libs/core/runtime/tests/jsrealm.rs"
 DENO_PROCESS="/Users/jack/src/github.com/nimbus/deno/ext/node/polyfills/process.ts"
 DENO_MESSAGE_PORT="/Users/jack/src/github.com/nimbus/deno/ext/web/13_message_port.js"
+DENO_OPS_BUILTIN="/Users/jack/src/github.com/nimbus/deno/libs/core/ops_builtin_v8.rs"
 DENO_STRUCTURED_CLONE_TEST="/Users/jack/src/github.com/nimbus/deno/tests/unit/structured_clone_test.ts"
 MAKEFILE_PATH="Makefile"
 CI_WORKFLOW=".github/workflows/ci.yml"
@@ -121,30 +128,37 @@ if [ -f "${STARTUP_KEY}" ] &&
   contains_all "${STARTUP_KEY}" \
     'pub\(crate\) enum RuntimeStartupSnapshotKey' \
     'WebLean' \
+    'WebLeanService' \
     'NodeFull' \
-    'for_target' \
+    'NodeFullService' \
+    'for_limits' \
     'RuntimeProfile::for_compatibility_target' \
     'snapshot_build_target' \
+    'service_extension_enabled' \
     'RuntimeCompatibilityTarget::Node22' \
     'startup_snapshot_key_collapses_node_majors_to_node_full' \
-    'startup_snapshot_key_keeps_web_and_unsupported_targets_separate' >/tmp/nfr1-startup-key-missing.txt; then
+    'startup_snapshot_key_keeps_web_and_unsupported_targets_separate' \
+    'startup_snapshot_key_partitions_optional_service_extension' >/tmp/nfr1-startup-key-missing.txt; then
   pass "startup snapshot key is a narrow internal module"
 else
   fail "RuntimeStartupSnapshotKey module is incomplete" \
     "$(cat /tmp/nfr1-startup-key-missing.txt 2>/dev/null)"
 fi
 
-step 3 "Construction uses one NodeFull snapshot cell, not per-Node-major cells"
+step 3 "Construction uses one NodeFull startup substrate, split only by service extension"
 if [ -f "${CONSTRUCTION}" ] &&
   contains_all "${CONSTRUCTION}" \
+    'WEB_STANDARD_SERVICE_BOOTSTRAP_SNAPSHOT' \
     'NODE_FULL_BOOTSTRAP_SNAPSHOT' \
-    'RuntimeStartupSnapshotKey::for_target' \
-    'snapshot_key.snapshot_build_target' >/tmp/nfr1-construction-missing.txt &&
+    'NODE_FULL_SERVICE_BOOTSTRAP_SNAPSHOT' \
+    'RuntimeStartupSnapshotKey::for_limits' \
+    'snapshot_key.snapshot_build_target' \
+    'snapshot_key.service_extension_enabled' >/tmp/nfr1-construction-missing.txt &&
   ! contains 'NODE20_BOOTSTRAP_SNAPSHOT' "${CONSTRUCTION}" &&
   ! contains 'NODE22_BOOTSTRAP_SNAPSHOT' "${CONSTRUCTION}" &&
   ! contains 'NODE24_BOOTSTRAP_SNAPSHOT' "${CONSTRUCTION}" &&
   ! contains 'NODE26_BOOTSTRAP_SNAPSHOT' "${CONSTRUCTION}"; then
-  pass "construction collapses immutable Node startup substrate to one NodeFull cell"
+  pass "construction collapses Node-major startup substrate while partitioning service extension state"
 else
   fail "construction still has per-Node-major startup snapshot state" \
     "$(cat /tmp/nfr1-construction-missing.txt 2>/dev/null)"
@@ -167,29 +181,25 @@ else
     "$(cat /tmp/nfr1-tests-missing.txt 2>/dev/null)"
 fi
 
-step 5 "NFR1 proof records exact verification and residual blocker"
+step 5 "NFR1 proof records current PR21 reconciliation verification"
 if [ -f "${NFR1_PROOF}" ] &&
   contains_all "${NFR1_PROOF}" \
     'NFR1 Profile-Keyed Startup Snapshot Proof' \
+    'PR21 NFR-R1 Reconciliation Verification' \
     'RuntimeStartupSnapshotKey' \
     'NodeFull startup snapshot cell' \
     'node_major_startup_snapshots_share_node_full_cell' \
     'node_full_shared_snapshot_keeps_exact_node_target_metadata' \
-    'cycle72_esm_cjs_named_error' \
-    'node24_default_lane_executes_cycle53_fs_symlink_batch' \
+    'startup_snapshot_key_partitions_optional_service_extension' \
     'cargo test -p nimbus-runtime startup_snapshot_key --lib -- --nocapture' \
-    '2 passed; 0 failed; 0 ignored; 0 measured; 1048 filtered out' \
+    '3 passed; 0 failed; 0 ignored; 0 measured; 1230 filtered out' \
     'cargo test -p nimbus-runtime node_major_startup_snapshots_share_node_full_cell --lib -- --nocapture' \
-    '1 passed; 0 failed; 0 ignored; 0 measured; 1049 filtered out' \
+    '1 passed; 0 failed; 0 ignored; 0 measured; 1232 filtered out' \
     'cargo test -p nimbus-runtime node_full_shared_snapshot_keeps_exact_node_target_metadata --lib -- --nocapture' \
-    '1 passed; 0 failed; 0 ignored; 0 measured; 1049 filtered out' \
-    'cargo test -p nimbus-runtime cycle72_esm_cjs_named_error --lib -- --nocapture' \
-    '2 passed; 0 failed; 0 ignored; 0 measured; 1048 filtered out' \
-    'cargo test -p nimbus-runtime node24_default_lane_executes_cycle53_fs_symlink_batch --lib -- --nocapture' \
-    '1 passed; 0 failed; 0 ignored; 0 measured; 1049 filtered out' \
-    'NFR2-NFR6 remain blocked until REC0-REC5 close' \
-    'Summary: 6 passed, 0 failed' >/tmp/nfr1-proof-missing.txt; then
-  pass "NFR1 proof records exact commands, counts, and the REC blocker"
+    'bash scripts/verify-node-full-substrate-realm.sh' \
+    'Summary: 11 passed, 4 failed' \
+    'R2-R5 remain open' >/tmp/nfr1-proof-missing.txt; then
+  pass "NFR1 proof records exact current commands, counts, and remaining R2-R5 failures"
 else
   fail "NFR1 proof artifact is incomplete" \
     "$(cat /tmp/nfr1-proof-missing.txt 2>/dev/null)"
@@ -213,8 +223,8 @@ if [ -f "${NFR2_PROOF}" ] &&
   contains_all "${NFR2_PROOF}" \
     'NFR2 Deno Realm Seam Inventory' \
     'Status: `done`' \
-    '1fdb7a09a8567a827e184361b294f44f91b35e4c' \
-    'v2\.8\.3-nimbus\.78' \
+    '5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52' \
+    'v2\.9\.0-nimbus\.2' \
     'JsRuntime::create_realm' \
     'init_extension_js_in_realm' \
     'load_main_es_module_in_realm' \
@@ -224,7 +234,7 @@ if [ -f "${NFR2_PROOF}" ] &&
     'with_event_loop_promise_in_realm' \
     'poll_event_loop_in_realm' \
     'realm-scoped extension JavaScript replay' \
-    'Node `process` / `module` lazy-load cycle' >/tmp/nfr2-proof-api-missing.txt &&
+    'Node `process` / `module` lazy-loader shape' >/tmp/nfr2-proof-api-missing.txt &&
   contains_all "${DENO_JSRUNTIME}" \
     'pub fn create_realm' \
     'pub fn init_extension_js_in_realm' \
@@ -246,8 +256,9 @@ if [ -f "${NFR2_PROOF}" ] &&
     'init_extension_js_in_realm_replays_snapshot_seeded_file_backed_extension_modules' >/tmp/nfr2-deno-tests-missing.txt &&
   contains_all "${DENO_PROCESS}" \
     'core\.createLazyLoader\("node:module"\)' \
-    'function getModule\(\)' \
-    'getModule\(\)\._extensions\["\.node"\]' >/tmp/nfr2-deno-process-missing.txt; then
+    'const lazyNodeModule' \
+    'lazyNodeModule\(\)\.default\._extensions\["\.node"\]' \
+    'lazyNodeModule\(\)\.getBuiltinModule' >/tmp/nfr2-deno-process-missing.txt; then
   pass "NFR2 records available Deno realm APIs including extension replay"
 else
   fail "NFR2 Deno realm API inventory is incomplete" \
@@ -275,27 +286,27 @@ else
     "$(cat /tmp/nfr2-authority-missing.txt 2>/dev/null)"
 fi
 
-step 9 "NFR2 focused verification, historical Deno tag, current pin, and REC host-session fix are recorded"
+step 9 "NFR2 focused verification, current Deno tag, current pin, and REC host-session fix are recorded"
 if [ -f "${NFR2_PROOF}" ] &&
   [ -f "${POOL_REUSE_TESTS}" ] &&
-  contains 'v2\.8\.3-nimbus\.78' "${NFR2_PROOF}" &&
-  contains '1fdb7a09a8567a827e184361b294f44f91b35e4c' "${NFR2_PROOF}" &&
-  contains 'v2\.8\.3-nimbus\.79#828cd062096fc765d672f8678b8b39f9cca148c6' "${CARGO_LOCK}" &&
+  contains 'v2\.9\.0-nimbus\.3' "${NFR2_PROOF}" &&
+  contains 'f3e922a9dcc30234012f002b763f0c8da327ca40' "${NFR2_PROOF}" &&
+  contains 'v2\.9\.0-nimbus\.3#f3e922a9dcc30234012f002b763f0c8da327ca40' "${CARGO_LOCK}" &&
   contains_all "${NFR2_PROOF}" \
     "CARGO_ENCODED_RUSTFLAGS='' cargo test -p deno_core create_realm --lib -- --nocapture" \
-    '2 passed; 0 failed; 0 ignored; 0 measured; 427 filtered out' \
+    '3 passed; 0 failed; 0 ignored; 0 measured; 429 filtered out' \
     "CARGO_ENCODED_RUSTFLAGS='' cargo test -p deno_core init_extension_js_in_realm --lib -- --nocapture" \
-    '3 passed; 0 failed' \
+    '3 passed; 0 failed; 0 ignored; 0 measured; 429 filtered out' \
     "CARGO_ENCODED_RUSTFLAGS='' cargo test -p deno_node --lib" \
-    '84 passed; 0 failed' \
+    '80 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out' \
     'cargo test -p nimbus-runtime fresh_realm --lib -- --nocapture' \
-    '4 passed; 0 failed; 1 ignored; 0 measured; 1062 filtered out' \
+    '32 passed; 0 failed; 32 ignored; 0 measured; 1169 filtered out' \
     '`fresh:` host-call session id' \
     '`query:<function_name>` invocation session' >/tmp/nfr2-verification-missing.txt &&
   contains '__nimbusCreateContext\(\{ request \}\)' "${POOL_REUSE_TESTS}" &&
   contains '"host_call_session_id": "query:messages:first"' "${POOL_REUSE_TESTS}" &&
   ! contains 'fresh:\$\{request.function_name\}' "${POOL_REUSE_TESTS}"; then
-  pass "NFR2 verification records historical Deno proof, current pin, and REC-aligned session use"
+  pass "NFR2 verification records current Deno proof, current pin, and REC-aligned session use"
 else
   fail "NFR2 verification evidence is incomplete" \
     "$(cat /tmp/nfr2-verification-missing.txt 2>/dev/null)"
@@ -377,10 +388,13 @@ if [ -f "${EXECUTION_PLAN}" ] &&
     'pub\(crate\) fn reset_runtime_contract' \
     'state\.put\(InstalledRuntimeContract \{ limits \}\)' >/tmp/nfr4-bootstrap-missing.txt &&
   contains_all "${DRIVER_LOADING}" \
+    'FreshRealmInvocationTrace' \
     'checkout_fresh_realm_lease' \
     'RuntimeExecutionPlan::for_realm_lease_invocation' \
     'start_fresh_realm_bundle_invocation_with_lease_and_trace' \
-    'reset_runtime_contract\(runtime, self, bundle\)' \
+    'start_fresh_realm_bundle_invocation_with_lease_and_reason_trace' \
+    'reset_runtime_contract\(runtime, self, trace\.bundle\)' \
+    'fresh_realm_module_loader' \
     'mark_realm_ready' \
     'mark_bundle_loaded' \
     'mark_invoking' \
@@ -388,6 +402,7 @@ if [ -f "${EXECUTION_PLAN}" ] &&
     'return_clean_fresh_realm_lease' \
     'condemn_dirty_fresh_realm_lease' >/tmp/nfr4-loading-missing.txt &&
   contains_all "${DRIVER_INVOCATION}" \
+    'FreshRealmInvocationTrace \{' \
     'start_fresh_realm_bundle_invocation_with_lease_and_reason_trace' \
     'resolve_fresh_realm_invocation_response_with_lease_and_trace' \
     'take_runtime_wait_until_pending' \
@@ -404,6 +419,7 @@ if [ -f "${EXECUTION_PLAN}" ] &&
     'node_full_fresh_realm_lease_denies_inspector_and_repl_in_production' \
     'node_full_fresh_realm_lease_denies_query_host_effects_before_dispatch' \
     'node_full_fresh_realm_lease_matches_startup_snapshot_for_node_fixture' \
+    '__mainRealmSentinel' \
     'mainRealmSentinelType' \
     'module\.exports' \
     'authority key mismatch' \
@@ -545,6 +561,9 @@ if [ -f "${NFR5_PROOF}" ] &&
     'RuntimeRealmLeaseCondemnationReason::TimedOut' \
     'RuntimeRealmLeaseCondemnationReason::ExternalPressure' \
     'start_fresh_realm_bundle_invocation_with_lease_and_reason_trace' >/tmp/nfr5-driver-invocation-missing.txt &&
+  contains_all "${CONSTRUCTION}" \
+    'SharedArrayBufferStore::default' \
+    'shared_array_buffer_store: Some' >/tmp/nfr5-construction-missing.txt &&
   contains_all "${EXECUTION_PLAN}" \
     'realm_lease_authority_key_partitions_permission_grants_and_node_conditions' \
     'runtime_execution_plan_keeps_node_full_ineligible_until_realm_proof' \
@@ -605,19 +624,23 @@ if [ -f "${NFR5_PROOF}" ] &&
     'routing_affinity: RuntimeRoutingAffinity' \
     'RuntimeBundleEngineCacheKey::for_limits\(limits, construction_mode\)' >/tmp/nfr5-runtime-bundle-missing.txt &&
   contains_all "${CARGO_MANIFEST}" \
-    'v2\.8\.3-nimbus\.79' >/tmp/nfr5-cargo-manifest-missing.txt &&
+    'v2\.9\.0-nimbus\.3' >/tmp/nfr5-cargo-manifest-missing.txt &&
   contains_all "${CARGO_LOCK}" \
-    'v2\.8\.3-nimbus\.79#828cd062096fc765d672f8678b8b39f9cca148c6' >/tmp/nfr5-cargo-lock-missing.txt &&
+    'v2\.9\.0-nimbus\.3#f3e922a9dcc30234012f002b763f0c8da327ca40' >/tmp/nfr5-cargo-lock-missing.txt &&
   contains_all "${DENO_MESSAGE_PORT}" \
-    'ArrayBufferPrototypeTransferToFixedLength' \
-    'detachTransferredArrayBuffersIfNeeded' \
-    'const cloned = deserializeJsMessageData\(messageData\)\[0\]' \
-    'detachTransferredArrayBuffersIfNeeded\(options\.transfer\)' >/tmp/nfr5-deno-message-port-missing.txt &&
+    'const transferredArrayBuffers = \[\]' \
+    'serializeJsMessageData\(value, options\.transfer\)' \
+    'deserializeJsMessageData\(messageData\)\[0\]' \
+    'ArrayBuffer at index' >/tmp/nfr5-deno-message-port-missing.txt &&
+  contains_all "${DENO_OPS_BUILTIN}" \
+    'shared_array_buffer_store' \
+    'buf\.detach\(None\)' \
+    'value_serializer\.transfer_array_buffer' \
+    'value_deserializer\.transfer_array_buffer' >/tmp/nfr5-deno-ops-missing.txt &&
   contains_all "${DENO_STRUCTURED_CLONE_TEST}" \
-    'structuredClone detaches transferred typed array backing store' \
-    'assertEquals\(buffer\.byteLength, 0\)' \
-    'assertEquals\(view\.byteLength, 0\)' \
-    'assertEquals\(cloned\.view\.buffer\.byteLength, 16\)' >/tmp/nfr5-deno-structured-test-missing.txt &&
+    'structuredClone\(ab, \{ transfer: \[ab\] \}\)' \
+    'ArrayBuffer at index 0 is already detached' \
+    'ab2 should not be detached after above failure' >/tmp/nfr5-deno-structured-test-missing.txt &&
   contains_all "${NODE_WATCHPOINTS}" \
     'node22_buffer_isascii_watchpoint' \
     'node20_buffer_isascii_watchpoint' \
@@ -627,8 +650,9 @@ if [ -f "${NFR5_PROOF}" ] &&
   contains_all "${NFR5_PROOF}" \
     'NFR5 Security And Cleanliness Proof' \
     'Status: `done`' \
-    'v2\.8\.3-nimbus\.79' \
-    '828cd062096fc765d672f8678b8b39f9cca148c6' \
+    'v2\.9\.0-nimbus\.3' \
+    'f3e922a9dcc30234012f002b763f0c8da327ca40' \
+    'SharedArrayBufferStore' \
     'structured-clone transfer detachment' \
     'take_runtime_wait_until_pending' \
     'drain_wait_until_with_trace' \
@@ -696,6 +720,8 @@ if [ -f "${NFR5_PROOF}" ] &&
     'cargo test -p nimbus-runtime node_full_fresh_realm_lease_condemns_heap_limit_before_reuse --lib -- --nocapture' \
     '1 passed; 0 failed; 0 ignored; 0 measured; 1108 filtered out' \
     'cargo test -p nimbus-runtime node_full_fresh_realm_lease_resets_arraybuffer_and_structured_clone_state --lib -- --nocapture' \
+    'cargo test -p nimbus-runtime isol_node_full_fresh_realm_lease_resets_arraybuffer_and_structured_clone_state --lib -- --nocapture' \
+    '1 passed; 0 failed; 0 ignored; 0 measured; 1232 filtered out' \
     'cargo test -p nimbus-runtime node_full_fresh_realm --lib -- --nocapture' \
     '25 passed; 0 failed; 0 ignored; 0 measured; 1084 filtered out' \
     'cargo test -p nimbus-runtime buffer_isascii_watchpoint --lib -- --nocapture' \
@@ -725,8 +751,8 @@ if [ -f "${NFR5_PROOF}" ] &&
     'Public Node `WarmContextRecycle` remains fail-closed by default' \
     'explicit `SameOwnerExactAuthority` proof axis' >/tmp/nfr5-proof-missing.txt &&
   contains_all "${PLAN}" \
-    'v2\.8\.3-nimbus\.79' \
-    '828cd062096fc765d672f8678b8b39f9cca148c6' \
+    'v2\.9\.0-nimbus\.3' \
+    'f3e922a9dcc30234012f002b763f0c8da327ca40' \
     'NFR5 initial security/cleanliness slice' \
     'child-process plus worker-thread resource surfaces are denied cleanly' \
     'dependency source change reloads fresh cached data' \
@@ -805,7 +831,7 @@ if [ -f "${NFR5_PROOF}" ] &&
   pass "NFR5 cleanup proof is closed and backed by focused tests"
 else
   fail "NFR5 cleanup proof is incomplete" \
-    "$(cat /tmp/nfr5-tests-missing.txt 2>/dev/null) $(cat /tmp/nfr5-node-bootstrap-missing.txt 2>/dev/null) $(cat /tmp/nfr5-bootstrap-state-missing.txt 2>/dev/null) $(cat /tmp/nfr5-driver-loading-missing.txt 2>/dev/null) $(cat /tmp/nfr5-driver-invocation-missing.txt 2>/dev/null) $(cat /tmp/nfr5-execution-plan-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-grants-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-axes-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-resources-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-tests-missing.txt 2>/dev/null) $(cat /tmp/nfr5-code-cache-missing.txt 2>/dev/null) $(cat /tmp/nfr5-runtime-bundle-missing.txt 2>/dev/null) $(cat /tmp/nfr5-cargo-manifest-missing.txt 2>/dev/null) $(cat /tmp/nfr5-cargo-lock-missing.txt 2>/dev/null) $(cat /tmp/nfr5-deno-message-port-missing.txt 2>/dev/null) $(cat /tmp/nfr5-deno-structured-test-missing.txt 2>/dev/null) $(cat /tmp/nfr5-node-watchpoints-missing.txt 2>/dev/null) $(cat /tmp/nfr5-proof-missing.txt 2>/dev/null) $(cat /tmp/nfr5-plan-missing.txt 2>/dev/null)"
+    "$(cat /tmp/nfr5-tests-missing.txt 2>/dev/null) $(cat /tmp/nfr5-node-bootstrap-missing.txt 2>/dev/null) $(cat /tmp/nfr5-bootstrap-state-missing.txt 2>/dev/null) $(cat /tmp/nfr5-driver-loading-missing.txt 2>/dev/null) $(cat /tmp/nfr5-driver-invocation-missing.txt 2>/dev/null) $(cat /tmp/nfr5-construction-missing.txt 2>/dev/null) $(cat /tmp/nfr5-execution-plan-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-grants-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-axes-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-resources-missing.txt 2>/dev/null) $(cat /tmp/nfr5-limits-tests-missing.txt 2>/dev/null) $(cat /tmp/nfr5-code-cache-missing.txt 2>/dev/null) $(cat /tmp/nfr5-runtime-bundle-missing.txt 2>/dev/null) $(cat /tmp/nfr5-cargo-manifest-missing.txt 2>/dev/null) $(cat /tmp/nfr5-cargo-lock-missing.txt 2>/dev/null) $(cat /tmp/nfr5-deno-message-port-missing.txt 2>/dev/null) $(cat /tmp/nfr5-deno-ops-missing.txt 2>/dev/null) $(cat /tmp/nfr5-deno-structured-test-missing.txt 2>/dev/null) $(cat /tmp/nfr5-node-watchpoints-missing.txt 2>/dev/null) $(cat /tmp/nfr5-proof-missing.txt 2>/dev/null) $(cat /tmp/nfr5-plan-missing.txt 2>/dev/null)"
 fi
 
 step 15 "NFR6 benchmark artifact records an evidence-backed rejection"

@@ -12,6 +12,7 @@ use tokio::sync::watch;
 use tracing::warn;
 
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
+use crate::adapters::cloudflare::CloudflareConfig;
 use crate::adapters::convex::ConvexRegistry;
 use crate::adapters::firebase::FirebaseConfig;
 use crate::error_envelope::StructuredHttpError;
@@ -32,6 +33,7 @@ pub(crate) struct AppStateConfig {
     pub(crate) system_convex_registry: Option<ConvexRegistry>,
     pub(crate) application_auth_verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
     pub(crate) cloud_functions_registry: Option<CloudFunctionsRegistry>,
+    pub(crate) cloudflare_config: Option<CloudflareConfig>,
     pub(crate) firebase_config: Option<FirebaseConfig>,
     pub(crate) license_state: LicenseState,
     pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
@@ -76,6 +78,7 @@ impl AppState {
             system_convex_registry,
             application_auth_verifier,
             cloud_functions_registry,
+            cloudflare_config,
             firebase_config,
             license_state,
             runtime_service_registry,
@@ -100,6 +103,7 @@ impl AppState {
             convex_registry,
             application_auth_verifier,
             cloud_functions_registry: cloud_functions_registry.map(Arc::new),
+            cloudflare_config: cloudflare_config.map(Arc::new),
             firebase_config: firebase_config.map(Arc::new),
         };
         Self {
@@ -208,6 +212,7 @@ pub(crate) struct DeploymentState {
     pub(crate) convex_registry: Option<Arc<ConvexRegistry>>,
     pub(crate) application_auth_verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
     pub(crate) cloud_functions_registry: Option<Arc<CloudFunctionsRegistry>>,
+    pub(crate) cloudflare_config: Option<Arc<CloudflareConfig>>,
     pub(crate) firebase_config: Option<Arc<FirebaseConfig>>,
 }
 
@@ -222,6 +227,10 @@ impl DeploymentState {
 
     pub(crate) fn cloud_functions_registry(&self) -> Option<Arc<CloudFunctionsRegistry>> {
         self.cloud_functions_registry.clone()
+    }
+
+    pub(crate) fn cloudflare_config(&self) -> Option<Arc<CloudflareConfig>> {
+        self.cloudflare_config.clone()
     }
 
     pub(crate) fn firebase_config(&self) -> Option<Arc<FirebaseConfig>> {
@@ -341,6 +350,7 @@ mod tests {
             convex_registry: Some(Arc::new(ConvexRegistry::empty())),
             application_auth_verifier: None,
             cloud_functions_registry: None,
+            cloudflare_config: None,
             firebase_config: Some(Arc::new(FirebaseConfig::new())),
         });
         let previous = deployment.current();
@@ -351,6 +361,7 @@ mod tests {
             convex_registry: Some(Arc::new(ConvexRegistry::empty())),
             application_auth_verifier: None,
             cloud_functions_registry: None,
+            cloudflare_config: previous.cloudflare_config(),
             firebase_config: previous.firebase_config(),
         });
         let current = deployment.current();
@@ -371,6 +382,7 @@ mod tests {
             system_convex_registry: None,
             application_auth_verifier: None,
             cloud_functions_registry: None,
+            cloudflare_config: None,
             firebase_config: None,
             license_state: LicenseState::community(),
             runtime_service_registry: Arc::new(
@@ -431,6 +443,7 @@ mod tests {
             system_convex_registry: None,
             application_auth_verifier: None,
             cloud_functions_registry: None,
+            cloudflare_config: None,
             firebase_config: None,
             license_state: LicenseState::community(),
             runtime_service_registry: Arc::new(

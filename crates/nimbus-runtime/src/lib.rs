@@ -26,6 +26,10 @@ pub fn bun_jsc_adapter_artifact_diagnostics() -> RuntimeExecutionAdapterArtifact
     backends::bun_jsc::adapter_artifact_diagnostics()
 }
 
+pub fn wasmtime_component_linker_diagnostics() -> Result<()> {
+    backends::wasmtime::component_linker_diagnostics()
+}
+
 /// Build / check the embeddable NodeFull(Node22) anchor-snapshot blob. Called by the
 /// `build_node22_anchor_snapshot` builder binary (a normal consumer of this crate): it writes the
 /// committed per-config `.bin`/`.pc.bin` the lib `include_bytes!`es, and `--check` byte-compares a
@@ -50,10 +54,11 @@ pub use fs::{NimbusFsBackend, RuntimeFileSystem};
 pub use host::{
     HOST_CALL_ABI_VERSION, HostBridge, HostBridgeFuture, HostCallCancellation,
     HostCallCancellationCause, HostCallEnvelope, HostCallOperation, HostCallPayload,
-    HostCallRequest, RuntimeAsyncActionPayload, RuntimeAsyncDbDeletePayload,
-    RuntimeAsyncDbGetPayload, RuntimeAsyncDbInsertPayload, RuntimeAsyncDbPatchPayload,
-    RuntimeAsyncExtensionPayload, RuntimeAsyncFunctionCallPayload, RuntimeAsyncHttpRoutePayload,
-    RuntimeAsyncMutationPayload, RuntimeAsyncPaginatedQueryPayload,
+    HostCallRequest, RuntimeAsyncActionPayload, RuntimeAsyncCfKvDeletePayload,
+    RuntimeAsyncCfKvGetPayload, RuntimeAsyncCfKvListPayload, RuntimeAsyncCfKvPutPayload,
+    RuntimeAsyncDbDeletePayload, RuntimeAsyncDbGetPayload, RuntimeAsyncDbInsertPayload,
+    RuntimeAsyncDbPatchPayload, RuntimeAsyncExtensionPayload, RuntimeAsyncFunctionCallPayload,
+    RuntimeAsyncHttpRoutePayload, RuntimeAsyncMutationPayload, RuntimeAsyncPaginatedQueryPayload,
     RuntimeAsyncQueryPaginatePayload, RuntimeAsyncQueryPayload, RuntimeAsyncQueryTakePayload,
     RuntimeAsyncQueryTerminalPayload, RuntimeAsyncSchedulerCancelPayload,
     RuntimeAsyncSchedulerRunAfterPayload, RuntimeAsyncSchedulerRunAtPayload,
@@ -100,5 +105,6 @@ pub use metrics::{
 pub use runtime::{
     InvocationAuth, InvocationKind, InvocationRequest, InvocationServiceBinding,
     InvocationServiceEndpoint, InvocationServiceProtocol, InvocationServices, NimbusRuntime,
-    RuntimeBundle, RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
+    RuntimeBundle, RuntimeBundleContent, RuntimeBundleWasmComponentContent, RuntimeComponentWorld,
+    RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
 };

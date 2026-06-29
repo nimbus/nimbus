@@ -142,6 +142,7 @@ fn snapshot_seeded_runtime_driver_cycles_survive_repeated_async_host_invocations
 #[ignore = "runs in a subprocess to isolate snapshot lifecycle V8 state"]
 async fn snapshot_driver_repeated_async_host_subprocess() {
     init_test_tracing();
+    let _test_lock = acquire_snapshot_reset_test_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -220,6 +221,7 @@ export {};
                 context: &context,
                 execution_plan: None,
                 record_replacement_on_error: false,
+                activity_signal: None,
             })
             .expect("driver preparation should succeed for snapshot-seeded runtime");
 
@@ -271,6 +273,7 @@ fn snapshot_seeded_runtime_driver_cycles_survive_with_fresh_runtime_owner_each_c
 #[ignore = "runs in a subprocess to isolate snapshot lifecycle V8 state"]
 async fn snapshot_driver_fresh_owner_subprocess() {
     init_test_tracing();
+    let _test_lock = acquire_snapshot_reset_test_lock();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(
@@ -354,6 +357,7 @@ export {};
                 context: &context,
                 execution_plan: None,
                 record_replacement_on_error: false,
+                activity_signal: None,
             })
             .expect("driver preparation should succeed for snapshot-seeded runtime");
 
@@ -491,6 +495,7 @@ export {};
                         context: &context,
                         execution_plan: None,
                         record_replacement_on_error: false,
+                        activity_signal: None,
                     })
                     .expect(
                         "driver preparation should succeed for snapshot-seeded delayed runtime",
