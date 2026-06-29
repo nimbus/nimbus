@@ -23,22 +23,27 @@
 //! stores identical ciphertext under the same content address:
 //!
 //! ```text
-//! PlacementBlobStore { local: EncryptedBlobStore<MemoryBlobStore>, mode: ... }
+//! PlacementBlobStore { local: EncryptedBlobStore<LocalPackStore>, mode: ... }
 //! ```
 //!
-//! The currently shipped backing adapter is [`MemoryBlobStore`]. It is a
-//! deterministic in-memory implementation for seam tests and consumers such as
-//! the CAS read-only filesystem backend. The durable [`LocalPackStore`] is the
-//! local append-only pack implementation.
+//! The shipped backing adapters are [`MemoryBlobStore`] for deterministic seam
+//! tests, [`LocalPackStore`] for the durable local append-only pack, and
+//! [`ObjectStoreBlobStore`] for cloud/object_store legs. [`ObjectBackup`] emits
+//! the single-file structural backup bundle that can restore into any placement.
 
+mod backup;
 mod encrypted;
 mod gc;
 mod hash;
 mod local;
 mod memory;
+mod object_store;
 mod placement;
 mod store;
 
+pub use backup::{
+    BackupBundle, BackupChunk, BackupRequest, BackupRestoreReport, KeyEscrow, ObjectBackup,
+};
 pub use encrypted::EncryptedBlobStore;
 pub use gc::{BlobGc, BlobGcReport, BlobGcRoots, StaticBlobRoots};
 pub use hash::{BLAKE3_HASH_LEN, BlobHash};
@@ -47,6 +52,7 @@ pub use hash::{BlobTicket, PeerAddr};
 pub use local::{CompactionStats, LocalBlobEntry, LocalPackStore};
 pub use memory::MemoryBlobStore;
 pub use nimbus_crypto::{FRAME_PLAINTEXT_LEN, FramedBlobKey, KEY_SEED_LEN, NONCE_LEN};
+pub use object_store::ObjectStoreBlobStore;
 pub use placement::{PlacementBlobStore, PlacementMode};
 #[cfg(feature = "cluster")]
 pub use store::ReplicatingBlobStore;
@@ -77,8 +83,11 @@ mod object_safety_tests {
         let placement: Arc<dyn BlobStore> = Arc::new(PlacementBlobStore::local_only(Arc::new(
             MemoryBlobStore::new(),
         )));
+        let object_store: Arc<dyn BlobStore> = Arc::new(ObjectStoreBlobStore::at_root(Arc::new(
+            ::object_store::memory::InMemory::new(),
+        )));
 
-        for store in [local, encrypted, placement] {
+        for store in [local, encrypted, placement, object_store] {
             let hash = store.put(Bytes::from_static(b"object-safe")).await.unwrap();
             assert_eq!(
                 store.get(&hash).await.unwrap(),
