@@ -22,15 +22,8 @@ async fn convex_ctx_mutation_host_binding_can_schedule_internal_generated_mutati
                 "kind": "mutation",
                 "visibility": "public",
                 "schedulable": true,
-                "plan": {
-                    "type": "schedule_run_after",
-                    "delay_ms": { "$arg": "delayMs" },
-                    "name": "messages:sendInternal",
-                    "visibility": "internal",
-                    "args": {
-                        "body": { "$arg": "body" }
-                    }
-                }
+                "runtime_handler": "async () => null",
+                "plan": null
             }
         ]),
         json!([]),
