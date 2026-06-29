@@ -26,6 +26,7 @@ mod registry;
 mod requests;
 pub mod subscriptions;
 mod templates;
+pub mod tenancy;
 
 pub use document_identity::{
     document_to_convex_json, documents_to_convex_json, encode_convex_document_id,
