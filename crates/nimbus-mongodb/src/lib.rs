@@ -1,10 +1,15 @@
 pub mod bson_bridge;
 pub mod commands;
 pub mod connection;
+pub mod credential_registry;
 pub mod error;
 pub mod wire;
 
 mod auth;
+
+pub use credential_registry::{
+    CredentialBinding, CredentialRegistry, CredentialSpecError, MongoAuth,
+};
 
 use std::error::Error as StdError;
 use std::fmt;

@@ -1,7 +1,6 @@
 use std::sync::OnceLock;
 
 use deno_error::JsErrorBox;
-use deno_fs::sync::MaybeArc;
 use deno_node::ops::module_hooks::LoaderHookRegistry;
 use deno_permissions::PermissionsContainer;
 use deno_web::InMemoryBroadcastChannel;
@@ -97,12 +96,14 @@ pub(crate) fn execution_extensions(
     path_policy: &RuntimePathPolicy,
     loader_hook_registry: Option<LoaderHookRegistry>,
     limits: &RuntimeLimits,
+    file_system: deno_fs::FileSystemRc,
 ) -> Vec<Extension> {
     RuntimeBootstrapExtensionRegistry::execution_extensions(
         target,
         path_policy,
         loader_hook_registry,
         limits,
+        file_system,
     )
 }
 
@@ -165,13 +166,14 @@ impl RuntimeBootstrapExtensionRegistry {
         path_policy: &RuntimePathPolicy,
         loader_hook_registry: Option<LoaderHookRegistry>,
         limits: &RuntimeLimits,
+        file_system: deno_fs::FileSystemRc,
     ) -> Vec<Extension> {
         install_rustls_default_provider_once();
         // Context is consumed only by Node-only slots; web-standard slots ignore it.
         let context = NodeExecutionExtensionContext {
             path_policy,
             limits,
-            fs: MaybeArc::new(deno_fs::RealFs),
+            fs: file_system,
         };
         let mut extensions = Self::selected_bootstrap_entries(
             target,

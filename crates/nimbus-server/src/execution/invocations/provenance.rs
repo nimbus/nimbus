@@ -117,9 +117,15 @@ mod tests {
     }
 
     fn write_bundle() -> (tempfile::TempDir, std::path::PathBuf, String) {
+        use std::io::Write as _;
+
         let temp = tempfile::tempdir().expect("tempdir should create");
-        let path = temp.path().join("bundle.mjs");
-        std::fs::write(&path, "export default 1;\n").expect("bundle should write");
+        let mut bundle = tempfile::NamedTempFile::with_prefix_in("bundle", temp.path())
+            .expect("bundle file should create");
+        bundle
+            .write_all(b"export default 1;\n")
+            .expect("bundle should write");
+        let (_file, path) = bundle.keep().expect("bundle file should persist");
         let sha256 = RuntimeBundle::compute_sha256_for_path(&path).expect("bundle should hash");
         (temp, path, sha256)
     }

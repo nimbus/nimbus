@@ -5,9 +5,17 @@ async fn firebase_write_stream_handshakes_and_applies_ordered_writes() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_write_stream_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .write(receiver)
@@ -110,9 +118,17 @@ async fn firebase_write_stream_handshakes_and_applies_ordered_writes() {
 async fn firebase_write_stream_rejects_missing_post_handshake_token() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_write_stream_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .write(receiver)
@@ -152,10 +168,18 @@ async fn firebase_write_stream_rejects_missing_post_handshake_token() {
 async fn firebase_write_stream_replays_unacknowledged_responses_on_resume() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
 
-    let mut initial_client = firestore_grpc_client(&server).await;
+    assert_firebase_grpc_write_stream_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)",
+    )
+    .await;
+    let mut initial_client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (initial_sender, initial_receiver) = mpsc::unbounded();
     let mut initial_responses = initial_client
         .write(initial_receiver)
@@ -200,7 +224,7 @@ async fn firebase_write_stream_replays_unacknowledged_responses_on_resume() {
         "initial write stream should end after the sender closes"
     );
 
-    let mut resumed_client = firestore_grpc_client(&server).await;
+    let mut resumed_client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (resume_sender, resume_receiver) = mpsc::unbounded();
     let mut resumed_responses = resumed_client
         .write(resume_receiver)
@@ -255,9 +279,17 @@ async fn firebase_write_stream_executes_transform_only_writes_and_returns_transf
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_write_stream_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .write(receiver)
@@ -326,9 +358,17 @@ async fn firebase_write_stream_roundtrips_server_timestamp_transform_results_and
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_write_stream_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .write(receiver)
@@ -407,9 +447,17 @@ async fn firebase_write_stream_roundtrips_special_double_transform_results_and_r
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_write_stream_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .write(receiver)
@@ -472,11 +520,21 @@ async fn firebase_commit_roundtrips_typed_scalar_transform_results_and_document_
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let client = firebase_rest_client("user-123", "demo");
 
-    let response = server
-        .client()
+    assert_firebase_rest_anonymous_refused(
+        &server,
+        "/v1/projects/demo/databases/(default)/documents:commit",
+        "{}",
+    )
+    .await;
+
+    let response = client
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
@@ -524,8 +582,7 @@ async fn firebase_commit_roundtrips_typed_scalar_transform_results_and_document_
         json!({ "doubleValue": "Infinity" })
     );
 
-    let get_response = server
-        .client()
+    let get_response = client
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:batchGet"))
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
@@ -578,9 +635,17 @@ async fn firebase_commit_roundtrips_typed_scalar_transform_results_and_document_
 async fn firebase_write_stream_closes_cleanly_after_handshake_when_sender_drops() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
-    let mut client = firestore_grpc_client(&server).await;
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+    assert_firebase_grpc_write_stream_anonymous_refused(
+        &server,
+        "projects/demo/databases/(default)",
+    )
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
     let (sender, receiver) = mpsc::unbounded();
     let mut responses = client
         .write(receiver)

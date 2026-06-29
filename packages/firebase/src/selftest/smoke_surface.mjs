@@ -105,12 +105,22 @@ export async function testSmokeSurface(bundleDir, smokeBaseUrl) {
   assert.ok(baseUrl.hostname, "Smoke base URL must include a hostname.");
   assert.ok(baseUrl.port, "Smoke base URL must include an explicit port.");
 
+  // The #24 verified-project gate refuses any caller without a verified Firebase
+  // project, so every smoke flow runs through the dev-mode verification bypass.
+  // The main/grpc flows use a non-owner subject so the owner-gated secureSmoke
+  // sub-flow still observes the protected document as filtered (not as its owner).
+  const smokeMainToken = {
+    sub: "smoke-main",
+    iss: "https://securetoken.google.com/demo",
+  };
+
   const app = appModule.initializeApp({ projectId: "demo" }, "smoke");
   const firestore = firestoreModule.getFirestore(app);
   firestoreModule.connectFirestoreEmulator(
     firestore,
     baseUrl.hostname,
     Number.parseInt(baseUrl.port, 10),
+    { mockUserToken: smokeMainToken },
   );
 
   const cities = firestoreModule.collection(firestore, "cities.v2");
@@ -263,6 +273,7 @@ export async function testSmokeSurface(bundleDir, smokeBaseUrl) {
   const grpcApp = appModule.initializeApp({ projectId: "demo" }, "smoke-grpc");
   const grpcFirestore = firestoreModule.initializeFirestore(grpcApp, {
     experimentalUnaryTransport: "grpc-web",
+    experimentalAuthToken: JSON.stringify(smokeMainToken),
     host: baseUrl.host,
     ssl: false,
   });

@@ -118,19 +118,24 @@ async function readableText(stream) {
 async function nodeSurfaceProbe(body) {
   const localDir = path.dirname(new URL(import.meta.url).pathname);
   const canaryFile = path.join(localDir, "convex-use-node-canary.tmp");
-  fs.writeFileSync(canaryFile, "tmp-ok", "utf8");
-
-  const response = await fetch(
-    "data:application/json,%7B%22source%22%3A%22convex-use-node%22%7D",
-  );
-  const fetchBody = await response.json();
-  const saas = new SaasClient({
-    apiKey: "nimbus-test-key",
-    endpoint: "/v1/events",
+  await withCanaryStep("node.fs.writeFileSync", async () => {
+    fs.writeFileSync(canaryFile, "tmp-ok", "utf8");
   });
-  const saasEvent = await saas.events.create({
-    type: "message.created",
-    body,
+
+  const response = await withCanaryStep("node.fetch(data-url)", () =>
+    fetch(
+      "data:application/json,%7B%22source%22%3A%22convex-use-node%22%7D",
+    ));
+  const fetchBody = await withCanaryStep("node.fetch.json", () => response.json());
+  const saasEvent = await withCanaryStep("node.saas-client", async () => {
+    const saas = new SaasClient({
+      apiKey: "nimbus-test-key",
+      endpoint: "/v1/events",
+    });
+    return saas.events.create({
+      type: "message.created",
+      body,
+    });
   });
 
   return {
@@ -151,7 +156,8 @@ async function nodeSurfaceProbe(body) {
       .slice(0, 12),
     streamText: await readableText(Readable.from(["stream", "-", "ok"])),
     pathBase: path.basename(canaryFile),
-    fsTemp: await fs.promises.readFile(canaryFile, "utf8"),
+    fsTemp: await withCanaryStep("node.fs.promises.readFile", () =>
+      fs.promises.readFile(canaryFile, "utf8")),
     fetchStatus: response.status,
     fetchBody,
     envSecretBoundary: {
@@ -164,45 +170,73 @@ async function nodeSurfaceProbe(body) {
   };
 }
 
+async function withCanaryStep(label, callback) {
+  try {
+    return await callback();
+  } catch (error) {
+    const message = describeCanaryError(error);
+    throw new Error(`${label} failed: ${message}`);
+  }
+}
+
+function describeCanaryError(error) {
+  if (error && typeof error === "object") {
+    const parts = [
+      `name=${error.name ?? "unknown"}`,
+      `message=${error.message ?? ""}`,
+    ];
+    if ("code" in error) {
+      parts.push(`code=${error.code}`);
+    }
+    return parts.join(" ");
+  }
+  return `${typeof error}:${String(error)}`;
+}
+
 const helpers = {
   async useNodeCanary(ctx, args, request) {
-    const before = await ctx.runQuery(
-      internal.messages.listByAuthor,
-      { author: args.author },
-    );
-    const insertedId = await ctx.runMutation(
-      internal.messages.storeInternal,
-      {
-        author: args.author,
-        body: args.body,
-        source: "ctx.runMutation",
-        metadata: {
-          lane: request.services?.lane ?? null,
-          nested: false,
+    const before = await withCanaryStep("ctx.runQuery(before)", () =>
+      ctx.runQuery(
+        internal.messages.listByAuthor,
+        { author: args.author },
+      ));
+    const insertedId = await withCanaryStep("ctx.runMutation(storeInternal)", () =>
+      ctx.runMutation(
+        internal.messages.storeInternal,
+        {
+          author: args.author,
+          body: args.body,
+          source: "ctx.runMutation",
+          metadata: {
+            lane: request.services?.lane ?? null,
+            nested: false,
+          },
         },
-      },
-    );
-    const child = await ctx.runAction(
-      internal.messages.nodeChildAction,
-      { body: args.body },
-    );
-    const scheduledJobId = await ctx.scheduler.runAfter(
-      0,
-      internal.messages.scheduledWrite,
-      {
-        author: args.author,
-        body: `${args.body} scheduled`,
-        source: "ctx.scheduler",
-        metadata: {
-          lane: request.services?.lane ?? null,
-          scheduled: true,
+      ));
+    const child = await withCanaryStep("ctx.runAction(nodeChildAction)", () =>
+      ctx.runAction(
+        internal.messages.nodeChildAction,
+        { body: args.body },
+      ));
+    const scheduledJobId = await withCanaryStep("ctx.scheduler.runAfter", () =>
+      ctx.scheduler.runAfter(
+        0,
+        internal.messages.scheduledWrite,
+        {
+          author: args.author,
+          body: `${args.body} scheduled`,
+          source: "ctx.scheduler",
+          metadata: {
+            lane: request.services?.lane ?? null,
+            scheduled: true,
+          },
         },
-      },
-    );
-    const after = await ctx.runQuery(
-      internal.messages.listByAuthor,
-      { author: args.author },
-    );
+      ));
+    const after = await withCanaryStep("ctx.runQuery(after)", () =>
+      ctx.runQuery(
+        internal.messages.listByAuthor,
+        { author: args.author },
+      ));
     return {
       beforeCount: before.length,
       afterCount: after.length,
@@ -217,7 +251,7 @@ const helpers = {
         scheduledMutation: internal.messages.scheduledWrite.name,
         childAction: internal.messages.nodeChildAction.name,
       },
-      node: await nodeSurfaceProbe(args.body),
+      node: await withCanaryStep("nodeSurfaceProbe", () => nodeSurfaceProbe(args.body)),
       serialization: {
         string: args.body,
         number: 24,

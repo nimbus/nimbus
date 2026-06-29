@@ -46,20 +46,20 @@ async fn firebase_sdk_crud_selftest_smoke() {
             firebase_owner_schema_for_collection("secureSmoke", firebase_owner_read_write_policy()),
         )
         .expect("secureSmoke schema should install");
-    let server = ServerFixture::start(router_for_firebase(
-        service,
-        FirebaseConfig::new().with_emulator_mock_user_token_auth(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service, firebase_verified_config())).await;
 
     let output = Command::new("node")
         .current_dir(repo_root)
         .arg("./packages/firebase/src/selftest.mjs")
         .arg("--smoke-base-url")
         .arg(server.http_url(""))
+        // The smoke surface runs every flow through the dev-mode verification
+        // bypass: the token carries the Firebase project issuer so the #24 gate
+        // resolves project `demo` to tenant `demo`.
         .env(
             "NIMBUS_FIREBASE_SMOKE_MOCK_USER_TOKEN",
-            r#"{"sub":"user-1"}"#,
+            r#"{"sub":"user-1","iss":"https://securetoken.google.com/demo"}"#,
         )
         .output()
         .await
@@ -77,12 +77,20 @@ async fn firebase_commit_executes_atomic_batch_and_returns_firestore_commit_resp
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
+
+    let commit_path = "/v1/projects/demo/databases/(default)/documents:commit";
+    assert_firebase_rest_anonymous_refused(&server, commit_path, "{}").await;
 
     let response = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
+        .post(server.http_url(commit_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -140,12 +148,20 @@ async fn firebase_commit_applies_update_transforms_and_returns_transform_results
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
+
+    let commit_path = "/v1/projects/demo/databases/(default)/documents:commit";
+    assert_firebase_rest_anonymous_refused(&server, commit_path, "{}").await;
 
     let response = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
+        .post(server.http_url(commit_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -218,12 +234,20 @@ async fn firebase_commit_rolls_back_entire_batch_on_failure() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
+
+    let commit_path = "/v1/projects/demo/databases/(default)/documents:commit";
+    assert_firebase_rest_anonymous_refused(&server, commit_path, "{}").await;
 
     let response = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
+        .post(server.http_url(commit_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -276,12 +300,20 @@ async fn firebase_commit_accepts_transaction_token_and_consumes_session() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
+
+    let commit_path = "/v1/projects/demo/databases/(default)/documents:commit";
+    assert_firebase_rest_anonymous_refused(&server, commit_path, "{}").await;
 
     let seed_response = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
+        .post(server.http_url(commit_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -304,10 +336,13 @@ async fn firebase_commit_accepts_transaction_token_and_consumes_session() {
         .expect("seed firebase commit should send");
     assert_eq!(seed_response.status(), StatusCode::OK);
 
+    // The transaction session is engine-bound to its creating principal, so it
+    // must be created under the exact principal the verified-path request
+    // carries.
     let session = service
         .begin_transaction_session(
             tenant_id.clone(),
-            PrincipalContext::anonymous(),
+            firebase_verified_principal("user-123", "demo"),
             TransactionSessionMode::ReadWrite,
         )
         .expect("transaction session should start");
@@ -316,7 +351,8 @@ async fn firebase_commit_accepts_transaction_token_and_consumes_session() {
 
     let response = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
+        .post(server.http_url(commit_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -355,7 +391,8 @@ async fn firebase_commit_accepts_transaction_token_and_consumes_session() {
 
     let reused = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
+        .post(server.http_url(commit_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -390,8 +427,12 @@ async fn firebase_batch_get_returns_found_missing_and_elides_duplicates() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
 
     let document_path =
         DocumentPath::from_segments(["cities", "SF"]).expect("document path should parse");
@@ -410,9 +451,13 @@ async fn firebase_batch_get_returns_found_missing_and_elides_duplicates() {
         )
         .expect("seed document should insert");
 
+    let batch_get_path = "/v1/projects/demo/databases/(default)/documents:batchGet";
+    assert_firebase_rest_anonymous_refused(&server, batch_get_path, "{}").await;
+
     let response = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:batchGet"))
+        .post(server.http_url(batch_get_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -481,8 +526,12 @@ async fn firebase_batch_get_reads_nested_document_paths() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
 
     let document_path = DocumentPath::from_segments(["cities", "SF", "landmarks", "golden-gate"])
         .expect("nested document path should parse");
@@ -497,9 +546,13 @@ async fn firebase_batch_get_reads_nested_document_paths() {
         )
         .expect("nested seed document should insert");
 
+    let batch_get_path = "/v1/projects/demo/databases/(default)/documents:batchGet";
+    assert_firebase_rest_anonymous_refused(&server, batch_get_path, "{}").await;
+
     let response = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:batchGet"))
+        .post(server.http_url(batch_get_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -546,10 +599,16 @@ async fn firebase_batch_get_accepts_active_transaction_tokens_and_rejects_inacti
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
 
-    let principal = PrincipalContext::anonymous();
+    // The transaction session must be created under the same principal the
+    // verified-path requests carry (engine sessions are principal-bound).
+    let principal = firebase_verified_principal("user-123", "demo");
     let document_path =
         DocumentPath::from_segments(["cities", "SF"]).expect("document path should parse");
     let locator = crate::adapters::firebase::locator_for_document_path(&document_path)
@@ -573,9 +632,13 @@ async fn firebase_batch_get_accepts_active_transaction_tokens_and_rejects_inacti
     let transaction_token =
         base64::engine::general_purpose::STANDARD.encode(session.token.as_str().as_bytes());
 
+    let batch_get_path = "/v1/projects/demo/databases/(default)/documents:batchGet";
+    assert_firebase_rest_anonymous_refused(&server, batch_get_path, "{}").await;
+
     let response = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:batchGet"))
+        .post(server.http_url(batch_get_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -603,7 +666,8 @@ async fn firebase_batch_get_accepts_active_transaction_tokens_and_rejects_inacti
         .expect("transaction session should roll back");
     let inactive = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:batchGet"))
+        .post(server.http_url(batch_get_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -631,12 +695,20 @@ async fn firebase_batch_get_accepts_active_transaction_tokens_and_rejects_inacti
 async fn firebase_rest_begin_transaction_and_rollback_manage_session_tokens() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
+
+    let begin_path = "/v1/projects/demo/databases/(default)/documents:beginTransaction";
+    assert_firebase_rest_anonymous_refused(&server, begin_path, "{}").await;
 
     let begin_response = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:beginTransaction"))
+        .post(server.http_url(begin_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -663,6 +735,7 @@ async fn firebase_rest_begin_transaction_and_rollback_manage_session_tokens() {
     let rollback_response = server
         .client()
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:rollback"))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -684,6 +757,7 @@ async fn firebase_rest_begin_transaction_and_rollback_manage_session_tokens() {
     let inactive_response = server
         .client()
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:rollback"))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -714,12 +788,20 @@ async fn firebase_run_query_supports_transaction_selector_with_pinned_snapshot()
         &["cities", "SF"],
         [("name", json!("San Francisco")), ("visits", json!(1))],
     );
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
+
+    let begin_path = "/v1/projects/demo/databases/(default)/documents:beginTransaction";
+    assert_firebase_rest_anonymous_refused(&server, begin_path, "{}").await;
 
     let begin_response = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:beginTransaction"))
+        .post(server.http_url(begin_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -758,6 +840,7 @@ async fn firebase_run_query_supports_transaction_selector_with_pinned_snapshot()
     let response = server
         .client()
         .post(server.http_url("/v1/projects/demo/databases/(default)/documents:runQuery"))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -791,12 +874,20 @@ async fn firebase_run_query_supports_transaction_selector_with_pinned_snapshot()
 async fn firebase_batch_get_rejects_unsupported_read_time_selector() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
+
+    let batch_get_path = "/v1/projects/demo/databases/(default)/documents:batchGet";
+    assert_firebase_rest_anonymous_refused(&server, batch_get_path, "{}").await;
 
     let response = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:batchGet"))
+        .post(server.http_url(batch_get_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(
             json!({
@@ -830,8 +921,12 @@ async fn firebase_list_collection_ids_lists_root_and_nested_parents_with_paginat
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    let server =
-        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
 
     seed_firebase_document(
         &service,
@@ -870,9 +965,13 @@ async fn firebase_list_collection_ids_lists_root_and_nested_parents_with_paginat
         [("label", json!("Photo"))],
     );
 
+    let list_path = "/v1/projects/demo/databases/(default)/documents:listCollectionIds";
+    assert_firebase_rest_anonymous_refused(&server, list_path, "{}").await;
+
     let root_first = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:listCollectionIds"))
+        .post(server.http_url(list_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(json!({ "pageSize": 2 }).to_string())
         .send()
@@ -892,7 +991,8 @@ async fn firebase_list_collection_ids_lists_root_and_nested_parents_with_paginat
 
     let root_second = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:listCollectionIds"))
+        .post(server.http_url(list_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(json!({ "pageToken": next_page_token }).to_string())
         .send()
@@ -911,6 +1011,7 @@ async fn firebase_list_collection_ids_lists_root_and_nested_parents_with_paginat
         .post(server.http_url(
             "/v1/projects/demo/databases/(default)/documents/cities/SF:listCollectionIds",
         ))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body("{}".to_string())
         .send()
@@ -931,6 +1032,7 @@ async fn firebase_list_collection_ids_lists_root_and_nested_parents_with_paginat
         .post(server.http_url(
             "/v1/projects/demo/databases/(default)/documents/cities/SF/landmarks/bridge:listCollectionIds",
         ))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body("{}".to_string())
         .send()
@@ -948,12 +1050,20 @@ async fn firebase_list_collection_ids_lists_root_and_nested_parents_with_paginat
 async fn firebase_list_collection_ids_rejects_invalid_page_tokens_and_read_time() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
-    let server =
-        ServerFixture::start(router_for_firebase(fixture.engine(), FirebaseConfig::new())).await;
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
+
+    let list_path = "/v1/projects/demo/databases/(default)/documents:listCollectionIds";
+    assert_firebase_rest_anonymous_refused(&server, list_path, "{}").await;
 
     let invalid_page_token = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:listCollectionIds"))
+        .post(server.http_url(list_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(json!({ "pageToken": "not-base64!" }).to_string())
         .send()
@@ -977,7 +1087,8 @@ async fn firebase_list_collection_ids_rejects_invalid_page_tokens_and_read_time(
 
     let read_time = server
         .client()
-        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:listCollectionIds"))
+        .post(server.http_url(list_path))
+        .header(header::AUTHORIZATION, &bearer)
         .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
         .body(json!({ "readTime": "2024-01-01T00:00:00Z" }).to_string())
         .send()

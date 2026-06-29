@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::http::{HeaderMap, header};
 use nimbus_auth::{
     ApplicationAuthError, ResolvedApplicationAuth,
-    firebase_emulator_mock_user_principal_from_bearer, normalize_principal_context,
+    firebase_emulator_verification_bypass_principal_from_bearer, normalize_principal_context,
     parse_bearer_value,
 };
 use nimbus_runtime::InvocationAuth;
@@ -37,7 +37,7 @@ pub(crate) async fn resolve_application_auth_from_bearer_in_deployment(
     };
 
     if firebase_emulator_mock_auth_enabled(deployment)
-        && let Some(principal) = firebase_emulator_mock_user_principal_from_bearer(bearer)
+        && let Some(principal) = firebase_emulator_verification_bypass_principal_from_bearer(bearer)
     {
         return Ok(ResolvedApplicationAuth {
             auth: None,
@@ -62,7 +62,7 @@ fn firebase_emulator_mock_auth_enabled(deployment: &DeploymentState) -> bool {
     deployment
         .firebase_config()
         .as_deref()
-        .is_some_and(|config| config.allows_emulator_mock_user_token_auth())
+        .is_some_and(|config| config.allows_emulator_token_verification_bypass())
 }
 
 pub(crate) fn grpc_status_from_app_error(error: AppError) -> Status {

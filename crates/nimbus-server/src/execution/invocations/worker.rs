@@ -46,7 +46,7 @@ where
     H: HostBridge + EgressGateway + 'static,
 {
     options.admit_runtime_bundle_artifact(&bundle)?;
-    let runtime = runtime_for_host_with_egress_gateway(host_bridge, runtime_policy);
+    let runtime = runtime_for_host_with_egress_gateway(host_bridge, runtime_policy)?;
     runtime_executor
         .invoke_on_worker_response_ready(
             runtime,

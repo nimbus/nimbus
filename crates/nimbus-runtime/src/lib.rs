@@ -5,6 +5,7 @@ mod egress;
 mod error;
 mod execution_plan;
 mod executor;
+pub mod fs;
 mod host;
 mod limits;
 mod metrics;
@@ -45,6 +46,7 @@ pub use egress::{
 };
 pub use error::{NimbusRuntimeError, Result};
 pub use executor::{RuntimeExecutor, RuntimeInvocationResponse};
+pub use fs::{NimbusFsBackend, RuntimeFileSystem};
 pub use host::{
     HOST_CALL_ABI_VERSION, HostBridge, HostBridgeFuture, HostCallCancellation,
     HostCallCancellationCause, HostCallEnvelope, HostCallOperation, HostCallPayload,

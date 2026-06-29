@@ -13,7 +13,10 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 
 use nimbus::{Error, TenantId};
-use nimbus_server::{DynamoDbConfig, FirebaseConfig, MongoDbAuthConfig, MongoDbConfig};
+use nimbus_server::{
+    DynamoDbConfig, FirebaseConfig, MongoDbAuthConfig, MongoDbConfig, MongoDbCredentialRegistry,
+    ProjectTenantRegistry,
+};
 
 use crate::wire_credentials::{WireCredentials, load_or_generate};
 
@@ -22,7 +25,22 @@ use super::network_bind::ensure_host_opt_in;
 
 pub(super) const MONGODB_USERNAME_ENV: &str = "NIMBUS_MONGODB_USERNAME";
 pub(super) const MONGODB_PASSWORD_ENV: &str = "NIMBUS_MONGODB_PASSWORD";
+/// Per-tenant MongoDB credential bindings (M9a). Comma-separated
+/// `USERNAME:TENANT:PASSWORD` entries, mirroring the DynamoDB
+/// [`DYNAMODB_ACCESS_KEYS_ENV`] convention. When set with at least one binding
+/// the listener runs in bound mode (authentication decides the tenant), which a
+/// non-loopback host requires; otherwise the listener stays in today's unbound,
+/// loopback-only mode.
+pub(super) const MONGODB_CREDENTIALS_ENV: &str = "NIMBUS_MONGODB_CREDENTIALS";
 pub(super) const DYNAMODB_ACCESS_KEYS_ENV: &str = "NIMBUS_DYNAMODB_ACCESS_KEYS";
+/// Per-tenant Firebase project->tenant bindings. Comma-separated
+/// `PROJECT:TENANT` entries, mirroring the MongoDB [`MONGODB_CREDENTIALS_ENV`]
+/// convention. When set the Firebase adapter resolves each request's project to
+/// its bound tenant through this registry; when unset the adapter keeps the
+/// default empty registry from [`FirebaseConfig::new`], which refuses every
+/// request because no project maps to a tenant. A malformed entry is a hard
+/// boot error, never a silent permissive default.
+pub(super) const FIREBASE_PROJECTS_ENV: &str = "NIMBUS_FIREBASE_PROJECTS";
 
 pub(crate) const MONGODB_CONVENTIONAL_PORT: u16 = 27017;
 pub(crate) const DYNAMODB_CONVENTIONAL_PORT: u16 = 8000;
@@ -143,10 +161,42 @@ pub(crate) fn resolve_adapter_enablement_with_env(
 ) -> Result<AdapterEnablement, Error> {
     let mut store = CredentialStore::new(control_data_dir);
     Ok(AdapterEnablement {
-        firebase: command.firestore.then(FirebaseConfig::new),
+        firebase: resolve_firebase(command, &env_lookup)?,
         mongodb: resolve_mongodb(command, &env_lookup, &port_is_free, &mut store)?,
         dynamodb: resolve_dynamodb(command, &env_lookup, &port_is_free, &mut store)?,
     })
+}
+
+/// Resolve the Firebase adapter config, ingesting the project->tenant registry
+/// from [`FIREBASE_PROJECTS_ENV`] when present.
+///
+/// When the surface is opted out this returns `Ok(None)`. When enabled the
+/// adapter starts from [`FirebaseConfig::new`] (an empty, strict refuse-all
+/// registry) and installs operator bindings only when the env is set, parsed by
+/// the same [`ProjectTenantRegistry::from_operator_spec`] the registry uses
+/// elsewhere. A malformed spec is a hard `InvalidInput` boot error, mirroring
+/// the MongoDB credential ingestion; an unset env never falls back to a
+/// permissive registry.
+fn resolve_firebase(
+    command: &StartCommand,
+    env_lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<Option<FirebaseConfig>, Error> {
+    if !command.firestore {
+        return Ok(None);
+    }
+    let mut config = FirebaseConfig::new();
+    if let Some(auto_tenant) = &command.auto_tenant {
+        let tenant = TenantId::new(auto_tenant)
+            .map_err(|error| Error::InvalidInput(format!("invalid auto tenant: {error}")))?;
+        config = config
+            .with_emulator_token_verification_bypass()
+            .with_project_registry(ProjectTenantRegistry::new().bind(auto_tenant, tenant));
+    } else if let Some(raw) = env_lookup(FIREBASE_PROJECTS_ENV) {
+        let registry = ProjectTenantRegistry::from_operator_spec(&raw)
+            .map_err(|error| Error::InvalidInput(error.to_string()))?;
+        config = config.with_project_registry(registry);
+    }
+    Ok(Some(config))
 }
 
 fn resolve_mongodb(
@@ -165,31 +215,41 @@ fn resolve_mongodb(
         }
         return Ok(None);
     }
-    // The server hard-guards the MongoDB listener to loopback
-    // (`guard_bind_address`): SCRAM runs over a plaintext
-    // channel, so the wire endpoint never binds a network-reachable
-    // address. Validate here for a flag-shaped error instead of a late
-    // bind failure.
+
+    // Bound mode (M9a): per-tenant credential bindings make authentication —
+    // not the wire `$db` — decide the tenant, so a bound listener may bind a
+    // non-loopback host. Built from the SAME parser the acceptance test
+    // exercises (`CredentialRegistry::from_operator_spec`), mirroring the
+    // DynamoDB access-key ingestion. The env presence is the switch: with at
+    // least one binding the listener runs bound; otherwise it falls through to
+    // today's unbound, loopback-only path unchanged.
+    if let Some(registry) = resolve_bound_mongodb_registry(command, env_lookup)? {
+        let Some(port) = resolve_mongodb_port(command, port_is_free) else {
+            return Ok(None);
+        };
+        // A bound listener may go non-loopback, gated by the same
+        // `--allow-network` opt-in as the main and DynamoDB listeners.
+        ensure_host_opt_in(&command.mongodb_host, command.allow_network)
+            .map_err(|error| Error::InvalidInput(format!("--mongodb-host: {error}")))?;
+        let bind_addr = adapter_bind_addr(&command.mongodb_host, port, "--mongodb-host")?;
+        return Ok(Some(MongoDbConfig::bound(bind_addr, registry)));
+    }
+
+    // Unbound mode: the server hard-guards the MongoDB listener to loopback
+    // (`guard_bind_address`): SCRAM runs over a plaintext channel under a single
+    // tenant-agnostic credential, so the wire endpoint never binds a
+    // network-reachable address. Validate here for a flag-shaped error instead
+    // of a late bind failure.
     if !host_is_loopback_name(&command.mongodb_host) {
         return Err(Error::InvalidInput(format!(
             "--mongodb-host: the MongoDB listener is loopback-only (`{host}` refused); \
-             front it with a TLS-terminating proxy for remote access",
+             supply per-tenant credentials ({MONGODB_CREDENTIALS_ENV}) for a non-loopback bind, \
+             or front it with a TLS-terminating proxy for remote access",
             host = command.mongodb_host
         )));
     }
-    let port = match command.mongodb_port {
-        Some(port) => port,
-        None => {
-            if !port_is_free(MONGODB_CONVENTIONAL_PORT) {
-                tracing::warn!(
-                    "MongoDB conventional port {MONGODB_CONVENTIONAL_PORT} is busy; \
-                     skipping the default MongoDB listener — pass --mongodb-port to \
-                     serve on another port"
-                );
-                return Ok(None);
-            }
-            MONGODB_CONVENTIONAL_PORT
-        }
+    let Some(port) = resolve_mongodb_port(command, port_is_free) else {
+        return Ok(None);
     };
     let (username, password) = if command.mongodb_credentials_from_store {
         // `nimbus dev` advertises the store credentials in the app's
@@ -236,6 +296,61 @@ fn resolve_mongodb(
         .map_err(|error| Error::Internal(error.to_string()))?;
     let bind_addr = adapter_bind_addr(&command.mongodb_host, port, "--mongodb-host")?;
     Ok(Some(MongoDbConfig::new(bind_addr, auth)))
+}
+
+/// Resolve the MongoDB listener port, shared by bound and unbound modes.
+///
+/// An explicit `--mongodb-port` is always honored. Without one the conventional
+/// port (27017) is used when free; when busy the listener is skipped (returns
+/// `None`) with a warning — the same default-port behavior as DynamoDB.
+fn resolve_mongodb_port(
+    command: &StartCommand,
+    port_is_free: &impl Fn(u16) -> bool,
+) -> Option<u16> {
+    match command.mongodb_port {
+        Some(port) => Some(port),
+        None => {
+            if port_is_free(MONGODB_CONVENTIONAL_PORT) {
+                Some(MONGODB_CONVENTIONAL_PORT)
+            } else {
+                tracing::warn!(
+                    "MongoDB conventional port {MONGODB_CONVENTIONAL_PORT} is busy; \
+                     skipping the default MongoDB listener — pass --mongodb-port to \
+                     serve on another port"
+                );
+                None
+            }
+        }
+    }
+}
+
+/// Parse the `NIMBUS_MONGODB_CREDENTIALS` env into a per-tenant credential
+/// registry (bound mode), if present and non-empty.
+///
+/// Returns `Ok(None)` when the env is unset, holds no bindings (whitespace or
+/// just separators), or the listener is in `nimbus dev` store-credential mode —
+/// each is the signal to use today's unbound, loopback-only path. Returns
+/// `Ok(Some(registry))` for one or more well-formed bindings. A malformed entry
+/// or a reserved-tenant binding is a hard `InvalidInput` error surfaced cleanly
+/// at boot, not a silent runtime auth failure. The parser is shared with the
+/// acceptance test, so ingestion and the test agree by construction.
+fn resolve_bound_mongodb_registry(
+    command: &StartCommand,
+    env_lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<Option<MongoDbCredentialRegistry>, Error> {
+    // `nimbus dev` pins the listener to its generated store credentials and
+    // advertises them in `.env.local`; ambient NIMBUS_MONGODB_CREDENTIALS in the
+    // developer's shell must not desync the two, exactly as ambient
+    // NIMBUS_MONGODB_USERNAME/PASSWORD are ignored in store mode.
+    if command.mongodb_credentials_from_store {
+        return Ok(None);
+    }
+    let Some(raw) = env_lookup(MONGODB_CREDENTIALS_ENV) else {
+        return Ok(None);
+    };
+    let registry = MongoDbCredentialRegistry::from_operator_spec(&raw)
+        .map_err(|error| Error::InvalidInput(error.to_string()))?;
+    Ok((!registry.is_empty()).then_some(registry))
 }
 
 fn resolve_dynamodb(
@@ -371,7 +486,18 @@ mod tests {
         let resolved = resolve(&base_command(), temp.path(), |_| None)
             .expect("the default command must resolve every surface");
 
-        assert!(resolved.firebase.is_some(), "firestore routes default on");
+        let firebase = resolved
+            .firebase
+            .as_ref()
+            .expect("firestore routes default on");
+        assert!(
+            !firebase.allows_emulator_token_verification_bypass(),
+            "plain start must not enable the dev-only Firebase emulator bypass"
+        );
+        assert!(
+            firebase.project_registry().resolve("demo").is_err(),
+            "plain start must keep Firestore strict until projects are explicitly bound"
+        );
 
         let mongodb = resolved.mongodb.expect("mongodb listener defaults on");
         assert_eq!(
@@ -397,13 +523,47 @@ mod tests {
             "a default-on boot must persist the generated credentials"
         );
         let store = load_or_generate(temp.path()).expect("reload the persisted store");
-        assert_eq!(mongodb.auth.username, store.mongodb_username);
+        assert_eq!(
+            mongodb
+                .auth_config()
+                .expect("an unbound listener exposes its credential")
+                .username,
+            store.mongodb_username
+        );
         assert!(
             dynamodb
                 .access_keys
                 .binding(&store.dynamodb_access_key_id)
                 .is_ok(),
             "the store access key must authenticate"
+        );
+    }
+
+    #[test]
+    fn dev_auto_tenant_enables_loopback_firebase_project_binding() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut command = base_command();
+        command.auto_tenant = Some("dev-project".to_string());
+        let resolved = resolve(&command, temp.path(), |name| {
+            (name == FIREBASE_PROJECTS_ENV).then(|| "other:other".to_string())
+        })
+        .expect("dev auto-tenant Firestore config should resolve");
+        let firebase = resolved.firebase.expect("firestore routes stay mounted");
+
+        assert!(
+            firebase.allows_emulator_token_verification_bypass(),
+            "dev auto-tenant mode must accept Firebase emulator mock tokens on loopback"
+        );
+        assert_eq!(
+            firebase
+                .project_registry()
+                .resolve("dev-project")
+                .expect("dev project should resolve"),
+            TenantId::new("dev-project").expect("tenant id should parse")
+        );
+        assert!(
+            firebase.project_registry().resolve("other").is_err(),
+            "ambient project bindings must not desync nimbus dev from its auto tenant"
         );
     }
 
@@ -514,7 +674,13 @@ mod tests {
             .expect("store credentials should back the listener");
         let mongodb = resolved.mongodb.expect("mongodb config should resolve");
         let store = load_or_generate(temp.path()).expect("reload the persisted store");
-        assert_eq!(mongodb.auth.username, store.mongodb_username);
+        assert_eq!(
+            mongodb
+                .auth_config()
+                .expect("an unbound listener exposes its credential")
+                .username,
+            store.mongodb_username
+        );
 
         // Operator env credentials take precedence over the store.
         let resolved = resolve(&command, temp.path(), |name| match name {
@@ -525,7 +691,13 @@ mod tests {
         .expect("env credentials should enable the listener");
         let mongodb = resolved.mongodb.expect("mongodb config should resolve");
         assert_eq!(mongodb.bind_addr, "127.0.0.1:27017".parse().unwrap());
-        assert_eq!(mongodb.auth.username, "ops");
+        assert_eq!(
+            mongodb
+                .auth_config()
+                .expect("an unbound listener exposes its credential")
+                .username,
+            "ops"
+        );
     }
 
     #[test]
@@ -564,7 +736,13 @@ mod tests {
         .expect("operator credentials should apply to the default listener");
         let mongodb = resolved.mongodb.expect("mongodb config should resolve");
         assert_eq!(mongodb.bind_addr.port(), MONGODB_CONVENTIONAL_PORT);
-        assert_eq!(mongodb.auth.username, "ops");
+        assert_eq!(
+            mongodb
+                .auth_config()
+                .expect("an unbound listener exposes its credential")
+                .username,
+            "ops"
+        );
         assert!(
             !wire_credentials_path(temp.path()).exists(),
             "operator credentials must not touch the store"
@@ -587,8 +765,20 @@ mod tests {
         .expect("store-only mode should resolve");
         let mongodb = resolved.mongodb.expect("mongodb config should resolve");
         let store = load_or_generate(temp.path()).expect("reload the persisted store");
-        assert_eq!(mongodb.auth.username, store.mongodb_username);
-        assert_ne!(mongodb.auth.username, "ambient-ops");
+        assert_eq!(
+            mongodb
+                .auth_config()
+                .expect("an unbound listener exposes its credential")
+                .username,
+            store.mongodb_username
+        );
+        assert_ne!(
+            mongodb
+                .auth_config()
+                .expect("an unbound listener exposes its credential")
+                .username,
+            "ambient-ops"
+        );
     }
 
     #[test]
@@ -665,6 +855,128 @@ mod tests {
             message.contains("loopback-only") && message.contains("proxy"),
             "refusal should explain the posture, got: {message}"
         );
+    }
+
+    #[test]
+    fn mongodb_bound_credentials_enable_a_tenant_bound_listener() {
+        // M9a: NIMBUS_MONGODB_CREDENTIALS ingests per-tenant bindings, so the
+        // listener runs in bound mode (authentication decides the tenant).
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut command = base_command();
+        command.mongodb_port = Some(27017);
+        // Opt DynamoDB out so its store-backed default key can't create the
+        // file this test asserts stays absent.
+        command.dynamodb = false;
+        let resolved = resolve(&command, temp.path(), |name| {
+            (name == MONGODB_CREDENTIALS_ENV)
+                .then(|| "user-a:tenant-a:secret-a,user-b:tenant-b:secret-b".to_string())
+        })
+        .expect("bound credentials should enable the listener");
+        let mongodb = resolved.mongodb.expect("mongodb config should resolve");
+        assert!(
+            mongodb.is_tenant_bound(),
+            "operator credentials must produce a bound listener"
+        );
+        assert!(
+            mongodb.auth_config().is_none(),
+            "bound mode exposes no single tenant-agnostic credential"
+        );
+        assert!(
+            !wire_credentials_path(temp.path()).exists(),
+            "operator credentials must not touch the store"
+        );
+    }
+
+    #[test]
+    fn mongodb_bound_credentials_admit_a_non_loopback_host_with_opt_in() {
+        // The loopback-only check is relaxed in bound mode, gated by the same
+        // --allow-network opt-in as the main and DynamoDB listeners.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut command = base_command();
+        command.mongodb_port = Some(27017);
+        command.mongodb_host = "0.0.0.0".to_string();
+
+        // Without --allow-network the non-loopback bound host is still refused.
+        let error = resolve(&command, temp.path(), |name| {
+            (name == MONGODB_CREDENTIALS_ENV).then(|| "user-a:tenant-a:secret-a".to_string())
+        })
+        .expect_err("a non-loopback bound host without --allow-network must be refused");
+        assert!(
+            error.to_string().contains("--allow-network"),
+            "refusal must name the opt-in flag, got: {error}"
+        );
+
+        // With --allow-network it binds the non-loopback address.
+        command.allow_network = true;
+        let resolved = resolve(&command, temp.path(), |name| {
+            (name == MONGODB_CREDENTIALS_ENV).then(|| "user-a:tenant-a:secret-a".to_string())
+        })
+        .expect("--allow-network should admit the non-loopback bound host");
+        let mongodb = resolved.mongodb.expect("mongodb config should resolve");
+        assert!(mongodb.is_tenant_bound());
+        assert_eq!(mongodb.bind_addr, "0.0.0.0:27017".parse().unwrap());
+    }
+
+    #[test]
+    fn mongodb_malformed_bound_credentials_are_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut command = base_command();
+        command.mongodb_port = Some(27017);
+        let error = resolve(&command, temp.path(), |name| {
+            (name == MONGODB_CREDENTIALS_ENV).then(|| "only-two:parts".to_string())
+        })
+        .expect_err("a malformed credential binding must be rejected");
+        assert!(
+            error.to_string().contains("USERNAME:TENANT:PASSWORD"),
+            "refusal must name the expected format, got: {error}"
+        );
+    }
+
+    #[test]
+    fn mongodb_reserved_tenant_bound_credentials_are_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut command = base_command();
+        command.mongodb_port = Some(27017);
+        let error = resolve(&command, temp.path(), |name| {
+            (name == MONGODB_CREDENTIALS_ENV)
+                .then(|| "user-evil:_nimbus_internal:secret".to_string())
+        })
+        .expect_err("binding a reserved Nimbus-internal tenant must be refused");
+        assert!(
+            error.to_string().contains("reserved"),
+            "refusal must explain the reserved-tenant rejection, got: {error}"
+        );
+    }
+
+    #[test]
+    fn mongodb_empty_credentials_env_keeps_the_unbound_loopback_path() {
+        // An env present but empty (no bindings) is not "bound mode": today's
+        // unbound, loopback-only behavior holds and a non-loopback host is
+        // refused with the loopback-only message.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut command = base_command();
+        command.mongodb_port = Some(27017);
+        let resolved = resolve(&command, temp.path(), |name| match name {
+            MONGODB_CREDENTIALS_ENV => Some("  ,  ".to_string()),
+            _ => None,
+        })
+        .expect("an empty credentials env should fall back to the unbound path");
+        let mongodb = resolved.mongodb.expect("mongodb config should resolve");
+        assert!(
+            !mongodb.is_tenant_bound(),
+            "an empty credentials env must not enable bound mode"
+        );
+
+        command.mongodb_host = "0.0.0.0".to_string();
+        command.allow_network = true;
+        let error = resolve(&command, temp.path(), |name| match name {
+            MONGODB_CREDENTIALS_ENV => Some("".to_string()),
+            MONGODB_USERNAME_ENV => Some("ops".to_string()),
+            MONGODB_PASSWORD_ENV => Some("secret".to_string()),
+            _ => None,
+        })
+        .expect_err("the unbound path must still refuse a non-loopback host");
+        assert!(error.to_string().contains("loopback-only"));
     }
 
     #[test]

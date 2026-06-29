@@ -46,7 +46,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
         .invoke_bundle(
@@ -211,7 +211,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
         .invoke_bundle(
@@ -250,9 +250,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(
-            RuntimeLimits::application_node22_local_development(),
-        )),
+        runtime_test_policy_with_real_fs(RuntimeLimits::application_node22_local_development()),
     );
     let result = runtime
         .invoke_bundle(
@@ -370,7 +368,7 @@ export {};
 
     let writer_runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(read_write_limits.clone())),
+        runtime_test_policy_with_real_fs(read_write_limits.clone()),
     );
     let written = writer_runtime
         .invoke_bundle(
@@ -410,7 +408,7 @@ export {};
         .push("NIMBUS_C1_3_SHARED_ENV".to_string());
     let worker_runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(worker_limits)),
+        runtime_test_policy_with_real_fs(worker_limits),
     );
     let worker_shared = worker_runtime
         .invoke_bundle(
@@ -444,7 +442,7 @@ export {};
 
     let reader_runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(read_write_limits)),
+        runtime_test_policy_with_real_fs(read_write_limits),
     );
     let read = reader_runtime
         .invoke_bundle(
@@ -478,7 +476,7 @@ export {};
         .push("NIMBUS_C1_3_SHARED_ENV".to_string());
     let read_only_runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(read_only_limits)),
+        runtime_test_policy_with_real_fs(read_only_limits),
     );
     let denied = read_only_runtime
         .invoke_bundle(
@@ -531,7 +529,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::tooling_node22())),
+        runtime_test_policy_with_real_fs(RuntimeLimits::tooling_node22()),
     );
     let result = runtime
         .invoke_bundle(
@@ -609,7 +607,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
         .invoke_bundle(
@@ -665,7 +663,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
         .invoke_bundle(
@@ -754,7 +752,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
         .invoke_bundle(
@@ -847,7 +845,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::tooling_node22())),
+        runtime_test_policy_with_real_fs(RuntimeLimits::tooling_node22()),
     );
     let result = runtime
         .invoke_bundle(

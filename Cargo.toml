@@ -14,6 +14,8 @@ members = [
     "crates/nimbus-crypto",
     "crates/nimbus-dynamodb",
     "crates/nimbus-firebase",
+    "crates/nimbus-fs",
+    "crates/nimbus-kv",
     "crates/nimbus-license",
     "crates/nimbus-machine",
     "crates/nimbus-mongodb",
@@ -99,6 +101,7 @@ node_resolver = { version = "0.90.0", features = ["sync"] }
 crc32c = "0.6"
 crc32fast = "1"
 extenddb-core = { git = "https://github.com/ExtendDB/extenddb", rev = "0448ca066c86bddf2eb465092b8b6854923665ee" }
+fjall = "3.1.5"
 futures = "0.3"
 fs2 = "0.4"
 hex = "0.4"
@@ -117,6 +120,8 @@ parking_lot = "0.12"
 pbkdf2 = { version = "0.12", features = ["hmac"] }
 rand = "0.8"
 redb = "2"
+redis = "1.3.0"
+redis-protocol = "6.0.0"
 reqwest = { version = "0.12", features = ["blocking", "json", "native-tls-vendored"] }
 ring = "0.17"
 rmp = "0.8"

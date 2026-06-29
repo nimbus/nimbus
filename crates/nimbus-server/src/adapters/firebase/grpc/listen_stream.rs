@@ -3,7 +3,9 @@ use nimbus_core::PrincipalContext;
 use tonic::{Request, Response, Status, Streaming};
 
 use super::generated::google::firestore::v1::{ListenRequest, ListenResponse};
-use super::{FirestoreGrpcService, request_bearer, resolve_bearer_auth};
+use super::{
+    FirestoreGrpcService, firebase_config_for_request, request_bearer, resolve_bearer_auth,
+};
 
 pub(super) fn listen_response_stream<S>(
     service: &FirestoreGrpcService,
@@ -13,8 +15,11 @@ pub(super) fn listen_response_stream<S>(
 where
     S: Stream<Item = Result<ListenRequest, Status>> + Send + 'static,
 {
+    let state = service.app_state()?;
+    let firebase_config = firebase_config_for_request(&state)?;
     nimbus_firebase::grpc::listen_stream::listen_response_stream(
-        service.app_state()?.engine.clone(),
+        firebase_config.project_registry(),
+        state.engine.clone(),
         service.listen_targets.clone(),
         requests,
         principal,

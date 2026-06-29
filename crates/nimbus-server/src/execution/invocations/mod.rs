@@ -3,8 +3,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use nimbus_core::TenantId;
 use nimbus_provenance::RuntimeBundleProvenanceConfig;
+use nimbus_runtime::EgressGateway;
 use nimbus_runtime::{
-    EgressGateway, HostBridge, HostCallCancellation, InvocationRequest, NimbusRuntime,
+    HostBridge, HostCallCancellation, InvocationRequest, NimbusRuntime, NimbusRuntimeError,
     RuntimeInvocationContext, RuntimePolicy,
 };
 
@@ -120,20 +121,22 @@ pub(crate) fn runtime_invocation_context(
 fn runtime_for_host(
     host_bridge: Arc<dyn HostBridge>,
     runtime_policy: Arc<RuntimePolicy>,
-) -> NimbusRuntime {
-    NimbusRuntime::with_policy(host_bridge, runtime_policy)
+) -> std::result::Result<NimbusRuntime, NimbusRuntimeError> {
+    let runtime_policy =
+        Arc::new(runtime_policy.clone_with_file_system(nimbus_fs::default_file_system()?));
+    Ok(NimbusRuntime::with_policy(host_bridge, runtime_policy))
 }
 
 fn runtime_for_host_with_egress_gateway<H>(
     host_bridge: Arc<H>,
     runtime_policy: Arc<RuntimePolicy>,
-) -> NimbusRuntime
+) -> std::result::Result<NimbusRuntime, NimbusRuntimeError>
 where
     H: HostBridge + EgressGateway + 'static,
 {
     let host: Arc<dyn HostBridge> = host_bridge.clone();
     let gateway: Arc<dyn EgressGateway> = host_bridge;
-    NimbusRuntime::with_policy(host, runtime_policy).with_egress_gateway(gateway)
+    Ok(runtime_for_host(host, runtime_policy)?.with_egress_gateway(gateway))
 }
 
 pub(crate) use blocking::invoke_runtime_bundle_blocking_with_egress_gateway;

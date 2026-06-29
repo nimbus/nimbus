@@ -66,22 +66,37 @@ impl ResolvedApplicationAuth {
     }
 }
 
-/// Parses a Firebase Auth emulator `mockUserToken` bearer into a principal.
+/// DEV-MODE TOKEN-VERIFICATION BYPASS — fabricate a *verified* principal from an
+/// unsigned, unverified Firebase Emulator token.
 ///
-/// This accepts the Firebase emulator's unsigned JSON object token shape and
-/// intentionally performs no signature verification. Callers must invoke this
-/// only after the active deployment has explicitly enabled emulator
-/// mock-user-token auth; signed production bearer paths must use an
-/// `ApplicationAuthVerifier` instead.
-pub fn firebase_emulator_mock_user_principal_from_bearer(token: &str) -> Option<PrincipalContext> {
+/// The Firebase Local Emulator Suite issues unsigned tokens by design for local
+/// development. This function performs **no** cryptographic verification: it
+/// accepts any bearer that parses as a JSON object and treats its contents as a
+/// fully verified identity — including any `iss` (issuer), from which the
+/// Firestore adapter derives the *verified Firebase project* (#24). It therefore
+/// lets the caller **forge** a verified project from attacker-controlled claims.
+///
+/// It is gated behind `FirebaseConfig::allows_emulator_token_verification_bypass`,
+/// and the `nimbus-bin` boot guard refuses that flag on any non-loopback bind, so
+/// this fabricator is structurally unreachable on a network-reachable listener.
+/// Signed production bearer paths must use an `ApplicationAuthVerifier` instead;
+/// this must never run on a public bind.
+pub fn firebase_emulator_verification_bypass_principal_from_bearer(
+    token: &str,
+) -> Option<PrincipalContext> {
     let Value::Object(mut claims) = serde_json::from_str::<Value>(token).ok()? else {
         return None;
     };
     normalize_subject_aliases(&mut claims);
     Some(PrincipalContext {
         authenticated: true,
+        // Dev-mode bypass: the opted-in emulator token *is* the trusted identity,
+        // so its (unverified) claims populate `verified_claims` too. This is what
+        // fabricates the verified project the #24 binding reads — sound only
+        // because the boot guard forbids enabling the bypass on a non-loopback
+        // bind.
+        verified_claims: claims.clone(),
         claims,
-        verified_claims: Map::new(),
     })
 }
 
@@ -207,13 +222,22 @@ mod tests {
     }
 
     #[test]
-    fn emulator_principal_normalizes_subject_aliases() {
-        let principal = firebase_emulator_mock_user_principal_from_bearer(r#"{"uid":"user-123"}"#)
-            .expect("emulator bearer should parse");
+    fn emulator_verification_bypass_normalizes_aliases_and_fabricates_verified_claims() {
+        let principal = firebase_emulator_verification_bypass_principal_from_bearer(
+            r#"{"uid":"user-123","iss":"https://securetoken.google.com/demo"}"#,
+        )
+        .expect("emulator bearer should parse");
 
         assert!(principal.authenticated);
         assert_eq!(principal.claims["subject"], json!("user-123"));
         assert_eq!(principal.claims["sub"], json!("user-123"));
+        // The dev-mode bypass fabricates verified_claims from the unverified
+        // token, so the issuer is treated as verified (this is the forge).
+        assert_eq!(
+            principal.verified_claims["iss"],
+            json!("https://securetoken.google.com/demo")
+        );
+        assert_eq!(principal.verified_claims["subject"], json!("user-123"));
     }
 
     fn test_auth() -> InvocationAuth {
