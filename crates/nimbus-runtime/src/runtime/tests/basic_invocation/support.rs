@@ -385,6 +385,11 @@ pub(super) fn networking_canary_expected_result(
                 "clientCount": 1,
             },
         }),
+        "ws-echo.mjs" => serde_json::json!({
+            "protocol": "ws",
+            "sent": "hello-ws",
+            "echoed": "echo:hello-ws",
+        }),
         other => panic!("unexpected networking canary bundle fixture: {other}"),
     }
 }
@@ -997,6 +1002,16 @@ pub(super) fn assert_host_heavy_canary_result(
                 &["Requires net access", "network access", "listen"],
             )
         }
+        "ws-server-listen.mjs" => {
+            if host_heavy_string(actual, "surface")? != "ws_server_listen" {
+                return Err(format!("ws_server_listen surface mismatch: {actual}"));
+            }
+            assert_denial_contains_any(
+                actual,
+                bundle_fixture_name,
+                &["Requires net access", "network access", "listen"],
+            )
+        }
         "prisma-engine.mjs" => {
             if host_heavy_string(actual, "surface")? != "prisma_engine" {
                 return Err(format!("prisma_engine surface mismatch: {actual}"));
@@ -1056,6 +1071,14 @@ pub(super) fn assert_host_heavy_canary_error(
         }
         "raw-server-listen.mjs" => Err(format!(
             "raw-server-listen.mjs did not fail with net-listen denial: {error}"
+        )),
+        "ws-server-listen.mjs"
+            if error.contains("Requires net access") && error.contains("127.0.0.1:0") =>
+        {
+            Ok(())
+        }
+        "ws-server-listen.mjs" => Err(format!(
+            "ws-server-listen.mjs did not fail with net-listen denial: {error}"
         )),
         other => Err(format!(
             "{other} failed during execution instead of returning a diagnostic payload: {error}"
