@@ -13,7 +13,7 @@ use deno_fs::sync::MaybeArc;
 use deno_fs::{FileSystem, FsDirEntry, FsFileType, FsReadDirRc, OpenOptions};
 use deno_io::fs::{File, FsError, FsResult, FsStat, FsStatFs};
 use deno_permissions::{CheckedPath, CheckedPathBuf};
-use nimbus_blob::{BlobHash, BlobStore, ByteStream, LocalPackStore};
+use nimbus_blob::{BlobHash, BlobStore, ByteStream, MemoryBlobStore};
 use nimbus_core::Result as NimbusResult;
 
 use super::{
@@ -455,7 +455,7 @@ fn symlink_targets_and_realpath_stay_inside_virtual_mount() {
 
 #[derive(Default)]
 struct TrackingBlobStore {
-    inner: LocalPackStore,
+    inner: MemoryBlobStore,
     get_stream_calls: Arc<Mutex<Vec<BlobHash>>>,
     get_calls: Arc<Mutex<usize>>,
 }

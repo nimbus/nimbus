@@ -113,7 +113,7 @@ mod tests {
 
     use nimbus_crypto::{DataEncryptionKey, FRAME_PLAINTEXT_LEN, FramedSeedKind, KEY_SEED_LEN};
 
-    use crate::local::LocalPackStore;
+    use crate::memory::MemoryBlobStore;
 
     fn key(seed: &str) -> FramedBlobKey {
         FramedBlobKey::new(DataEncryptionKey::new(
@@ -123,7 +123,7 @@ mod tests {
 
     #[tokio::test]
     async fn put_then_get_round_trips_through_crypto() {
-        let store = EncryptedBlobStore::new(LocalPackStore::new(), key("acme"));
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
         let plaintext = Bytes::from_static(b"top secret payload");
         let hash = store.put(plaintext.clone()).await.unwrap();
         let got = store.get(&hash).await.unwrap();
@@ -132,7 +132,7 @@ mod tests {
 
     #[tokio::test]
     async fn ciphertext_differs_from_plaintext() {
-        let store = EncryptedBlobStore::new(LocalPackStore::new(), key("acme"));
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
         let plaintext = Bytes::from_static(b"this should be encrypted at rest");
         let hash = store.put(plaintext.clone()).await.unwrap();
         let stored = store.inner().get(&hash).await.unwrap();
@@ -142,8 +142,8 @@ mod tests {
 
     #[tokio::test]
     async fn identical_plaintext_and_key_yields_identical_ciphertext() {
-        let store_a = EncryptedBlobStore::new(LocalPackStore::new(), key("acme"));
-        let store_b = EncryptedBlobStore::new(LocalPackStore::new(), key("acme"));
+        let store_a = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
+        let store_b = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
         let plaintext = Bytes::from_static(b"dedup me please");
 
         let hash_a = store_a.put(plaintext.clone()).await.unwrap();
@@ -164,8 +164,8 @@ mod tests {
     #[tokio::test]
     async fn different_keys_yield_different_ciphertext() {
         let plaintext = Bytes::from_static(b"sensitive");
-        let store_a = EncryptedBlobStore::new(LocalPackStore::new(), key("tenant-a"));
-        let store_b = EncryptedBlobStore::new(LocalPackStore::new(), key("tenant-b"));
+        let store_a = EncryptedBlobStore::new(MemoryBlobStore::new(), key("tenant-a"));
+        let store_b = EncryptedBlobStore::new(MemoryBlobStore::new(), key("tenant-b"));
         let hash_a = store_a.put(plaintext.clone()).await.unwrap();
         let hash_b = store_b.put(plaintext.clone()).await.unwrap();
         assert_ne!(
@@ -176,14 +176,14 @@ mod tests {
 
     #[tokio::test]
     async fn empty_plaintext_round_trips() {
-        let store = EncryptedBlobStore::new(LocalPackStore::new(), key("acme"));
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
         let hash = store.put(Bytes::new()).await.unwrap();
         assert_eq!(store.get(&hash).await.unwrap(), Bytes::new());
     }
 
     #[tokio::test]
     async fn multi_frame_plaintext_round_trips() {
-        let store = EncryptedBlobStore::new(LocalPackStore::new(), key("acme"));
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
         let plaintext: Vec<u8> = (0..(FRAME_PLAINTEXT_LEN * 2 + 1234))
             .map(|i| (i % 251) as u8)
             .collect();
@@ -196,7 +196,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_range_returns_plaintext_slice() {
-        let store = EncryptedBlobStore::new(LocalPackStore::new(), key("acme"));
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
         let hash = store.put(Bytes::from_static(b"abcdefghij")).await.unwrap();
         let slice = store.get_range(&hash, 3..7).await.unwrap();
         assert_eq!(slice, Bytes::from_static(b"defg"));
@@ -204,7 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_range_opens_only_overlapping_frames() {
-        let store = EncryptedBlobStore::new(LocalPackStore::new(), key("acme"));
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
         let plaintext: Vec<u8> = (0..(FRAME_PLAINTEXT_LEN * 3 + 21))
             .map(|i| (i % 251) as u8)
             .collect();
@@ -221,7 +221,7 @@ mod tests {
     #[tokio::test]
     async fn streamed_put_uses_crypto_salt_and_round_trips() {
         use std::io::Cursor;
-        let store = EncryptedBlobStore::new(LocalPackStore::new(), key("acme"));
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
         let payload = Bytes::from_static(b"streamed via salt seed");
         let src: ByteStream = Box::new(Cursor::new(payload.clone()));
         let hash = store.put_stream(src).await.unwrap();
@@ -229,7 +229,8 @@ mod tests {
         assert_eq!(got, payload);
 
         let framed = store.inner().get(&hash).await.unwrap();
-        let header = EncryptedBlobStore::<LocalPackStore>::parse_header_for_tests(&framed).unwrap();
+        let header =
+            EncryptedBlobStore::<MemoryBlobStore>::parse_header_for_tests(&framed).unwrap();
         assert_eq!(
             header.seed_kind,
             FramedSeedKind::Salt,
@@ -240,7 +241,7 @@ mod tests {
     #[tokio::test]
     async fn streamed_puts_do_not_dedup() {
         use std::io::Cursor;
-        let store = EncryptedBlobStore::new(LocalPackStore::new(), key("acme"));
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
         let payload = Bytes::from_static(b"identical stream bytes");
         let h1 = store
             .put_stream(Box::new(Cursor::new(payload.clone())))
@@ -257,7 +258,7 @@ mod tests {
 
     #[tokio::test]
     async fn tampered_ciphertext_fails_to_open() {
-        let store = EncryptedBlobStore::new(LocalPackStore::new(), key("acme"));
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
         let hash = store.put(Bytes::from_static(b"authentic")).await.unwrap();
 
         let mut framed = store.inner().get(&hash).await.unwrap().to_vec();
@@ -274,7 +275,7 @@ mod tests {
 
     #[tokio::test]
     async fn tampered_header_len_fails_to_open() {
-        let store = EncryptedBlobStore::new(LocalPackStore::new(), key("acme"));
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
         let hash = store.put(Bytes::from_static(b"len-bound")).await.unwrap();
         let mut framed = store.inner().get(&hash).await.unwrap().to_vec();
         framed[4 + 1 + KEY_SEED_LEN + 8 - 1] ^= 0x01;
