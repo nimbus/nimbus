@@ -129,6 +129,7 @@ async fn application_node22_networking_package_canary_batch() {
         "axios.mjs",
         "undici.mjs",
         "socket-io.mjs",
+        "ws-echo.mjs",
     ];
     run_application_networking_canary_batch(
         &app,
@@ -150,6 +151,7 @@ async fn application_node24_networking_package_canary_batch() {
         "axios.mjs",
         "undici.mjs",
         "socket-io.mjs",
+        "ws-echo.mjs",
     ];
     run_application_networking_canary_batch(
         &app,
@@ -312,6 +314,7 @@ async fn run_application_host_heavy_diagnostic_canary_batch(
         "native-addon.mjs",
         "persistent-fs.mjs",
         "raw-server-listen.mjs",
+        "ws-server-listen.mjs",
         "prisma-engine.mjs",
         "sharp-native.mjs",
         "esbuild-binary.mjs",
