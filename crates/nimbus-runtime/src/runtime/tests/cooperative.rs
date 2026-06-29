@@ -1497,6 +1497,9 @@ export {};
             RuntimePoolKind::BunJscTrustedRetained | RuntimePoolKind::BunJscFreshDiscard => {
                 unreachable!("test covers only V8/Deno pool kinds")
             }
+            RuntimePoolKind::PrecompiledModuleCache | RuntimePoolKind::RetainedStorePool => {
+                unreachable!("test covers only V8/Deno pool kinds")
+            }
         };
         limits.max_concurrent_runtime_instances = 1;
         limits.worker_threads = 1;

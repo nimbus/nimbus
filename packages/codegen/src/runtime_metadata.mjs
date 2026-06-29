@@ -1,10 +1,13 @@
 const RUNTIME_ENGINE = "v8";
 const BUN_JSC_RUNTIME_ENGINE = "bun_jsc";
+const WASMTIME_RUNTIME_ENGINE = "wasmtime";
 const RUNTIME_BUNDLE_CONTENT_KIND = "javascript";
+const WASM_COMPONENT_BUNDLE_CONTENT_KIND = "wasm_component";
 const JAVASCRIPT_EVALUATION_FORMAT = "es_module";
 const BUN_JSC_JAVASCRIPT_EVALUATION_FORMAT = "program_wrapper";
 const DEFAULT_COMPATIBILITY_TARGET = "web_standard_isolate";
 const BUN_JSC_COMPATIBILITY_TARGET = "bun_jsc";
+const WASM_COMPONENT_COMPATIBILITY_TARGET = "wasm_component";
 const NODE_PACKAGE_RESOLUTION = "node_external_packages";
 const BUNDLED_PACKAGE_RESOLUTION = "bundled";
 const BUN_JSC_PACKAGE_RESOLUTION = "bun_self_contained";
@@ -60,6 +63,14 @@ function runtimeLaneMetadata(projectConfig) {
       runtime_compatibility_target: BUN_JSC_COMPATIBILITY_TARGET,
       runtime_package_resolution: BUN_JSC_PACKAGE_RESOLUTION,
     },
+    wasmtime: {
+      runtime_engine: WASMTIME_RUNTIME_ENGINE,
+      runtime_bundle_content_kind: WASM_COMPONENT_BUNDLE_CONTENT_KIND,
+      runtime_javascript_evaluation_format: JAVASCRIPT_EVALUATION_FORMAT,
+      runtime_compatibility_target: WASM_COMPONENT_COMPATIBILITY_TARGET,
+      runtime_package_resolution: BUNDLED_PACKAGE_RESOLUTION,
+      runtime_component_world: "nimbus_function",
+    },
     selectedNode: projectConfig.node.runtimeTarget,
   };
 }
@@ -75,6 +86,9 @@ export {
   NODE_PACKAGE_RESOLUTION,
   RUNTIME_BUNDLE_CONTENT_KIND,
   RUNTIME_ENGINE,
+  WASM_COMPONENT_BUNDLE_CONTENT_KIND,
+  WASM_COMPONENT_COMPATIBILITY_TARGET,
+  WASMTIME_RUNTIME_ENGINE,
   runtimeLaneMetadata,
   runtimeMetadataForFunction,
 };

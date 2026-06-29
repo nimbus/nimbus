@@ -320,6 +320,7 @@ fn runtime_backend_label(kind: RuntimeBackendKind) -> &'static str {
     match kind {
         RuntimeBackendKind::V8 => "v8",
         RuntimeBackendKind::BunJsc => "bun_jsc",
+        RuntimeBackendKind::Wasmtime => "wasmtime",
     }
 }
 

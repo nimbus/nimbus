@@ -6755,6 +6755,7 @@ async fn invoke_node_full_fresh_realm_with_driver(
             context,
             execution_plan: Some(&execution_plan),
             record_replacement_on_error: false,
+            activity_signal: None,
         })
         .expect("driver preparation should install timeout and cancellation guards");
 
@@ -6787,7 +6788,7 @@ async fn invoke_node_full_fresh_realm_with_driver(
                         .begin_wait_until_phase()
                         .await
                         .expect("waitUntil phase should arm cleanly");
-                    match runtime_owner
+                    let drain = runtime_owner
                         .drain_wait_until_with_trace(
                             &mut driver.runtime,
                             Some(&realm),
@@ -6796,14 +6797,10 @@ async fn invoke_node_full_fresh_realm_with_driver(
                             driver.construction_mode,
                             Some(context),
                         )
-                        .await
-                    {
-                        Ok(()) => match driver.wait_until_phase_timeout_error() {
-                            Some(error) => Err(error),
-                            None => Ok(response),
-                        },
-                        Err(error) => Err(driver.classify_wait_until_phase_error(error)),
-                    }
+                        .await;
+                    driver
+                        .classify_wait_until_drain_result(drain)
+                        .map(|()| response)
                 } else {
                     Ok(response)
                 }
@@ -7378,6 +7375,7 @@ export {};
             context: &context,
             execution_plan: None,
             record_replacement_on_error: false,
+            activity_signal: None,
         })
         .expect("driver preparation should reset invocation state");
 

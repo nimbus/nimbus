@@ -4,14 +4,15 @@ use crate::error::NimbusRuntimeError;
 use crate::executor::{RuntimeWorkerJob, RuntimeWorkerQueue, RuntimeWorkerShutdown};
 use crate::runtime::CooperativeRuntimeSlotPoll;
 
+use super::backend::{CooperativeBackendDriver, CooperativeBackendSlot};
 use super::{CooperativeInvocation, CooperativeRunnableSlot, CooperativeWorkerLoop, WorkerLoop};
 
-impl CooperativeWorkerLoop {
+impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
     fn finish_slot_with_result(
         &mut self,
         queue: &Arc<dyn RuntimeWorkerQueue>,
         slot_id: usize,
-        invocation: CooperativeInvocation,
+        invocation: CooperativeInvocation<D::Slot>,
         result: crate::error::Result<serde_json::Value>,
         finish_scheduler_slot: bool,
     ) {
@@ -81,7 +82,7 @@ impl CooperativeWorkerLoop {
         &mut self,
         queue: &Arc<dyn RuntimeWorkerQueue>,
         shutdown: &RuntimeWorkerShutdown,
-    ) -> Option<CooperativeRunnableSlot<CooperativeInvocation>> {
+    ) -> Option<CooperativeRunnableSlot<CooperativeInvocation<D::Slot>>> {
         loop {
             self.drain_ready_parked_slots();
 
@@ -95,7 +96,7 @@ impl CooperativeWorkerLoop {
             // single worker on a new admission; defer the job locally so the
             // slot holding capacity can be polled.
             if let Some(job) = self.next_admission_job(queue) {
-                if !job.execution_plan.permits_cooperative_scheduler_admission()
+                if !self.driver.permits_scheduler_admission(&job.execution_plan)
                     && !self.scheduler.is_idle()
                 {
                     self.pending_admissions.push_front(job);
@@ -137,7 +138,10 @@ impl CooperativeWorkerLoop {
     }
 }
 
-impl WorkerLoop for CooperativeWorkerLoop {
+impl<D: CooperativeBackendDriver> WorkerLoop for CooperativeWorkerLoop<D>
+where
+    D::Slot: CooperativeBackendSlot,
+{
     fn run(&mut self, queue: Arc<dyn RuntimeWorkerQueue>, shutdown: RuntimeWorkerShutdown) {
         self.activity_signal = queue.activity_signal();
         self.activity_generation = self.activity_signal.current_generation();
@@ -213,6 +217,6 @@ impl WorkerLoop for CooperativeWorkerLoop {
             self.drain_cancelled_slots(&queue);
             self.drain_pending_admissions(&queue);
         }
-        self.deferred_v8_runtime_drops.clear();
+        self.driver.clear_retained();
     }
 }

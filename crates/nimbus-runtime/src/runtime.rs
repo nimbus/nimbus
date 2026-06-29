@@ -29,9 +29,11 @@ mod realm_lifecycle;
 #[cfg(test)]
 use self::bootstrap::RuntimeCancellationState;
 pub(crate) use self::bootstrap::RuntimeInvocationTimeoutController;
-pub use self::bundle::RuntimeBundle;
 pub(crate) use self::bundle::RuntimeBundleEntrypointKind;
 pub(crate) use self::bundle::RuntimeBundleIdentity;
+pub use self::bundle::{
+    RuntimeBundle, RuntimeBundleContent, RuntimeBundleWasmComponentContent, RuntimeComponentWorld,
+};
 #[cfg(test)]
 use self::helpers::deserialize_json_value;
 pub use self::invocation::{
@@ -65,7 +67,6 @@ impl RuntimeHost {
         NimbusRuntime::with_policy(self.bridge.clone(), policy)
     }
 
-    #[cfg(feature = "bun-jsc-linked-adapter")]
     pub(crate) fn bridge(&self) -> Arc<dyn HostBridge> {
         self.bridge.clone()
     }
@@ -129,4 +130,6 @@ mod tests {
     mod timeout_cancellation;
     mod verification_harness;
     mod warm_pool;
+    mod wasmtime_fuel;
+    mod wasmtime_store_pool;
 }

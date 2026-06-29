@@ -132,6 +132,9 @@ impl RestrictedModuleLoader {
             RuntimeCompatibilityTarget::BunJsc => {
                 "Bun/JSC package resolution is owned by the Bun/JSC backend and is unavailable through the V8 module loader"
             }
+            RuntimeCompatibilityTarget::WasmComponent => {
+                "WASM components do not use the V8 JavaScript module loader"
+            }
             RuntimeCompatibilityTarget::Node20
             | RuntimeCompatibilityTarget::Node22
             | RuntimeCompatibilityTarget::Node24

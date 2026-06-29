@@ -151,7 +151,7 @@ pub(crate) fn extension_transpiler_for_target(
     target: RuntimeCompatibilityTarget,
 ) -> Option<Rc<RuntimeExtensionTranspiler>> {
     match target {
-        RuntimeCompatibilityTarget::BunJsc => None,
+        RuntimeCompatibilityTarget::BunJsc | RuntimeCompatibilityTarget::WasmComponent => None,
         // WebStandardIsolate now evaluates the shared global scope, which loads .ts ext
         // scripts (deno_telemetry), so it needs the same extension transpiler as Node.
         RuntimeCompatibilityTarget::WebStandardIsolate

@@ -9,19 +9,17 @@ use crate::executor::{
 };
 use crate::host::HostCallCancellation;
 use crate::limits::RuntimePolicy;
-use crate::runtime::{
-    CooperativeLockerRuntimeSlot, CooperativeRuntimeSlotStart, RuntimeInvocationExecution,
-};
 
+use super::backend::{CooperativeBackendDriver, CooperativeBackendInvocationStart};
 use super::{CooperativeInvocation, CooperativeWorkerLoop};
 
-enum CooperativeAdmissionStart {
-    Slot(Box<CooperativeLockerRuntimeSlot>),
+enum CooperativeAdmissionStart<S> {
+    Slot(S),
     DirectResult(crate::error::Result<serde_json::Value>),
     Deferred,
 }
 
-impl CooperativeWorkerLoop {
+impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
     pub(super) fn cancellation_cause(
         cancellation: &Option<HostCallCancellation>,
     ) -> Option<crate::host::HostCallCancellationCause> {
@@ -131,9 +129,7 @@ impl CooperativeWorkerLoop {
             return None;
         }
 
-        let runtime = job.host.runtime_with_policy(job_policy.clone());
         let worker_runtime = &self.worker_runtime;
-        let v8_runtime_pool = &mut self.v8_runtime_pool;
         let watchdog = self.watchdog.clone();
         let activity_signal = self.activity_signal.clone();
         let worker_id = self.worker_id;
@@ -170,38 +166,34 @@ impl CooperativeWorkerLoop {
                 "runtime worker invocation started"
             );
 
-            let invocation = RuntimeInvocationExecution {
+            let start = CooperativeBackendInvocationStart {
                 watchdog,
+                host: job.host.clone(),
+                policy: job_policy.clone(),
                 bundle: job.bundle.clone(),
                 request: job.request.clone(),
                 context: job.context.clone(),
                 execution_plan: job.execution_plan.clone(),
-                external_cancellation: job.cancellation.clone(),
+                cancellation: job.cancellation.clone(),
                 response_ready_tx: job.response_ready_tx.take(),
                 permit: permit.clone(),
+                activity_signal,
             };
-            if !job.execution_plan.permits_cooperative_scheduler_admission() {
-                let result = runtime
-                    .invoke_bundle_unmanaged(Some(v8_runtime_pool), invocation)
-                    .await;
+            if !self.driver.permits_scheduler_admission(&job.execution_plan) {
+                let result = self.driver.invoke_direct(start).await;
                 return Ok::<_, (NimbusRuntimeError, Instant)>((
                     CooperativeAdmissionStart::DirectResult(result),
                     execution_started_at,
                 ));
             }
 
-            let slot = runtime
-                .start_cooperative_locker_runtime_slot(
-                    v8_runtime_pool,
-                    CooperativeRuntimeSlotStart {
-                        invocation,
-                        activity_signal,
-                    },
-                )
+            let slot = self
+                .driver
+                .start_slot(start)
                 .await
                 .map_err(|error| (error, execution_started_at))?;
             Ok::<_, (NimbusRuntimeError, Instant)>((
-                CooperativeAdmissionStart::Slot(Box::new(slot)),
+                CooperativeAdmissionStart::Slot(slot),
                 execution_started_at,
             ))
         });
@@ -211,7 +203,7 @@ impl CooperativeWorkerLoop {
                 self.scheduler.admit_runnable(CooperativeInvocation {
                     job,
                     permit,
-                    slot: *slot,
+                    slot,
                     execution_started_at,
                     cancellation_for_metrics,
                 });

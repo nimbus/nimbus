@@ -77,6 +77,14 @@ function assertRuntimeLanes(manifest, selectedNode) {
       runtime_compatibility_target: "bun_jsc",
       runtime_package_resolution: "bun_self_contained",
     },
+    wasmtime: {
+      runtime_engine: "wasmtime",
+      runtime_bundle_content_kind: "wasm_component",
+      runtime_javascript_evaluation_format: "es_module",
+      runtime_compatibility_target: "wasm_component",
+      runtime_package_resolution: "bundled",
+      runtime_component_world: "nimbus_function",
+    },
     selectedNode,
   });
 }

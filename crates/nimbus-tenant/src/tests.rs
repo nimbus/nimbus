@@ -1,5 +1,7 @@
 use nimbus_core::{PrincipalContext, TenantId};
-use nimbus_runtime::{RuntimeBundle, RuntimeLimits, RuntimePolicy, RuntimeProfile};
+use nimbus_runtime::{
+    RuntimeBackendKind, RuntimeBundle, RuntimeLimits, RuntimePolicy, RuntimeProfile,
+};
 use nimbus_sandbox::{
     PublishedEndpointProtocol, SandboxBackendKind, SandboxOwnerSpec, SandboxProcessSpec,
     SandboxResourceCharge, SandboxRootSpec, SandboxSpec,
@@ -375,6 +377,34 @@ fn workload_identity_splits_subject_from_audit_projection() {
     assert!(
         audit_json.contains("messages%3Asend"),
         "audit record should use the stable escaped workload name: {audit_json}"
+    );
+}
+
+#[test]
+fn workload_identity_labels_wasmtime_runtime_backend() {
+    let context = test_application_context();
+    let policy = RuntimePolicy::new(RuntimeLimits::application_wasm_component());
+    let input = TenantIsolationPolicyInput::new(WorkloadAttributes::runtime_function(
+        "agent:tick",
+        RuntimeIsolationTier::InProcessUntrusted,
+    ))
+    .with_runtime_policy(
+        &context,
+        &policy,
+        RuntimeIsolationTier::InProcessUntrusted,
+        TenantIsolationMode::LocalDevelopment,
+    );
+    let decision = context
+        .admit_decision(input)
+        .expect("local development Wasmtime policy should admit for identity derivation");
+
+    assert_eq!(
+        decision.runtime().backend_kind(),
+        RuntimeBackendKind::Wasmtime
+    );
+    assert_eq!(
+        decision.workload_identity().subject(),
+        "nimbus-workload:v1/tenant/tenant-a/deployment/none/surface/test/kind/runtime_function/name/agent%3Atick/runtime-tier/in_process_untrusted/runtime-backend/wasmtime/sandbox-backend/none"
     );
 }
 
