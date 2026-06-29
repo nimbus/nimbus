@@ -1,0 +1,15 @@
+[package]
+name = "nimbus-proxy"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nimbus-core = { path = "../nimbus-core" }
+nimbus-egress = { path = "../nimbus-egress" }
+url.workspace = true

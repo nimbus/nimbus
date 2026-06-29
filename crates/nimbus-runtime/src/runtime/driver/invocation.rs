@@ -491,6 +491,11 @@ impl NimbusRuntime {
         let system_timeout_triggered = Arc::new(AtomicBool::new(false));
         let heap_limit_triggered = Arc::new(AtomicBool::new(false));
         let external_cancellation_triggered = Arc::new(AtomicBool::new(false));
+        super::super::bootstrap::install_runtime_owner(&mut runtime, self.clone());
+        super::super::bootstrap::install_runtime_egress_gateway(
+            &mut runtime,
+            self.egress_gateway_binding(),
+        );
         super::super::bootstrap::bind_runtime_host_bridge(&mut runtime, self.host.clone());
         super::super::bootstrap::reset_runtime_invocation_state(
             &mut runtime,

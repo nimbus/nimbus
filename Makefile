@@ -141,8 +141,11 @@ test: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
 # libtest overlap those with isolated parents can poison process-global V8
 # cage / RO-heap state and abort the whole binary instead of producing a
 # normal Rust test failure.
+# Keep this feature-off lane out of the pool_reuse `isol_` parent tests:
+# those subprocess crash-oracle parents are covered by test-rust-runtime-cage
+# under the pointer-compression configuration they are designed to prove.
 test-rust-runtime: build-node22-anchor-snapshot-off
-	$(SINGLE_FLIGHT) --key cargo-test-runtime-ci -- cargo test -p nimbus-runtime -- --skip runtime::tests::node_compat:: --test-threads=1
+	$(SINGLE_FLIGHT) --key cargo-test-runtime-ci -- cargo test -p nimbus-runtime -- --skip runtime::tests::node_compat:: --skip runtime::tests::pool_reuse::isol_ --test-threads=1
 
 # Run the cage (pointer-compression) crash-oracle lane. The cross-profile shared-RO-heap
 # crash only reproduces under --features v8-pointer-compression (the single shared cage),

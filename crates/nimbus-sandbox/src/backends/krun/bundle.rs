@@ -5,12 +5,12 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::egress::{
-    SANDBOX_EGRESS_ENFORCEMENT_ENV, SANDBOX_EGRESS_RESERVED_ENV_KEYS, SandboxEgressEnforcementPlan,
-    SandboxEgressLaunchEnforcement,
-};
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
+use nimbus_egress::{
+    EGRESS_ENFORCEMENT_ENV, EGRESS_RESERVED_ENV_KEYS, EgressEnforcementPlan,
+    EgressLaunchEnforcement,
+};
 
 const DEFAULT_PATH_ENV: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const MIN_MEMORY_LIMIT_BYTES: u64 = 1024 * 1024;
@@ -237,7 +237,7 @@ pub(crate) fn build_bundle_config(
 
     validate_port_bindings(&spec.port_bindings)?;
     validate_resource_limits(&spec.resources)?;
-    let egress_enforcement = SandboxEgressLaunchEnforcement::ProcessSupervisorProxy
+    let egress_enforcement = EgressLaunchEnforcement::ProcessSupervisorProxy
         .materialize(&spec.egress)
         .map_err(|message| SandboxError::InvalidSpec { message })?;
     let process_env = process_env(spec, &egress_enforcement)?;
@@ -404,22 +404,20 @@ fn process_cwd(process: &SandboxProcessSpec) -> String {
 
 fn process_env(
     spec: &SandboxSpec,
-    egress_enforcement: &SandboxEgressEnforcementPlan,
+    egress_enforcement: &EgressEnforcementPlan,
 ) -> Result<Vec<String>> {
     let mut env = if spec.process.env.is_empty() {
         vec![DEFAULT_PATH_ENV.to_owned()]
     } else {
         spec.process.env.clone()
     };
-    env.retain(|entry| {
-        env_key(entry).is_none_or(|key| !SANDBOX_EGRESS_RESERVED_ENV_KEYS.contains(&key))
-    });
+    env.retain(|entry| env_key(entry).is_none_or(|key| !EGRESS_RESERVED_ENV_KEYS.contains(&key)));
     let rendered = serde_json::to_string(egress_enforcement).map_err(|error| {
         SandboxError::OperationFailed {
             message: format!("failed to serialize sandbox egress enforcement plan: {error}"),
         }
     })?;
-    env.push(format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}={rendered}"));
+    env.push(format!("{EGRESS_ENFORCEMENT_ENV}={rendered}"));
     Ok(env)
 }
 
@@ -561,23 +559,22 @@ mod tests {
         write_bundle_config,
     };
     use crate::backend::SandboxBackendKind;
-    use crate::egress::{
-        SANDBOX_EGRESS_ENFORCEMENT_ENV, SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
-        SANDBOX_EGRESS_LEGACY_POLICY_ENV, SandboxEgressEnforcementMode,
-        SandboxEgressEnforcementPlan, SandboxEgressPolicy, SandboxEgressReloadPolicy,
-        SandboxEgressRule,
-    };
     use crate::endpoint::PublishedEndpointProtocol;
     use crate::spec::{
         SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
         SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
     };
+    use nimbus_egress::{
+        EGRESS_ENFORCEMENT_ENV, EGRESS_ENFORCEMENT_SCHEMA_VERSION, EGRESS_LEGACY_POLICY_ENV,
+        EgressEnforcementMode, EgressEnforcementPlan, EgressPolicy, EgressProtocol,
+        EgressReloadPolicy, EgressRule,
+    };
 
-    fn egress_enforcement_from_config(config: &serde_json::Value) -> SandboxEgressEnforcementPlan {
+    fn egress_enforcement_from_config(config: &serde_json::Value) -> EgressEnforcementPlan {
         let env = config["process"]["env"]
             .as_array()
             .expect("env should be an array");
-        let enforcement_prefix = format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}=");
+        let enforcement_prefix = format!("{EGRESS_ENFORCEMENT_ENV}=");
         let enforcement_entries = env
             .iter()
             .filter_map(serde_json::Value::as_str)
@@ -701,19 +698,18 @@ mod tests {
 
     #[test]
     fn bundle_config_materializes_sandbox_egress_enforcement_contract_env() {
-        let mut spec =
-            sample_spec().with_egress_policy(SandboxEgressPolicy::new([SandboxEgressRule::new(
-                "stripe",
-                PublishedEndpointProtocol::Https,
-                "api.stripe.com",
-                443,
-            )
-            .with_methods(["POST"])
-            .with_path_prefixes(["/v1/"])]));
+        let mut spec = sample_spec().with_egress_policy(EgressPolicy::new([EgressRule::new(
+            "stripe",
+            EgressProtocol::Https,
+            "api.stripe.com",
+            443,
+        )
+        .with_methods(["POST"])
+        .with_path_prefixes(["/v1/"])]));
         spec.process.env = vec![
             "PATH=/usr/bin".to_owned(),
-            format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}={{\"schema_version\":0}}"),
-            format!("{SANDBOX_EGRESS_LEGACY_POLICY_ENV}={{\"allow\":[]}}"),
+            format!("{EGRESS_ENFORCEMENT_ENV}={{\"schema_version\":0}}"),
+            format!("{EGRESS_LEGACY_POLICY_ENV}={{\"allow\":[]}}"),
         ];
 
         let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
@@ -722,8 +718,8 @@ mod tests {
         let env = config["process"]["env"]
             .as_array()
             .expect("env should be an array");
-        let enforcement_prefix = format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}=");
-        let legacy_policy_prefix = format!("{SANDBOX_EGRESS_LEGACY_POLICY_ENV}=");
+        let enforcement_prefix = format!("{EGRESS_ENFORCEMENT_ENV}=");
+        let legacy_policy_prefix = format!("{EGRESS_LEGACY_POLICY_ENV}=");
         let enforcement_entries = env
             .iter()
             .filter_map(serde_json::Value::as_str)
@@ -740,20 +736,16 @@ mod tests {
                 .all(|entry| !entry.starts_with(&legacy_policy_prefix)),
             "bundle generation should remove spoofed legacy egress policy env values"
         );
-        let enforcement: SandboxEgressEnforcementPlan =
-            serde_json::from_str(enforcement_entries[0])
-                .expect("egress enforcement env should contain JSON");
+        let enforcement: EgressEnforcementPlan = serde_json::from_str(enforcement_entries[0])
+            .expect("egress enforcement env should contain JSON");
         assert_eq!(
             enforcement.schema_version,
-            SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION
+            EGRESS_ENFORCEMENT_SCHEMA_VERSION
         );
-        assert_eq!(
-            enforcement.mode,
-            SandboxEgressEnforcementMode::SupervisorProxy
-        );
+        assert_eq!(enforcement.mode, EgressEnforcementMode::SupervisorProxy);
         assert_eq!(
             enforcement.reload_policy,
-            SandboxEgressReloadPolicy::RecreateRequired
+            EgressReloadPolicy::RecreateRequired
         );
         assert_eq!(enforcement.policy().rules().len(), 1);
         assert_eq!(enforcement.policy().rules()[0].name, "stripe");
@@ -776,15 +768,12 @@ mod tests {
 
         assert_eq!(
             enforcement.schema_version,
-            SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION
+            EGRESS_ENFORCEMENT_SCHEMA_VERSION
         );
-        assert_eq!(
-            enforcement.mode,
-            SandboxEgressEnforcementMode::SupervisorProxy
-        );
+        assert_eq!(enforcement.mode, EgressEnforcementMode::SupervisorProxy);
         assert_eq!(
             enforcement.reload_policy,
-            SandboxEgressReloadPolicy::RecreateRequired
+            EgressReloadPolicy::RecreateRequired
         );
         assert!(
             enforcement.policy().is_deny_all(),
@@ -797,13 +786,12 @@ mod tests {
 
     #[test]
     fn bundle_config_rejects_invalid_sandbox_egress_policy() {
-        let spec =
-            sample_spec().with_egress_policy(SandboxEgressPolicy::new([SandboxEgressRule::new(
-                "wildcard",
-                PublishedEndpointProtocol::Https,
-                "*",
-                443,
-            )]));
+        let spec = sample_spec().with_egress_policy(EgressPolicy::new([EgressRule::new(
+            "wildcard",
+            EgressProtocol::Https,
+            "*",
+            443,
+        )]));
 
         let error = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
             .expect_err("invalid sandbox egress policy should fail bundle generation");

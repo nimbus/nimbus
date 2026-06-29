@@ -407,15 +407,15 @@ impl ComposeServicePlan {
 fn compose_egress_policy(
     service_name: &str,
     x_nimbus: Option<&ComposeNimbusPlan>,
-) -> Result<SandboxEgressPolicy, Error> {
+) -> Result<EgressPolicy, Error> {
     let Some(egress) = x_nimbus.and_then(|plan| plan.egress.as_ref()) else {
-        return Ok(SandboxEgressPolicy::deny_all());
+        return Ok(EgressPolicy::deny_all());
     };
     let mut rules = egress
         .allow
         .iter()
         .map(|rule| {
-            let mut egress_rule = SandboxEgressRule::new(
+            let mut egress_rule = EgressRule::new(
                 rule.name.clone(),
                 rule.protocol,
                 rule.host.clone(),
@@ -430,7 +430,7 @@ fn compose_egress_policy(
         })
         .collect::<Vec<_>>();
     rules.sort_by(|left, right| left.name.cmp(&right.name));
-    let policy = SandboxEgressPolicy::new(rules);
+    let policy = EgressPolicy::new(rules);
     policy.validate().map_err(|message| {
         Error::InvalidInput(format!(
             "services.{service_name}.x-nimbus.egress: {message}"

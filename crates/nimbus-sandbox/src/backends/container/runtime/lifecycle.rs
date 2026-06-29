@@ -8,8 +8,7 @@ use std::time::Duration;
 use tempfile::TempDir;
 
 use crate::backends::oci::command::CommandSpec;
-use crate::egress::{SandboxEgressPolicy, SandboxEgressRule};
-use crate::endpoint::PublishedEndpointProtocol;
+use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
 
 #[test]
 fn detect_runtime_status_marks_stale_pidfiles_as_failed() {
@@ -249,14 +248,11 @@ fn reload_egress_policy_updates_running_container_proxy() {
     );
 }
 
-fn allow_loopback_http_policy(port: u16) -> SandboxEgressPolicy {
-    SandboxEgressPolicy::new([SandboxEgressRule::new(
-        "loopback-test",
-        PublishedEndpointProtocol::Http,
-        "127.0.0.1",
-        port,
-    )
-    .allow_internal_ips(true)])
+fn allow_loopback_http_policy(port: u16) -> EgressPolicy {
+    EgressPolicy::new([
+        EgressRule::new("loopback-test", EgressProtocol::Http, "127.0.0.1", port)
+            .allow_internal_ips(true),
+    ])
 }
 
 fn unused_loopback_port() -> u16 {

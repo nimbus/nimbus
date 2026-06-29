@@ -666,14 +666,16 @@ pub(super) fn write_node_fs_policy_bundle() -> (tempfile::TempDir, std::path::Pa
     std::fs::write(
         &bundle_path,
         r#"
-import fs from "node:fs";
 import path from "node:path";
 
-globalThis.__nimbusInvoke = function () {
+globalThis.__nimbusInvoke = function (request) {
+  if (request.function_name === "messages:warmNoop") {
+    return "warm-noop";
+  }
   const localDir = path.dirname(new URL(import.meta.url).pathname);
-  const file = path.join(localDir, "worker-policy-write.txt");
-  fs.writeFileSync(file, "job-policy-fs", "utf8");
-  return fs.readFileSync(file, "utf8");
+  const directory = path.join(localDir, "worker-policy-write");
+  Deno.mkdirSync(directory, { recursive: true });
+  return Deno.statSync(directory).isDirectory ? "job-policy-fs" : "missing";
 };
 
 export {};

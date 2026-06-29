@@ -45,6 +45,7 @@ fn router_for_queued_request_drop(engine: Arc<Engine>, registry: ConvexRegistry)
             )),
     )
 }
+
 #[tokio::test]
 async fn dropped_queued_runtime_request_never_starts_mutation() {
     let registry = runtime_request_drop_registry(json!([
@@ -109,6 +110,15 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
                 && metrics.admission_decisions >= 2
                 && metrics.worker_dispatched_invocations == 1
                 && metrics.started_invocations == 1
+                && metrics
+                    .recent_request_correlations
+                    .iter()
+                    .any(|correlation| {
+                        correlation.function_name == "messages:insertQueued"
+                            && correlation
+                                .server_request_id
+                                .starts_with("convex-mutation-")
+                    })
         },
     )
     .await;
@@ -259,6 +269,15 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
                 && metrics.admission_decisions >= 2
                 && metrics.worker_dispatched_invocations == 1
                 && metrics.started_invocations == 1
+                && metrics
+                    .recent_request_correlations
+                    .iter()
+                    .any(|correlation| {
+                        correlation.function_name == "messages:insertQueued"
+                            && correlation
+                                .server_request_id
+                                .starts_with("convex-mutation-")
+                    })
         },
     )
     .await;

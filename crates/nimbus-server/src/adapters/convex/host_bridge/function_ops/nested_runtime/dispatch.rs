@@ -161,7 +161,7 @@ impl ConvexHostBridge {
                 &request.function_name
             ))
             .map_err(runtime_error_to_core)?;
-        let response = invoke_runtime_bundle_on_worker_with_host(
+        let response = invoke_runtime_bundle_on_worker_with_egress_gateway(
             &runtime_executor,
             runtime_policy,
             Arc::new(self.clone()),
@@ -203,7 +203,7 @@ impl ConvexHostBridge {
                 &request.function_name
             ))
             .map_err(runtime_error_to_core)?;
-        let response = invoke_runtime_bundle_blocking_with_host(
+        let response = invoke_runtime_bundle_blocking_with_egress_gateway(
             &runtime_executor,
             runtime_policy,
             Arc::new(self.clone()),

@@ -28,6 +28,8 @@ pub(crate) const FAIRNESS_WEBSOCKET_REJECTION_CASE: DeterministicTestCase =
 fn fairness_runtime_registry() -> ConvexRegistry {
     let mut limits = bounded_fairness_runtime_test_limits();
     limits.max_concurrent_runtime_instances = 1;
+    limits.execution_timeout = std::time::Duration::from_secs(120);
+    limits.system_timeout = std::time::Duration::from_secs(120);
     convex_registry_with_routes_and_bundle(
         json!([
             {

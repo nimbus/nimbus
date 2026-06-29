@@ -11,6 +11,8 @@ const IN_FLIGHT_REQUEST_DROP_CASE: DeterministicTestCase = DeterministicTestCase
 async fn dropped_runtime_http_request_cancels_runtime_invocation() {
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.max_concurrent_runtime_instances = 1;
+    limits.execution_timeout = std::time::Duration::from_secs(120);
+    limits.system_timeout = std::time::Duration::from_secs(120);
     let registry = runtime_request_drop_registry(json!([
         {
             "name": "messages:spin",

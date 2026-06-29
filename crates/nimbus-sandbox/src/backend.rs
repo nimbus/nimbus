@@ -5,10 +5,10 @@ use serde::{Deserialize, Serialize};
 
 use nimbus_core::TenantId;
 
-use crate::egress::SandboxEgressPolicy;
 use crate::error::Result;
 use crate::instance::{SandboxHandle, SandboxId};
 use crate::spec::SandboxSpec;
+use nimbus_egress::EgressPolicy;
 
 pub type SandboxFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'static>>;
 
@@ -28,11 +28,7 @@ pub trait SandboxBackend: Send + Sync + 'static {
 
     fn stop(&self, id: &SandboxId) -> SandboxFuture<()>;
 
-    fn reload_egress_policy(
-        &self,
-        id: &SandboxId,
-        _egress: SandboxEgressPolicy,
-    ) -> SandboxFuture<()> {
+    fn reload_egress_policy(&self, id: &SandboxId, _egress: EgressPolicy) -> SandboxFuture<()> {
         let backend = self.kind();
         let sandbox_id = id.clone();
         Box::pin(async move {

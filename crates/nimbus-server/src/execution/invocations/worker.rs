@@ -1,43 +1,52 @@
 use std::sync::Arc;
 
 use nimbus_runtime::{
-    HostBridge, InvocationRequest, NimbusRuntimeError, RuntimeBundle, RuntimeExecutor,
-    RuntimeInvocationResponse, RuntimePolicy,
+    EgressGateway, HostBridge, InvocationRequest, NimbusRuntimeError, RuntimeBundle,
+    RuntimeExecutor, RuntimePolicy,
 };
 
-use super::{RuntimeBundleInvocationOptions, runtime_for_host, runtime_invocation_context};
+use super::{
+    RuntimeBundleInvocationOptions, runtime_for_host_with_egress_gateway,
+    runtime_invocation_context,
+};
 
-pub(crate) async fn invoke_runtime_bundle_on_worker_with_host(
+pub(crate) async fn invoke_runtime_bundle_on_worker_with_host_state<H, S>(
     runtime_executor: &RuntimeExecutor,
     runtime_policy: Arc<RuntimePolicy>,
-    host_bridge: Arc<dyn HostBridge>,
+    host_bridge: Arc<H>,
     bundle: RuntimeBundle,
     request: InvocationRequest,
     options: RuntimeBundleInvocationOptions<'_>,
-) -> std::result::Result<serde_json::Value, NimbusRuntimeError> {
-    invoke_runtime_bundle_on_worker_response_ready_with_host(
+    snapshot: impl FnOnce(&H) -> S,
+) -> std::result::Result<(serde_json::Value, S), NimbusRuntimeError>
+where
+    H: HostBridge + EgressGateway + 'static,
+{
+    let response = invoke_runtime_bundle_on_worker_with_egress_gateway(
         runtime_executor,
         runtime_policy,
-        host_bridge,
+        host_bridge.clone(),
         bundle,
         request,
         options,
     )
-    .await?
-    .wait_until_complete()
-    .await
+    .await?;
+    Ok((response, snapshot(host_bridge.as_ref())))
 }
 
-pub(crate) async fn invoke_runtime_bundle_on_worker_response_ready_with_host(
+pub(crate) async fn invoke_runtime_bundle_on_worker_with_egress_gateway<H>(
     runtime_executor: &RuntimeExecutor,
     runtime_policy: Arc<RuntimePolicy>,
-    host_bridge: Arc<dyn HostBridge>,
+    host_bridge: Arc<H>,
     bundle: RuntimeBundle,
     request: InvocationRequest,
     options: RuntimeBundleInvocationOptions<'_>,
-) -> std::result::Result<RuntimeInvocationResponse, NimbusRuntimeError> {
+) -> std::result::Result<serde_json::Value, NimbusRuntimeError>
+where
+    H: HostBridge + EgressGateway + 'static,
+{
     options.admit_runtime_bundle_artifact(&bundle)?;
-    let runtime = runtime_for_host(host_bridge, runtime_policy)?;
+    let runtime = runtime_for_host_with_egress_gateway(host_bridge, runtime_policy)?;
     runtime_executor
         .invoke_on_worker_response_ready(
             runtime,
@@ -52,29 +61,7 @@ pub(crate) async fn invoke_runtime_bundle_on_worker_response_ready_with_host(
             ),
             options.cancellation,
         )
+        .await?
+        .wait_until_complete()
         .await
-}
-
-pub(crate) async fn invoke_runtime_bundle_on_worker_with_host_state<H, S>(
-    runtime_executor: &RuntimeExecutor,
-    runtime_policy: Arc<RuntimePolicy>,
-    host_bridge: Arc<H>,
-    bundle: RuntimeBundle,
-    request: InvocationRequest,
-    options: RuntimeBundleInvocationOptions<'_>,
-    snapshot: impl FnOnce(&H) -> S,
-) -> std::result::Result<(serde_json::Value, S), NimbusRuntimeError>
-where
-    H: HostBridge + 'static,
-{
-    let response = invoke_runtime_bundle_on_worker_with_host(
-        runtime_executor,
-        runtime_policy,
-        host_bridge.clone(),
-        bundle,
-        request,
-        options,
-    )
-    .await?;
-    Ok((response, snapshot(host_bridge.as_ref())))
 }

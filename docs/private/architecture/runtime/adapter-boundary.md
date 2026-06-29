@@ -65,6 +65,29 @@ Shared runtime-host modules may provide primitive capabilities such as:
 These capabilities must not carry Firebase-, Firestore-, or Convex-specific
 payloads, names, or response shapes.
 
+### Egress Is A Tier-Neutral Runtime Seam
+
+Outbound HTTP egress is not adapter-owned. Container, isolate, and wasm traffic
+share one tenant policy decision and one forwarding/enforcement model:
+
+- `nimbus-runtime` owns only the zero-workspace-dependency `EgressGateway`
+  trait and seam types, plus substrate binding adapters for isolate `fetch` and
+  wasm/WASI HTTP.
+- `nimbus-server` implements `EgressGateway` by adapting runtime requests to
+  admitted tenant policy and readiness state.
+- `nimbus-egress` is the pure PDP that decides policy. It depends on
+  `nimbus-core` only and does not own sockets, DNS, TLS, forwarding, or secret
+  material.
+- `nimbus-proxy` is the PEP that enforces the decision with DNS and canonical
+  authority checks, forwarding, credential injection, DLP, pool identity, and
+  redacted decision logs.
+- `nimbus-sandbox` wires container workloads to the PEP; it must not regain a
+  parallel egress policy or forwarding stack.
+
+Provider adapters may request egress through the same runtime/tenant authority
+model, but they must not define provider-specific bypasses around the PDP/PEP
+split.
+
 ### Translation And Execution Are Separate
 
 Provider shims may translate:

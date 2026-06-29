@@ -9,12 +9,15 @@ use nimbus_node::LocalEnforcementBinding;
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::{TenantIsolationDecision, TenantStorageAccessDecision};
 
+use super::egress_gateway::EgressGatewayEnforcementReadiness;
+
 #[derive(Clone)]
 pub(crate) struct ConvexHostBridgeScope {
     engine: Arc<nimbus_engine::Engine>,
     registry: Arc<ConvexRegistry>,
     decision: TenantIsolationDecision,
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    egress_readiness: Option<EgressGatewayEnforcementReadiness>,
 }
 
 impl ConvexHostBridgeScope {
@@ -29,7 +32,17 @@ impl ConvexHostBridgeScope {
             registry,
             decision,
             runtime_service_registry,
+            egress_readiness: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(in crate::adapters::convex) fn with_egress_readiness(
+        mut self,
+        egress_readiness: EgressGatewayEnforcementReadiness,
+    ) -> Self {
+        self.egress_readiness = Some(egress_readiness);
+        self
     }
 }
 
@@ -76,6 +89,7 @@ pub(crate) struct ConvexHostBridge {
     auth: Option<InvocationAuth>,
     services: nimbus_runtime::InvocationServices,
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    egress_readiness: EgressGatewayEnforcementReadiness,
     principal: nimbus_core::PrincipalContext,
     execution_unit: Option<Arc<nimbus_engine::MutationExecutionUnit>>,
     state: Arc<RuntimeHostState>,
@@ -96,6 +110,9 @@ impl ConvexHostBridge {
         invocation: ConvexHostBridgeInvocation,
     ) -> Result<Self, Error> {
         let local_enforcement = LocalEnforcementBinding::from_decision(&scope.decision)?;
+        let egress_readiness = scope.egress_readiness.clone().unwrap_or_else(|| {
+            EgressGatewayEnforcementReadiness::ready_for_decision(&scope.decision)
+        });
         let bootstrap = build_runtime_host_bootstrap(RuntimeHostBootstrapRequest {
             engine: &scope.engine,
             tenant_id: scope.decision.tenant_id(),
@@ -120,6 +137,7 @@ impl ConvexHostBridge {
             auth: invocation.auth,
             services: invocation.services,
             runtime_service_registry: scope.runtime_service_registry,
+            egress_readiness,
             principal: bootstrap.principal,
             execution_unit: bootstrap.execution_unit,
             state: bootstrap.state,
@@ -155,6 +173,12 @@ impl ConvexHostBridge {
 
     pub(in crate::adapters::convex) fn decision(&self) -> &TenantIsolationDecision {
         &self.decision
+    }
+
+    pub(in crate::adapters::convex) fn egress_readiness(
+        &self,
+    ) -> &EgressGatewayEnforcementReadiness {
+        &self.egress_readiness
     }
 
     pub(crate) fn storage_access(&self) -> &TenantStorageAccessDecision {

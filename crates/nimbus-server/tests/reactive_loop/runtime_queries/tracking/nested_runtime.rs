@@ -160,11 +160,36 @@ export {};
             .all(|document| document["author"] == json!("Ada"))
     );
 
-    let metrics = registry.runtime_metrics_snapshot();
+    let metrics_body = wait_for_value(
+        "nested runtime subscription runtime pool outcomes",
+        Duration::from_secs(3),
+        Duration::from_millis(25),
+        || async {
+            api.runtime_metrics()
+                .await
+                .json::<serde_json::Value>()
+                .await
+                .expect("runtime metrics response should parse")
+        },
+        |body| runtime_pool_outcomes(body) == 2,
+    )
+    .await;
     assert_eq!(
-        metrics.runtime_pool_hits + metrics.runtime_pool_misses,
+        runtime_pool_outcomes(&metrics_body),
         2,
         "bootstrap plus one reactive reevaluation should account for two pool outcomes"
     );
-    assert_eq!(metrics.runtime_pool_replacements, 0);
+    assert_eq!(
+        runtime_metric_u64(&metrics_body, "runtime_pool_replacements"),
+        0
+    );
+}
+
+fn runtime_pool_outcomes(metrics_body: &serde_json::Value) -> u64 {
+    runtime_metric_u64(metrics_body, "runtime_pool_hits")
+        + runtime_metric_u64(metrics_body, "runtime_pool_misses")
+}
+
+fn runtime_metric_u64(metrics_body: &serde_json::Value, key: &str) -> u64 {
+    metrics_body["metrics"][key].as_u64().unwrap_or(0)
 }

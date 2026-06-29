@@ -80,9 +80,9 @@ async fn start_service_for_decision_rejects_unadmitted_service_before_launch() {
 async fn start_service_for_decision_rejects_unadmitted_sandbox_egress_before_launch() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
     let backend = Arc::new(StubSandboxBackend::new(1));
-    let egress = SandboxEgressPolicy::new([SandboxEgressRule::new(
+    let egress = EgressPolicy::new([EgressRule::new(
         "stripe",
-        PublishedEndpointProtocol::Https,
+        nimbus_egress::EgressProtocol::Https,
         "api.stripe.com",
         443,
     )]);
@@ -122,9 +122,9 @@ async fn start_service_for_decision_rejects_unadmitted_sandbox_egress_before_lau
 async fn start_service_for_decision_accepts_matching_sandbox_egress_policy() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
     let backend = Arc::new(StubSandboxBackend::new(1));
-    let egress = SandboxEgressPolicy::new([SandboxEgressRule::new(
+    let egress = EgressPolicy::new([EgressRule::new(
         "stripe",
-        PublishedEndpointProtocol::Https,
+        nimbus_egress::EgressProtocol::Https,
         "api.stripe.com",
         443,
     )]);
@@ -272,9 +272,9 @@ async fn reload_service_egress_for_decision_updates_active_backend_policy() {
         .await
         .expect("service should start")
         .expect("handle should exist");
-    let egress = SandboxEgressPolicy::new([SandboxEgressRule::new(
+    let egress = EgressPolicy::new([EgressRule::new(
         "stripe",
-        PublishedEndpointProtocol::Https,
+        nimbus_egress::EgressProtocol::Https,
         "api.stripe.com",
         443,
     )]);

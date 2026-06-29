@@ -289,9 +289,9 @@ fi
 step 9 "NFR2 focused verification, current Deno tag, current pin, and REC host-session fix are recorded"
 if [ -f "${NFR2_PROOF}" ] &&
   [ -f "${POOL_REUSE_TESTS}" ] &&
-  contains 'v2\.9\.0-nimbus\.2' "${NFR2_PROOF}" &&
-  contains '5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52' "${NFR2_PROOF}" &&
-  contains 'v2\.9\.0-nimbus\.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52' "${CARGO_LOCK}" &&
+  contains 'v2\.9\.0-nimbus\.3' "${NFR2_PROOF}" &&
+  contains 'f3e922a9dcc30234012f002b763f0c8da327ca40' "${NFR2_PROOF}" &&
+  contains 'v2\.9\.0-nimbus\.3#f3e922a9dcc30234012f002b763f0c8da327ca40' "${CARGO_LOCK}" &&
   contains_all "${NFR2_PROOF}" \
     "CARGO_ENCODED_RUSTFLAGS='' cargo test -p deno_core create_realm --lib -- --nocapture" \
     '3 passed; 0 failed; 0 ignored; 0 measured; 429 filtered out' \
@@ -624,9 +624,9 @@ if [ -f "${NFR5_PROOF}" ] &&
     'routing_affinity: RuntimeRoutingAffinity' \
     'RuntimeBundleEngineCacheKey::for_limits\(limits, construction_mode\)' >/tmp/nfr5-runtime-bundle-missing.txt &&
   contains_all "${CARGO_MANIFEST}" \
-    'v2\.9\.0-nimbus\.2' >/tmp/nfr5-cargo-manifest-missing.txt &&
+    'v2\.9\.0-nimbus\.3' >/tmp/nfr5-cargo-manifest-missing.txt &&
   contains_all "${CARGO_LOCK}" \
-    'v2\.9\.0-nimbus\.2#5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52' >/tmp/nfr5-cargo-lock-missing.txt &&
+    'v2\.9\.0-nimbus\.3#f3e922a9dcc30234012f002b763f0c8da327ca40' >/tmp/nfr5-cargo-lock-missing.txt &&
   contains_all "${DENO_MESSAGE_PORT}" \
     'const transferredArrayBuffers = \[\]' \
     'serializeJsMessageData\(value, options\.transfer\)' \
@@ -650,8 +650,8 @@ if [ -f "${NFR5_PROOF}" ] &&
   contains_all "${NFR5_PROOF}" \
     'NFR5 Security And Cleanliness Proof' \
     'Status: `done`' \
-    'v2\.9\.0-nimbus\.2' \
-    '5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52' \
+    'v2\.9\.0-nimbus\.3' \
+    'f3e922a9dcc30234012f002b763f0c8da327ca40' \
     'SharedArrayBufferStore' \
     'structured-clone transfer detachment' \
     'take_runtime_wait_until_pending' \
@@ -751,8 +751,8 @@ if [ -f "${NFR5_PROOF}" ] &&
     'Public Node `WarmContextRecycle` remains fail-closed by default' \
     'explicit `SameOwnerExactAuthority` proof axis' >/tmp/nfr5-proof-missing.txt &&
   contains_all "${PLAN}" \
-    'v2\.9\.0-nimbus\.2' \
-    '5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52' \
+    'v2\.9\.0-nimbus\.3' \
+    'f3e922a9dcc30234012f002b763f0c8da327ca40' \
     'NFR5 initial security/cleanliness slice' \
     'child-process plus worker-thread resource surfaces are denied cleanly' \
     'dependency source change reloads fresh cached data' \

@@ -26,10 +26,8 @@ ignore = [
   # not enable `log`, and Nimbus uses `tracing_subscriber`.
   { id = "RUSTSEC-2026-0097", reason = "Requires rand log + thread_rng features plus a custom log::Log path; Nimbus does not enable rand log and uses tracing_subscriber." },
   { id = "RUSTSEC-2023-0071", reason = "RustCrypto rsa has no safe fixed release; exposure is limited to user-authored Deno/Node crypto operations, so keep the audit visible until upstream replaces the implementation." },
-  { id = "RUSTSEC-2026-0118", reason = "Pinned nimbus/deno v2.9.0-nimbus.2 carries hickory-proto 0.25 through deno_net; keep visible until the Deno fork moves DNSSEC validation off the affected 0.25 API." },
-  { id = "RUSTSEC-2026-0119", reason = "Pinned nimbus/deno v2.9.0-nimbus.2 carries hickory-proto 0.25 through deno_net; keep visible until the Deno fork advances to hickory-proto >=0.26.1." },
-  { id = "RUSTSEC-2026-0185", reason = "Pinned nimbus/deno v2.9.0-nimbus.2 carries quinn-proto 0.11.14 through deno_net/deno_tunnel; keep visible until the Deno fork advances to quinn-proto >=0.11.15." },
-  { crate = "crypto-bigint@0.7.3", reason = "Pinned Deno crypto ed448-goldilocks prerelease lane still requires the yanked RustCrypto 0.14 prerelease dependency; replace when the Deno fork updates RustCrypto." },
+  { id = "RUSTSEC-2026-0118", reason = "Pinned nimbus/deno v2.9.0-nimbus.3 carries hickory-proto 0.25 through deno_net; keep visible until the Deno fork moves DNSSEC validation off the affected 0.25 API." },
+  { id = "RUSTSEC-2026-0119", reason = "Pinned nimbus/deno v2.9.0-nimbus.3 carries hickory-proto 0.25 through deno_net; keep visible until the Deno fork advances to hickory-proto >=0.26.1." },
 ]
 
 [licenses]
@@ -78,7 +76,7 @@ skip = [
     { crate = "brotli@6.0.0", reason = "The pinned Deno HTTP/web stack carries brotli 6 while async-compression carries brotli 8." },
     { crate = "brotli-decompressor@4.0.3", reason = "The pinned Deno HTTP/web stack carries brotli-decompressor 4 while async-compression carries brotli-decompressor 5." },
     { crate = "compact_str@0.7.1", reason = "The pinned Deno SWC codegen stack carries compact_str 0.7 while the OXC code-index stack carries compact_str 0.9." },
-    { crate = "crypto-bigint@0.7.3", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "crypto-bigint@0.7.5", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "dashmap@5.5.3", reason = "The pinned Deno resolver/config stack carries dashmap 5 while the fjall storage lane uses dashmap 6." },
     { crate = "der@0.8.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "elliptic-curve@0.14.0-rc.28", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },

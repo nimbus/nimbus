@@ -981,6 +981,7 @@ function runtimeNodePlatform() {
 }
 
 const nimbusProcessCwdPatched = Symbol("nimbus.processCwdPatched");
+const nimbusProcessCwdState = Symbol("nimbus.processCwdState");
 const nimbusProcessStdioPatched = Symbol("nimbus.processStdioPatched");
 let nimbusRuntimeCurrentCwd = null;
 
@@ -1000,41 +1001,59 @@ function seedNodeProcessCwd(nodeProcess) {
     return;
   }
 
-  const alreadyPatched = nodeProcess[nimbusProcessCwdPatched] === true;
   const policyCwd = nimbusRuntimePolicyCwd();
-  if (alreadyPatched && policyCwd === null) {
+  const existingState = nodeProcess[nimbusProcessCwdState];
+  if (existingState && typeof existingState === "object") {
+    if (!existingState.pinnedByChdir && policyCwd !== null) {
+      existingState.currentCwd = policyCwd;
+      nimbusRuntimeCurrentCwd = policyCwd;
+    }
+    return;
+  }
+
+  const alreadyPatched = nodeProcess[nimbusProcessCwdPatched] === true;
+  if (alreadyPatched && policyCwd === null && existingState) {
     return;
   }
   const originalCwd = typeof nodeProcess.cwd === "function"
     ? nodeProcess.cwd.bind(nodeProcess)
     : null;
-  let currentCwd = policyCwd !== null
-    ? policyCwd
-    : nimbusRuntimeCurrentCwd ??
-      (nodeProcess !== globalThis.process &&
-          globalThis.process?.[nimbusProcessCwdPatched] === true &&
-          typeof globalThis.process?.cwd === "function"
-        ? globalThis.process.cwd()
-        : null) ??
-      (originalCwd !== null &&
-          nodeProcess === globalThis.process &&
-          nodeProcess[nimbusProcessCwdPatched] === true
-        ? originalCwd()
-        : null) ??
-      "/";
-  let cwdPinnedByChdir = false;
-  nimbusRuntimeCurrentCwd = currentCwd;
+  const cwdState = {
+    currentCwd: policyCwd !== null
+      ? policyCwd
+      : nimbusRuntimeCurrentCwd ??
+        (nodeProcess !== globalThis.process &&
+            globalThis.process?.[nimbusProcessCwdPatched] === true &&
+            typeof globalThis.process?.cwd === "function"
+          ? globalThis.process.cwd()
+          : null) ??
+        (originalCwd !== null &&
+            nodeProcess === globalThis.process &&
+            nodeProcess[nimbusProcessCwdPatched] === true
+            ? originalCwd()
+            : null) ??
+          "/",
+    pinnedByChdir: false,
+  };
+  nimbusRuntimeCurrentCwd = cwdState.currentCwd;
+
+  Object.defineProperty(nodeProcess, nimbusProcessCwdState, {
+    value: cwdState,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
 
   Object.defineProperty(nodeProcess, "cwd", {
     value() {
-      if (!cwdPinnedByChdir) {
+      if (!cwdState.pinnedByChdir) {
         const latestPolicyCwd = nimbusRuntimePolicyCwd();
-        if (latestPolicyCwd !== null && latestPolicyCwd !== currentCwd) {
-          currentCwd = latestPolicyCwd;
-          nimbusRuntimeCurrentCwd = currentCwd;
+        if (latestPolicyCwd !== null && latestPolicyCwd !== cwdState.currentCwd) {
+          cwdState.currentCwd = latestPolicyCwd;
+          nimbusRuntimeCurrentCwd = cwdState.currentCwd;
         }
       }
-      return currentCwd;
+      return cwdState.currentCwd;
     },
     configurable: true,
     enumerable: false,
@@ -1043,19 +1062,19 @@ function seedNodeProcessCwd(nodeProcess) {
 
   Object.defineProperty(nodeProcess, "chdir", {
     value(directory) {
-      const nextCwd = nodePathResolve(currentCwd, String(directory));
+      const nextCwd = nodePathResolve(cwdState.currentCwd, String(directory));
       const fileInfo = runtimeFsAssertExistingCwd(nextCwd);
       if (!fileInfo.isDirectory) {
-        const error = new Error(`ENOTDIR: not a directory, chdir '${currentCwd}' -> '${nextCwd}'`);
+        const error = new Error(`ENOTDIR: not a directory, chdir '${cwdState.currentCwd}' -> '${nextCwd}'`);
         error.code = "ENOTDIR";
         error.errno = -20;
         error.syscall = "chdir";
         error.path = nextCwd;
         throw error;
       }
-      currentCwd = nextCwd;
-      cwdPinnedByChdir = true;
-      nimbusRuntimeCurrentCwd = currentCwd;
+      cwdState.currentCwd = nextCwd;
+      cwdState.pinnedByChdir = true;
+      nimbusRuntimeCurrentCwd = cwdState.currentCwd;
     },
     configurable: true,
     enumerable: false,
@@ -4010,6 +4029,9 @@ if (typeof runtimeTargetTriple === "string" && runtimeTargetTriple.length > 0) {
 enableNextTick();
 function refreshNodeRuntimeOpState() {
   op_stream_base_register_state(streamBaseState);
+  seedNodeProcessCwd(nodeProcessBuiltin);
+  seedNodeProcessCwd(internals.nodeGlobals?.process);
+  seedNodeProcessCwd(globalThis.process);
 }
 Object.defineProperty(globalThis, "__nimbusRefreshNodeRuntimeOpState", {
   value: refreshNodeRuntimeOpState,

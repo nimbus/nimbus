@@ -14,6 +14,8 @@ flate2 = "1"
 fs2.workspace = true
 libc.workspace = true
 nimbus-core = { path = "../nimbus-core" }
+nimbus-egress = { path = "../nimbus-egress" }
+nimbus-proxy = { path = "../nimbus-proxy" }
 oci-client = "0.16"
 serde.workspace = true
 serde_json.workspace = true

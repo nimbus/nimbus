@@ -6,6 +6,7 @@ use serde_json::Value;
 
 #[cfg(test)]
 use crate::RuntimeInvocationContext;
+use crate::egress::RuntimeEgressGatewayBinding;
 #[cfg(test)]
 use crate::error::{NimbusRuntimeError, Result};
 use crate::executor::RuntimeExecutor;
@@ -46,25 +47,39 @@ pub use self::invocation::{
 pub struct NimbusRuntime {
     host: Arc<dyn HostBridge>,
     policy: Arc<RuntimePolicy>,
+    egress_gateway: RuntimeEgressGatewayBinding,
     owned_executor: Arc<OnceLock<RuntimeExecutor>>,
 }
 
 #[derive(Clone)]
 pub(crate) struct RuntimeHost {
     bridge: Arc<dyn HostBridge>,
+    egress_gateway: RuntimeEgressGatewayBinding,
 }
 
 impl RuntimeHost {
+    #[cfg(test)]
     pub(crate) fn new(bridge: Arc<dyn HostBridge>) -> Self {
-        Self { bridge }
+        Self::new_with_egress_gateway(bridge, RuntimeEgressGatewayBinding::coarse_permissions())
+    }
+
+    pub(crate) fn new_with_egress_gateway(
+        bridge: Arc<dyn HostBridge>,
+        egress_gateway: RuntimeEgressGatewayBinding,
+    ) -> Self {
+        Self {
+            bridge,
+            egress_gateway,
+        }
     }
 
     pub(crate) fn from_runtime(runtime: &NimbusRuntime) -> Self {
-        Self::new(runtime.host.clone())
+        Self::new_with_egress_gateway(runtime.host.clone(), runtime.egress_gateway.clone())
     }
 
     pub(crate) fn runtime_with_policy(&self, policy: Arc<RuntimePolicy>) -> NimbusRuntime {
         NimbusRuntime::with_policy(self.bridge.clone(), policy)
+            .with_egress_gateway_binding(self.egress_gateway.clone())
     }
 
     pub(crate) fn bridge(&self) -> Arc<dyn HostBridge> {

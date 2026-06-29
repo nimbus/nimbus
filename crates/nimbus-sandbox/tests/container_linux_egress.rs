@@ -12,13 +12,13 @@ use futures::executor::block_on;
 use tempfile::TempDir;
 
 use nimbus_core::TenantId;
+use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
 use nimbus_sandbox::backends::container::{
     ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
 };
 use nimbus_sandbox::{
-    PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxEgressPolicy,
-    SandboxEgressRule, SandboxId, SandboxMountSpec, SandboxOwnerSpec, SandboxProcessSpec,
-    SandboxRootSpec, SandboxSpec,
+    SandboxBackend, SandboxBackendKind, SandboxId, SandboxMountSpec, SandboxOwnerSpec,
+    SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
 };
 
 const RESULT_VOLUME: &str = "egress-proof";
@@ -240,10 +240,10 @@ sleep 120"#
     )
 }
 
-fn phase_one_policy(port: u16) -> SandboxEgressPolicy {
-    SandboxEgressPolicy::new([SandboxEgressRule::new(
+fn phase_one_policy(port: u16) -> EgressPolicy {
+    EgressPolicy::new([EgressRule::new(
         "phase-one-allowed",
-        PublishedEndpointProtocol::Http,
+        EgressProtocol::Http,
         "127.0.0.1",
         port,
     )
@@ -252,20 +252,20 @@ fn phase_one_policy(port: u16) -> SandboxEgressPolicy {
     .allow_internal_ips(true)])
 }
 
-fn phase_two_policy(allowed_port: u16, internal_dns_port: u16) -> SandboxEgressPolicy {
-    SandboxEgressPolicy::new([
-        SandboxEgressRule::new(
+fn phase_two_policy(allowed_port: u16, internal_dns_port: u16) -> EgressPolicy {
+    EgressPolicy::new([
+        EgressRule::new(
             "phase-two-allowed",
-            PublishedEndpointProtocol::Http,
+            EgressProtocol::Http,
             "127.0.0.1",
             allowed_port,
         )
         .with_methods(["GET"])
         .with_path_prefixes(["/allowed"])
         .allow_internal_ips(true),
-        SandboxEgressRule::new(
+        EgressRule::new(
             "dns-internal-denied",
-            PublishedEndpointProtocol::Http,
+            EgressProtocol::Http,
             "ip6-localhost",
             internal_dns_port,
         )

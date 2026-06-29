@@ -25,4 +25,5 @@ ulid.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+nimbus-egress = { path = "../nimbus-egress" }
 tempfile.workspace = true

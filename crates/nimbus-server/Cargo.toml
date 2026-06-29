@@ -32,6 +32,7 @@ nimbus-cloud-functions = { path = "../nimbus-cloud-functions" }
 nimbus-code-index = { path = "../nimbus-code-index" }
 nimbus-convex = { path = "../nimbus-convex" }
 nimbus-dynamodb = { path = "../nimbus-dynamodb" }
+nimbus-egress = { path = "../nimbus-egress" }
 nimbus-license = { path = "../nimbus-license" }
 nimbus-mongodb = { path = "../nimbus-mongodb" }
 nimbus-provenance = { path = "../nimbus-provenance" }

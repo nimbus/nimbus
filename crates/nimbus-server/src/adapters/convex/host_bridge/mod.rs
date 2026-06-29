@@ -18,6 +18,7 @@ use nimbus_convex::validate_runtime_http_route;
 mod async_bridge;
 mod bridge;
 mod db_ops;
+mod egress_gateway;
 mod function_ops;
 mod read_tracking;
 

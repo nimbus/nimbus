@@ -1406,7 +1406,7 @@ async fn wait_for_runtime_metrics(
     registry: &ConvexRegistry,
     description: &str,
     predicate: impl Fn(&nimbus_runtime::RuntimeMetricsSnapshot) -> bool,
-) -> nimbus_runtime::RuntimeMetricsSnapshot {
+) -> RuntimeMetricsSnapshot {
     wait_for_runtime_metrics_case_impl(registry, description.to_string(), predicate).await
 }
 
@@ -1415,7 +1415,7 @@ async fn wait_for_runtime_metrics_case(
     case: DeterministicTestCase,
     description: &str,
     predicate: impl Fn(&nimbus_runtime::RuntimeMetricsSnapshot) -> bool,
-) -> nimbus_runtime::RuntimeMetricsSnapshot {
+) -> RuntimeMetricsSnapshot {
     wait_for_runtime_metrics_case_impl(registry, case.failure_context(description), predicate).await
 }
 

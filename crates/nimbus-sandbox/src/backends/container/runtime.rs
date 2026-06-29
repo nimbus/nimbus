@@ -40,8 +40,6 @@ use crate::backends::oci::network::{
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
-use crate::egress::SandboxEgressPolicy;
-use crate::egress_proxy::{SandboxEgressProxy, SandboxEgressProxyConfig};
 use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
@@ -49,6 +47,8 @@ use crate::spec::{
     SandboxOciImageSource, SandboxResourceQuotaPolicy, SandboxRootSpec, SandboxSpec,
     resolve_process_without_image_defaults,
 };
+use nimbus_egress::EgressPolicy;
+use nimbus_proxy::{EgressProxy, EgressProxyConfig, EgressProxyError};
 
 const DEFAULT_RUNTIME_PATH: &str = "crun";
 const DEFAULT_CONMON_PATH: &str = "conmon";
@@ -139,7 +139,7 @@ impl Default for ContainerSandboxBackendConfig {
 #[derive(Clone)]
 pub struct ContainerSandboxBackend {
     config: ContainerSandboxBackendConfig,
-    egress_proxies: Arc<Mutex<HashMap<SandboxId, SandboxEgressProxy>>>,
+    egress_proxies: Arc<Mutex<HashMap<SandboxId, EgressProxy>>>,
     machine_port_proxies: Arc<Mutex<HashMap<SandboxId, Vec<MachinePortProxy>>>>,
 }
 
@@ -158,7 +158,7 @@ impl ContainerSandboxBackend {
         }
     }
 
-    pub fn reload_egress_policy(&self, id: &SandboxId, egress: SandboxEgressPolicy) -> Result<()> {
+    pub fn reload_egress_policy(&self, id: &SandboxId, egress: EgressPolicy) -> Result<()> {
         let compiled = egress
             .compile()
             .map_err(|message| SandboxError::InvalidSpec { message })?;
@@ -185,7 +185,7 @@ impl ContainerSandboxBackend {
             .ok_or_else(|| SandboxError::OperationFailed {
                 message: format!("container egress proxy for sandbox {id} is not running"),
             })?;
-        proxy.reload_policy(compiled)?;
+        proxy.reload_policy(compiled).map_err(egress_proxy_error)?;
         drop(proxies);
         self.write_manifest(&manifest)
     }
@@ -870,9 +870,8 @@ impl ContainerSandboxBackend {
             .compile()
             .map_err(|message| SandboxError::InvalidSpec { message })?;
         let bind_addr = egress_proxy.bind_addr()?;
-        let proxy = SandboxEgressProxy::start(
-            SandboxEgressProxyConfig::new(policy).with_bind_addr(bind_addr),
-        )?;
+        let proxy = EgressProxy::start(EgressProxyConfig::new(policy).with_bind_addr(bind_addr))
+            .map_err(egress_proxy_error)?;
         proxies.insert(manifest.handle.id.clone(), proxy);
         Ok(())
     }
@@ -1143,6 +1142,12 @@ fn tenant_volume_mount_options(read_only: bool) -> Vec<String> {
     ]
 }
 
+fn egress_proxy_error(error: EgressProxyError) -> SandboxError {
+    SandboxError::OperationFailed {
+        message: error.to_string(),
+    }
+}
+
 impl SandboxBackend for ContainerSandboxBackend {
     fn kind(&self) -> SandboxBackendKind {
         SandboxBackendKind::Container
@@ -1165,11 +1170,7 @@ impl SandboxBackend for ContainerSandboxBackend {
         Box::pin(async move { backend.stop_sync(&sandbox_id) })
     }
 
-    fn reload_egress_policy(
-        &self,
-        id: &SandboxId,
-        egress: SandboxEgressPolicy,
-    ) -> SandboxFuture<()> {
+    fn reload_egress_policy(&self, id: &SandboxId, egress: EgressPolicy) -> SandboxFuture<()> {
         let backend = self.clone();
         let sandbox_id = id.clone();
         Box::pin(async move {

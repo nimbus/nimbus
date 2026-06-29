@@ -1,8 +1,8 @@
 use nimbus_core::{Error, Result};
-use nimbus_sandbox::{PublishedEndpointProtocol, SandboxEgressPolicy, SandboxEgressRule};
+use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
 use serde::{Deserialize, Serialize};
 
-use super::{normalized_strings, protocol_label};
+use super::{egress_protocol_label, normalized_strings};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -12,9 +12,9 @@ pub struct OperatorSandboxEgressPolicy {
 }
 
 impl OperatorSandboxEgressPolicy {
-    pub(super) fn to_sandbox_policy(&self) -> SandboxEgressPolicy {
-        SandboxEgressPolicy::new(self.normalized_rules().into_iter().map(|rule| {
-            let mut egress_rule = SandboxEgressRule::new(
+    pub(super) fn to_sandbox_policy(&self) -> EgressPolicy {
+        EgressPolicy::new(self.normalized_rules().into_iter().map(|rule| {
+            let mut egress_rule = EgressRule::new(
                 rule.name.clone(),
                 rule.protocol,
                 rule.host.clone(),
@@ -55,7 +55,7 @@ impl OperatorSandboxEgressPolicy {
 #[serde(deny_unknown_fields)]
 pub struct OperatorSandboxEgressRulePolicy {
     pub name: String,
-    pub protocol: PublishedEndpointProtocol,
+    pub protocol: EgressProtocol,
     pub host: String,
     pub port: u16,
     #[serde(default)]
@@ -71,7 +71,7 @@ impl OperatorSandboxEgressRulePolicy {
         let mut parts = vec![format!(
             "{} {} {}:{}",
             self.name,
-            protocol_label(self.protocol),
+            egress_protocol_label(self.protocol),
             self.host,
             self.port
         )];
