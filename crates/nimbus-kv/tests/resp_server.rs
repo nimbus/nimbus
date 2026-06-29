@@ -136,18 +136,60 @@ async fn tenant_a_credential_cannot_read_tenant_b_keys() {
     let tenant_b_password = test_password("tenant-b");
     let credentials = CredentialRegistry::new()
         .bind("tenant-a", tenant_a_password.clone(), tenant("tenant-a"))
-        .bind("tenant-b", tenant_b_password, tenant("tenant-b"));
+        .bind("tenant-b", tenant_b_password.clone(), tenant("tenant-b"));
     let (addr, server) = spawn_test_server(credentials).await;
-    let mut stream = TcpStream::connect(addr).await.expect("connects");
+    let mut tenant_a_stream = TcpStream::connect(addr).await.expect("tenant A connects");
+    let mut tenant_b_stream = TcpStream::connect(addr).await.expect("tenant B connects");
 
     let auth = write_command(
-        &mut stream,
+        &mut tenant_a_stream,
         &[b"AUTH", b"tenant-a", tenant_a_password.as_bytes()],
     )
     .await;
     assert_eq!(auth, "+OK\r\n");
+    let auth = write_command(
+        &mut tenant_b_stream,
+        &[b"AUTH", b"tenant-b", tenant_b_password.as_bytes()],
+    )
+    .await;
+    assert_eq!(auth, "+OK\r\n");
 
-    let cross_tenant = write_command(&mut stream, &[b"SELECT", b"tenant-b"]).await;
+    let tenant_b_set = write_command(&mut tenant_b_stream, &[b"SET", b"shared", b"tenant-b"]).await;
+    assert_eq!(tenant_b_set, "+OK\r\n");
+
+    let tenant_a_get = write_command(&mut tenant_a_stream, &[b"GET", b"shared"]).await;
+    assert_eq!(
+        tenant_a_get, "$-1\r\n",
+        "tenant A credential must not read tenant B's same-named key"
+    );
+
+    let tenant_a_set = write_command(&mut tenant_a_stream, &[b"SET", b"shared", b"tenant-a"]).await;
+    assert_eq!(tenant_a_set, "+OK\r\n");
+    let tenant_b_get = write_command(&mut tenant_b_stream, &[b"GET", b"shared"]).await;
+    assert_eq!(
+        tenant_b_get, "$8\r\ntenant-b\r\n",
+        "tenant A writes must not overwrite tenant B's same-named key"
+    );
+
+    let tenant_a_flush = write_command(&mut tenant_a_stream, &[b"FLUSHALL"]).await;
+    assert_eq!(tenant_a_flush, "+OK\r\n");
+    let tenant_b_after_flush = write_command(&mut tenant_b_stream, &[b"GET", b"shared"]).await;
+    assert_eq!(
+        tenant_b_after_flush, "$8\r\ntenant-b\r\n",
+        "tenant A FLUSHALL must only clear tenant A's keyspace"
+    );
+
+    let metrics = write_command(&mut tenant_b_stream, &[b"NIMBUS.METRICS"]).await;
+    assert!(
+        metrics.contains("durable_writes_started:3"),
+        "operator metrics must include writes routed through every tenant store, got {metrics:?}"
+    );
+    assert!(
+        metrics.contains("durable_writes_completed:3"),
+        "operator metrics must include completed writes routed through every tenant store, got {metrics:?}"
+    );
+
+    let cross_tenant = write_command(&mut tenant_a_stream, &[b"SELECT", b"tenant-b"]).await;
     assert!(
         cross_tenant.contains("cannot change tenant"),
         "credential bound to tenant A must not select tenant B, got {cross_tenant:?}"

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -140,6 +140,13 @@ impl CredentialRegistry {
             }
         }
     }
+
+    fn tenants(&self) -> BTreeSet<TenantId> {
+        self.bindings
+            .values()
+            .map(|binding| binding.tenant.clone())
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -230,6 +237,82 @@ struct CommandOutcome {
     close: bool,
 }
 
+#[derive(Debug, Clone)]
+struct TenantStoreRouter {
+    stores: BTreeMap<TenantId, NimbusKvStore>,
+    metrics: NimbusKvMetrics,
+}
+
+impl TenantStoreRouter {
+    fn from_config(
+        credentials: &CredentialRegistry,
+        configured_store: Option<NimbusKvStore>,
+        configured_metrics: Option<NimbusKvMetrics>,
+    ) -> Result<Self, KvError> {
+        let tenants = credentials.tenants();
+        if tenants.is_empty() {
+            return Err(nimbus_core::Error::InvalidInput(
+                "nimbus-kv requires at least one credential binding".to_string(),
+            )
+            .into());
+        }
+
+        let (stores, metrics) = match configured_store {
+            Some(store) => {
+                if configured_metrics.is_some() {
+                    return Err(nimbus_core::Error::InvalidInput(
+                        "NimbusKvConfig::with_metrics cannot be combined with a prebuilt NimbusKvStore"
+                            .to_string(),
+                    )
+                    .into());
+                }
+                if tenants.len() != 1 {
+                    return Err(nimbus_core::Error::InvalidInput(
+                        "a single configured NimbusKvStore can only serve one credential-bound tenant"
+                            .to_string(),
+                    )
+                    .into());
+                }
+                let tenant = tenants
+                    .into_iter()
+                    .next()
+                    .expect("non-empty tenant set has a first tenant");
+                let metrics = store.metrics();
+                (BTreeMap::from([(tenant, store)]), metrics)
+            }
+            None => {
+                let metrics = configured_metrics.unwrap_or_default();
+                let stores = tenants
+                    .into_iter()
+                    .map(|tenant| {
+                        NimbusKvStore::no_disk_with_metrics(
+                            TieringConfig::no_disk(),
+                            metrics.clone(),
+                        )
+                        .map(|store| (tenant, store))
+                    })
+                    .collect::<Result<BTreeMap<_, _>, _>>()?;
+                (stores, metrics)
+            }
+        };
+
+        Ok(Self { stores, metrics })
+    }
+
+    fn store_for(&self, tenant: &TenantId) -> Result<&NimbusKvStore, KvError> {
+        self.stores.get(tenant).ok_or_else(|| {
+            nimbus_core::Error::PermissionDenied(format!(
+                "no nimbus-kv store is configured for credential-bound tenant {tenant}"
+            ))
+            .into()
+        })
+    }
+
+    fn metrics(&self) -> NimbusKvMetrics {
+        self.metrics.clone()
+    }
+}
+
 /// Bind and run the RESP listener until the process is interrupted.
 pub async fn run_listener(config: NimbusKvConfig) -> Result<(), KvError> {
     refuse_non_loopback_bind(config.bind_addr)?;
@@ -240,19 +323,27 @@ pub async fn run_listener(config: NimbusKvConfig) -> Result<(), KvError> {
 /// Serve an already-bound listener.
 pub async fn serve(listener: TcpListener, config: NimbusKvConfig) -> Result<(), KvError> {
     refuse_non_loopback_bind(listener.local_addr()?)?;
-    let credentials = Arc::new(config.credentials);
-    let store = config
-        .store
-        .unwrap_or(NimbusKvStore::no_disk(TieringConfig::no_disk())?);
-    let metrics = config.metrics.unwrap_or_else(|| store.metrics());
+    let NimbusKvConfig {
+        bind_addr: _,
+        credentials,
+        store,
+        metrics,
+    } = config;
+    let stores = Arc::new(TenantStoreRouter::from_config(
+        &credentials,
+        store,
+        metrics,
+    )?);
+    let metrics = stores.metrics();
+    let credentials = Arc::new(credentials);
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;
         let credentials = Arc::clone(&credentials);
-        let store = store.clone();
+        let stores = Arc::clone(&stores);
         let metrics = metrics.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_connection(stream, credentials, store, metrics).await {
+            if let Err(error) = handle_connection(stream, credentials, stores, metrics).await {
                 tracing::warn!(%peer_addr, %error, "nimbus-kv connection ended with error");
             }
         });
@@ -262,7 +353,7 @@ pub async fn serve(listener: TcpListener, config: NimbusKvConfig) -> Result<(), 
 async fn handle_connection(
     mut stream: TcpStream,
     credentials: Arc<CredentialRegistry>,
-    store: NimbusKvStore,
+    stores: Arc<TenantStoreRouter>,
     metrics: NimbusKvMetrics,
 ) -> Result<(), KvError> {
     let _client = metrics.client_connected();
@@ -277,7 +368,7 @@ async fn handle_connection(
                     let name = command.name();
                     let started_at = Instant::now();
                     let outcome =
-                        execute_command(command, &mut state, &credentials, &store, &metrics);
+                        execute_command(command, &mut state, &credentials, &stores, &metrics);
                     metrics.record_command(
                         &name,
                         started_at.elapsed(),
@@ -413,7 +504,7 @@ fn execute_command(
     command: CommandRequest,
     state: &mut ConnectionState,
     credentials: &CredentialRegistry,
-    store: &NimbusKvStore,
+    stores: &TenantStoreRouter,
     metrics: &NimbusKvMetrics,
 ) -> CommandOutcome {
     let name = command.name();
@@ -436,14 +527,16 @@ fn execute_command(
         },
         "CLIENT" => client_command(&command.args),
         "SELECT" => select_command(&command.args, state),
-        "GET" => get_command(&command.args, store),
-        "SET" => set_command(&command.args, store),
-        "DEL" => del_command(&command.args, store),
-        "FLUSHALL" => flushall_command(&command.args, store),
+        "GET" => with_tenant_store(state, stores, |store| get_command(&command.args, store)),
+        "SET" => with_tenant_store(state, stores, |store| set_command(&command.args, store)),
+        "DEL" => with_tenant_store(state, stores, |store| del_command(&command.args, store)),
+        "FLUSHALL" => with_tenant_store(state, stores, |store| {
+            flushall_command(&command.args, store)
+        }),
         "FUNCTION" => function_command(&command.args),
-        "EXPIRE" => expire_command(&command.args, store),
-        "TTL" => ttl_command(&command.args, store),
-        "INCR" => incr_command(&command.args, store),
+        "EXPIRE" => with_tenant_store(state, stores, |store| expire_command(&command.args, store)),
+        "TTL" => with_tenant_store(state, stores, |store| ttl_command(&command.args, store)),
+        "INCR" => with_tenant_store(state, stores, |store| incr_command(&command.args, store)),
         "NIMBUS.READY" => ready_command(&command.args),
         "NIMBUS.METRICS" => metrics_command(&command.args, metrics),
         _ => CommandOutcome {
@@ -451,6 +544,20 @@ fn execute_command(
             protocol: None,
             close: false,
         },
+    }
+}
+
+fn with_tenant_store(
+    state: &ConnectionState,
+    stores: &TenantStoreRouter,
+    command: impl FnOnce(&NimbusKvStore) -> CommandOutcome,
+) -> CommandOutcome {
+    let Some(binding) = &state.binding else {
+        return noauth();
+    };
+    match stores.store_for(&binding.tenant) {
+        Ok(store) => command(store),
+        Err(error) => command_response(storage_error(error)),
     }
 }
 

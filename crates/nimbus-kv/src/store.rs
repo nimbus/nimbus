@@ -93,12 +93,19 @@ impl NimbusKvStore {
     }
 
     pub fn no_disk(tiering: TieringConfig) -> Result<Self, KvError> {
+        Self::no_disk_with_metrics(tiering, NimbusKvMetrics::default())
+    }
+
+    pub fn no_disk_with_metrics(
+        tiering: TieringConfig,
+        metrics: NimbusKvMetrics,
+    ) -> Result<Self, KvError> {
         let tiering = TieringConfig {
             mode: TieringMode::NoDisk,
             ..tiering
         };
         let engine = Arc::new(RedbTenantKvStore::create_in_memory()?);
-        Ok(Self::from_engine(engine, tiering))
+        Ok(Self::from_engine_with_metrics(engine, tiering, metrics))
     }
 
     pub fn no_cache_at(path: impl AsRef<Path>) -> Result<Self, KvError> {
@@ -109,11 +116,19 @@ impl NimbusKvStore {
         engine: Arc<dyn TenantKvStore + Send + Sync>,
         tiering: TieringConfig,
     ) -> Self {
+        Self::from_engine_with_metrics(engine, tiering, NimbusKvMetrics::default())
+    }
+
+    pub fn from_engine_with_metrics(
+        engine: Arc<dyn TenantKvStore + Send + Sync>,
+        tiering: TieringConfig,
+        metrics: NimbusKvMetrics,
+    ) -> Self {
         Self {
             inner: Arc::new(NimbusKvStoreInner {
                 engine,
                 tiering,
-                metrics: NimbusKvMetrics::default(),
+                metrics,
                 mutation: Mutex::new(()),
                 cache: Mutex::new(BTreeMap::new()),
             }),

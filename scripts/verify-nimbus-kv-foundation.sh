@@ -357,10 +357,14 @@ fi
 if [ -d "${KV_TESTS}" ] && grep -rqE 'unauthenticated|NOAUTH|requires.*auth|auth.*reject|credential' "${KV_TESTS}" 2>/dev/null; then
   c9_auth_test=1
 fi
-if grep_dir 'AccessKeyRegistry|credential.*TenantId|TenantId.*credential|tenant.*credential|credential.*tenant|SELECT' "${KV_SRC}"; then
+if grep_dir 'TenantStoreRouter|with_tenant_store|store_for.*tenant|no_disk_with_metrics|metrics.clone' "${KV_SRC}" &&
+   grep_dir 'CredentialBinding|credential.*tenant|tenant.*credential|SELECT' "${KV_SRC}"; then
   c9_tenant_binding=1
 fi
-if [ -d "${KV_TESTS}" ] && grep -rqE 'tenant.?A|tenant_a|cross.?tenant|SELECT|cannot.*read.*tenant|credential.*tenant' "${KV_TESTS}" 2>/dev/null; then
+if [ -d "${KV_TESTS}" ] &&
+   grep -rqE 'same-named key|FLUSHALL must only clear|must not read tenant B|must not overwrite tenant B' "${KV_TESTS}" 2>/dev/null &&
+   grep -rqE 'durable_writes_started:3|operator metrics must include writes routed through every tenant store' "${KV_TESTS}" 2>/dev/null &&
+   grep -rqE 'SELECT|cannot change tenant' "${KV_TESTS}" 2>/dev/null; then
   c9_tenant_test=1
 fi
 if [ "${c9_helper}" = "1" ] && [ "${c9_uses_helper}" = "1" ] && [ "${c9_bind_test}" = "1" ] && [ "${c9_auth}" = "1" ] && [ "${c9_auth_test}" = "1" ] && [ "${c9_tenant_binding}" = "1" ] && [ "${c9_tenant_test}" = "1" ]; then
