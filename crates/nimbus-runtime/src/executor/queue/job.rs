@@ -7,12 +7,15 @@ use crate::context::RuntimeInvocationContext;
 use crate::error::Result;
 use crate::execution_plan::RuntimeExecutionPlan;
 use crate::host::HostCallCancellation;
+use crate::limits::RuntimePolicy;
 use crate::runtime::{InvocationRequest, RuntimeBundle, RuntimeHost};
 
 use crate::executor::admission::RuntimeInvocationDispatchHandle;
+use std::sync::Arc;
 
 pub(crate) struct RuntimeWorkerJob {
     pub(crate) host: RuntimeHost,
+    pub(crate) policy: Arc<RuntimePolicy>,
     pub(crate) bundle: RuntimeBundle,
     pub(crate) request: InvocationRequest,
     pub(crate) context: RuntimeInvocationContext,

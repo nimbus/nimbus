@@ -15,6 +15,7 @@ aws-kms = ["nimbus-crypto/aws-kms"]
 [dependencies]
 aes-gcm-siv.workspace = true
 deadpool-postgres.workspace = true
+fjall.workspace = true
 hex.workspace = true
 hyper = { workspace = true, features = ["client", "server", "http1", "runtime"] }
 libsql.workspace = true
@@ -50,4 +51,8 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [[bench]]
 name = "read-format-evaluation"
+harness = false
+
+[[bench]]
+name = "kv-engine-write-throughput"
 harness = false

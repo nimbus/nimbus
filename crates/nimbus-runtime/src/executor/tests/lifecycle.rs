@@ -38,6 +38,37 @@ async fn pre_canceled_worker_invocation_records_request_correlation() {
 }
 
 #[tokio::test]
+async fn worker_invocation_uses_invocation_runtime_policy_filesystem() {
+    let _test_lock = runtime_executor_test_lock().lock().await;
+    let (_bundle_dir, bundle_path) = write_node_fs_policy_bundle();
+    let mut limits = crate::RuntimeLimits::application_node22();
+    limits.execution_model = crate::RuntimeExecutionModel::RunToCompletion;
+    limits.runtime_pool_kind = crate::RuntimePoolKind::StartupSnapshotCache;
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
+    let executor_policy = Arc::new(RuntimePolicy::new(limits.clone()));
+    let invocation_policy = Arc::new(
+        RuntimePolicy::new(limits)
+            .clone_with_file_system(deno_fs::sync::MaybeArc::new(deno_fs::RealFs)),
+    );
+    let executor = RuntimeExecutor::new(executor_policy);
+    let request = test_request("messages:writePolicyFile");
+
+    let result = executor
+        .invoke_on_worker(
+            NimbusRuntime::with_policy(Arc::new(NoopHost), invocation_policy),
+            RuntimeBundle::new(&bundle_path),
+            request.clone(),
+            test_context(&request, "req-worker-policy-fs"),
+            None,
+        )
+        .await
+        .expect("worker invocation should use the invocation runtime filesystem policy");
+
+    assert_eq!(result, json!("job-policy-fs"));
+}
+
+#[tokio::test]
 async fn worker_invocations_reuse_worker_local_tokio_runtime() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_runtime_id_bundle();

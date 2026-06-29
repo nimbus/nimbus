@@ -1,5 +1,8 @@
+use std::borrow::Cow;
 use std::path::Path;
 
+use deno_fs::OpenOptions;
+use deno_permissions::CheckedPath;
 use deno_permissions::OpenAccessKind;
 
 use crate::backends::v8::embedder::{JsErrorBox, OpState, op2};
@@ -7,7 +10,7 @@ use crate::node_compat::{
     ResolvedNodeModuleKind, ResolvedNodeTarget, resolve_node_target_with_user_conditions,
 };
 use crate::runtime::bootstrap::payloads::RuntimeHostCallEnvelope;
-use crate::runtime::bootstrap::state::InstalledRuntimeCapabilityPolicy;
+use crate::runtime::bootstrap::state::{InstalledRuntimeCapabilityPolicy, InstalledRuntimeOwner};
 
 use super::support::capability_denied_error;
 use super::types::{
@@ -70,6 +73,11 @@ pub(in super::super) fn op_nimbus_runtime_require_read_file(
         .borrow::<InstalledRuntimeCapabilityPolicy>()
         .permissions
         .clone();
+    let fs = state
+        .borrow::<InstalledRuntimeOwner>()
+        .runtime
+        .policy()
+        .file_system();
     let path = permissions
         .check_open(
             std::borrow::Cow::Borrowed(Path::new(&payload.path)),
@@ -78,7 +86,18 @@ pub(in super::super) fn op_nimbus_runtime_require_read_file(
         )
         .map_err(capability_denied_error)?
         .into_owned_path();
-    let value = std::fs::read_to_string(&path).map_err(|error| {
+    let bytes = fs
+        .read_file_sync(
+            &CheckedPath::unsafe_new(Cow::Borrowed(path.as_path())),
+            OpenOptions::read(),
+        )
+        .map_err(|error| {
+            JsErrorBox::generic(format!(
+                "failed to read CommonJS runtime module {}: {error}",
+                path.display()
+            ))
+        })?;
+    let value = String::from_utf8(bytes.into_owned()).map_err(|error| {
         JsErrorBox::generic(format!(
             "failed to read CommonJS runtime module {}: {error}",
             path.display()

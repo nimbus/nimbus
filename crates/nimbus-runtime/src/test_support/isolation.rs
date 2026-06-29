@@ -134,7 +134,7 @@ pub(crate) fn run_v8_sensitive_runtime_test_in_subprocess(case: IsolatedRuntimeT
 }
 
 /// Run a CRASH-CONTROL test (one that aborts BY DESIGN) in a fresh subprocess and assert the
-/// child died BY SIGNAL (SIGABRT/SIGBUS/SIGSEGV — the cross-profile RO-heap crash). This is
+/// child died BY SIGNAL (SIGTRAP/SIGABRT/SIGBUS/SIGSEGV — the cross-profile RO-heap crash). This is
 /// the inverse of `run_v8_sensitive_runtime_test_in_subprocess`: a control that EXITS NORMALLY
 /// (success OR a plain test failure) fails the parent — that means either the guarded crash
 /// REGRESSED (bug returned) or the control was defanged. Either way the oracle must go RED.
@@ -181,6 +181,7 @@ pub(crate) fn run_v8_crash_control_in_subprocess(case: IsolatedRuntimeTestCase, 
             // first now abort via the guard (deterministic) instead of the racy V8_Fatal.
             let has_cage_signature = [
                 "vector.h:415",
+                "Check failed: index < size().",
                 "Hardening",
                 "Unknown external reference",
                 "DeserializeStringTable",
@@ -224,7 +225,7 @@ pub(crate) fn run_v8_crash_control_in_subprocess(case: IsolatedRuntimeTestCase, 
              guarded cross-profile RO-heap crash REGRESSED (the bug returned and should crash) \
              or the control was defanged. A control that can pass without crashing is the \
              vacuous oracle this guards against.\n{last_observation}",
-            case.failure_context("crash control must abort by SIGABRT/SIGBUS"),
+            case.failure_context("crash control must abort by cage signal"),
             max_attempts.max(1),
         );
     }

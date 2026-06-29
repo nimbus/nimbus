@@ -8,7 +8,7 @@ use crate::executor::{
     RuntimeWorkerQueue, RuntimeWorkerShutdown, SharedInvocationPermit, run_invocation_lifecycle,
 };
 use crate::host::HostCallCancellation;
-use crate::limits::RuntimePolicy;
+use crate::limits::{RuntimeBackendKind, RuntimePolicy};
 use crate::watchdog::WatchdogTimer;
 
 pub(crate) trait WorkerLoopFactory: Send + Sync + 'static {
@@ -61,8 +61,8 @@ impl WorkerLoopFactory for RunToCompletionWorkerLoopFactory {
 
 struct RunToCompletionWorkerLoop {
     worker_id: usize,
-    policy: Arc<RuntimePolicy>,
     watchdog: WatchdogTimer,
+    backend_kind: RuntimeBackendKind,
     backend: Box<dyn RuntimeBackend>,
     worker_runtime: tokio::runtime::Runtime,
 }
@@ -87,8 +87,8 @@ impl RunToCompletionWorkerLoop {
         }
         Self {
             worker_id,
-            policy,
             watchdog,
+            backend_kind: policy.limits().backend_kind,
             backend,
             worker_runtime,
         }
@@ -108,8 +108,9 @@ impl WorkerLoop for RunToCompletionWorkerLoop {
                 break;
             };
             let cancellation_for_metrics = job.cancellation.clone();
+            let job_policy = job.policy.clone();
             let permit = SharedInvocationPermit::new(
-                self.policy.clone(),
+                job_policy.clone(),
                 job.context.tenant_label.clone(),
                 job.dispatch_handle.clone(),
                 job.context.bypasses_concurrency_limit(),
@@ -121,7 +122,7 @@ impl WorkerLoop for RunToCompletionWorkerLoop {
                 .as_ref()
                 .is_some_and(HostCallCancellation::is_cancelled)
             {
-                self.policy
+                job_policy
                     .metrics()
                     .record_queued_canceled_invocation_for_tenant(
                         job.context.tenant_label.as_deref(),
@@ -132,10 +133,14 @@ impl WorkerLoop for RunToCompletionWorkerLoop {
                 continue;
             }
 
-            self.policy.metrics().record_worker_dispatch();
+            job_policy.metrics().record_worker_dispatch();
+            if self.backend_kind != job_policy.limits().backend_kind {
+                self.backend_kind = job_policy.limits().backend_kind;
+                self.backend = create_runtime_backend_for_policy(&job_policy);
+            }
             let (result, ready_jobs) = self.worker_runtime.block_on(run_invocation_lifecycle(
                 permit,
-                self.policy.clone(),
+                job_policy.clone(),
                 job.context.clone(),
                 cancellation_for_metrics,
                 job.enqueued_at,
@@ -144,7 +149,7 @@ impl WorkerLoop for RunToCompletionWorkerLoop {
                     self.backend.invoke(RuntimeBackendInvocation {
                         watchdog: self.watchdog.clone(),
                         host: job.host.clone(),
-                        policy: self.policy.clone(),
+                        policy: job_policy.clone(),
                         bundle: job.bundle.clone(),
                         request: job.request.clone(),
                         context: job.context.clone(),

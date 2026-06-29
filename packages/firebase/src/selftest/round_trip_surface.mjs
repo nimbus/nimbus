@@ -46,6 +46,12 @@ export async function testRoundTripSurface(bundleDir, baseUrlText, projectId) {
     firestore,
     baseUrl.hostname,
     Number.parseInt(baseUrl.port, 10),
+    {
+      mockUserToken: {
+        sub: "round-trip-user",
+        iss: `https://securetoken.google.com/${projectId}`,
+      },
+    },
   );
 
   const notes = firestoreModule.collection(firestore, "notes");

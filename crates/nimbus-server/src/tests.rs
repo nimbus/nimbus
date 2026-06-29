@@ -114,7 +114,17 @@ fn router_for_engine(engine: Arc<Engine>) -> Router {
 }
 
 fn router_for_convex(engine: Arc<Engine>, convex_registry: ConvexRegistry) -> Router {
-    build_router(RouterOptions::new(engine).with_convex_registry(convex_registry))
+    let test_host_parallelism =
+        std::num::NonZeroUsize::new(64).expect("test host parallelism is nonzero");
+    build_router(
+        RouterOptions::new(engine)
+            .with_convex_registry(convex_registry)
+            .with_runtime_host_resource_budget(
+                nimbus_runtime::RuntimeHostResourceBudget::conservative_for_logical_cpus(
+                    test_host_parallelism,
+                ),
+            ),
+    )
 }
 
 fn router_for_firebase(engine: Arc<Engine>, firebase_config: FirebaseConfig) -> Router {

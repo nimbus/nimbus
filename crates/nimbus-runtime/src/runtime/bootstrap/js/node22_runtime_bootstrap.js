@@ -171,15 +171,26 @@ function runtimeFsAssertExistingCwd(cwd) {
   }
 }
 
+function runtimeFsCurrentCwd() {
+  const policyCwd = typeof core.ops.op_nimbus_runtime_cwd === "function"
+    ? core.ops.op_nimbus_runtime_cwd()
+    : null;
+  if (typeof policyCwd === "string" && policyCwd.length > 0) {
+    nimbusRuntimeCurrentCwd = policyCwd;
+    return policyCwd;
+  }
+  return nimbusRuntimeCurrentCwd ??
+    nodeProcessBuiltin?.cwd?.() ??
+    globalThis.process?.cwd?.() ??
+    ".";
+}
+
 function runtimeFsPathToString(path) {
   if (typeof path === "string") {
     if (nodePathIsAbsolute(path)) {
       return path;
     }
-    const cwd = nodeProcessBuiltin?.cwd?.() ??
-      globalThis.process?.cwd?.() ??
-      nimbusRuntimeCurrentCwd ??
-      ".";
+    const cwd = runtimeFsCurrentCwd();
     if (nodePathIsAbsolute(cwd)) {
       runtimeFsAssertExistingCwd(cwd);
     }
@@ -976,18 +987,24 @@ let nimbusRuntimeCurrentCwd = null;
 function seedNodeProcessCwd(nodeProcess) {
   if (
     !nodeProcess ||
-    typeof nodeProcess !== "object" ||
-    nodeProcess[nimbusProcessCwdPatched] === true
+    typeof nodeProcess !== "object"
   ) {
     return;
   }
 
+  const alreadyPatched = nodeProcess[nimbusProcessCwdPatched] === true;
   const originalCwd = typeof nodeProcess.cwd === "function"
     ? nodeProcess.cwd.bind(nodeProcess)
     : null;
   const policyCwd = typeof core.ops.op_nimbus_runtime_cwd === "function"
     ? core.ops.op_nimbus_runtime_cwd()
     : null;
+  if (
+    alreadyPatched &&
+    !(typeof policyCwd === "string" && policyCwd.length > 0)
+  ) {
+    return;
+  }
   let currentCwd = typeof policyCwd === "string" && policyCwd.length > 0
     ? policyCwd
     : nimbusRuntimeCurrentCwd ??

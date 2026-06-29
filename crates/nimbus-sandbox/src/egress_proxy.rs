@@ -249,6 +249,7 @@ struct ParsedProxyRequest {
     version: String,
     header_lines: Vec<String>,
     body_offset: usize,
+    content_length: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -309,23 +310,13 @@ fn handle_client(
         );
     }
 
-    let mut upstream = TcpStream::connect_timeout(&upstream_addr, connect_timeout)?;
+    let upstream = TcpStream::connect_timeout(&upstream_addr, connect_timeout)?;
     upstream.set_nonblocking(false)?;
     upstream.set_read_timeout(Some(io_timeout))?;
     upstream.set_write_timeout(Some(io_timeout))?;
     match &parsed.mode {
         ProxyRequestMode::ForwardHttp { .. } => {
-            let request = render_upstream_request(&parsed);
-            upstream.write_all(request.as_bytes())?;
-            // Flush the body bytes that arrived co-buffered with the headers,
-            // then relay both directions: the rest of the client request body
-            // streams to upstream while the response streams back. Without the
-            // bidirectional relay, a request body larger than the initial header
-            // read was silently truncated and the request stalled until timeout
-            // (M3). CONNECT already did this via `tunnel_connect`; the forward
-            // path was the asymmetric exception.
-            upstream.write_all(&buffer[parsed.body_offset..])?;
-            relay_bidirectional(client, upstream)
+            forward_http_request(client, upstream, &parsed, &buffer[parsed.body_offset..])
         }
         ProxyRequestMode::ConnectTunnel => {
             tunnel_connect(client, upstream, &buffer[parsed.body_offset..])
@@ -399,6 +390,7 @@ fn parse_proxy_request(
             version: version.to_owned(),
             header_lines: lines.map(ToOwned::to_owned).collect(),
             body_offset,
+            content_length: None,
         });
     }
     let url = Url::parse(target).map_err(|_| {
@@ -427,7 +419,7 @@ fn parse_proxy_request(
     let origin_form = origin_form(&url);
     let egress_request =
         SandboxEgressRequest::new(protocol, host.clone(), port).with_http(method, url.path());
-    let header_lines = lines
+    let header_lines: Vec<String> = lines
         .filter(|line| {
             let header = line
                 .split_once(':')
@@ -438,6 +430,7 @@ fn parse_proxy_request(
         })
         .map(ToOwned::to_owned)
         .collect();
+    let content_length = parse_content_length(&header_lines)?;
 
     Ok(ParsedProxyRequest {
         egress_request,
@@ -448,7 +441,45 @@ fn parse_proxy_request(
         version: version.to_owned(),
         header_lines,
         body_offset,
+        content_length,
     })
+}
+
+fn parse_content_length(
+    header_lines: &[String],
+) -> std::result::Result<Option<usize>, HttpProxyResponse> {
+    let mut content_length = None;
+    for line in header_lines {
+        let Some((name, raw_value)) = line.split_once(':') else {
+            continue;
+        };
+        let name = name.trim();
+        let value = raw_value.trim();
+        if name.eq_ignore_ascii_case("transfer-encoding")
+            && value
+                .split(',')
+                .any(|token| token.trim().eq_ignore_ascii_case("chunked"))
+        {
+            return Err(HttpProxyResponse::not_implemented(
+                "sandbox egress proxy chunked request bodies are not supported",
+            ));
+        }
+        if !name.eq_ignore_ascii_case("content-length") {
+            continue;
+        }
+        let parsed = value.parse::<usize>().map_err(|_| {
+            HttpProxyResponse::bad_request(
+                "sandbox egress proxy Content-Length must be a non-negative integer",
+            )
+        })?;
+        if content_length.is_some_and(|existing| existing != parsed) {
+            return Err(HttpProxyResponse::bad_request(
+                "sandbox egress proxy request has conflicting Content-Length headers",
+            ));
+        }
+        content_length = Some(parsed);
+    }
+    Ok(content_length)
 }
 
 fn render_upstream_request(parsed: &ParsedProxyRequest) -> String {
@@ -476,11 +507,45 @@ fn tunnel_connect(
     relay_bidirectional(client, upstream)
 }
 
+fn forward_http_request(
+    mut client: TcpStream,
+    mut upstream: TcpStream,
+    parsed: &ParsedProxyRequest,
+    buffered_client_bytes: &[u8],
+) -> io::Result<()> {
+    let request = render_upstream_request(parsed);
+    upstream.write_all(request.as_bytes())?;
+
+    let content_length = parsed.content_length.unwrap_or(0);
+    let buffered_body_len = buffered_client_bytes.len().min(content_length);
+    if buffered_body_len > 0 {
+        upstream.write_all(&buffered_client_bytes[..buffered_body_len])?;
+    }
+
+    let mut remaining = content_length.saturating_sub(buffered_body_len);
+    let mut chunk = [0_u8; 8192];
+    while remaining > 0 {
+        let to_read = remaining.min(chunk.len());
+        let read = client.read(&mut chunk[..to_read])?;
+        if read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "client closed before sending declared HTTP request body",
+            ));
+        }
+        upstream.write_all(&chunk[..read])?;
+        remaining -= read;
+    }
+
+    let _ = upstream.shutdown(Shutdown::Write);
+    let _ = io::copy(&mut upstream, &mut client)?;
+    let _ = client.shutdown(Shutdown::Write);
+    Ok(())
+}
+
 /// Relays bytes in both directions between an already-prepared client and
-/// upstream socket until each side closes its write half. Both the CONNECT
-/// tunnel and the plain-HTTP forward path use this so a request body larger
-/// than the initial header read is fully delivered upstream (and the full
-/// response streamed back), instead of being truncated.
+/// upstream socket until each side closes its write half. CONNECT tunnels use
+/// this because there is no HTTP message boundary after the tunnel is opened.
 fn relay_bidirectional(mut client: TcpStream, mut upstream: TcpStream) -> io::Result<()> {
     let mut upstream_reader = upstream.try_clone()?;
     let mut client_writer = client.try_clone()?;

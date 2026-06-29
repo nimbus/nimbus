@@ -37,7 +37,7 @@ pub(crate) async fn invoke_runtime_bundle_on_worker_response_ready_with_host(
     options: RuntimeBundleInvocationOptions<'_>,
 ) -> std::result::Result<RuntimeInvocationResponse, NimbusRuntimeError> {
     options.admit_runtime_bundle_artifact(&bundle)?;
-    let runtime = runtime_for_host(host_bridge, runtime_policy);
+    let runtime = runtime_for_host(host_bridge, runtime_policy)?;
     runtime_executor
         .invoke_on_worker_response_ready(
             runtime,
