@@ -152,8 +152,26 @@ Once an app generation is active you get three things:
   (nanoseconds), plus per-host-operation and per-tenant counter maps and a
   ring of `recent_request_correlations` for tracing recent invocations.
 - `lanes` — the same limits/metrics breakdown per runtime lane, with
-  `lane_name`, `default_lane`, and `executor_started` so you can confirm
-  each configured lane actually started.
+  `lane_name`, `default_lane`, `executor_started`,
+  `execution_adapter_state`, `execution_adapter_artifact`, and each lane's
+  effective limits.
+
+The lane list distinguishes API compatibility from the engine that enforces
+it:
+
+| Lane | Default | Runtime backend | Compatibility target | Adapter state | Executor | Memory enforcement |
+| --- | --- | --- | --- | --- | --- | --- |
+| `default` | yes | `v8` | `web_standard_isolate` | `linked` | lazy until invoked | `v8_isolate_heap_limit` |
+| `node20` | no | `v8` | `node20` | `linked` | lazy until invoked | `v8_isolate_heap_limit` |
+| `node22` | no | `v8` | `node22` | `linked` | lazy until invoked | `v8_isolate_heap_limit` |
+| `node24` | no | `v8` | `node24` | `linked` | lazy until invoked | `v8_isolate_heap_limit` |
+| `node26` | no | `v8` | `node26` | `linked` | lazy until invoked | `v8_isolate_heap_limit` |
+| `bun_jsc` | no | `bun_jsc` | `bun_jsc` | `not_linked` unless the verified adapter is loaded | lazy until invoked | `outer_quota_required` |
+
+For Bun/JSC, `not_linked` means the lane is visible but the optional
+execution adapter has not been loaded. The lane remains fail-closed in that
+state. `outer_quota_required` means memory enforcement depends on the
+outer runtime quota rather than V8's isolate heap limit.
 
 Track the ratio of `rejected_invocations` and `timed_out_invocations` to
 `started_invocations`, and watch `queued_invocations` for sustained
