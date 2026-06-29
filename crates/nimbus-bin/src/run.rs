@@ -354,7 +354,7 @@ mod tests {
     use crate::{Cli, Command};
 
     #[test]
-    fn run_exec_command_resolves_target() {
+    fn run_command_resolves_target() {
         let cli = Cli::parse_from([
             "nimbus", "run", "--target", "dev", "exec", "--", "npm", "test",
         ]);
@@ -362,10 +362,8 @@ mod tests {
             panic!("run command should parse");
         };
 
-        let context = command
-            .target
-            .resolve("run", |_| None)
-            .expect("target should resolve");
+        let context =
+            super::resolve_run_target_with_env(&command, |_| None).expect("target should resolve");
 
         assert_eq!(
             context.kind,

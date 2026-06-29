@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
-# Aggregate completion-gate verifier for
-# docs/private/plans/service-sandbox-node-reconciliation-plan.md (NSR0..NSR11).
+# Aggregate completion-gate verifier for the Service/Sandbox Node Reconciliation
+# plan (NSR0..NSR11). The completed plan now lives under docs/private/plans/archive.
 #
-# Ships in NSR0 so /goal is verifiable from day one. Later phases progressively
-# flip conditions from FAIL to PASS. Heavy test gates live in phase proof and CI;
-# this script keeps cheap/static assertions and cargo fmt.
+# Shipped in NSR0 so /goal was verifiable from day one. The archived baseline
+# must stay green. Heavy test gates live in phase proof and CI; this script keeps
+# cheap/static assertions and cargo fmt.
 
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/private/plans/service-sandbox-node-reconciliation-plan.md"
+PLAN_ACTIVE="docs/private/plans/service-sandbox-node-reconciliation-plan.md"
+PLAN_ARCHIVE="docs/private/plans/archive/service-sandbox-node-reconciliation-plan.md"
+if [[ -f "${PLAN_ACTIVE}" ]]; then
+  PLAN="${PLAN_ACTIVE}"
+else
+  PLAN="${PLAN_ARCHIVE}"
+fi
 PLANS_README="docs/private/plans/README.md"
 PROOF_DIR="docs/private/plans/proof/service-sandbox-node-reconciliation"
 VERIFIER="scripts/verify-service-sandbox-node-reconciliation.sh"
@@ -71,10 +77,10 @@ machine_api_direct_container_lifecycle_leaks() {
 # --- 1. NSR0 control-plane registration --------------------------------------
 C="1. NSR0 control plane, proof bundle, and verifier are registered"
 if [[ -f "${PLAN}" ]] \
-  && grep -q 'Status: active control plane' "${PLAN}" \
+  && grep -Eq 'Status: (active control plane|archived complete)' "${PLAN}" \
   && grep -q 'Control Plane Protocol' "${PLAN}" \
   && grep -q 'Verifiable Success Criteria' "${PLAN}" \
-  && grep -q 'Autonomous `/goal` Prompt' "${PLAN}" \
+  && grep -Eq '(Autonomous|Historical) `/goal` Prompt' "${PLAN}" \
   && grep -q 'service-sandbox-node-reconciliation-plan.md' "${PLANS_README}" \
   && [[ -d "${PROOF_DIR}" ]] \
   && [[ -f "${PROOF_DIR}/README.md" ]] \
@@ -82,7 +88,7 @@ if [[ -f "${PLAN}" ]] \
   && [[ -f "${VERIFIER}" ]]; then
   pass "${C}"
 else
-  fail "${C}" "missing active plan markers, README entry, proof files, or verifier"
+  fail "${C}" "missing plan markers, README entry, proof files, or verifier"
 fi
 
 # --- 2. NSR1 node namespace remains workload-free -----------------------------
