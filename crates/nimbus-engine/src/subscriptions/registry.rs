@@ -367,6 +367,15 @@ mod tests {
     use crate::subscriptions::DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY;
     use crate::subscriptions::SubscriptionUpdate;
 
+    fn query(table: &str) -> Query {
+        Query {
+            table: TableName::new(table).expect("table name should be valid"),
+            filters: Vec::new(),
+            order: None,
+            limit: None,
+        }
+    }
+
     #[test]
     fn dropping_registration_unregisters_subscription() {
         let registry = SubscriptionRegistry::new();
@@ -471,5 +480,110 @@ mod tests {
             rx.try_recv().is_err(),
             "stale older update must not reach the receiver"
         );
+    }
+
+    #[test]
+    fn pending_policy_revision_mismatch_marks_and_restores_subscription() {
+        let registry = SubscriptionRegistry::new();
+        let table = TableName::new("tasks").expect("table name should be valid");
+        let (tx, _rx) = mpsc::channel(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
+        let registration = registry.register(
+            query("tasks"),
+            PrincipalContext::anonymous(),
+            "policy-v1".to_string(),
+            tx,
+            true,
+        );
+
+        assert_eq!(
+            registry.publish_delivery_update(
+                registration.id(),
+                SequenceNumber(5),
+                SubscriptionUpdate::Error {
+                    subscription_id: registration.id(),
+                    request_id: None,
+                    message: "delivered".to_string(),
+                },
+                None,
+            ),
+            SubscriptionPublishResult::Delivered
+        );
+
+        let pending = registry.begin_policy_revision_mismatches(&table, "policy-v2");
+        assert!(!pending.is_empty());
+        assert!(
+            registry.delivery(registration.id()).is_none(),
+            "pre-marked subscriptions should not be visible for delivery"
+        );
+        assert_eq!(
+            registry.publish_delivery_update(
+                registration.id(),
+                SequenceNumber(6),
+                SubscriptionUpdate::Error {
+                    subscription_id: registration.id(),
+                    request_id: None,
+                    message: "stale".to_string(),
+                },
+                None,
+            ),
+            SubscriptionPublishResult::Missing
+        );
+
+        registry.restore_policy_revision_mismatches(pending);
+
+        let delivery = registry
+            .delivery(registration.id())
+            .expect("restored subscription should be active");
+        assert!(delivery.is_stale_for_sequence(SequenceNumber(5)));
+        assert!(!delivery.is_stale_for_sequence(SequenceNumber(6)));
+    }
+
+    #[test]
+    fn finishing_policy_revision_mismatch_removes_only_marked_subscriptions() {
+        let registry = SubscriptionRegistry::new();
+        let table = TableName::new("tasks").expect("table name should be valid");
+        let (stale_tx, mut stale_rx) = mpsc::channel(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
+        let (current_tx, mut current_rx) = mpsc::channel(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
+        let (other_tx, mut other_rx) = mpsc::channel(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
+
+        let stale = registry.register(
+            query("tasks"),
+            PrincipalContext::anonymous(),
+            "policy-v1".to_string(),
+            stale_tx,
+            true,
+        );
+        let current = registry.register(
+            query("tasks"),
+            PrincipalContext::anonymous(),
+            "policy-v2".to_string(),
+            current_tx,
+            true,
+        );
+        let other_table = registry.register(
+            query("notes"),
+            PrincipalContext::anonymous(),
+            "policy-v1".to_string(),
+            other_tx,
+            true,
+        );
+
+        let pending = registry.begin_policy_revision_mismatches(&table, "policy-v2");
+        registry.finish_policy_revision_mismatches(pending, "authorization policy changed");
+
+        assert!(registry.delivery(stale.id()).is_none());
+        assert!(registry.delivery(current.id()).is_some());
+        assert!(registry.delivery(other_table.id()).is_some());
+        assert_eq!(registry.len(), 2);
+
+        let update = stale_rx
+            .try_recv()
+            .expect("stale subscription should receive terminal error");
+        assert!(matches!(
+            update,
+            SubscriptionUpdate::Error { message, .. } if message == "authorization policy changed"
+        ));
+        assert!(current_rx.try_recv().is_err());
+        assert!(other_rx.try_recv().is_err());
     }
 }

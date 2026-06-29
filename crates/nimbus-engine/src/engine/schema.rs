@@ -7,6 +7,8 @@ use crate::tenant::TenantRuntime;
 
 use super::Engine;
 
+const POLICY_REVISION_CHANGED_MESSAGE: &str = "authorization policy changed; resubscribe";
+
 impl Engine {
     /// Stores a table schema for a tenant.
     pub fn set_table_schema(&self, tenant_id: &TenantId, table_schema: TableSchema) -> Result<()> {
@@ -155,7 +157,7 @@ fn apply_loaded_schema_snapshot(
                 .terminate_policy_revision_mismatches(
                     &table,
                     &revision,
-                    "authorization policy changed; resubscribe",
+                    POLICY_REVISION_CHANGED_MESSAGE,
                 );
         }
     }
@@ -181,9 +183,33 @@ fn apply_set_table_schema(
         .map(TableSchema::access_policy_revision)
         .transpose()?;
     let next_policy_revision = table_schema.access_policy_revision()?;
+    let policy_revision_changed =
+        previous_policy_revision.as_deref() != Some(next_policy_revision.as_str());
+    let pending_policy_termination = policy_revision_changed.then(|| {
+        runtime
+            .subscription_registry()
+            .begin_policy_revision_mismatches(&table, &next_policy_revision)
+    });
 
-    runtime.store().replace_table_schema(&table_schema)?;
-    runtime.sync_mutation_journal_progress(runtime.store().journal_progress()?);
+    if let Err(error) = runtime.store().replace_table_schema(&table_schema) {
+        if let Some(pending) = pending_policy_termination {
+            runtime
+                .subscription_registry()
+                .restore_policy_revision_mismatches(pending);
+        }
+        return Err(error);
+    }
+    let journal_progress = match runtime.store().journal_progress() {
+        Ok(journal_progress) => journal_progress,
+        Err(error) => {
+            if let Some(pending) = pending_policy_termination {
+                runtime
+                    .subscription_registry()
+                    .finish_policy_revision_mismatches(pending, POLICY_REVISION_CHANGED_MESSAGE);
+            }
+            return Err(error);
+        }
+    };
 
     let mut schema = previous_schema;
     Arc::make_mut(&mut schema)
@@ -191,16 +217,13 @@ fn apply_set_table_schema(
         .insert(table.clone(), table_schema);
     runtime.replace_schema_snapshot(schema);
 
-    if previous_policy_revision.as_deref() != Some(next_policy_revision.as_str()) {
+    if let Some(pending) = pending_policy_termination {
         runtime.clear_document_cache();
         runtime
             .subscription_registry()
-            .terminate_policy_revision_mismatches(
-                &table,
-                &next_policy_revision,
-                "authorization policy changed; resubscribe",
-            );
+            .finish_policy_revision_mismatches(pending, POLICY_REVISION_CHANGED_MESSAGE);
     }
+    runtime.sync_mutation_journal_progress(journal_progress);
     Ok(())
 }
 
@@ -217,24 +240,46 @@ fn apply_delete_table_schema(
         .map(TableSchema::access_policy_revision)
         .transpose()?;
 
-    runtime.store().delete_table_schema(table)?;
-    runtime.sync_mutation_journal_progress(runtime.store().journal_progress()?);
+    let removed_policy_revision = policy_revision_id(None)?;
+    let policy_revision_changed =
+        previous_policy_revision.as_deref() != Some(removed_policy_revision.as_str());
+    let pending_policy_termination = policy_revision_changed.then(|| {
+        runtime
+            .subscription_registry()
+            .begin_policy_revision_mismatches(table, &removed_policy_revision)
+    });
+
+    if let Err(error) = runtime.store().delete_table_schema(table) {
+        if let Some(pending) = pending_policy_termination {
+            runtime
+                .subscription_registry()
+                .restore_policy_revision_mismatches(pending);
+        }
+        return Err(error);
+    }
+    let journal_progress = match runtime.store().journal_progress() {
+        Ok(journal_progress) => journal_progress,
+        Err(error) => {
+            if let Some(pending) = pending_policy_termination {
+                runtime
+                    .subscription_registry()
+                    .finish_policy_revision_mismatches(pending, POLICY_REVISION_CHANGED_MESSAGE);
+            }
+            return Err(error);
+        }
+    };
 
     let mut schema = previous_schema;
     Arc::make_mut(&mut schema).tables.remove(table);
     runtime.replace_schema_snapshot(schema);
 
-    let removed_policy_revision = policy_revision_id(None)?;
-    if previous_policy_revision.as_deref() != Some(removed_policy_revision.as_str()) {
+    if let Some(pending) = pending_policy_termination {
         runtime.clear_document_cache();
         runtime
             .subscription_registry()
-            .terminate_policy_revision_mismatches(
-                table,
-                &removed_policy_revision,
-                "authorization policy changed; resubscribe",
-            );
+            .finish_policy_revision_mismatches(pending, POLICY_REVISION_CHANGED_MESSAGE);
     }
+    runtime.sync_mutation_journal_progress(journal_progress);
     Ok(())
 }
 
