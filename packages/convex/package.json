@@ -22,7 +22,7 @@
   "dependencies": {
     "@nimbus/codegen": "0.1.44",
     "@nimbus/nimbus": "0.1.44",
-    "esbuild": "0.28.0"
+    "esbuild": "0.28.1"
   },
   "devDependencies": {
     "typescript": "6.0.3"
