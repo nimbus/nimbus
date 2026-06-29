@@ -22,6 +22,7 @@ use super::{
     NimbusFs, ObjectRwBackend, ObjectUnsupportedOperation, PassthroughBackend, PersistenceMode,
     ResolvedAccess, WasiPreopenBuilder,
 };
+use crate::caps::capped_mount_backend;
 
 fn checked(path: &Path) -> CheckedPath<'_> {
     CheckedPath::unsafe_new(Cow::Borrowed(path))
@@ -867,6 +868,37 @@ fn backend_registry_mount_enforces_registered_caps() {
         error.to_string().contains("EROFS"),
         "unexpected registry cap error: {error}"
     );
+}
+
+#[test]
+fn capped_backend_delegates_cp_without_collapsing_to_copy_file() {
+    let spy = SpyBackend::default();
+    let (backend, _) = capped_mount_backend(MaybeArc::new(spy.clone()), FsMountCaps::read_write());
+    let path = checked(Path::new("/from"));
+    let other = checked(Path::new("/to"));
+
+    let error = backend
+        .cp_sync(&path, &other)
+        .expect_err("spy backend returns its delegated method name");
+    assert_eq!(error.to_string(), "cp_sync");
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let error = backend
+            .cp_async(checked_buf("from"), checked_buf("to"))
+            .await
+            .expect_err("spy backend returns its delegated method name");
+        assert_eq!(error.to_string(), "cp_async");
+    });
+
+    let calls = spy.call_set();
+    assert!(calls.contains("cp_sync"));
+    assert!(calls.contains("cp_async"));
+    assert!(!calls.contains("copy_file_sync"));
+    assert!(!calls.contains("copy_file_async"));
 }
 
 #[test]

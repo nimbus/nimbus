@@ -185,7 +185,13 @@ fn resolve_firebase(
         return Ok(None);
     }
     let mut config = FirebaseConfig::new();
-    if let Some(raw) = env_lookup(FIREBASE_PROJECTS_ENV) {
+    if let Some(auto_tenant) = &command.auto_tenant {
+        let tenant = TenantId::new(auto_tenant)
+            .map_err(|error| Error::InvalidInput(format!("invalid auto tenant: {error}")))?;
+        config = config
+            .with_emulator_token_verification_bypass()
+            .with_project_registry(ProjectTenantRegistry::new().bind(auto_tenant, tenant));
+    } else if let Some(raw) = env_lookup(FIREBASE_PROJECTS_ENV) {
         let registry = ProjectTenantRegistry::from_operator_spec(&raw)
             .map_err(|error| Error::InvalidInput(error.to_string()))?;
         config = config.with_project_registry(registry);
@@ -480,7 +486,18 @@ mod tests {
         let resolved = resolve(&base_command(), temp.path(), |_| None)
             .expect("the default command must resolve every surface");
 
-        assert!(resolved.firebase.is_some(), "firestore routes default on");
+        let firebase = resolved
+            .firebase
+            .as_ref()
+            .expect("firestore routes default on");
+        assert!(
+            !firebase.allows_emulator_token_verification_bypass(),
+            "plain start must not enable the dev-only Firebase emulator bypass"
+        );
+        assert!(
+            firebase.project_registry().resolve("demo").is_err(),
+            "plain start must keep Firestore strict until projects are explicitly bound"
+        );
 
         let mongodb = resolved.mongodb.expect("mongodb listener defaults on");
         assert_eq!(
@@ -519,6 +536,34 @@ mod tests {
                 .binding(&store.dynamodb_access_key_id)
                 .is_ok(),
             "the store access key must authenticate"
+        );
+    }
+
+    #[test]
+    fn dev_auto_tenant_enables_loopback_firebase_project_binding() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut command = base_command();
+        command.auto_tenant = Some("dev-project".to_string());
+        let resolved = resolve(&command, temp.path(), |name| {
+            (name == FIREBASE_PROJECTS_ENV).then(|| "other:other".to_string())
+        })
+        .expect("dev auto-tenant Firestore config should resolve");
+        let firebase = resolved.firebase.expect("firestore routes stay mounted");
+
+        assert!(
+            firebase.allows_emulator_token_verification_bypass(),
+            "dev auto-tenant mode must accept Firebase emulator mock tokens on loopback"
+        );
+        assert_eq!(
+            firebase
+                .project_registry()
+                .resolve("dev-project")
+                .expect("dev project should resolve"),
+            TenantId::new("dev-project").expect("tenant id should parse")
+        );
+        assert!(
+            firebase.project_registry().resolve("other").is_err(),
+            "ambient project bindings must not desync nimbus dev from its auto tenant"
         );
     }
 

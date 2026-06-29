@@ -439,11 +439,17 @@ impl FileSystem for CappedBackend {
     }
 
     fn cp_sync(&self, path: &CheckedPath<'_>, new_path: &CheckedPath<'_>) -> FsResult<()> {
-        self.copy_file_sync(path, new_path)
+        self.caps.require_file_read()?;
+        self.caps.require_file_write()?;
+        self.caps.require_directory_mutate()?;
+        self.inner.cp_sync(path, new_path)
     }
 
     async fn cp_async(&self, path: CheckedPathBuf, new_path: CheckedPathBuf) -> FsResult<()> {
-        self.copy_file_async(path, new_path).await
+        self.caps.require_file_read()?;
+        self.caps.require_file_write()?;
+        self.caps.require_directory_mutate()?;
+        self.inner.cp_async(path, new_path).await
     }
 
     fn stat_sync(&self, path: &CheckedPath<'_>) -> FsResult<FsStat> {
