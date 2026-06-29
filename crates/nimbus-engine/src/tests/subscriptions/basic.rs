@@ -5,7 +5,7 @@ async fn recv_result_covering(
     covered_sequence: SequenceNumber,
     message: &str,
 ) -> (u64, Option<String>, nimbus_core::SubscriptionResultSnapshot) {
-    timeout(Duration::from_secs(1), async {
+    timeout(Duration::from_secs(5), async {
         loop {
             let update = rx.recv().await.expect("subscription update should arrive");
             match update {

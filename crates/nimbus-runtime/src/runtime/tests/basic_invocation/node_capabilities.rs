@@ -137,7 +137,7 @@ export {};
 
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let request = |function_name: &str| InvocationRequest {
         kind: InvocationKind::Query,

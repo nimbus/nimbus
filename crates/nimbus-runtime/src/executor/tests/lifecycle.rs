@@ -42,8 +42,8 @@ async fn worker_invocation_uses_invocation_runtime_policy_filesystem() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir, bundle_path) = write_node_fs_policy_bundle();
     let mut limits = crate::RuntimeLimits::application_node22();
-    limits.execution_model = crate::RuntimeExecutionModel::RunToCompletion;
-    limits.runtime_pool_kind = crate::RuntimePoolKind::StartupSnapshotCache;
+    limits.execution_model = crate::RuntimeExecutionModel::CooperativeLocker;
+    limits.runtime_pool_kind = crate::RuntimePoolKind::WarmPool;
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let executor_policy = Arc::new(RuntimePolicy::new(limits.clone()));
@@ -51,12 +51,25 @@ async fn worker_invocation_uses_invocation_runtime_policy_filesystem() {
         RuntimePolicy::new(limits)
             .clone_with_file_system(deno_fs::sync::MaybeArc::new(deno_fs::RealFs)),
     );
-    let executor = RuntimeExecutor::new(executor_policy);
-    let request = test_request("messages:writePolicyFile");
+    let executor = RuntimeExecutor::new(executor_policy.clone());
+    let warmup_request = test_request("messages:warmNoop");
 
+    let warmup = executor
+        .invoke_on_worker(
+            NimbusRuntime::with_policy(Arc::new(NoopHost), executor_policy),
+            RuntimeBundle::new(&bundle_path),
+            warmup_request.clone(),
+            test_context(&warmup_request, "req-worker-policy-fs-warmup"),
+            None,
+        )
+        .await
+        .expect("warmup invocation should not require filesystem authority");
+    assert_eq!(warmup, json!("warm-noop"));
+
+    let request = test_request("messages:writePolicyFile");
     let result = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(Arc::new(NoopHost), invocation_policy),
+            NimbusRuntime::with_policy(Arc::new(NoopHost), invocation_policy.clone()),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             test_context(&request, "req-worker-policy-fs"),
@@ -66,6 +79,10 @@ async fn worker_invocation_uses_invocation_runtime_policy_filesystem() {
         .expect("worker invocation should use the invocation runtime filesystem policy");
 
     assert_eq!(result, json!("job-policy-fs"));
+    let executor_metrics = executor.policy().metrics_snapshot();
+    assert_eq!(executor_metrics.runtime_pool_misses, 1);
+    let invocation_metrics = invocation_policy.metrics_snapshot();
+    assert_eq!(invocation_metrics.runtime_pool_hits, 1);
 }
 
 #[tokio::test]
