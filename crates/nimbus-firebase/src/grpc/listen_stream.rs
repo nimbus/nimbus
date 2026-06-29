@@ -33,6 +33,7 @@ use super::write_stream::{
     core_timestamp_from_prost, decode_nimbus_value_from_grpc, encode_document_field_to_grpc,
     firebase_grpc_status, prost_timestamp_from_core,
 };
+use crate::ProjectTenantRegistry;
 use crate::resource_names::{self, FirestoreDatabaseName};
 use crate::{
     firestore_document_name, resource_name_error_to_core, storage_table_for_collection_path,
@@ -380,6 +381,7 @@ impl ActiveListenTarget {
 }
 
 struct ActiveListenRequestStream {
+    registry: ProjectTenantRegistry,
     engine: Arc<Engine>,
     retained_targets: Arc<RetainedListenRegistry>,
     requests: Pin<Box<dyn Stream<Item = Result<ListenRequest, Status>> + Send>>,
@@ -410,6 +412,7 @@ enum TargetedListenUpdate {
 
 impl ActiveListenRequestStream {
     fn new(
+        registry: ProjectTenantRegistry,
         engine: Arc<Engine>,
         retained_targets: Arc<RetainedListenRegistry>,
         requests: Pin<Box<dyn Stream<Item = Result<ListenRequest, Status>> + Send>>,
@@ -419,6 +422,7 @@ impl ActiveListenRequestStream {
             mpsc::channel(LISTEN_TARGET_UPDATE_QUEUE_CAPACITY);
         let (target_overflow_tx, target_overflow_rx) = mpsc::unbounded_channel();
         Self {
+            registry,
             engine,
             retained_targets,
             requests,
@@ -512,9 +516,13 @@ impl ActiveListenRequestStream {
         );
         let (resume, existence_filter_count) =
             apply_expected_count_resume_policy(resume, prepared_target.expected_count)?;
-        let tenant_context =
-            tenant_context_for_database(&database, &self.principal, "firestore.grpc.listen")
-                .map_err(firebase_grpc_status)?;
+        let tenant_context = tenant_context_for_database(
+            &self.registry,
+            &database,
+            &self.principal,
+            "firestore.grpc.listen",
+        )
+        .map_err(firebase_grpc_status)?;
         let (sender, receiver) = mpsc::channel(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
         let registration = self
             .engine
@@ -673,6 +681,7 @@ struct DiffResponseContext<'a> {
 }
 
 pub fn listen_response_stream<S>(
+    registry: &ProjectTenantRegistry,
     engine: Arc<Engine>,
     retained_targets: Arc<RetainedListenRegistry>,
     requests: S,
@@ -681,8 +690,13 @@ pub fn listen_response_stream<S>(
 where
     S: Stream<Item = Result<ListenRequest, Status>> + Send + 'static,
 {
-    let session =
-        ActiveListenRequestStream::new(engine, retained_targets, Box::pin(requests), principal);
+    let session = ActiveListenRequestStream::new(
+        registry.clone(),
+        engine,
+        retained_targets,
+        Box::pin(requests),
+        principal,
+    );
     Ok(Box::pin(stream::unfold(
         session,
         |mut session| async move { session.next_response().await.map(|item| (item, session)) },

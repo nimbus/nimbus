@@ -28,6 +28,7 @@ use super::generated::google::firestore::v1::{
     WriteResult,
 };
 use super::generated::google::r#type::LatLng;
+use crate::ProjectTenantRegistry;
 use crate::resource_names::{self, FirestoreDatabaseName};
 use crate::serializer::{
     FirestoreDouble, FirestoreProtoJsonError, FirestoreValue, firestore_value_from_typed_scalar,
@@ -261,6 +262,7 @@ struct ActiveWriteStream {
 }
 
 struct ActiveWriteRequestStream {
+    project_tenant_registry: ProjectTenantRegistry,
     engine: Arc<Engine>,
     registry: Arc<WriteStreamRegistry>,
     requests: Streaming<WriteRequest>,
@@ -272,12 +274,14 @@ struct ActiveWriteRequestStream {
 
 impl ActiveWriteRequestStream {
     fn new(
+        project_tenant_registry: ProjectTenantRegistry,
         engine: Arc<Engine>,
         registry: Arc<WriteStreamRegistry>,
         requests: Streaming<WriteRequest>,
         principal: PrincipalContext,
     ) -> Self {
         Self {
+            project_tenant_registry,
             engine,
             registry,
             requests,
@@ -339,6 +343,7 @@ impl ActiveWriteRequestStream {
             }
 
             let tenant_context = tenant_context_for_database(
+                &self.project_tenant_registry,
                 &database,
                 &self.principal,
                 "firestore.grpc.write_stream",
@@ -441,12 +446,19 @@ impl ActiveWriteRequestStream {
 }
 
 pub fn write_response_stream(
+    project_tenant_registry: &ProjectTenantRegistry,
     engine: Arc<Engine>,
     registry: Arc<WriteStreamRegistry>,
     requests: Streaming<WriteRequest>,
     principal: PrincipalContext,
 ) -> tonic::codegen::BoxStream<WriteResponse> {
-    let session = ActiveWriteRequestStream::new(engine, registry, requests, principal);
+    let session = ActiveWriteRequestStream::new(
+        project_tenant_registry.clone(),
+        engine,
+        registry,
+        requests,
+        principal,
+    );
     Box::pin(stream::unfold(session, |mut session| async move {
         session.next_response().await.map(|item| (item, session))
     }))
