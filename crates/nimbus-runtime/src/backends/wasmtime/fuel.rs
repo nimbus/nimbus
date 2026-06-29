@@ -107,7 +107,7 @@ impl WasmtimeFuelSlot {
 
         let future = Box::pin(async move {
             tokio::task::yield_now().await;
-            let mut backend = WasmtimeBackendFactory::new().create_typed();
+            let mut backend = WasmtimeBackendFactory::new().create_typed()?;
             backend
                 .invoke(RuntimeBackendInvocation {
                     watchdog,
@@ -320,7 +320,7 @@ impl CooperativeBackendDriver for WasmtimeFuelDriver {
                 permit,
                 activity_signal: _activity_signal,
             } = start;
-            let mut backend = self.backend_factory.create_typed();
+            let mut backend = self.backend_factory.create_typed()?;
             backend
                 .invoke(RuntimeBackendInvocation {
                     watchdog,

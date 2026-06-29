@@ -27,7 +27,7 @@ const WASMTIME_COOPERATIVE_FUEL_SLICE: u64 = 1_000_000;
 
 #[derive(Clone)]
 pub(crate) struct WasmtimeBackendFactory {
-    shared: &'static WasmtimeSharedBackend,
+    shared: std::result::Result<&'static WasmtimeSharedBackend, String>,
 }
 
 struct WasmtimeSharedBackend {
@@ -38,35 +38,68 @@ struct WasmtimeSharedBackend {
 
 impl WasmtimeBackendFactory {
     pub(crate) fn new() -> Self {
-        static SHARED: OnceLock<WasmtimeSharedBackend> = OnceLock::new();
+        static SHARED: OnceLock<std::result::Result<WasmtimeSharedBackend, String>> =
+            OnceLock::new();
+        let shared = SHARED.get_or_init(|| {
+            let engine = create_wasmtime_component_engine().map_err(|error| error.to_string())?;
+            let linker = build_nimbus_host_linker(&engine).map_err(|error| error.to_string())?;
+            Ok(WasmtimeSharedBackend {
+                module_cache: Arc::new(WasmtimeModuleCache::new(engine.clone())),
+                engine,
+                linker,
+            })
+        });
         Self {
-            shared: SHARED.get_or_init(|| {
-                let engine = create_wasmtime_component_engine()
-                    .expect("Wasmtime component engine should initialize");
-                let linker =
-                    build_nimbus_host_linker(&engine).expect("Wasmtime host linker should build");
-                WasmtimeSharedBackend {
-                    module_cache: Arc::new(WasmtimeModuleCache::new(engine.clone())),
-                    engine,
-                    linker,
-                }
-            }),
+            shared: shared.as_ref().map_err(Clone::clone),
         }
     }
 
-    pub(crate) fn create_typed(&self) -> WasmtimeBackend {
-        WasmtimeBackend {
-            engine: self.shared.engine.clone(),
-            linker: self.shared.linker.clone(),
-            module_cache: self.shared.module_cache.clone(),
+    pub(crate) fn create_typed(&self) -> Result<WasmtimeBackend> {
+        let shared = match &self.shared {
+            Ok(shared) => *shared,
+            Err(error) => {
+                return Err(NimbusRuntimeError::Contract(format!(
+                    "Wasmtime backend unavailable: {error}"
+                )));
+            }
+        };
+        Ok(WasmtimeBackend {
+            engine: shared.engine.clone(),
+            linker: shared.linker.clone(),
+            module_cache: shared.module_cache.clone(),
             store_pool: WasmtimeStorePool::new(),
-        }
+        })
     }
 }
 
 impl RuntimeBackendFactory for WasmtimeBackendFactory {
     fn create(&self) -> Box<dyn RuntimeBackend> {
-        Box::new(self.create_typed())
+        match self.create_typed() {
+            Ok(backend) => Box::new(backend),
+            Err(error) => Box::new(UnavailableWasmtimeBackend::from_error(error)),
+        }
+    }
+}
+
+struct UnavailableWasmtimeBackend {
+    message: String,
+}
+
+impl UnavailableWasmtimeBackend {
+    fn from_error(error: NimbusRuntimeError) -> Self {
+        Self {
+            message: error.to_string(),
+        }
+    }
+}
+
+impl RuntimeBackend for UnavailableWasmtimeBackend {
+    fn invoke<'a>(
+        &'a mut self,
+        _invocation: RuntimeBackendInvocation,
+    ) -> Pin<Box<dyn Future<Output = Result<Value>> + 'a>> {
+        let message = self.message.clone();
+        Box::pin(async move { Err(NimbusRuntimeError::Contract(message)) })
     }
 }
 
