@@ -657,6 +657,50 @@ fn web_standard_permissions_deny_local_network_hosts() {
     );
 }
 
+/// Outbound `fetch()` and `new WebSocket()` funnel through the same
+/// `allow_net` gate (`check_net_url` -> the merged `net_connect`/`net_listen`
+/// allowlist). No runtime profile grants a non-loopback host, so an isolate
+/// can never reach a public `https://`/`wss://` endpoint, not even the
+/// local-development profile, whose loopback grant must not be mistaken for
+/// public egress. This pins that invariant across every profile that ships a
+/// net grant.
+#[test]
+fn node_isolates_deny_public_host_egress_in_every_profile() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let bundle_root = tempdir.path().join("app/.nimbus/convex");
+    std::fs::create_dir_all(&bundle_root).expect("bundle root should build");
+    let bundle_path = bundle_root.join("bundle.mjs");
+    std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+    let bundle = RuntimeBundle::new(&bundle_path);
+
+    // (profile label, limits): production denies all net; local-development
+    // grants loopback only. A public host must be denied under both.
+    let profiles = [
+        ("production", RuntimeLimits::application_node22()),
+        (
+            "local-development",
+            RuntimeLimits::application_node22_local_development(),
+        ),
+    ];
+
+    for (label, limits) in profiles {
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &limits).expect("policy should build");
+        let env = RuntimeEnvPolicy::for_grants(&limits.grants);
+        let mut permissions =
+            build_permissions_container(&policy, &env, &limits).expect("permissions should build");
+
+        // `wss://echo.example.com:443` resolves to this check_net descriptor.
+        // expect_err panics if a public host was (wrongly) permitted.
+        let denial = permissions
+            .check_net(&("echo.example.com", Some(443)), "new WebSocket()")
+            .expect_err("public-host WebSocket/fetch egress must be denied in every profile");
+        assert!(
+            denial.to_string().contains("Requires net access"),
+            "{label}: unexpected public-host net denial: {denial}"
+        );
+    }
+}
+
 #[cfg(unix)]
 fn binary_name() -> &'static str {
     "esbuild"
