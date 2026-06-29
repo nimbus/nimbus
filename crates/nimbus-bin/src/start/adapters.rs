@@ -14,8 +14,8 @@ use std::path::Path;
 
 use nimbus::{Error, TenantId};
 use nimbus_server::{
-    DynamoDbConfig, FirebaseConfig, MongoDbAuthConfig, MongoDbConfig, MongoDbCredentialRegistry,
-    ProjectTenantRegistry,
+    CloudflareConfig, DynamoDbConfig, FirebaseConfig, MongoDbAuthConfig, MongoDbConfig,
+    MongoDbCredentialRegistry, ProjectTenantRegistry,
 };
 
 use crate::wire_credentials::{WireCredentials, load_or_generate};
@@ -56,6 +56,7 @@ pub(super) const DEFAULT_DYNAMODB_TENANT: &str = "default";
 #[derive(Debug)]
 pub(crate) struct AdapterEnablement {
     pub(crate) firebase: Option<FirebaseConfig>,
+    pub(crate) cloudflare: Option<CloudflareConfig>,
     pub(crate) mongodb: Option<MongoDbConfig>,
     pub(crate) dynamodb: Option<DynamoDbConfig>,
 }
@@ -69,6 +70,19 @@ impl AdapterEnablement {
             Some(_) => "mounted on the main listener".to_string(),
             None => "off".to_string(),
         };
+        let cloudflare = match &self.cloudflare {
+            Some(config) if config.bindings().is_empty() => {
+                "mounted on the main listener".to_string()
+            }
+            Some(config) => format!(
+                "mounted on the main listener ({} KV, {} DO, {} D1, {} R2 bindings)",
+                config.bindings().kv_namespaces().len(),
+                config.bindings().durable_objects().len(),
+                config.bindings().d1_databases().len(),
+                config.bindings().r2_buckets().len()
+            ),
+            None => "off".to_string(),
+        };
         let mongodb = self
             .mongodb
             .as_ref()
@@ -79,6 +93,7 @@ impl AdapterEnablement {
             .map_or_else(|| "off".to_string(), |config| config.bind_addr.to_string());
         vec![
             format!("firestore routes:\t{firestore}"),
+            format!("cloudflare routes:\t{cloudflare}"),
             format!("mongodb listener:\t{mongodb}"),
             format!("dynamodb listener:\t{dynamodb}"),
         ]
@@ -91,6 +106,9 @@ impl AdapterEnablement {
     ) -> nimbus_server::ServeOptions {
         if let Some(firebase) = self.firebase {
             options = options.with_firebase_config(firebase);
+        }
+        if let Some(cloudflare) = self.cloudflare {
+            options = options.with_cloudflare(cloudflare);
         }
         if let Some(mongodb) = self.mongodb {
             options = options.with_mongodb(mongodb);
@@ -144,26 +162,49 @@ fn store_error(error: std::io::Error) -> Error {
 pub(super) fn resolve_adapter_enablement(
     command: &StartCommand,
     control_data_dir: &Path,
+    app_dir: Option<&Path>,
 ) -> Result<AdapterEnablement, Error> {
-    resolve_adapter_enablement_with_env(
+    resolve_adapter_enablement_with_env_and_app_dir(
         command,
         control_data_dir,
+        app_dir,
         |name| std::env::var(name).ok(),
         |port| std::net::TcpListener::bind(("127.0.0.1", port)).is_ok(),
     )
 }
 
+#[cfg(test)]
 pub(crate) fn resolve_adapter_enablement_with_env(
     command: &StartCommand,
     control_data_dir: &Path,
     env_lookup: impl Fn(&str) -> Option<String>,
     port_is_free: impl Fn(u16) -> bool,
 ) -> Result<AdapterEnablement, Error> {
+    resolve_adapter_enablement_with_env_and_app_dir(
+        command,
+        control_data_dir,
+        None,
+        env_lookup,
+        port_is_free,
+    )
+}
+
+pub(crate) fn resolve_adapter_enablement_with_env_and_app_dir(
+    command: &StartCommand,
+    control_data_dir: &Path,
+    app_dir: Option<&Path>,
+    env_lookup: impl Fn(&str) -> Option<String>,
+    port_is_free: impl Fn(u16) -> bool,
+) -> Result<AdapterEnablement, Error> {
     let mut store = CredentialStore::new(control_data_dir);
+    let mongodb = resolve_mongodb(command, &env_lookup, &port_is_free, &mut store)?;
+    let dynamodb = resolve_dynamodb(command, &env_lookup, &port_is_free, &mut store)?;
+    let cloudflare = resolve_cloudflare(command, app_dir, &mut store)?;
     Ok(AdapterEnablement {
         firebase: resolve_firebase(command, &env_lookup)?,
-        mongodb: resolve_mongodb(command, &env_lookup, &port_is_free, &mut store)?,
-        dynamodb: resolve_dynamodb(command, &env_lookup, &port_is_free, &mut store)?,
+        cloudflare,
+        mongodb,
+        dynamodb,
     })
 }
 
@@ -196,6 +237,32 @@ fn resolve_firebase(
             .map_err(|error| Error::InvalidInput(error.to_string()))?;
         config = config.with_project_registry(registry);
     }
+    Ok(Some(config))
+}
+
+fn resolve_cloudflare(
+    command: &StartCommand,
+    app_dir: Option<&Path>,
+    store: &mut CredentialStore<'_>,
+) -> Result<Option<CloudflareConfig>, Error> {
+    if !command.cloudflare {
+        return Ok(None);
+    }
+    // Cloudflare routes share the refuse_non_loopback_bind posture enforced by `ensure_host_opt_in`.
+    ensure_host_opt_in(&command.host, command.allow_network)
+        .map_err(|error| Error::InvalidInput(format!("--host for Cloudflare routes: {error}")))?;
+    let mut config = match app_dir {
+        Some(app_dir) => CloudflareConfig::from_app_dir(app_dir)
+            .map_err(|error| Error::InvalidInput(error.to_string()))?,
+        None => CloudflareConfig::default(),
+    };
+    let credentials = store.get()?;
+    let tenant = TenantId::new(DEFAULT_DYNAMODB_TENANT)?;
+    config = config.with_signed_access_key(
+        credentials.dynamodb_access_key_id.clone(),
+        tenant,
+        credentials.dynamodb_secret_access_key.clone(),
+    );
     Ok(Some(config))
 }
 
@@ -498,6 +565,10 @@ mod tests {
             firebase.project_registry().resolve("demo").is_err(),
             "plain start must keep Firestore strict until projects are explicitly bound"
         );
+        assert!(
+            resolved.cloudflare.is_some(),
+            "cloudflare routes default on"
+        );
 
         let mongodb = resolved.mongodb.expect("mongodb listener defaults on");
         assert_eq!(
@@ -536,6 +607,16 @@ mod tests {
                 .binding(&store.dynamodb_access_key_id)
                 .is_ok(),
             "the store access key must authenticate"
+        );
+        assert!(
+            resolved
+                .cloudflare
+                .as_ref()
+                .expect("cloudflare should resolve")
+                .access_keys()
+                .binding(&store.dynamodb_access_key_id)
+                .is_ok(),
+            "the store access key must authenticate the Cloudflare surface"
         );
     }
 
@@ -577,6 +658,7 @@ mod tests {
             lines,
             vec![
                 "firestore routes:\tmounted on the main listener".to_string(),
+                "cloudflare routes:\tmounted on the main listener".to_string(),
                 format!("mongodb listener:\t127.0.0.1:{MONGODB_CONVENTIONAL_PORT}"),
                 format!("dynamodb listener:\t127.0.0.1:{DYNAMODB_CONVENTIONAL_PORT}"),
             ]
@@ -593,6 +675,7 @@ mod tests {
 
         let mut command = base_command();
         command.firestore = false;
+        command.cloudflare = false;
         command.mongodb = false;
         command.dynamodb = false;
         let opted_out = resolve(&command, temp.path(), |_| None)
@@ -601,6 +684,7 @@ mod tests {
             opted_out.status_lines(),
             vec![
                 "firestore routes:\toff".to_string(),
+                "cloudflare routes:\toff".to_string(),
                 "mongodb listener:\toff".to_string(),
                 "dynamodb listener:\toff".to_string(),
             ]
@@ -612,11 +696,13 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let mut command = base_command();
         command.firestore = false;
+        command.cloudflare = false;
         command.mongodb = false;
         command.dynamodb = false;
         let resolved = resolve(&command, temp.path(), |_| None)
             .expect("a fully opted-out command should resolve");
         assert!(resolved.firebase.is_none());
+        assert!(resolved.cloudflare.is_none());
         assert!(resolved.mongodb.is_none());
         assert!(resolved.dynamodb.is_none());
         assert!(
@@ -639,6 +725,48 @@ mod tests {
         let error = resolve(&command, temp.path(), |_| None)
             .expect_err("--no-dynamodb with --dynamodb-access-key must conflict");
         assert!(error.to_string().contains("--no-dynamodb"));
+    }
+
+    #[test]
+    fn cloudflare_reads_wrangler_bindings_from_app_dir() {
+        let data_dir = tempfile::tempdir().expect("data tempdir");
+        let app_dir = tempfile::tempdir().expect("app tempdir");
+        std::fs::write(
+            app_dir.path().join("wrangler.jsonc"),
+            r#"
+            {
+              "kv_namespaces": [
+                { "binding": "CACHE", "id": "kv-prod", },
+              ],
+              "durable_objects": {
+                "bindings": [
+                  { "name": "COUNTERS", "class_name": "Counter", },
+                ],
+              },
+            }
+            "#,
+        )
+        .expect("wrangler config should write");
+
+        let resolved = resolve_adapter_enablement_with_env_and_app_dir(
+            &base_command(),
+            data_dir.path(),
+            Some(app_dir.path()),
+            |_| None,
+            |_| true,
+        )
+        .expect("wrangler-backed Cloudflare config should resolve");
+        let cloudflare = resolved
+            .cloudflare
+            .as_ref()
+            .expect("cloudflare should be enabled");
+
+        assert_eq!(cloudflare.bindings().kv_namespaces()[0].binding, "CACHE");
+        assert_eq!(cloudflare.bindings().durable_objects()[0].name, "COUNTERS");
+        assert_eq!(
+            resolved.status_lines()[1],
+            "cloudflare routes:\tmounted on the main listener (1 KV, 1 DO, 0 D1, 0 R2 bindings)"
+        );
     }
 
     #[test]
@@ -727,8 +855,11 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let mut command = base_command();
         // Opt DynamoDB out so its store-backed default key can't create the
-        // file this test asserts stays absent.
+        // file this test asserts stays absent. Cloudflare also uses the
+        // generated store credential by default, so it is out of this
+        // MongoDB-only assertion too.
         command.dynamodb = false;
+        command.cloudflare = false;
         command.mongodb_username = Some("ops".to_string());
         let resolved = resolve(&command, temp.path(), |name| {
             (name == MONGODB_PASSWORD_ENV).then(|| "secret".to_string())
@@ -785,6 +916,7 @@ mod tests {
     fn dynamodb_listener_parses_access_key_bindings() {
         let temp = tempfile::tempdir().expect("tempdir");
         let mut command = base_command();
+        command.cloudflare = false;
         command.mongodb = false;
         command.dynamodb_port = Some(8000);
         command.dynamodb_access_key = vec!["AKIDEXAMPLE:sEcr3t/Key+=:demo".to_string()];
@@ -865,8 +997,11 @@ mod tests {
         let mut command = base_command();
         command.mongodb_port = Some(27017);
         // Opt DynamoDB out so its store-backed default key can't create the
-        // file this test asserts stays absent.
+        // file this test asserts stays absent. Cloudflare also uses the
+        // generated store credential by default, so it is out of this
+        // MongoDB-only assertion too.
         command.dynamodb = false;
+        command.cloudflare = false;
         let resolved = resolve(&command, temp.path(), |name| {
             (name == MONGODB_CREDENTIALS_ENV)
                 .then(|| "user-a:tenant-a:secret-a,user-b:tenant-b:secret-b".to_string())

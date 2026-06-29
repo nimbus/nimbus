@@ -121,6 +121,17 @@ ci_workflow_green() {
   conclusion="$(printf '%s\n' "${latest}" | grep -oE '"conclusion":"[^"]*"' | head -n 1 | cut -d: -f2 | tr -d '"')"
   status="$(printf '%s\n' "${latest}" | grep -oE '"status":"[^"]*"' | head -n 1 | cut -d: -f2 | tr -d '"')"
   run_id="$(printf '%s\n' "${latest}" | grep -oE '"databaseId":[0-9]+' | head -n 1 | cut -d: -f2)"
+  head_sha="$(printf '%s\n' "${latest}" | grep -oE '"headSha":"[0-9a-f]+"' | head -n 1 | cut -d: -f2 | tr -d '"')"
+  current_branch="$(git branch --show-current 2>/dev/null || true)"
+
+  if [ "${branch}" = "${current_branch}" ]; then
+    current_head="$(git rev-parse HEAD 2>/dev/null || true)"
+    if [ -n "${current_head}" ] && [ "${head_sha}" != "${current_head}" ]; then
+      printf '        note: latest ci.yml for %s is for head=%s, local HEAD=%s\n' \
+        "${branch}" "${head_sha:-unknown}" "${current_head}"
+      return 1
+    fi
+  fi
 
   if [ "${conclusion}" = "success" ]; then
     return 0

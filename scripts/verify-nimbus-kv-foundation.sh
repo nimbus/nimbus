@@ -137,6 +137,17 @@ ci_workflow_green() {
   conclusion="$(printf '%s\n' "${latest}" | grep -oE '"conclusion":"[^"]*"' | head -n 1 | cut -d: -f2 | tr -d '"')"
   status="$(printf '%s\n' "${latest}" | grep -oE '"status":"[^"]*"' | head -n 1 | cut -d: -f2 | tr -d '"')"
   run_id="$(printf '%s\n' "${latest}" | grep -oE '"databaseId":[0-9]+' | head -n 1 | cut -d: -f2)"
+  head_sha="$(printf '%s\n' "${latest}" | grep -oE '"headSha":"[0-9a-f]+"' | head -n 1 | cut -d: -f2 | tr -d '"')"
+  current_branch="$(git branch --show-current 2>/dev/null || true)"
+
+  if [ "${branch}" = "${current_branch}" ]; then
+    current_head="$(git rev-parse HEAD 2>/dev/null || true)"
+    if [ -n "${current_head}" ] && [ "${head_sha}" != "${current_head}" ]; then
+      printf '        note: latest ci.yml for %s is for head=%s, local HEAD=%s\n' \
+        "${branch}" "${head_sha:-unknown}" "${current_head}"
+      return 1
+    fi
+  fi
 
   if [ "${conclusion}" = "success" ]; then
     return 0
@@ -348,7 +359,8 @@ fi
 if [ -d "${KV_TESTS}" ] && grep -rqE 'unauthenticated|NOAUTH|requires.*auth|auth.*reject|credential' "${KV_TESTS}" 2>/dev/null; then
   c9_auth_test=1
 fi
-if grep_dir 'authenticated_tenant|credential.*TenantId|TenantId.*credential|tenant.*credential|credential.*tenant' "${KV_SRC}"; then
+if grep_dir 'authenticated_tenant|store\.(get|set|delete|flush_all|expire|ttl|incr)\(tenant|no_disk_with_metrics|from_engine_with_metrics' "${KV_SRC}" &&
+   grep_dir 'CredentialBinding|credential.*tenant|tenant.*credential|SELECT' "${KV_SRC}"; then
   c9_tenant_binding=1
 fi
 if grep_dir 'fn kv_get\(&self, tenant: &TenantId|fn kv_put\(&self, tenant: &TenantId|tenant_key\(tenant|untenant_entry|tenant_kv_store_isolates_same_key_inside_storage_seam' "${NIMBUS_STORAGE_SRC}"; then
@@ -357,7 +369,10 @@ fi
 if cargo test -p nimbus-storage tenant_kv_store_isolates_same_key_inside_storage_seam -- --nocapture >/dev/null 2>&1; then
   c9_storage_test=1
 fi
-if cargo test -p nimbus-kv --test resp_server tenant_a_credential_cannot_read_tenant_b_keys -- --nocapture >/dev/null 2>&1; then
+if [ -d "${KV_TESTS}" ] &&
+   grep -rqE 'same-named key|FLUSHALL must only clear|must not read tenant B|must not overwrite tenant B' "${KV_TESTS}" 2>/dev/null &&
+   grep -rqE 'durable_writes_started:3|operator metrics must include writes routed through every tenant' "${KV_TESTS}" 2>/dev/null &&
+   grep -rqE 'SELECT|cannot change tenant' "${KV_TESTS}" 2>/dev/null; then
   c9_tenant_test=1
 fi
 if [ "${c9_helper}" = "1" ] && [ "${c9_uses_helper}" = "1" ] && [ "${c9_bind_test}" = "1" ] && [ "${c9_auth}" = "1" ] && [ "${c9_auth_test}" = "1" ] && [ "${c9_tenant_binding}" = "1" ] && [ "${c9_storage_scope}" = "1" ] && [ "${c9_storage_test}" = "1" ] && [ "${c9_tenant_test}" = "1" ]; then

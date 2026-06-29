@@ -78,10 +78,16 @@ pub(crate) async fn run_start_command(
     let runtime_config = runtime_config_from_start_command(&command)?;
     let compose_control_data_dir =
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
+    let resolved_app_dir = resolve_start_app_dir(&command)?;
     // Adapter enablement resolves after the control data dir: default-on
     // listeners without operator credentials load (or generate) theirs
-    // from the wire-credential store under that dir.
-    let adapter_enablement = resolve_adapter_enablement(&command, &compose_control_data_dir)?;
+    // from the wire-credential store under that dir. App-dir-backed adapters
+    // may also inspect local framework config such as wrangler.*.
+    let adapter_enablement = resolve_adapter_enablement(
+        &command,
+        &compose_control_data_dir,
+        resolved_app_dir.as_ref().map(ResolvedStartAppDir::path),
+    )?;
     // Refuse the Firebase dev-mode token-verification bypass on a non-loopback
     // bind: it fabricates verified Firebase projects from unsigned emulator
     // tokens (#24), so it must be unreachable over the network by construction.
@@ -101,7 +107,6 @@ pub(crate) async fn run_start_command(
     // after the listener is up and the discovery lease is held so the
     // launch ticket can mint against the live server.
     let is_first_boot_run = is_first_boot(&compose_control_data_dir);
-    let resolved_app_dir = resolve_start_app_dir(&command)?;
     run_codegen_preflight(&command, resolved_app_dir.as_ref()).await?;
     let runtime_limits = runtime_limits_from_command(&command);
     let runtime_host_resource_budget = runtime_host_resource_budget_from_command(&command);

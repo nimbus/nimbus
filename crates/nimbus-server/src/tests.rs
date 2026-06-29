@@ -47,9 +47,9 @@ use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 
 use crate::{
-    ConvexRegistry, FirebaseConfig, LicenseDocument, LicenseEntitlements, LicenseKind,
-    LicenseSourceInfo, LicenseSourceKind, LicenseState, ProjectTenantRegistry, RouterOptions,
-    ServeOptions, build_router, serve,
+    CloudflareConfig, ConvexRegistry, FirebaseConfig, LicenseDocument, LicenseEntitlements,
+    LicenseKind, LicenseSourceInfo, LicenseSourceKind, LicenseState, ProjectTenantRegistry,
+    RouterOptions, ServeOptions, build_router, serve,
 };
 use crate::router::RouterBuildConfig;
 use crate::adapters::firebase::grpc::generated::google::firestore::v1::document_transform::FieldTransform as GrpcFieldTransform;
@@ -228,6 +228,7 @@ async fn router_prepare_system_tenant_records_enabled_adapter_listeners() {
     RouterBuildConfig::core(fixture.engine())
         .with_system_convex_registry(convex_registry(json!([])))
         .with_firebase(FirebaseConfig::new())
+        .with_cloudflare(CloudflareConfig::default())
         .with_listen_addr(listen_addr)
         .prepare_system_tenant()
         .await
@@ -252,6 +253,7 @@ async fn router_prepare_system_tenant_records_enabled_adapter_listeners() {
     assert!(has_listener("native", "http"));
     assert!(has_listener("convex", "websocket"));
     assert!(has_listener("firebase", "http+websocket"));
+    assert!(has_listener("cloudflare", "http"));
 }
 
 fn header_csv_values(response: &reqwest::Response, header_name: &str) -> BTreeSet<String> {

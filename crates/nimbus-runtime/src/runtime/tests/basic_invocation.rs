@@ -1,6 +1,7 @@
 use super::*;
 use crate::RuntimeLimits;
 
+mod cloudflare_workers;
 mod node_bootstrap;
 mod node_capabilities;
 mod package_resolution;

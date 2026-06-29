@@ -101,6 +101,7 @@ pub(crate) async fn deploy_app(
             convex_registry: next_convex_registry,
             application_auth_verifier: next_application_auth_verifier,
             cloud_functions_registry: next_cloud_functions_registry.clone(),
+            cloudflare_config: previous_deployment.cloudflare_config(),
             firebase_config: previous_deployment.firebase_config(),
         };
         state.active_deployment.activate(next_deployment);

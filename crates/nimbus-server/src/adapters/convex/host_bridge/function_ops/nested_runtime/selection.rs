@@ -27,6 +27,12 @@ impl ConvexHostBridge {
             InvocationKind::PaginatedQuery => ConvexFunctionKind::PaginatedQuery,
             InvocationKind::Mutation => ConvexFunctionKind::Mutation,
             InvocationKind::Action => ConvexFunctionKind::Action,
+            InvocationKind::CloudflareWorkerFetch => {
+                return Err(Error::InvalidInput(
+                    "convex nested runtime calls do not support Cloudflare Worker fetch invocations"
+                        .to_string(),
+                ));
+            }
         };
         if definition.kind != expected_kind {
             return Err(Error::InvalidInput(format!(

@@ -38,6 +38,7 @@ nimbus-provenance = { path = "../nimbus-provenance" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-services = { path = "../nimbus-services" }
+nimbus-storage = { path = "../nimbus-storage" }
 nimbus-machine = { path = "../nimbus-machine" }
 nimbus-node = { path = "../nimbus-node" }
 nimbus-operator = { path = "../nimbus-operator" }
@@ -65,6 +66,7 @@ tempfile.workspace = true
 thiserror.workspace = true
 time = { workspace = true, features = ["formatting", "parsing"] }
 tokio.workspace = true
+toml.workspace = true
 tonic = "0.13.0"
 tonic-web = "0.13.0"
 tower = "0.5"
@@ -90,7 +92,6 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_
 aws-sdk-dynamodb = { workspace = true }
 aws-sdk-dynamodbstreams = { workspace = true }
 nimbus-engine = { path = "../nimbus-engine", features = ["test-hooks"] }
-nimbus-storage = { path = "../nimbus-storage" }
 nimbus-testing = { path = "../nimbus-testing" }
 serde_yaml.workspace = true
 tempfile.workspace = true

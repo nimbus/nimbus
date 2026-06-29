@@ -7,6 +7,7 @@ use nimbus_runtime::{
 };
 
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
+use crate::adapters::cloudflare::CloudflareConfig;
 use crate::adapters::convex::ConvexRegistry;
 use crate::adapters::dynamodb::DynamoDbConfig;
 use crate::adapters::firebase::FirebaseConfig;
@@ -65,6 +66,13 @@ impl ServeOptions {
 
     pub fn with_firebase_config(mut self, firebase_config: FirebaseConfig) -> Self {
         self.router_options = self.router_options.with_firebase_config(firebase_config);
+        self
+    }
+
+    pub fn with_cloudflare(mut self, cloudflare_config: CloudflareConfig) -> Self {
+        self.router_options = self
+            .router_options
+            .with_cloudflare_config(cloudflare_config);
         self
     }
 

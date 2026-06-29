@@ -1,6 +1,6 @@
 use super::model::{
     SeededDemoOperation, choose_seeded_convex_demo_operation, seeded_convex_demo_context,
-    seeded_convex_demo_request_timeout,
+    seeded_convex_demo_fault_recovery_timeout, seeded_convex_demo_request_timeout,
 };
 use super::support::{
     ArmedBlockingFaultInjector, CreatedMessage, assert_messages_match_expected,
@@ -115,7 +115,7 @@ async fn execute_faulted_seeded_convex_demo_overlap<F>(
 
     faults.release();
 
-    let action = timeout(seeded_convex_demo_request_timeout(), action)
+    let action = timeout(seeded_convex_demo_fault_recovery_timeout(), action)
         .await
         .expect("runtime-backed action should resolve after apply resumes")
         .expect("action task should join");
@@ -144,7 +144,7 @@ async fn execute_faulted_seeded_convex_demo_overlap<F>(
     );
     created.push(action_message);
 
-    let blocked_query = timeout(seeded_convex_demo_request_timeout(), blocked_query)
+    let blocked_query = timeout(seeded_convex_demo_fault_recovery_timeout(), blocked_query)
         .await
         .expect("blocked query should resolve after apply resumes")
         .expect("blocked query task should join");
@@ -167,7 +167,7 @@ async fn execute_faulted_seeded_convex_demo_overlap<F>(
         })
     }));
 
-    let http_post = timeout(seeded_convex_demo_request_timeout(), &mut http_post)
+    let http_post = timeout(seeded_convex_demo_fault_recovery_timeout(), &mut http_post)
         .await
         .expect("follow-up httpAction post should resolve after apply resumes")
         .expect("httpAction post task should join");
@@ -197,7 +197,7 @@ async fn execute_faulted_seeded_convex_demo_overlap<F>(
     created.push(http_message);
 
     let second_action = timeout(
-        seeded_convex_demo_request_timeout(),
+        seeded_convex_demo_fault_recovery_timeout(),
         api.convex_named_action(
             "demo",
             "messages:sendViaAction",

@@ -582,7 +582,9 @@ fn effect_class_for_invocation_kind(kind: &InvocationKind) -> RuntimeEffectClass
             RuntimeEffectClass::ObservableRead
         }
         InvocationKind::Mutation => RuntimeEffectClass::Write,
-        InvocationKind::Action => RuntimeEffectClass::ServiceExternal,
+        InvocationKind::Action | InvocationKind::CloudflareWorkerFetch => {
+            RuntimeEffectClass::ServiceExternal
+        }
     }
 }
 
@@ -663,7 +665,9 @@ fn scheduling_class_for_invocation_kind(kind: &InvocationKind) -> RuntimeSchedul
         InvocationKind::Query | InvocationKind::PaginatedQuery => {
             RuntimeSchedulingClass::LatencySensitiveRead
         }
-        InvocationKind::Mutation | InvocationKind::Action => RuntimeSchedulingClass::Effectful,
+        InvocationKind::Mutation
+        | InvocationKind::Action
+        | InvocationKind::CloudflareWorkerFetch => RuntimeSchedulingClass::Effectful,
     }
 }
 
