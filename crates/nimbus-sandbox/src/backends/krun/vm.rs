@@ -35,8 +35,8 @@ use crate::backends::oci::materializer::{
 use crate::backends::oci::network::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
     DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, OciNetworkConfig, OciNetworkDirectEgress,
-    OciNetworkLayout, create_persistent_network_namespace, remove_persistent_network_namespace,
-    setup_container_network, teardown_container_network,
+    OciNetworkLayout, create_persistent_network_namespace, pin_netns_egress_to_own_proxy,
+    remove_persistent_network_namespace, setup_container_network, teardown_container_network,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
