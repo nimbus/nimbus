@@ -28,6 +28,19 @@ use nimbus_tenant::TenantIsolationDecision;
 /// against a half-installed policy. The latch is bound to a specific
 /// [`TenantIsolationDecision`] id so a readiness token minted for one decision
 /// can never silently authorize traffic for another.
+///
+/// **Production producer status (audit M14 — stated decision: keep the seam).**
+/// [`Self::not_ready_for_decision`] is the seam for NEG's cross-substrate
+/// generation-gated readiness (NEG4): a future producer, tied to the nimbus-proxy
+/// PEP generation-install signal, will mint it so container/microVM workloads
+/// cannot start before the tenant generation's enforcement state is installed.
+/// Today every host bridge constructs [`Self::ready_for_decision`], which is
+/// correct — *not* fail-open — because the in-process isolate gateway is
+/// synchronous and its decision is admitted before the runtime executes, so there
+/// is no install gap to gate. The seam is kept (not removed and not left silently
+/// `#[cfg(test)]`-inert) so that producer can be wired without re-introducing a
+/// contract; the not-ready path is already fully enforced (see
+/// [`Self::ensure_ready`]) and is exercised by tests.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EgressGatewayEnforcementReadiness {
     decision_id: String,
