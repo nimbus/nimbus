@@ -10,7 +10,15 @@ pub(crate) type Resolver =
 pub struct DnsCacheConfig {
     pub max_hosts: usize,
     pub max_addresses_per_host: usize,
+    /// Seam for NEG's planned bounded dynamic DNS/FQDN state: the lower TTL
+    /// clamp a future DNS cache would apply. Deliberately unimplemented today —
+    /// the resolver does not cache, which is the safer DNS-rebind posture — so
+    /// this bound is not yet enforced.
     pub min_ttl: Duration,
+    /// Seam for NEG's planned bounded dynamic DNS/FQDN state: the upper TTL
+    /// clamp a future DNS cache would apply. Deliberately unimplemented today
+    /// (no caching, the safer DNS-rebind posture), so this bound is not yet
+    /// enforced.
     pub max_ttl: Duration,
 }
 
@@ -35,6 +43,11 @@ impl DnsCacheConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DnsResolution {
     pub canonical_host: String,
+    /// Seam for NEG's planned DNS alias-chain handling: the CNAME/alias chain a
+    /// future resolver would walk so policy can be enforced against every name
+    /// in the chain, not just the queried host. Deliberately unimplemented today
+    /// — `resolve_dns` records only the canonical host as a single-element chain
+    /// — so alias-chain policy is not yet enforced.
     pub alias_chain: Vec<String>,
     pub addresses: Vec<SocketAddr>,
 }

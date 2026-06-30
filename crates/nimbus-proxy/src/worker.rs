@@ -416,7 +416,6 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
         .egress_request
         .clone()
         .with_resolved_ip(upstream_addr.ip());
-    let _policy_generation = active_policy.policy_generation;
     let authorization = active_policy.policy.authorize(&egress_request);
     if !authorization.is_allowed() {
         return deny_terminal(
