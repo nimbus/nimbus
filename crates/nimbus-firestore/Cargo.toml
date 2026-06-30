@@ -1,0 +1,18 @@
+[package]
+name = "nimbus-firestore"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+base64.workspace = true
+nimbus-core = { path = "../nimbus-core" }
+ring.workspace = true

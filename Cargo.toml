@@ -14,6 +14,7 @@ members = [
     "crates/nimbus-crypto",
     "crates/nimbus-dynamodb",
     "crates/nimbus-firebase",
+    "crates/nimbus-firestore",
     "crates/nimbus-fs",
     "crates/nimbus-kv",
     "crates/nimbus-license",
