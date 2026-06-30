@@ -216,6 +216,9 @@ impl ContainerSandboxBackend {
             network_interface: self.config.network_interface.clone(),
             network_subnet: self.config.network_subnet.clone(),
             direct_egress: OciNetworkDirectEgress::Deny,
+            // Container workloads keep the bridge resolver; DNS behavior here is
+            // unchanged from before the krun-scoped `enable_dns` split.
+            enable_dns: true,
         }
     }
 

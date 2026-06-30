@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::backends::oci::egress::egress_proxy_env_entries;
+use crate::backends::oci::hardening::{masked_paths_json, readonly_paths_json};
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
 use nimbus_egress::EGRESS_RESERVED_ENV_KEYS;
@@ -290,6 +291,11 @@ pub(crate) fn build_bundle_config(
         linux.insert("resources".to_owned(), resources);
     }
     linux.insert("seccomp".to_owned(), krun_seccomp_profile());
+    // OCI default-spec mount-namespace hardening: mask the sensitive host-kernel
+    // /proc and /sys surfaces and mark the /proc control surfaces read-only.
+    // Shared with the container backend so neither can drift to a weaker posture.
+    linux.insert("maskedPaths".to_owned(), masked_paths_json());
+    linux.insert("readonlyPaths".to_owned(), readonly_paths_json());
 
     let mut mounts = default_linux_mounts();
     mounts.extend(options.additional_mounts.iter().map(bundle_mount_json));
@@ -568,14 +574,15 @@ mod tests {
     use nimbus_core::TenantId;
 
     use super::{
-        KrunBundleLayout, KrunBundleMount, KrunBundleOptions, build_bundle_config, format_port_map,
-        write_bundle_config,
+        KRUN_REQUIRED_CAPABILITIES, KrunBundleLayout, KrunBundleMount, KrunBundleOptions,
+        build_bundle_config, format_port_map, write_bundle_config,
     };
     use crate::backend::SandboxBackendKind;
+    use crate::backends::oci::hardening::{DEFAULT_MASKED_PATHS, DEFAULT_READONLY_PATHS};
     use crate::endpoint::PublishedEndpointProtocol;
     use crate::spec::{
-        SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
-        SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
+        SandboxMountSource, SandboxMountSpec, SandboxOwnerSpec, SandboxPortBinding,
+        SandboxProcessSpec, SandboxResourceLimits, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
     };
     use nimbus_egress::{
         EGRESS_ENFORCEMENT_ENV, EGRESS_LEGACY_POLICY_ENV, EGRESS_PROXY_URL_ENV,
@@ -891,6 +898,187 @@ mod tests {
         assert_eq!(capabilities["permitted"], expected);
         assert_eq!(capabilities["inheritable"], json!([]));
         assert_eq!(capabilities["ambient"], json!([]));
+    }
+
+    /// Always-on negative invariant: the krun VMM capability set must never carry
+    /// `CAP_NET_RAW` (raw/ICMP/`AF_PACKET` sockets) nor `CAP_NET_BROADCAST`. A
+    /// future cap-set edit that reintroduces either — reopening a raw-socket
+    /// egress path that bypasses the deny-by-default netns + PEP — fails CI here.
+    #[test]
+    fn bundle_config_excludes_raw_and_broadcast_socket_capabilities() {
+        const FORBIDDEN_CAPABILITIES: &[&str] = &["CAP_NET_RAW", "CAP_NET_BROADCAST"];
+
+        for forbidden in FORBIDDEN_CAPABILITIES {
+            assert!(
+                !KRUN_REQUIRED_CAPABILITIES.contains(forbidden),
+                "KRUN_REQUIRED_CAPABILITIES must never grant {forbidden}: raw/broadcast sockets bypass the netns+PEP egress seam"
+            );
+        }
+
+        let config = build_bundle_config(
+            "nimbus-db",
+            &sample_spec(),
+            None,
+            &KrunBundleOptions::default(),
+        )
+        .expect("bundle config should build");
+        let capabilities = &config["process"]["capabilities"];
+        for set in [
+            "bounding",
+            "effective",
+            "permitted",
+            "inheritable",
+            "ambient",
+        ] {
+            let granted = capabilities[set]
+                .as_array()
+                .unwrap_or_else(|| panic!("capability set {set} should be an array"));
+            for forbidden in FORBIDDEN_CAPABILITIES {
+                assert!(
+                    granted.iter().all(|cap| cap.as_str() != Some(*forbidden)),
+                    "krun bundle capability set {set} must never contain {forbidden}: {granted:?}"
+                );
+            }
+        }
+    }
+
+    /// The krun bundle must carry the OCI default-spec mount-namespace hardening:
+    /// the sensitive host-kernel `/proc`/`/sys` surfaces masked and the `/proc`
+    /// control surfaces read-only.
+    #[test]
+    fn bundle_config_sets_oci_masked_and_readonly_paths() {
+        let config = build_bundle_config(
+            "nimbus-db",
+            &sample_spec(),
+            None,
+            &KrunBundleOptions::default(),
+        )
+        .expect("bundle config should build");
+
+        let masked = config["linux"]["maskedPaths"]
+            .as_array()
+            .expect("linux.maskedPaths must be present");
+        for required in [
+            "/proc/kcore",
+            "/proc/keys",
+            "/proc/timer_list",
+            "/sys/firmware",
+        ] {
+            assert!(
+                masked.iter().any(|path| path.as_str() == Some(required)),
+                "krun bundle must mask the sensitive host-kernel surface {required}: {masked:?}"
+            );
+        }
+        assert_eq!(
+            masked.len(),
+            DEFAULT_MASKED_PATHS.len(),
+            "krun bundle must carry the full shared masked-path set"
+        );
+
+        let readonly = config["linux"]["readonlyPaths"]
+            .as_array()
+            .expect("linux.readonlyPaths must be present");
+        for required in ["/proc/sys", "/proc/sysrq-trigger"] {
+            assert!(
+                readonly.iter().any(|path| path.as_str() == Some(required)),
+                "krun bundle must mark the /proc control surface {required} read-only: {readonly:?}"
+            );
+        }
+        assert_eq!(
+            readonly.len(),
+            DEFAULT_READONLY_PATHS.len(),
+            "krun bundle must carry the full shared read-only-path set"
+        );
+    }
+
+    /// AF_UNIX / mount-namespace invariant: a krun bundle must never bind-mount a
+    /// host AF_UNIX socket into the guest. The base mount set is all pseudo-fs
+    /// (no host path is shared in), and even with tenant-volume binds the only
+    /// admitted sources are Nimbus-owned directories — never a `.sock`.
+    #[test]
+    fn bundle_config_exposes_no_host_socket_mount() {
+        // Base bundle: every default mount is a pseudo-filesystem; none is a bind
+        // of a host path, so no host socket can ride in on the defaults.
+        let base = build_bundle_config(
+            "nimbus-db",
+            &sample_spec(),
+            None,
+            &KrunBundleOptions::default(),
+        )
+        .expect("bundle config should build");
+        for mount in base["mounts"].as_array().expect("mounts should be present") {
+            assert_ne!(
+                mount["type"], "bind",
+                "the krun default mount set must not bind any host path: {mount}"
+            );
+            assert_no_socket_source(mount);
+        }
+
+        // Even with an additional bind (the shape `krun_additional_mounts` emits
+        // for a resolved tenant volume), the source is a Nimbus-owned directory
+        // path mounted nosuid+nodev — never a host AF_UNIX socket.
+        let with_volume = build_bundle_config(
+            "nimbus-db",
+            &sample_spec(),
+            None,
+            &KrunBundleOptions {
+                additional_mounts: vec![KrunBundleMount {
+                    destination: "/data".to_owned(),
+                    source: Path::new("/var/lib/nimbus/state/tenants/tenant/volumes/cache").into(),
+                    options: vec![
+                        "rbind".to_owned(),
+                        "rw".to_owned(),
+                        "nosuid".to_owned(),
+                        "nodev".to_owned(),
+                    ],
+                }],
+                ..Default::default()
+            },
+        )
+        .expect("bundle config should build");
+        let mounts = with_volume["mounts"]
+            .as_array()
+            .expect("mounts should be present");
+        let volume_mount = mounts
+            .iter()
+            .find(|mount| mount["destination"] == "/data")
+            .expect("the tenant-volume bind mount should be present");
+        let options: Vec<&str> = volume_mount["options"]
+            .as_array()
+            .expect("bind mount options should be present")
+            .iter()
+            .map(|option| option.as_str().expect("options should be strings"))
+            .collect();
+        assert!(
+            options.contains(&"nosuid") && options.contains(&"nodev"),
+            "tenant-volume binds must be nosuid+nodev: {options:?}"
+        );
+        for mount in mounts {
+            assert_no_socket_source(mount);
+        }
+    }
+
+    /// Construction-time AF_UNIX guard at the type level: a sandbox mount source
+    /// can only ever be a Nimbus-owned tenant volume. There is no host-path (let
+    /// alone host-socket) mount-source variant, so a tenant can never name a host
+    /// AF_UNIX socket as a mount source. This match fails to compile if such a
+    /// variant is ever added, forcing a re-audit before any host path can be
+    /// shared into a guest.
+    #[test]
+    fn sandbox_mount_source_admits_only_tenant_volumes() {
+        let source = SandboxMountSpec::tenant_volume("cache", "/data").source;
+        match source {
+            SandboxMountSource::TenantVolume { name } => assert_eq!(name, "cache"),
+        }
+    }
+
+    fn assert_no_socket_source(mount: &serde_json::Value) {
+        if let Some(source) = mount["source"].as_str() {
+            assert!(
+                !source.ends_with(".sock") && !source.contains(".sock/"),
+                "no krun mount source may be a host AF_UNIX socket: {source}"
+            );
+        }
     }
 
     #[test]

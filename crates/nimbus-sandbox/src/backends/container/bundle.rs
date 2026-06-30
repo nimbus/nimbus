@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::backends::oci::egress::egress_proxy_env_entries;
+use crate::backends::oci::hardening::{masked_paths_json, readonly_paths_json};
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
 use nimbus_egress::{
@@ -140,6 +141,11 @@ pub(crate) fn build_bundle_config(
     if let Some(resources) = build_linux_resources(&spec.resources) {
         linux.insert("resources".to_owned(), resources);
     }
+    // OCI default-spec mount-namespace hardening shared with the krun backend:
+    // mask the sensitive host-kernel /proc and /sys surfaces and mark the /proc
+    // control surfaces read-only.
+    linux.insert("maskedPaths".to_owned(), masked_paths_json());
+    linux.insert("readonlyPaths".to_owned(), readonly_paths_json());
 
     let mut mounts = default_linux_mounts();
     mounts.extend(options.additional_mounts.iter().map(bundle_mount_json));
@@ -423,6 +429,38 @@ mod tests {
             .iter()
             .map(|value| value.as_str().expect("env entries should be strings"))
             .collect()
+    }
+
+    #[test]
+    fn bundle_config_sets_shared_oci_masked_and_readonly_paths() {
+        let config = build_bundle_config(
+            "db",
+            &sample_spec(),
+            None,
+            None,
+            &crate::backends::container::bundle::ContainerBundleOptions::default(),
+        )
+        .expect("bundle should render");
+
+        let masked = config["linux"]["maskedPaths"]
+            .as_array()
+            .expect("linux.maskedPaths must be present");
+        for required in ["/proc/kcore", "/proc/keys", "/sys/firmware"] {
+            assert!(
+                masked.iter().any(|path| path.as_str() == Some(required)),
+                "container bundle must mask the sensitive host-kernel surface {required}: {masked:?}"
+            );
+        }
+
+        let readonly = config["linux"]["readonlyPaths"]
+            .as_array()
+            .expect("linux.readonlyPaths must be present");
+        for required in ["/proc/sys", "/proc/sysrq-trigger"] {
+            assert!(
+                readonly.iter().any(|path| path.as_str() == Some(required)),
+                "container bundle must mark the /proc control surface {required} read-only: {readonly:?}"
+            );
+        }
     }
 
     #[test]

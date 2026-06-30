@@ -178,6 +178,12 @@ impl KrunSandboxBackend {
             network_interface: self.config.network_interface.clone(),
             network_subnet: self.config.network_subnet.clone(),
             direct_egress: OciNetworkDirectEgress::Deny,
+            // The deny-by-default microVM guest resolves names through the host
+            // PEP (`HTTP_PROXY`), never a local resolver, so netavark must not
+            // start an aardvark-dns stub on the bridge gateway `:53`. That stub
+            // is the residual DNS-exfil channel KME5 flagged, and two krun
+            // sandboxes binding the same `10.89.0.1:53` would also collide.
+            enable_dns: false,
         }
     }
 

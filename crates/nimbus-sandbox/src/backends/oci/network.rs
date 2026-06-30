@@ -105,6 +105,19 @@ pub(crate) struct OciNetworkConfig {
     pub network_interface: String,
     pub network_subnet: String,
     pub direct_egress: OciNetworkDirectEgress,
+    /// Whether netavark starts the in-subnet aardvark-dns stub bound to the
+    /// bridge gateway `:53`. The container backend leaves this on so workloads
+    /// keep their bridge resolver; the krun microVM backend turns it off
+    /// because the deny-by-default guest resolves names through the host PEP
+    /// (`HTTP_PROXY`), so the bridge resolver is dead weight and a residual
+    /// DNS-exfil channel. Defaults to `true` to preserve container behavior on
+    /// (de)serialization of older state.
+    #[serde(default = "default_enable_dns")]
+    pub enable_dns: bool,
+}
+
+fn default_enable_dns() -> bool {
+    true
 }
 
 impl Default for OciNetworkConfig {
@@ -116,6 +129,7 @@ impl Default for OciNetworkConfig {
             network_interface: DEFAULT_NETWORK_INTERFACE.to_owned(),
             network_subnet: DEFAULT_NETWORK_SUBNET.to_owned(),
             direct_egress: OciNetworkDirectEgress::Deny,
+            enable_dns: default_enable_dns(),
         }
     }
 }
@@ -628,7 +642,7 @@ fn build_bridge_network(config: &OciNetworkConfig) -> Result<NetavarkNetwork> {
         subnets: vec![NetavarkSubnet { subnet, gateway }],
         ipv6_enabled: false,
         internal: false,
-        dns_enabled: true,
+        dns_enabled: config.enable_dns,
         network_dns_servers: Vec::new(),
         labels: BTreeMap::from([(
             "io.nimbus.egress.direct".to_owned(),
@@ -1208,10 +1222,10 @@ mod tests {
         DEFAULT_MACHINE_FORWARDER_HOST, DEFAULT_MACHINE_FORWARDER_PATH,
         DEFAULT_MACHINE_FORWARDER_PORT, NETAVARK_OPTION_NO_DEFAULT_ROUTE,
         OciMachinePortForwarderConfig, OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout,
-        allocate_container_ips, build_netavark_request, deallocate_container_ips,
-        load_container_ips, machine_forward_remote, machine_port_proxy_bind_addr,
-        netavark_path_env, netavark_port_bindings, parse_ipv4_subnet_and_gateway,
-        render_netavark_failure, start_machine_port_proxies,
+        allocate_container_ips, build_bridge_network, build_netavark_request,
+        deallocate_container_ips, load_container_ips, machine_forward_remote,
+        machine_port_proxy_bind_addr, netavark_path_env, netavark_port_bindings,
+        parse_ipv4_subnet_and_gateway, render_netavark_failure, start_machine_port_proxies,
     };
     use crate::backend::SandboxBackendKind;
     use crate::error::SandboxError;
@@ -1259,6 +1273,90 @@ mod tests {
         assert_eq!(
             request.network_info["nimbus"].labels["io.nimbus.egress.direct"],
             "deny"
+        );
+    }
+
+    #[test]
+    fn krun_deny_network_route_denies_offsubnet_dns_and_carries_no_resolver_stub() {
+        // DNS-containment invariant for the krun microVM network. Two layers
+        // hold the line:
+        //
+        //  1. `no_default_route` leaves the netns with a route only to its own
+        //     bridge subnet, so a guest's direct UDP/TCP :53 to an arbitrary
+        //     external resolver (e.g. 8.8.8.8) has no route and is denied at the
+        //     kernel before any packet leaves — off-subnet DNS-exfil cannot
+        //     leave the namespace.
+        //  2. `enable_dns: false` (the krun backend's `network_config`) stops
+        //     netavark from starting the in-subnet aardvark-dns stub on the
+        //     bridge gateway `:53`. That stub was the residual DNS-exfil channel
+        //     KME5 flagged and would also collide when two krun sandboxes share
+        //     a subnet; with no resolver present at all, "DNS contained"
+        //     strengthens from route-deny-only to no-resolver-present.
+        //
+        // Legitimate name resolution flows through the HTTP_PROXY (the host-side
+        // PEP resolves), never the guest's own stub.
+        let config = OciNetworkConfig {
+            direct_egress: OciNetworkDirectEgress::Deny,
+            enable_dns: false,
+            ..OciNetworkConfig::default()
+        };
+        let request = build_netavark_request(
+            &config,
+            &crate::instance::SandboxId::new("dns-deny-01"),
+            "db",
+            "db",
+            &[],
+            &[],
+            false,
+        )
+        .expect("request should build");
+
+        assert_eq!(
+            request.network_info["nimbus"].options[NETAVARK_OPTION_NO_DEFAULT_ROUTE], "true",
+            "a deny-by-default network must omit the container default route so off-subnet :53 has no route"
+        );
+        assert!(
+            !request.network_info["nimbus"].dns_enabled,
+            "the krun network must not start an in-subnet aardvark-dns resolver stub on the bridge gateway :53"
+        );
+        assert!(
+            request.network_info["nimbus"]
+                .network_dns_servers
+                .is_empty(),
+            "a deny-by-default network must not advertise external DNS servers the guest could exfil through"
+        );
+        assert!(
+            request.dns_servers.is_empty(),
+            "a deny-by-default network must not hand the guest external resolvers"
+        );
+    }
+
+    #[test]
+    fn build_bridge_network_dns_enabled_mirrors_enable_dns_flag() {
+        // `build_bridge_network` must thread `enable_dns` straight through to the
+        // netavark `dns_enabled` toggle: false suppresses the aardvark stub (the
+        // krun shape), true keeps it (the container default).
+        let krun_shaped = OciNetworkConfig {
+            enable_dns: false,
+            ..OciNetworkConfig::default()
+        };
+        let krun_network =
+            build_bridge_network(&krun_shaped).expect("krun bridge network should build");
+        assert!(
+            !krun_network.dns_enabled,
+            "enable_dns=false must emit dns_enabled=false so netavark starts no aardvark stub"
+        );
+
+        let container_shaped = OciNetworkConfig::default();
+        assert!(
+            container_shaped.enable_dns,
+            "the default config keeps DNS on so container behavior is unchanged"
+        );
+        let container_network =
+            build_bridge_network(&container_shaped).expect("container bridge network should build");
+        assert!(
+            container_network.dns_enabled,
+            "enable_dns=true must emit dns_enabled=true so container DNS behavior is unchanged"
         );
     }
 

