@@ -694,7 +694,7 @@ fn krun_guest_cannot_reach_a_sibling_tenants_pep() {
     let a_result_path = tenant_volume_path(&a_workdir, &a_tenant, RESULT_VOLUME).join("result");
     let a_result = wait_for_result(
         &a_result_path,
-        Duration::from_secs(25),
+        Duration::from_secs(60),
         "sandbox A sibling-reach result",
     );
 
@@ -710,11 +710,13 @@ fn sibling_reach_probe_command(sibling_proxy_url: &str, upstream_port: u16) -> S
 : > "$TMP"
 # (1) Positive control: reach the shared upstream through A's OWN injected PEP
 #     (the proxy env A was launched with). The pin permits A's own PEP port.
-if wget -T 5 -q -O /tmp/own "http://127.0.0.1:{upstream_port}/allowed" && grep -q shared-upstream-body /tmp/own; then echo own_pep=allowed >> "$TMP"; else echo own_pep=denied >> "$TMP"; fi
+#     Every probe is hard-bounded by `timeout` so a DROPped connection (which
+#     yields no RST) can never hang past its budget.
+if timeout 8 wget -T 5 -q -O /tmp/own "http://127.0.0.1:{upstream_port}/allowed" && grep -q shared-upstream-body /tmp/own; then echo own_pep=allowed >> "$TMP"; else echo own_pep=denied >> "$TMP"; fi
 # (2) H1: try to egress the same upstream through sibling B's PEP by overriding
 #     the proxy env to B's gateway:port. The netns pin drops every gateway port
 #     except A's own PEP, so the connection to B's PEP must fail.
-if http_proxy={sibling_proxy_url} HTTP_PROXY={sibling_proxy_url} wget -T 5 -q -O /tmp/sib "http://127.0.0.1:{upstream_port}/allowed"; then echo sibling_pep_reach=allowed >> "$TMP"; else echo sibling_pep_reach=denied >> "$TMP"; fi
+if http_proxy={sibling_proxy_url} HTTP_PROXY={sibling_proxy_url} timeout 8 wget -T 5 -q -O /tmp/sib "http://127.0.0.1:{upstream_port}/allowed"; then echo sibling_pep_reach=allowed >> "$TMP"; else echo sibling_pep_reach=denied >> "$TMP"; fi
 mv "$TMP" {RESULT_PATH_IN_GUEST}
 sleep 30"#
     )
