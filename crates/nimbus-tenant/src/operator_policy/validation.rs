@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::net::IpAddr;
 
-use nimbus_core::{Error, Result, TenantId};
+use nimbus_core::{Error, Result, TenantId, is_valid_dns_hostname};
 use nimbus_sandbox::validate_tenant_volume_name;
 
 use super::super::image_admission::{has_sha256_digest, parse_oci_image_reference};
@@ -449,21 +449,6 @@ fn validate_host(host: &str, workload_key: &str) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-fn is_valid_dns_hostname(host: &str) -> bool {
-    if host.len() > 253 || host.starts_with('.') || host.ends_with('.') {
-        return false;
-    }
-    host.split('.').all(|label| {
-        !label.is_empty()
-            && label.len() <= 63
-            && !label.starts_with('-')
-            && !label.ends_with('-')
-            && label
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-    })
 }
 
 fn validate_port(port: u16, field: &str, workload_key: &str) -> Result<()> {

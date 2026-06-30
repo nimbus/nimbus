@@ -315,17 +315,12 @@ impl KrunSandboxBackend {
     /// bind address. Fail-closed: a missing assignment or a proxy start error
     /// returns `Err`, which the launch path treats as deny.
     fn ensure_egress_proxy_running(&self, manifest: &KrunSandboxManifest) -> Result<()> {
-        let Some(egress_proxy) = manifest.egress_proxy.as_ref() else {
-            return Err(SandboxError::OperationFailed {
-                message: format!(
-                    "krun sandbox {} has no egress proxy assignment",
-                    manifest.handle.id
-                ),
-            });
-        };
-        let bind_addr = egress_proxy.bind_addr()?;
-        self.egress_proxies
-            .ensure_running(&manifest.handle.id, &manifest.spec.egress, bind_addr)
+        crate::backends::oci::egress::ensure_egress_proxy_running(
+            &self.egress_proxies,
+            &manifest.handle.id,
+            manifest.egress_proxy.as_ref(),
+            &manifest.spec.egress,
+        )
     }
 
     /// Stop the egress PEP, tear the sandbox network down, and remove the netns,

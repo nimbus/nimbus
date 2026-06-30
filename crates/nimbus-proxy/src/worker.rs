@@ -38,16 +38,12 @@ pub struct EgressProxyConfig {
 
 impl EgressProxyConfig {
     pub fn new(policy: CompiledEgressPolicy) -> Self {
+        // Delegate to the policy-less constructor so the full default field set
+        // lives in exactly one place; only the active policy differs. (egress
+        // audit L13.)
         Self {
-            bind_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
             policy: Some(policy),
-            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
-            io_timeout: DEFAULT_IO_TIMEOUT,
-            max_connections: DEFAULT_MAX_CONNECTIONS,
-            dns_cache: DnsCacheConfig::default(),
-            credential_store: CredentialSecretStore::empty(),
-            decision_logger: noop_decision_logger(),
-            resolver: Arc::new(resolve_socket_addrs),
+            ..Self::without_active_policy()
         }
     }
 

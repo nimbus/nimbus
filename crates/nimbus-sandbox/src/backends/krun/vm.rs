@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::net::{IpAddr, SocketAddr, TcpStream};
+use std::net::{SocketAddr, TcpStream};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -28,15 +28,15 @@ use crate::backends::oci::builder::OciDockerfileBuilder;
 use crate::backends::oci::conmon::{
     OciConmonConfig, OciConmonLaunchPlan, OciConmonLayout, build_launch_plan,
 };
-use crate::backends::oci::egress::EgressProxyRegistry;
+use crate::backends::oci::egress::{EgressProxyAssignment, EgressProxyRegistry};
 use crate::backends::oci::materializer::{
     MaterializedImageRootfs, OciImageMaterializer, PreparedMaterializedImageLaunch,
 };
 use crate::backends::oci::network::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
     DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, OciNetworkConfig, OciNetworkDirectEgress,
-    OciNetworkLayout, bridge_gateway_addr, create_persistent_network_namespace,
-    remove_persistent_network_namespace, setup_container_network, teardown_container_network,
+    OciNetworkLayout, create_persistent_network_namespace, remove_persistent_network_namespace,
+    setup_container_network, teardown_container_network,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -277,7 +277,7 @@ struct KrunSandboxManifest {
     bundle_layout: KrunBundleLayout,
     conmon_layout: OciConmonLayout,
     network_layout: OciNetworkLayout,
-    egress_proxy: Option<KrunEgressProxyManifest>,
+    egress_proxy: Option<EgressProxyAssignment>,
     conmon_launch: OciConmonLaunchPlan,
     last_exit_code: Option<i32>,
     #[serde(default)]
@@ -309,38 +309,6 @@ struct KrunImageMetadata {
 struct KrunVmConfig {
     cpus: u8,
     ram_mib: u32,
-}
-
-/// Host-side egress PEP assignment for an execute-mode krun sandbox.
-///
-/// The proxy binds on the bridge gateway address so it is the only reachable
-/// outbound path from inside the sandbox's deny-by-default network namespace,
-/// mirroring the container backend's `ContainerEgressProxyManifest`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct KrunEgressProxyManifest {
-    host: String,
-    port: u16,
-}
-
-impl KrunEgressProxyManifest {
-    fn bind_addr(&self) -> Result<SocketAddr> {
-        let host = self
-            .host
-            .parse::<IpAddr>()
-            .map_err(|_| SandboxError::InvalidSpec {
-                message: format!(
-                    "krun egress proxy host {:?} must be an IP address",
-                    self.host
-                ),
-            })?;
-        Ok(SocketAddr::new(host, self.port))
-    }
-
-    /// Container-shape proxy URL the guest env is pointed at: the PEP binds on
-    /// the bridge gateway, the only outbound path from the deny-by-default netns.
-    fn proxy_url(&self) -> Result<String> {
-        Ok(format!("http://{}", self.bind_addr()?))
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

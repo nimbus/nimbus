@@ -4,13 +4,11 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::backends::oci::egress::egress_proxy_env_entries;
+use crate::backends::oci::egress::{egress_proxy_env_entries, scrub_reserved_egress_env};
 use crate::backends::oci::hardening::{masked_paths_json, readonly_paths_json};
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
-use nimbus_egress::{
-    EGRESS_ENFORCEMENT_ENV, EGRESS_RESERVED_ENV_KEYS, EgressEnforcementPlan, EgressReloadPolicy,
-};
+use nimbus_egress::{EGRESS_ENFORCEMENT_ENV, EgressEnforcementPlan, EgressReloadPolicy};
 
 const DEFAULT_PATH_ENV: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const DEFAULT_CPU_PERIOD: u64 = 100_000;
@@ -311,7 +309,7 @@ fn process_env(
     } else {
         spec.process.env.clone()
     };
-    env.retain(|entry| env_key(entry).is_none_or(|key| !EGRESS_RESERVED_ENV_KEYS.contains(&key)));
+    scrub_reserved_egress_env(&mut env);
     let rendered = serde_json::to_string(egress_enforcement).map_err(|error| {
         SandboxError::OperationFailed {
             message: format!("failed to serialize sandbox egress enforcement plan: {error}"),
@@ -322,11 +320,6 @@ fn process_env(
         env.extend(egress_proxy_env_entries(egress_proxy_url));
     }
     Ok(env)
-}
-
-fn env_key(entry: &str) -> Option<&str> {
-    let (key, _) = entry.split_once('=')?;
-    (!key.is_empty()).then_some(key)
 }
 
 fn default_linux_mounts() -> Vec<Value> {

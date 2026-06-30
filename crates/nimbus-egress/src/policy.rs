@@ -1,5 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+use nimbus_core::is_valid_dns_hostname;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -703,27 +704,6 @@ fn is_internal_hostname(host: &str) -> bool {
     matches!(host.as_str(), "localhost" | "localhost.localdomain")
         || host.ends_with(".localhost")
         || host.ends_with(".localhost.localdomain")
-}
-
-fn is_valid_dns_hostname(host: &str) -> bool {
-    if host.len() > 253 || host.starts_with('.') || host.ends_with('.') {
-        return false;
-    }
-    host.split('.').all(|label| {
-        !label.is_empty()
-            && label.len() <= 63
-            && label
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-            && label
-                .as_bytes()
-                .first()
-                .is_some_and(u8::is_ascii_alphanumeric)
-            && label
-                .as_bytes()
-                .last()
-                .is_some_and(u8::is_ascii_alphanumeric)
-    })
 }
 
 fn canonical_host(host: &str) -> String {

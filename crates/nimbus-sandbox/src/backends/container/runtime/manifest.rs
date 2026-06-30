@@ -1,7 +1,6 @@
 //! Container runtime manifest and launch DTOs.
 
 use std::collections::BTreeMap;
-use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -9,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use crate::backends::container::bundle::ContainerBundleLayout;
 use crate::backends::oci::buildah::{ImageHealthcheck, MountedRootfsSession, OciExposedPort};
 use crate::backends::oci::conmon::{OciConmonLaunchPlan, OciConmonLayout};
+use crate::backends::oci::egress::EgressProxyAssignment;
 use crate::backends::oci::materializer::MaterializedImageRootfs;
 use crate::backends::oci::network::{OciMachinePortForwarderConfig, OciNetworkLayout};
-use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxStatus};
 use crate::spec::SandboxSpec;
 
@@ -31,7 +30,7 @@ pub(super) struct ContainerSandboxManifest {
     pub(super) bundle_layout: ContainerBundleLayout,
     pub(super) conmon_layout: OciConmonLayout,
     pub(super) network_layout: OciNetworkLayout,
-    pub(super) egress_proxy: Option<ContainerEgressProxyManifest>,
+    pub(super) egress_proxy: Option<EgressProxyAssignment>,
     pub(super) conmon_launch: OciConmonLaunchPlan,
     #[serde(default)]
     pub(super) runner_config: ContainerRunnerExecutionConfig,
@@ -83,31 +82,6 @@ impl ContainerRunnerExecutionConfig {
 impl Default for ContainerRunnerExecutionConfig {
     fn default() -> Self {
         Self::from_backend_config(&ContainerSandboxBackendConfig::default())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct ContainerEgressProxyManifest {
-    pub(super) host: String,
-    pub(super) port: u16,
-}
-
-impl ContainerEgressProxyManifest {
-    pub(super) fn proxy_url(&self) -> String {
-        format!("http://{}:{}", self.host, self.port)
-    }
-
-    pub(super) fn bind_addr(&self) -> Result<SocketAddr> {
-        let host = self
-            .host
-            .parse::<IpAddr>()
-            .map_err(|_| SandboxError::InvalidSpec {
-                message: format!(
-                    "container egress proxy host {:?} must be an IP address",
-                    self.host
-                ),
-            })?;
-        Ok(SocketAddr::new(host, self.port))
     }
 }
 

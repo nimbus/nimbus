@@ -5,11 +5,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::backends::oci::egress::egress_proxy_env_entries;
+use crate::backends::oci::egress::{egress_proxy_env_entries, scrub_reserved_egress_env};
 use crate::backends::oci::hardening::{masked_paths_json, readonly_paths_json};
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
-use nimbus_egress::EGRESS_RESERVED_ENV_KEYS;
 
 const DEFAULT_PATH_ENV: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const MIN_MEMORY_LIMIT_BYTES: u64 = 1024 * 1024;
@@ -452,16 +451,11 @@ fn process_env(spec: &SandboxSpec, egress_proxy_url: Option<&str>) -> Vec<String
     };
     // Scrub every reserved egress key so a tenant-supplied proxy override can
     // never survive into the guest, then point the guest at the host-side PEP.
-    env.retain(|entry| env_key(entry).is_none_or(|key| !EGRESS_RESERVED_ENV_KEYS.contains(&key)));
+    scrub_reserved_egress_env(&mut env);
     if let Some(egress_proxy_url) = egress_proxy_url {
         env.extend(egress_proxy_env_entries(egress_proxy_url));
     }
     env
-}
-
-fn env_key(entry: &str) -> Option<&str> {
-    let (key, _) = entry.split_once('=')?;
-    (!key.is_empty()).then_some(key)
 }
 
 fn validate_resource_limits(resources: &SandboxResourceLimits) -> Result<()> {
