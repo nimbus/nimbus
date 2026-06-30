@@ -10,9 +10,17 @@ pub enum EgressProtocol {
     Https,
 }
 
+/// Default-deny egress allowlist: the PDP authorizes a request only when some
+/// rule in `allow` matches it. An empty policy denies everything; there is no
+/// implicit allow and no deny list. This is the policy-decision point — it is
+/// pure (`nimbus-core` only, zero I/O) and never performs the egress itself.
+/// The enforcing PEP (nimbus-proxy / netns firewall / isolate gateway) consumes
+/// the [`EgressAuthorization`] this returns.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EgressPolicy {
+    /// Allowlist of rules; a request is authorized by the first compiled rule
+    /// that matches it. Empty means deny-all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allow: Vec<EgressRule>,
 }
@@ -138,21 +146,44 @@ impl CompiledEgressPolicy {
     }
 }
 
+/// A single allow rule. A request matches only when protocol, canonical host,
+/// and port all match (L4) and — for HTTP(S) — the method and path-prefix
+/// constraints are satisfied (L7). Unless `allow_internal_ips` is set, a rule
+/// will not authorize a request whose host or resolved IP is internal/
+/// non-global, which is the SSRF / metadata-endpoint guard. An optional
+/// `credential` is injected by the PEP, and `dlp` rules are inspected by the
+/// PEP; both make the rule proxy-enforced (see
+/// [`EgressAuthorization::requires_proxy_enforcement`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EgressRule {
+    /// Unique, concrete rule name (no whitespace, not `*`); used in diagnostics.
     pub name: String,
+    /// L4 protocol the rule authorizes (`tcp`, `http`, or `https`).
     pub protocol: EgressProtocol,
+    /// Concrete destination host: a bare DNS name or IP literal, no wildcards.
     pub host: String,
+    /// Destination port; must be non-zero.
     pub port: u16,
+    /// Allowed HTTP methods (uppercase tokens). Empty means any method. Invalid
+    /// for `tcp` rules.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub methods: Vec<String>,
+    /// Allowed request path prefixes, matched per path segment (a prefix `/v1`
+    /// admits `/v1` and `/v1/x` but not `/v1beta`). Empty means any path.
+    /// Invalid for `tcp` rules.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub path_prefixes: Vec<String>,
+    /// Opt in to targeting internal/non-global addresses. Off by default so the
+    /// SSRF / metadata-endpoint gate stays fail-closed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_internal_ips: bool,
+    /// Optional managed credential the PEP injects on matching requests; its
+    /// presence makes the rule proxy-enforced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<EgressCredentialInjection>,
+    /// Optional DLP inspection rules the PEP applies to the request body; any
+    /// rule makes the rule proxy-enforced.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dlp: Vec<EgressDlpRule>,
 }
@@ -294,7 +325,7 @@ impl EgressRule {
             if !self
                 .path_prefixes
                 .iter()
-                .any(|prefix| path.starts_with(prefix))
+                .any(|prefix| path_matches_prefix(path, prefix))
             {
                 return false;
             }
@@ -303,13 +334,25 @@ impl EgressRule {
     }
 }
 
+/// Instruction for the PEP to inject a managed credential into matching
+/// requests. This policy struct carries no secret material: `credential_ref` is
+/// an opaque *handle* the PEP resolves against the secret store at egress time,
+/// so the policy can be serialized, logged, and diffed without leaking secrets.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EgressCredentialInjection {
+    /// Opaque handle the PEP resolves to the real secret — never the secret
+    /// itself. Must be a concrete, whitespace-free, non-empty value.
     pub credential_ref: String,
+    /// HTTP header the resolved credential is written to. Must be a valid HTTP
+    /// token and not a proxy-controlled header (e.g. `Host`, `Connection`).
     pub header_name: String,
+    /// Optional literal prefix prepended to the resolved value (e.g. `Bearer `).
+    /// Must not contain CR or LF.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_prefix: Option<String>,
+    /// When false (default) the PEP strips any caller-supplied value of
+    /// `header_name` before injecting, so the caller cannot smuggle its own.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_caller_header: bool,
 }
@@ -355,11 +398,19 @@ impl EgressCredentialInjection {
     }
 }
 
+/// A data-loss-prevention rule the PEP applies to a matching request body.
+/// Keeping the PDP pure means there is no regex engine here: `pattern` is
+/// matched by the PEP as a **literal substring**, not a regular expression, so
+/// this crate carries no regex dependency. (audit L9.)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EgressDlpRule {
+    /// Unique, concrete rule name (no whitespace, not `*`); used in diagnostics.
     pub name: String,
+    /// Non-empty literal substring the PEP scans the body for — not a regex.
     pub pattern: String,
+    /// Upper bound on how many leading bytes of the body the PEP inspects; must
+    /// be greater than 0.
     #[serde(default = "default_dlp_max_inspection_bytes")]
     pub max_inspection_bytes: usize,
 }
@@ -400,13 +451,31 @@ fn default_dlp_max_inspection_bytes() -> usize {
     64 * 1024
 }
 
+/// A single egress attempt presented to the PDP for an authorization decision.
+///
+/// The internal-IP / SSRF gate inspects both the literal `host` and the
+/// `resolved_ip`. When the rule targets a DNS name, the host string alone does
+/// not reveal that the name resolves to an internal address, so **the PEP MUST
+/// populate `resolved_ip` with the address it is about to connect to before
+/// calling [`EgressPolicy::authorize`]**. Leaving it `None` for a DNS-name rule
+/// silently skips the internal-IP gate — a fail-open shape that lets a
+/// DNS-rebinding / metadata-endpoint target through. This struct is not
+/// `Deserialize`: it is constructed by the PEP from the live connection, never
+/// from untrusted policy input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EgressRequest {
+    /// L4 protocol of the attempt.
     pub protocol: EgressProtocol,
+    /// Destination host as requested by the caller (DNS name or IP literal).
     pub host: String,
+    /// Destination port.
     pub port: u16,
+    /// HTTP method, when known; required to satisfy a rule's `methods`.
     pub method: Option<String>,
+    /// Request path, when known; required to satisfy a rule's `path_prefixes`.
     pub path: Option<String>,
+    /// The address the PEP is about to connect to. MUST be set for DNS-name
+    /// targets or the internal-IP gate is skipped (fail-open).
     pub resolved_ip: Option<IpAddr>,
 }
 
@@ -606,6 +675,20 @@ fn validate_http_header_name(
     Ok(())
 }
 
+/// Segment-aware path-prefix match: a request path matches a rule prefix only
+/// when the prefix is either an exact match or a true path-segment ancestor.
+/// A bare `starts_with` over-authorizes — prefix `/v1` would wrongly admit
+/// `/v1beta/secret`. The match succeeds only when the remainder after the
+/// prefix is empty, the prefix already ends in `/`, or the remainder starts a
+/// new segment with `/`. (audit M4.)
+fn path_matches_prefix(path: &str, prefix: &str) -> bool {
+    if !path.starts_with(prefix) {
+        return false;
+    }
+    let rest = &path[prefix.len()..];
+    rest.is_empty() || prefix.ends_with('/') || rest.starts_with('/')
+}
+
 fn validate_path_prefix(path_prefix: &str, rule_name: &str) -> std::result::Result<(), String> {
     if !path_prefix.starts_with('/') || path_prefix.contains(char::is_whitespace) {
         return Err(format!(
@@ -697,6 +780,13 @@ fn embedded_ipv4_for_ipv6(ip: Ipv6Addr) -> Option<Ipv4Addr> {
     if segments[..6] == [0x0064, 0xff9b, 0, 0, 0, 0] || segments[..6] == [0, 0, 0, 0, 0, 0] {
         return Some(ipv4_from_ipv6_tail(segments[6], segments[7]));
     }
+    // 6to4 (2002::/16): the embedded IPv4 lives in segments 1 and 2, e.g.
+    // `2002:a9fe:a9fe::` carries 169.254.169.254. Without decoding it the
+    // classifier would treat a 6to4-wrapped internal target as global and
+    // skip the internal-IP gate. (audit L8/M19.)
+    if segments[0] == 0x2002 {
+        return Some(ipv4_from_ipv6_tail(segments[1], segments[2]));
+    }
     None
 }
 
@@ -708,6 +798,7 @@ fn ipv4_from_ipv6_tail(high: u16, low: u16) -> Ipv4Addr {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+    use super::{embedded_ipv4_for_ipv6, is_non_global_or_internal_ip};
     use crate::*;
 
     #[test]
@@ -1076,5 +1167,193 @@ mod tests {
                 "host validation error should name host shape for {host:?}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn sandbox_egress_path_prefix_matches_on_segment_boundaries() {
+        let policy = EgressPolicy::new([EgressRule::new(
+            "versioned",
+            EgressProtocol::Https,
+            "api.example.com",
+            443,
+        )
+        .with_methods(["GET"])
+        .with_path_prefixes(["/v1"])]);
+        let compiled = policy.compile().expect("policy should compile");
+
+        // Exact match and a true sub-segment are authorized.
+        for path in ["/v1", "/v1/charges"] {
+            let allowed = compiled.authorize(
+                &EgressRequest::new(EgressProtocol::Https, "api.example.com", 443)
+                    .with_http("GET", path),
+            );
+            assert!(
+                allowed.is_allowed(),
+                "path {path:?} should match /v1: {allowed:?}"
+            );
+        }
+
+        // A sibling path that merely shares the textual prefix must be denied;
+        // deleting the segment-boundary check in `path_matches_prefix` would
+        // wrongly allow this via `starts_with`.
+        let denied = compiled.authorize(
+            &EgressRequest::new(EgressProtocol::Https, "api.example.com", 443)
+                .with_http("GET", "/v1beta/secret"),
+        );
+        assert!(
+            !denied.is_allowed(),
+            "/v1beta must not be admitted by prefix /v1: {denied:?}"
+        );
+        assert!(
+            denied.reason().contains("method/path"),
+            "L7 path denial should be named: {denied:?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_egress_policy_denies_internal_ipv6_resolved_forms() {
+        let policy = EgressPolicy::new([EgressRule::new(
+            "ipv6-lookalike",
+            EgressProtocol::Http,
+            "ipv6.example.com",
+            80,
+        )]);
+        policy.validate().expect("policy should validate");
+
+        for raw in [
+            "::1",              // loopback
+            "fe80::1",          // link-local
+            "fc00::1",          // unique-local
+            "2001:db8::1",      // documentation
+            "2002:a9fe:a9fe::", // 6to4-wrapped 169.254.169.254 (audit L8/M19)
+        ] {
+            let resolved_ip: IpAddr = raw.parse().expect("IPv6 literal should parse");
+            let denied = policy.authorize(
+                &EgressRequest::new(EgressProtocol::Http, "ipv6.example.com", 80)
+                    .with_resolved_ip(resolved_ip),
+            );
+            assert!(
+                !denied.is_allowed(),
+                "internal IPv6 {raw} must be denied without allow_internal_ips: {denied:?}"
+            );
+            assert!(
+                denied.reason().contains("internal/non-global"),
+                "IPv6 SSRF denial should be named for {raw}: {denied:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sandbox_egress_6to4_decodes_embedded_ipv4_directly() {
+        // Guard the 6to4 decode at the classifier level so removing the
+        // `segments[0] == 0x2002` branch fails here, not only end-to-end.
+        let embedded = embedded_ipv4_for_ipv6(
+            "2002:a9fe:a9fe::"
+                .parse::<Ipv6Addr>()
+                .expect("6to4 literal should parse"),
+        );
+        assert_eq!(embedded, Some(Ipv4Addr::new(169, 254, 169, 254)));
+        assert!(is_non_global_or_internal_ip(IpAddr::V6(
+            "2002:a9fe:a9fe::"
+                .parse()
+                .expect("6to4 literal should parse")
+        )));
+    }
+
+    #[test]
+    fn credential_injection_validate_rejects_empty_or_whitespace_ref() {
+        for bad_ref in ["", "   ", "vault has space"] {
+            let policy = EgressPolicy::new([EgressRule::new(
+                "cred",
+                EgressProtocol::Https,
+                "api.example.com",
+                443,
+            )
+            .with_credential_injection(EgressCredentialInjection::new(bad_ref, "Authorization"))]);
+            let error = policy
+                .validate()
+                .expect_err("non-concrete credential_ref must be rejected");
+            assert!(
+                error.contains("credential_ref must be a concrete non-empty handle"),
+                "credential_ref error should be named for {bad_ref:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn credential_injection_validate_rejects_proxy_controlled_header() {
+        let policy = EgressPolicy::new([EgressRule::new(
+            "cred",
+            EgressProtocol::Https,
+            "api.example.com",
+            443,
+        )
+        .with_credential_injection(EgressCredentialInjection::new("vault://token", "Host"))]);
+        let error = policy
+            .validate()
+            .expect_err("proxy-controlled header must be rejected");
+        assert!(
+            error.contains("is controlled by the proxy"),
+            "blocklisted header error should be named: {error}"
+        );
+    }
+
+    #[test]
+    fn credential_injection_validate_rejects_crlf_value_prefix() {
+        for bad_prefix in ["Bearer \r", "Bearer \n", "Bearer \r\nX-Inject: 1"] {
+            let policy = EgressPolicy::new([EgressRule::new(
+                "cred",
+                EgressProtocol::Https,
+                "api.example.com",
+                443,
+            )
+            .with_credential_injection(
+                EgressCredentialInjection::new("vault://token", "Authorization")
+                    .with_value_prefix(bad_prefix),
+            )]);
+            let error = policy
+                .validate()
+                .expect_err("CR/LF in value_prefix must be rejected");
+            assert!(
+                error.contains("value_prefix must not contain CR/LF"),
+                "header-injection guard should be named for {bad_prefix:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn dlp_validate_rejects_empty_pattern() {
+        let policy = EgressPolicy::new([EgressRule::new(
+            "dlp-host",
+            EgressProtocol::Https,
+            "api.example.com",
+            443,
+        )
+        .with_dlp_rules([EgressDlpRule::new("ssn", "")])]);
+        let error = policy
+            .validate()
+            .expect_err("empty DLP pattern must be rejected");
+        assert!(
+            error.contains("pattern must not be empty"),
+            "empty DLP pattern error should be named: {error}"
+        );
+    }
+
+    #[test]
+    fn dlp_validate_rejects_zero_inspection_bytes() {
+        let policy = EgressPolicy::new([EgressRule::new(
+            "dlp-host",
+            EgressProtocol::Https,
+            "api.example.com",
+            443,
+        )
+        .with_dlp_rules([EgressDlpRule::new("ssn", "secret").with_max_inspection_bytes(0)])]);
+        let error = policy
+            .validate()
+            .expect_err("zero DLP inspection budget must be rejected");
+        assert!(
+            error.contains("max_inspection_bytes must be greater than 0"),
+            "zero-byte DLP budget error should be named: {error}"
+        );
     }
 }
