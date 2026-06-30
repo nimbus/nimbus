@@ -72,7 +72,7 @@ impl KrunSandboxBackend {
         // claim no proxy, so no proxy env is injected for them.
         let egress_proxy_url = egress_proxy
             .as_ref()
-            .map(KrunEgressProxyManifest::proxy_url)
+            .map(EgressProxyAssignment::proxy_url)
             .transpose()?;
         let network_layout = OciNetworkLayout::new(
             &self.config.state_root,
@@ -286,7 +286,7 @@ impl KrunSandboxBackend {
         let egress_proxy_url = manifest
             .egress_proxy
             .as_ref()
-            .map(KrunEgressProxyManifest::proxy_url)
+            .map(EgressProxyAssignment::proxy_url)
             .transpose()?;
         write_bundle_config(
             &manifest.bundle_layout,
@@ -310,15 +310,12 @@ impl KrunSandboxBackend {
     pub(super) fn allocate_egress_proxy(
         &self,
         spec: &SandboxSpec,
-    ) -> Result<KrunEgressProxyManifest> {
-        let gateway = bridge_gateway_addr(&self.network_config())?;
-        let port = self
-            .port_manager()
-            .allocate_internal_host_port(&spec.port_bindings)?;
-        Ok(KrunEgressProxyManifest {
-            host: gateway.to_string(),
-            port,
-        })
+    ) -> Result<EgressProxyAssignment> {
+        crate::backends::oci::egress::allocate_egress_proxy(
+            &self.network_config(),
+            &self.port_manager(),
+            &spec.port_bindings,
+        )
     }
 
     pub(super) fn materialize_krun_vm_config(&self, manifest: &KrunSandboxManifest) -> Result<()> {

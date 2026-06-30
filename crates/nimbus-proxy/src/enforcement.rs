@@ -131,9 +131,12 @@ fn enforce_dlp_rules(
             "DLP inspection input unavailable for CONNECT tunnels",
         ));
     }
-    let content_length = content_length(&parsed.header_lines).ok_or_else(|| {
+    // Reuse the Content-Length that `request.rs` already parsed and validated
+    // (it rejects non-numeric and conflicting headers at parse time), instead of
+    // re-parsing the header lines here. (egress audit L2.)
+    let content_length = parsed.content_length.ok_or_else(|| {
         HttpProxyResponse::forbidden("DLP inspection input unavailable: missing Content-Length")
-    })??;
+    })?;
     if dlp_rules
         .iter()
         .any(|rule| content_length > rule.max_inspection_bytes)
@@ -152,19 +155,6 @@ fn enforce_dlp_rules(
         }
     }
     Ok(Some(body))
-}
-
-fn content_length(
-    header_lines: &[String],
-) -> Option<std::result::Result<usize, HttpProxyResponse>> {
-    header_lines.iter().find_map(|line| {
-        let (name, value) = line.split_once(':')?;
-        name.trim().eq_ignore_ascii_case("content-length").then(|| {
-            value.trim().parse::<usize>().map_err(|_| {
-                HttpProxyResponse::bad_request("Content-Length must be a non-negative integer")
-            })
-        })
-    })
 }
 
 fn read_exact_request_body(

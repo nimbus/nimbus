@@ -8,14 +8,20 @@
 //! here once instead of being forked per backend.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use nimbus_egress::{CompiledEgressPolicy, EGRESS_PROXY_URL_ENV, EgressPolicy};
+use nimbus_egress::{
+    CompiledEgressPolicy, EGRESS_PROXY_URL_ENV, EGRESS_RESERVED_ENV_KEYS, EgressPolicy,
+};
 use nimbus_proxy::{EgressProxy, EgressProxyConfig, EgressProxyError, EgressProxyReadiness};
+use serde::{Deserialize, Serialize};
 
+use crate::backends::oci::network::{OciNetworkConfig, bridge_gateway_addr};
+use crate::backends::oci::port_manager::PortManager;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
+use crate::spec::SandboxPortBinding;
 
 /// Registry of running per-sandbox egress proxies, shared by every sandbox
 /// backend. Cloning shares the underlying registry (it is `Arc`-backed), so a
@@ -149,6 +155,97 @@ pub(crate) fn egress_proxy_env_entries(egress_proxy_url: &str) -> Vec<String> {
     .collect()
 }
 
+/// Tier-neutral host-side egress PEP assignment for an execute-mode sandbox.
+///
+/// The proxy binds on the bridge gateway address so it is the only reachable
+/// outbound path from inside the sandbox's deny-by-default network namespace.
+/// Every sandbox backend (container today, krun microVM next) embeds an
+/// `Option<EgressProxyAssignment>` in its persisted manifest and renders the
+/// guest-facing proxy URL through [`EgressProxyAssignment::proxy_url`], so the
+/// assignment shape and its IPv6-safe URL rendering live here once instead of
+/// being forked per backend. (egress audit M9.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct EgressProxyAssignment {
+    pub(crate) host: String,
+    pub(crate) port: u16,
+}
+
+impl EgressProxyAssignment {
+    /// Bind address the PEP listens on. The host must be an IP literal (the
+    /// bridge gateway), so a non-IP value fails closed as an invalid spec.
+    pub(crate) fn bind_addr(&self) -> Result<SocketAddr> {
+        let host = self
+            .host
+            .parse::<IpAddr>()
+            .map_err(|_| SandboxError::InvalidSpec {
+                message: format!("egress proxy host {:?} must be an IP address", self.host),
+            })?;
+        Ok(SocketAddr::new(host, self.port))
+    }
+
+    /// Container-shape proxy URL the guest env is pointed at. Rendered through
+    /// [`SocketAddr`] so an IPv6 gateway is bracketed correctly
+    /// (`http://[::1]:15000`, never the malformed `http://::1:15000`).
+    pub(crate) fn proxy_url(&self) -> Result<String> {
+        Ok(format!("http://{}", self.bind_addr()?))
+    }
+}
+
+/// Assign a host-side egress PEP for an execute-mode launch: the proxy binds on
+/// the bridge gateway address so it is the only outbound path reachable from
+/// inside the sandbox's deny-by-default network namespace. Shared by every
+/// sandbox backend so the gateway+port allocation is defined once.
+pub(crate) fn allocate_egress_proxy(
+    network_config: &OciNetworkConfig,
+    port_manager: &PortManager,
+    existing_bindings: &[SandboxPortBinding],
+) -> Result<EgressProxyAssignment> {
+    let gateway = bridge_gateway_addr(network_config)?;
+    let port = port_manager.allocate_internal_host_port(existing_bindings)?;
+    Ok(EgressProxyAssignment {
+        host: gateway.to_string(),
+        port,
+    })
+}
+
+/// Start the host-side egress PEP for a sandbox on its assigned bridge-gateway
+/// bind address. Fail-closed: a missing assignment or a proxy start error
+/// returns `Err`, which every backend's launch path treats as deny. Shared so
+/// the "no assignment means deny" invariant cannot drift between backends.
+pub(crate) fn ensure_egress_proxy_running(
+    registry: &EgressProxyRegistry,
+    id: &SandboxId,
+    assignment: Option<&EgressProxyAssignment>,
+    policy: &EgressPolicy,
+) -> Result<()> {
+    let Some(assignment) = assignment else {
+        return Err(SandboxError::OperationFailed {
+            message: format!("sandbox {id} has no egress proxy assignment"),
+        });
+    };
+    let bind_addr = assignment.bind_addr()?;
+    registry.ensure_running(id, policy, bind_addr)
+}
+
+/// Extract the key (`KEY` of `KEY=VALUE`) of an OCI process env entry, or `None`
+/// for a malformed or empty-key entry.
+fn env_key(entry: &str) -> Option<&str> {
+    let (key, _) = entry.split_once('=')?;
+    (!key.is_empty()).then_some(key)
+}
+
+/// Scrub every reserved egress env key ([`EGRESS_RESERVED_ENV_KEYS`]) from a
+/// process env vector so a tenant-supplied proxy override can never survive into
+/// the launched workload.
+///
+/// This is the security companion of [`egress_proxy_env_entries`]: a backend
+/// MUST scrub before injecting the PEP env so the two halves can never be
+/// half-applied. Defined here once so both backends call the same scrub.
+/// (egress audit L11.)
+pub(crate) fn scrub_reserved_egress_env(env: &mut Vec<String>) {
+    env.retain(|entry| env_key(entry).is_none_or(|key| !EGRESS_RESERVED_ENV_KEYS.contains(&key)));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,6 +374,102 @@ mod tests {
                 .iter()
                 .all(|entry| entry != "NO_PROXY=http://10.89.0.1:15000"),
             "NO_PROXY must remain empty so no destination bypasses the PEP: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn egress_proxy_assignment_renders_ipv4_proxy_url() {
+        let assignment = EgressProxyAssignment {
+            host: "10.89.0.1".to_owned(),
+            port: 15000,
+        };
+        assert_eq!(
+            assignment.proxy_url().expect("ipv4 url renders"),
+            "http://10.89.0.1:15000"
+        );
+        assert_eq!(
+            assignment.bind_addr().expect("ipv4 bind addr"),
+            "10.89.0.1:15000".parse().unwrap()
+        );
+    }
+
+    #[test]
+    fn egress_proxy_assignment_brackets_ipv6_proxy_url() {
+        // Rendering through SocketAddr is what makes an IPv6 gateway safe: a raw
+        // `format!("http://{host}:{port}")` would emit the malformed
+        // `http://::1:15000`. Guard the IPv6-bracket behavior directly.
+        let assignment = EgressProxyAssignment {
+            host: "::1".to_owned(),
+            port: 15000,
+        };
+        assert_eq!(
+            assignment.proxy_url().expect("ipv6 url renders"),
+            "http://[::1]:15000"
+        );
+    }
+
+    #[test]
+    fn egress_proxy_assignment_rejects_non_ip_host() {
+        let assignment = EgressProxyAssignment {
+            host: "gateway.example.com".to_owned(),
+            port: 15000,
+        };
+        let error = assignment
+            .bind_addr()
+            .expect_err("a non-IP gateway host must fail closed");
+        assert!(matches!(error, SandboxError::InvalidSpec { .. }));
+        assert!(assignment.proxy_url().is_err());
+    }
+
+    #[test]
+    fn ensure_egress_proxy_running_denies_when_assignment_absent() {
+        let registry = EgressProxyRegistry::new();
+        let id = SandboxId::new("egress-no-assignment");
+        let error = ensure_egress_proxy_running(&registry, &id, None, &EgressPolicy::deny_all())
+            .expect_err("a missing assignment must fail closed");
+        assert!(matches!(error, SandboxError::OperationFailed { .. }));
+        assert!(
+            !registry.contains(&id).unwrap(),
+            "a denied launch must register no PEP"
+        );
+    }
+
+    #[test]
+    fn ensure_egress_proxy_running_starts_pep_for_assignment() {
+        let registry = EgressProxyRegistry::new();
+        let id = SandboxId::new("egress-with-assignment");
+        let assignment = EgressProxyAssignment {
+            host: "127.0.0.1".to_owned(),
+            port: 0,
+        };
+        ensure_egress_proxy_running(&registry, &id, Some(&assignment), &EgressPolicy::deny_all())
+            .expect("a valid assignment should start the PEP");
+        assert!(registry.contains(&id).unwrap());
+        registry.stop(&id).unwrap();
+    }
+
+    #[test]
+    fn scrub_reserved_egress_env_removes_only_reserved_keys_and_keeps_others() {
+        let mut env = vec![
+            "PATH=/usr/bin".to_owned(),
+            "HTTP_PROXY=http://attacker:1".to_owned(),
+            "https_proxy=http://attacker:2".to_owned(),
+            "MALFORMED".to_owned(),
+            "API_KEY=keep-me".to_owned(),
+        ];
+        scrub_reserved_egress_env(&mut env);
+
+        for reserved in EGRESS_RESERVED_ENV_KEYS {
+            assert!(
+                !env.iter().any(|entry| env_key(entry) == Some(reserved)),
+                "reserved key {reserved} must be scrubbed: {env:?}"
+            );
+        }
+        assert!(
+            env.contains(&"PATH=/usr/bin".to_owned())
+                && env.contains(&"API_KEY=keep-me".to_owned())
+                && env.contains(&"MALFORMED".to_owned()),
+            "non-reserved entries must be preserved: {env:?}"
         );
     }
 }

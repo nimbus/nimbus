@@ -23,13 +23,16 @@ use crate::backends::conmon::lifecycle::{
 use crate::backends::oci::buildah::{BuildahCli, OciImageLaunchDefaults};
 use crate::backends::oci::builder::OciDockerfileBuilder;
 use crate::backends::oci::conmon::{OciConmonConfig, OciConmonLayout, build_launch_plan};
-use crate::backends::oci::egress::EgressProxyRegistry;
+use crate::backends::oci::egress::{
+    EgressProxyAssignment, EgressProxyRegistry, allocate_egress_proxy as allocate_oci_egress_proxy,
+    ensure_egress_proxy_running as ensure_oci_egress_proxy_running,
+};
 use crate::backends::oci::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
 use crate::backends::oci::network::{
     MachinePortProxy, OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout,
-    bridge_gateway_addr, create_persistent_network_namespace, expose_machine_ports,
-    remove_persistent_network_namespace, setup_container_network, start_machine_port_proxies,
-    teardown_container_network, unexpose_machine_ports,
+    create_persistent_network_namespace, expose_machine_ports, remove_persistent_network_namespace,
+    setup_container_network, start_machine_port_proxies, teardown_container_network,
+    unexpose_machine_ports,
 };
 use crate::backends::oci::port_manager::PortManager;
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -41,8 +44,8 @@ use nimbus_egress::EgressPolicy;
 pub use config::{ContainerSandboxBackendConfig, ContainerStartMode};
 use launch::{hostname_for, next_sandbox_id, resolve_start_spec};
 use manifest::{
-    ContainerEgressProxyManifest, ContainerLaunchArtifact, ContainerRunnerExecutionConfig,
-    ContainerSandboxManifest, ContainerStartPlan,
+    ContainerLaunchArtifact, ContainerRunnerExecutionConfig, ContainerSandboxManifest,
+    ContainerStartPlan,
 };
 use restart::{ContainerRestartDecision, mark_restart_decision_after_exit};
 use runner::RUNNER_MANIFEST_POINTER_FILE;
@@ -220,7 +223,7 @@ impl ContainerSandboxBackend {
                     &self.config.state_root,
                     &launch_plan.manifest.spec,
                 )?,
-                egress_proxy_url: Some(egress_proxy.proxy_url()),
+                egress_proxy_url: Some(egress_proxy.proxy_url()?),
             },
         )?;
         launch_plan.manifest.egress_proxy = Some(egress_proxy);
@@ -386,7 +389,8 @@ impl ContainerSandboxBackend {
                 )?,
                 egress_proxy_url: egress_proxy
                     .as_ref()
-                    .map(ContainerEgressProxyManifest::proxy_url),
+                    .map(EgressProxyAssignment::proxy_url)
+                    .transpose()?,
             },
         )?;
 
@@ -738,30 +742,21 @@ impl ContainerSandboxBackend {
         Ok(())
     }
 
-    fn allocate_egress_proxy(&self, spec: &SandboxSpec) -> Result<ContainerEgressProxyManifest> {
-        let network_config = self.network_config();
-        let gateway = bridge_gateway_addr(&network_config)?;
-        let port = self
-            .port_manager()
-            .allocate_internal_host_port(&spec.port_bindings)?;
-        Ok(ContainerEgressProxyManifest {
-            host: gateway.to_string(),
-            port,
-        })
+    fn allocate_egress_proxy(&self, spec: &SandboxSpec) -> Result<EgressProxyAssignment> {
+        allocate_oci_egress_proxy(
+            &self.network_config(),
+            &self.port_manager(),
+            &spec.port_bindings,
+        )
     }
 
     fn ensure_egress_proxy_running(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
-        let Some(egress_proxy) = manifest.egress_proxy.as_ref() else {
-            return Err(SandboxError::OperationFailed {
-                message: format!(
-                    "container sandbox {} has no egress proxy assignment",
-                    manifest.handle.id
-                ),
-            });
-        };
-        let bind_addr = egress_proxy.bind_addr()?;
-        self.egress_proxies
-            .ensure_running(&manifest.handle.id, &manifest.spec.egress, bind_addr)
+        ensure_oci_egress_proxy_running(
+            &self.egress_proxies,
+            &manifest.handle.id,
+            manifest.egress_proxy.as_ref(),
+            &manifest.spec.egress,
+        )
     }
 
     fn ensure_machine_port_proxies_running(
