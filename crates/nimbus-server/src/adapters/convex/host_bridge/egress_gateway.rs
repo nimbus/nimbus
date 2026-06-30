@@ -119,15 +119,27 @@ fn policy_request_from_runtime_request(
 fn runtime_authorization_from_policy(
     authorization: PolicyEgressAuthorization,
 ) -> RuntimeEgressAuthorization {
-    if authorization.is_allowed() {
-        let mut runtime_authorization = RuntimeEgressAuthorization::allow(authorization.reason());
-        if let Some(rule) = authorization.matched_rule() {
-            runtime_authorization = runtime_authorization.with_matched_rule(rule);
-        }
-        runtime_authorization
-    } else {
-        RuntimeEgressAuthorization::deny(authorization.reason())
+    if !authorization.is_allowed() {
+        return RuntimeEgressAuthorization::deny(authorization.reason());
     }
+    // The isolate `fetch` gateway does not route bytes through the nimbus-proxy
+    // PEP, so it cannot inject the rule's managed credential or run L7 DLP that a
+    // container/microVM gets. A rule whose enforcement depends on the PEP must
+    // therefore fail closed on this substrate rather than silently egress without
+    // those controls (reaching a credential-governed host with no credential, or
+    // bypassing DLP). (audit H4.)
+    if authorization.requires_proxy_enforcement() {
+        return RuntimeEgressAuthorization::deny(format!(
+            "egress rule `{}` requires proxy-mediated enforcement (credential injection or DLP) \
+             that the isolate substrate cannot apply",
+            authorization.matched_rule().unwrap_or("<unknown>")
+        ));
+    }
+    let mut runtime_authorization = RuntimeEgressAuthorization::allow(authorization.reason());
+    if let Some(rule) = authorization.matched_rule() {
+        runtime_authorization = runtime_authorization.with_matched_rule(rule);
+    }
+    runtime_authorization
 }
 
 #[cfg(test)]
@@ -135,7 +147,7 @@ mod tests {
     use std::sync::Arc;
 
     use nimbus_core::{PrincipalContext, TenantId};
-    use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
+    use nimbus_egress::{EgressCredentialInjection, EgressPolicy, EgressProtocol, EgressRule};
     use nimbus_engine::Engine;
     use nimbus_runtime::{
         EgressProtocol as RuntimeEgressProtocol, EgressRequest as RuntimeEgressRequest,
@@ -199,6 +211,61 @@ mod tests {
             isolate_allow.matched_rule(),
             container_allow.matched_rule(),
             "isolate and container substrates must resolve the same matched rule"
+        );
+    }
+
+    #[test]
+    fn egress_gateway_isolate_fails_closed_for_proxy_enforced_rules() {
+        // A rule whose enforcement depends on the nimbus-proxy PEP (credential
+        // injection or DLP) must be DENIED on the isolate substrate — which never
+        // routes through the PEP — rather than silently egressing without the
+        // managed credential / DLP a container or microVM would get. (audit H4.)
+        let (_tempdir, bridge) = bridge_for_policy(
+            "tenant-l7",
+            EgressPolicy::new([
+                EgressRule::new("plain", EgressProtocol::Https, "plain.internal", 443)
+                    .with_methods(["GET"])
+                    .with_path_prefixes(["/v1"]),
+                EgressRule::new(
+                    "credentialed",
+                    EgressProtocol::Https,
+                    "secret.internal",
+                    443,
+                )
+                .with_methods(["GET"])
+                .with_path_prefixes(["/v1"])
+                .with_credential_injection(EgressCredentialInjection::new(
+                    "github_pat",
+                    "authorization",
+                )),
+            ]),
+            None,
+        );
+
+        let plain = bridge.authorize(&runtime_request(
+            EgressSubstrate::Isolate,
+            "plain.internal",
+            "/v1/ok",
+        ));
+        assert!(
+            plain.is_allowed(),
+            "a plain allow rule must still permit isolate fetch, got: {}",
+            plain.reason()
+        );
+
+        let credentialed = bridge.authorize(&runtime_request(
+            EgressSubstrate::Isolate,
+            "secret.internal",
+            "/v1/ok",
+        ));
+        assert!(
+            !credentialed.is_allowed(),
+            "an isolate fetch matching a credential-injection rule must fail closed"
+        );
+        assert!(
+            credentialed.reason().contains("proxy-mediated enforcement"),
+            "deny reason should name the proxy-enforcement requirement, got: {}",
+            credentialed.reason()
         );
     }
 
