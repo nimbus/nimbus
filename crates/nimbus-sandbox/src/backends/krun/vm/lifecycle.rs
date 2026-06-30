@@ -1,5 +1,5 @@
 use super::readiness::{running_status, synchronize_handle_status, visible_published_endpoints};
-use super::start::ensure_guest_user_helper_available;
+use super::start::{ensure_guest_user_helper_available, hostname_for};
 use super::*;
 
 impl KrunSandboxBackend {
@@ -60,6 +60,7 @@ impl KrunSandboxBackend {
             manifest.last_exit_code =
                 Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
             synchronize_handle_status(manifest, SandboxStatus::Stopped);
+            self.release_network_artifacts(manifest)?;
             return self.write_manifest(manifest);
         }
 
@@ -83,6 +84,7 @@ impl KrunSandboxBackend {
 
         manifest.last_exit_code = Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
         synchronize_handle_status(manifest, SandboxStatus::Stopped);
+        self.release_network_artifacts(manifest)?;
         self.cleanup_manifest_launch_artifacts(manifest)?;
         manifest.launch_artifact = None;
         self.write_manifest(manifest)
@@ -142,6 +144,29 @@ impl KrunSandboxBackend {
     ) -> Result<()> {
         ensure_linux_host("krun")?;
         ensure_guest_user_helper_available(&self.config, manifest)?;
+        // Stand up the deny-by-default network namespace (deny chain + inbound
+        // published-port DNAT) and start the egress PEP on the bridge gateway
+        // BEFORE crun launches the VMM into the namespace. Under libkrun TSI the
+        // guest's outbound sockets are issued by this host VMM process, so the
+        // VMM must only ever run once the namespace's sole outbound path is the
+        // policy-enforcing proxy — there is no open-egress window.
+        self.configure_network(manifest)?;
+        if let Err(error) = self.launch_into_network(manifest, clear_last_exit_code) {
+            // Fail-closed: never leave a namespace or a running VMM whose egress
+            // is not enforced. Tear the VMM and the netns back down on any error.
+            let _ = run_status_best_effort(&manifest.conmon_launch.delete_command);
+            let _ = self.release_network_artifacts(manifest);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn launch_into_network(
+        &self,
+        manifest: &mut KrunSandboxManifest,
+        clear_last_exit_code: bool,
+    ) -> Result<()> {
+        self.ensure_egress_proxy_running(manifest)?;
         spawn_background(&manifest.conmon_launch.create_command)?;
         let runtime_state = wait_for_runtime_state(
             &manifest.conmon_launch.state_command,
@@ -160,7 +185,85 @@ impl KrunSandboxBackend {
         self.write_manifest(manifest)
     }
 
+    /// Stand up the sandbox's deny-by-default network namespace: create the
+    /// persistent netns, then run the shared netavark setup (no-default-route
+    /// deny chain + inbound published-port DNAT). Fail-closed: if setup fails the
+    /// half-built namespace is removed so the VMM is never launched into an
+    /// unconfigured netns. Reuses the container backend's shared netns
+    /// free-functions; no netns/netavark/IPAM logic is forked here.
+    fn configure_network(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+        create_persistent_network_namespace(&manifest.network_layout.netns_path)?;
+        if let Err(error) = setup_container_network(
+            &manifest.network_layout,
+            &self.network_config(),
+            &manifest.handle.id,
+            manifest.spec.display_name(),
+            &hostname_for(&manifest.spec),
+            &manifest.spec.port_bindings,
+            None,
+        ) {
+            let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Start the host-side egress PEP for this sandbox on the bridge gateway
+    /// bind address. Fail-closed: a missing assignment or a proxy start error
+    /// returns `Err`, which the launch path treats as deny.
+    fn ensure_egress_proxy_running(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+        let Some(egress_proxy) = manifest.egress_proxy.as_ref() else {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun sandbox {} has no egress proxy assignment",
+                    manifest.handle.id
+                ),
+            });
+        };
+        let bind_addr = egress_proxy.bind_addr()?;
+        self.egress_proxies
+            .ensure_running(&manifest.handle.id, &manifest.spec.egress, bind_addr)
+    }
+
+    /// Stop the egress PEP, tear the sandbox network down, and remove the netns,
+    /// reusing the container backend's shared teardown free-functions plus the
+    /// shared `EgressProxyRegistry::stop`. Errors are collected so a single
+    /// failing step never short-circuits the rest of the cleanup.
+    fn release_network_artifacts(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+        let mut errors = Vec::new();
+        if let Err(error) = self.egress_proxies.stop(&manifest.handle.id) {
+            errors.push(error.to_string());
+        }
+        if let Err(error) = teardown_container_network(
+            &manifest.network_layout,
+            &self.network_config(),
+            &manifest.handle.id,
+            manifest.spec.display_name(),
+            &hostname_for(&manifest.spec),
+            &manifest.spec.port_bindings,
+            None,
+        ) {
+            errors.push(error.to_string());
+        }
+        if let Err(error) = remove_persistent_network_namespace(&manifest.network_layout.netns_path)
+        {
+            errors.push(error.to_string());
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(SandboxError::OperationFailed {
+                message: format!(
+                    "failed to release krun sandbox {} network artifacts: {}",
+                    manifest.handle.id,
+                    errors.join("; ")
+                ),
+            })
+        }
+    }
+
     fn reset_runtime_for_restart(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+        self.release_network_artifacts(manifest)?;
         run_status_checked(&manifest.conmon_launch.delete_command)?;
         remove_if_exists(&manifest.conmon_layout.exit_status_file)?;
         remove_if_exists(&manifest.conmon_layout.pidfile)?;

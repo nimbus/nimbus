@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::net::IpAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -191,6 +191,7 @@ pub(crate) fn write_bundle_config(
     layout: &KrunBundleLayout,
     hostname: &str,
     spec: &SandboxSpec,
+    network_namespace_path: Option<&Path>,
     options: &KrunBundleOptions,
 ) -> Result<()> {
     std::fs::create_dir_all(&layout.bundle_dir).map_err(|error| SandboxError::OperationFailed {
@@ -200,7 +201,7 @@ pub(crate) fn write_bundle_config(
         ),
     })?;
 
-    let config = build_bundle_config(hostname, spec, options)?;
+    let config = build_bundle_config(hostname, spec, network_namespace_path, options)?;
     let rendered =
         serde_json::to_vec_pretty(&config).map_err(|error| SandboxError::OperationFailed {
             message: format!("failed to serialize krun bundle config: {error}"),
@@ -221,6 +222,7 @@ pub(crate) fn write_bundle_config(
 pub(crate) fn build_bundle_config(
     hostname: &str,
     spec: &SandboxSpec,
+    network_namespace_path: Option<&Path>,
     options: &KrunBundleOptions,
 ) -> Result<Value> {
     if spec.process.args.is_empty() {
@@ -260,15 +262,24 @@ pub(crate) fn build_bundle_config(
     }
 
     let mut linux = serde_json::Map::new();
-    linux.insert(
-        "namespaces".to_owned(),
-        json!([
-            { "type": "mount" },
-            { "type": "uts" },
-            { "type": "ipc" },
-            { "type": "pid" },
-        ]),
-    );
+    // The krun VMM (crun) joins a host-created deny-by-default network namespace
+    // when one is supplied. Under libkrun TSI the guest's connect()/sendto() are
+    // host sockets issued by this VMM process, so confining the VMM to a netns
+    // confines the guest's egress to the namespace's only outbound path: the
+    // host-side egress PEP bound on the bridge gateway.
+    let mut namespaces = vec![
+        json!({ "type": "mount" }),
+        json!({ "type": "uts" }),
+        json!({ "type": "ipc" }),
+        json!({ "type": "pid" }),
+    ];
+    if let Some(network_namespace_path) = network_namespace_path {
+        namespaces.push(json!({
+            "type": "network",
+            "path": network_namespace_path,
+        }));
+    }
+    linux.insert("namespaces".to_owned(), Value::Array(namespaces));
     if let Some(resources) = build_linux_resources(&spec.resources) {
         linux.insert("resources".to_owned(), resources);
     }
@@ -592,7 +603,7 @@ mod tests {
     #[test]
     fn bundle_config_sets_krun_handler_and_port_map() {
         let spec = sample_spec();
-        let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+        let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect("bundle config should build");
 
         assert_eq!(config["annotations"]["run.oci.handler"], "krun");
@@ -611,9 +622,37 @@ mod tests {
     }
 
     #[test]
-    fn bundle_config_omits_network_namespace() {
+    fn bundle_config_includes_network_namespace_when_supplied() {
         let spec = sample_spec();
-        let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+        let netns_path = Path::new("/run/nimbus/netns/krun-egress-01");
+        let config = build_bundle_config(
+            "nimbus-db",
+            &spec,
+            Some(netns_path),
+            &KrunBundleOptions::default(),
+        )
+        .expect("bundle config should build");
+        let namespaces = config["linux"]["namespaces"]
+            .as_array()
+            .expect("linux.namespaces should be an array");
+
+        let network_namespace = namespaces
+            .iter()
+            .find(|namespace| namespace["type"] == "network")
+            .expect(
+                "krun bundles must carry the network namespace so the VMM joins the deny-by-default netns",
+            );
+        assert_eq!(
+            network_namespace["path"],
+            netns_path.to_string_lossy().as_ref(),
+            "the network namespace entry must point at the host-created netns path"
+        );
+    }
+
+    #[test]
+    fn bundle_config_omits_network_namespace_without_a_path() {
+        let spec = sample_spec();
+        let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect("bundle config should build");
         let namespaces = config["linux"]["namespaces"]
             .as_array()
@@ -623,7 +662,7 @@ mod tests {
             namespaces
                 .iter()
                 .all(|namespace| namespace["type"] != "network"),
-            "krun bundles must omit the network namespace so TSI ports bind on the host"
+            "krun bundles must omit the network namespace when no netns path is supplied"
         );
     }
 
@@ -633,8 +672,14 @@ mod tests {
         let layout = KrunBundleLayout::new(temp_dir.path().join("bundle"));
         let spec = sample_spec();
 
-        write_bundle_config(&layout, "nimbus-db", &spec, &KrunBundleOptions::default())
-            .expect("bundle should be written");
+        write_bundle_config(
+            &layout,
+            "nimbus-db",
+            &spec,
+            None,
+            &KrunBundleOptions::default(),
+        )
+        .expect("bundle should be written");
 
         let rendered = fs::read_to_string(&layout.config_path).expect("config should be readable");
         assert!(
@@ -671,7 +716,7 @@ mod tests {
         // krun VMMs always run as root because the crun process needs /dev/kvm.
         // Image USER is stored in the manifest for guest-side application.
         let spec = sample_spec();
-        let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+        let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect("bundle config should build");
 
         assert_eq!(
@@ -687,7 +732,7 @@ mod tests {
     #[test]
     fn bundle_config_sets_no_new_privileges() {
         let spec = sample_spec();
-        let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+        let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect("bundle config should build");
 
         assert_eq!(
@@ -712,7 +757,7 @@ mod tests {
             format!("{EGRESS_LEGACY_POLICY_ENV}={{\"allow\":[]}}"),
         ];
 
-        let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+        let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect("bundle config should build");
 
         let env = config["process"]["env"]
@@ -760,9 +805,13 @@ mod tests {
 
     #[test]
     fn bundle_config_materializes_default_deny_supervisor_proxy_egress_contract_env() {
-        let config =
-            build_bundle_config("nimbus-db", &sample_spec(), &KrunBundleOptions::default())
-                .expect("bundle config should build");
+        let config = build_bundle_config(
+            "nimbus-db",
+            &sample_spec(),
+            None,
+            &KrunBundleOptions::default(),
+        )
+        .expect("bundle config should build");
 
         let enforcement = egress_enforcement_from_config(&config);
 
@@ -793,7 +842,7 @@ mod tests {
             443,
         )]));
 
-        let error = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+        let error = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect_err("invalid sandbox egress policy should fail bundle generation");
 
         assert!(
@@ -805,7 +854,7 @@ mod tests {
     #[test]
     fn bundle_config_sets_explicit_krun_capabilities() {
         let spec = sample_spec();
-        let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+        let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect("bundle config should build");
         let capabilities = &config["process"]["capabilities"];
         let expected = json!(["CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE", "CAP_SYS_ADMIN"]);
@@ -820,7 +869,7 @@ mod tests {
     #[test]
     fn bundle_config_sets_explicit_seccomp_allowlist() {
         let spec = sample_spec();
-        let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+        let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect("bundle config should build");
         let seccomp = &config["linux"]["seccomp"];
 
@@ -868,7 +917,7 @@ mod tests {
         .expect("passwd file should be written");
 
         let spec = sample_spec_with_rootfs(&rootfs);
-        let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+        let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect("bundle config should build");
 
         assert_eq!(config["process"]["user"]["uid"], 0);
@@ -882,7 +931,7 @@ mod tests {
         fs::create_dir_all(rootfs.join("etc")).expect("rootfs etc directory should exist");
 
         let spec = sample_spec_with_rootfs(&rootfs);
-        let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+        let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect("bundle config should build");
 
         assert_eq!(config["process"]["user"]["uid"], 0);
@@ -895,6 +944,7 @@ mod tests {
         let config = build_bundle_config(
             "nimbus-db",
             &spec,
+            None,
             &KrunBundleOptions {
                 additional_mounts: vec![KrunBundleMount {
                     destination: "/.nimbus".to_owned(),
@@ -922,7 +972,7 @@ mod tests {
             SandboxResourceLimits::default().with_memory_limit_bytes(256 * 1024 * 1024),
         );
 
-        let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+        let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect("bundle config should build with memory limits");
 
         assert_eq!(
@@ -936,7 +986,7 @@ mod tests {
         let spec =
             sample_spec().with_resource_limits(SandboxResourceLimits::default().with_cpu_count(2));
 
-        let error = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+        let error = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect_err("krun cpu count without memory should be rejected");
 
         assert!(
@@ -952,7 +1002,7 @@ mod tests {
         let spec = sample_spec_with_rootfs(Path::new("/srv/rootfs"))
             .with_port_binding(SandboxPortBinding::tcp("invalid-host", 0, 8080));
 
-        let error = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+        let error = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect_err("zero host ports should be rejected");
 
         assert!(
@@ -968,7 +1018,7 @@ mod tests {
         let spec = sample_spec_with_rootfs(Path::new("/srv/rootfs"))
             .with_port_binding(SandboxPortBinding::tcp("invalid-guest", 18080, 0));
 
-        let error = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+        let error = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect_err("zero guest ports should be rejected");
 
         assert!(
@@ -984,7 +1034,7 @@ mod tests {
         let spec = sample_spec()
             .with_resource_limits(SandboxResourceLimits::default().with_disk_limit_bytes(1024));
 
-        let error = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+        let error = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect_err("an unenforceable disk_limit_bytes must fail closed");
 
         assert!(
@@ -1000,8 +1050,13 @@ mod tests {
         let with_memory = sample_spec().with_resource_limits(
             SandboxResourceLimits::default().with_memory_limit_bytes(256 * 1024 * 1024),
         );
-        build_bundle_config("nimbus-db", &with_memory, &KrunBundleOptions::default())
-            .expect("a spec without disk_limit_bytes should still render a bundle");
+        build_bundle_config(
+            "nimbus-db",
+            &with_memory,
+            None,
+            &KrunBundleOptions::default(),
+        )
+        .expect("a spec without disk_limit_bytes should still render a bundle");
     }
 
     fn sample_spec() -> SandboxSpec {

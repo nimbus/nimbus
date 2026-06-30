@@ -61,6 +61,19 @@ impl KrunSandboxBackend {
         apply_guest_user_switch(&mut resolved_launch.spec, &resolved_launch.image_metadata)?;
         self.resource_quota_manager()
             .ensure_launch_quota(&resolved_launch.spec)?;
+        // Execute-mode launches reach the guest through a host-side egress PEP
+        // bound on the bridge gateway; plan-only materialization claims no live
+        // proxy. The fail-closed gate above means execute mode never reaches
+        // this point yet (lifted by KME4), but the assignment is wired so the
+        // launch path enforces egress the moment the gate is removed.
+        let egress_proxy = (self.config.start_mode == KrunStartMode::Execute)
+            .then(|| self.allocate_egress_proxy(&resolved_launch.spec))
+            .transpose()?;
+        let network_layout = OciNetworkLayout::new(
+            &self.config.state_root,
+            &resolved_launch.spec.tenant_id,
+            sandbox_id,
+        );
         let bundle_layout = KrunBundleLayout::new(crate::artifact_paths::bundle_dir(
             &self.config.bundle_root,
             &resolved_launch.spec.tenant_id,
@@ -70,6 +83,7 @@ impl KrunSandboxBackend {
             &bundle_layout,
             &hostname_for(&resolved_launch.spec),
             &resolved_launch.spec,
+            Some(network_layout.netns_path.as_path()),
             &KrunBundleOptions {
                 additional_mounts: krun_additional_mounts(
                     &self.config,
@@ -92,6 +106,7 @@ impl KrunSandboxBackend {
                     self.config.state_root.display()
                 ),
             })?;
+        network_layout.ensure_directories()?;
 
         let conmon_launch = build_launch_plan(
             &OciConmonConfig {
@@ -140,6 +155,8 @@ impl KrunSandboxBackend {
             launch_artifact,
             bundle_layout,
             conmon_layout,
+            network_layout,
+            egress_proxy,
             conmon_launch,
             last_exit_code: None,
             restart_count: 0,
@@ -274,6 +291,7 @@ impl KrunSandboxBackend {
             &manifest.bundle_layout,
             &hostname_for(&manifest.spec),
             &manifest.spec,
+            Some(manifest.network_layout.netns_path.as_path()),
             &KrunBundleOptions {
                 additional_mounts: krun_additional_mounts(
                     &self.config,
@@ -282,6 +300,23 @@ impl KrunSandboxBackend {
                 )?,
             },
         )
+    }
+
+    /// Assign a host-side egress PEP for an execute-mode launch: the proxy binds
+    /// on the bridge gateway address so it is the only outbound path reachable
+    /// from inside the sandbox's deny-by-default network namespace.
+    pub(super) fn allocate_egress_proxy(
+        &self,
+        spec: &SandboxSpec,
+    ) -> Result<KrunEgressProxyManifest> {
+        let gateway = bridge_gateway_addr(&self.network_config())?;
+        let port = self
+            .port_manager()
+            .allocate_internal_host_port(&spec.port_bindings)?;
+        Ok(KrunEgressProxyManifest {
+            host: gateway.to_string(),
+            port,
+        })
     }
 
     pub(super) fn materialize_krun_vm_config(&self, manifest: &KrunSandboxManifest) -> Result<()> {
@@ -344,7 +379,7 @@ fn next_sandbox_id(name: &str) -> SandboxId {
     ))
 }
 
-fn hostname_for(spec: &SandboxSpec) -> String {
+pub(super) fn hostname_for(spec: &SandboxSpec) -> String {
     let slug = slugify(spec.display_name());
     if slug.is_empty() {
         "nimbus-sandbox".to_owned()
