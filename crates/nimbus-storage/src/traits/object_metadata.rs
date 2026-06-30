@@ -576,6 +576,18 @@ pub trait ObjectMetaStore {
     ) -> Result<Vec<ObjectMultipartUpload>>;
 }
 
+fn object_identity_matches_prefix(document: &Document, bucket: &str, prefix: &str) -> bool {
+    let bucket_matches = match document.fields.get(OBJECT_FIELD_BUCKET) {
+        Some(Value::String(document_bucket)) => document_bucket == bucket,
+        _ => false,
+    };
+    let key_matches = match document.fields.get(OBJECT_FIELD_KEY) {
+        Some(Value::String(key)) => key.starts_with(prefix),
+        _ => false,
+    };
+    bucket_matches && key_matches
+}
+
 fn validate_object_key(key: &str) -> Result<()> {
     if key.is_empty() {
         return Err(nimbus_core::Error::InvalidInput(
@@ -769,15 +781,7 @@ where
     let mut check_cancel = || Ok(());
     let mut manifests = store
         .scan_table_matching_with_filters_cancellable(&table, &[], &mut check_cancel, |document| {
-            let bucket_matches = matches!(
-                document.fields.get(OBJECT_FIELD_BUCKET),
-                Some(Value::String(document_bucket)) if document_bucket == bucket
-            );
-            let key_matches = match document.fields.get(OBJECT_FIELD_KEY) {
-                Some(Value::String(key)) => key.starts_with(prefix),
-                _ => false,
-            };
-            Ok(bucket_matches && key_matches)
+            Ok(object_identity_matches_prefix(document, bucket, prefix))
         })?
         .iter()
         .map(ObjectManifest::from_document)
@@ -853,15 +857,7 @@ where
     let mut check_cancel = || Ok(());
     let mut uploads = store
         .scan_table_matching_with_filters_cancellable(&table, &[], &mut check_cancel, |document| {
-            let bucket_matches = matches!(
-                document.fields.get(OBJECT_FIELD_BUCKET),
-                Some(Value::String(document_bucket)) if document_bucket == bucket
-            );
-            let key_matches = match document.fields.get(OBJECT_FIELD_KEY) {
-                Some(Value::String(key)) => key.starts_with(prefix),
-                _ => false,
-            };
-            Ok(bucket_matches && key_matches)
+            Ok(object_identity_matches_prefix(document, bucket, prefix))
         })?
         .iter()
         .map(ObjectMultipartUpload::from_document)
