@@ -14,6 +14,7 @@ pub(crate) fn prepare_proxy_request_enforcement(
     parsed: &ParsedProxyRequest,
     policy: &CompiledEgressPolicy,
     matched_rule: Option<&str>,
+    reason: &str,
     credential_store: &CredentialSecretStore,
 ) -> std::result::Result<PreparedProxyRequest, HttpProxyResponse> {
     let Some(rule) = matched_rule.and_then(|name| {
@@ -26,14 +27,24 @@ pub(crate) fn prepare_proxy_request_enforcement(
         return Ok(PreparedProxyRequest {
             header_lines: parsed.header_lines.clone(),
             inspected_body: None,
-            decision_log: EgressDecisionLog::for_request(parsed, None),
+            decision_log: EgressDecisionLog::allowed(
+                parsed,
+                None,
+                reason.to_owned(),
+                matched_rule.map(ToOwned::to_owned),
+            ),
         });
     };
     let mut header_lines = parsed.header_lines.clone();
     let credential_identity =
         apply_credential_injection(rule, &mut header_lines, parsed, credential_store)?;
     let inspected_body = enforce_dlp_rules(client, buffer, parsed, &rule.dlp)?;
-    let decision_log = EgressDecisionLog::for_request(parsed, credential_identity.clone());
+    let decision_log = EgressDecisionLog::allowed(
+        parsed,
+        credential_identity.clone(),
+        reason.to_owned(),
+        matched_rule.map(ToOwned::to_owned),
+    );
     Ok(PreparedProxyRequest {
         header_lines,
         inspected_body,
