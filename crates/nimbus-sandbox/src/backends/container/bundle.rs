@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::backends::oci::egress::egress_proxy_env_entries;
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
 use nimbus_egress::{
-    EGRESS_ENFORCEMENT_ENV, EGRESS_PROXY_URL_ENV, EGRESS_RESERVED_ENV_KEYS, EgressEnforcementPlan,
-    EgressReloadPolicy,
+    EGRESS_ENFORCEMENT_ENV, EGRESS_RESERVED_ENV_KEYS, EgressEnforcementPlan, EgressReloadPolicy,
 };
 
 const DEFAULT_PATH_ENV: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -316,23 +316,6 @@ fn process_env(
         env.extend(egress_proxy_env_entries(egress_proxy_url));
     }
     Ok(env)
-}
-
-fn egress_proxy_env_entries(egress_proxy_url: &str) -> Vec<String> {
-    [
-        (EGRESS_PROXY_URL_ENV, egress_proxy_url),
-        ("HTTP_PROXY", egress_proxy_url),
-        ("http_proxy", egress_proxy_url),
-        ("HTTPS_PROXY", egress_proxy_url),
-        ("https_proxy", egress_proxy_url),
-        ("ALL_PROXY", egress_proxy_url),
-        ("all_proxy", egress_proxy_url),
-        ("NO_PROXY", ""),
-        ("no_proxy", ""),
-    ]
-    .into_iter()
-    .map(|(key, value)| format!("{key}={value}"))
-    .collect()
 }
 
 fn env_key(entry: &str) -> Option<&str> {

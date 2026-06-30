@@ -21,6 +21,8 @@
 
 use std::env;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -30,6 +32,10 @@ use futures::executor::block_on;
 use tempfile::TempDir;
 
 use nimbus_core::TenantId;
+use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
+use nimbus_sandbox::backends::container::{
+    ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
+};
 use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxBackendConfig, KrunStartMode};
 use nimbus_sandbox::{
     SandboxBackend, SandboxBackendKind, SandboxId, SandboxMountSpec, SandboxOwnerSpec,
@@ -98,6 +104,211 @@ fn krun_execute_mode_denies_direct_external_egress() {
     );
 
     drop(temp_dir);
+}
+
+/// Cross-substrate parity proof: ONE egress policy enforced through the krun PEP
+/// and the container PEP must yield byte-identical allow/deny. The policy allows
+/// a single internal upstream and denies everything else (`evil.example` and a
+/// second tenant's endpoint, `cross_tenant_reach`).
+///
+/// Gated behind `#[ignore]` + `/dev/kvm`: the krun execute path is still
+/// fail-closed before launch planning (lifted by KME4), so the krun half cannot
+/// boot a guest until then. The container half runs today; this is the pinned
+/// parity harness that turns green once execute mode is enabled on real KVM
+/// hardware as root.
+#[test]
+#[ignore = "requires a Linux root host with /dev/kvm plus the full krun + container OCI runtime stack; the krun half is gated behind the KME4 execute fail-close lift"]
+fn krun_and_container_pep_enforce_identical_allow_deny() {
+    if !egress_proof_preconditions_met() {
+        return;
+    }
+
+    // One allowed internal upstream plus one disallowed upstream that stands in
+    // for both `evil.example` and a second tenant's endpoint.
+    let allowed = TestHttpServer::start("allowed-body");
+    let cross_tenant = TestHttpServer::start("cross-tenant-body");
+
+    // ONE policy drives both substrates.
+    let policy = parity_policy(allowed.addr.port());
+
+    let krun_result = run_krun_parity_probe(&policy, allowed.addr.port(), cross_tenant.addr.port());
+    let container_result =
+        run_container_parity_probe(&policy, allowed.addr.port(), cross_tenant.addr.port());
+
+    // Byte-identical allow/deny across the two PEPs is the parity guarantee.
+    assert_eq!(
+        krun_result, container_result,
+        "krun PEP and container PEP must yield byte-identical allow/deny for one policy"
+    );
+    assert_result_line(&krun_result, "allowed_internal=allowed");
+    assert_result_line(&krun_result, "evil_denied=denied");
+    assert_result_line(&krun_result, "cross_tenant_reach=denied");
+}
+
+fn run_krun_parity_probe(
+    policy: &EgressPolicy,
+    allowed_port: u16,
+    cross_tenant_port: u16,
+) -> String {
+    let (_temp_dir, workdir) = test_workdir("krun-parity");
+    let backend = KrunSandboxBackend::new(egress_backend_config(&workdir, 15400));
+    let tenant_id = TenantId::new("krun-parity-tenant").expect("tenant id should parse");
+    let image = env::var("NIMBUS_KRUN_EGRESS_IMAGE")
+        .unwrap_or_else(|_| "docker://busybox:latest".to_owned());
+    let spec = SandboxSpec::new(
+        tenant_id.clone(),
+        SandboxOwnerSpec::standalone_named("krun-parity-probe"),
+        SandboxBackendKind::Krun,
+        SandboxRootSpec::oci_image_reference(image),
+        SandboxProcessSpec::new(Vec::<String>::new())
+            .with_entrypoint(["/bin/sh", "-c"])
+            .with_command([parity_probe_command(allowed_port, cross_tenant_port)]),
+    )
+    .with_mount(SandboxMountSpec::tenant_volume(
+        RESULT_VOLUME,
+        "/nimbus-egress",
+    ))
+    .with_egress_policy(policy.clone());
+
+    let handle = block_on(backend.start(spec))
+        .expect("krun guest should start once execute mode is enabled (KME4)");
+    let teardown = ForceTeardownGuard::new(
+        backend.clone(),
+        handle.id.clone(),
+        sandbox_netns_path(&workdir, &tenant_id, &handle.id),
+    );
+
+    let result_path = tenant_volume_path(&workdir, &tenant_id, RESULT_VOLUME).join("result");
+    let result = wait_for_result(
+        &result_path,
+        Duration::from_secs(25),
+        "krun parity probe result",
+    );
+    // Force-tear-down the guest while the workdir still backs the netns.
+    drop(teardown);
+    normalize_result(&result)
+}
+
+fn run_container_parity_probe(
+    policy: &EgressPolicy,
+    allowed_port: u16,
+    cross_tenant_port: u16,
+) -> String {
+    let (_temp_dir, workdir) = test_workdir("container-parity");
+    let backend = ContainerSandboxBackend::new(container_parity_config(&workdir, 15500));
+    let tenant_id = TenantId::new("container-parity-tenant").expect("tenant id should parse");
+    let image = env::var("NIMBUS_CONTAINER_EGRESS_IMAGE")
+        .unwrap_or_else(|_| "docker.io/library/busybox:latest".to_owned());
+    let spec = SandboxSpec::new(
+        tenant_id.clone(),
+        SandboxOwnerSpec::standalone_named("container-parity-probe"),
+        SandboxBackendKind::Container,
+        SandboxRootSpec::oci_image_reference(image),
+        SandboxProcessSpec::new(Vec::<String>::new())
+            .with_entrypoint(["/bin/sh", "-c"])
+            .with_command([parity_probe_command(allowed_port, cross_tenant_port)]),
+    )
+    .with_mount(SandboxMountSpec::tenant_volume(
+        RESULT_VOLUME,
+        "/nimbus-egress",
+    ))
+    .with_egress_policy(policy.clone());
+
+    let handle = block_on(backend.start(spec)).expect("container should start");
+    let result_path = tenant_volume_path(&workdir, &tenant_id, RESULT_VOLUME).join("result");
+    let result = wait_for_result(
+        &result_path,
+        Duration::from_secs(20),
+        "container parity probe result",
+    );
+    let _ = block_on(backend.stop(&handle.id));
+    let _ = block_on(backend.remove_tenant_artifacts(tenant_id));
+    normalize_result(&result)
+}
+
+fn parity_policy(allowed_port: u16) -> EgressPolicy {
+    EgressPolicy::new([EgressRule::new(
+        "parity-allowed-internal",
+        EgressProtocol::Http,
+        "127.0.0.1",
+        allowed_port,
+    )
+    .with_methods(["GET"])
+    .with_path_prefixes(["/allowed"])
+    .allow_internal_ips(true)])
+}
+
+fn parity_probe_command(allowed_port: u16, cross_tenant_port: u16) -> String {
+    format!(
+        r#"TMP=/nimbus-egress/result.tmp
+: > "$TMP"
+if wget -T 5 -q -O /tmp/allowed "http://127.0.0.1:{allowed_port}/allowed" && grep -q allowed-body /tmp/allowed; then echo allowed_internal=allowed >> "$TMP"; else echo allowed_internal=denied >> "$TMP"; fi
+if wget -T 5 -q -O /tmp/evil "http://evil.example/"; then echo evil_denied=allowed >> "$TMP"; else echo evil_denied=denied >> "$TMP"; fi
+if wget -T 5 -q -O /tmp/cross "http://127.0.0.1:{cross_tenant_port}/allowed"; then echo cross_tenant_reach=allowed >> "$TMP"; else echo cross_tenant_reach=denied >> "$TMP"; fi
+mv "$TMP" {RESULT_PATH_IN_GUEST}
+sleep 30"#
+    )
+}
+
+fn normalize_result(result: &str) -> String {
+    let mut lines: Vec<&str> = result
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    lines.sort_unstable();
+    lines.join("\n")
+}
+
+fn assert_result_line(results: &str, expected: &str) {
+    assert!(
+        results.lines().any(|line| line == expected),
+        "expected result line {expected:?}, got:\n{results}"
+    );
+}
+
+fn container_parity_config(workdir: &Path, first_port: u16) -> ContainerSandboxBackendConfig {
+    let mut config = ContainerSandboxBackendConfig::under_root(workdir);
+    config.start_mode = ContainerStartMode::Execute;
+    config.conmon_path = default_existing_path("/usr/bin/conmon", "conmon");
+    config.runtime_path = default_existing_path("/usr/bin/crun", "crun");
+    config.buildah_path = default_existing_path("/usr/bin/buildah", "buildah");
+    config.netavark_path = env::var_os("NIMBUS_NETAVARK")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_existing_path("/usr/lib/podman/netavark", "netavark"));
+    config.aardvark_dns_path = env::var_os("NIMBUS_AARDVARK_DNS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_existing_path("/usr/lib/podman/aardvark-dns", "aardvark-dns"));
+    config.use_buildah_unshare = false;
+    config.published_port_range = first_port..=first_port + 20;
+    config.start_timeout = Duration::from_secs(30);
+    config
+}
+
+struct TestHttpServer {
+    addr: SocketAddr,
+}
+
+impl TestHttpServer {
+    fn start(body: &'static str) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("parity upstream should bind");
+        let addr = listener
+            .local_addr()
+            .expect("parity upstream address should resolve");
+        thread::spawn(move || {
+            while let Ok((mut stream, _)) = listener.accept() {
+                let mut request = [0_u8; 1024];
+                let _ = stream.read(&mut request);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        Self { addr }
+    }
 }
 
 fn egress_proof_preconditions_met() -> bool {

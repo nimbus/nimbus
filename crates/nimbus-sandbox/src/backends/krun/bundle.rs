@@ -5,12 +5,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::backends::oci::egress::egress_proxy_env_entries;
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
-use nimbus_egress::{
-    EGRESS_ENFORCEMENT_ENV, EGRESS_RESERVED_ENV_KEYS, EgressEnforcementPlan,
-    EgressLaunchEnforcement,
-};
+use nimbus_egress::EGRESS_RESERVED_ENV_KEYS;
 
 const DEFAULT_PATH_ENV: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const MIN_MEMORY_LIMIT_BYTES: u64 = 1024 * 1024;
@@ -158,6 +156,11 @@ pub(crate) struct KrunBundleLayout {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct KrunBundleOptions {
     pub additional_mounts: Vec<KrunBundleMount>,
+    /// Host-side egress PEP URL (`http://<bridge-gateway>:<port>`) for an
+    /// execute-mode launch with an egress-proxy assignment. When present, the
+    /// guest env is pointed at this PEP via the shared container-shape proxy
+    /// env; when absent (plan-only / no assignment) no proxy env is injected.
+    pub egress_proxy_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,10 +242,13 @@ pub(crate) fn build_bundle_config(
 
     validate_port_bindings(&spec.port_bindings)?;
     validate_resource_limits(&spec.resources)?;
-    let egress_enforcement = EgressLaunchEnforcement::ProcessSupervisorProxy
-        .materialize(&spec.egress)
+    // Fail closed at bundle build if the egress policy is malformed. The policy
+    // itself is enforced at the host by the per-sandbox egress PEP (see
+    // `EgressProxyRegistry`); the guest is never handed a cooperative copy of it.
+    spec.egress
+        .compile()
         .map_err(|message| SandboxError::InvalidSpec { message })?;
-    let process_env = process_env(spec, &egress_enforcement)?;
+    let process_env = process_env(spec, options.egress_proxy_url.as_deref());
 
     // krun VMMs always run as root because the crun process needs /dev/kvm access.
     // Any image USER is applied later inside the guest after the VMM is already
@@ -413,23 +419,19 @@ fn process_cwd(process: &SandboxProcessSpec) -> String {
     }
 }
 
-fn process_env(
-    spec: &SandboxSpec,
-    egress_enforcement: &EgressEnforcementPlan,
-) -> Result<Vec<String>> {
+fn process_env(spec: &SandboxSpec, egress_proxy_url: Option<&str>) -> Vec<String> {
     let mut env = if spec.process.env.is_empty() {
         vec![DEFAULT_PATH_ENV.to_owned()]
     } else {
         spec.process.env.clone()
     };
+    // Scrub every reserved egress key so a tenant-supplied proxy override can
+    // never survive into the guest, then point the guest at the host-side PEP.
     env.retain(|entry| env_key(entry).is_none_or(|key| !EGRESS_RESERVED_ENV_KEYS.contains(&key)));
-    let rendered = serde_json::to_string(egress_enforcement).map_err(|error| {
-        SandboxError::OperationFailed {
-            message: format!("failed to serialize sandbox egress enforcement plan: {error}"),
-        }
-    })?;
-    env.push(format!("{EGRESS_ENFORCEMENT_ENV}={rendered}"));
-    Ok(env)
+    if let Some(egress_proxy_url) = egress_proxy_url {
+        env.extend(egress_proxy_env_entries(egress_proxy_url));
+    }
+    env
 }
 
 fn env_key(entry: &str) -> Option<&str> {
@@ -576,28 +578,17 @@ mod tests {
         SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
     };
     use nimbus_egress::{
-        EGRESS_ENFORCEMENT_ENV, EGRESS_ENFORCEMENT_SCHEMA_VERSION, EGRESS_LEGACY_POLICY_ENV,
-        EgressEnforcementMode, EgressEnforcementPlan, EgressPolicy, EgressProtocol,
-        EgressReloadPolicy, EgressRule,
+        EGRESS_ENFORCEMENT_ENV, EGRESS_LEGACY_POLICY_ENV, EGRESS_PROXY_URL_ENV,
+        EGRESS_RESERVED_ENV_KEYS, EgressPolicy, EgressProtocol, EgressRule,
     };
 
-    fn egress_enforcement_from_config(config: &serde_json::Value) -> EgressEnforcementPlan {
-        let env = config["process"]["env"]
+    fn env_from_config(config: &serde_json::Value) -> Vec<&str> {
+        config["process"]["env"]
             .as_array()
-            .expect("env should be an array");
-        let enforcement_prefix = format!("{EGRESS_ENFORCEMENT_ENV}=");
-        let enforcement_entries = env
+            .expect("env should be an array")
             .iter()
-            .filter_map(serde_json::Value::as_str)
-            .filter_map(|entry| entry.strip_prefix(&enforcement_prefix))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            enforcement_entries.len(),
-            1,
-            "bundle generation should emit exactly one egress enforcement env value"
-        );
-        serde_json::from_str(enforcement_entries[0])
-            .expect("egress enforcement env should contain JSON")
+            .map(|value| value.as_str().expect("env entries should be strings"))
+            .collect()
     }
 
     #[test]
@@ -742,7 +733,10 @@ mod tests {
     }
 
     #[test]
-    fn bundle_config_materializes_sandbox_egress_enforcement_contract_env() {
+    fn bundle_config_injects_assigned_egress_proxy_env_and_scrubs_spoofed_values() {
+        // A real allow policy plus tenant-spoofed proxy/enforcement env. The
+        // host-enforced model: the guest is pointed at the assigned PEP and the
+        // spoofed values are scrubbed; no guest-cooperative contract is handed in.
         let mut spec = sample_spec().with_egress_policy(EgressPolicy::new([EgressRule::new(
             "stripe",
             EgressProtocol::Https,
@@ -753,58 +747,101 @@ mod tests {
         .with_path_prefixes(["/v1/"])]));
         spec.process.env = vec![
             "PATH=/usr/bin".to_owned(),
+            "HTTP_PROXY=http://attacker.invalid:1".to_owned(),
+            "https_proxy=http://attacker.invalid:2".to_owned(),
             format!("{EGRESS_ENFORCEMENT_ENV}={{\"schema_version\":0}}"),
             format!("{EGRESS_LEGACY_POLICY_ENV}={{\"allow\":[]}}"),
+            format!("{EGRESS_PROXY_URL_ENV}=http://attacker.invalid:4"),
         ];
 
-        let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
-            .expect("bundle config should build");
+        let config = build_bundle_config(
+            "nimbus-db",
+            &spec,
+            None,
+            &KrunBundleOptions {
+                egress_proxy_url: Some("http://10.89.0.1:15000".to_owned()),
+                ..Default::default()
+            },
+        )
+        .expect("bundle config should build");
+        let env = env_from_config(&config);
 
-        let env = config["process"]["env"]
-            .as_array()
-            .expect("env should be an array");
-        let enforcement_prefix = format!("{EGRESS_ENFORCEMENT_ENV}=");
-        let legacy_policy_prefix = format!("{EGRESS_LEGACY_POLICY_ENV}=");
-        let enforcement_entries = env
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .filter_map(|entry| entry.strip_prefix(&enforcement_prefix))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            enforcement_entries.len(),
-            1,
-            "bundle generation should replace spoofed egress enforcement env values"
+        assert!(env.contains(&"PATH=/usr/bin"));
+        for expected in [
+            format!("{EGRESS_PROXY_URL_ENV}=http://10.89.0.1:15000"),
+            "HTTP_PROXY=http://10.89.0.1:15000".to_owned(),
+            "http_proxy=http://10.89.0.1:15000".to_owned(),
+            "HTTPS_PROXY=http://10.89.0.1:15000".to_owned(),
+            "https_proxy=http://10.89.0.1:15000".to_owned(),
+            "ALL_PROXY=http://10.89.0.1:15000".to_owned(),
+            "all_proxy=http://10.89.0.1:15000".to_owned(),
+            "NO_PROXY=".to_owned(),
+            "no_proxy=".to_owned(),
+        ] {
+            assert!(
+                env.contains(&expected.as_str()),
+                "expected proxy env {expected:?} in {env:?}"
+            );
+        }
+        assert!(
+            env.iter().all(|entry| !entry.contains("attacker.invalid")),
+            "tenant-provided proxy env must be scrubbed: {env:?}"
         );
+        // The retired guest-cooperative supervisor-proxy contract is gone: the
+        // krun bundle never emits an egress enforcement plan for the guest to
+        // self-enforce. Egress is host-enforced by the PEP the proxy env names.
+        let enforcement_prefix = format!("{EGRESS_ENFORCEMENT_ENV}=");
         assert!(
             env.iter()
-                .filter_map(serde_json::Value::as_str)
+                .all(|entry| !entry.starts_with(&enforcement_prefix)),
+            "krun bundles must not carry the guest-cooperative egress enforcement contract: {env:?}"
+        );
+        let legacy_policy_prefix = format!("{EGRESS_LEGACY_POLICY_ENV}=");
+        assert!(
+            env.iter()
                 .all(|entry| !entry.starts_with(&legacy_policy_prefix)),
-            "bundle generation should remove spoofed legacy egress policy env values"
+            "krun bundles must scrub the spoofed legacy egress policy env: {env:?}"
         );
-        let enforcement: EgressEnforcementPlan = serde_json::from_str(enforcement_entries[0])
-            .expect("egress enforcement env should contain JSON");
-        assert_eq!(
-            enforcement.schema_version,
-            EGRESS_ENFORCEMENT_SCHEMA_VERSION
-        );
-        assert_eq!(enforcement.mode, EgressEnforcementMode::SupervisorProxy);
-        assert_eq!(
-            enforcement.reload_policy,
-            EgressReloadPolicy::RecreateRequired
-        );
-        assert_eq!(enforcement.policy().rules().len(), 1);
-        assert_eq!(enforcement.policy().rules()[0].name, "stripe");
-        assert_eq!(
-            enforcement.policy().rules()[0].methods,
-            vec!["POST".to_string()]
-        );
-        enforcement
-            .validate()
-            .expect("materialized egress enforcement contract should validate");
     }
 
     #[test]
-    fn bundle_config_materializes_default_deny_supervisor_proxy_egress_contract_env() {
+    fn bundle_config_routes_default_deny_through_assigned_proxy_without_guest_contract() {
+        // Even a default deny-all policy routes the guest through its assigned
+        // PEP (the PEP enforces deny-all); no enforcement contract reaches the guest.
+        let config = build_bundle_config(
+            "nimbus-db",
+            &sample_spec(),
+            None,
+            &KrunBundleOptions {
+                egress_proxy_url: Some("http://10.89.0.1:15001".to_owned()),
+                ..Default::default()
+            },
+        )
+        .expect("bundle config should build");
+        let env = env_from_config(&config);
+
+        for expected in [
+            "HTTP_PROXY=http://10.89.0.1:15001",
+            "HTTPS_PROXY=http://10.89.0.1:15001",
+            "NO_PROXY=",
+        ] {
+            assert!(
+                env.contains(&expected),
+                "default-deny bundle must still route through the assigned PEP: {env:?}"
+            );
+        }
+        let enforcement_prefix = format!("{EGRESS_ENFORCEMENT_ENV}=");
+        assert!(
+            env.iter()
+                .all(|entry| !entry.starts_with(&enforcement_prefix)),
+            "default-deny krun bundle must not emit a guest-cooperative enforcement contract: {env:?}"
+        );
+    }
+
+    #[test]
+    fn bundle_config_without_egress_assignment_injects_no_proxy_env() {
+        // Plan-only / no egress-proxy assignment: no proxy env at all is injected,
+        // and no guest-cooperative enforcement contract is emitted either.
         let config = build_bundle_config(
             "nimbus-db",
             &sample_spec(),
@@ -812,25 +849,15 @@ mod tests {
             &KrunBundleOptions::default(),
         )
         .expect("bundle config should build");
+        let env = env_from_config(&config);
 
-        let enforcement = egress_enforcement_from_config(&config);
-
-        assert_eq!(
-            enforcement.schema_version,
-            EGRESS_ENFORCEMENT_SCHEMA_VERSION
-        );
-        assert_eq!(enforcement.mode, EgressEnforcementMode::SupervisorProxy);
-        assert_eq!(
-            enforcement.reload_policy,
-            EgressReloadPolicy::RecreateRequired
-        );
-        assert!(
-            enforcement.policy().is_deny_all(),
-            "default sandbox egress should remain deny-all"
-        );
-        enforcement
-            .validate()
-            .expect("default supervisor egress contract should validate");
+        for reserved in EGRESS_RESERVED_ENV_KEYS {
+            let prefix = format!("{reserved}=");
+            assert!(
+                env.iter().all(|entry| !entry.starts_with(&prefix)),
+                "a krun bundle without an egress-proxy assignment must inject no egress env ({reserved}): {env:?}"
+            );
+        }
     }
 
     #[test]
@@ -951,6 +978,7 @@ mod tests {
                     source: Path::new("/usr/libexec/nimbus").into(),
                     options: vec!["rbind".to_owned(), "ro".to_owned()],
                 }],
+                ..Default::default()
             },
         )
         .expect("bundle config should build");

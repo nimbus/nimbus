@@ -69,6 +69,12 @@ impl KrunSandboxBackend {
         let egress_proxy = (self.config.start_mode == KrunStartMode::Execute)
             .then(|| self.allocate_egress_proxy(&resolved_launch.spec))
             .transpose()?;
+        // Point the guest env at the assigned host-side PEP. Plan-only launches
+        // claim no proxy, so no proxy env is injected for them.
+        let egress_proxy_url = egress_proxy
+            .as_ref()
+            .map(KrunEgressProxyManifest::proxy_url)
+            .transpose()?;
         let network_layout = OciNetworkLayout::new(
             &self.config.state_root,
             &resolved_launch.spec.tenant_id,
@@ -90,6 +96,7 @@ impl KrunSandboxBackend {
                     &resolved_launch.spec,
                     &resolved_launch.image_metadata,
                 )?,
+                egress_proxy_url,
             },
         )?;
 
@@ -287,6 +294,11 @@ impl KrunSandboxBackend {
         manifest.spec.port_bindings.extend(auto_bindings);
         manifest.handle.published_endpoints =
             visible_published_endpoints(manifest.start_mode, &manifest.spec, manifest.status);
+        let egress_proxy_url = manifest
+            .egress_proxy
+            .as_ref()
+            .map(KrunEgressProxyManifest::proxy_url)
+            .transpose()?;
         write_bundle_config(
             &manifest.bundle_layout,
             &hostname_for(&manifest.spec),
@@ -298,6 +310,7 @@ impl KrunSandboxBackend {
                     &manifest.spec,
                     &manifest.image_metadata,
                 )?,
+                egress_proxy_url,
             },
         )
     }

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use nimbus_egress::{CompiledEgressPolicy, EgressPolicy};
+use nimbus_egress::{CompiledEgressPolicy, EGRESS_PROXY_URL_ENV, EgressPolicy};
 use nimbus_proxy::{EgressProxy, EgressProxyConfig, EgressProxyError};
 
 use crate::error::{Result, SandboxError};
@@ -98,6 +98,32 @@ pub(crate) fn egress_proxy_error(error: EgressProxyError) -> SandboxError {
     }
 }
 
+/// Build the container-shape HTTP-proxy environment entries that point a sandbox
+/// workload at its host-side egress PEP.
+///
+/// The shape (`HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` plus the lowercase variants,
+/// the Nimbus `EGRESS_PROXY_URL_ENV` handle, and an empty `NO_PROXY` so nothing
+/// is exempt) is backend-agnostic, so both the container backend and the krun
+/// microVM backend call this one helper instead of forking the env shape. The
+/// caller is responsible for first scrubbing `EGRESS_RESERVED_ENV_KEYS` so a
+/// tenant-supplied proxy override can never survive into the launched workload.
+pub(crate) fn egress_proxy_env_entries(egress_proxy_url: &str) -> Vec<String> {
+    [
+        (EGRESS_PROXY_URL_ENV, egress_proxy_url),
+        ("HTTP_PROXY", egress_proxy_url),
+        ("http_proxy", egress_proxy_url),
+        ("HTTPS_PROXY", egress_proxy_url),
+        ("https_proxy", egress_proxy_url),
+        ("ALL_PROXY", egress_proxy_url),
+        ("all_proxy", egress_proxy_url),
+        ("NO_PROXY", ""),
+        ("no_proxy", ""),
+    ]
+    .into_iter()
+    .map(|(key, value)| format!("{key}={value}"))
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,5 +174,34 @@ mod tests {
             .reload(&id, CompiledEgressPolicy::deny_all())
             .unwrap();
         registry.stop(&id).unwrap();
+    }
+
+    #[test]
+    fn egress_proxy_env_entries_emit_container_shape_for_every_backend() {
+        let entries = egress_proxy_env_entries("http://10.89.0.1:15000");
+
+        for expected in [
+            "NIMBUS_SANDBOX_EGRESS_PROXY_URL=http://10.89.0.1:15000",
+            "HTTP_PROXY=http://10.89.0.1:15000",
+            "http_proxy=http://10.89.0.1:15000",
+            "HTTPS_PROXY=http://10.89.0.1:15000",
+            "https_proxy=http://10.89.0.1:15000",
+            "ALL_PROXY=http://10.89.0.1:15000",
+            "all_proxy=http://10.89.0.1:15000",
+            "NO_PROXY=",
+            "no_proxy=",
+        ] {
+            assert!(
+                entries.iter().any(|entry| entry == expected),
+                "expected shared proxy env entry {expected:?} in {entries:?}"
+            );
+        }
+        // NO_PROXY/no_proxy must stay empty so nothing is exempt from the PEP.
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry != "NO_PROXY=http://10.89.0.1:15000"),
+            "NO_PROXY must remain empty so no destination bypasses the PEP: {entries:?}"
+        );
     }
 }
