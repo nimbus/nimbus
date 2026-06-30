@@ -20,9 +20,9 @@ PLAN_ACTIVE="docs/private/plans/krun-microvm-egress-enforcement-plan.md"
 PLAN_ARCHIVED="docs/private/plans/archive/krun-microvm-egress-enforcement-plan.md"
 AGENTS_MD="AGENTS.md"
 PLANS_README="docs/private/plans/README.md"
-FORK_HEALTH="docs/private/operating/fork-health.md"
 PROOF_DIR="docs/private/plans/proof/krun-microvm-egress"
 PROOF_KME0="${PROOF_DIR}/kme0-baseline.md"
+PROOF_KME1="${PROOF_DIR}/kme1-spike.md"
 PROOF_KME5="${PROOF_DIR}/kme5-egress-proof.md"
 
 KRUN_START="crates/nimbus-sandbox/src/backends/krun/vm/start.rs"
@@ -98,34 +98,41 @@ else
   fail "baseline proof missing" "expected ${PROOF_KME0}"
 fi
 
-step 5 "nimbus-crun fork-health budget row exists"
-if [ -f "${FORK_HEALTH}" ] && grep -qi "nimbus-crun" "${FORK_HEALTH}"; then
-  pass "nimbus-crun budget row present in fork-health.md"
+step 5 "KME1 TSI+netns spike proof exists"
+if [ -f "${PROOF_KME1}" ]; then
+  pass "TSI+netns spike proof present (${PROOF_KME1})"
 else
-  fail "no nimbus-crun row in ${FORK_HEALTH}" "G6 budget row required before any nimbus-crun patch"
+  fail "KME1 spike proof missing" "expected ${PROOF_KME1}"
 fi
 
-step 6 "krun backend configures passt networking"
-if [ -d "${KRUN_DIR}" ] && grep -rqi "passt" "${KRUN_DIR}"; then
-  pass "passt networking wired in krun backend"
+step 6 "krun bundle wires a network namespace (TSI+netns design)"
+if [ -d "${KRUN_DIR}" ] \
+  && grep -rqE 'LinuxNamespaceType::Network|"type": ?"network"|create_persistent_network_namespace|setup_container_network' "${KRUN_DIR}" \
+  && ! grep -rq 'bundle_config_omits_network_namespace' "${KRUN_DIR}"; then
+  pass "krun bundle materializes a network namespace via the shared netns chain"
 else
-  fail "krun backend still TSI-only (no passt wiring)" "KME1/KME3"
+  fail "krun bundle does not yet wire a network namespace" "KME2 — reuse oci/network.rs netns chain; replace the omit-netns assertion"
 fi
 
-step 7 "krun backend binds the NEG PEP / EgressGateway (fourth enforcement point)"
-if [ -d "${KRUN_DIR}" ] && grep -rqE "EgressGateway|nimbus_proxy|EgressProxy|HTTP_PROXY" "${KRUN_DIR}"; then
-  pass "egress forwarding binding present in krun backend"
+step 7 "krun backend forwards through the NEG PEP (EgressProxy, container shape)"
+if [ -d "${KRUN_DIR}" ] && grep -rqE 'nimbus_proxy|EgressProxy|HTTP_PROXY' "${KRUN_DIR}"; then
+  pass "egress PEP forwarding binding present in krun backend"
 else
-  fail "krun backend does not forward through the NEG PEP" "KME2"
+  fail "krun backend does not forward through the NEG PEP" "KME3 — compile spec.egress -> EgressProxy + HTTP_PROXY env (not the in-process EgressGateway trait)"
 fi
 
-step 8 "unconditional fail-close replaced by a PEP-readiness gate"
-if [ -f "${KRUN_START}" ] && grep -q "packet-level egress enforcement path for libkrun TSI" "${KRUN_START}"; then
-  fail "krun execute-mode still unconditionally fail-closed" "KME3 must replace the guard with a readiness gate"
-elif [ -f "${KRUN_START}" ]; then
-  pass "unconditional TSI fail-close string is gone"
-else
+step 8 "execute fail-close replaced by a real readiness gate (two-sided)"
+KRUN_TESTS="${KRUN_DIR}/vm/tests.rs"
+if [ ! -f "${KRUN_START}" ]; then
   fail "krun start.rs missing" "${KRUN_START}"
+elif grep -q "packet-level egress enforcement path for libkrun TSI" "${KRUN_START}"; then
+  fail "krun execute-mode still unconditionally fail-closed" "KME4 must replace the guard with a readiness gate"
+elif ! grep -rqiE 'readiness|enforcement_ready|egress_ready' "${KRUN_DIR}"; then
+  fail "fail-close removed but no readiness gate present (fail-open risk)" "KME4 — gate execute on netns+PEP+policy-generation ready"
+elif [ ! -f "${KRUN_TESTS}" ] || ! grep -qiE 'not_ready|fail.?closed|denied|deny' "${KRUN_TESTS}"; then
+  fail "readiness gate has no fail-closed-when-not-ready negative test" "KME4 — assert execute denies when the gate is unsatisfied"
+else
+  pass "readiness gate present with a fail-closed not-ready negative test"
 fi
 
 step 9 "krun_linux_egress minicloud proof exists"
