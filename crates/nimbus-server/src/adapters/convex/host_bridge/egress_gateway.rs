@@ -1,138 +1,25 @@
-use nimbus_egress::{
-    EgressAuthorization as PolicyEgressAuthorization, EgressProtocol as PolicyEgressProtocol,
-    EgressRequest as PolicyEgressRequest,
-};
 use nimbus_runtime::{
     EgressAuthorization as RuntimeEgressAuthorization, EgressGateway,
-    EgressProtocol as RuntimeEgressProtocol, EgressRequest as RuntimeEgressRequest,
+    EgressRequest as RuntimeEgressRequest,
 };
-use nimbus_tenant::TenantIsolationDecision;
+
+// The readiness latch and the runtime<->PDP egress bridging live in
+// `nimbus-bridge` so every adapter host bridge (Convex, Cloud Functions, and
+// any future runtime adapter) resolves the identical verdict from one code
+// path — "three substrates, one decision" — instead of re-encoding the policy
+// translation per adapter. (audit M13.)
+pub(in crate::adapters::convex) use nimbus_bridge::egress::EgressGatewayEnforcementReadiness;
 
 use super::bridge::ConvexHostBridge;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::adapters::convex) struct EgressGatewayEnforcementReadiness {
-    decision_id: String,
-    ready: bool,
-    reason: Option<String>,
-}
-
-impl EgressGatewayEnforcementReadiness {
-    pub(in crate::adapters::convex) fn ready_for_decision(
-        decision: &TenantIsolationDecision,
-    ) -> Self {
-        Self {
-            decision_id: decision.id().as_str().to_owned(),
-            ready: true,
-            reason: None,
-        }
-    }
-
-    #[cfg(test)]
-    pub(in crate::adapters::convex) fn not_ready_for_decision(
-        decision: &TenantIsolationDecision,
-        reason: impl Into<String>,
-    ) -> Self {
-        Self {
-            decision_id: decision.id().as_str().to_owned(),
-            ready: false,
-            reason: Some(reason.into()),
-        }
-    }
-
-    fn ensure_ready(&self, decision: &TenantIsolationDecision) -> std::result::Result<(), String> {
-        if self.decision_id != decision.id().as_str() {
-            return Err(format!(
-                "egress gateway readiness belongs to decision {}, not active decision {}",
-                self.decision_id,
-                decision.id().as_str()
-            ));
-        }
-        if !self.ready {
-            return Err(format!(
-                "egress gateway enforcement state is not ready for decision {}{}",
-                self.decision_id,
-                self.reason
-                    .as_deref()
-                    .map(|reason| format!(": {reason}"))
-                    .unwrap_or_default()
-            ));
-        }
-        Ok(())
-    }
-}
-
 impl EgressGateway for ConvexHostBridge {
     fn authorize(&self, request: &RuntimeEgressRequest) -> RuntimeEgressAuthorization {
-        if let Err(reason) = self.egress_readiness().ensure_ready(self.decision()) {
-            return RuntimeEgressAuthorization::deny(reason);
-        }
-        if let Some(tenant_label) = request.tenant_label.as_deref()
-            && tenant_label != self.tenant_id().as_str()
-        {
-            return RuntimeEgressAuthorization::deny(format!(
-                "egress gateway request tenant `{tenant_label}` does not match admitted tenant `{}`",
-                self.tenant_id()
-            ));
-        }
-        if request.uses_custom_client {
-            return RuntimeEgressAuthorization::deny(
-                "custom fetch clients must route through the Nimbus egress PEP",
-            );
-        }
-
-        let Some(policy_request) = policy_request_from_runtime_request(request) else {
-            return RuntimeEgressAuthorization::deny(format!(
-                "egress gateway does not authorize {:?} traffic for {:?}",
-                request.protocol, request.substrate
-            ));
-        };
-        runtime_authorization_from_policy(
-            self.decision()
-                .network()
-                .authorize_sandbox_egress(&policy_request),
+        nimbus_bridge::egress::authorize_runtime_egress(
+            self.decision(),
+            self.egress_readiness(),
+            request,
         )
     }
-}
-
-fn policy_request_from_runtime_request(
-    request: &RuntimeEgressRequest,
-) -> Option<PolicyEgressRequest> {
-    let protocol = match request.protocol {
-        RuntimeEgressProtocol::Http => PolicyEgressProtocol::Http,
-        RuntimeEgressProtocol::Https => PolicyEgressProtocol::Https,
-        RuntimeEgressProtocol::Tcp => PolicyEgressProtocol::Tcp,
-        RuntimeEgressProtocol::Udp => return None,
-    };
-    let mut policy_request = PolicyEgressRequest::new(protocol, request.host.clone(), request.port);
-    if matches!(
-        request.protocol,
-        RuntimeEgressProtocol::Http | RuntimeEgressProtocol::Https
-    ) && let (Some(method), Some(path)) =
-        (request.method.as_deref(), request.path_and_query.as_deref())
-    {
-        policy_request = policy_request.with_http(method, path);
-    }
-    Some(policy_request)
-}
-
-fn runtime_authorization_from_policy(
-    authorization: PolicyEgressAuthorization,
-) -> RuntimeEgressAuthorization {
-    if !authorization.is_allowed() {
-        return RuntimeEgressAuthorization::deny(authorization.reason());
-    }
-    // Map the PDP verdict faithfully — including whether the matched rule needs
-    // PEP-mediated L7 (credential injection / DLP). The fail-closed for substrates
-    // with no proxy route (the isolate `fetch`) lives at the single runtime fetch
-    // hook, the consumption seam every adapter funnels through, so no host bridge
-    // re-encodes the rule. (audit H4.)
-    let mut runtime_authorization = RuntimeEgressAuthorization::allow(authorization.reason())
-        .requiring_proxy_enforcement(authorization.requires_proxy_enforcement());
-    if let Some(rule) = authorization.matched_rule() {
-        runtime_authorization = runtime_authorization.with_matched_rule(rule);
-    }
-    runtime_authorization
 }
 
 #[cfg(test)]
@@ -527,7 +414,7 @@ mod tests {
         }
     }
 
-    fn container_request(host: &str, path: &str) -> PolicyEgressRequest {
-        PolicyEgressRequest::new(PolicyEgressProtocol::Https, host, 443).with_http("GET", path)
+    fn container_request(host: &str, path: &str) -> nimbus_egress::EgressRequest {
+        nimbus_egress::EgressRequest::new(EgressProtocol::Https, host, 443).with_http("GET", path)
     }
 }

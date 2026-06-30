@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 base64.workspace = true
 nimbus-core = { path = "../nimbus-core" }
+nimbus-egress = { path = "../nimbus-egress" }
 nimbus-engine = { path = "../nimbus-engine" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-tenant = { path = "../nimbus-tenant" }

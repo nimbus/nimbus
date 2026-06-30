@@ -8,6 +8,7 @@ pub mod abi;
 pub mod admission;
 pub mod cancellation;
 pub mod capabilities;
+pub mod egress;
 pub mod host_calls;
 pub mod read_tracking;
 pub mod responses;
@@ -98,6 +99,16 @@ impl RuntimeHostScope {
 
     pub fn runtime_policy(&self) -> &Arc<RuntimePolicy> {
         &self.runtime_policy
+    }
+
+    /// The tenant isolation decision this scope was admitted under.
+    ///
+    /// Exposed so a host bridge can retain the decision (e.g. to implement
+    /// [`nimbus_runtime::EgressGateway`] via [`crate::egress`]) before the
+    /// scope is consumed by [`RuntimeHostContext::build`], which keeps only the
+    /// tenant id and storage access.
+    pub fn decision(&self) -> &TenantIsolationDecision {
+        &self.decision
     }
 }
 
