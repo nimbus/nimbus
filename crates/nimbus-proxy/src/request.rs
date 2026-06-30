@@ -13,7 +13,6 @@ pub(crate) struct ParsedProxyRequest {
     pub(crate) version: String,
     pub(crate) header_lines: Vec<String>,
     pub(crate) content_length: Option<usize>,
-    pub(crate) has_transfer_encoding: bool,
     pub(crate) body_offset: usize,
 }
 
@@ -41,6 +40,7 @@ pub(crate) fn parse_proxy_request(
     let headers = std::str::from_utf8(&buffer[..header_end]).map_err(|_| {
         HttpProxyResponse::bad_request("egress proxy request headers must be UTF-8")
     })?;
+    reject_bare_cr_or_lf(headers)?;
     let mut lines = headers.split("\r\n");
     let request_line = lines.next().unwrap_or_default();
     let mut parts = request_line.split_whitespace();
@@ -65,7 +65,6 @@ pub(crate) fn parse_proxy_request(
             version: version.to_owned(),
             header_lines: lines.map(ToOwned::to_owned).collect(),
             content_length: None,
-            has_transfer_encoding: false,
             body_offset,
         });
     }
@@ -112,8 +111,12 @@ pub(crate) fn parse_proxy_request(
         })
         .map(ToOwned::to_owned)
         .collect();
+    if has_header(&header_lines, "transfer-encoding") {
+        return Err(HttpProxyResponse::bad_request(
+            "egress proxy does not forward Transfer-Encoding requests; use Content-Length",
+        ));
+    }
     let content_length = content_length(&header_lines)?;
-    let has_transfer_encoding = has_header(&header_lines, "transfer-encoding");
 
     Ok(ParsedProxyRequest {
         egress_request,
@@ -124,7 +127,6 @@ pub(crate) fn parse_proxy_request(
         version: version.to_owned(),
         header_lines,
         content_length,
-        has_transfer_encoding,
         body_offset,
     })
 }
@@ -235,6 +237,31 @@ pub(crate) fn find_header_end(buffer: &[u8]) -> Option<usize> {
     buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
+/// Reject a header block containing a bare CR or bare LF. Within `buffer[..header_end]`
+/// every header line is `\r\n`-terminated, so a `\r` not followed by `\n` (or a `\n`
+/// not preceded by `\r`) is an embedded line that survives `split("\r\n")` inside one
+/// header value and smuggles a forbidden header (e.g. `Authorization`) past the
+/// per-line credential guard to any LF-lenient upstream. (audit H2.)
+fn reject_bare_cr_or_lf(headers: &str) -> std::result::Result<(), HttpProxyResponse> {
+    let bytes = headers.as_bytes();
+    for (index, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b'\r' if bytes.get(index + 1) != Some(&b'\n') => {
+                return Err(HttpProxyResponse::bad_request(
+                    "egress proxy request header block contains a bare CR",
+                ));
+            }
+            b'\n' if index == 0 || bytes[index - 1] != b'\r' => {
+                return Err(HttpProxyResponse::bad_request(
+                    "egress proxy request header block contains a bare LF",
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn canonicalize_proxy_host(host: &str) -> std::result::Result<String, HttpProxyResponse> {
     let trimmed = host.trim();
     if trimmed.is_empty() {
@@ -252,5 +279,20 @@ fn canonicalize_proxy_host(host: &str) -> std::result::Result<String, HttpProxyR
             "egress proxy canonical authority rejected ambiguous host",
         ));
     }
-    Ok(trimmed.trim_end_matches('.').to_ascii_lowercase())
+    let canonical = trimmed.trim_end_matches('.').to_ascii_lowercase();
+    // M7: CONNECT authorities skip the WHATWG IPv4 normalization that `Url::parse`
+    // gives ForwardHttp targets, so hex/octal/dword IPv4 obfuscation
+    // (`0x7f000001`, `2130706433`, `0177.0.0.1`) would otherwise reach the resolver
+    // unrecognized. A host that is purely IPv4-numeric-shaped must already be
+    // canonical dotted-decimal; reject every other numeric form. (audit M7.)
+    let ipv4_shaped = canonical
+        .chars()
+        .all(|c| c.is_ascii_hexdigit() || c == '.' || c == 'x' || c == 'X')
+        && canonical.chars().any(|c| c.is_ascii_digit());
+    if ipv4_shaped && canonical.parse::<std::net::Ipv4Addr>().is_err() {
+        return Err(HttpProxyResponse::bad_request(
+            "egress proxy rejected a non-canonical numeric authority",
+        ));
+    }
+    Ok(canonical)
 }

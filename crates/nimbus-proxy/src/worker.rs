@@ -412,7 +412,7 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
     if matches!(parsed.mode, ProxyRequestMode::ForwardHttp { .. })
         && prepared.inspected_body.is_none()
         && parsed.content_length.is_none()
-        && (parsed.has_transfer_encoding || buffer.len() > parsed.body_offset)
+        && buffer.len() > parsed.body_offset
     {
         return write_http_response(
             &mut client,

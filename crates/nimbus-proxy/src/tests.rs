@@ -52,6 +52,100 @@ fn egress_proxy_allows_matching_http_request() {
 }
 
 #[test]
+fn egress_proxy_rejects_transfer_encoding_request() {
+    // CL.TE: a request carrying both Transfer-Encoding and Content-Length lets the
+    // proxy's substring DLP read the CL bytes while a downstream dechunks them — a
+    // DLP bypass / request-smuggling vector. The proxy forwards only CL-framed
+    // bodies, so any Transfer-Encoding is rejected outright, before dial.
+    let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    let proxy = start_test_proxy(allow_policy([EgressRule::new(
+        "allowed",
+        EgressProtocol::Http,
+        "allowed.test",
+        upstream.addr.port(),
+    )
+    .with_methods(["POST"])
+    .with_path_prefixes(["/ok"])
+    .allow_internal_ips(true)]));
+
+    let response = proxy_request(
+        proxy.local_addr(),
+        format!(
+            "POST http://allowed.test:{}/ok HTTP/1.1\r\nHost: allowed.test\r\nTransfer-Encoding: chunked\r\nContent-Length: 11\r\n\r\n3\r\nsec\r\n3\r\nret\r\n0\r\n\r\n",
+            upstream.addr.port()
+        ),
+    );
+
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request"),
+        "Transfer-Encoding requests must be rejected, got: {response}"
+    );
+    assert!(
+        upstream
+            .request
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "a rejected TE+CL request must never reach upstream"
+    );
+}
+
+#[test]
+fn egress_proxy_rejects_bare_lf_header_smuggling() {
+    // A bare LF inside a header value survives `split("\r\n")` and re-emits an
+    // embedded `Authorization` the per-line credential guard never sees — a
+    // credential-control bypass. Reject any bare CR/LF in the header block.
+    let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    let proxy = start_test_proxy(allow_policy([EgressRule::new(
+        "allowed",
+        EgressProtocol::Http,
+        "allowed.test",
+        upstream.addr.port(),
+    )
+    .with_methods(["GET"])
+    .with_path_prefixes(["/ok"])
+    .allow_internal_ips(true)]));
+
+    let response = proxy_request(
+        proxy.local_addr(),
+        format!(
+            "GET http://allowed.test:{}/ok HTTP/1.1\r\nHost: allowed.test\r\nX-Smuggle: a\nAuthorization: Bearer stolen\r\n\r\n",
+            upstream.addr.port()
+        ),
+    );
+
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request"),
+        "bare-LF header smuggling must be rejected, got: {response}"
+    );
+    assert!(
+        upstream
+            .request
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "a smuggled Authorization must never reach upstream"
+    );
+}
+
+#[test]
+fn egress_proxy_rejects_numeric_ip_connect_authority() {
+    // CONNECT authorities skip the WHATWG IPv4 normalization ForwardHttp targets
+    // get from `Url::parse`, so dword/hex/octal obfuscation must be rejected rather
+    // than handed to the resolver. `2130706433` == `0x7f000001` == 127.0.0.1.
+    let proxy = start_test_proxy(CompiledEgressPolicy::deny_all());
+
+    for authority in ["2130706433:443", "0x7f000001:443", "0177.0.0.1:443"] {
+        let response = proxy_request(
+            proxy.local_addr(),
+            format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n"),
+        );
+        assert!(
+            response.starts_with("HTTP/1.1 400 Bad Request"),
+            "numeric-IP CONNECT authority {authority} must be rejected, got: {response}"
+        );
+    }
+}
+
+#[test]
 fn egress_proxy_forwards_full_request_body_larger_than_header_buffer() {
     // The proxy reads headers in 1024-byte chunks and stops at the header
     // terminator, so only a small body prefix is co-buffered. A 16 KiB body
@@ -910,7 +1004,7 @@ fn egress_proxy_rejects_unbounded_http_body_before_dial() {
     let response = proxy_request(
         proxy.local_addr(),
         format!(
-            "POST http://allowed.test:{}/upload HTTP/1.1\r\nHost: allowed.test\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+            "POST http://allowed.test:{}/upload HTTP/1.1\r\nHost: allowed.test\r\n\r\nbody-without-length",
             upstream.addr.port()
         ),
     );
@@ -918,7 +1012,7 @@ fn egress_proxy_rejects_unbounded_http_body_before_dial() {
     assert!(
         response.starts_with("HTTP/1.1 400 Bad Request")
             && response.contains("request bodies require Content-Length"),
-        "unbounded request bodies should fail closed before dial, got: {response}"
+        "unbounded request bodies (no Content-Length) should fail closed before dial, got: {response}"
     );
     assert!(
         upstream
