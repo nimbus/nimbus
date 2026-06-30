@@ -1263,6 +1263,47 @@ mod tests {
     }
 
     #[test]
+    fn deny_egress_network_omits_default_route_so_offsubnet_dns_is_route_denied() {
+        // DNS-containment invariant. A deny-by-default sandbox network carries
+        // `no_default_route`, so the netns has a route only to its own bridge
+        // subnet and none to anything off-subnet. A guest's direct UDP/TCP :53
+        // to an arbitrary external resolver (e.g. 8.8.8.8) therefore has no route
+        // and is denied at the kernel before any packet leaves — DNS-exfil to an
+        // attacker-controlled resolver cannot leave the namespace. Name
+        // resolution the workload legitimately needs flows through the HTTP_PROXY
+        // (the host-side PEP resolves), not the guest's own stub resolver.
+        let config = OciNetworkConfig {
+            direct_egress: OciNetworkDirectEgress::Deny,
+            ..OciNetworkConfig::default()
+        };
+        let request = build_netavark_request(
+            &config,
+            &crate::instance::SandboxId::new("dns-deny-01"),
+            "db",
+            "db",
+            &[],
+            &[],
+            false,
+        )
+        .expect("request should build");
+
+        assert_eq!(
+            request.network_info["nimbus"].options[NETAVARK_OPTION_NO_DEFAULT_ROUTE], "true",
+            "a deny-by-default network must omit the container default route so off-subnet :53 has no route"
+        );
+        assert!(
+            request.network_info["nimbus"]
+                .network_dns_servers
+                .is_empty(),
+            "a deny-by-default network must not advertise external DNS servers the guest could exfil through"
+        );
+        assert!(
+            request.dns_servers.is_empty(),
+            "a deny-by-default network must not hand the guest external resolvers"
+        );
+    }
+
+    #[test]
     fn netavark_port_bindings_are_omitted_when_machine_forwarding_is_enabled() {
         let bindings = vec![SandboxPortBinding::tcp("http", 18080, 8080)];
         let forwarder = OciMachinePortForwarderConfig::gvproxy_default();
