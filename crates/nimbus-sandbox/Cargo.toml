@@ -24,6 +24,7 @@ sha2.workspace = true
 tar = "0.4"
 thiserror.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 ulid.workspace = true
 url.workspace = true
 zstd = "0.13"

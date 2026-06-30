@@ -154,8 +154,26 @@ impl KrunSandboxBackend {
         if let Err(error) = self.launch_into_network(manifest, clear_last_exit_code) {
             // Fail-closed: never leave a namespace or a running VMM whose egress
             // is not enforced. Tear the VMM and the netns back down on any error.
-            let _ = run_status_best_effort(&manifest.conmon_launch.delete_command);
-            let _ = self.release_network_artifacts(manifest);
+            // The original launch `error` stays the returned error (priority
+            // unchanged); teardown failures are security-relevant (a leaked netns
+            // or running VMM whose egress would no longer be gated), so they are
+            // surfaced at warn rather than discarded silently.
+            if let Err(teardown_error) =
+                run_status_best_effort(&manifest.conmon_launch.delete_command)
+            {
+                tracing::warn!(
+                    sandbox_id = %manifest.handle.id,
+                    error = %teardown_error,
+                    "failed to delete krun VMM during fail-closed launch teardown"
+                );
+            }
+            if let Err(teardown_error) = self.release_network_artifacts(manifest) {
+                tracing::warn!(
+                    sandbox_id = %manifest.handle.id,
+                    error = %teardown_error,
+                    "failed to release krun network artifacts during fail-closed launch teardown"
+                );
+            }
             return Err(error);
         }
         Ok(())
@@ -218,18 +236,25 @@ impl KrunSandboxBackend {
 
     /// Fail-closed readiness gate evaluated immediately before the VMM launches.
     ///
-    /// Permits the launch only when ALL hold: (1) the host platform supports
-    /// krun egress enforcement (Linux-KVM only), (2) the sandbox's
-    /// deny-by-default network namespace is installed, and (3) the per-sandbox
-    /// egress PEP is running AND ready (it reports an active policy generation).
-    /// Any missing precondition, any lookup error, or a not-ready PEP returns
-    /// `Err`, which the caller treats as deny: the VMM is never spawned and the
-    /// half-built namespace is torn down. The gate never degrades to allow.
+    /// Permits the launch only when ALL hold: (1) the binary is built for a
+    /// Linux target (`ensure_linux_host`, a compile-time `cfg!(target_os =
+    /// "linux")` check — it does NOT probe `/dev/kvm`; actual KVM availability
+    /// is enforced downstream by crun/libkrun, which fail closed at VMM spawn
+    /// when `/dev/kvm` is absent, so a Linux host without KVM never reaches an
+    /// enforced-egress-bypassing state), (2) the sandbox's deny-by-default
+    /// network namespace is installed, and (3) the per-sandbox egress PEP is
+    /// running AND ready (it reports an active policy generation). Any missing
+    /// precondition, any lookup error, or a not-ready PEP returns `Err`, which
+    /// the caller treats as deny: the VMM is never spawned and the half-built
+    /// namespace is torn down. The gate never degrades to allow.
     pub(super) fn ensure_execute_egress_enforced(
         &self,
         manifest: &KrunSandboxManifest,
     ) -> Result<()> {
-        // (3) Platform: krun execute is Linux-KVM only; deny everywhere else.
+        // (1) Platform: the krun execute path is a Linux build target. This is a
+        // compile-time cfg check, not a /dev/kvm probe; a Linux host without KVM
+        // still fails closed because crun/libkrun cannot spawn the VMM without
+        // /dev/kvm. Deny on every non-Linux build.
         ensure_linux_host("krun")?;
         self.ensure_execute_egress_preconditions(
             &manifest.handle.id,
@@ -248,6 +273,18 @@ impl KrunSandboxBackend {
         netns_path: &Path,
     ) -> Result<()> {
         // (1) The deny-by-default network namespace must already be installed.
+        //
+        // `netns_path.exists()` is a sufficient proxy for "the deny chain is
+        // installed" because `configure_network` is atomic with respect to this
+        // file: it first creates the persistent netns, then runs the netavark
+        // setup (no-default-route deny chain + inbound published-port DNAT), and
+        // on ANY netavark failure it removes the netns again
+        // (`remove_persistent_network_namespace`). So the netns path only
+        // persists once the full deny-chain setup has succeeded; a half-built,
+        // open-egress netns never survives to be observed here. Do NOT weaken
+        // `configure_network` to "create the netns, then configure it" without
+        // also gating on a netavark status artifact here — otherwise an
+        // unconfigured (open-egress) netns could satisfy this check.
         if !netns_path.exists() {
             return Err(SandboxError::OperationFailed {
                 message: format!(
