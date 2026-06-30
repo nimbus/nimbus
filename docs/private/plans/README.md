@@ -411,27 +411,25 @@ closed scope, success criteria, and proof obligations.
     CB9 = standard-`ws`/socket.io zero-config DX is the Vercel-parity surface,
     CB10 = Active-CPU-vs-resident metering). LOCAL-ONLY plan: lives under
     untracked `docs/private/`, never committed.
-- `docs/private/plans/crate-architecture-modularity-plan.md`
-  - **CAM0..CAM7 (active)** — pre-launch Rust crate architecture cleanup from
-    the 2026-06-30 full-crate audit, revalidated against clean `main` at
-    `54eeb9c57` after the NOS/KME/dependency PRs. Removes the
-    `nimbus-cloud-functions` -> `nimbus-firebase` adapter dependency by lifting
-    shared Firestore semantics to a provider-family seam; narrows accidental
-    public surfaces in `nimbus` and `nimbus-server`; decomposes overloaded
-    `nimbus-storage` traits and Postgres helper roots without collapsing the
-    landed `nimbus-object-storage` module tree; splits OCI/container sandbox
-    networking/runtime roots by concept-owned seams while preserving KME
-    netns/PEP routing; moves runtime bootstrap JavaScript into named assets; and
-    preserves the `nimbus-core` zero-I/O plus `nimbus-runtime`
-    zero-workspace-dep invariants. `/goal` control-plane verifier is planned at
-    `bash scripts/verify-crate-architecture-modularity.sh` (10 conditions) and
-    is created by CAM0. Until CAM0 lands, a missing verifier is expected, not a
-    pass. CAM0 also records the dedicated worktree
-    `/Users/jack/.codex/worktrees/crate-architecture-modularity/nimbus`, the
-    current NOS/KME verifier baselines, and `git worktree list --porcelain`.
-    Implementation must happen on branch `codex/crate-architecture-modularity`
-    in that dedicated worktree. LOCAL-ONLY plan: lives under untracked
-    `docs/private/`, never committed.
+- `docs/private/plans/crate-seam-deepening-plan.md`
+  - **CAS0..CAS8 (active)** — post-PR #68 Rust crate seam deepening from the
+    2026-06-30 full-crate audit and owner steering corrections. Must narrow
+    `nimbus-server` public exports; move auth identity out of `nimbus-runtime`
+    while preserving runtime zero workspace dependencies; create
+    `nimbus-workloads` as the workload-control seam so `nimbus-services` no
+    longer depends on `nimbus-node`; move machine API protocol versioning,
+    paths, DTOs, and validation into `nimbus-machine` first, proposing a
+    separate `nimbus-machine-api` only if dependency proof shows heavy transport
+    deps would otherwise enter `nimbus-machine`; introduce/use `nimbus-cli` as
+    the command/application library while `nimbus-bin` stays the tiny executable
+    launcher; and refactor concept-heavy modules only by ownership. Gated on
+    `bash scripts/verify-crate-seam-deepening.sh` (12 conditions, created by
+    CAS0). Until CAS0 lands, a missing verifier is expected, not a pass.
+    Implementation must happen in dedicated worktree
+    `/Users/jack/.codex/worktrees/crate-seam-deepening/nimbus` on branch
+    `codex/crate-seam-deepening`, with PR closeout required. The completed
+    predecessor is `docs/private/plans/crate-architecture-modularity-plan.md`
+    (CAM0..CAM7, PR #68).
 - `docs/private/plans/nimbus-kv-foundation-plan.md`
   - **NKV0 (Foundation)**, first phase of the `nimbus-kv` program: a monolithic,
     natively Redis/Valkey-compatible (RESP2/RESP3) data-structure store that
