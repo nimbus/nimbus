@@ -648,7 +648,7 @@ mod tests {
     }
 
     #[test]
-    fn bundle_config_omits_network_namespace_without_a_path() {
+    fn bundle_config_has_no_netns_entry_when_path_absent() {
         let spec = sample_spec();
         let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect("bundle config should build");
