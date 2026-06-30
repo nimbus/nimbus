@@ -142,13 +142,12 @@ fn release_execution_artifacts_stops_running_egress_proxy() {
     backend
         .ensure_egress_proxy_running(&manifest)
         .expect("egress proxy should start on loopback test subnet");
-    assert_eq!(
+    assert!(
         backend
             .egress_proxies
-            .lock()
-            .expect("lock should hold")
-            .len(),
-        1
+            .contains(&manifest.handle.id)
+            .expect("registry lock should hold"),
+        "egress proxy should be registered after ensure"
     );
 
     backend
@@ -156,11 +155,10 @@ fn release_execution_artifacts_stops_running_egress_proxy() {
         .expect("cleanup should stop proxy and tolerate absent runtime artifacts");
 
     assert!(
-        backend
+        !backend
             .egress_proxies
-            .lock()
-            .expect("lock should hold")
-            .is_empty(),
+            .contains(&manifest.handle.id)
+            .expect("registry lock should hold"),
         "cleanup should drop the live egress proxy handle"
     );
 }

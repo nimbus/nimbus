@@ -28,6 +28,7 @@ use crate::backends::oci::builder::OciDockerfileBuilder;
 use crate::backends::oci::conmon::{
     OciConmonConfig, OciConmonLaunchPlan, OciConmonLayout, build_launch_plan,
 };
+use crate::backends::oci::egress::EgressProxyRegistry;
 use crate::backends::oci::materializer::{
     MaterializedImageRootfs, OciImageMaterializer, PreparedMaterializedImageLaunch,
 };
@@ -48,7 +49,6 @@ use crate::spec::{
     resolve_process_without_image_defaults,
 };
 use nimbus_egress::EgressPolicy;
-use nimbus_proxy::{EgressProxy, EgressProxyConfig, EgressProxyError};
 
 const DEFAULT_RUNTIME_PATH: &str = "crun";
 const DEFAULT_CONMON_PATH: &str = "conmon";
@@ -139,7 +139,7 @@ impl Default for ContainerSandboxBackendConfig {
 #[derive(Clone)]
 pub struct ContainerSandboxBackend {
     config: ContainerSandboxBackendConfig,
-    egress_proxies: Arc<Mutex<HashMap<SandboxId, EgressProxy>>>,
+    egress_proxies: EgressProxyRegistry,
     machine_port_proxies: Arc<Mutex<HashMap<SandboxId, Vec<MachinePortProxy>>>>,
 }
 
@@ -153,7 +153,7 @@ impl ContainerSandboxBackend {
     pub fn new(config: ContainerSandboxBackendConfig) -> Self {
         Self {
             config,
-            egress_proxies: Arc::new(Mutex::new(HashMap::new())),
+            egress_proxies: EgressProxyRegistry::new(),
             machine_port_proxies: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -174,19 +174,7 @@ impl ContainerSandboxBackend {
         }
         manifest.spec.egress = compiled.policy().clone();
         self.ensure_egress_proxy_running(&manifest)?;
-        let proxies = self
-            .egress_proxies
-            .lock()
-            .map_err(|_| SandboxError::OperationFailed {
-                message: "container egress proxy registry lock is poisoned".to_owned(),
-            })?;
-        let proxy = proxies
-            .get(id)
-            .ok_or_else(|| SandboxError::OperationFailed {
-                message: format!("container egress proxy for sandbox {id} is not running"),
-            })?;
-        proxy.reload_policy(compiled).map_err(egress_proxy_error)?;
-        drop(proxies);
+        self.egress_proxies.reload(id, compiled)?;
         self.write_manifest(&manifest)
     }
 
@@ -855,25 +843,9 @@ impl ContainerSandboxBackend {
                 ),
             });
         };
-        let mut proxies =
-            self.egress_proxies
-                .lock()
-                .map_err(|_| SandboxError::OperationFailed {
-                    message: "container egress proxy registry lock is poisoned".to_owned(),
-                })?;
-        if proxies.contains_key(&manifest.handle.id) {
-            return Ok(());
-        }
-        let policy = manifest
-            .spec
-            .egress
-            .compile()
-            .map_err(|message| SandboxError::InvalidSpec { message })?;
         let bind_addr = egress_proxy.bind_addr()?;
-        let proxy = EgressProxy::start(EgressProxyConfig::new(policy).with_bind_addr(bind_addr))
-            .map_err(egress_proxy_error)?;
-        proxies.insert(manifest.handle.id.clone(), proxy);
-        Ok(())
+        self.egress_proxies
+            .ensure_running(&manifest.handle.id, &manifest.spec.egress, bind_addr)
     }
 
     fn ensure_machine_port_proxies_running(
@@ -943,14 +915,7 @@ impl ContainerSandboxBackend {
     }
 
     fn stop_egress_proxy(&self, id: &SandboxId) -> Result<()> {
-        let mut proxies =
-            self.egress_proxies
-                .lock()
-                .map_err(|_| SandboxError::OperationFailed {
-                    message: "container egress proxy registry lock is poisoned".to_owned(),
-                })?;
-        proxies.remove(id);
-        Ok(())
+        self.egress_proxies.stop(id)
     }
 
     fn stop_machine_port_proxies(&self, id: &SandboxId) -> Result<()> {
@@ -1140,12 +1105,6 @@ fn tenant_volume_mount_options(read_only: bool) -> Vec<String> {
         "nosuid".to_owned(),
         "nodev".to_owned(),
     ]
-}
-
-fn egress_proxy_error(error: EgressProxyError) -> SandboxError {
-    SandboxError::OperationFailed {
-        message: error.to_string(),
-    }
 }
 
 impl SandboxBackend for ContainerSandboxBackend {
