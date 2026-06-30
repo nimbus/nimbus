@@ -8,6 +8,7 @@ use super::{
     HostLifecycleStatus, HostLifecycleStatusReason, LocalEnforcementBinding, NodeIdentity,
     SystemdDbusClient, SystemdTransientUnitBackend, TenantSystemEvidenceProjection,
     TenantWorkloadDeletionState, TenantWorkloadId, TenantWorkloadSpec, TenantWorkloadStatus,
+    ensure_status_matches_projection,
 };
 
 pub trait StatusEvidenceWriter: Send + Sync + 'static {
@@ -34,7 +35,7 @@ impl<'a> StatusEvidenceWrite<'a> {
         projection: &'a TenantSystemEvidenceProjection,
         status: &'a TenantWorkloadStatus,
     ) -> Result<Self> {
-        projection.ensure_status_matches(status)?;
+        ensure_status_matches_projection(projection, status)?;
         Ok(Self { projection, status })
     }
 
@@ -602,7 +603,7 @@ mod tests {
             write: StatusEvidenceWrite<'a>,
         ) -> HostLifecycleFuture<'a, ()> {
             Box::pin(async move {
-                write.projection().ensure_status_matches(write.status())?;
+                ensure_status_matches_projection(write.projection(), write.status())?;
                 self.writes
                     .lock()
                     .expect("recording writer lock should not be poisoned")

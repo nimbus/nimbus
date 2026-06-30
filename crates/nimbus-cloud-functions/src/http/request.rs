@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use http::{HeaderMap, Method, header};
+use nimbus_core::InvocationAuth;
 use nimbus_core::{Error, Result};
-use nimbus_runtime::InvocationAuth;
 use serde::Serialize;
 use serde_json::Map;
 use serde_json::Value;

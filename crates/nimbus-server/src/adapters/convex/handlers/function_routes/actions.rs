@@ -1,5 +1,6 @@
 use super::*;
 use crate::adapters::convex::execution::RuntimeInvocationContext;
+use crate::adapters::convex::runtime_auth_payload;
 
 /// Executes a Convex-style action backed by an existing Nimbus operation.
 pub(crate) async fn action(
@@ -43,7 +44,7 @@ pub(crate) async fn action(
                     args: request.args,
                     page_size: None,
                     cursor: None,
-                    auth: auth.clone(),
+                    auth: runtime_auth_payload(&auth),
                     services: context.runtime_services(),
                 },
                 request_cancellation.token(),

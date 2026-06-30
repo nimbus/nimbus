@@ -15,10 +15,10 @@ workspace = true
 [dependencies]
 futures.workspace = true
 nimbus-core = { path = "../nimbus-core" }
-nimbus-node = { path = "../nimbus-node" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-tenant = { path = "../nimbus-tenant" }
+nimbus-workloads = { path = "../nimbus-workloads" }
 sha2.workspace = true
 tokio.workspace = true
 ulid.workspace = true

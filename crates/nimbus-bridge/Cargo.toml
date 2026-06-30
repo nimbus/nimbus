@@ -16,9 +16,9 @@ workspace = true
 base64.workspace = true
 nimbus-core = { path = "../nimbus-core" }
 nimbus-engine = { path = "../nimbus-engine" }
-nimbus-node = { path = "../nimbus-node" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-tenant = { path = "../nimbus-tenant" }
+nimbus-workloads = { path = "../nimbus-workloads" }
 serde.workspace = true
 serde_json.workspace = true
 time = { workspace = true, features = ["formatting"] }

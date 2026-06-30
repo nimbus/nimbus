@@ -6,16 +6,17 @@ use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
 use serde_json::{Value, json};
 
 use nimbus_node::{
-    HostLifecycleBackendKind, HostLifecycleStatusReason, LocalEnforcementBinding,
-    NodeStatusAuthorizer, StatusEvidenceWrite, StatusEvidenceWriter, SystemdTransientCapabilities,
-    SystemdUnitName, TenantNodeObservationIds, TenantWorkloadDiagnostics,
-    TenantWorkloadLifecycleEvidence, TenantWorkloadPhase, TenantWorkloadStatusPatch,
+    HostLifecycleBackendKind, HostLifecycleStatusReason, NodeStatusAuthorizer, StatusEvidenceWrite,
+    StatusEvidenceWriter, SystemdTransientCapabilities, SystemdUnitName, TenantNodeObservationIds,
+    TenantWorkloadDiagnostics, TenantWorkloadLifecycleEvidence, TenantWorkloadPhase,
+    TenantWorkloadStatusPatch,
 };
 use nimbus_tenant::{
     RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode, TenantIsolationPolicyInput,
     TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision, WorkloadAttributes,
     WorkloadLocation,
 };
+use nimbus_workloads::LocalEnforcementBinding;
 
 use super::*;
 

@@ -2,8 +2,7 @@ use std::error::Error as StdError;
 use std::fmt;
 
 use futures::future::BoxFuture;
-use nimbus_core::PrincipalContext;
-use nimbus_runtime::InvocationAuth;
+use nimbus_core::{InvocationAuth, PrincipalContext};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
@@ -162,7 +161,7 @@ pub fn parse_bearer_value(value: &str) -> Result<&str, ApplicationAuthError> {
 #[cfg(test)]
 mod tests {
     use futures::FutureExt;
-    use nimbus_runtime::{RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind};
+    use nimbus_core::{RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind};
     use serde_json::json;
 
     use super::*;

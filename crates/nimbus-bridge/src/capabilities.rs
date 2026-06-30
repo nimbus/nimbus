@@ -5,9 +5,9 @@ use nimbus_core::{
     Result, TableName,
 };
 use nimbus_engine::{Engine, MutationExecutionUnit};
-use nimbus_node::LocalEnforcementBinding;
 use nimbus_runtime::{HostCallCancellation, NimbusRuntimeError};
 use nimbus_tenant::TenantServiceAccessDecision;
+use nimbus_workloads::LocalEnforcementBinding;
 use serde_json::{Map, Value};
 
 use nimbus_tenant::TenantStorageAccessDecision;

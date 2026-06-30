@@ -2,7 +2,7 @@ use super::*;
 use crate::manager::session_channels::{
     SessionChannelAuditKind, SessionChannelHalfState, SessionChannelKey,
 };
-use crate::{
+use nimbus_workloads::{
     DesiredWorkload, WorkloadChannelDescriptor, WorkloadExecutionStatus, WorkloadExecutor,
 };
 

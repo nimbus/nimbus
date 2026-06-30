@@ -1,9 +1,9 @@
 use nimbus_core::Error;
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_tenant::{TenantIsolationDecision, TenantVolumePolicyDecision};
+use nimbus_workloads::LocalEnforcementBinding;
 
 use crate::ServiceBackend;
-use nimbus_node::LocalEnforcementBinding;
 
 use super::ServiceManager;
 use super::types::{TenantServiceKey, sandbox_backend_error};

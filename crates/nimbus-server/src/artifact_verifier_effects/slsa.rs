@@ -663,6 +663,18 @@ mod tests {
     }
 
     #[test]
+    fn slsa_backend_rejects_zero_timeout() {
+        let error = SlsaVerifierBackend::new()
+            .with_timeout(Duration::ZERO)
+            .expect_err("zero verifier timeout should be rejected");
+
+        assert!(
+            error.to_string().contains("greater than 0"),
+            "zero-timeout error should be actionable: {error}"
+        );
+    }
+
+    #[test]
     fn slsa_backend_rejects_file_artifact_without_immutable_subject_or_provenance_path() {
         let runner = Arc::new(StaticCommandRunner::success(statement(
             BUILDER_ID,

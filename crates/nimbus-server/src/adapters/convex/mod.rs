@@ -11,15 +11,15 @@ pub use nimbus_convex::ConvexRegistry;
 pub(crate) use nimbus_convex::*;
 pub use nimbus_convex::{ConvexTenancyConfig, PrincipalTeamRegistry, SiloTeamRegistry, TeamId};
 use nimbus_core::{
-    Cursor, DocumentId, Error, Filter, FilterOp, Mutation, OrderBy, PaginatedQuery, Query,
-    ScheduleRequest, TableName, TenantId, Timestamp,
+    Cursor, DocumentId, Error, Filter, FilterOp, InvocationAuth, Mutation, OrderBy, PaginatedQuery,
+    Query, ScheduleRequest, TableName, TenantId, Timestamp,
 };
 use nimbus_engine::SubscriptionUpdate;
 #[cfg(test)]
 use nimbus_runtime::HostCallOperation;
 use nimbus_runtime::{
-    HostBridge, HostBridgeFuture, HostCallCancellation, HostCallRequest, InvocationAuth,
-    InvocationKind, InvocationRequest, NimbusRuntimeError, RuntimeBundle,
+    HostBridge, HostBridgeFuture, HostCallCancellation, HostCallRequest, InvocationKind,
+    InvocationRequest, NimbusRuntimeError, RuntimeBundle,
 };
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -33,6 +33,12 @@ mod subscriptions;
 mod tests;
 
 pub(in crate::adapters::convex) use self::execution::ConvexHttpRouteRequest;
+
+pub(in crate::adapters::convex) fn runtime_auth_payload(
+    auth: &Option<InvocationAuth>,
+) -> Option<Value> {
+    auth.as_ref().map(InvocationAuth::to_runtime_payload)
+}
 pub(crate) use self::handlers::{
     action, cancel_scheduled_job, http_route, http_route_root, mutation, paginated_query, query,
     schedule_after, schedule_at, ws,

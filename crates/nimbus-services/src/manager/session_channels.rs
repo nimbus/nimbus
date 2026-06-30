@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use nimbus_core::{Error, TenantId};
+use nimbus_workloads::{WorkloadChannelDescriptor, WorkloadExecutor};
 
-use crate::{SessionResource, SessionTargetSnapshot, WorkloadChannelDescriptor, WorkloadExecutor};
+use crate::{SessionResource, SessionTargetSnapshot};
 
 use super::clock::now_millis;
 use super::types::ServiceManagerState;

@@ -5,9 +5,9 @@ use nimbus_bridge::{
     RuntimeHostBootstrapRequest, build_runtime_host_bootstrap,
     commit_runtime_mutation_execution_unit,
 };
-use nimbus_node::LocalEnforcementBinding;
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::{TenantIsolationDecision, TenantStorageAccessDecision};
+use nimbus_workloads::LocalEnforcementBinding;
 
 use super::egress_gateway::EgressGatewayEnforcementReadiness;
 

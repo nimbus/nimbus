@@ -1,0 +1,19 @@
+[package]
+name = "nimbus-workloads"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+nimbus-core = { path = "../nimbus-core" }
+nimbus-tenant = { path = "../nimbus-tenant" }
+serde.workspace = true
+sha2.workspace = true

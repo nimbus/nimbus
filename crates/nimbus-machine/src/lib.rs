@@ -4,6 +4,8 @@
 //! and by the server control plane as machine lifecycle endpoints move out of
 //! `nimbus-bin`.
 
+pub mod api;
+
 use std::env;
 use std::ffi::OsString;
 use std::fs;

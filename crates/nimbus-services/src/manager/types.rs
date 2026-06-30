@@ -2,11 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use nimbus_core::{Error, TenantId};
 use nimbus_sandbox::{SandboxError, SandboxHandle};
+use nimbus_workloads::InMemoryDesiredWorkloadStore;
 
 use crate::{SandboxResource, ServiceDefinition, SessionResource};
 
 use super::session_channels::{SessionChannelKey, SessionChannelState};
-use crate::InMemoryDesiredWorkloadStore;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct TenantServiceKey {

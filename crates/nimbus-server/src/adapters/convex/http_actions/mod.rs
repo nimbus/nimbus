@@ -8,8 +8,9 @@ use axum::body::Bytes;
 use axum::extract::OriginalUri;
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
+use nimbus_core::InvocationAuth;
 use nimbus_core::{Error, TenantId};
-use nimbus_runtime::{HostCallCancellation, InvocationAuth};
+use nimbus_runtime::HostCallCancellation;
 use serde_json::{Value, json};
 
 #[cfg(test)]

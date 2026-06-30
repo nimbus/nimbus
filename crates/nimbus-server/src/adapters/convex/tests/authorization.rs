@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use nimbus_core::{
     AccessOperator, AccessPredicate, AccessRule, AccessValue, DocumentId, Error, FieldSchema,
-    FieldType, IndexDefinition, OrderBy, OrderDirection, PrincipalClaimSource, Query,
-    TableAccessPolicy, TableName, TableSchema, TenantId,
+    FieldType, IndexDefinition, InvocationAuth, OrderBy, OrderDirection, PrincipalClaimSource,
+    Query, RuntimeUserIdentity, TableAccessPolicy, TableName, TableSchema, TenantId,
 };
 use nimbus_runtime::{
-    InvocationAuth, InvocationKind, InvocationServiceBinding, InvocationServiceProtocol,
-    InvocationServices, NimbusRuntimeError, RuntimeUserIdentity,
+    InvocationKind, InvocationServiceBinding, InvocationServiceProtocol, InvocationServices,
+    NimbusRuntimeError,
 };
 use serde_json::{Map, Value, json};
 
@@ -317,7 +317,7 @@ fn mutation_bridge(
             registry,
             decision,
             Arc::new(ServiceInstanceBindingRegistry::new(Arc::new(
-                crate::EmptyServiceInstanceCatalog,
+                nimbus_services::EmptyServiceInstanceCatalog,
             ))),
         ),
         ConvexHostBridgeInvocation::new(
@@ -578,7 +578,7 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
             registry,
             decision,
             Arc::new(ServiceInstanceBindingRegistry::new(Arc::new(
-                crate::EmptyServiceInstanceCatalog,
+                nimbus_services::EmptyServiceInstanceCatalog,
             ))),
         ),
         ConvexHostBridgeInvocation::new(

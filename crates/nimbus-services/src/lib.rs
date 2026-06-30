@@ -4,7 +4,6 @@ mod catalog;
 mod manager;
 mod registry;
 mod sandbox_templates;
-mod workload_control;
 
 pub use catalog::{
     BuiltInServiceSpec, DurableObjectActivationLease, DurableObjectId, DurableObjectIdError,
@@ -27,12 +26,4 @@ pub use sandbox_templates::{
     ComposeSandboxTemplateService, DeployMode, EffectiveSandboxTemplatePolicy, LeasedSandbox,
     NimbusAppIntent, NimbusDeployPackage, SandboxTemplate, SandboxTemplateChannelEndpoint,
     SandboxTemplateLeaseController, SandboxTemplateLeaseRequest, SandboxTemplateProvenance,
-};
-pub use workload_control::{
-    DesiredWorkload, DesiredWorkloadKind, DesiredWorkloadSnapshot, DesiredWorkloadState,
-    DesiredWorkloadStore, EmbeddedNodeClient, InMemoryDesiredWorkloadStore, NodeAssignment,
-    NodeCapacity, PlacementPlan, SchedulingExplanation, WorkloadChannelDescriptor,
-    WorkloadController, WorkloadEvaluation, WorkloadEventQueue, WorkloadExecutionPhase,
-    WorkloadExecutionStatus, WorkloadExecutor, WorkloadPlacementEngine, WorkloadScheduler,
-    WorkloadStatusUpdate,
 };

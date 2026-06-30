@@ -1,14 +1,20 @@
 use nimbus_core::{Error, PrincipalContext, Result, TenantId};
 use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
 use nimbus_sandbox::{PublishedEndpointProtocol, SandboxResourceCharge};
+use nimbus_workloads::{
+    LocalEnforcementBinding, NodeIdentity, TenantCredentialProjectionRequest,
+    TenantCredentialProjectionScope, TenantEgressReloadRequest, TenantFinalizerRecord,
+    TenantPolicyArea, TenantPolicyLifecycle, TenantWorkloadDeletionState, TenantWorkloadGeneration,
+    TenantWorkloadSpec, policy_lifecycle,
+};
 
 use super::*;
 use nimbus_tenant::{
     RuntimeIsolationTier, TenantImagePolicyDecision, TenantIsolationContext,
-    TenantIsolationDecision, TenantIsolationMode, TenantIsolationPolicyInput,
-    TenantNetworkEndpointDecision, TenantNetworkPolicyDecision, TenantQuotaPolicyDecision,
-    TenantSecretPolicyDecision, TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision,
-    TenantVolumePolicyDecision, WorkloadAttributes, WorkloadLocation,
+    TenantIsolationDecision, TenantIsolationEventKind, TenantIsolationMode,
+    TenantIsolationPolicyInput, TenantNetworkEndpointDecision, TenantNetworkPolicyDecision,
+    TenantQuotaPolicyDecision, TenantSecretPolicyDecision, TenantServiceGrantPolicyDecision,
+    TenantStoragePolicyDecision, TenantVolumePolicyDecision, WorkloadAttributes, WorkloadLocation,
 };
 
 fn principal_with_tenant_claim(tenant: &str) -> PrincipalContext {

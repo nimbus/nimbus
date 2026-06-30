@@ -9,9 +9,8 @@ mod execution;
 mod http;
 mod latency;
 mod license;
-pub mod local_enforcement;
 mod local_server;
-mod machine_lifecycle;
+pub mod machine_lifecycle;
 mod owned_tasks;
 mod protocol;
 mod router;
@@ -20,6 +19,7 @@ mod state;
 mod system;
 mod system_tenant;
 mod tenant;
+#[cfg(test)]
 mod tenant_isolation_drift;
 mod tls;
 mod ws;
@@ -51,82 +51,14 @@ pub fn enable_firebase_emulator_token_verification_bypass(
 pub use adapters::mongodb::{
     AuthConfig as MongoDbAuthConfig, CredentialRegistry as MongoDbCredentialRegistry, MongoDbConfig,
 };
-pub use artifact_verifier_effects::{
-    ArtifactVerifierCommandBackend, ArtifactVerifierCommandInvocation,
-    ArtifactVerifierCommandOutput, ArtifactVerifierCommandRunner, CosignVerifierBackend,
-    DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, OfflineVerificationConfig,
-    ProcessArtifactVerifierCommandRunner, SbomVerifierBackend, SlsaVerifierBackend,
-    admit_guest_executable_artifact, admit_runtime_bundle_artifact,
-};
 pub use construction::{ServeOptions, serve};
-pub use license::{
-    LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind, LicenseLoadError,
-    LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState, LicenseStatus,
-    LicenseUsageSnapshot,
-};
 pub use local_server::{
     SERVER_DISCOVERY_PROTOCOL_VERSIONS, ServerDiscoveryLease, ServerDiscoveryRecord,
     read_live_server_discovery,
 };
-pub use machine_lifecycle::{
-    MachineCreateRequest, MachineLifecycleFuture, MachineLifecycleManager,
-    MachineLifecycleSnapshot, MachineUpdateRequest,
-};
-pub use nimbus_artifacts::{
-    ArtifactAdmission, ArtifactAttestationEvidence, ArtifactProvenanceRequirement,
-    ArtifactSignatureEvidence, ArtifactSignatureRequirement, ArtifactVerificationEvidence,
-    ArtifactVerificationPolicy, ArtifactVerificationRequest, ArtifactVerificationSubject,
-    ArtifactVerificationSubjectKind, ArtifactVerifierBackend, ArtifactVerifierBackendIdentity,
-    ArtifactVerifierError, ArtifactVerifierErrorKind, ArtifactVerifierResult,
-    CompositeArtifactVerifierBackend,
-};
 pub use nimbus_dynamodb::AccessKeyRegistry as DynamoDbAccessKeyRegistry;
 pub use nimbus_s3::AccessKeyRegistry as S3AccessKeyRegistry;
-pub use nimbus_services::{
-    BuiltInServiceSpec, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
-    ExternalServiceSpec, LocalBuildAdmission, ServiceBackend, ServiceDefinitionCatalog,
-    ServiceInstanceCatalog, ServiceManager,
-};
-pub use nimbus_system::SystemTenantStatusEvidenceWriter;
 pub use router::{RouterOptions, build_router, normalize_cors_origin};
-pub use tenant::{
-    ArtifactImageVerificationProvider, OPERATOR_POLICY_SCHEMA_VERSION, OperatorAuditPolicy,
-    OperatorDeniedEgressEvent, OperatorExternalPolicyBackend, OperatorExternalPolicyBackendError,
-    OperatorExternalPolicyBackendErrorKind, OperatorExternalPolicyBackendIdentity,
-    OperatorExternalPolicyBackendResult, OperatorExternalPolicyDecision,
-    OperatorExternalPolicyEngine, OperatorExternalPolicyEvidence, OperatorExternalPolicyOutcome,
-    OperatorExternalPolicyRequest, OperatorImagePolicy, OperatorImageProvenancePolicy,
-    OperatorImageSignaturePolicy, OperatorNetworkEndpointPolicy, OperatorNetworkPolicy,
-    OperatorPolicyAcceptedRisk, OperatorPolicyAdvisory, OperatorPolicyAdvisoryKind,
-    OperatorPolicyAdvisorySeverity, OperatorPolicyDecisionEvaluation, OperatorPolicyDefaults,
-    OperatorPolicyDiff, OperatorPolicyDiffSummary, OperatorPolicyDraft,
-    OperatorPolicyDraftApproval, OperatorPolicyDraftKind, OperatorPolicyDraftStatus,
-    OperatorPolicyEvaluation, OperatorPolicyImageSummary, OperatorPolicyLifecycle,
-    OperatorPolicyMetadata, OperatorPolicyProofReport, OperatorPolicyQuotaSummary,
-    OperatorPolicyReloadOutcome, OperatorPolicyReloadState, OperatorPolicyWorkload,
-    OperatorQuotaPolicy, OperatorRuntimePolicy, OperatorRuntimeProfile,
-    OperatorRuntimeResourceEnvelope, OperatorRuntimeSafetyCaps, OperatorRuntimeScalingQuota,
-    OperatorSandboxEgressPolicy, OperatorSandboxEgressRulePolicy, OperatorSandboxPolicy,
-    OperatorSecretPolicy, OperatorServicePolicy, OperatorStoragePolicy, OperatorVolumePolicy,
-    RuntimeIsolationTier, SLSA_PROVENANCE_V1_PREDICATE_TYPE, TENANT_ISOLATION_EVENT_SCHEMA_VERSION,
-    TenantAuditRedactionPolicy, TenantImageAdmission, TenantImageAdmissionSource,
-    TenantImageAttestationEvidence, TenantImagePolicyDecision, TenantImageProvenanceRequirement,
-    TenantImageSignatureEvidence, TenantImageSignatureRequirement, TenantImageVerificationEvidence,
-    TenantImageVerificationProvider, TenantImageVerificationRequest, TenantIsolationAuditRecord,
-    TenantIsolationAuthorityDecision, TenantIsolationContext, TenantIsolationEvent,
-    TenantIsolationEventKind, TenantIsolationEventResult, TenantIsolationEventValue,
-    TenantIsolationMode, TenantIsolationPolicyInput, TenantNetworkEndpointDecision,
-    TenantNetworkPolicyDecision, TenantQuotaPolicyDecision, TenantRuntimePolicyAdmission,
-    TenantRuntimePolicyDecision, TenantRuntimeScalingRequest, TenantSecretPolicyDecision,
-    TenantServiceAccessDecision, TenantServiceGrantPolicyDecision, TenantStorageAccessDecision,
-    TenantStoragePolicyDecision, TenantVolumePolicyDecision, WorkloadAttributes, WorkloadIdentity,
-    WorkloadKind, WorkloadLocation, admit_artifact_subject, normalize_artifact_sha256,
-    redact_artifact_verifier_output,
-};
-pub use tenant_isolation_drift::{
-    TenantIsolationDriftReport, TenantIsolationDriftScanConfig, TenantIsolationDriftSurface,
-    TenantIsolationDriftViolation, scan_tenant_isolation_drift_async,
-};
 pub use tls::TlsConfig;
 
 #[cfg(test)]

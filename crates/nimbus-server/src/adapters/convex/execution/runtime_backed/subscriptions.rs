@@ -43,7 +43,7 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
             args: args.clone(),
             page_size,
             cursor: cursor.clone(),
-            auth: auth.clone(),
+            auth: runtime_auth_payload(&auth),
             services: runtime_services.clone(),
         },
         cancellation,

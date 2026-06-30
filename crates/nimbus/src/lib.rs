@@ -9,7 +9,7 @@ pub use nimbus_core::{
     FieldSchema, FieldType, Filter, FilterOp, IndexDefinition, JobId, Mutation, OrderBy,
     OrderDirection, Page, PaginatedQuery, Query, Result, ScheduleRequest, ScheduledJob,
     ScheduledJobOutcome, ScheduledJobResult, Schema, SequenceNumber, TableName, TableSchema,
-    TenantId, Timestamp, WriteOp, WriteOpType,
+    TenantId, Timestamp, VerifiedUserIdentity, VerifiedUserIdentityKind, WriteOp, WriteOpType,
 };
 // Engine coordination and persistence configuration.
 pub use nimbus_engine::{
@@ -37,7 +37,6 @@ pub use nimbus_runtime::{
     RuntimeMemoryPressureSourceStatus, RuntimePolicy, RuntimePoolKind,
     RuntimePrewarmScheduleDecision, RuntimeProfile, RuntimeScalingAdjustmentReason,
     RuntimeScalingLimit, RuntimeScalingPlanSet, RuntimeScalingPreset, RuntimeScalingTarget,
-    VerifiedUserIdentity, VerifiedUserIdentityKind,
 };
 // Tenant egress policy decision point.
 pub use nimbus_egress::{
@@ -67,13 +66,16 @@ pub use nimbus_crypto::{
     dek_rotation_data_stage_path, dek_rotation_manifest_stage_path, generate_key_manifest,
     recover_interrupted_dek_rotation, resolve_subject_encryption_key, unwrap_key_manifest,
 };
-pub use nimbus_server::{
+pub use nimbus_license::{
+    LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind, LicenseLoadError,
+    LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState, LicenseStatus,
+    LicenseUsageSnapshot,
+};
+pub use nimbus_server::{RouterOptions, ServeOptions, build_router, serve};
+pub use nimbus_services::{
     BuiltInServiceSpec, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
-    ExternalServiceSpec, LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind,
-    LicenseLoadError, LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState,
-    LicenseStatus, LicenseUsageSnapshot, LocalBuildAdmission, RouterOptions, ServeOptions,
-    ServiceBackend, ServiceDefinitionCatalog, ServiceInstanceCatalog, ServiceManager, build_router,
-    serve,
+    ExternalServiceSpec, LocalBuildAdmission, ServiceBackend, ServiceDefinitionCatalog,
+    ServiceInstanceCatalog, ServiceManager,
 };
 // Storage and encryption helpers.
 pub use nimbus_blob::{

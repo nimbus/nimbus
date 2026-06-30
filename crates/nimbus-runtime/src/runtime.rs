@@ -38,9 +38,8 @@ pub use self::bundle::{
 #[cfg(test)]
 use self::helpers::deserialize_json_value;
 pub use self::invocation::{
-    InvocationAuth, InvocationKind, InvocationRequest, InvocationServiceBinding,
-    InvocationServiceEndpoint, InvocationServiceProtocol, InvocationServices, RuntimeUserIdentity,
-    VerifiedUserIdentity, VerifiedUserIdentityKind,
+    InvocationKind, InvocationRequest, InvocationServiceBinding, InvocationServiceEndpoint,
+    InvocationServiceProtocol, InvocationServices,
 };
 
 #[derive(Clone)]

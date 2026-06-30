@@ -2,9 +2,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use ::http::Method;
+use nimbus_core::InvocationAuth;
 use nimbus_runtime::{
-    InvocationAuth, InvocationKind, NimbusRuntimeError, RuntimeBundle, RuntimeExecutor,
-    RuntimeLimits, RuntimePolicy,
+    InvocationKind, NimbusRuntimeError, RuntimeBundle, RuntimeExecutor, RuntimeLimits,
+    RuntimePolicy,
 };
 
 use super::auth::{ConvexAuthVerifier, read_auth_config};

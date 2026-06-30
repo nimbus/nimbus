@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use nimbus_core::{Error, TenantId};
+use nimbus_core::{Error, InvocationAuth, TenantId};
 use nimbus_runtime::{HostCallCancellation, InvocationKind, InvocationRequest};
 use serde_json::Value;
 
@@ -58,13 +58,14 @@ fn invoke_named_convex_function_with_trace_cancellable(
     cancellation: HostCallCancellation,
 ) -> Result<(Value, RuntimeReadSet), Error> {
     let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-        ServiceInstanceBindingRegistry::new(Arc::new(crate::EmptyServiceInstanceCatalog)),
+        ServiceInstanceBindingRegistry::new(Arc::new(nimbus_services::EmptyServiceInstanceCatalog)),
     );
     let bundle = registry.required_runtime_bundle()?;
     let invocation_kind = request.kind.clone();
+    let auth = runtime_request_auth(&request)?;
     let isolation = TenantIsolationContext::application(
         tenant_id.clone(),
-        normalize_principal_context(request.auth.as_ref()),
+        normalize_principal_context(auth.as_ref()),
         "convex_test_runtime",
     );
     let decision = admit_runtime_invocation_decision(
@@ -84,9 +85,9 @@ fn invoke_named_convex_function_with_trace_cancellable(
             runtime_service_registry,
         ),
         ConvexHostBridgeInvocation::new(
-            request.auth.clone(),
+            auth.clone(),
             request.services.clone(),
-            normalize_principal_context(request.auth.as_ref()),
+            normalize_principal_context(auth.as_ref()),
             None,
             invocation_kind.clone(),
             request.function_name.clone(),
@@ -119,15 +120,16 @@ async fn invoke_named_convex_function_with_trace_async(
     request: InvocationRequest,
 ) -> Result<(Value, RuntimeReadSet), Error> {
     let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-        ServiceInstanceBindingRegistry::new(Arc::new(crate::EmptyServiceInstanceCatalog)),
+        ServiceInstanceBindingRegistry::new(Arc::new(nimbus_services::EmptyServiceInstanceCatalog)),
     );
+    let auth = runtime_request_auth(&request)?;
     let context = RuntimeInvocationContext::new(
         service,
         registry,
         &runtime_service_registry,
         TenantIsolationContext::application(
             tenant_id.clone(),
-            normalize_principal_context(request.auth.as_ref()),
+            normalize_principal_context(auth.as_ref()),
             "convex_test_runtime",
         ),
         nimbus_tenant::TenantIsolationMode::LocalDevelopment,
@@ -139,4 +141,13 @@ async fn invoke_named_convex_function_with_trace_async(
         None,
     )
     .await
+}
+
+fn runtime_request_auth(request: &InvocationRequest) -> Result<Option<InvocationAuth>, Error> {
+    request
+        .auth
+        .clone()
+        .map(serde_json::from_value::<InvocationAuth>)
+        .transpose()
+        .map_err(|error| Error::Serialization(error.to_string()))
 }

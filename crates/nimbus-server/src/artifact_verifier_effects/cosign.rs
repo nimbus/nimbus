@@ -545,6 +545,18 @@ mod tests {
     }
 
     #[test]
+    fn cosign_backend_rejects_zero_timeout() {
+        let error = CosignVerifierBackend::new()
+            .with_timeout(Duration::ZERO)
+            .expect_err("zero verifier timeout should be rejected");
+
+        assert!(
+            error.to_string().contains("greater than 0"),
+            "zero-timeout error should be actionable: {error}"
+        );
+    }
+
+    #[test]
     fn cosign_backend_offline_private_root_passes_trusted_root_without_network() {
         let (_temp, trusted_root) = trusted_root_fixture();
         let runner = Arc::new(StaticCommandRunner::success(signed_payload(DIGEST)));

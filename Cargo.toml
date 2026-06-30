@@ -6,6 +6,7 @@ members = [
     "crates/nimbus-assets",
     "crates/nimbus-auth",
     "crates/nimbus-bin",
+    "crates/nimbus-cli",
     "crates/nimbus-blob",
     "crates/nimbus-bridge",
     "crates/nimbus-cloud-functions",
@@ -37,6 +38,7 @@ members = [
     "crates/nimbus-server",
     "crates/nimbus-storage",
     "crates/nimbus-testing",
+    "crates/nimbus-workloads",
 ]
 resolver = "2"
 

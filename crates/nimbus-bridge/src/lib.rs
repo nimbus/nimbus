@@ -13,8 +13,8 @@ pub mod read_tracking;
 pub mod responses;
 pub mod state;
 
-use nimbus_node::LocalEnforcementBinding;
 use nimbus_tenant::{TenantIsolationDecision, TenantStorageAccessDecision};
+use nimbus_workloads::LocalEnforcementBinding;
 
 use self::state::RuntimeHostState;
 

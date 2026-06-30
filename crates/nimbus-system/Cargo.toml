@@ -19,6 +19,7 @@ nimbus-machine = { path = "../nimbus-machine" }
 nimbus-node = { path = "../nimbus-node" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-tenant = { path = "../nimbus-tenant" }
+nimbus-workloads = { path = "../nimbus-workloads" }
 serde_json.workspace = true
 sha2.workspace = true
 tokio.workspace = true

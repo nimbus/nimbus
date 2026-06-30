@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use nimbus_core::Error;
+use nimbus_core::{Error, InvocationAuth};
 use nimbus_runtime::{
     HostCallCancellation, InvocationKind, InvocationRequest, InvocationServices, RuntimeBundle,
 };
@@ -94,6 +94,12 @@ impl<'a> RuntimeInvocationContext<'a> {
         decision.ensure_runtime_bundle_matches(&bundle, "convex runtime bundle")?;
         RuntimeExecutionAdmission::for_decision(&decision)
             .ensure_in_process_available("convex runtime invocation")?;
+        let auth = request
+            .auth
+            .clone()
+            .map(serde_json::from_value::<InvocationAuth>)
+            .transpose()
+            .map_err(|error| Error::Serialization(error.to_string()))?;
         let bridge = Arc::new(ConvexHostBridge::build(
             ConvexHostBridgeScope::new(
                 self.engine.clone(),
@@ -102,9 +108,9 @@ impl<'a> RuntimeInvocationContext<'a> {
                 self.runtime_service_registry.clone(),
             ),
             ConvexHostBridgeInvocation::new(
-                request.auth.clone(),
+                auth.clone(),
                 request.services.clone(),
-                normalize_principal_context(request.auth.as_ref()),
+                normalize_principal_context(auth.as_ref()),
                 server_request_id.clone(),
                 invocation_kind.clone(),
                 request.function_name.clone(),

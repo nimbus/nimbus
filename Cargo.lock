@@ -6351,10 +6351,12 @@ dependencies = [
  "nimbus-crypto",
  "nimbus-egress",
  "nimbus-engine",
+ "nimbus-license",
  "nimbus-object-storage",
  "nimbus-runtime",
  "nimbus-sandbox",
  "nimbus-server",
+ "nimbus-services",
  "nimbus-storage",
 ]
 
@@ -6396,7 +6398,6 @@ version = "0.1.44"
 dependencies = [
  "futures",
  "nimbus-core",
- "nimbus-runtime",
  "serde",
  "serde_json",
 ]
@@ -6405,49 +6406,9 @@ dependencies = [
 name = "nimbus-bin"
 version = "0.1.44"
 dependencies = [
- "aes-gcm-siv",
- "axum",
- "clap",
- "comfy-table",
- "flate2",
- "fs2",
- "indicatif",
- "libc",
- "nimbus",
- "nimbus-assets",
- "nimbus-convex",
- "nimbus-crypto",
- "nimbus-fs",
- "nimbus-kv",
- "nimbus-machine",
- "nimbus-operator",
- "nimbus-sandbox",
- "nimbus-server",
- "nimbus-services",
- "nimbus-system",
- "nimbus-tenant",
- "nimbus-testing",
- "oci-client",
- "open",
- "rand 0.8.5",
- "reqwest 0.12.28",
- "semver",
- "serde",
- "serde_json",
- "serde_yaml",
- "serial_test",
- "sha2 0.10.9",
- "shell-words",
- "signal-hook-registry",
- "tar",
- "tempfile",
- "time",
+ "nimbus-cli",
  "tokio",
- "toml",
- "tracing",
  "tracing-subscriber",
- "zeroize",
- "zstd",
 ]
 
 [[package]]
@@ -6471,13 +6432,63 @@ dependencies = [
  "base64 0.22.1",
  "nimbus-core",
  "nimbus-engine",
- "nimbus-node",
  "nimbus-runtime",
  "nimbus-tenant",
+ "nimbus-workloads",
  "serde",
  "serde_json",
  "time",
  "tracing",
+]
+
+[[package]]
+name = "nimbus-cli"
+version = "0.1.44"
+dependencies = [
+ "aes-gcm-siv",
+ "axum",
+ "clap",
+ "comfy-table",
+ "flate2",
+ "fs2",
+ "indicatif",
+ "libc",
+ "nimbus",
+ "nimbus-assets",
+ "nimbus-convex",
+ "nimbus-crypto",
+ "nimbus-fs",
+ "nimbus-kv",
+ "nimbus-machine",
+ "nimbus-node",
+ "nimbus-operator",
+ "nimbus-sandbox",
+ "nimbus-server",
+ "nimbus-services",
+ "nimbus-system",
+ "nimbus-tenant",
+ "nimbus-testing",
+ "nimbus-workloads",
+ "oci-client",
+ "open",
+ "rand 0.8.5",
+ "reqwest 0.12.28",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "serial_test",
+ "sha2 0.10.9",
+ "shell-words",
+ "signal-hook-registry",
+ "tar",
+ "tempfile",
+ "time",
+ "tokio",
+ "toml",
+ "tracing",
+ "zeroize",
+ "zstd",
 ]
 
 [[package]]
@@ -6714,7 +6725,9 @@ name = "nimbus-machine"
 version = "0.1.44"
 dependencies = [
  "nimbus-core",
+ "nimbus-sandbox",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -6746,6 +6759,7 @@ dependencies = [
  "nimbus-runtime",
  "nimbus-sandbox",
  "nimbus-tenant",
+ "nimbus-workloads",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -6953,6 +6967,7 @@ dependencies = [
  "nimbus-system",
  "nimbus-tenant",
  "nimbus-testing",
+ "nimbus-workloads",
  "pbkdf2",
  "prost 0.13.5",
  "prost-types 0.13.5",
@@ -6988,10 +7003,10 @@ dependencies = [
  "futures",
  "nimbus-core",
  "nimbus-egress",
- "nimbus-node",
  "nimbus-runtime",
  "nimbus-sandbox",
  "nimbus-tenant",
+ "nimbus-workloads",
  "sha2 0.10.9",
  "tempfile",
  "tokio",
@@ -7047,6 +7062,7 @@ dependencies = [
  "nimbus-runtime",
  "nimbus-sandbox",
  "nimbus-tenant",
+ "nimbus-workloads",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
@@ -7085,6 +7101,16 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
+]
+
+[[package]]
+name = "nimbus-workloads"
+version = "0.1.44"
+dependencies = [
+ "nimbus-core",
+ "nimbus-tenant",
+ "serde",
+ "sha2 0.10.9",
 ]
 
 [[package]]

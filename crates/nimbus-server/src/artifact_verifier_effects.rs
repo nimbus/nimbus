@@ -1,37 +1,51 @@
+#[cfg(test)]
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
+#[cfg(test)]
 use std::sync::Arc;
+#[cfg(test)]
 use std::time::Duration;
 
 use nimbus_core::{Error, Result};
 use nimbus_runtime::RuntimeBundle;
+#[cfg(test)]
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
 mod cosign;
+#[cfg(test)]
 mod process;
+#[cfg(test)]
 mod sbom;
+#[cfg(test)]
 mod slsa;
 
-pub use cosign::CosignVerifierBackend;
+#[cfg(test)]
 pub use process::ProcessArtifactVerifierCommandRunner;
-pub use sbom::SbomVerifierBackend;
-pub use slsa::SlsaVerifierBackend;
 
 pub(crate) use nimbus_artifacts::{
-    ArtifactAdmission, ArtifactVerificationEvidence, ArtifactVerificationPolicy,
-    ArtifactVerificationRequest, ArtifactVerificationSubject, ArtifactVerificationSubjectKind,
-    ArtifactVerifierBackend, ArtifactVerifierBackendIdentity, ArtifactVerifierError,
-    ArtifactVerifierResult, SLSA_PROVENANCE_V1_PREDICATE_TYPE, admit_artifact_subject,
-    normalize_artifact_sha256, redact_artifact_verifier_output,
+    ArtifactAdmission, ArtifactVerificationPolicy, ArtifactVerificationSubject,
+    ArtifactVerifierBackend, admit_artifact_subject, normalize_artifact_sha256,
+};
+#[cfg(test)]
+pub(crate) use nimbus_artifacts::{
+    ArtifactVerificationEvidence, ArtifactVerificationRequest, ArtifactVerificationSubjectKind,
+    ArtifactVerifierBackendIdentity, ArtifactVerifierError, ArtifactVerifierResult,
+    SLSA_PROVENANCE_V1_PREDICATE_TYPE, redact_artifact_verifier_output,
 };
 
+#[cfg(test)]
 pub const DEFAULT_ARTIFACT_VERIFIER_TIMEOUT: Duration = Duration::from_secs(10);
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OfflineVerificationConfig {
     trusted_root_path: PathBuf,
 }
 
+#[cfg(test)]
 impl OfflineVerificationConfig {
     pub fn new(trusted_root_path: impl Into<PathBuf>) -> Self {
         Self {
@@ -96,6 +110,7 @@ pub fn admit_runtime_bundle_artifact(
     )
 }
 
+#[cfg(test)]
 pub fn admit_guest_executable_artifact(
     path: impl AsRef<Path>,
     expected_sha256: impl AsRef<str>,
@@ -138,6 +153,7 @@ fn ensure_path_matches_sha256(path: &Path, expected_sha256: &str, context: &str)
     )))
 }
 
+#[cfg(test)]
 pub struct ArtifactVerifierCommandBackend {
     identity: ArtifactVerifierBackendIdentity,
     program: String,
@@ -147,6 +163,7 @@ pub struct ArtifactVerifierCommandBackend {
     runner: Arc<dyn ArtifactVerifierCommandRunner>,
 }
 
+#[cfg(test)]
 impl ArtifactVerifierCommandBackend {
     pub fn new(identity: ArtifactVerifierBackendIdentity, program: impl Into<String>) -> Self {
         Self {
@@ -194,6 +211,7 @@ impl ArtifactVerifierCommandBackend {
     }
 }
 
+#[cfg(test)]
 impl std::fmt::Debug for ArtifactVerifierCommandBackend {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -207,6 +225,7 @@ impl std::fmt::Debug for ArtifactVerifierCommandBackend {
     }
 }
 
+#[cfg(test)]
 impl ArtifactVerifierBackend for ArtifactVerifierCommandBackend {
     fn verify_artifact(
         &self,
@@ -249,6 +268,7 @@ impl ArtifactVerifierBackend for ArtifactVerifierCommandBackend {
     }
 }
 
+#[cfg(test)]
 pub trait ArtifactVerifierCommandRunner: Send + Sync {
     fn run(
         &self,
@@ -256,6 +276,7 @@ pub trait ArtifactVerifierCommandRunner: Send + Sync {
     ) -> ArtifactVerifierResult<ArtifactVerifierCommandOutput>;
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactVerifierCommandInvocation {
     program: String,
@@ -264,6 +285,7 @@ pub struct ArtifactVerifierCommandInvocation {
     stdin: Option<String>,
 }
 
+#[cfg(test)]
 impl ArtifactVerifierCommandInvocation {
     pub fn program(&self) -> &str {
         &self.program
@@ -282,6 +304,7 @@ impl ArtifactVerifierCommandInvocation {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactVerifierCommandOutput {
     status_code: Option<i32>,
@@ -289,6 +312,7 @@ pub struct ArtifactVerifierCommandOutput {
     stderr: String,
 }
 
+#[cfg(test)]
 impl ArtifactVerifierCommandOutput {
     pub fn success(stdout: impl Into<String>) -> Self {
         Self {
@@ -317,6 +341,7 @@ impl ArtifactVerifierCommandOutput {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct NormalizedVerifierOutput {
     #[serde(default)]
@@ -327,12 +352,14 @@ struct NormalizedVerifierOutput {
     sbom_present: bool,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct NormalizedSignatureEvidence {
     issuer: String,
     subject: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct NormalizedAttestationEvidence {
     builder_id: String,
@@ -341,6 +368,7 @@ struct NormalizedAttestationEvidence {
     predicate_type: String,
 }
 
+#[cfg(test)]
 fn parse_normalized_evidence(
     identity: &ArtifactVerifierBackendIdentity,
     stdout: &str,
@@ -757,6 +785,54 @@ mod tests {
         let rendered = error.to_string();
         assert!(rendered.contains("[redacted verifier output]"));
         assert!(!rendered.contains("do-not-log-timeout-token"));
+    }
+
+    #[test]
+    fn command_backend_builder_validation_rejects_empty_subjects_and_zero_timeout() {
+        let backend = ArtifactVerifierCommandBackend::new(
+            ArtifactVerifierBackendIdentity::new("fixture-verifier", "1.0.0"),
+            "fixture-verifier",
+        );
+
+        let empty_subjects = backend
+            .with_supported_subjects([])
+            .expect_err("verifier must declare at least one supported artifact class");
+        assert!(
+            empty_subjects.to_string().contains("at least one"),
+            "empty-subject error should be actionable: {empty_subjects}"
+        );
+
+        let zero_timeout = ArtifactVerifierCommandBackend::new(
+            ArtifactVerifierBackendIdentity::new("fixture-verifier", "1.0.0"),
+            "fixture-verifier",
+        )
+        .with_timeout(Duration::ZERO)
+        .expect_err("zero verifier timeout must fail closed");
+        assert!(
+            zero_timeout.to_string().contains("greater than 0"),
+            "zero-timeout error should be actionable: {zero_timeout}"
+        );
+    }
+
+    #[test]
+    fn command_backend_custom_supported_subjects_are_used_for_admission() {
+        let runner = Arc::new(StaticCommandRunner::success("{}"));
+        let backend = command_backend(Arc::clone(&runner))
+            .with_supported_subjects([ArtifactVerificationSubjectKind::RuntimeBundle])
+            .expect("runtime bundle support should configure");
+        let request = ArtifactVerificationRequest::new(
+            ArtifactVerificationSubject::RuntimeBundle {
+                path: PathBuf::from("/srv/nimbus/functions/bundle.mjs"),
+                sha256: format!("sha256:{DIGEST}"),
+            },
+            ArtifactVerificationPolicy::new(),
+        );
+
+        backend
+            .verify_artifact(&request)
+            .expect("custom-supported runtime bundle should reach command runner");
+
+        assert_eq!(runner.invocations().len(), 1);
     }
 
     #[test]

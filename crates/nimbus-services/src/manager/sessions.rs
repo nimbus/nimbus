@@ -2,12 +2,13 @@ use std::collections::BTreeSet;
 
 use nimbus_core::{Error, TenantId};
 use nimbus_sandbox::SandboxStatus;
+use nimbus_workloads::{WorkloadChannelDescriptor, WorkloadExecutor};
 use ulid::Ulid;
 
 use crate::{
     BuiltInServiceSpec, ExternalServiceSpec, ServiceBackend, ServiceDefinition,
     ServiceDefinitionSource, SessionLifecycleState, SessionResource, SessionTarget,
-    SessionTargetSnapshot, WorkloadChannelDescriptor, WorkloadExecutor,
+    SessionTargetSnapshot,
 };
 
 use super::ServiceManager;

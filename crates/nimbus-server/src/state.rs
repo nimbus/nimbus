@@ -2,11 +2,11 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
 use axum::response::{IntoResponse, Response};
-use nimbus_core::Error;
+use nimbus_core::{Error, InvocationAuth};
 use nimbus_engine::Engine;
 use nimbus_runtime::{
-    EffectiveRuntimeScalingPlan, HostCallCancellation, InvocationAuth,
-    RuntimeAdaptiveControllerSettings, RuntimeHostResourceBudget, RuntimeScalingPlanSet,
+    EffectiveRuntimeScalingPlan, HostCallCancellation, RuntimeAdaptiveControllerSettings,
+    RuntimeHostResourceBudget, RuntimeScalingPlanSet,
 };
 use tokio::sync::watch;
 use tracing::warn;

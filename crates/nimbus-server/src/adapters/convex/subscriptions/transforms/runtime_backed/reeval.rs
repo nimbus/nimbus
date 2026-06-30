@@ -1,9 +1,7 @@
 use std::sync::{Arc, RwLock};
 
-use nimbus_core::{Error, Page};
-use nimbus_runtime::{
-    HostCallCancellation, InvocationAuth, InvocationKind, InvocationRequest, InvocationServices,
-};
+use nimbus_core::{Error, InvocationAuth, Page};
+use nimbus_runtime::{HostCallCancellation, InvocationKind, InvocationRequest, InvocationServices};
 use serde_json::Value;
 
 use crate::adapters::convex::ConvexRegistry;
@@ -83,7 +81,10 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_quer
             args: transform.args.clone(),
             page_size: None,
             cursor: None,
-            auth: transform.auth.clone(),
+            auth: transform
+                .auth
+                .as_ref()
+                .map(InvocationAuth::to_runtime_payload),
             services: transform.services.clone(),
         },
         context.runtime_cancellation.clone(),
@@ -134,7 +135,10 @@ pub(in crate::adapters::convex::subscriptions) async fn apply_runtime_named_pagi
             args: transform.args.clone(),
             page_size: Some(transform.page_size),
             cursor: transform.cursor.clone(),
-            auth: transform.auth.clone(),
+            auth: transform
+                .auth
+                .as_ref()
+                .map(InvocationAuth::to_runtime_payload),
             services: transform.services.clone(),
         },
         context.runtime_cancellation.clone(),

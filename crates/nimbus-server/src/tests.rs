@@ -19,6 +19,10 @@ use nimbus_core::{
     TypedScalarValue,
 };
 use nimbus_engine::{Engine, run_scheduler};
+use nimbus_license::{
+    LicenseDocument, LicenseEntitlements, LicenseKind, LicenseSourceInfo, LicenseSourceKind,
+    LicenseState,
+};
 use nimbus_runtime::{RuntimeBundle, RuntimeMetricsSnapshot};
 pub(crate) use nimbus_testing::{
     DeterministicHarness, DeterministicTestCase, EngineFixture, GeneratedTaskHistory,
@@ -46,9 +50,8 @@ use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 
 use crate::{
-    CloudflareConfig, ConvexRegistry, FirebaseConfig, LicenseDocument, LicenseEntitlements,
-    LicenseKind, LicenseSourceInfo, LicenseSourceKind, LicenseState, ProjectTenantRegistry,
-    RouterOptions, ServeOptions, build_router, serve,
+    CloudflareConfig, ConvexRegistry, FirebaseConfig, ProjectTenantRegistry, RouterOptions,
+    ServeOptions, build_router, serve,
 };
 use crate::router::RouterBuildConfig;
 use crate::adapters::firebase::grpc::generated::google::firestore::v1::document_transform::FieldTransform as GrpcFieldTransform;
@@ -191,7 +194,7 @@ impl nimbus_auth::ApplicationAuthVerifier for StaticConvexTeamVerifier {
         token: &'a str,
     ) -> futures::future::BoxFuture<
         'a,
-        Result<nimbus_runtime::InvocationAuth, nimbus_auth::ApplicationAuthError>,
+        Result<nimbus_core::InvocationAuth, nimbus_auth::ApplicationAuthError>,
     > {
         use futures::FutureExt;
         async move {
@@ -201,13 +204,13 @@ impl nimbus_auth::ApplicationAuthVerifier for StaticConvexTeamVerifier {
                 ));
             }
             let token_identifier = format!("{CONVEX_TEAM_ISSUER}|{CONVEX_TEAM_SUBJECT}");
-            let identity: nimbus_runtime::RuntimeUserIdentity = serde_json::from_value(json!({
+            let identity: nimbus_core::RuntimeUserIdentity = serde_json::from_value(json!({
                 "tokenIdentifier": token_identifier,
                 "subject": CONVEX_TEAM_SUBJECT,
                 "issuer": CONVEX_TEAM_ISSUER,
             }))
             .expect("static runtime identity should build");
-            let verified_identity: nimbus_runtime::VerifiedUserIdentity =
+            let verified_identity: nimbus_core::VerifiedUserIdentity =
                 serde_json::from_value(json!({
                     "kind": "custom_jwt",
                     "tokenIdentifier": token_identifier,
@@ -215,7 +218,7 @@ impl nimbus_auth::ApplicationAuthVerifier for StaticConvexTeamVerifier {
                     "issuer": CONVEX_TEAM_ISSUER,
                 }))
                 .expect("static verified identity should build");
-            Ok(nimbus_runtime::InvocationAuth::with_identities(
+            Ok(nimbus_core::InvocationAuth::with_identities(
                 identity,
                 verified_identity,
                 false,
