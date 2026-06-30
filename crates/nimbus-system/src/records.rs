@@ -13,10 +13,11 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use nimbus_node::{
-    HostLifecycleFuture, StatusEvidenceWrite, StatusEvidenceWriter, TenantSystemEvidenceProjection,
-    TenantWorkloadStatus,
+    HostLifecycleFuture, StatusEvidenceWrite, StatusEvidenceWriter, TenantWorkloadStatus,
+    ensure_status_matches_projection,
 };
 use nimbus_tenant::TenantIsolationContext;
+use nimbus_workloads::TenantSystemEvidenceProjection;
 
 use super::identity::{is_reserved_tenant_id, is_system_tenant_id, system_tenant_id};
 use super::inventory::{adapter_capability_inventory, route_inventory};
@@ -309,7 +310,7 @@ pub(crate) async fn record_tenant_workload_status_async(
     status: &TenantWorkloadStatus,
 ) -> Result<()> {
     authority.ensure_system_or_operator_authority("_nimbus workload status projection")?;
-    projection.ensure_status_matches(status)?;
+    ensure_status_matches_projection(projection, status)?;
     ensure_system_tenant_async(engine).await?;
 
     let evidence = json!({

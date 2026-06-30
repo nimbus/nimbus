@@ -6429,6 +6429,7 @@ dependencies = [
  "nimbus-system",
  "nimbus-tenant",
  "nimbus-testing",
+ "nimbus-workloads",
  "oci-client",
  "open",
  "rand 0.8.5",
@@ -6473,9 +6474,9 @@ dependencies = [
  "base64 0.22.1",
  "nimbus-core",
  "nimbus-engine",
- "nimbus-node",
  "nimbus-runtime",
  "nimbus-tenant",
+ "nimbus-workloads",
  "serde",
  "serde_json",
  "time",
@@ -6748,6 +6749,7 @@ dependencies = [
  "nimbus-runtime",
  "nimbus-sandbox",
  "nimbus-tenant",
+ "nimbus-workloads",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -6955,6 +6957,7 @@ dependencies = [
  "nimbus-system",
  "nimbus-tenant",
  "nimbus-testing",
+ "nimbus-workloads",
  "pbkdf2",
  "prost 0.13.5",
  "prost-types 0.13.5",
@@ -6990,10 +6993,10 @@ dependencies = [
  "futures",
  "nimbus-core",
  "nimbus-egress",
- "nimbus-node",
  "nimbus-runtime",
  "nimbus-sandbox",
  "nimbus-tenant",
+ "nimbus-workloads",
  "sha2 0.10.9",
  "tempfile",
  "tokio",
@@ -7049,6 +7052,7 @@ dependencies = [
  "nimbus-runtime",
  "nimbus-sandbox",
  "nimbus-tenant",
+ "nimbus-workloads",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
@@ -7087,6 +7091,16 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
+]
+
+[[package]]
+name = "nimbus-workloads"
+version = "0.1.44"
+dependencies = [
+ "nimbus-core",
+ "nimbus-tenant",
+ "serde",
+ "sha2 0.10.9",
 ]
 
 [[package]]

@@ -1,6 +1,12 @@
 use nimbus_core::{Error, PrincipalContext, Result, TenantId};
 use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
 use nimbus_sandbox::{PublishedEndpointProtocol, SandboxResourceCharge};
+use nimbus_workloads::{
+    LocalEnforcementBinding, NodeIdentity, TenantCredentialProjectionRequest,
+    TenantCredentialProjectionScope, TenantEgressReloadRequest, TenantFinalizerRecord,
+    TenantPolicyArea, TenantPolicyLifecycle, TenantWorkloadDeletionState, TenantWorkloadGeneration,
+    TenantWorkloadSpec, policy_lifecycle,
+};
 
 use super::*;
 use nimbus_tenant::{

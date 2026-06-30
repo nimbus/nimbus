@@ -50,6 +50,7 @@ nimbus-object-storage = { path = "../nimbus-object-storage" }
 nimbus-operator = { path = "../nimbus-operator" }
 nimbus-system = { path = "../nimbus-system" }
 nimbus-tenant = { path = "../nimbus-tenant" }
+nimbus-workloads = { path = "../nimbus-workloads" }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-engine = { path = "../nimbus-engine" }
 nimbus-firebase = { path = "../nimbus-firebase" }

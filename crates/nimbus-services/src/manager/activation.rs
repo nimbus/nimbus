@@ -1,16 +1,17 @@
 use std::time::Instant;
 
 use nimbus_core::{Error, TenantId};
-use nimbus_node::{LocalEnforcementBinding, TenantEgressReloadRequest};
 use nimbus_runtime::HostCallCancellation;
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_tenant::{
     TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput,
     TenantServiceGrantPolicyDecision, WorkloadAttributes,
 };
+use nimbus_workloads::{
+    DesiredWorkload, DesiredWorkloadState, DesiredWorkloadStore, LocalEnforcementBinding,
+    TenantEgressReloadRequest,
+};
 use tokio::time::sleep;
-
-use crate::{DesiredWorkload, DesiredWorkloadState, DesiredWorkloadStore};
 
 use super::ServiceManager;
 use super::types::{ActivationClaim, TenantServiceKey, sandbox_backend_error};

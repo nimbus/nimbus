@@ -37,6 +37,7 @@ members = [
     "crates/nimbus-server",
     "crates/nimbus-storage",
     "crates/nimbus-testing",
+    "crates/nimbus-workloads",
 ]
 resolver = "2"
 

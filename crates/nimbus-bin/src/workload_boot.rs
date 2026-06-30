@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use nimbus::{Error, TenantId};
-use nimbus_services::{
+use nimbus_tenant::TenantIsolationMode;
+use nimbus_workloads::{
     DesiredWorkload, DesiredWorkloadSnapshot, DesiredWorkloadState, InMemoryDesiredWorkloadStore,
     NodeCapacity, PlacementPlan, WorkloadController, WorkloadScheduler,
 };
-use nimbus_tenant::TenantIsolationMode;
 
 use crate::compose::discovery::ResolvedComposeSelection;
 
@@ -105,7 +105,7 @@ mod tests {
     use crate::test_support::with_current_dir;
     use crate::{Cli, Command, StartCommand};
     use clap::Parser;
-    use nimbus_services::DesiredWorkloadKind;
+    use nimbus_workloads::DesiredWorkloadKind;
 
     fn write_compose_fixture(root: &Path, body: &str) -> PathBuf {
         let path = root.join("compose.yaml");

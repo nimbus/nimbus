@@ -386,10 +386,13 @@ async fn service_start_records_desired_workload() {
     assert_eq!(handle.status, SandboxStatus::Ready);
     assert_eq!(backend.image_starts.load(Ordering::SeqCst), 1);
     assert_eq!(desired.tenant_id(), &tenant_id);
-    assert_eq!(desired.kind(), crate::DesiredWorkloadKind::Service);
+    assert_eq!(
+        desired.kind(),
+        nimbus_workloads::DesiredWorkloadKind::Service
+    );
     assert_eq!(
         desired.desired_state(),
-        crate::DesiredWorkloadState::Running
+        nimbus_workloads::DesiredWorkloadState::Running
     );
     assert_eq!(
         desired.generation(),

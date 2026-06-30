@@ -2,14 +2,6 @@ use std::collections::{BTreeMap, VecDeque};
 
 use nimbus_core::{Error, TenantId};
 
-mod assignment;
-mod scheduling;
-
-pub use assignment::{NodeAssignment, WorkloadStatusUpdate};
-pub use scheduling::{
-    NodeCapacity, PlacementPlan, SchedulingExplanation, WorkloadPlacementEngine, WorkloadScheduler,
-};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DesiredWorkloadState {
     Running,
@@ -387,7 +379,7 @@ where
     }
 }
 
-fn validate_component(label: &str, value: impl Into<String>) -> Result<String, Error> {
+pub(crate) fn validate_component(label: &str, value: impl Into<String>) -> Result<String, Error> {
     let value = value.into();
     if value.trim() != value || value.is_empty() {
         return Err(Error::InvalidInput(format!(

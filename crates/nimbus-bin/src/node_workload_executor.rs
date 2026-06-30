@@ -16,11 +16,12 @@ use std::path::PathBuf;
 use clap::{Args, ValueEnum};
 use nimbus_node::{
     HostExecutable, HostLifecycleBackendKind, HostLifecycleFuture, HostLifecycleRequest,
-    StatusEvidenceWrite, StatusEvidenceWriter, TenantWorkloadSpec,
+    StatusEvidenceWrite, StatusEvidenceWriter,
 };
 use nimbus_tenant::{
     TenantIsolationContext, TenantIsolationPolicyInput, WorkloadAttributes, WorkloadLocation,
 };
+use nimbus_workloads::TenantWorkloadSpec;
 
 use crate::cli_ux;
 
@@ -370,7 +371,7 @@ mod tests {
         let path = temp.path().join("evidence/status.jsonl");
         let spec =
             admit_workload_spec("demo", "worker", "node-1", false).expect("spec should admit");
-        let binding = nimbus_node::LocalEnforcementBinding::from_spec(spec.clone());
+        let binding = nimbus_workloads::LocalEnforcementBinding::from_spec(spec.clone());
         let projection = binding.system_evidence_projection();
         let plan = nimbus_node::HostLifecyclePlan::from_binding(
             &binding,

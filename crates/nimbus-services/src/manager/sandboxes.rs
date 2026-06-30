@@ -5,8 +5,9 @@ use nimbus_sandbox::{SandboxHandle, SandboxOwnerSpec, SandboxSpec, SandboxStatus
 use nimbus_tenant::{
     TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput, WorkloadAttributes,
 };
+use nimbus_workloads::{DesiredWorkload, DesiredWorkloadState, DesiredWorkloadStore};
 
-use crate::{DesiredWorkload, DesiredWorkloadState, DesiredWorkloadStore, SandboxResource};
+use crate::SandboxResource;
 
 use super::ServiceManager;
 use super::clock::{next_version, now_millis};

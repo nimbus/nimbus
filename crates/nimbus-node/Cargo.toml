@@ -16,6 +16,7 @@ workspace = true
 nimbus-core = { path = "../nimbus-core" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-tenant = { path = "../nimbus-tenant" }
+nimbus-workloads = { path = "../nimbus-workloads" }
 serde.workspace = true
 sha2.workspace = true
 futures = { workspace = true, optional = true }

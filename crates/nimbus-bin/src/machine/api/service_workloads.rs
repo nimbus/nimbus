@@ -11,9 +11,9 @@ use nimbus_node::{
     HostLifecycleBackend, HostLifecycleBackendKind, HostLifecyclePlan, HostLifecycleRequest,
     HostLifecycleStatus, NodeAgent, NodeAgentAssignment, NodeAssignmentDisposition,
     NodeBackendCapabilitySource, RunnerSpec, StatusEvidenceWriter, TenantWorkloadPhase,
-    TenantWorkloadSpec,
 };
 use nimbus_sandbox::backends::container::{ContainerSandboxBackend, ContainerSandboxStateView};
+use nimbus_workloads::{LocalEnforcementBinding, TenantWorkloadSpec};
 
 use crate::node_workload_executor::admit_workload_spec;
 
@@ -305,7 +305,7 @@ where
         spec: TenantWorkloadSpec,
         request: HostLifecycleRequest,
     ) -> Result<HostLifecycleStatus, MachineApiHttpError> {
-        let binding = nimbus_node::LocalEnforcementBinding::from_spec(spec);
+        let binding = LocalEnforcementBinding::from_spec(spec);
         let plan =
             HostLifecyclePlan::from_binding(&binding, request).map_err(core_error_to_http)?;
         self.node_agent
@@ -483,10 +483,11 @@ mod tests {
     };
     use nimbus_node::{
         HostBackendObservedState, HostLifecycleBackendCapabilities, HostLifecycleFuture,
-        HostLifecyclePlan, HostLifecycleProperty, HostLifecycleStatus, NodeIdentity,
-        StatusEvidenceWrite, TenantWorkloadId, TenantWorkloadStatus,
+        HostLifecyclePlan, HostLifecycleProperty, HostLifecycleStatus, StatusEvidenceWrite,
+        TenantWorkloadId, TenantWorkloadStatus,
     };
     use nimbus_sandbox::backends::container::ContainerSandboxBackendConfig;
+    use nimbus_workloads::NodeIdentity;
 
     use super::*;
 
@@ -526,7 +527,7 @@ mod tests {
     impl HostLifecycleBackend for RecordingLifecycleBackend {
         fn validate(
             &self,
-            binding: &nimbus_node::LocalEnforcementBinding,
+            binding: &LocalEnforcementBinding,
             request: HostLifecycleRequest,
         ) -> Result<HostLifecyclePlan, Error> {
             self.record("validate");
@@ -608,7 +609,7 @@ mod tests {
             write: StatusEvidenceWrite<'a>,
         ) -> HostLifecycleFuture<'a, ()> {
             Box::pin(async move {
-                write.projection().ensure_status_matches(write.status())?;
+                nimbus_node::ensure_status_matches_projection(write.projection(), write.status())?;
                 *self.writes.lock().expect("writes lock") += 1;
                 Ok(())
             })

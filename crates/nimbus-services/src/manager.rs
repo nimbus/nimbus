@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use nimbus_sandbox::SandboxBackend;
+use nimbus_workloads::{DesiredWorkloadSnapshot, DesiredWorkloadStore};
 use tokio::sync::Notify;
 
 mod activation;
@@ -18,7 +19,7 @@ mod system_state;
 mod types;
 mod verification;
 
-use crate::{DesiredWorkloadSnapshot, DesiredWorkloadStore, ServiceDefinitionCatalog};
+use crate::ServiceDefinitionCatalog;
 use nimbus_tenant::{TenantImagePolicyDecision, TenantImageVerificationProvider};
 
 use types::ServiceManagerState;

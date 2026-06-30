@@ -1,5 +1,5 @@
 [package]
-name = "nimbus-bridge"
+name = "nimbus-workloads"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
@@ -13,13 +13,7 @@ doctest = false
 workspace = true
 
 [dependencies]
-base64.workspace = true
 nimbus-core = { path = "../nimbus-core" }
-nimbus-engine = { path = "../nimbus-engine" }
-nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-tenant = { path = "../nimbus-tenant" }
-nimbus-workloads = { path = "../nimbus-workloads" }
 serde.workspace = true
-serde_json.workspace = true
-time = { workspace = true, features = ["formatting"] }
-tracing.workspace = true
+sha2.workspace = true
