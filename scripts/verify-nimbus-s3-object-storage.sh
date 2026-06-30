@@ -112,8 +112,14 @@ check_nos0() {
 check_nos1_object_meta_and_blob_store() {
   local object_meta=0 storage_engine=0 per_store_test=0 blob_crate=0 blob_trait=0 local_pack=0 no_per_store_blob_impl=0
 
-  grep_rs "trait ObjectMetaStore" "crates/nimbus-storage/src" && object_meta=1
-  grep_rs "ObjectMetaStore" "crates/nimbus-storage/src/traits/mod.rs" && grep_rs "StorageEngine.*ObjectMetaStore|ObjectMetaStore.*StorageEngine" "crates/nimbus-storage/src/traits/mod.rs" && storage_engine=1
+  grep_rs "trait ObjectMetaStore" "crates/nimbus-storage/src/traits/object_metadata.rs" \
+    && grep_rs "ObjectMetaStore" "crates/nimbus-storage/src/traits/mod.rs" \
+    && object_meta=1
+  grep_rs "trait StorageEngine" "crates/nimbus-storage/src/traits/core.rs" \
+    && grep_rs "ObjectMetaStore" "crates/nimbus-storage/src/traits/core.rs" \
+    && grep_rs "impl<T> StorageEngine" "crates/nimbus-storage/src/traits/provider_impls.rs" \
+    && grep_rs "ObjectMetaStore" "crates/nimbus-storage/src/traits/provider_impls.rs" \
+    && storage_engine=1
   grep_rs "ObjectMetaStore" "crates/nimbus-storage/src/tests" "crates/nimbus-storage/tests" && per_store_test=1
   has_dir "crates/nimbus-blob" && blob_crate=1
   grep_rs "trait BlobStore" "crates/nimbus-blob/src" && grep_rs "struct MemoryBlobStore" "crates/nimbus-blob/src" && blob_trait=1
