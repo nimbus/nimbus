@@ -122,20 +122,13 @@ fn runtime_authorization_from_policy(
     if !authorization.is_allowed() {
         return RuntimeEgressAuthorization::deny(authorization.reason());
     }
-    // The isolate `fetch` gateway does not route bytes through the nimbus-proxy
-    // PEP, so it cannot inject the rule's managed credential or run L7 DLP that a
-    // container/microVM gets. A rule whose enforcement depends on the PEP must
-    // therefore fail closed on this substrate rather than silently egress without
-    // those controls (reaching a credential-governed host with no credential, or
-    // bypassing DLP). (audit H4.)
-    if authorization.requires_proxy_enforcement() {
-        return RuntimeEgressAuthorization::deny(format!(
-            "egress rule `{}` requires proxy-mediated enforcement (credential injection or DLP) \
-             that the isolate substrate cannot apply",
-            authorization.matched_rule().unwrap_or("<unknown>")
-        ));
-    }
-    let mut runtime_authorization = RuntimeEgressAuthorization::allow(authorization.reason());
+    // Map the PDP verdict faithfully — including whether the matched rule needs
+    // PEP-mediated L7 (credential injection / DLP). The fail-closed for substrates
+    // with no proxy route (the isolate `fetch`) lives at the single runtime fetch
+    // hook, the consumption seam every adapter funnels through, so no host bridge
+    // re-encodes the rule. (audit H4.)
+    let mut runtime_authorization = RuntimeEgressAuthorization::allow(authorization.reason())
+        .requiring_proxy_enforcement(authorization.requires_proxy_enforcement());
     if let Some(rule) = authorization.matched_rule() {
         runtime_authorization = runtime_authorization.with_matched_rule(rule);
     }
@@ -215,11 +208,12 @@ mod tests {
     }
 
     #[test]
-    fn egress_gateway_isolate_fails_closed_for_proxy_enforced_rules() {
+    fn egress_gateway_propagates_proxy_enforcement_requirement() {
         // A rule whose enforcement depends on the nimbus-proxy PEP (credential
-        // injection or DLP) must be DENIED on the isolate substrate — which never
-        // routes through the PEP — rather than silently egressing without the
-        // managed credential / DLP a container or microVM would get. (audit H4.)
+        // injection or DLP) must be flagged so the single runtime fetch hook can
+        // fail it closed on a substrate with no proxy route (the isolate). The
+        // bridge's job is faithful propagation, not per-adapter enforcement — the
+        // fail-closed lives at the consumption seam, not here. (audit H4.)
         let (_tempdir, bridge) = bridge_for_policy(
             "tenant-l7",
             EgressPolicy::new([
@@ -248,8 +242,8 @@ mod tests {
             "/v1/ok",
         ));
         assert!(
-            plain.is_allowed(),
-            "a plain allow rule must still permit isolate fetch, got: {}",
+            plain.is_allowed() && !plain.requires_proxy_enforcement(),
+            "a plain allow rule carries no proxy-enforcement requirement, got: {}",
             plain.reason()
         );
 
@@ -259,13 +253,11 @@ mod tests {
             "/v1/ok",
         ));
         assert!(
-            !credentialed.is_allowed(),
-            "an isolate fetch matching a credential-injection rule must fail closed"
-        );
-        assert!(
-            credentialed.reason().contains("proxy-mediated enforcement"),
-            "deny reason should name the proxy-enforcement requirement, got: {}",
-            credentialed.reason()
+            credentialed.is_allowed() && credentialed.requires_proxy_enforcement(),
+            "the bridge must propagate the credential rule's proxy-enforcement \
+             requirement so the runtime hook can fail closed (allowed={}, requires_proxy={})",
+            credentialed.is_allowed(),
+            credentialed.requires_proxy_enforcement()
         );
     }
 
