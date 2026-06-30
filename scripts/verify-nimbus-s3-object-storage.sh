@@ -136,10 +136,12 @@ check_nos1_blob_behavior() {
     && grep_rs "manifest.*atomic|atomic.*manifest" "crates/nimbus-blob/src" "crates/nimbus-storage/src" "crates/nimbus-storage/tests" \
     && grep_rs "compaction|compact" "crates/nimbus-blob/src" \
     && grep_rs "EncryptedBlobStore" "crates/nimbus-blob/src" \
+    && grep_rs "EncryptedBlobStore" "crates/nimbus-object-storage/src" \
+    && grep_rs "FramedBlobAes256GcmSiv|object-storage master key" "crates/nimbus-object-storage/src" "crates/nimbus-crypto/src" \
     && grep_rs "different_keys_yield_different_ciphertext|tenant.*isolated" "crates/nimbus-blob/src"; then
-    pass "NOS1 blob behavior tests are present"
+    pass "NOS1 encrypted blob behavior and resolver composition are present"
   else
-    fail "NOS1 blob behavior tests are incomplete"
+    fail "NOS1 blob behavior/resolver encryption tests are incomplete"
   fi
 }
 

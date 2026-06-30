@@ -12,9 +12,11 @@ workspace = true
 [dependencies]
 nimbus-blob = { path = "../nimbus-blob" }
 nimbus-core = { path = "../nimbus-core" }
+nimbus-crypto = { path = "../nimbus-crypto" }
 nimbus-engine = { path = "../nimbus-engine" }
 nimbus-storage = { path = "../nimbus-storage" }
 object_store.workspace = true
+rand.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
