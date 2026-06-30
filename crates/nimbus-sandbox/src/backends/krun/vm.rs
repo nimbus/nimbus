@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -15,8 +15,8 @@ use crate::backends::conmon::lifecycle::{
     RuntimeStatusProbe, configured_stop_signal, configured_stop_timeout,
     detect_runtime_status as detect_conmon_runtime_status, ensure_linux_host, now_millis,
     read_exit_code, read_pid, remove_if_exists, restart_backoff_delay,
-    restart_policy_allows_restart, run_status_checked, signal_process, spawn_background,
-    wait_for_path, wait_for_runtime_state,
+    restart_policy_allows_restart, run_status_best_effort, run_status_checked, signal_process,
+    spawn_background, wait_for_path, wait_for_runtime_state,
 };
 use crate::backends::conmon::spec_resolve::{
     merge_env_overrides, resolve_process_spec, resolve_root_spec, slugify,
@@ -28,8 +28,15 @@ use crate::backends::oci::builder::OciDockerfileBuilder;
 use crate::backends::oci::conmon::{
     OciConmonConfig, OciConmonLaunchPlan, OciConmonLayout, build_launch_plan,
 };
+use crate::backends::oci::egress::EgressProxyRegistry;
 use crate::backends::oci::materializer::{
     MaterializedImageRootfs, OciImageMaterializer, PreparedMaterializedImageLaunch,
+};
+use crate::backends::oci::network::{
+    DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
+    DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, OciNetworkConfig, OciNetworkDirectEgress,
+    OciNetworkLayout, bridge_gateway_addr, create_persistent_network_namespace,
+    remove_persistent_network_namespace, setup_container_network, teardown_container_network,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -83,10 +90,15 @@ pub struct KrunSandboxBackendConfig {
     pub conmon_path: PathBuf,
     pub runtime_path: PathBuf,
     pub buildah_path: PathBuf,
+    pub netavark_path: PathBuf,
+    pub aardvark_dns_path: PathBuf,
     #[cfg(test)]
     pub buildah_launcher_args: Vec<String>,
     pub guest_user_helper_root: PathBuf,
     pub use_buildah_unshare: bool,
+    pub network_name: String,
+    pub network_interface: String,
+    pub network_subnet: String,
     pub published_port_range: RangeInclusive<u16>,
     pub max_published_ports_per_tenant: Option<usize>,
     pub resource_quota_policy: SandboxResourceQuotaPolicy,
@@ -124,10 +136,15 @@ impl Default for KrunSandboxBackendConfig {
             conmon_path: PathBuf::from(DEFAULT_CONMON_PATH),
             runtime_path: PathBuf::from(DEFAULT_RUNTIME_PATH),
             buildah_path: PathBuf::from(DEFAULT_BUILDAH_PATH),
+            netavark_path: PathBuf::from(DEFAULT_NETAVARK_BINARY),
+            aardvark_dns_path: PathBuf::from(DEFAULT_AARDVARK_DNS_BINARY),
             #[cfg(test)]
             buildah_launcher_args: Vec::new(),
             guest_user_helper_root: PathBuf::from(DEFAULT_GUEST_USER_HELPER_ROOT),
             use_buildah_unshare: true,
+            network_name: DEFAULT_NETWORK_NAME.to_owned(),
+            network_interface: DEFAULT_NETWORK_INTERFACE.to_owned(),
+            network_subnet: DEFAULT_NETWORK_SUBNET.to_owned(),
             published_port_range: DEFAULT_PUBLISHED_PORT_START..=DEFAULT_PUBLISHED_PORT_END,
             max_published_ports_per_tenant: Some(DEFAULT_MAX_PORTS_PER_TENANT),
             resource_quota_policy: SandboxResourceQuotaPolicy::default(),
@@ -139,14 +156,29 @@ impl Default for KrunSandboxBackendConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct KrunSandboxBackend {
     config: KrunSandboxBackendConfig,
+    egress_proxies: EgressProxyRegistry,
 }
 
 impl KrunSandboxBackend {
     pub fn new(config: KrunSandboxBackendConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            egress_proxies: EgressProxyRegistry::new(),
+        }
+    }
+
+    fn network_config(&self) -> OciNetworkConfig {
+        OciNetworkConfig {
+            netavark_path: self.config.netavark_path.clone(),
+            aardvark_dns_path: self.config.aardvark_dns_path.clone(),
+            network_name: self.config.network_name.clone(),
+            network_interface: self.config.network_interface.clone(),
+            network_subnet: self.config.network_subnet.clone(),
+            direct_egress: OciNetworkDirectEgress::Deny,
+        }
     }
 
     fn remove_tenant_artifacts_sync(&self, tenant_id: &nimbus_core::TenantId) -> Result<()> {
@@ -238,6 +270,8 @@ struct KrunSandboxManifest {
     launch_artifact: Option<KrunLaunchArtifact>,
     bundle_layout: KrunBundleLayout,
     conmon_layout: OciConmonLayout,
+    network_layout: OciNetworkLayout,
+    egress_proxy: Option<KrunEgressProxyManifest>,
     conmon_launch: OciConmonLaunchPlan,
     last_exit_code: Option<i32>,
     #[serde(default)]
@@ -269,6 +303,32 @@ struct KrunImageMetadata {
 struct KrunVmConfig {
     cpus: u8,
     ram_mib: u32,
+}
+
+/// Host-side egress PEP assignment for an execute-mode krun sandbox.
+///
+/// The proxy binds on the bridge gateway address so it is the only reachable
+/// outbound path from inside the sandbox's deny-by-default network namespace,
+/// mirroring the container backend's `ContainerEgressProxyManifest`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct KrunEgressProxyManifest {
+    host: String,
+    port: u16,
+}
+
+impl KrunEgressProxyManifest {
+    fn bind_addr(&self) -> Result<SocketAddr> {
+        let host = self
+            .host
+            .parse::<IpAddr>()
+            .map_err(|_| SandboxError::InvalidSpec {
+                message: format!(
+                    "krun egress proxy host {:?} must be an IP address",
+                    self.host
+                ),
+            })?;
+        Ok(SocketAddr::new(host, self.port))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

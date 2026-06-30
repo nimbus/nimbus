@@ -1140,6 +1140,17 @@ fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() 
             "exit_status_file": "/tmp/state/exits/sandbox-01",
             "manifest_path": "/tmp/state/containers/sandbox-01/manifest.json",
         },
+        "network_layout": {
+            "network_root": "/tmp/state/tenants/tenant/networks",
+            "run_root": "/tmp/state/tenants/tenant/networks/run",
+            "netns_root": "/tmp/state/tenants/tenant/networks/netns",
+            "container_network_dir": "/tmp/state/tenants/tenant/networks/containers/sandbox-01",
+            "netns_path": "/tmp/state/tenants/tenant/networks/netns/sandbox-01",
+            "status_path": "/tmp/state/tenants/tenant/networks/containers/sandbox-01/status.json",
+            "ipam_state_path": "/tmp/state/tenants/tenant/networks/run/ipam-state.json",
+            "ipam_lock_path": "/tmp/state/tenants/tenant/networks/run/ipam.lock",
+        },
+        "egress_proxy": null,
         "conmon_launch": {
             "create_command": {
                 "program": "/usr/bin/conmon",
@@ -1190,5 +1201,129 @@ fn desired_krun_vm_config_requires_memory_when_cpu_count_is_requested() {
             .to_string()
             .contains("cpu_count requires memory_limit_bytes"),
         "expected actionable validation error, got: {error}"
+    );
+}
+
+#[test]
+fn launch_network_config_denies_direct_bridge_egress() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ));
+
+    assert_eq!(
+        backend.network_config().direct_egress,
+        crate::backends::oci::network::OciNetworkDirectEgress::Deny,
+        "krun VMMs must run inside a deny-by-default bridge with no ambient egress route"
+    );
+}
+
+#[test]
+fn execute_egress_proxy_binds_bridge_gateway_after_published_ports() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
+    config.published_port_range = 15000..=15002;
+    let backend = KrunSandboxBackend::new(config);
+
+    let proxy = backend
+        .allocate_egress_proxy(
+            &sample_spec().with_port_binding(SandboxPortBinding::tcp("extra", 15000, 8080)),
+        )
+        .expect("execute launches should assign a bridge-reachable egress proxy");
+
+    assert_eq!(
+        proxy
+            .bind_addr()
+            .expect("egress proxy bind address should resolve"),
+        "10.89.0.1:15001"
+            .parse()
+            .expect("bridge gateway socket address should parse"),
+        "the egress PEP must bind on the bridge gateway and skip already-published host ports"
+    );
+}
+
+#[test]
+fn plan_scopes_network_namespace_path_by_tenant() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
+    ));
+
+    let tenant_a_plan = backend
+        .plan_start_with_id(
+            &sample_spec_for_tenant("tenant-a", "db"),
+            &SandboxId::new("db-a"),
+            None,
+            None,
+        )
+        .expect("tenant-a plan should lower");
+    let tenant_b_plan = backend
+        .plan_start_with_id(
+            &sample_spec_for_tenant("tenant-b", "db"),
+            &SandboxId::new("db-b"),
+            None,
+            None,
+        )
+        .expect("tenant-b plan should lower");
+
+    assert!(
+        tenant_a_plan
+            .manifest
+            .network_layout
+            .netns_path
+            .starts_with(
+                temp_dir
+                    .path()
+                    .join("state")
+                    .join("tenants")
+                    .join("tenant-a")
+            ),
+        "the sandbox netns must be rooted under the owning tenant"
+    );
+    assert_ne!(
+        tenant_a_plan.manifest.network_layout.netns_path,
+        tenant_b_plan.manifest.network_layout.netns_path,
+        "the same service name in different tenants must not share a network namespace"
+    );
+    assert!(
+        tenant_a_plan.manifest.egress_proxy.is_none(),
+        "plan-only launches must not claim a live egress proxy"
+    );
+}
+
+#[test]
+fn plan_writes_bundle_joining_the_planned_network_namespace() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
+    ));
+
+    let plan = backend
+        .plan_start_with_id(&sample_spec(), &SandboxId::new("db-01"), None, None)
+        .expect("plan-only launch should lower");
+
+    let config: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&plan.manifest.bundle_layout.config_path)
+            .expect("bundle config should be readable"),
+    )
+    .expect("bundle config should parse");
+    let namespaces = config["linux"]["namespaces"]
+        .as_array()
+        .expect("linux.namespaces should be an array");
+    let network_namespace = namespaces
+        .iter()
+        .find(|namespace| namespace["type"] == "network")
+        .expect("krun bundle must carry the deny-by-default network namespace");
+
+    assert_eq!(
+        network_namespace["path"],
+        plan.manifest
+            .network_layout
+            .netns_path
+            .to_string_lossy()
+            .as_ref(),
+        "the bundle network namespace entry must point at the planned tenant-scoped netns"
     );
 }

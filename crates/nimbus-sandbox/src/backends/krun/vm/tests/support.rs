@@ -159,6 +159,11 @@ pub(super) fn sample_image_metadata() -> KrunImageMetadata {
 
 pub(super) fn sample_manifest(spec: SandboxSpec, start_mode: KrunStartMode) -> KrunSandboxManifest {
     let endpoints = visible_published_endpoints(start_mode, &spec, SandboxStatus::Starting);
+    let network_layout = super::super::OciNetworkLayout::new(
+        "/tmp/state",
+        &spec.tenant_id,
+        &crate::instance::SandboxId::new("sandbox-01"),
+    );
     KrunSandboxManifest {
         handle: crate::instance::SandboxHandle::new(
             spec.tenant_id.clone(),
@@ -176,6 +181,8 @@ pub(super) fn sample_manifest(spec: SandboxSpec, start_mode: KrunStartMode) -> K
             "/tmp/state",
             &crate::instance::SandboxId::new("sandbox-01"),
         ),
+        network_layout,
+        egress_proxy: None,
         conmon_launch: super::super::OciConmonLaunchPlan {
             create_command: CommandSpec::new("/bin/true"),
             state_command: CommandSpec::new("/bin/true"),
