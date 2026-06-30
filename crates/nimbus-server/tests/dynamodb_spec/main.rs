@@ -24,10 +24,11 @@ use aws_sdk_dynamodb::types::{
     ScalarAttributeType, TableStatus,
 };
 use nimbus_core::TenantId;
-use nimbus_dynamodb::{AccessKeyRegistry, AuthMode};
 use nimbus_engine::Engine;
-use nimbus_server::adapters_dynamodb::listener::run_listener;
+use nimbus_server::{DynamoDbConfig, ServeOptions, serve};
 use tokio::net::TcpListener;
+use tokio::net::TcpStream;
+use tokio::time::{Duration, Instant, sleep};
 
 const ACCESS_KEY: &str = "AKIATEST";
 const TENANT: &str = "acme";
@@ -38,7 +39,7 @@ const TENANT: &str = "acme";
 struct Fixture {
     addr: SocketAddr,
     _temp: tempfile::TempDir,
-    listener: tokio::task::JoinHandle<()>,
+    listener: tokio::task::JoinHandle<std::io::Result<()>>,
     /// Retained engine handle so tests can configure persisted state (e.g. the
     /// D7.3 access-key store) on the same `Engine` the listener serves.
     engine: Arc<Engine>,
@@ -102,17 +103,22 @@ impl Fixture {
 async fn fixture_with_keys(bindings: &[(&str, &str)]) -> Fixture {
     let temp = tempfile::tempdir().expect("tempdir");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
-    let mut registry = AccessKeyRegistry::new().with_mode(AuthMode::Strict);
+    let port = reserve_loopback_port().await;
+    let mut config = DynamoDbConfig::new(port).with_ttl_sweep_interval(None);
     for (key, tenant) in bindings {
-        registry = registry.bind_signed(
+        config = config.with_signed_access_key(
             *key,
             TenantId::new(*tenant).expect("valid tenant"),
             CLIENT_SECRET,
         );
     }
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-    let addr = listener.local_addr().expect("local addr");
-    let handle = tokio::spawn(run_listener(listener, Arc::clone(&engine), registry));
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let handle = tokio::spawn(serve(
+        listener,
+        ServeOptions::new(Arc::clone(&engine)).with_dynamodb(config),
+    ));
+    wait_for_tcp_port(addr, &handle).await;
     Fixture {
         addr,
         _temp: temp,
@@ -135,12 +141,17 @@ const CLIENT_SECRET: &str = "test-secret";
 async fn fixture_strict(secret: &str) -> Fixture {
     let temp = tempfile::tempdir().expect("tempdir");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
-    let registry = AccessKeyRegistry::new()
-        .bind_signed(ACCESS_KEY, TenantId::new(TENANT).expect("tenant"), secret)
-        .with_mode(AuthMode::Strict);
+    let port = reserve_loopback_port().await;
+    let config = DynamoDbConfig::new(port)
+        .with_signed_access_key(ACCESS_KEY, TenantId::new(TENANT).expect("tenant"), secret)
+        .with_ttl_sweep_interval(None);
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-    let addr = listener.local_addr().expect("local addr");
-    let handle = tokio::spawn(run_listener(listener, Arc::clone(&engine), registry));
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let handle = tokio::spawn(serve(
+        listener,
+        ServeOptions::new(Arc::clone(&engine)).with_dynamodb(config),
+    ));
+    wait_for_tcp_port(addr, &handle).await;
     Fixture {
         addr,
         _temp: temp,
@@ -155,15 +166,51 @@ async fn fixture_strict(secret: &str) -> Fixture {
 async fn fixture_strict_store_only() -> Fixture {
     let temp = tempfile::tempdir().expect("tempdir");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
-    let registry = AccessKeyRegistry::new().with_mode(AuthMode::Strict);
+    let port = reserve_loopback_port().await;
+    let config = DynamoDbConfig::new(port).with_ttl_sweep_interval(None);
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-    let addr = listener.local_addr().expect("local addr");
-    let handle = tokio::spawn(run_listener(listener, Arc::clone(&engine), registry));
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let handle = tokio::spawn(serve(
+        listener,
+        ServeOptions::new(Arc::clone(&engine)).with_dynamodb(config),
+    ));
+    wait_for_tcp_port(addr, &handle).await;
     Fixture {
         addr,
         _temp: temp,
         listener: handle,
         engine,
+    }
+}
+
+async fn reserve_loopback_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("ephemeral listener should bind");
+    listener
+        .local_addr()
+        .expect("ephemeral listener address should resolve")
+        .port()
+}
+
+async fn wait_for_tcp_port(
+    addr: SocketAddr,
+    server: &tokio::task::JoinHandle<std::io::Result<()>>,
+) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        assert!(
+            !server.is_finished(),
+            "Nimbus server exited before DynamoDB listener accepted connections"
+        );
+        match TcpStream::connect(addr).await {
+            Ok(_) => return,
+            Err(error) if Instant::now() < deadline => {
+                sleep(Duration::from_millis(25)).await;
+                drop(error);
+            }
+            Err(error) => panic!("DynamoDB listener at {addr} did not become ready: {error}"),
+        }
     }
 }
 

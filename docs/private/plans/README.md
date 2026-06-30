@@ -411,6 +411,27 @@ closed scope, success criteria, and proof obligations.
     CB9 = standard-`ws`/socket.io zero-config DX is the Vercel-parity surface,
     CB10 = Active-CPU-vs-resident metering). LOCAL-ONLY plan: lives under
     untracked `docs/private/`, never committed.
+- `docs/private/plans/crate-architecture-modularity-plan.md`
+  - **CAM0..CAM7 (active)** — pre-launch Rust crate architecture cleanup from
+    the 2026-06-30 full-crate audit, revalidated against clean `main` at
+    `54eeb9c57` after the NOS/KME/dependency PRs. Removes the
+    `nimbus-cloud-functions` -> `nimbus-firebase` adapter dependency by lifting
+    shared Firestore semantics to a provider-family seam; narrows accidental
+    public surfaces in `nimbus` and `nimbus-server`; decomposes overloaded
+    `nimbus-storage` traits and Postgres helper roots without collapsing the
+    landed `nimbus-object-storage` module tree; splits OCI/container sandbox
+    networking/runtime roots by concept-owned seams while preserving KME
+    netns/PEP routing; moves runtime bootstrap JavaScript into named assets; and
+    preserves the `nimbus-core` zero-I/O plus `nimbus-runtime`
+    zero-workspace-dep invariants. `/goal` control-plane verifier is planned at
+    `bash scripts/verify-crate-architecture-modularity.sh` (10 conditions) and
+    is created by CAM0. Until CAM0 lands, a missing verifier is expected, not a
+    pass. CAM0 also records the dedicated worktree
+    `/Users/jack/.codex/worktrees/crate-architecture-modularity/nimbus`, the
+    current NOS/KME verifier baselines, and `git worktree list --porcelain`.
+    Implementation must happen on branch `codex/crate-architecture-modularity`
+    in that dedicated worktree. LOCAL-ONLY plan: lives under untracked
+    `docs/private/`, never committed.
 - `docs/private/plans/nimbus-kv-foundation-plan.md`
   - **NKV0 (Foundation)**, first phase of the `nimbus-kv` program: a monolithic,
     natively Redis/Valkey-compatible (RESP2/RESP3) data-structure store that

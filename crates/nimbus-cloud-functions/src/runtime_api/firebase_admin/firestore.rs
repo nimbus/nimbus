@@ -11,7 +11,7 @@ use nimbus_bridge::capabilities::{
     get_document, get_document_async, validate_runtime_capability_access,
 };
 use nimbus_bridge::responses::encode_runtime_core_result;
-use nimbus_firebase::{
+use nimbus_firestore::{
     locator_for_document_path, parse_document_path, validate_default_database_id,
 };
 

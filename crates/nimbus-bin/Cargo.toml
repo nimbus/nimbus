@@ -34,14 +34,17 @@ indicatif.workspace = true
 libc.workspace = true
 nimbus = { path = "../nimbus", features = ["aws-kms"] }
 nimbus-assets = { path = "../nimbus-assets", features = ["js-packages", "templates"] }
+nimbus-convex = { path = "../nimbus-convex" }
 nimbus-crypto = { path = "../nimbus-crypto" }
 nimbus-fs = { path = "../nimbus-fs" }
 nimbus-kv = { path = "../nimbus-kv" }
 nimbus-machine = { path = "../nimbus-machine" }
+nimbus-operator = { path = "../nimbus-operator" }
 nimbus-server = { path = "../nimbus-server" }
 nimbus-services = { path = "../nimbus-services" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-system = { path = "../nimbus-system" }
+nimbus-tenant = { path = "../nimbus-tenant" }
 open = "5.3"
 rand.workspace = true
 reqwest.workspace = true

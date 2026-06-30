@@ -68,7 +68,7 @@ pub use nimbus_crypto::{
     recover_interrupted_dek_rotation, resolve_subject_encryption_key, unwrap_key_manifest,
 };
 pub use nimbus_server::{
-    BuiltInServiceSpec, ConvexRegistry, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
+    BuiltInServiceSpec, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
     ExternalServiceSpec, LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind,
     LicenseLoadError, LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState,
     LicenseStatus, LicenseUsageSnapshot, LocalBuildAdmission, RouterOptions, ServeOptions,

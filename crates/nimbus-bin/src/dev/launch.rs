@@ -119,7 +119,7 @@ pub(super) async fn announce_launch_url_when_ready(
 }
 
 async fn mint_launch_url_or_fallback(console_url: &str) -> String {
-    let paths = match nimbus_server::LocalServerPaths::resolve_for_current_platform() {
+    let paths = match nimbus_operator::LocalServerPaths::resolve_for_current_platform() {
         Ok(paths) => paths,
         Err(error) => {
             tracing::warn!(

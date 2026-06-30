@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use nimbus_server::LocalServerPaths;
+use nimbus_operator::LocalServerPaths;
 
 use crate::cli_ux;
 use crate::local_server_client::LocalServerHttpClient;
@@ -126,10 +126,8 @@ mod tests {
     use std::sync::Arc;
 
     use nimbus::Engine;
-    use nimbus_server::{
-        LocalServerSecurityState, ServeOptions, ServerDiscoveryLease,
-        load_or_create_local_admin_token, serve,
-    };
+    use nimbus_operator::{LocalServerSecurityState, load_or_create_local_admin_token};
+    use nimbus_server::{ServeOptions, ServerDiscoveryLease, serve};
     use tempfile::tempdir;
 
     use super::*;

@@ -5,7 +5,7 @@ use nimbus::{
     EffectiveRuntimeScalingPlan, Error, RequestedRuntimeScalingTarget, RuntimeHostResourceBudget,
     RuntimeScalingLimit, RuntimeScalingPlanSet, RuntimeScalingPreset,
 };
-use nimbus_server::{
+use nimbus_tenant::{
     OPERATOR_POLICY_SCHEMA_VERSION, OperatorPolicyDefaults, OperatorPolicyDocument,
     OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorRuntimePolicy,
     OperatorRuntimeResourceEnvelope, OperatorRuntimeSafetyCaps, OperatorSandboxPolicy,

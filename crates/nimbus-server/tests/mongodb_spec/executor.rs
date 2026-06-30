@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use nimbus_engine::Engine;
-use nimbus_server::MongoDbAuthConfig;
-use nimbus_server::adapters_mongodb::listener::{MongoAuthSource, run_listener};
+use nimbus_server::{MongoDbAuthConfig, MongoDbConfig, ServeOptions, serve};
 use nimbus_testing::EngineFixture;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::task::JoinHandle;
+use tokio::time::{Duration, Instant, sleep};
 
 use super::runner::{self, SpecTest, SpecTestFile, TestResult};
 use super::wire_client::WireClient;
@@ -16,27 +16,63 @@ pub(crate) const TEST_PASSWORD: &str = "spec-password";
 
 pub struct SpecTestFixture {
     _fixture: EngineFixture<Engine>,
+    _server: JoinHandle<std::io::Result<()>>,
     pub addr: SocketAddr,
 }
 
 impl SpecTestFixture {
     pub async fn new() -> Self {
         let fixture = EngineFixture::new(|path| Engine::new(path));
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-        let addr = listener.local_addr().expect("local addr");
-        let service = fixture.engine();
-        tokio::spawn(run_listener(
-            listener,
-            service,
-            MongoAuthSource::Unbound(Arc::new(MongoDbAuthConfig::new(
-                TEST_USERNAME.into(),
-                TEST_PASSWORD.into(),
-            ))),
+        let adapter_port = reserve_loopback_port().await;
+        let addr = SocketAddr::from(([127, 0, 0, 1], adapter_port));
+        let http_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let server = tokio::spawn(serve(
+            http_listener,
+            ServeOptions::new(fixture.engine()).with_mongodb(MongoDbConfig::localhost(
+                adapter_port,
+                MongoDbAuthConfig::new(TEST_USERNAME.into(), TEST_PASSWORD.into()),
+            )),
         ));
+        wait_for_tcp_port(addr, &server).await;
 
         Self {
             _fixture: fixture,
+            _server: server,
             addr,
+        }
+    }
+}
+
+impl Drop for SpecTestFixture {
+    fn drop(&mut self) {
+        self._server.abort();
+    }
+}
+
+async fn reserve_loopback_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("ephemeral listener should bind");
+    listener
+        .local_addr()
+        .expect("ephemeral listener address should resolve")
+        .port()
+}
+
+async fn wait_for_tcp_port(addr: SocketAddr, server: &JoinHandle<std::io::Result<()>>) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        assert!(
+            !server.is_finished(),
+            "Nimbus server exited before MongoDB listener accepted connections"
+        );
+        match TcpStream::connect(addr).await {
+            Ok(_) => return,
+            Err(error) if Instant::now() < deadline => {
+                sleep(Duration::from_millis(25)).await;
+                drop(error);
+            }
+            Err(error) => panic!("MongoDB listener at {addr} did not become ready: {error}"),
         }
     }
 }

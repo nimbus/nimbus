@@ -6415,14 +6415,17 @@ dependencies = [
  "libc",
  "nimbus",
  "nimbus-assets",
+ "nimbus-convex",
  "nimbus-crypto",
  "nimbus-fs",
  "nimbus-kv",
  "nimbus-machine",
+ "nimbus-operator",
  "nimbus-sandbox",
  "nimbus-server",
  "nimbus-services",
  "nimbus-system",
+ "nimbus-tenant",
  "nimbus-testing",
  "oci-client",
  "open",
@@ -6487,7 +6490,7 @@ dependencies = [
  "nimbus-bridge",
  "nimbus-core",
  "nimbus-engine",
- "nimbus-firebase",
+ "nimbus-firestore",
  "nimbus-provenance",
  "nimbus-runtime",
  "nimbus-services",
@@ -6633,6 +6636,7 @@ dependencies = [
  "http 1.4.2",
  "nimbus-core",
  "nimbus-engine",
+ "nimbus-firestore",
  "nimbus-tenant",
  "nimbus-testing",
  "prost 0.13.5",
@@ -6647,6 +6651,15 @@ dependencies = [
  "tokio",
  "tonic 0.13.1",
  "tonic-build",
+]
+
+[[package]]
+name = "nimbus-firestore"
+version = "0.1.44"
+dependencies = [
+ "base64 0.22.1",
+ "nimbus-core",
+ "ring",
 ]
 
 [[package]]
@@ -6923,6 +6936,7 @@ dependencies = [
  "nimbus-egress",
  "nimbus-engine",
  "nimbus-firebase",
+ "nimbus-firestore",
  "nimbus-fs",
  "nimbus-license",
  "nimbus-machine",

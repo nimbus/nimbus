@@ -7,6 +7,7 @@ use nimbus_core::{
     WriteKey,
 };
 use nimbus_engine::Engine;
+use nimbus_firestore::{locator_for_document_path, storage_table_for_collection_path};
 use nimbus_tenant::TenantIsolationContext;
 
 use crate::project_tenant_registry::{
@@ -16,7 +17,6 @@ use crate::project_tenant_registry::{
 use super::batch_get_request;
 use super::commit_request;
 use super::errors::{list_collection_ids_request_error_to_core, resource_name_error_to_core};
-use super::firestore_model::{locator_for_document_path, storage_table_for_collection_path};
 use super::list_collection_ids_request;
 use super::resource_names;
 use super::response::firestore_parent_name;
@@ -490,8 +490,8 @@ pub fn run_aggregation_query_for_database(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::firestore_model::parse_document_path;
     use crate::project_tenant_registry::ProjectTenantRegistry;
+    use nimbus_firestore::parse_document_path;
     use serde_json::json;
 
     fn database(project_id: &str) -> resource_names::FirestoreDatabaseName {

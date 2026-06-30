@@ -12,7 +12,7 @@ repo and find the owning crate. The full architecture tour lives at
 
 ### Rust crates (`crates/`)
 
-All 30 workspace members, per the root `Cargo.toml`.
+All Rust workspace members, per the root `Cargo.toml`.
 
 | Crate | Role |
 | --- | --- |
@@ -32,6 +32,7 @@ All 30 workspace members, per the root `Cargo.toml`.
 | `nimbus-dynamodb` | DynamoDB wire-protocol adapter: AttributeValue conversion, expressions, operation dispatch, SigV4, streams. |
 | `nimbus-engine` | Central coordinator (`Engine`): mutation path, query evaluation, subscriptions, scheduler, triggers. |
 | `nimbus-firebase` | Firestore protocol semantics: REST/gRPC request models, queries, transactions, serialization. |
+| `nimbus-firestore` | Firestore provider-family path, default-database, and storage-locator semantics shared by Firebase and Cloud Functions. |
 | `nimbus-license` | License file loading and status (community / trial / enterprise). |
 | `nimbus-machine` | Render-independent machine records and provider contracts shared by CLI and server. |
 | `nimbus-mongodb` | MongoDB wire protocol: BSON bridging, command handlers, connections, auth. |
@@ -107,10 +108,10 @@ every route family is mounted.
 
 Protocol semantics live in standalone crates — `nimbus-convex`,
 `nimbus-firebase`, `nimbus-cloud-functions`, `nimbus-mongodb`,
-`nimbus-dynamodb` — supported by the shared `nimbus-bridge` and `nimbus-auth`
-seams. `crates/nimbus-server/src/adapters/` holds only thin transport shims
-that mount those crates; MongoDB and DynamoDB additionally run their own
-listeners.
+`nimbus-dynamodb` — supported by provider-family seams such as
+`nimbus-firestore` and by the shared `nimbus-bridge` and `nimbus-auth` seams.
+`crates/nimbus-server/src/adapters/` holds only thin transport shims that mount
+those crates; MongoDB and DynamoDB additionally run their own listeners.
 → <https://nimbusdocs.com/concepts/architecture/adapters/>
 
 ### Engine & mutation path

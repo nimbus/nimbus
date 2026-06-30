@@ -2,10 +2,11 @@ use std::error::Error;
 use std::io;
 
 use clap::{Args, Subcommand};
-use nimbus_server::{
-    LocalAdminTokenRecord, LocalServerPaths, ServerDiscoveryRecord, load_local_admin_token,
-    read_live_server_discovery, rotate_local_admin_token_offline,
+use nimbus_operator::{
+    LocalAdminTokenRecord, LocalServerPaths, load_local_admin_token,
+    rotate_local_admin_token_offline,
 };
+use nimbus_server::{ServerDiscoveryRecord, read_live_server_discovery};
 use serde::Deserialize;
 
 use crate::local_server_client::normalize_loopback_connect_address;
@@ -140,10 +141,8 @@ mod tests {
 
     use clap::Parser;
     use nimbus::Engine;
-    use nimbus_server::{
-        LocalServerPaths, LocalServerSecurityState, ServeOptions, ServerDiscoveryRecord,
-        load_local_admin_token, load_or_create_local_admin_token, serve,
-    };
+    use nimbus_operator::{LocalServerSecurityState, load_or_create_local_admin_token};
+    use nimbus_server::{ServeOptions, ServerDiscoveryRecord, serve};
 
     use super::*;
     use crate::test_support::wait_for_live_server_health;

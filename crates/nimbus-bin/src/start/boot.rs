@@ -7,13 +7,14 @@ use std::sync::Arc;
 use std::{env, process};
 
 use nimbus::{
-    ConvexRegistry, Engine, Error, LicenseState, RuntimeHostResourceBudget, RuntimeLimits,
-    TenantId, run_scheduler,
+    Engine, Error, LicenseState, RuntimeHostResourceBudget, RuntimeLimits, TenantId, run_scheduler,
 };
-use nimbus_server::{
-    CloudFunctionsRegistry, LocalServerPaths, LocalServerSecurityState, OperatorPolicyDocument,
-    ServeOptions, ServerDiscoveryLease, load_or_create_local_admin_token, serve,
+use nimbus_convex::ConvexRegistry;
+use nimbus_operator::{
+    LocalServerPaths, LocalServerSecurityState, load_or_create_local_admin_token,
 };
+use nimbus_server::{CloudFunctionsRegistry, ServeOptions, ServerDiscoveryLease, serve};
+use nimbus_tenant::OperatorPolicyDocument;
 
 use super::StartCommand;
 use super::adapters::{AdapterEnablement, resolve_adapter_enablement};

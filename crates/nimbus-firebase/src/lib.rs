@@ -2,7 +2,6 @@ pub mod batch_get_request;
 pub mod batch_write_request;
 pub mod commit_request;
 pub mod errors;
-pub mod firestore_model;
 pub mod grpc;
 pub mod list_collection_ids_request;
 pub mod operations;
@@ -21,10 +20,6 @@ pub use errors::{
     firestore_grpc_code, list_collection_ids_request_error_to_core, resource_name_error_to_core,
     run_aggregation_query_request_error_to_core, run_query_request_error_to_core,
     transaction_request_error_to_core,
-};
-pub use firestore_model::{
-    locator_for_document_path, parse_document_path, storage_table_for_collection_path,
-    validate_default_database_id,
 };
 use nimbus_core::{
     AtomicWriteResult, Document, DocumentPath, Error, StructuredAggregationResult, Timestamp,

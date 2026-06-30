@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
 use nimbus::Error;
-use nimbus_server::LocalServerPaths;
+use nimbus_operator::LocalServerPaths;
 use serde::Deserialize;
 use serde_json::{Value, json};
 

@@ -14,6 +14,7 @@ use nimbus_core::{
 use nimbus_engine::{
     DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, Engine, SubscriptionCleanupHandle, SubscriptionUpdate,
 };
+use nimbus_firestore::storage_table_for_collection_path;
 use tokio::sync::mpsc;
 use tonic::Status;
 
@@ -35,10 +36,7 @@ use super::write_stream::{
 };
 use crate::ProjectTenantRegistry;
 use crate::resource_names::{self, FirestoreDatabaseName};
-use crate::{
-    firestore_document_name, resource_name_error_to_core, storage_table_for_collection_path,
-    tenant_context_for_database,
-};
+use crate::{firestore_document_name, resource_name_error_to_core, tenant_context_for_database};
 
 const RETAINED_LISTEN_TARGET_TTL: Duration = Duration::from_secs(60);
 const MAX_RETAINED_LISTEN_TARGETS: usize = 256;

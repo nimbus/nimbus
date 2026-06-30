@@ -3,7 +3,8 @@ use std::fmt;
 use std::io;
 
 use clap::Args;
-use nimbus_server::{LocalServerPaths, ServerDiscoveryRecord, read_live_server_discovery};
+use nimbus_operator::LocalServerPaths;
+use nimbus_server::{ServerDiscoveryRecord, read_live_server_discovery};
 
 use crate::local_server_client::{LocalServerHttpClient, normalize_loopback_connect_address};
 
@@ -180,10 +181,8 @@ mod tests {
     use std::sync::Arc;
 
     use nimbus::Engine;
-    use nimbus_server::{
-        LocalServerPaths, LocalServerSecurityState, ServeOptions, load_or_create_local_admin_token,
-        serve,
-    };
+    use nimbus_operator::{LocalServerSecurityState, load_or_create_local_admin_token};
+    use nimbus_server::{ServeOptions, serve};
     use std::net::Ipv4Addr;
 
     use super::*;

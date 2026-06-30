@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use nimbus::Error;
-use nimbus_server::LocalServerPaths;
+use nimbus_operator::LocalServerPaths;
 use serde::Serialize;
 
 use crate::local_server_client::LocalServerHttpClient;
@@ -232,10 +232,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use nimbus::Engine;
+    use nimbus_operator::{LocalServerSecurityState, load_or_create_local_admin_token};
     use nimbus_server::{
-        LocalServerSecurityState, MachineCreateRequest, MachineLifecycleFuture,
-        MachineLifecycleManager, MachineLifecycleSnapshot, MachineUpdateRequest, ServeOptions,
-        ServerDiscoveryLease, load_or_create_local_admin_token, serve,
+        MachineCreateRequest, MachineLifecycleFuture, MachineLifecycleManager,
+        MachineLifecycleSnapshot, MachineUpdateRequest, ServeOptions, ServerDiscoveryLease, serve,
     };
     use tempfile::tempdir;
 

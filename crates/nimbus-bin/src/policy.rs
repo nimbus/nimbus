@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand, ValueEnum};
-use nimbus_server::{OperatorPolicyDiff, OperatorPolicyDocument};
+use nimbus_tenant::{OperatorPolicyDiff, OperatorPolicyDocument};
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum PolicyCommand {

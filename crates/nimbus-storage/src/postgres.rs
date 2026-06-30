@@ -50,6 +50,7 @@ mod query_helpers;
 mod read;
 mod resource_paths;
 mod storage;
+mod table_catalog;
 mod table_lifecycle;
 mod trigger_delivery;
 mod trigger_invocations;
@@ -68,6 +69,7 @@ use self::notifications::{
 };
 pub use self::notifications::{PostgresNotificationListener, PostgresProviderNotification};
 use self::query_helpers::*;
+use self::table_catalog::*;
 
 const POSTGRES_IDENTIFIER_LIMIT: usize = 63;
 const TARGET_TENANT_HASH_HEX_LEN: usize = 40;

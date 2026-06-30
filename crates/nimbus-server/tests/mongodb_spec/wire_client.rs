@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use hmac::{Hmac, Mac};
-use nimbus_server::adapters_mongodb::wire::OP_MSG;
+use nimbus_mongodb::wire::OP_MSG;
 use sha2::Sha256;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;

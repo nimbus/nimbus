@@ -4,10 +4,8 @@ use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
-use nimbus_server::{
-    LocalServerPaths, load_local_admin_token, read_live_server_discovery,
-    rotate_local_admin_token_offline,
-};
+use nimbus_operator::{LocalServerPaths, load_local_admin_token, rotate_local_admin_token_offline};
+use nimbus_server::read_live_server_discovery;
 
 use crate::credentials::{
     self, ConnectionEntry, CredentialsFile, default_credentials_path, find_connection, mask_bearer,
@@ -404,10 +402,8 @@ mod tests {
 
     use clap::Parser;
     use nimbus::Engine;
-    use nimbus_server::{
-        LocalServerPaths, LocalServerSecurityState, ServeOptions, ServerDiscoveryLease,
-        load_or_create_local_admin_token, serve,
-    };
+    use nimbus_operator::{LocalServerSecurityState, load_or_create_local_admin_token};
+    use nimbus_server::{ServeOptions, ServerDiscoveryLease, serve};
 
     use super::*;
     use crate::test_support::wait_for_live_server_health;

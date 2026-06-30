@@ -4,6 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use clap::Args;
+use nimbus_operator::{LOCAL_ADMIN_HEADER_NAME, LocalServerPaths, load_local_admin_token};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -225,8 +226,8 @@ pub(crate) fn load_local_admin_token_for_loopback(target_url: &str) -> Option<St
     if !target_url_is_loopback(target_url) {
         return None;
     }
-    let paths = nimbus_server::LocalServerPaths::resolve_for_current_platform().ok()?;
-    nimbus_server::load_local_admin_token(&paths)
+    let paths = LocalServerPaths::resolve_for_current_platform().ok()?;
+    load_local_admin_token(&paths)
         .ok()
         .map(|record| record.token)
 }
@@ -627,7 +628,7 @@ pub(crate) async fn post_deploy_request(
         .bearer_auth(token)
         .json(request);
     if let Some(admin_token) = admin_token {
-        builder = builder.header(nimbus_server::LOCAL_ADMIN_HEADER_NAME, admin_token);
+        builder = builder.header(LOCAL_ADMIN_HEADER_NAME, admin_token);
     }
     let response = builder.send().await?;
     let status = response.status();
@@ -873,6 +874,9 @@ fn read_optional_text(path: &Path) -> Result<Option<String>, Box<dyn std::error:
 #[cfg(test)]
 mod tests {
     use clap::{Parser, error::ErrorKind};
+    use nimbus_operator::{
+        LocalAdminTokenRecord, LocalServerSecurityState, load_or_create_local_admin_token,
+    };
     use serde_json::json;
 
     use super::*;
@@ -1334,8 +1338,8 @@ mod tests {
         assert!(!target_url_is_loopback("not a url"));
     }
 
-    fn live_server_paths(root: &Path) -> nimbus_server::LocalServerPaths {
-        nimbus_server::LocalServerPaths {
+    fn live_server_paths(root: &Path) -> LocalServerPaths {
+        LocalServerPaths {
             auth_token_path: root.join("auth").join("token"),
             server_discovery_path: root.join("run").join("server.json"),
             audit_log_path: root.join("logs").join("access.jsonl"),
@@ -1370,17 +1374,14 @@ mod tests {
         deploy_token: &str,
     ) -> (
         String,
-        nimbus_server::LocalAdminTokenRecord,
+        LocalAdminTokenRecord,
         tokio::task::JoinHandle<std::io::Result<()>>,
         std::sync::Arc<nimbus::Engine>,
     ) {
         let paths = live_server_paths(&temp.path().join("paths"));
-        let record = nimbus_server::load_or_create_local_admin_token(&paths)
-            .expect("local admin token should initialize");
-        let security = std::sync::Arc::new(nimbus_server::LocalServerSecurityState::new(
-            paths,
-            record.clone(),
-        ));
+        let record =
+            load_or_create_local_admin_token(&paths).expect("local admin token should initialize");
+        let security = std::sync::Arc::new(LocalServerSecurityState::new(paths, record.clone()));
         let engine = std::sync::Arc::new(
             nimbus::Engine::new(temp.path().join("engine")).expect("engine should initialize"),
         );
