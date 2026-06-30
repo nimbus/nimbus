@@ -329,6 +329,12 @@ impl KrunEgressProxyManifest {
             })?;
         Ok(SocketAddr::new(host, self.port))
     }
+
+    /// Container-shape proxy URL the guest env is pointed at: the PEP binds on
+    /// the bridge gateway, the only outbound path from the deny-by-default netns.
+    fn proxy_url(&self) -> Result<String> {
+        Ok(format!("http://{}", self.bind_addr()?))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
