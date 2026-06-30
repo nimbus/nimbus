@@ -6717,7 +6717,9 @@ name = "nimbus-machine"
 version = "0.1.44"
 dependencies = [
  "nimbus-core",
+ "nimbus-sandbox",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

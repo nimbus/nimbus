@@ -30,12 +30,19 @@ use serde::Deserialize;
 
 use crate::node_workload_executor::JsonlStatusWriter;
 
-use super::protocol::{
-    MACHINE_API_ROLE, MachineApiBinaryStatus, MachineApiBootcOperationResponse,
-    MachineApiBootcRollbackRequest, MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest,
-    MachineApiBootcUpgradeRequest, MachineApiCapabilityResponse, MachineApiErrorResponse,
-    MachineApiHealthResponse, MachineApiOperationStatus, MachineApiServiceExecutionDriver,
-    MachineApiServiceExecutionMode, MachineApiServiceProcessRow, MachineApiServiceProcessSnapshot,
+use super::{MachineApiCommand, MachineRootLayout};
+use nimbus_machine::api::{
+    MACHINE_API_BOOTC_ROLLBACK_OPERATION, MACHINE_API_BOOTC_STATUS_OPERATION,
+    MACHINE_API_BOOTC_SWITCH_OPERATION, MACHINE_API_BOOTC_UPGRADE_OPERATION,
+    MACHINE_API_BUILD_START_OPERATION, MACHINE_API_IMAGE_START_OPERATION,
+    MACHINE_API_INSPECT_CURRENT_OPERATION, MACHINE_API_INSPECT_OPERATION,
+    MACHINE_API_LIST_OPERATION, MACHINE_API_LOGS_OPERATION, MACHINE_API_PS_OPERATION,
+    MACHINE_API_ROLE, MACHINE_API_STOP_OPERATION, MachineApiBinaryStatus,
+    MachineApiBootcOperationResponse, MachineApiBootcRollbackRequest,
+    MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest, MachineApiBootcUpgradeRequest,
+    MachineApiCapabilityResponse, MachineApiErrorResponse, MachineApiHealthResponse,
+    MachineApiOperationStatus, MachineApiServiceExecutionDriver, MachineApiServiceExecutionMode,
+    MachineApiServiceProcessRow, MachineApiServiceProcessSnapshot,
     MachineApiServiceProcessSnapshotResponse, MachineApiServiceSandboxBuildStartRequest,
     MachineApiServiceSandboxDetails, MachineApiServiceSandboxImageStartRequest,
     MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxListResponse,
@@ -43,7 +50,6 @@ use super::protocol::{
     MachineApiServiceSandboxLookupResponse, MachineApiServiceSandboxStartResponse,
     MachineApiServiceSandboxStopResponse, MachineApiServiceSandboxSummary, PROTOCOL_VERSION,
 };
-use super::{MachineApiCommand, MachineRootLayout};
 
 mod binaries;
 mod bootc;
@@ -70,18 +76,6 @@ pub(crate) use self::service_workloads::{GuestNodeWorkloadService, MachineApiNod
 
 const MACHINE_API_OPERATION_BLOCKER: &str =
     "guest machine API does not yet expose service lifecycle operations";
-const MACHINE_API_IMAGE_START_OPERATION: &str = "service-sandboxes.image-start";
-const MACHINE_API_BUILD_START_OPERATION: &str = "service-sandboxes.build-start";
-const MACHINE_API_LIST_OPERATION: &str = "service-sandboxes.list";
-const MACHINE_API_INSPECT_OPERATION: &str = "service-sandboxes.inspect";
-const MACHINE_API_INSPECT_CURRENT_OPERATION: &str = "service-sandboxes.inspect-current";
-const MACHINE_API_LOGS_OPERATION: &str = "service-sandboxes.logs";
-const MACHINE_API_PS_OPERATION: &str = "service-sandboxes.ps";
-const MACHINE_API_STOP_OPERATION: &str = "service-sandboxes.stop";
-const MACHINE_API_BOOTC_STATUS_OPERATION: &str = "os.bootc.status";
-const MACHINE_API_BOOTC_SWITCH_OPERATION: &str = "os.bootc.switch";
-const MACHINE_API_BOOTC_UPGRADE_OPERATION: &str = "os.bootc.upgrade";
-const MACHINE_API_BOOTC_ROLLBACK_OPERATION: &str = "os.bootc.rollback";
 const MACHINE_PORT_FORWARDER_TIMEOUT: Duration = Duration::from_millis(200);
 
 #[derive(Clone)]

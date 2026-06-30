@@ -8,7 +8,10 @@ use nimbus::{Error, SandboxHandle, SandboxId, SandboxRootSpec, SandboxSpec, Tena
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use super::protocol::{
+use nimbus_machine::api::{
+    MACHINE_API_BOOTC_ROLLBACK_PATH, MACHINE_API_BOOTC_STATUS_PATH, MACHINE_API_BOOTC_SWITCH_PATH,
+    MACHINE_API_BOOTC_UPGRADE_PATH, MACHINE_API_CAPABILITIES_PATH, MACHINE_API_HEALTH_PATH,
+    MACHINE_API_SERVICE_SANDBOX_BUILD_START_PATH, MACHINE_API_SERVICE_SANDBOX_IMAGE_START_PATH,
     MachineApiBootcOperationResponse, MachineApiBootcRollbackRequest,
     MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest, MachineApiBootcUpgradeRequest,
     MachineApiCapabilityResponse, MachineApiErrorResponse, MachineApiHealthResponse,
@@ -17,7 +20,10 @@ use super::protocol::{
     MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxListResponse,
     MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLookupResponse,
     MachineApiServiceSandboxStartResponse, MachineApiServiceSandboxStopResponse,
-    MachineApiServiceSandboxSummary, PROTOCOL_VERSION,
+    MachineApiServiceSandboxSummary, PROTOCOL_VERSION, machine_api_current_service_sandbox_path,
+    machine_api_service_sandbox_list_path, machine_api_service_sandbox_logs_path,
+    machine_api_service_sandbox_path, machine_api_service_sandbox_process_snapshot_path,
+    machine_api_service_sandbox_stop_path,
 };
 
 const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(2);
@@ -25,16 +31,6 @@ const SOCKET_MUTATION_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[cfg(test)]
 const SOCKET_IO_TIMEOUT_TEST: Duration = Duration::from_secs(30);
-const HEALTHZ_PATH: &str = "/healthz";
-const CAPABILITIES_PATH: &str = "/v1/machine-api/capabilities";
-const BOOTC_STATUS_PATH: &str = "/v1/machine-api/os/bootc/status";
-const BOOTC_SWITCH_PATH: &str = "/v1/machine-api/os/bootc/switch";
-const BOOTC_UPGRADE_PATH: &str = "/v1/machine-api/os/bootc/upgrade";
-const BOOTC_ROLLBACK_PATH: &str = "/v1/machine-api/os/bootc/rollback";
-const IMAGE_START_PATH: &str = "/v1/machine-api/service-sandboxes/image-start";
-const BUILD_START_PATH: &str = "/v1/machine-api/service-sandboxes/build-start";
-const LIST_PATH: &str = "/v1/machine-api/service-sandboxes";
-const CURRENT_PATH: &str = "/v1/machine-api/service-sandboxes/current";
 const LOCAL_GUEST_BINARY_HELP_TEXT: &str = "set `NIMBUS_MACHINE_GUEST_BINARY` only when you intentionally need a local Linux guest binary override";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,45 +62,46 @@ impl MachineApiClient {
     }
 
     pub(crate) fn health(&self) -> Result<MachineApiHealthResponse, Error> {
-        self.get_json(HEALTHZ_PATH)
+        self.get_json(MACHINE_API_HEALTH_PATH)
     }
 
     pub(crate) fn capabilities(&self) -> Result<MachineApiCapabilityResponse, Error> {
         let response = read_unix_http_request(
             &self.socket_path,
             "GET",
-            CAPABILITIES_PATH,
+            MACHINE_API_CAPABILITIES_PATH,
             None,
             self.io_timeout,
         )?;
-        let body = parse_http_json_body(&response, &self.socket_path, CAPABILITIES_PATH)?;
+        let body =
+            parse_http_json_body(&response, &self.socket_path, MACHINE_API_CAPABILITIES_PATH)?;
         serde_json::from_slice(body)
             .map_err(|error| describe_capability_decode_error(&self.socket_path, body, error))
     }
 
     pub(crate) fn bootc_status(&self) -> Result<MachineApiBootcStatusResponse, Error> {
-        self.get_json(BOOTC_STATUS_PATH)
+        self.get_json(MACHINE_API_BOOTC_STATUS_PATH)
     }
 
     pub(crate) fn bootc_switch(
         &self,
         request: MachineApiBootcSwitchRequest,
     ) -> Result<MachineApiBootcOperationResponse, Error> {
-        self.post_json(BOOTC_SWITCH_PATH, &request)
+        self.post_json(MACHINE_API_BOOTC_SWITCH_PATH, &request)
     }
 
     pub(crate) fn bootc_upgrade(
         &self,
         request: MachineApiBootcUpgradeRequest,
     ) -> Result<MachineApiBootcOperationResponse, Error> {
-        self.post_json(BOOTC_UPGRADE_PATH, &request)
+        self.post_json(MACHINE_API_BOOTC_UPGRADE_PATH, &request)
     }
 
     pub(crate) fn bootc_rollback(
         &self,
         request: MachineApiBootcRollbackRequest,
     ) -> Result<MachineApiBootcOperationResponse, Error> {
-        self.post_json(BOOTC_ROLLBACK_PATH, &request)
+        self.post_json(MACHINE_API_BOOTC_ROLLBACK_PATH, &request)
     }
 
     pub(crate) fn start_service_sandbox_from_image(
@@ -112,7 +109,7 @@ impl MachineApiClient {
         spec: SandboxSpec,
     ) -> Result<SandboxHandle, Error> {
         self.post_json(
-            IMAGE_START_PATH,
+            MACHINE_API_SERVICE_SANDBOX_IMAGE_START_PATH,
             &MachineApiServiceSandboxImageStartRequest { spec },
         )
         .map(|response: MachineApiServiceSandboxStartResponse| response.handle)
@@ -124,7 +121,7 @@ impl MachineApiClient {
     ) -> Result<SandboxHandle, Error> {
         let spec = normalize_guest_visible_build_spec(spec);
         self.post_json(
-            BUILD_START_PATH,
+            MACHINE_API_SERVICE_SANDBOX_BUILD_START_PATH,
             &MachineApiServiceSandboxBuildStartRequest { spec },
         )
         .map(|response: MachineApiServiceSandboxStartResponse| response.handle)
@@ -134,18 +131,16 @@ impl MachineApiClient {
         &self,
         sandbox_id: &SandboxId,
     ) -> Result<Option<SandboxHandle>, Error> {
-        self.get_json::<MachineApiServiceSandboxInspectResponse>(&format!(
-            "/v1/machine-api/service-sandboxes/{}",
-            machine_api_path_segment(sandbox_id.as_str())
+        self.get_json::<MachineApiServiceSandboxInspectResponse>(&machine_api_service_sandbox_path(
+            sandbox_id.as_str(),
         ))
         .map(|response| response.handle)
     }
 
     pub(crate) fn stop_service_sandbox(&self, sandbox_id: &SandboxId) -> Result<(), Error> {
-        let response = self.post_empty::<MachineApiServiceSandboxStopResponse>(&format!(
-            "/v1/machine-api/service-sandboxes/{}/stop",
-            machine_api_path_segment(sandbox_id.as_str())
-        ))?;
+        let response = self.post_empty::<MachineApiServiceSandboxStopResponse>(
+            &machine_api_service_sandbox_stop_path(sandbox_id.as_str()),
+        )?;
         if response.stopped {
             Ok(())
         } else {
@@ -160,11 +155,7 @@ impl MachineApiClient {
         &self,
         tenant_id: Option<&TenantId>,
     ) -> Result<Vec<MachineApiServiceSandboxSummary>, Error> {
-        let path = tenant_id
-            .map(|tenant_id| {
-                machine_api_query_path(LIST_PATH, &[("tenant_id", tenant_id.as_str())])
-            })
-            .unwrap_or_else(|| LIST_PATH.to_owned());
+        let path = machine_api_service_sandbox_list_path(tenant_id.map(TenantId::as_str));
         self.get_json::<MachineApiServiceSandboxListResponse>(&path)
             .map(|response| response.sandboxes)
     }
@@ -174,12 +165,9 @@ impl MachineApiClient {
         tenant_id: &TenantId,
         service_name: &str,
     ) -> Result<MachineApiServiceSandboxLookupResponse, Error> {
-        self.get_json(&machine_api_query_path(
-            CURRENT_PATH,
-            &[
-                ("tenant_id", tenant_id.as_str()),
-                ("service_name", service_name),
-            ],
+        self.get_json(&machine_api_current_service_sandbox_path(
+            tenant_id.as_str(),
+            service_name,
         ))
     }
 
@@ -188,9 +176,9 @@ impl MachineApiClient {
         sandbox_id: &SandboxId,
         offset: u64,
     ) -> Result<MachineApiServiceSandboxLogChunkResponse, Error> {
-        self.get_json(&format!(
-            "/v1/machine-api/service-sandboxes/{}/logs?offset={offset}",
-            machine_api_path_segment(sandbox_id.as_str())
+        self.get_json(&machine_api_service_sandbox_logs_path(
+            sandbox_id.as_str(),
+            offset,
         ))
     }
 
@@ -198,10 +186,9 @@ impl MachineApiClient {
         &self,
         sandbox_id: &SandboxId,
     ) -> Result<MachineApiServiceProcessSnapshot, Error> {
-        self.get_json::<MachineApiServiceProcessSnapshotResponse>(&format!(
-            "/v1/machine-api/service-sandboxes/{}/ps",
-            machine_api_path_segment(sandbox_id.as_str())
-        ))
+        self.get_json::<MachineApiServiceProcessSnapshotResponse>(
+            &machine_api_service_sandbox_process_snapshot_path(sandbox_id.as_str()),
+        )
         .map(|response| response.snapshot)
     }
 
@@ -319,88 +306,16 @@ fn describe_capability_decode_error(
         Some(protocol_version) if protocol_version != PROTOCOL_VERSION => Error::Internal(format!(
             "guest machine API protocol mismatch at {}{}: host expects {}, guest reported {}. Re-sync a matching guest nimbus binary and retry ({LOCAL_GUEST_BINARY_HELP_TEXT})",
             socket_path.display(),
-            CAPABILITIES_PATH,
+            MACHINE_API_CAPABILITIES_PATH,
             PROTOCOL_VERSION,
             protocol_version
         )),
         _ => Error::Internal(format!(
             "failed to decode machine API response from {}{}: {error}",
             socket_path.display(),
-            CAPABILITIES_PATH
+            MACHINE_API_CAPABILITIES_PATH
         )),
     }
-}
-
-fn machine_api_query_path(path: &str, params: &[(&str, &str)]) -> String {
-    let mut encoded = String::from(path);
-    for (index, (name, value)) in params.iter().enumerate() {
-        encoded.push(if index == 0 { '?' } else { '&' });
-        encoded.push_str(name);
-        encoded.push('=');
-        percent_encode_query_value_into(value, &mut encoded);
-    }
-    encoded
-}
-
-/// Encode `id` into a single URL path segment, percent-escaping every byte
-/// outside the RFC 3986 unreserved set so reserved/structural characters
-/// (`/`, `..`, `%`, space, `?`, `#`, ...) cannot break out of the segment
-/// and alter the request line's path structure.
-///
-/// This is the client-side counterpart to the server's `AxumPath<String>`
-/// extractor, which percent-decodes path segments before
-/// `SandboxId::new(...)`. The encoding is therefore decode-symmetric: a
-/// normal all-unreserved id round-trips byte-for-byte, and a hostile id is
-/// reconstructed to its exact original string server-side.
-fn machine_api_path_segment(id: &str) -> String {
-    let mut out = String::with_capacity(id.len());
-    percent_encode_path_segment_into(id, &mut out);
-    out
-}
-
-fn percent_encode_query_value_into(value: &str, encoded: &mut String) {
-    percent_encode_into(value, encoded, is_unreserved_query_byte);
-}
-
-fn percent_encode_path_segment_into(value: &str, encoded: &mut String) {
-    percent_encode_into(value, encoded, is_unreserved_path_segment_byte);
-}
-
-/// Shared RFC 3986 percent-encode loop: keep bytes the `is_unreserved`
-/// predicate accepts and `%XX`-escape every other byte (including the bytes
-/// of multi-byte UTF-8 sequences).
-fn percent_encode_into(value: &str, encoded: &mut String, is_unreserved: fn(u8) -> bool) {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-
-    for byte in value.bytes() {
-        if is_unreserved(byte) {
-            encoded.push(byte as char);
-        } else {
-            encoded.push('%');
-            encoded.push(HEX[(byte >> 4) as usize] as char);
-            encoded.push(HEX[(byte & 0x0F) as usize] as char);
-        }
-    }
-}
-
-fn is_unreserved_query_byte(byte: u8) -> bool {
-    matches!(
-        byte,
-        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~'
-    )
-}
-
-/// Path-segment safety needs the same guarantee as a query value: escape
-/// every reserved/structural byte. The unreserved set is identical to the
-/// query predicate, so `/`, `?`, `#`, `%`, and space all percent-encode. `.`
-/// stays literal (it is unreserved), but escaping `/` is what confines a
-/// hostile id to a single segment: `../etc` collapses to `..%2Fetc` rather
-/// than introducing an extra slash-delimited path component.
-fn is_unreserved_path_segment_byte(byte: u8) -> bool {
-    matches!(
-        byte,
-        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~'
-    )
 }
 
 fn read_unix_http_request(
@@ -654,17 +569,16 @@ mod tests {
     use tempfile::{Builder, TempDir};
 
     use super::{
-        MachineApiClient, machine_api_path_segment, machine_api_query_path,
-        normalize_guest_visible_build_spec, normalize_guest_visible_host_path,
+        MachineApiClient, normalize_guest_visible_build_spec, normalize_guest_visible_host_path,
     };
     use crate::machine::api::{
         MachineApiListenMode, MachineApiState, bind_direct_listener,
         default_guest_helper_binary_dirs, machine_api_node_workload_facade_from_sandbox_backend,
         serve_machine_api,
     };
-    use crate::machine::protocol::{
+    use nimbus_machine::api::{
         MachineApiHealthResponse, MachineApiServiceExecutionDriver, MachineApiServiceExecutionMode,
-        PROTOCOL_VERSION,
+        PROTOCOL_VERSION, machine_api_path_segment, machine_api_query_path,
     };
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

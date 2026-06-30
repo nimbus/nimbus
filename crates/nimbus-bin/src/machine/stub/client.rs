@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use nimbus::{Error, SandboxHandle, SandboxId, SandboxSpec, TenantId};
 
-use super::protocol::{
+use nimbus_machine::api::{
     MachineApiCapabilityResponse, MachineApiHealthResponse, MachineApiServiceProcessSnapshot,
     MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLookupResponse,
     MachineApiServiceSandboxSummary,

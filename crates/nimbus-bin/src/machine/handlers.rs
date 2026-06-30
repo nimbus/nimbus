@@ -24,10 +24,6 @@ use super::manager::{
     build_scp_command, build_ssh_command, refresh_machine_state, release_machine_ssh_port,
     start_machine, stop_machine,
 };
-#[cfg(unix)]
-use super::protocol::{
-    MachineApiBootcRollbackRequest, MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest,
-};
 use super::record::{
     MachineConfigRecord, MachineGuestProvisioning, MachineImageSource, MachineLifecycle,
     MachinePaths, MachineRootLayout, MachineStateRecord, resolve_runtime_root,
@@ -44,6 +40,10 @@ use super::{
     invalidate_materialized_machine_os, machine_image_reference_repository,
     machine_image_reference_version_label, uses_nimbus_bootc_machine_image_source,
     uses_podman_machine_image_source,
+};
+#[cfg(unix)]
+use nimbus_machine::api::{
+    MachineApiBootcRollbackRequest, MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest,
 };
 
 mod os;

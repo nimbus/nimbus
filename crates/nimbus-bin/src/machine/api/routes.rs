@@ -11,60 +11,63 @@ use super::state::{
     refresh_persisted_service_sandbox_state, service_sandbox_status_needs_refresh,
 };
 use super::*;
+use nimbus_machine::api::{
+    MACHINE_API_BOOTC_ROLLBACK_PATH, MACHINE_API_BOOTC_STATUS_PATH, MACHINE_API_BOOTC_SWITCH_PATH,
+    MACHINE_API_BOOTC_UPGRADE_PATH, MACHINE_API_CAPABILITIES_PATH,
+    MACHINE_API_CURRENT_SERVICE_SANDBOX_PATH, MACHINE_API_HEALTH_PATH,
+    MACHINE_API_SERVICE_SANDBOX_BUILD_START_PATH, MACHINE_API_SERVICE_SANDBOX_IMAGE_START_PATH,
+    MACHINE_API_SERVICE_SANDBOX_LOGS_PATH, MACHINE_API_SERVICE_SANDBOX_PATH,
+    MACHINE_API_SERVICE_SANDBOX_PROCESS_SNAPSHOT_PATH, MACHINE_API_SERVICE_SANDBOX_STOP_PATH,
+    MACHINE_API_SERVICE_SANDBOXES_PATH,
+};
 
 pub(super) fn machine_api_router(state: MachineApiState) -> Router {
     Router::new()
-        .route("/healthz", get(machine_api_healthz))
+        .route(MACHINE_API_HEALTH_PATH, get(machine_api_healthz))
+        .route(MACHINE_API_CAPABILITIES_PATH, get(machine_api_capabilities))
+        .route(MACHINE_API_BOOTC_STATUS_PATH, get(machine_api_bootc_status))
         .route(
-            "/v1/machine-api/capabilities",
-            get(machine_api_capabilities),
-        )
-        .route(
-            "/v1/machine-api/os/bootc/status",
-            get(machine_api_bootc_status),
-        )
-        .route(
-            "/v1/machine-api/os/bootc/switch",
+            MACHINE_API_BOOTC_SWITCH_PATH,
             post(machine_api_bootc_switch),
         )
         .route(
-            "/v1/machine-api/os/bootc/upgrade",
+            MACHINE_API_BOOTC_UPGRADE_PATH,
             post(machine_api_bootc_upgrade),
         )
         .route(
-            "/v1/machine-api/os/bootc/rollback",
+            MACHINE_API_BOOTC_ROLLBACK_PATH,
             post(machine_api_bootc_rollback),
         )
         .route(
-            "/v1/machine-api/service-sandboxes/image-start",
+            MACHINE_API_SERVICE_SANDBOX_IMAGE_START_PATH,
             post(machine_api_start_image_service_sandbox),
         )
         .route(
-            "/v1/machine-api/service-sandboxes/build-start",
+            MACHINE_API_SERVICE_SANDBOX_BUILD_START_PATH,
             post(machine_api_start_build_service_sandbox),
         )
         .route(
-            "/v1/machine-api/service-sandboxes",
+            MACHINE_API_SERVICE_SANDBOXES_PATH,
             get(machine_api_list_service_sandboxes),
         )
         .route(
-            "/v1/machine-api/service-sandboxes/current",
+            MACHINE_API_CURRENT_SERVICE_SANDBOX_PATH,
             get(machine_api_lookup_current_service_sandbox),
         )
         .route(
-            "/v1/machine-api/service-sandboxes/{sandbox_id}",
+            MACHINE_API_SERVICE_SANDBOX_PATH,
             get(machine_api_inspect_service_sandbox),
         )
         .route(
-            "/v1/machine-api/service-sandboxes/{sandbox_id}/logs",
+            MACHINE_API_SERVICE_SANDBOX_LOGS_PATH,
             get(machine_api_read_service_sandbox_logs),
         )
         .route(
-            "/v1/machine-api/service-sandboxes/{sandbox_id}/ps",
+            MACHINE_API_SERVICE_SANDBOX_PROCESS_SNAPSHOT_PATH,
             get(machine_api_service_sandbox_process_snapshot),
         )
         .route(
-            "/v1/machine-api/service-sandboxes/{sandbox_id}/stop",
+            MACHINE_API_SERVICE_SANDBOX_STOP_PATH,
             post(machine_api_stop_service_sandbox),
         )
         .with_state(state)

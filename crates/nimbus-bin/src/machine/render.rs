@@ -22,7 +22,6 @@ use super::manager::{
     MachineRuntimeState, inspect_desired_guest_nimbus_binary, inspect_observed_guest_nimbus_binary,
     refresh_machine_state,
 };
-use super::protocol::MachineApiCapabilityResponse;
 use super::record::{
     MachineConfigRecord, MachineGuestConfig, MachineLifecycle, MachineManagerState, MachinePaths,
     MachineProvider, MachineResources, MachineRootLayout, MachineStateRecord, MachineVolume,
@@ -31,6 +30,7 @@ use super::{
     DEFAULT_MACHINE_NAME, describe_machine_image_source, desired_machine_image_source,
     uses_host_managed_machine_image_contract,
 };
+use nimbus_machine::api::MachineApiCapabilityResponse;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]

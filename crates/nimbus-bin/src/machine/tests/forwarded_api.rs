@@ -283,13 +283,13 @@ fn machine_status_detects_reachable_machine_api_socket() {
         api.capabilities
             .as_ref()
             .map(|capabilities| capabilities.service_execution_mode),
-        Some(protocol::MachineApiServiceExecutionMode::StandardContainers)
+        Some(nimbus_machine::api::MachineApiServiceExecutionMode::StandardContainers)
     );
     assert_eq!(
         api.capabilities
             .as_ref()
             .map(|capabilities| capabilities.service_execution_driver),
-        Some(protocol::MachineApiServiceExecutionDriver::Unavailable)
+        Some(nimbus_machine::api::MachineApiServiceExecutionDriver::Unavailable)
     );
     assert_eq!(
         api.capabilities

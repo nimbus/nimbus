@@ -37,7 +37,6 @@ mod manager;
 #[cfg(not(unix))]
 #[path = "stub/manager.rs"]
 mod manager;
-mod protocol;
 mod record;
 mod render;
 mod server_control;
@@ -54,8 +53,8 @@ pub(crate) use self::handlers::{
     ensure_default_machine_api_client_started, require_default_machine_api_client,
     run_machine_command,
 };
-pub(crate) use self::protocol::MachineApiServiceSandboxDetails;
 pub(crate) use self::server_control::host_machine_lifecycle_manager;
+pub(crate) use nimbus_machine::api::MachineApiServiceSandboxDetails;
 
 use self::command::MachineApiCommand;
 use self::files::write_json_file;
