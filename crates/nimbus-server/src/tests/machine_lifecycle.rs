@@ -1,4 +1,4 @@
-use crate::{
+use crate::machine_lifecycle::{
     MachineCreateRequest, MachineLifecycleFuture, MachineLifecycleManager,
     MachineLifecycleSnapshot, MachineUpdateRequest,
 };

@@ -58,7 +58,7 @@ fn invoke_named_convex_function_with_trace_cancellable(
     cancellation: HostCallCancellation,
 ) -> Result<(Value, RuntimeReadSet), Error> {
     let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-        ServiceInstanceBindingRegistry::new(Arc::new(crate::EmptyServiceInstanceCatalog)),
+        ServiceInstanceBindingRegistry::new(Arc::new(nimbus_services::EmptyServiceInstanceCatalog)),
     );
     let bundle = registry.required_runtime_bundle()?;
     let invocation_kind = request.kind.clone();
@@ -119,7 +119,7 @@ async fn invoke_named_convex_function_with_trace_async(
     request: InvocationRequest,
 ) -> Result<(Value, RuntimeReadSet), Error> {
     let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
-        ServiceInstanceBindingRegistry::new(Arc::new(crate::EmptyServiceInstanceCatalog)),
+        ServiceInstanceBindingRegistry::new(Arc::new(nimbus_services::EmptyServiceInstanceCatalog)),
     );
     let context = RuntimeInvocationContext::new(
         service,

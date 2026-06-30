@@ -403,8 +403,8 @@ pub(crate) struct StartCommand {
     pub(crate) mongodb_credentials_from_store: bool,
 
     /// Tenant-isolation mode selected by the owning command.
-    #[arg(skip = nimbus_server::TenantIsolationMode::Production)]
-    pub(crate) tenant_isolation_mode: nimbus_server::TenantIsolationMode,
+    #[arg(skip = nimbus_tenant::TenantIsolationMode::Production)]
+    pub(crate) tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
 }
 
 /// clap value parser for `--cors-allow-origin`: normalize-or-reject at
@@ -492,7 +492,7 @@ impl Default for StartCommand {
             deploy_admin_token: None,
             auto_tenant: None,
             mongodb_credentials_from_store: false,
-            tenant_isolation_mode: nimbus_server::TenantIsolationMode::Production,
+            tenant_isolation_mode: nimbus_tenant::TenantIsolationMode::Production,
         }
     }
 }

@@ -3,7 +3,6 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use super::*;
-use crate::ServiceManager;
 use crate::local_server::{
     LocalServerPaths, LocalServerSecurityState, load_or_create_local_admin_token,
 };
@@ -16,11 +15,12 @@ use nimbus_sandbox::{
     SandboxFuture, SandboxHandle, SandboxId, SandboxMountSpec, SandboxOciImageSource,
     SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus,
 };
+use nimbus_services::ServiceManager;
 use nimbus_services::{RuntimeServiceRegistry, ServiceBackend};
 
 struct HarnessServiceDefinitionCatalog;
 
-impl crate::ServiceDefinitionCatalog for HarnessServiceDefinitionCatalog {
+impl nimbus_services::ServiceDefinitionCatalog for HarnessServiceDefinitionCatalog {
     fn service_backend_for_tenant(
         &self,
         tenant_id: &TenantId,
@@ -46,11 +46,11 @@ impl crate::ServiceDefinitionCatalog for HarnessServiceDefinitionCatalog {
         &self,
         _tenant_id: &TenantId,
         service_name: &str,
-    ) -> crate::TenantVolumePolicyDecision {
+    ) -> nimbus_tenant::TenantVolumePolicyDecision {
         if service_name == "db" {
-            return crate::TenantVolumePolicyDecision::new(["data"]);
+            return nimbus_tenant::TenantVolumePolicyDecision::new(["data"]);
         }
-        crate::TenantVolumePolicyDecision::default()
+        nimbus_tenant::TenantVolumePolicyDecision::default()
     }
 }
 

@@ -149,10 +149,10 @@ mod tests {
     };
     use tempfile::{TempDir, tempdir};
 
-    use crate::EmptyServiceInstanceCatalog;
     use crate::adapters::convex::{
         ConvexHostBridge, ConvexHostBridgeInvocation, ConvexHostBridgeScope, ConvexRegistry,
     };
+    use nimbus_services::EmptyServiceInstanceCatalog;
 
     use super::*;
 

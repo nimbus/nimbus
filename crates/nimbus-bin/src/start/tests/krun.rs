@@ -45,7 +45,7 @@ async fn convex_runtime_query_starts_real_krun_service_from_compose_file_and_tea
         crate::compose::load_host_backed_service_manager_for_selection_with_isolation_mode(
             &selection,
             &control_data_dir,
-            nimbus_server::TenantIsolationMode::LocalDevelopment,
+            nimbus_tenant::TenantIsolationMode::LocalDevelopment,
         )
         .expect("compose-backed service manager should load")
         .with_activation_poll_interval(Duration::from_millis(50))

@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use nimbus::{Error, TenantId};
-use nimbus_server::TenantIsolationMode;
 use nimbus_services::{
     DesiredWorkload, DesiredWorkloadSnapshot, DesiredWorkloadState, InMemoryDesiredWorkloadStore,
     NodeCapacity, PlacementPlan, WorkloadController, WorkloadScheduler,
 };
+use nimbus_tenant::TenantIsolationMode;
 
 use crate::compose::discovery::ResolvedComposeSelection;
 

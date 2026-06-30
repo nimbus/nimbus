@@ -7,13 +7,13 @@ use axum::http::StatusCode;
 use nimbus::{
     Error, SandboxBackend, SandboxBackendKind, SandboxHandle, SandboxId, SandboxSpec, SandboxStatus,
 };
-use nimbus_sandbox::backends::container::{ContainerSandboxBackend, ContainerSandboxStateView};
-use nimbus_server::local_enforcement::{
+use nimbus_node::{
     HostLifecycleBackend, HostLifecycleBackendKind, HostLifecyclePlan, HostLifecycleRequest,
     HostLifecycleStatus, NodeAgent, NodeAgentAssignment, NodeAssignmentDisposition,
     NodeBackendCapabilitySource, RunnerSpec, StatusEvidenceWriter, TenantWorkloadPhase,
     TenantWorkloadSpec,
 };
+use nimbus_sandbox::backends::container::{ContainerSandboxBackend, ContainerSandboxStateView};
 
 use crate::node_workload_executor::admit_workload_spec;
 
@@ -305,7 +305,7 @@ where
         spec: TenantWorkloadSpec,
         request: HostLifecycleRequest,
     ) -> Result<HostLifecycleStatus, MachineApiHttpError> {
-        let binding = nimbus_server::local_enforcement::LocalEnforcementBinding::from_spec(spec);
+        let binding = nimbus_node::LocalEnforcementBinding::from_spec(spec);
         let plan =
             HostLifecyclePlan::from_binding(&binding, request).map_err(core_error_to_http)?;
         self.node_agent
@@ -481,12 +481,12 @@ mod tests {
     use nimbus::{
         SandboxBackendKind, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, TenantId,
     };
-    use nimbus_sandbox::backends::container::ContainerSandboxBackendConfig;
-    use nimbus_server::local_enforcement::{
+    use nimbus_node::{
         HostBackendObservedState, HostLifecycleBackendCapabilities, HostLifecycleFuture,
         HostLifecyclePlan, HostLifecycleProperty, HostLifecycleStatus, NodeIdentity,
         StatusEvidenceWrite, TenantWorkloadId, TenantWorkloadStatus,
     };
+    use nimbus_sandbox::backends::container::ContainerSandboxBackendConfig;
 
     use super::*;
 
@@ -526,7 +526,7 @@ mod tests {
     impl HostLifecycleBackend for RecordingLifecycleBackend {
         fn validate(
             &self,
-            binding: &nimbus_server::local_enforcement::LocalEnforcementBinding,
+            binding: &nimbus_node::LocalEnforcementBinding,
             request: HostLifecycleRequest,
         ) -> Result<HostLifecyclePlan, Error> {
             self.record("validate");

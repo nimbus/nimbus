@@ -57,7 +57,6 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::EmptyServiceInstanceCatalog;
     use crate::adapters::cloud_functions::{
         CLOUD_FUNCTIONS_ARTIFACT_MANIFEST_FILE, CLOUD_FUNCTIONS_INTERNAL_ARTIFACT_DIR,
         CLOUD_FUNCTIONS_TARGETS_MANIFEST_FILE, CloudFunctionsArtifactManifest,
@@ -71,6 +70,7 @@ mod tests {
         ArtifactVerifierBackend, ArtifactVerifierBackendIdentity, ArtifactVerifierResult,
         SLSA_PROVENANCE_V1_PREDICATE_TYPE,
     };
+    use nimbus_services::EmptyServiceInstanceCatalog;
     use nimbus_services::{RuntimeServiceRegistry, ServiceInstanceBindingRegistry};
     use nimbus_tenant::TenantIsolationMode;
     use nimbus_testing::{ServerFixture, wait_for_value};

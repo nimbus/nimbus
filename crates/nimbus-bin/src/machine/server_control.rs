@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use nimbus::Error;
 use nimbus_machine::MachineRootLayout;
-use nimbus_server::{
+use nimbus_server::machine_lifecycle::{
     MachineCreateRequest, MachineLifecycleFuture, MachineLifecycleManager,
     MachineLifecycleSnapshot, MachineUpdateRequest,
 };

@@ -347,7 +347,7 @@ pub(crate) fn resolve_optional_compose_selection(
 pub(super) fn load_service_manager(
     compose_selection: Option<&ResolvedComposeSelection>,
     compose_control_data_dir: &std::path::Path,
-    tenant_isolation_mode: nimbus_server::TenantIsolationMode,
+    tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
 ) -> Result<Option<Arc<nimbus::ServiceManager>>, Error> {
     compose_selection
         .map(|selection| {
@@ -502,7 +502,7 @@ pub(super) fn admit_start_function_scaling_plans(
 fn function_scaling_context_from_command(command: &StartCommand) -> FunctionScalingContext {
     if matches!(
         command.tenant_isolation_mode,
-        nimbus_server::TenantIsolationMode::LocalDevelopment
+        nimbus_tenant::TenantIsolationMode::LocalDevelopment
     ) {
         FunctionScalingContext::Dev
     } else {

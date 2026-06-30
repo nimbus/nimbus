@@ -234,8 +234,12 @@ mod tests {
     use nimbus::Engine;
     use nimbus_operator::{LocalServerSecurityState, load_or_create_local_admin_token};
     use nimbus_server::{
-        MachineCreateRequest, MachineLifecycleFuture, MachineLifecycleManager,
-        MachineLifecycleSnapshot, MachineUpdateRequest, ServeOptions, ServerDiscoveryLease, serve,
+        ServeOptions, ServerDiscoveryLease,
+        machine_lifecycle::{
+            MachineCreateRequest, MachineLifecycleFuture, MachineLifecycleManager,
+            MachineLifecycleSnapshot, MachineUpdateRequest,
+        },
+        serve,
     };
     use tempfile::tempdir;
 

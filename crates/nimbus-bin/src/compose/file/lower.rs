@@ -3,7 +3,7 @@ use super::raw::*;
 use super::warnings::*;
 use super::*;
 use crate::compose::discovery::ResolvedComposeSelection;
-use nimbus_server::TenantVolumePolicyDecision;
+use nimbus_tenant::TenantVolumePolicyDecision;
 use oci_client::Reference;
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -96,7 +96,7 @@ pub(crate) fn load_compose_project_context_for_selection(
 pub(crate) fn load_compose_project_context_for_selection_with_isolation_mode(
     selection: &ResolvedComposeSelection,
     control_data_dir: &std::path::Path,
-    tenant_isolation_mode: nimbus_server::TenantIsolationMode,
+    tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
 ) -> Result<ComposeProjectContext, Error> {
     ComposeProjectContext::load_selection_with_admission(
         selection,
@@ -108,7 +108,7 @@ pub(crate) fn load_compose_project_context_for_selection_with_isolation_mode(
 pub(crate) fn load_host_backed_service_manager_for_selection_with_isolation_mode(
     selection: &ResolvedComposeSelection,
     control_data_dir: &std::path::Path,
-    tenant_isolation_mode: nimbus_server::TenantIsolationMode,
+    tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
 ) -> Result<ServiceManager, Error> {
     load_host_backed_service_manager_for_platform_selection_with_admission(
         selection,
@@ -120,13 +120,13 @@ pub(crate) fn load_host_backed_service_manager_for_selection_with_isolation_mode
 }
 
 fn compose_admission_mode_for_tenant_isolation(
-    tenant_isolation_mode: nimbus_server::TenantIsolationMode,
+    tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
 ) -> file::ComposeAdmissionMode {
     match tenant_isolation_mode {
-        nimbus_server::TenantIsolationMode::LocalDevelopment => {
+        nimbus_tenant::TenantIsolationMode::LocalDevelopment => {
             file::ComposeAdmissionMode::LocalDevelopment
         }
-        nimbus_server::TenantIsolationMode::Production => file::ComposeAdmissionMode::Production,
+        nimbus_tenant::TenantIsolationMode::Production => file::ComposeAdmissionMode::Production,
     }
 }
 

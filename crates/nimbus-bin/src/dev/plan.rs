@@ -158,7 +158,7 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         compose_file: start_compose_files,
         deploy_admin_token: Some(deploy_admin_token),
         auto_tenant: Some(auto_tenant),
-        tenant_isolation_mode: nimbus_server::TenantIsolationMode::LocalDevelopment,
+        tenant_isolation_mode: nimbus_tenant::TenantIsolationMode::LocalDevelopment,
         ..StartCommand::default()
     };
 

@@ -46,7 +46,7 @@ fn dev_plan_uses_project_local_persistence_root() {
     );
     assert_eq!(
         plan.start_command.tenant_isolation_mode,
-        nimbus_server::TenantIsolationMode::LocalDevelopment,
+        nimbus_tenant::TenantIsolationMode::LocalDevelopment,
         "dev should preserve Node-compatible localhost grants explicitly"
     );
 }
@@ -463,7 +463,7 @@ services:
         .expect("dev plan should resolve");
     assert_eq!(
         dev_plan.start_command.tenant_isolation_mode,
-        nimbus_server::TenantIsolationMode::LocalDevelopment
+        nimbus_tenant::TenantIsolationMode::LocalDevelopment
     );
     assert_eq!(
         dev_plan.start_command.compose_file,

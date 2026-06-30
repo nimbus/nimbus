@@ -20,11 +20,11 @@ use nimbus::{
     Error, SandboxBackendKind, SandboxError, SandboxOciImageSource, SandboxRootSpec, SandboxSpec,
     SandboxStatus, TenantId,
 };
+use nimbus_node::{NodeAgent, NodeIdentity, SystemdTransientUnitBackend};
 use nimbus_sandbox::backends::container::{
     ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerSandboxStateView,
     OciMachinePortForwarderConfig,
 };
-use nimbus_server::local_enforcement::{NodeAgent, NodeIdentity, SystemdTransientUnitBackend};
 use serde::Deserialize;
 
 use crate::node_workload_executor::JsonlStatusWriter;

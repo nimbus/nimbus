@@ -317,7 +317,7 @@ fn mutation_bridge(
             registry,
             decision,
             Arc::new(ServiceInstanceBindingRegistry::new(Arc::new(
-                crate::EmptyServiceInstanceCatalog,
+                nimbus_services::EmptyServiceInstanceCatalog,
             ))),
         ),
         ConvexHostBridgeInvocation::new(
@@ -578,7 +578,7 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
             registry,
             decision,
             Arc::new(ServiceInstanceBindingRegistry::new(Arc::new(
-                crate::EmptyServiceInstanceCatalog,
+                nimbus_services::EmptyServiceInstanceCatalog,
             ))),
         ),
         ConvexHostBridgeInvocation::new(

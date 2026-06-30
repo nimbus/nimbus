@@ -39,6 +39,7 @@ nimbus-crypto = { path = "../nimbus-crypto" }
 nimbus-fs = { path = "../nimbus-fs" }
 nimbus-kv = { path = "../nimbus-kv" }
 nimbus-machine = { path = "../nimbus-machine" }
+nimbus-node = { path = "../nimbus-node" }
 nimbus-operator = { path = "../nimbus-operator" }
 nimbus-server = { path = "../nimbus-server" }
 nimbus-services = { path = "../nimbus-services" }

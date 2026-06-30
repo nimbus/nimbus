@@ -115,7 +115,7 @@ fn start_command_default_uses_production_tenant_isolation() {
     let command = StartCommand::default();
     assert_eq!(
         command.tenant_isolation_mode,
-        nimbus_server::TenantIsolationMode::Production,
+        nimbus_tenant::TenantIsolationMode::Production,
         "start is the production-oriented server entrypoint; dev opts out explicitly"
     );
 }
@@ -131,7 +131,7 @@ fn production_start_compose_manager_rejects_tag_only_image_before_backend_setup(
     let error = match super::boot::load_service_manager(
         Some(&selection),
         &tempdir.path().join("control"),
-        nimbus_server::TenantIsolationMode::Production,
+        nimbus_tenant::TenantIsolationMode::Production,
     ) {
         Ok(_) => panic!("production compose manager should reject tag-only images"),
         Err(error) => error,
@@ -679,7 +679,7 @@ fn start_startup_summary_mentions_baked_function_scaling_defaults() {
     }));
 
     let dev_command = StartCommand {
-        tenant_isolation_mode: nimbus_server::TenantIsolationMode::LocalDevelopment,
+        tenant_isolation_mode: nimbus_tenant::TenantIsolationMode::LocalDevelopment,
         ..StartCommand::default()
     };
     let dev_lines = super::boot::start_startup_summary_lines(

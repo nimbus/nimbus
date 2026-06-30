@@ -14,11 +14,13 @@ use std::error::Error;
 use std::path::PathBuf;
 
 use clap::{Args, ValueEnum};
-use nimbus_server::local_enforcement::{
+use nimbus_node::{
     HostExecutable, HostLifecycleBackendKind, HostLifecycleFuture, HostLifecycleRequest,
     StatusEvidenceWrite, StatusEvidenceWriter, TenantWorkloadSpec,
 };
-use nimbus_server::{TenantIsolationContext, TenantIsolationPolicyInput, WorkloadAttributes};
+use nimbus_tenant::{
+    TenantIsolationContext, TenantIsolationPolicyInput, WorkloadAttributes, WorkloadLocation,
+};
 
 use crate::cli_ux;
 
@@ -151,7 +153,7 @@ pub(crate) fn admit_workload_spec(
 ) -> Result<TenantWorkloadSpec, Box<dyn Error>> {
     let tenant_id = nimbus::TenantId::new(tenant)?;
     let context = TenantIsolationContext::operator(tenant_id, "node.workload_executor")
-        .with_workload_location(nimbus_server::WorkloadLocation::new().with_node_id(node_id));
+        .with_workload_location(WorkloadLocation::new().with_node_id(node_id));
     let decision = context.admit_decision(TenantIsolationPolicyInput::new(
         WorkloadAttributes::service(workload),
     ))?;
@@ -178,7 +180,7 @@ pub(crate) fn lifecycle_request(
 pub(crate) async fn run_node_workload_executor_command(
     command: NodeWorkloadExecutorCommand,
 ) -> Result<(), Box<dyn Error>> {
-    use nimbus_server::local_enforcement::{
+    use nimbus_node::{
         BusKind, NodeWorkloadReconciler, SystemdTransientUnitBackend, ZbusSystemdClient,
     };
 
@@ -342,15 +344,15 @@ mod tests {
             .expect("operator admission should produce a spec");
         assert_eq!(spec.tenant_id().as_str(), "demo");
         assert_eq!(
-            nimbus_server::local_enforcement::NodeWorkloadDesiredState::from_spec(&spec),
-            nimbus_server::local_enforcement::NodeWorkloadDesiredState::Running,
+            nimbus_node::NodeWorkloadDesiredState::from_spec(&spec),
+            nimbus_node::NodeWorkloadDesiredState::Running,
         );
 
         let stopped = admit_workload_spec("demo", "worker", "node-1", true)
             .expect("stop admission should produce a spec");
         assert_eq!(
-            nimbus_server::local_enforcement::NodeWorkloadDesiredState::from_spec(&stopped),
-            nimbus_server::local_enforcement::NodeWorkloadDesiredState::Stopped,
+            nimbus_node::NodeWorkloadDesiredState::from_spec(&stopped),
+            nimbus_node::NodeWorkloadDesiredState::Stopped,
         );
     }
 
@@ -368,17 +370,16 @@ mod tests {
         let path = temp.path().join("evidence/status.jsonl");
         let spec =
             admit_workload_spec("demo", "worker", "node-1", false).expect("spec should admit");
-        let binding =
-            nimbus_server::local_enforcement::LocalEnforcementBinding::from_spec(spec.clone());
+        let binding = nimbus_node::LocalEnforcementBinding::from_spec(spec.clone());
         let projection = binding.system_evidence_projection();
-        let plan = nimbus_server::local_enforcement::HostLifecyclePlan::from_binding(
+        let plan = nimbus_node::HostLifecyclePlan::from_binding(
             &binding,
             lifecycle_request("/usr/bin/sleep", &[]).expect("request should build"),
         )
         .expect("plan should build");
-        let status = nimbus_server::local_enforcement::HostLifecycleStatus::from_backend_state(
+        let status = nimbus_node::HostLifecycleStatus::from_backend_state(
             &plan,
-            nimbus_server::local_enforcement::HostBackendObservedState::Stopped,
+            nimbus_node::HostBackendObservedState::Stopped,
         )
         .to_workload_status(&plan)
         .expect("status should build");

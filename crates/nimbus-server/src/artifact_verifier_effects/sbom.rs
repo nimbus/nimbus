@@ -296,6 +296,18 @@ mod tests {
     }
 
     #[test]
+    fn sbom_backend_rejects_zero_timeout() {
+        let error = SbomVerifierBackend::new()
+            .with_timeout(Duration::ZERO)
+            .expect_err("zero verifier timeout should be rejected");
+
+        assert!(
+            error.to_string().contains("greater than 0"),
+            "zero-timeout error should be actionable: {error}"
+        );
+    }
+
+    #[test]
     fn sbom_backend_satisfies_tenant_image_admission_policy() {
         let runner = Arc::new(StaticCommandRunner::success(
             r#"{"spdxVersion":"SPDX-2.3","packages":[]}"#,

@@ -6351,10 +6351,12 @@ dependencies = [
  "nimbus-crypto",
  "nimbus-egress",
  "nimbus-engine",
+ "nimbus-license",
  "nimbus-object-storage",
  "nimbus-runtime",
  "nimbus-sandbox",
  "nimbus-server",
+ "nimbus-services",
  "nimbus-storage",
 ]
 
@@ -6420,6 +6422,7 @@ dependencies = [
  "nimbus-fs",
  "nimbus-kv",
  "nimbus-machine",
+ "nimbus-node",
  "nimbus-operator",
  "nimbus-sandbox",
  "nimbus-server",

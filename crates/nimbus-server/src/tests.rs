@@ -19,6 +19,10 @@ use nimbus_core::{
     TypedScalarValue,
 };
 use nimbus_engine::{Engine, run_scheduler};
+use nimbus_license::{
+    LicenseDocument, LicenseEntitlements, LicenseKind, LicenseSourceInfo, LicenseSourceKind,
+    LicenseState,
+};
 use nimbus_runtime::{RuntimeBundle, RuntimeMetricsSnapshot};
 pub(crate) use nimbus_testing::{
     DeterministicHarness, DeterministicTestCase, EngineFixture, GeneratedTaskHistory,
@@ -46,9 +50,8 @@ use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 
 use crate::{
-    CloudflareConfig, ConvexRegistry, FirebaseConfig, LicenseDocument, LicenseEntitlements,
-    LicenseKind, LicenseSourceInfo, LicenseSourceKind, LicenseState, ProjectTenantRegistry,
-    RouterOptions, ServeOptions, build_router, serve,
+    CloudflareConfig, ConvexRegistry, FirebaseConfig, ProjectTenantRegistry, RouterOptions,
+    ServeOptions, build_router, serve,
 };
 use crate::router::RouterBuildConfig;
 use crate::adapters::firebase::grpc::generated::google::firestore::v1::document_transform::FieldTransform as GrpcFieldTransform;

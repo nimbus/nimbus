@@ -31,7 +31,7 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
             registry,
             decision,
             Arc::new(ServiceInstanceBindingRegistry::new(Arc::new(
-                crate::EmptyServiceInstanceCatalog,
+                nimbus_services::EmptyServiceInstanceCatalog,
             ))),
         ),
         ConvexHostBridgeInvocation::new(

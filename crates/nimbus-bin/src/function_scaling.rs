@@ -111,7 +111,7 @@ impl DurationInput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedFunctionScalingIntent {
-    pub(crate) request: nimbus_server::TenantRuntimeScalingRequest,
+    pub(crate) request: nimbus_tenant::TenantRuntimeScalingRequest,
     pub(crate) class: Option<String>,
     pub(crate) reason: Option<String>,
     pub(crate) used_baked_defaults: bool,
@@ -202,8 +202,8 @@ impl RuntimeScalingPolicyBuilder {
         }
     }
 
-    fn request(self, function: &str) -> nimbus_server::TenantRuntimeScalingRequest {
-        nimbus_server::TenantRuntimeScalingRequest::new(
+    fn request(self, function: &str) -> nimbus_tenant::TenantRuntimeScalingRequest {
+        nimbus_tenant::TenantRuntimeScalingRequest::new(
             function,
             self.preset,
             RequestedRuntimeScalingTarget {
