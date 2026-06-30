@@ -6,7 +6,7 @@ use nimbus_runtime::{
 };
 
 use super::{
-    RuntimeBundleInvocationOptions, runtime_for_host, runtime_for_host_with_egress_gateway,
+    RuntimeBundleInvocationOptions, runtime_for_host_with_egress_gateway,
     runtime_invocation_context,
 };
 
@@ -30,24 +30,6 @@ pub(crate) fn invoke_runtime_bundle_blocking_with_cancellation(
             options.scope,
         ),
         options.cancellation,
-    )
-}
-
-pub(crate) fn invoke_runtime_bundle_blocking_with_host(
-    runtime_executor: &RuntimeExecutor,
-    runtime_policy: Arc<RuntimePolicy>,
-    host_bridge: Arc<dyn HostBridge>,
-    bundle: RuntimeBundle,
-    request: InvocationRequest,
-    options: RuntimeBundleInvocationOptions<'_>,
-) -> std::result::Result<serde_json::Value, NimbusRuntimeError> {
-    let runtime = runtime_for_host(host_bridge, runtime_policy)?;
-    invoke_runtime_bundle_blocking_with_cancellation(
-        runtime_executor,
-        runtime,
-        bundle,
-        request,
-        options,
     )
 }
 

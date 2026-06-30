@@ -6431,6 +6431,7 @@ version = "0.1.44"
 dependencies = [
  "base64 0.22.1",
  "nimbus-core",
+ "nimbus-egress",
  "nimbus-engine",
  "nimbus-runtime",
  "nimbus-tenant",
@@ -6500,6 +6501,7 @@ dependencies = [
  "nimbus-auth",
  "nimbus-bridge",
  "nimbus-core",
+ "nimbus-egress",
  "nimbus-engine",
  "nimbus-firestore",
  "nimbus-provenance",

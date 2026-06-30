@@ -6,7 +6,7 @@ use nimbus_cloud_functions::CloudFunctionsTriggerExecutor;
 
 use crate::execution::errors::runtime_error_to_core;
 use crate::execution::invocations::{
-    RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_host,
+    RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_egress_gateway,
 };
 
 #[derive(Debug, Clone)]
@@ -17,7 +17,12 @@ impl CloudFunctionsRuntimeInvoker for ServerCloudFunctionsRuntimeInvoker {
         &self,
         invocation: CloudFunctionsRuntimeInvocation,
     ) -> Result<serde_json::Value> {
-        invoke_runtime_bundle_blocking_with_host(
+        // Route Cloud Functions through the egress-gateway entrypoint (not the
+        // coarse no-gateway `_with_host` path) so the handler's `fetch` is bound
+        // to the tenant's nimbus-egress PDP. CloudFunctionsHostBridge implements
+        // EgressGateway, so the isolate fetch hook inherits the L7 fail-closed
+        // for free. (audit M13 — Cloud Functions egress parity.)
+        invoke_runtime_bundle_blocking_with_egress_gateway(
             &invocation.runtime_executor,
             invocation.runtime_policy,
             invocation.host_bridge,

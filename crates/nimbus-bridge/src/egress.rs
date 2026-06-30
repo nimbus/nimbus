@@ -1,0 +1,162 @@
+//! Shared host-bridge egress authorization.
+//!
+//! Every adapter host bridge that implements [`nimbus_runtime::EgressGateway`]
+//! funnels through [`authorize_runtime_egress`] so the per-tenant PDP
+//! (`nimbus-egress`) decision, the readiness gate, the tenant-label guard, the
+//! custom-client / UDP fail-closed, and faithful proxy-enforcement propagation
+//! are identical across every substrate and adapter. "Three substrates, one
+//! decision" — Convex, Cloud Functions, and any future runtime adapter resolve
+//! the same verdict from the same code, instead of each re-encoding (or
+//! forgetting) the policy translation. (audit M13 — Cloud Functions egress
+//! parity.)
+
+use nimbus_egress::{
+    EgressAuthorization as PolicyEgressAuthorization, EgressProtocol as PolicyEgressProtocol,
+    EgressRequest as PolicyEgressRequest,
+};
+use nimbus_runtime::{
+    EgressAuthorization as RuntimeEgressAuthorization, EgressProtocol as RuntimeEgressProtocol,
+    EgressRequest as RuntimeEgressRequest,
+};
+use nimbus_tenant::TenantIsolationDecision;
+
+/// Readiness latch for a tenant's egress enforcement plane.
+///
+/// A host bridge is only allowed to authorize workload traffic once the
+/// nimbus-proxy PEP policy generation for its admitted decision is installed.
+/// Until then every request fails closed, so a workload can never egress
+/// against a half-installed policy. The latch is bound to a specific
+/// [`TenantIsolationDecision`] id so a readiness token minted for one decision
+/// can never silently authorize traffic for another.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EgressGatewayEnforcementReadiness {
+    decision_id: String,
+    ready: bool,
+    reason: Option<String>,
+}
+
+impl EgressGatewayEnforcementReadiness {
+    /// The enforcement plane is installed and ready for `decision`.
+    pub fn ready_for_decision(decision: &TenantIsolationDecision) -> Self {
+        Self {
+            decision_id: decision.id().as_str().to_owned(),
+            ready: true,
+            reason: None,
+        }
+    }
+
+    /// The enforcement plane for `decision` is not yet ready; `reason` explains
+    /// why so workload traffic fails closed with an actionable diagnostic.
+    pub fn not_ready_for_decision(
+        decision: &TenantIsolationDecision,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            decision_id: decision.id().as_str().to_owned(),
+            ready: false,
+            reason: Some(reason.into()),
+        }
+    }
+
+    fn ensure_ready(&self, decision: &TenantIsolationDecision) -> std::result::Result<(), String> {
+        if self.decision_id != decision.id().as_str() {
+            return Err(format!(
+                "egress gateway readiness belongs to decision {}, not active decision {}",
+                self.decision_id,
+                decision.id().as_str()
+            ));
+        }
+        if !self.ready {
+            return Err(format!(
+                "egress gateway enforcement state is not ready for decision {}{}",
+                self.decision_id,
+                self.reason
+                    .as_deref()
+                    .map(|reason| format!(": {reason}"))
+                    .unwrap_or_default()
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Authorize a runtime egress request against the tenant's admitted decision.
+///
+/// This is the single shared bridging path between the `nimbus-runtime` fetch
+/// surface and the `nimbus-egress` PDP. It enforces, in order: the readiness
+/// latch, the tenant-label guard, the custom-client fail-closed, the
+/// unsupported-protocol (UDP) fail-closed, and finally the per-tenant policy
+/// verdict — faithfully propagating whether the matched rule still requires
+/// PEP-mediated L7 enforcement (credential injection / DLP) so the runtime
+/// fetch hook can fail it closed on substrates with no proxy route (the
+/// isolate). The bridge propagates; it never re-encodes the L7 fail-closed.
+pub fn authorize_runtime_egress(
+    decision: &TenantIsolationDecision,
+    readiness: &EgressGatewayEnforcementReadiness,
+    request: &RuntimeEgressRequest,
+) -> RuntimeEgressAuthorization {
+    if let Err(reason) = readiness.ensure_ready(decision) {
+        return RuntimeEgressAuthorization::deny(reason);
+    }
+    if let Some(tenant_label) = request.tenant_label.as_deref()
+        && tenant_label != decision.tenant_id().as_str()
+    {
+        return RuntimeEgressAuthorization::deny(format!(
+            "egress gateway request tenant `{tenant_label}` does not match admitted tenant `{}`",
+            decision.tenant_id()
+        ));
+    }
+    if request.uses_custom_client {
+        return RuntimeEgressAuthorization::deny(
+            "custom fetch clients must route through the Nimbus egress PEP",
+        );
+    }
+
+    let Some(policy_request) = policy_request_from_runtime_request(request) else {
+        return RuntimeEgressAuthorization::deny(format!(
+            "egress gateway does not authorize {:?} traffic for {:?}",
+            request.protocol, request.substrate
+        ));
+    };
+    runtime_authorization_from_policy(decision.network().authorize_sandbox_egress(&policy_request))
+}
+
+fn policy_request_from_runtime_request(
+    request: &RuntimeEgressRequest,
+) -> Option<PolicyEgressRequest> {
+    let protocol = match request.protocol {
+        RuntimeEgressProtocol::Http => PolicyEgressProtocol::Http,
+        RuntimeEgressProtocol::Https => PolicyEgressProtocol::Https,
+        RuntimeEgressProtocol::Tcp => PolicyEgressProtocol::Tcp,
+        RuntimeEgressProtocol::Udp => return None,
+    };
+    let mut policy_request = PolicyEgressRequest::new(protocol, request.host.clone(), request.port);
+    if matches!(
+        request.protocol,
+        RuntimeEgressProtocol::Http | RuntimeEgressProtocol::Https
+    ) && let (Some(method), Some(path)) =
+        (request.method.as_deref(), request.path_and_query.as_deref())
+    {
+        policy_request = policy_request.with_http(method, path);
+    }
+    Some(policy_request)
+}
+
+fn runtime_authorization_from_policy(
+    authorization: PolicyEgressAuthorization,
+) -> RuntimeEgressAuthorization {
+    if !authorization.is_allowed() {
+        return RuntimeEgressAuthorization::deny(authorization.reason());
+    }
+    // Map the PDP verdict faithfully — including whether the matched rule needs
+    // PEP-mediated L7 (credential injection / DLP). The fail-closed for substrates
+    // with no proxy route (the isolate `fetch`) lives at the single runtime fetch
+    // hook, the consumption seam every adapter funnels through, so no host bridge
+    // re-encodes the rule. (audit H4.)
+    let mut runtime_authorization = RuntimeEgressAuthorization::allow(authorization.reason())
+        .requiring_proxy_enforcement(authorization.requires_proxy_enforcement());
+    if let Some(rule) = authorization.matched_rule() {
+        runtime_authorization = runtime_authorization.with_matched_rule(rule);
+    }
+    runtime_authorization
+}
