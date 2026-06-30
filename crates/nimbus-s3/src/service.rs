@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime};
 use bytes::Bytes;
 use futures::StreamExt;
 use http::HeaderMap;
+use nimbus_blob::BlobHash;
 use nimbus_core::TenantId;
 use nimbus_storage::{
     ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMultipartPart,
@@ -116,7 +117,7 @@ impl s3s::S3 for NimbusS3 {
             .put_blob(&tenant, bytes)
             .await
             .map_err(map_core_error)?;
-        let manifest = ObjectManifest::whole(
+        let manifest = match ObjectManifest::whole(
             input.bucket.clone(),
             input.key.clone(),
             byte_len,
@@ -127,14 +128,21 @@ impl s3s::S3 for NimbusS3 {
                 computed.md5_hex.clone(),
                 computed.object_checksums(),
             ),
-        )
-        .map_err(map_core_error)?;
+        ) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                self.release_blob_unless_manifest_retains(&tenant, &hash, previous.as_ref())
+                    .await?;
+                return Err(map_core_error(error));
+            }
+        };
         let size = manifest.size;
         let retained = manifest.clone();
-        self.backend
-            .put_manifest(&tenant, manifest)
-            .await
-            .map_err(map_core_error)?;
+        if let Err(error) = self.backend.put_manifest(&tenant, manifest).await {
+            self.release_blob_unless_manifest_retains(&tenant, &hash, previous.as_ref())
+                .await?;
+            return Err(map_core_error(error));
+        }
         if let Some(previous) = previous {
             self.release_manifest_blobs_except(&tenant, &previous, Some(&retained))
                 .await?;
@@ -411,28 +419,47 @@ impl s3s::S3 for NimbusS3 {
             .put_blob(&tenant, bytes)
             .await
             .map_err(map_core_error)?;
-        let replaced = upload
-            .replace_part(ObjectMultipartPart {
-                part_number: input.part_number as u32,
-                blob_hash: hash.to_hex(),
-                size: byte_len,
-                etag: computed.md5_hex.clone(),
-                checksums: computed.object_checksums(),
-                last_modified_millis: current_millis(),
-            })
-            .map_err(map_core_error)?;
-        self.backend
-            .put_multipart_upload(&tenant, upload)
-            .await
-            .map_err(map_core_error)?;
-        if let Some(replaced) = replaced
-            && replaced.blob_hash != hash.to_hex()
-        {
-            self.backend
-                .release_blob(
+        let hash_hex = hash.to_hex();
+        let original_upload_retains_hash =
+            object_io::multipart_upload_contains_blob(&upload, &hash).map_err(map_core_error)?;
+        let replaced = match upload.replace_part(ObjectMultipartPart {
+            part_number: input.part_number as u32,
+            blob_hash: hash_hex.clone(),
+            size: byte_len,
+            etag: computed.md5_hex.clone(),
+            checksums: computed.object_checksums(),
+            last_modified_millis: current_millis(),
+        }) {
+            Ok(replaced) => replaced,
+            Err(error) => {
+                self.release_blob_unless_upload_retains(
                     &tenant,
-                    &object_io::parse_blob_hash(&replaced.blob_hash).map_err(map_core_error)?,
+                    &hash,
+                    original_upload_retains_hash,
                 )
+                .await?;
+                return Err(map_core_error(error));
+            }
+        };
+        let replaced_release_hash = if let Some(replaced) = replaced
+            && replaced.blob_hash != hash_hex
+        {
+            let replaced_hash =
+                object_io::parse_blob_hash(&replaced.blob_hash).map_err(map_core_error)?;
+            (!object_io::multipart_upload_contains_blob(&upload, &replaced_hash)
+                .map_err(map_core_error)?)
+            .then_some(replaced_hash)
+        } else {
+            None
+        };
+        if let Err(error) = self.backend.put_multipart_upload(&tenant, upload).await {
+            self.release_blob_unless_upload_retains(&tenant, &hash, original_upload_retains_hash)
+                .await?;
+            return Err(map_core_error(error));
+        }
+        if let Some(replaced_hash) = replaced_release_hash {
+            self.backend
+                .release_blob(&tenant, &replaced_hash)
                 .await
                 .map_err(map_core_error)?;
         }
@@ -601,6 +628,38 @@ impl NimbusS3 {
         retained: Option<&ObjectManifest>,
     ) -> S3Result<()> {
         object_io::release_manifest_blobs_except(self.backend.as_ref(), tenant, manifest, retained)
+            .await
+            .map_err(map_core_error)
+    }
+
+    async fn release_blob_unless_manifest_retains(
+        &self,
+        tenant: &TenantId,
+        hash: &BlobHash,
+        retained: Option<&ObjectManifest>,
+    ) -> S3Result<()> {
+        if let Some(retained) = retained
+            && object_io::manifest_contains_blob(retained, hash).map_err(map_core_error)?
+        {
+            return Ok(());
+        }
+        self.backend
+            .release_blob(tenant, hash)
+            .await
+            .map_err(map_core_error)
+    }
+
+    async fn release_blob_unless_upload_retains(
+        &self,
+        tenant: &TenantId,
+        hash: &BlobHash,
+        retained_by_upload: bool,
+    ) -> S3Result<()> {
+        if retained_by_upload {
+            return Ok(());
+        }
+        self.backend
+            .release_blob(tenant, hash)
             .await
             .map_err(map_core_error)
     }

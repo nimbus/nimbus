@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::Write as _;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -35,6 +36,8 @@ struct InMemoryBackend {
     blobs: Mutex<HashMap<TenantId, Arc<MemoryBlobStore>>>,
     manifests: Mutex<BTreeMap<(TenantId, String, String), ObjectManifest>>,
     uploads: Mutex<BTreeMap<(TenantId, String), ObjectMultipartUpload>>,
+    fail_put_manifest: AtomicBool,
+    fail_put_multipart_upload: AtomicBool,
 }
 
 #[async_trait]
@@ -61,6 +64,12 @@ impl S3ObjectBackend for InMemoryBackend {
         tenant: &TenantId,
         manifest: ObjectManifest,
     ) -> Result<CommitEntry> {
+        if self.fail_put_manifest.load(Ordering::SeqCst) {
+            return Err(nimbus_core::Error::storage(
+                nimbus_core::StorageErrorKind::Unavailable,
+                "injected put_manifest failure",
+            ));
+        }
         self.manifests.lock().unwrap().insert(
             (
                 tenant.clone(),
@@ -128,6 +137,12 @@ impl S3ObjectBackend for InMemoryBackend {
         tenant: &TenantId,
         upload: ObjectMultipartUpload,
     ) -> Result<CommitEntry> {
+        if self.fail_put_multipart_upload.load(Ordering::SeqCst) {
+            return Err(nimbus_core::Error::storage(
+                nimbus_core::StorageErrorKind::Unavailable,
+                "injected put_multipart_upload failure",
+            ));
+        }
         self.uploads
             .lock()
             .unwrap()
@@ -373,6 +388,37 @@ async fn overwriting_object_with_same_bytes_keeps_blob_readable() {
     assert_eq!(
         collect(response.output.body.unwrap()).await,
         Bytes::from_static(b"stable")
+    );
+}
+
+#[tokio::test]
+async fn put_object_releases_new_blob_when_manifest_commit_fails() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let service = service_with_backend(backend.clone());
+    backend.fail_put_manifest.store(true, Ordering::SeqCst);
+
+    service
+        .put_object(req(
+            PutObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "commit-fails.txt".to_string(),
+                body: Some(blob(b"uncommitted bytes")),
+                content_length: Some(17),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect_err("manifest commit failure should fail the S3 write");
+
+    let hash = BlobHash::of(b"uncommitted bytes");
+    assert!(
+        !backend
+            .store(&tenant("tenant-a"))
+            .has(&hash)
+            .await
+            .expect("blob store should answer has"),
+        "failed metadata commit must release the newly written blob"
     );
 }
 
@@ -651,6 +697,173 @@ async fn multipart_upload_assembles_chunks_and_etag() {
     assert_eq!(
         collect(fetched.output.body.unwrap()).await,
         Bytes::from_static(b"hello world")
+    );
+}
+
+#[tokio::test]
+async fn replacing_duplicate_multipart_part_keeps_shared_blob_readable() {
+    let service = service();
+    let created = service
+        .create_multipart_upload(req(
+            CreateMultipartUploadInput {
+                bucket: BUCKET.to_string(),
+                key: "large/duplicates.txt".to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("create multipart should succeed");
+    let upload_id = created.output.upload_id.expect("upload id");
+
+    let first_original = service
+        .upload_part(req(
+            UploadPartInput {
+                bucket: BUCKET.to_string(),
+                key: "large/duplicates.txt".to_string(),
+                upload_id: upload_id.clone(),
+                part_number: 1,
+                body: Some(blob(b"same")),
+                content_length: Some(4),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("first duplicate part should upload")
+        .output
+        .e_tag
+        .expect("first duplicate etag");
+    let second = service
+        .upload_part(req(
+            UploadPartInput {
+                bucket: BUCKET.to_string(),
+                key: "large/duplicates.txt".to_string(),
+                upload_id: upload_id.clone(),
+                part_number: 2,
+                body: Some(blob(b"same")),
+                content_length: Some(4),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("second duplicate part should upload")
+        .output
+        .e_tag
+        .expect("second duplicate etag");
+    assert_eq!(
+        first_original, second,
+        "identical part bytes share one content address and ETag"
+    );
+
+    let replacement = service
+        .upload_part(req(
+            UploadPartInput {
+                bucket: BUCKET.to_string(),
+                key: "large/duplicates.txt".to_string(),
+                upload_id: upload_id.clone(),
+                part_number: 1,
+                body: Some(blob(b"new")),
+                content_length: Some(3),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("replacement part should upload")
+        .output
+        .e_tag
+        .expect("replacement etag");
+
+    service
+        .complete_multipart_upload(req(
+            s3s::dto::CompleteMultipartUploadInput {
+                bucket: BUCKET.to_string(),
+                key: "large/duplicates.txt".to_string(),
+                upload_id,
+                multipart_upload: Some(CompletedMultipartUpload {
+                    parts: Some(vec![
+                        CompletedPart {
+                            part_number: Some(1),
+                            e_tag: Some(replacement),
+                            ..Default::default()
+                        },
+                        CompletedPart {
+                            part_number: Some(2),
+                            e_tag: Some(second),
+                            ..Default::default()
+                        },
+                    ]),
+                }),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("multipart complete should preserve the still-referenced duplicate blob");
+
+    let fetched = service
+        .get_object(req(
+            GetObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "large/duplicates.txt".to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("multipart object should read");
+    assert_eq!(
+        collect(fetched.output.body.unwrap()).await,
+        Bytes::from_static(b"newsame")
+    );
+}
+
+#[tokio::test]
+async fn upload_part_releases_new_blob_when_upload_commit_fails() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let service = service_with_backend(backend.clone());
+    let created = service
+        .create_multipart_upload(req(
+            CreateMultipartUploadInput {
+                bucket: BUCKET.to_string(),
+                key: "large/upload-fails.txt".to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("create multipart should succeed");
+    let upload_id = created.output.upload_id.expect("upload id");
+    backend
+        .fail_put_multipart_upload
+        .store(true, Ordering::SeqCst);
+
+    service
+        .upload_part(req(
+            UploadPartInput {
+                bucket: BUCKET.to_string(),
+                key: "large/upload-fails.txt".to_string(),
+                upload_id,
+                part_number: 1,
+                body: Some(blob(b"uncommitted part")),
+                content_length: Some(16),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect_err("upload metadata commit failure should fail the part write");
+
+    let hash = BlobHash::of(b"uncommitted part");
+    assert!(
+        !backend
+            .store(&tenant("tenant-a"))
+            .has(&hash)
+            .await
+            .expect("blob store should answer has"),
+        "failed upload metadata commit must release the newly written part blob"
     );
 }
 

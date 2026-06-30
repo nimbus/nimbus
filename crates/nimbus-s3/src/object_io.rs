@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use bytes::Bytes;
 use nimbus_blob::BlobHash;
 use nimbus_core::{Error, Result, TenantId};
-use nimbus_storage::{ObjectBlobLayout, ObjectManifest};
+use nimbus_storage::{ObjectBlobLayout, ObjectManifest, ObjectMultipartUpload};
 
 use crate::backend::S3ObjectBackend;
 
@@ -103,6 +103,22 @@ fn manifest_blob_hashes(manifest: &ObjectManifest) -> Result<BTreeSet<BlobHash>>
         }
     }
     Ok(hashes)
+}
+
+pub(crate) fn manifest_contains_blob(manifest: &ObjectManifest, hash: &BlobHash) -> Result<bool> {
+    Ok(manifest_blob_hashes(manifest)?.contains(hash))
+}
+
+pub(crate) fn multipart_upload_contains_blob(
+    upload: &ObjectMultipartUpload,
+    hash: &BlobHash,
+) -> Result<bool> {
+    for part in &upload.parts {
+        if parse_blob_hash(&part.blob_hash)? == *hash {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub(crate) fn parse_blob_hash(value: &str) -> Result<BlobHash> {

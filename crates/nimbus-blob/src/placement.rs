@@ -62,6 +62,20 @@ impl PlacementBlobStore {
     pub fn local_only(local: Arc<dyn BlobStore>) -> Self {
         Self::new(local, PlacementMode::LocalOnly)
     }
+
+    async fn get_remote_and_warm(
+        &self,
+        remote: &Arc<dyn BlobStore>,
+        hash: &BlobHash,
+    ) -> Result<Bytes> {
+        let bytes = remote.get(hash).await?;
+        let warmed = self.local.put(bytes.clone()).await?;
+        debug_assert_eq!(
+            warmed, *hash,
+            "cache warm should preserve the content address"
+        );
+        Ok(bytes)
+    }
 }
 
 #[async_trait]
@@ -125,31 +139,31 @@ impl BlobStore for PlacementBlobStore {
             Ok(bytes) => Ok(bytes),
             Err(local_err) => match &self.mode {
                 // CloudPrimary: on a local miss, fall through to the cloud leg.
-                PlacementMode::CloudPrimary { cloud } => cloud.get(hash).await,
+                PlacementMode::CloudPrimary { cloud } => {
+                    self.get_remote_and_warm(cloud, hash).await
+                }
                 // Tier: on a local (cache) miss, read from the cold tier.
-                PlacementMode::Tier { cold } => cold.get(hash).await,
+                PlacementMode::Tier { cold } => self.get_remote_and_warm(cold, hash).await,
                 _ => Err(local_err),
             },
         }
     }
 
     async fn get_stream(&self, hash: &BlobHash) -> Result<ByteStream> {
-        match self.local.get_stream(hash).await {
-            Ok(stream) => Ok(stream),
-            Err(local_err) => match &self.mode {
-                PlacementMode::CloudPrimary { cloud } => cloud.get_stream(hash).await,
-                PlacementMode::Tier { cold } => cold.get_stream(hash).await,
-                _ => Err(local_err),
-            },
-        }
+        let bytes = self.get(hash).await?;
+        Ok(Box::new(std::io::Cursor::new(bytes)))
     }
 
     async fn get_range(&self, hash: &BlobHash, range: Range<u64>) -> Result<Bytes> {
         match self.local.get_range(hash, range.clone()).await {
             Ok(bytes) => Ok(bytes),
             Err(local_err) => match &self.mode {
-                PlacementMode::CloudPrimary { cloud } => cloud.get_range(hash, range).await,
-                PlacementMode::Tier { cold } => cold.get_range(hash, range).await,
+                PlacementMode::CloudPrimary { cloud } => {
+                    slice_range(self.get_remote_and_warm(cloud, hash).await?, range)
+                }
+                PlacementMode::Tier { cold } => {
+                    slice_range(self.get_remote_and_warm(cold, hash).await?, range)
+                }
                 _ => Err(local_err),
             },
         }
@@ -185,6 +199,17 @@ impl BlobStore for PlacementBlobStore {
         }
         Ok(())
     }
+}
+
+fn slice_range(bytes: Bytes, range: Range<u64>) -> Result<Bytes> {
+    let len = bytes.len() as u64;
+    if range.start > range.end || range.end > len {
+        return Err(nimbus_core::Error::InvalidInput(format!(
+            "range {}..{} out of bounds for blob of {len} bytes",
+            range.start, range.end
+        )));
+    }
+    Ok(bytes.slice(range.start as usize..range.end as usize))
 }
 
 #[cfg(test)]
@@ -263,6 +288,10 @@ mod tests {
         assert!(!local.has(&hash).await.unwrap(), "local starts empty");
         let got = store.get(&hash).await.unwrap();
         assert_eq!(got, Bytes::from_static(b"in the cloud"));
+        assert!(
+            local.has(&hash).await.unwrap(),
+            "cloud-primary read warms the local cache"
+        );
     }
 
     #[tokio::test]
@@ -286,6 +315,10 @@ mod tests {
         assert!(!local.has(&hash).await.unwrap());
         let got = store.get(&hash).await.unwrap();
         assert_eq!(got, Bytes::from_static(b"cold data"));
+        assert!(
+            local.has(&hash).await.unwrap(),
+            "tier read rehydrates the local cache"
+        );
     }
 
     #[tokio::test]

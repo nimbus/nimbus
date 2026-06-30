@@ -146,6 +146,8 @@ pub enum ManifestCipher {
     SqlCipher,
     /// libsql native encryption for replica caches.
     LibsqlAes256Cbc,
+    /// Framed AES-256-GCM-SIV for content-addressed object blobs.
+    FramedBlobAes256GcmSiv,
 }
 
 impl ManifestCipher {
@@ -155,6 +157,7 @@ impl ManifestCipher {
             Self::RedbAes256GcmSiv => "redb:aes-256-gcm-siv",
             Self::SqlCipher => "sqlite:sqlcipher",
             Self::LibsqlAes256Cbc => "libsql:aes-256-cbc",
+            Self::FramedBlobAes256GcmSiv => "blob:framed:aes-256-gcm-siv",
         }
     }
 
@@ -164,6 +167,7 @@ impl ManifestCipher {
             "redb:aes-256-gcm-siv" => Some(Self::RedbAes256GcmSiv),
             "sqlite:sqlcipher" => Some(Self::SqlCipher),
             "libsql:aes-256-cbc" => Some(Self::LibsqlAes256Cbc),
+            "blob:framed:aes-256-gcm-siv" => Some(Self::FramedBlobAes256GcmSiv),
             _ => None,
         }
     }

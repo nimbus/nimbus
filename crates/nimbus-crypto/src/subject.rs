@@ -59,6 +59,8 @@ pub enum LocalArtifactRole {
     SnapshotExport,
     /// Bootstrap bundle file.
     BootstrapBundle,
+    /// Tenant object-storage blob byte plane.
+    ObjectBlobStore,
 }
 
 impl LocalArtifactRole {
@@ -70,6 +72,7 @@ impl LocalArtifactRole {
             Self::RetiredReplicaCache => "artifact:retired-cache",
             Self::SnapshotExport => "artifact:snapshot",
             Self::BootstrapBundle => "artifact:bootstrap",
+            Self::ObjectBlobStore => "artifact:object-blob-store",
         }
     }
 }
@@ -133,6 +136,15 @@ impl LocalKeySubject {
         Self {
             kind: LocalKeySubjectKind::Artifact(LocalArtifactRole::MigrationCopy),
             tenant_id,
+            logical_name: logical_name.into(),
+        }
+    }
+
+    /// Creates a new subject for one tenant's object-storage blob byte plane.
+    pub fn object_blob_store(tenant_id: TenantId, logical_name: impl Into<String>) -> Self {
+        Self {
+            kind: LocalKeySubjectKind::Artifact(LocalArtifactRole::ObjectBlobStore),
+            tenant_id: Some(tenant_id),
             logical_name: logical_name.into(),
         }
     }
