@@ -119,15 +119,20 @@ fn policy_request_from_runtime_request(
 fn runtime_authorization_from_policy(
     authorization: PolicyEgressAuthorization,
 ) -> RuntimeEgressAuthorization {
-    if authorization.is_allowed() {
-        let mut runtime_authorization = RuntimeEgressAuthorization::allow(authorization.reason());
-        if let Some(rule) = authorization.matched_rule() {
-            runtime_authorization = runtime_authorization.with_matched_rule(rule);
-        }
-        runtime_authorization
-    } else {
-        RuntimeEgressAuthorization::deny(authorization.reason())
+    if !authorization.is_allowed() {
+        return RuntimeEgressAuthorization::deny(authorization.reason());
     }
+    // Map the PDP verdict faithfully — including whether the matched rule needs
+    // PEP-mediated L7 (credential injection / DLP). The fail-closed for substrates
+    // with no proxy route (the isolate `fetch`) lives at the single runtime fetch
+    // hook, the consumption seam every adapter funnels through, so no host bridge
+    // re-encodes the rule. (audit H4.)
+    let mut runtime_authorization = RuntimeEgressAuthorization::allow(authorization.reason())
+        .requiring_proxy_enforcement(authorization.requires_proxy_enforcement());
+    if let Some(rule) = authorization.matched_rule() {
+        runtime_authorization = runtime_authorization.with_matched_rule(rule);
+    }
+    runtime_authorization
 }
 
 #[cfg(test)]
@@ -135,7 +140,7 @@ mod tests {
     use std::sync::Arc;
 
     use nimbus_core::{PrincipalContext, TenantId};
-    use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
+    use nimbus_egress::{EgressCredentialInjection, EgressPolicy, EgressProtocol, EgressRule};
     use nimbus_engine::Engine;
     use nimbus_runtime::{
         EgressProtocol as RuntimeEgressProtocol, EgressRequest as RuntimeEgressRequest,
@@ -199,6 +204,60 @@ mod tests {
             isolate_allow.matched_rule(),
             container_allow.matched_rule(),
             "isolate and container substrates must resolve the same matched rule"
+        );
+    }
+
+    #[test]
+    fn egress_gateway_propagates_proxy_enforcement_requirement() {
+        // A rule whose enforcement depends on the nimbus-proxy PEP (credential
+        // injection or DLP) must be flagged so the single runtime fetch hook can
+        // fail it closed on a substrate with no proxy route (the isolate). The
+        // bridge's job is faithful propagation, not per-adapter enforcement — the
+        // fail-closed lives at the consumption seam, not here. (audit H4.)
+        let (_tempdir, bridge) = bridge_for_policy(
+            "tenant-l7",
+            EgressPolicy::new([
+                EgressRule::new("plain", EgressProtocol::Https, "plain.internal", 443)
+                    .with_methods(["GET"])
+                    .with_path_prefixes(["/v1"]),
+                EgressRule::new(
+                    "credentialed",
+                    EgressProtocol::Https,
+                    "secret.internal",
+                    443,
+                )
+                .with_methods(["GET"])
+                .with_path_prefixes(["/v1"])
+                .with_credential_injection(EgressCredentialInjection::new(
+                    "github_pat",
+                    "authorization",
+                )),
+            ]),
+            None,
+        );
+
+        let plain = bridge.authorize(&runtime_request(
+            EgressSubstrate::Isolate,
+            "plain.internal",
+            "/v1/ok",
+        ));
+        assert!(
+            plain.is_allowed() && !plain.requires_proxy_enforcement(),
+            "a plain allow rule carries no proxy-enforcement requirement, got: {}",
+            plain.reason()
+        );
+
+        let credentialed = bridge.authorize(&runtime_request(
+            EgressSubstrate::Isolate,
+            "secret.internal",
+            "/v1/ok",
+        ));
+        assert!(
+            credentialed.is_allowed() && credentialed.requires_proxy_enforcement(),
+            "the bridge must propagate the credential rule's proxy-enforcement \
+             requirement so the runtime hook can fail closed (allowed={}, requires_proxy={})",
+            credentialed.is_allowed(),
+            credentialed.requires_proxy_enforcement()
         );
     }
 

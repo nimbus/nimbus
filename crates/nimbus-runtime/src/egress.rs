@@ -144,7 +144,7 @@ pub struct EgressAuthorization {
     allowed: bool,
     reason: String,
     matched_rule: Option<String>,
-    proxy_url: Option<String>,
+    requires_proxy_enforcement: bool,
 }
 
 impl EgressAuthorization {
@@ -153,16 +153,7 @@ impl EgressAuthorization {
             allowed: true,
             reason: reason.into(),
             matched_rule: None,
-            proxy_url: None,
-        }
-    }
-
-    pub fn allow_with_proxy(reason: impl Into<String>, proxy_url: impl Into<String>) -> Self {
-        Self {
-            allowed: true,
-            reason: reason.into(),
-            matched_rule: None,
-            proxy_url: Some(proxy_url.into()),
+            requires_proxy_enforcement: false,
         }
     }
 
@@ -171,12 +162,22 @@ impl EgressAuthorization {
             allowed: false,
             reason: reason.into(),
             matched_rule: None,
-            proxy_url: None,
+            requires_proxy_enforcement: false,
         }
     }
 
     pub fn with_matched_rule(mut self, matched_rule: impl Into<String>) -> Self {
         self.matched_rule = Some(matched_rule.into());
+        self
+    }
+
+    /// Mark this allow as depending on the nimbus-proxy PEP for L7 enforcement
+    /// (credential injection or DLP). The single consumption seam — the runtime
+    /// fetch hook — fails closed when this is set and the substrate has no proxy
+    /// route, so the invariant holds for every host bridge / adapter without each
+    /// re-encoding it. (audit H4.)
+    pub fn requiring_proxy_enforcement(mut self, requires_proxy_enforcement: bool) -> Self {
+        self.requires_proxy_enforcement = requires_proxy_enforcement;
         self
     }
 
@@ -192,9 +193,31 @@ impl EgressAuthorization {
         self.matched_rule.as_deref()
     }
 
-    pub fn proxy_url(&self) -> Option<&str> {
-        self.proxy_url.as_deref()
+    pub fn requires_proxy_enforcement(&self) -> bool {
+        self.requires_proxy_enforcement
     }
+}
+
+/// The isolate `fetch` path's allow/deny decision for a gateway authorization.
+/// The isolate has no route to the nimbus-proxy PEP, so an allow that requires
+/// PEP-mediated L7 enforcement (credential injection / DLP) fails closed here —
+/// the single consumption seam every host bridge funnels through, so the
+/// invariant cannot be re-encoded (or forgotten) per adapter. (audit H4.)
+/// Returns the deny reason, or `Ok(())` to proceed.
+pub(crate) fn isolate_fetch_decision(
+    authorization: &EgressAuthorization,
+) -> std::result::Result<(), String> {
+    if !authorization.is_allowed() {
+        return Err(format!("fetch egress denied: {}", authorization.reason()));
+    }
+    if authorization.requires_proxy_enforcement() {
+        return Err(format!(
+            "fetch egress denied: rule `{}` requires proxy-mediated enforcement \
+             (credential injection or DLP) that the isolate substrate cannot apply",
+            authorization.matched_rule().unwrap_or("<unknown>")
+        ));
+    }
+    Ok(())
 }
 
 pub trait EgressGateway: Send + Sync + 'static {
@@ -518,6 +541,26 @@ mod tests {
         assert_eq!(
             authorization.reason(),
             "custom fetch clients must route through the PEP"
+        );
+    }
+
+    #[test]
+    fn isolate_fetch_decision_fails_closed_for_proxy_enforced_allow() {
+        // deny passes the reason through
+        assert!(isolate_fetch_decision(&EgressAuthorization::deny("nope")).is_err());
+        // a plain allow proceeds
+        assert!(isolate_fetch_decision(&EgressAuthorization::allow("ok")).is_ok());
+        // an allow that requires PEP-mediated L7 fails closed: the isolate has no
+        // proxy route, so credential injection / DLP cannot be applied. (audit H4.)
+        let denied = isolate_fetch_decision(
+            &EgressAuthorization::allow("ok")
+                .with_matched_rule("github")
+                .requiring_proxy_enforcement(true),
+        )
+        .expect_err("a proxy-enforced allow must fail closed on the isolate substrate");
+        assert!(
+            denied.contains("proxy-mediated enforcement") && denied.contains("github"),
+            "deny reason should name the requirement and the matched rule, got: {denied}"
         );
     }
 

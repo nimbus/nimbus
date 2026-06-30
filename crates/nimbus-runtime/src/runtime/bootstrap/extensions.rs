@@ -393,13 +393,17 @@ fn nimbus_fetch_egress_gateway_hook(
             )
             .map_err(|error| JsErrorBox::generic(error.to_string()))?;
             let authorization = gateway.authorize(&egress_request);
-            if authorization.is_allowed() {
-                Ok(deno_fetch::FetchEgressGatewayAuthorization::bypass_deno_permissions())
-            } else {
-                Err(JsErrorBox::generic(format!(
-                    "fetch egress denied: {}",
-                    authorization.reason()
-                )))
+            // The isolate `fetch` path has no route to the nimbus-proxy PEP, so the
+            // shared decision fails closed for an allow that needs PEP-mediated L7
+            // (credential injection / DLP). Centralizing it at this single
+            // consumption seam keeps every host bridge / adapter from re-encoding
+            // the rule — the per-adapter duplication that is itself the fail-open
+            // risk. (audit H4.)
+            match crate::egress::isolate_fetch_decision(&authorization) {
+                Ok(()) => {
+                    Ok(deno_fetch::FetchEgressGatewayAuthorization::bypass_deno_permissions())
+                }
+                Err(reason) => Err(JsErrorBox::generic(reason)),
             }
         }
         RuntimeEgressGatewayBinding::Missing => {

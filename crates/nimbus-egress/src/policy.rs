@@ -121,7 +121,10 @@ impl CompiledEgressPolicy {
                 });
                 continue;
             }
-            return EgressAuthorization::allow(rule.name.clone());
+            return EgressAuthorization::allow(
+                rule.name.clone(),
+                rule.requires_proxy_enforcement(),
+            );
         }
 
         if let Some(reason) = matched_but_denied {
@@ -252,6 +255,14 @@ impl EgressRule {
             credential: self.credential.clone(),
             dlp: self.dlp.clone(),
         }
+    }
+
+    /// True when this rule's enforcement depends on the nimbus-proxy PEP —
+    /// credential injection or L7 DLP. Substrates that do not route through the
+    /// PEP (the isolate `fetch` gateway) must fail closed for such rules rather
+    /// than egress without those controls. (audit H4.)
+    fn requires_proxy_enforcement(&self) -> bool {
+        self.credential.is_some() || !self.dlp.is_empty()
     }
 
     fn matches_l4(&self, request: &EgressRequest) -> bool {
@@ -444,15 +455,17 @@ impl EgressRequest {
 pub struct EgressAuthorization {
     allowed: bool,
     matched_rule: Option<String>,
+    requires_proxy_enforcement: bool,
     reason: String,
 }
 
 impl EgressAuthorization {
-    fn allow(rule_name: String) -> Self {
+    fn allow(rule_name: String, requires_proxy_enforcement: bool) -> Self {
         Self {
             allowed: true,
             reason: format!("sandbox egress allowed by rule `{rule_name}`"),
             matched_rule: Some(rule_name),
+            requires_proxy_enforcement,
         }
     }
 
@@ -460,6 +473,7 @@ impl EgressAuthorization {
         Self {
             allowed: false,
             matched_rule: None,
+            requires_proxy_enforcement: false,
             reason,
         }
     }
@@ -470,6 +484,13 @@ impl EgressAuthorization {
 
     pub fn matched_rule(&self) -> Option<&str> {
         self.matched_rule.as_deref()
+    }
+
+    /// True when the matched rule's enforcement depends on the nimbus-proxy PEP
+    /// (credential injection or L7 DLP); always false for a deny. A substrate
+    /// that does not route through the PEP must fail closed when this is set.
+    pub fn requires_proxy_enforcement(&self) -> bool {
+        self.requires_proxy_enforcement
     }
 
     pub fn reason(&self) -> &str {
