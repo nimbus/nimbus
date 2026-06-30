@@ -1,47 +1,176 @@
 mod support;
 use support::*;
 
+// KME4 readiness gate: the execute path no longer fails closed unconditionally;
+// it is gated immediately before the VMM launches and permits the launch IFF the
+// deny-by-default netns is installed AND the per-sandbox egress PEP is running
+// with an active policy generation AND the host platform supports enforcement.
+// The two tests below are the converted descendants of the original
+// always-fail-closed pair: one proves a NOT-READY PEP still denies, the other
+// proves a fully-ready setup permits. Each gate arm gets its own negative test.
+
+/// Converted from the original always-fail-closed execute test: a running but
+/// NOT-READY PEP (no active policy generation) must still deny the launch.
 #[test]
-fn execute_backend_fails_closed_until_krun_tsi_egress_pep_exists() {
+fn execute_launch_denies_when_egress_pep_is_not_ready() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ));
+    let id = SandboxId::new("kme4-not-ready");
+    let netns_path = temp_dir.path().join("netns-installed");
+    fs::write(&netns_path, b"netns").expect("netns marker should write");
+
+    // A PEP is running, but it was started without a policy, so it reports
+    // not-ready (no active policy generation).
+    let policyless = EgressProxy::start(EgressProxyConfig::without_active_policy())
+        .expect("a policy-less PEP should still bind and start");
+    backend
+        .egress_proxies
+        .insert_running_for_test(&id, policyless)
+        .expect("test PEP should register");
+    let readiness = backend
+        .egress_proxies
+        .readiness(&id)
+        .expect("readiness should resolve")
+        .expect("a PEP is registered");
+    assert!(
+        !readiness.ready && readiness.policy_generation.is_none(),
+        "precondition: the registered PEP must be not-ready, got: {readiness:?}"
+    );
+
+    let error = backend
+        .ensure_execute_egress_preconditions(&id, &netns_path)
+        .expect_err("a not-ready PEP must deny the launch fail-closed");
+    assert!(
+        error.to_string().contains("not ready")
+            && error.to_string().contains("active policy generation"),
+        "expected not-ready deny, got: {error}"
+    );
+}
+
+/// Converted from the original always-fail-closed image-launch test: with the
+/// netns installed AND a ready PEP (active policy generation), the gate permits
+/// the launch. Runs on the Mac without `/dev/kvm` because it exercises the gate
+/// decision, not a real VMM.
+#[test]
+fn execute_launch_permits_when_netns_installed_and_pep_ready() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ));
+    let id = SandboxId::new("kme4-ready");
+    let netns_path = temp_dir.path().join("netns-installed");
+    fs::write(&netns_path, b"netns").expect("netns marker should write");
+
+    backend
+        .egress_proxies
+        .ensure_running(&id, &EgressPolicy::deny_all(), loopback_addr())
+        .expect("a ready PEP should start with a compiled policy");
+    let readiness = backend
+        .egress_proxies
+        .readiness(&id)
+        .expect("readiness should resolve")
+        .expect("a PEP is registered");
+    assert!(
+        readiness.ready && readiness.policy_generation.is_some(),
+        "precondition: the registered PEP must be ready, got: {readiness:?}"
+    );
+
+    backend
+        .ensure_execute_egress_preconditions(&id, &netns_path)
+        .expect("all preconditions satisfied must permit the launch");
+}
+
+/// NETNS-ABSENT arm: even with a ready PEP, a missing deny-by-default netns must
+/// deny the launch fail-closed.
+#[test]
+fn execute_launch_denies_when_network_namespace_is_not_installed() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ));
+    let id = SandboxId::new("kme4-no-netns");
+    let missing_netns = temp_dir.path().join("netns").join("never-created");
+    backend
+        .egress_proxies
+        .ensure_running(&id, &EgressPolicy::deny_all(), loopback_addr())
+        .expect("a ready PEP should start");
+
+    let error = backend
+        .ensure_execute_egress_preconditions(&id, &missing_netns)
+        .expect_err("a missing netns must deny the launch fail-closed");
+    assert!(
+        error.to_string().contains("network namespace")
+            && error.to_string().contains("not installed"),
+        "expected netns-not-installed deny, got: {error}"
+    );
+}
+
+/// PEP-ABSENT arm: the netns is installed but no PEP is registered for the
+/// sandbox, so the gate must deny fail-closed.
+#[test]
+fn execute_launch_denies_when_egress_pep_is_absent() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ));
+    let id = SandboxId::new("kme4-no-pep");
+    let netns_path = temp_dir.path().join("netns-installed");
+    fs::write(&netns_path, b"netns").expect("netns marker should write");
+
+    let error = backend
+        .ensure_execute_egress_preconditions(&id, &netns_path)
+        .expect_err("an absent PEP must deny the launch fail-closed");
+    assert!(
+        error
+            .to_string()
+            .contains("no egress policy-enforcement proxy is running"),
+        "expected no-PEP deny, got: {error}"
+    );
+}
+
+/// PLATFORM arm: krun execute is Linux-KVM only. On a non-Linux host the full
+/// execute path denies before any VMM launch and registers no egress proxy, so
+/// no enforcement state leaks. (Only meaningful off-Linux; vacuous on Linux CI.)
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn execute_start_denies_fail_closed_off_linux() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
         temp_dir.path().to_path_buf(),
     ));
 
     let error = block_on(backend.start(sample_spec()))
-        .expect_err("krun execute-mode should fail closed before launch planning");
-    let message = error.to_string();
-
+        .expect_err("krun execute-mode must fail closed on a non-Linux host");
     assert!(
-        message.contains("krun execute-mode is fail-closed")
-            && message.contains("libkrun TSI")
-            && message.contains("packet-level egress enforcement"),
-        "expected fail-closed egress error, got: {error}"
+        matches!(error, crate::error::SandboxError::BackendUnavailable { .. })
+            && error.to_string().contains("requires a Linux host"),
+        "expected non-Linux platform deny, got: {error}"
     );
-    assert!(
-        !temp_dir.path().join("bundles").exists() && !temp_dir.path().join("state").exists(),
-        "krun execute-mode should fail before materializing launch artifacts"
-    );
-}
 
-#[test]
-fn execute_image_launch_fails_closed_before_image_materialization() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
-        temp_dir.path().to_path_buf(),
-    ));
-
-    let error = block_on(backend.start(sparse_image_spec("blocked-image-launch")))
-        .expect_err("krun execute-mode image launch should fail before image materialization");
-    let message = error.to_string();
-
+    // The full gate (`ensure_execute_egress_enforced`) also denies off-Linux even
+    // when the netns + a ready PEP are present, proving the platform check is part
+    // of the gate itself, not only the earlier `execute_start` guard.
+    let id = SandboxId::new("kme4-off-linux");
+    let netns_path = temp_dir.path().join("netns-installed");
+    fs::write(&netns_path, b"netns").expect("netns marker should write");
+    backend
+        .egress_proxies
+        .ensure_running(&id, &EgressPolicy::deny_all(), loopback_addr())
+        .expect("a ready PEP should start");
+    let mut manifest = sample_manifest(sample_spec(), KrunStartMode::Execute);
+    manifest.handle.id = id;
+    manifest.network_layout.netns_path = netns_path;
+    let gate_error = backend
+        .ensure_execute_egress_enforced(&manifest)
+        .expect_err("the full gate must deny on a non-Linux host");
     assert!(
-        message.contains("krun execute-mode is fail-closed"),
-        "expected fail-closed egress error, got: {error}"
-    );
-    assert!(
-        !temp_dir.path().join("bundles").exists() && !temp_dir.path().join("state").exists(),
-        "krun execute-mode image launch should fail before pulling or materializing an image"
+        matches!(
+            gate_error,
+            crate::error::SandboxError::BackendUnavailable { .. }
+        ),
+        "expected platform deny from the full gate, got: {gate_error}"
     );
 }
 

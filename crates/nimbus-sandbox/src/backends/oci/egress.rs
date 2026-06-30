@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use nimbus_egress::{CompiledEgressPolicy, EGRESS_PROXY_URL_ENV, EgressPolicy};
-use nimbus_proxy::{EgressProxy, EgressProxyConfig, EgressProxyError};
+use nimbus_proxy::{EgressProxy, EgressProxyConfig, EgressProxyError, EgressProxyReadiness};
 
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
@@ -76,10 +76,35 @@ impl EgressProxyRegistry {
         Ok(())
     }
 
+    /// Report the readiness of the PEP registered for `id`.
+    ///
+    /// Returns `Ok(None)` when no proxy is registered (so the caller treats an
+    /// absent PEP as deny), and `Ok(Some(readiness))` carrying the proxy's
+    /// active-policy state otherwise. A readiness gate must require both that a
+    /// proxy is registered AND that its `EgressProxyReadiness` reports an active
+    /// policy generation before permitting a workload to launch.
+    pub(crate) fn readiness(&self, id: &SandboxId) -> Result<Option<EgressProxyReadiness>> {
+        let proxies = self.lock()?;
+        proxies
+            .get(id)
+            .map(|proxy| proxy.readiness().map_err(egress_proxy_error))
+            .transpose()
+    }
+
     /// True if a PEP is currently registered for `id`.
     #[cfg(test)]
     pub(crate) fn contains(&self, id: &SandboxId) -> Result<bool> {
         Ok(self.lock()?.contains_key(id))
+    }
+
+    /// Register an already-started proxy for `id` under test, so a readiness
+    /// gate can be exercised against a not-ready (policy-less) PEP without a
+    /// live VMM. Production code only ever registers a PEP through
+    /// [`EgressProxyRegistry::ensure_running`], which always loads a policy.
+    #[cfg(test)]
+    pub(crate) fn insert_running_for_test(&self, id: &SandboxId, proxy: EgressProxy) -> Result<()> {
+        self.lock()?.insert(id.clone(), proxy);
+        Ok(())
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, HashMap<SandboxId, EgressProxy>>> {
@@ -151,6 +176,56 @@ mod tests {
         assert!(!registry.contains(&id).unwrap());
         // stop is a no-op when nothing is registered
         registry.stop(&id).unwrap();
+    }
+
+    #[test]
+    fn readiness_is_none_when_no_proxy_is_registered() {
+        let registry = EgressProxyRegistry::new();
+        let id = SandboxId::new("egress-seam-readiness-absent");
+
+        assert!(
+            registry
+                .readiness(&id)
+                .expect("readiness lookup should succeed")
+                .is_none(),
+            "an unregistered sandbox must report no PEP so the gate denies"
+        );
+    }
+
+    #[test]
+    fn readiness_reports_active_policy_for_a_running_proxy() {
+        let registry = EgressProxyRegistry::new();
+        let id = SandboxId::new("egress-seam-readiness-ready");
+        registry
+            .ensure_running(&id, &EgressPolicy::deny_all(), loopback())
+            .unwrap();
+
+        let readiness = registry
+            .readiness(&id)
+            .expect("readiness lookup should succeed")
+            .expect("a registered proxy should report readiness");
+        assert!(
+            readiness.ready && readiness.policy_generation.is_some(),
+            "a PEP started with a compiled policy must be ready with an active generation: {readiness:?}"
+        );
+    }
+
+    #[test]
+    fn readiness_reports_not_ready_for_a_policyless_proxy() {
+        let registry = EgressProxyRegistry::new();
+        let id = SandboxId::new("egress-seam-readiness-policyless");
+        let proxy = EgressProxy::start(EgressProxyConfig::without_active_policy())
+            .expect("a policy-less PEP should still bind and start");
+        registry.insert_running_for_test(&id, proxy).unwrap();
+
+        let readiness = registry
+            .readiness(&id)
+            .expect("readiness lookup should succeed")
+            .expect("the registered proxy should report readiness");
+        assert!(
+            !readiness.ready && readiness.policy_generation.is_none(),
+            "a PEP with no loaded policy must report not-ready so the gate denies: {readiness:?}"
+        );
     }
 
     #[test]
