@@ -10,13 +10,14 @@ use std::time::Duration;
 use nimbus_egress::{CompiledEgressPolicy, EgressPolicy};
 
 use crate::credentials::CredentialSecretStore;
-use crate::decision_log::{DecisionLogger, noop_decision_logger};
+use crate::decision_log::{DecisionLogger, EgressDecisionLog, noop_decision_logger};
 use crate::dns::{DnsCacheConfig, Resolver, resolve_dns, resolve_socket_addrs};
 use crate::enforcement::prepare_proxy_request_enforcement;
 use crate::error::{EgressProxyError, Result};
 use crate::policy_state::{EgressProxyPolicyState, EgressProxyReadiness, PolicyGeneration};
 use crate::request::{
-    ProxyRequestMode, find_header_end, parse_proxy_request, render_upstream_request,
+    ParsedProxyRequest, ProxyRequestMode, find_header_end, parse_proxy_request,
+    render_upstream_request,
 };
 use crate::response::{HttpProxyResponse, write_http_response};
 use crate::{
@@ -327,6 +328,25 @@ impl Drop for ConnectionPermit {
     }
 }
 
+/// Audits a terminal deny and writes the matching fail-closed response. Every
+/// post-parse deny path funnels through here so a blocked request emits exactly
+/// one decision-log record (`allowed = false`) carrying the reason and matched
+/// rule, mirroring the response body without leaking secret material.
+fn deny_terminal(
+    client: &mut TcpStream,
+    decision_logger: &DecisionLogger,
+    parsed: &ParsedProxyRequest,
+    matched_rule: Option<String>,
+    response: HttpProxyResponse,
+) -> io::Result<()> {
+    decision_logger(EgressDecisionLog::denied(
+        parsed,
+        response.body().to_owned(),
+        matched_rule,
+    ));
+    write_http_response(client, response)
+}
+
 fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Result<()> {
     client.set_read_timeout(Some(context.io_timeout))?;
     client.set_write_timeout(Some(context.io_timeout))?;
@@ -345,8 +365,11 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
         .active()
         .cloned();
     let Some(active_policy) = active_policy else {
-        return write_http_response(
+        return deny_terminal(
             &mut client,
+            &context.decision_logger,
+            &parsed,
+            None,
             HttpProxyResponse::forbidden(
                 "egress proxy default deny: no active policy generation is ready",
             ),
@@ -361,22 +384,31 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
     ) {
         Ok(resolution) if !resolution.addresses.is_empty() => resolution,
         Ok(_) => {
-            return write_http_response(
+            return deny_terminal(
                 &mut client,
+                &context.decision_logger,
+                &parsed,
+                None,
                 HttpProxyResponse::bad_gateway("egress proxy DNS resolution returned no addresses"),
             );
         }
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
-            return write_http_response(
+            return deny_terminal(
                 &mut client,
+                &context.decision_logger,
+                &parsed,
+                None,
                 HttpProxyResponse::forbidden(&format!(
                     "egress proxy DNS cache overflow default deny: {error}"
                 )),
             );
         }
         Err(error) => {
-            return write_http_response(
+            return deny_terminal(
                 &mut client,
+                &context.decision_logger,
+                &parsed,
+                None,
                 HttpProxyResponse::bad_gateway(&format!(
                     "egress proxy DNS resolution failed: {error}"
                 )),
@@ -391,38 +423,69 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
     let _policy_generation = active_policy.policy_generation;
     let authorization = active_policy.policy.authorize(&egress_request);
     if !authorization.is_allowed() {
-        return write_http_response(
+        return deny_terminal(
             &mut client,
+            &context.decision_logger,
+            &parsed,
+            None,
             HttpProxyResponse::forbidden(authorization.reason()),
         );
     }
+    let matched_rule = authorization.matched_rule().map(ToOwned::to_owned);
     let prepared = match prepare_proxy_request_enforcement(
         &mut client,
         &mut buffer,
         &parsed,
         &active_policy.policy,
         authorization.matched_rule(),
+        authorization.reason(),
         &context.credential_store,
     ) {
         Ok(prepared) => prepared,
-        Err(response) => return write_http_response(&mut client, response),
+        // DLP block or credential deny: audit the terminal deny before
+        // responding so blocked exfiltration attempts are never a blind spot.
+        Err(response) => {
+            return deny_terminal(
+                &mut client,
+                &context.decision_logger,
+                &parsed,
+                matched_rule,
+                response,
+            );
+        }
     };
-    (context.decision_logger)(prepared.decision_log.clone());
 
     if matches!(parsed.mode, ProxyRequestMode::ForwardHttp { .. })
         && prepared.inspected_body.is_none()
         && parsed.content_length.is_none()
         && buffer.len() > parsed.body_offset
     {
-        return write_http_response(
+        return deny_terminal(
             &mut client,
+            &context.decision_logger,
+            &parsed,
+            matched_rule,
             HttpProxyResponse::bad_request(
                 "egress proxy HTTP request bodies require Content-Length",
             ),
         );
     }
 
-    let mut upstream = TcpStream::connect_timeout(&upstream_addr, context.connect_timeout)?;
+    // The policy decision is final and allowed; record it exactly once before
+    // dialing so every request emits a single terminal decision log.
+    (context.decision_logger)(prepared.decision_log.clone());
+
+    let mut upstream = match TcpStream::connect_timeout(&upstream_addr, context.connect_timeout) {
+        Ok(upstream) => upstream,
+        // A dial failure is an operational fault, not a policy deny: surface a
+        // 502 to the client instead of dropping the connection silently.
+        Err(_) => {
+            return write_http_response(
+                &mut client,
+                HttpProxyResponse::bad_gateway("egress proxy failed to dial the upstream"),
+            );
+        }
+    };
     upstream.set_nonblocking(false)?;
     upstream.set_read_timeout(Some(context.io_timeout))?;
     upstream.set_write_timeout(Some(context.io_timeout))?;

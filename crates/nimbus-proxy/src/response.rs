@@ -48,6 +48,12 @@ impl HttpProxyResponse {
             body: body.to_owned(),
         }
     }
+
+    /// The fail-closed message returned to the caller. Used to mirror the deny
+    /// reason into the audit decision log without duplicating message strings.
+    pub(crate) fn body(&self) -> &str {
+        &self.body
+    }
 }
 
 pub(crate) fn write_http_response(

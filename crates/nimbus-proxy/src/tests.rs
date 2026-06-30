@@ -592,6 +592,257 @@ fn egress_proxy_pool_key_covers_security_relevant_identity() {
     assert_ne!(base, changed);
 }
 
+// Audit (M6): every terminal deny must emit exactly one decision-log record
+// flagged `allowed = false`, carrying the reason and matched rule, and leaking
+// no secret material. Before M6 the logger fired only on the allow path, so a
+// blocked exfiltration attempt was an audit blind spot. This test fails (the
+// `recv_timeout` expect panics) if the deny path stops emitting a log.
+#[test]
+fn egress_proxy_audits_denied_request_with_one_redacted_record() {
+    let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    let (log_tx, log_rx) = mpsc::channel();
+    let proxy = start_test_proxy_with_store_and_logger(
+        CompiledEgressPolicy::deny_all(),
+        CredentialSecretStore::empty(),
+        Arc::new(move |log| {
+            let _ = log_tx.send(log);
+        }),
+    );
+
+    let response = proxy_request(
+        proxy.local_addr(),
+        format!(
+            "GET http://allowed.test:{}/secret?token=supersecret HTTP/1.1\r\nHost: allowed.test\r\nAuthorization: Bearer topsecret\r\n\r\n",
+            upstream.addr.port()
+        ),
+    );
+    assert!(
+        response.starts_with("HTTP/1.1 403 Forbidden"),
+        "deny-all policy must reject the request, got: {response}"
+    );
+
+    let log = log_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("a denied request must still emit a decision-log record");
+    assert!(
+        !log.is_allowed(),
+        "the deny verdict must be audited as allowed = false"
+    );
+    assert_eq!(
+        log.matched_rule(),
+        None,
+        "a deny-all verdict matches no policy rule"
+    );
+    assert_eq!(
+        log.credential_identity(),
+        None,
+        "no credential is injected on a deny"
+    );
+    assert!(
+        !log.reason().is_empty(),
+        "the deny audit must record a non-empty reason"
+    );
+    assert!(
+        !log.reason().contains("topsecret")
+            && !log.destination().contains("supersecret")
+            && !log.destination().contains("topsecret")
+            && log.destination().contains("token=<redacted>"),
+        "the deny audit must redact secret material: reason={:?} destination={:?}",
+        log.reason(),
+        log.destination()
+    );
+    assert!(
+        log_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "a terminal deny must emit exactly one decision-log record, not several"
+    );
+    assert!(
+        upstream
+            .request
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "an audited deny must not contact upstream"
+    );
+}
+
+// Host normalization (L1): the caller's Host header is advisory and must never
+// be forwarded verbatim. The proxy overwrites it with the authorized authority
+// (`upstream_host:upstream_port`). This test fails if the spoofed Host survives
+// or the authorized Host is missing.
+#[test]
+fn egress_proxy_overwrites_caller_host_with_authorized_authority() {
+    let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    let proxy = start_test_proxy(allow_policy([EgressRule::new(
+        "allowed",
+        EgressProtocol::Http,
+        "allowed.test",
+        upstream.addr.port(),
+    )
+    .allow_internal_ips(true)]));
+
+    let response = proxy_request(
+        proxy.local_addr(),
+        format!(
+            "GET http://allowed.test:{}/ok HTTP/1.1\r\nHost: spoofed.evil:1234\r\n\r\n",
+            upstream.addr.port()
+        ),
+    );
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK"),
+        "the authorized request should reach upstream, got: {response}"
+    );
+
+    let upstream_request = upstream
+        .request
+        .recv_timeout(Duration::from_secs(1))
+        .expect("upstream should receive the forwarded request");
+    let authorized_host = format!("Host: allowed.test:{}", upstream.addr.port());
+    assert!(
+        upstream_request.contains(&authorized_host),
+        "proxy must forward the authorized Host `{authorized_host}`, got: {upstream_request}"
+    );
+    assert!(
+        !upstream_request.contains("spoofed.evil"),
+        "the caller-supplied Host must not be forwarded verbatim, got: {upstream_request}"
+    );
+}
+
+// Dial-failure UX (L3): a failed upstream dial must surface a 502 rather than
+// dropping the client with no response. This test fails if the dial error
+// propagates and the client receives an empty response.
+#[test]
+fn egress_proxy_maps_upstream_dial_failure_to_bad_gateway() {
+    // Bind an ephemeral port, then drop the listener so the dial is refused.
+    let dead = TcpListener::bind(("127.0.0.1", 0)).expect("bind to reserve a dead port");
+    let dead_port = dead
+        .local_addr()
+        .expect("dead address should resolve")
+        .port();
+    drop(dead);
+
+    let resolver = Arc::new(move |_host: &str, _port: u16| {
+        Ok(vec![SocketAddr::from(([127, 0, 0, 1], dead_port))])
+    });
+    let proxy = EgressProxy::start(
+        EgressProxyConfig::new(allow_policy([EgressRule::new(
+            "allowed",
+            EgressProtocol::Http,
+            "allowed.test",
+            dead_port,
+        )
+        .allow_internal_ips(true)]))
+        .with_timeouts(Duration::from_millis(500), Duration::from_secs(2))
+        .with_resolver(resolver),
+    )
+    .expect("proxy should start");
+
+    let response = proxy_request(
+        proxy.local_addr(),
+        format!("GET http://allowed.test:{dead_port}/ok HTTP/1.1\r\nHost: allowed.test\r\n\r\n"),
+    );
+
+    assert!(
+        response.starts_with("HTTP/1.1 502 Bad Gateway") && response.contains("failed to dial"),
+        "an upstream dial failure must surface a 502 to the client, got: {response}"
+    );
+}
+
+// Rebind coverage (L19), positive: authorize and dial must both pin to the
+// first resolved address. addresses[0] is a globally-classified but unreachable
+// peer (192.88.99.0/24, deprecated 6to4 anycast — outside the egress internal/
+// non-global deny list) and addresses[1] is the real loopback upstream. The
+// proxy must authorize addresses[0] (a 403 would mean a later internal address
+// was authorized) and dial addresses[0] (reaching the loopback upstream would
+// mean addresses[1] was dialed).
+#[test]
+fn egress_proxy_pins_authorization_and_dial_to_first_resolved_address() {
+    let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    let upstream_port = upstream.addr.port();
+    let resolver = Arc::new(move |_host: &str, port: u16| {
+        Ok(vec![
+            SocketAddr::from(([192, 88, 99, 1], port)),
+            SocketAddr::from(([127, 0, 0, 1], port)),
+        ])
+    });
+    let proxy = EgressProxy::start(
+        // allow_internal_ips defaults to false: only the global addresses[0] is
+        // authorizable.
+        EgressProxyConfig::new(allow_policy([EgressRule::new(
+            "allowed",
+            EgressProtocol::Http,
+            "allowed.test",
+            upstream_port,
+        )]))
+        .with_timeouts(Duration::from_millis(400), Duration::from_secs(2))
+        .with_resolver(resolver),
+    )
+    .expect("proxy should start");
+
+    let response = proxy_request(
+        proxy.local_addr(),
+        format!(
+            "GET http://allowed.test:{upstream_port}/ok HTTP/1.1\r\nHost: allowed.test\r\n\r\n"
+        ),
+    );
+
+    assert!(
+        !response.starts_with("HTTP/1.1 403"),
+        "addresses[0] is global, so authorization must pass; a 403 means a later internal address was authorized, got: {response}"
+    );
+    assert!(
+        response.starts_with("HTTP/1.1 502 Bad Gateway"),
+        "the dial must target the unreachable global addresses[0] (502), not fall through to a later address, got: {response}"
+    );
+    assert!(
+        upstream
+            .request
+            .recv_timeout(Duration::from_millis(200))
+            .is_err(),
+        "the loopback addresses[1] must never be dialed when addresses[0] is authorized"
+    );
+}
+
+// Rebind coverage (L19), negative: an internal first resolved address must be
+// denied (SSRF guard) without any upstream contact. This proves authorization
+// is evaluated against addresses[0].
+#[test]
+fn egress_proxy_denies_when_first_resolved_address_is_internal() {
+    let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    let upstream_port = upstream.addr.port();
+    let resolver =
+        Arc::new(move |_host: &str, port: u16| Ok(vec![SocketAddr::from(([127, 0, 0, 1], port))]));
+    let proxy = EgressProxy::start(
+        EgressProxyConfig::new(allow_policy([EgressRule::new(
+            "allowed",
+            EgressProtocol::Http,
+            "allowed.test",
+            upstream_port,
+        )]))
+        .with_timeouts(Duration::from_secs(2), Duration::from_secs(2))
+        .with_resolver(resolver),
+    )
+    .expect("proxy should start");
+
+    let response = proxy_request(
+        proxy.local_addr(),
+        format!(
+            "GET http://allowed.test:{upstream_port}/ok HTTP/1.1\r\nHost: allowed.test\r\n\r\n"
+        ),
+    );
+
+    assert!(
+        response.starts_with("HTTP/1.1 403 Forbidden")
+            && response.contains("internal/non-global targets"),
+        "an internal addresses[0] must be denied as SSRF/internal egress, got: {response}"
+    );
+    assert!(
+        upstream
+            .request
+            .recv_timeout(Duration::from_millis(200))
+            .is_err(),
+        "an internal-denied request must not contact upstream"
+    );
+}
+
 fn start_test_proxy(policy: CompiledEgressPolicy) -> EgressProxy {
     start_test_proxy_with_store(policy, CredentialSecretStore::empty())
 }
