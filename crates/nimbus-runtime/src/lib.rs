@@ -44,9 +44,8 @@ pub use runtime::driver::anchor::smoke_install_committed_embedded_anchor;
 
 pub use context::RuntimeInvocationContext;
 pub use egress::{
-    AllowAllEgressGateway, DenyAllEgressGateway, EgressAuthorization, EgressGateway,
-    EgressProtocol, EgressRequest, EgressRequestError, EgressSubstrate,
-    WasmHttpClientEgressGatewayBinding, authorize_fetch_egress,
+    DenyAllEgressGateway, EgressAuthorization, EgressGateway, EgressProtocol, EgressRequest,
+    EgressRequestError, EgressSubstrate, WasmHttpClientEgressGatewayBinding,
 };
 pub use error::{NimbusRuntimeError, Result};
 pub use executor::{RuntimeExecutor, RuntimeInvocationResponse};

@@ -42,8 +42,8 @@ pub use nimbus_runtime::{
 pub use nimbus_egress::{
     CompiledEgressPolicy, EGRESS_ENFORCEMENT_ENV, EGRESS_ENFORCEMENT_SCHEMA_VERSION,
     EGRESS_LEGACY_POLICY_ENV, EGRESS_PROXY_URL_ENV, EGRESS_RESERVED_ENV_KEYS, EgressAuthorization,
-    EgressEnforcementMode, EgressEnforcementPlan, EgressLaunchEnforcement, EgressPolicy,
-    EgressProtocol, EgressReloadPolicy, EgressRequest, EgressRule,
+    EgressEnforcementMode, EgressEnforcementPlan, EgressPolicy, EgressProtocol, EgressReloadPolicy,
+    EgressRequest, EgressRule,
 };
 // Sandbox orchestration surface.
 pub use nimbus_sandbox::{

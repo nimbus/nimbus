@@ -1,3 +1,18 @@
+//! Connection-pool isolation key for PLANNED egress connection pooling.
+//!
+//! [`EgressProxyPoolKey`] (with [`EgressProxySubstrate`] and
+//! [`TlsVerificationMode`]) is the seam for the connection broker / pooling work
+//! owned by `docs/private/plans/connection-broker-plan.md`; the NEG plan treats
+//! "pool-key completeness" as a testable PEP invariant. It is NOT yet wired:
+//! today the worker dials a fresh upstream connection per request (see
+//! `worker.rs::handle_client`), so nothing is pooled or reused. The key's
+//! presence documents the intended isolation contract — that two requests
+//! differing in any security-relevant dimension (tenant, policy generation,
+//! injected credential identity, destination authority, resolved peer, SNI, TLS
+//! verification mode, client-certificate identity, ALPN, or upstream-proxy
+//! settings) can never share a pooled connection once pooling lands. It is the
+//! intended contract, not an enforced guarantee.
+
 use std::net::SocketAddr;
 
 use nimbus_core::TenantId;

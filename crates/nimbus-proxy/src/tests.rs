@@ -534,24 +534,74 @@ fn egress_proxy_rejects_ambiguous_canonical_authorities() {
     );
 }
 
+// Guards the SHAPE of the documented request-phase model for the egress PEP's
+// planned phase-driven dispatch (see `phase.rs`). The worker uses inline
+// ordering today; this asserts the model's structural invariants rather than
+// copying the constant back to itself: every phase appears exactly once, and the
+// security-critical orderings hold (resolve DNS before authorizing the resolved
+// peer, authorize before dialing, and select the pool key before dialing).
 #[test]
-fn egress_proxy_request_phase_order_is_explicit() {
+fn egress_proxy_request_phase_model_holds_security_critical_orderings() {
+    let position = |phase: EgressProxyRequestPhase| {
+        REQUEST_PHASE_ORDER
+            .iter()
+            .position(|candidate| *candidate == phase)
+            .unwrap_or_else(|| panic!("phase {phase:?} must appear in REQUEST_PHASE_ORDER"))
+    };
+
+    // Every phase appears exactly once.
+    let all_phases = [
+        EgressProxyRequestPhase::CanonicalizeAuthority,
+        EgressProxyRequestPhase::ResolveDns,
+        EgressProxyRequestPhase::AuthorizeResolvedPeer,
+        EgressProxyRequestPhase::SelectPoolKey,
+        EgressProxyRequestPhase::Dial,
+        EgressProxyRequestPhase::Relay,
+    ];
     assert_eq!(
-        REQUEST_PHASE_ORDER,
-        [
-            EgressProxyRequestPhase::CanonicalizeAuthority,
-            EgressProxyRequestPhase::ResolveDns,
-            EgressProxyRequestPhase::AuthorizeResolvedPeer,
-            EgressProxyRequestPhase::SelectPoolKey,
-            EgressProxyRequestPhase::Dial,
-            EgressProxyRequestPhase::Relay,
-        ]
+        REQUEST_PHASE_ORDER.len(),
+        all_phases.len(),
+        "the phase order must contain exactly the known phases"
+    );
+    for phase in all_phases {
+        assert_eq!(
+            REQUEST_PHASE_ORDER
+                .iter()
+                .filter(|candidate| **candidate == phase)
+                .count(),
+            1,
+            "phase {phase:?} must appear exactly once"
+        );
+    }
+
+    // Security-critical orderings.
+    assert!(
+        position(EgressProxyRequestPhase::ResolveDns)
+            < position(EgressProxyRequestPhase::AuthorizeResolvedPeer),
+        "DNS must resolve before the resolved peer is authorized"
+    );
+    assert!(
+        position(EgressProxyRequestPhase::AuthorizeResolvedPeer)
+            < position(EgressProxyRequestPhase::Dial),
+        "the resolved peer must be authorized before dialing"
+    );
+    assert!(
+        position(EgressProxyRequestPhase::SelectPoolKey) < position(EgressProxyRequestPhase::Dial),
+        "the pool key must be selected before dialing"
     );
 }
 
+// Guards the SHAPE of the connection-pool isolation key for the PLANNED egress
+// connection pooling (see `pool.rs`). Pooling is not wired yet — the worker
+// dials fresh per request — so this asserts the key DISTINGUISHES every
+// security-relevant isolation dimension: mutating any single field yields a
+// different key. Once pooling lands, that property is what guarantees two
+// requests differing in any such dimension can never share a pooled connection.
+// This guards the key's shape, not an enforced runtime guarantee.
 #[test]
-fn egress_proxy_pool_key_covers_security_relevant_identity() {
+fn egress_proxy_pool_key_shape_distinguishes_every_isolation_dimension() {
     let tenant_id = TenantId::new("tenant-a").expect("tenant id should be valid");
+    let other_tenant = TenantId::new("tenant-b").expect("tenant id should be valid");
     let base = EgressProxyPoolKey {
         tenant_id,
         substrate: EgressProxySubstrate::Container,
@@ -566,30 +616,58 @@ fn egress_proxy_pool_key_covers_security_relevant_identity() {
         proxy_settings: Some("direct".to_string()),
     };
 
-    let mut changed = base.clone();
-    changed.policy_generation = base.policy_generation.next();
-    assert_ne!(base, changed);
-    let mut changed = base.clone();
-    changed.credential_identity = Some("secret:github".to_string());
-    assert_ne!(base, changed);
-    let mut changed = base.clone();
-    changed.resolved_peer = SocketAddr::from(([203, 0, 113, 11], 443));
-    assert_ne!(base, changed);
-    let mut changed = base.clone();
-    changed.sni = Some("uploads.stripe.com".to_string());
-    assert_ne!(base, changed);
-    let mut changed = base.clone();
-    changed.tls_verification = TlsVerificationMode::Disabled;
-    assert_ne!(base, changed);
-    let mut changed = base.clone();
-    changed.client_cert_identity = None;
-    assert_ne!(base, changed);
-    let mut changed = base.clone();
-    changed.alpn = vec!["http/1.1".to_string()];
-    assert_ne!(base, changed);
-    let mut changed = base.clone();
-    changed.proxy_settings = Some("upstream-proxy-a".to_string());
-    assert_ne!(base, changed);
+    // Every security-relevant dimension must change the key. Each closure
+    // mutates exactly one field so a missing dimension fails this test.
+    type PoolKeyMutator = fn(&mut EgressProxyPoolKey);
+    let mutators: Vec<(&str, PoolKeyMutator)> = vec![
+        ("tenant_id", |key| {
+            key.tenant_id = TenantId::new("tenant-b").expect("tenant id should be valid");
+        }),
+        ("substrate", |key| {
+            key.substrate = EgressProxySubstrate::Isolate;
+        }),
+        ("policy_generation", |key| {
+            key.policy_generation = key.policy_generation.next();
+        }),
+        ("credential_identity", |key| {
+            key.credential_identity = Some("secret:github".to_string());
+        }),
+        ("destination", |key| {
+            key.destination = "https://api.github.com:443".to_string();
+        }),
+        ("resolved_peer", |key| {
+            key.resolved_peer = SocketAddr::from(([203, 0, 113, 11], 443));
+        }),
+        ("sni", |key| {
+            key.sni = Some("uploads.stripe.com".to_string());
+        }),
+        ("tls_verification", |key| {
+            key.tls_verification = TlsVerificationMode::Disabled;
+        }),
+        ("client_cert_identity", |key| {
+            key.client_cert_identity = None;
+        }),
+        ("alpn", |key| {
+            key.alpn = vec!["http/1.1".to_string()];
+        }),
+        ("proxy_settings", |key| {
+            key.proxy_settings = Some("upstream-proxy-a".to_string());
+        }),
+    ];
+
+    for (field, mutate) in mutators {
+        let mut changed = base.clone();
+        mutate(&mut changed);
+        assert_ne!(
+            base, changed,
+            "mutating `{field}` must produce a distinct pool key so the dimension can never be pooled together"
+        );
+    }
+
+    // Sanity: an unmutated clone shares the key (the baseline for "same key
+    // means poolable"), and the tenant mutator above genuinely diverged.
+    assert_eq!(base, base.clone());
+    assert_ne!(base.tenant_id, other_tenant);
 }
 
 // Audit (M6): every terminal deny must emit exactly one decision-log record

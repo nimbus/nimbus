@@ -17,6 +17,11 @@ pub enum EgressProtocol {
 #[serde(rename_all = "snake_case")]
 pub enum EgressSubstrate {
     Isolate,
+    /// Forward seam for wasm egress. Tagged here so the `EgressGateway` makes
+    /// the same single decision for a wasm request as for an isolate or
+    /// container one. Wasm egress is not yet plumbed into a production wasm
+    /// runtime — wiring is owned by `docs/private/plans/wasmtime-backend-plan.md`
+    /// and `docs/private/plans/wasi-agent-capabilities-plan.md` (NEG6).
     Wasm,
     Container,
 }
@@ -44,6 +49,12 @@ impl EgressRequest {
         Self::from_fetch_url_with_context(method, url, false, None, None, None)
     }
 
+    /// Builds a wasm-substrate egress request. This is the forward seam for
+    /// wasm egress (owned by `docs/private/plans/wasmtime-backend-plan.md` and
+    /// `docs/private/plans/wasi-agent-capabilities-plan.md`, NEG6): once the
+    /// wasmtime HTTP client is wired, wasm requests inherit the same single
+    /// gateway decision as isolate and container requests. Not yet plumbed into
+    /// a production wasm runtime.
     pub fn from_wasm_http_url(
         method: impl Into<String>,
         url: &str,
@@ -51,6 +62,9 @@ impl EgressRequest {
         Self::from_wasm_http_url_with_context(method, url, None, None, None)
     }
 
+    /// Context-carrying variant of [`Self::from_wasm_http_url`]; same forward
+    /// seam for wasm egress (NEG6), not yet plumbed into a production wasm
+    /// runtime.
     pub fn from_wasm_http_url_with_context(
         method: impl Into<String>,
         url: &str,
@@ -233,25 +247,13 @@ impl EgressGateway for DenyAllEgressGateway {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct AllowAllEgressGateway;
-
-impl EgressGateway for AllowAllEgressGateway {
-    fn authorize(&self, _request: &EgressRequest) -> EgressAuthorization {
-        EgressAuthorization::allow("egress gateway allowed by explicit test gateway")
-    }
-}
-
-pub fn authorize_fetch_egress(
-    gateway: Option<&dyn EgressGateway>,
-    request: &EgressRequest,
-) -> EgressAuthorization {
-    match gateway {
-        Some(gateway) => gateway.authorize(request),
-        None => EgressAuthorization::deny("fetch egress gateway is not installed"),
-    }
-}
-
+/// Forward seam for wasm egress (owned by
+/// `docs/private/plans/wasmtime-backend-plan.md` and
+/// `docs/private/plans/wasi-agent-capabilities-plan.md`, NEG6). Carries the
+/// invocation context and consults the installed [`EgressGateway`] so a wasm
+/// HTTP-client request inherits the same single decision as an isolate or
+/// container request. It is not yet plumbed into a production wasm runtime — no
+/// production wasmtime HTTP client calls this today.
 #[derive(Clone)]
 pub struct WasmHttpClientEgressGatewayBinding {
     gateway: Arc<dyn EgressGateway>,
@@ -395,51 +397,6 @@ mod tests {
     }
 
     #[test]
-    fn missing_fetch_egress_gateway_fails_closed() {
-        let request = EgressRequest::from_fetch_url("GET", "https://api.example.test/").unwrap();
-
-        let authorization = authorize_fetch_egress(None, &request);
-
-        assert!(!authorization.is_allowed());
-        assert_eq!(
-            authorization.reason(),
-            "fetch egress gateway is not installed"
-        );
-    }
-
-    #[test]
-    fn fetch_egress_gateway_sees_request_and_can_allow() {
-        #[derive(Default)]
-        struct SpyGateway {
-            seen: Mutex<Vec<EgressRequest>>,
-        }
-
-        impl EgressGateway for SpyGateway {
-            fn authorize(&self, request: &EgressRequest) -> EgressAuthorization {
-                self.seen
-                    .lock()
-                    .expect("spy gateway lock should not be poisoned")
-                    .push(request.clone());
-                EgressAuthorization::allow("allowed by spy")
-            }
-        }
-
-        let gateway = Arc::new(SpyGateway::default());
-        let request =
-            EgressRequest::from_fetch_url("POST", "https://uploads.example.test/v1").unwrap();
-
-        let authorization = authorize_fetch_egress(Some(gateway.as_ref()), &request);
-
-        assert!(authorization.is_allowed());
-        assert_eq!(authorization.reason(), "allowed by spy");
-        let seen = gateway
-            .seen
-            .lock()
-            .expect("spy gateway lock should not be poisoned");
-        assert_eq!(seen.as_slice(), std::slice::from_ref(&request));
-    }
-
-    #[test]
     fn wasm_egress_http_client_binding_consults_egress_gateway() {
         let gateway = Arc::new(RecordingRuleGateway::default());
         let binding = WasmHttpClientEgressGatewayBinding::new(gateway.clone()).with_context(
@@ -482,8 +439,14 @@ mod tests {
         );
     }
 
+    /// Seam check: the single `EgressGateway` reaches the same decision for an
+    /// identical request regardless of substrate (isolate / wasm / container),
+    /// so the wasm forward seam will inherit "one decision" once it is wired.
+    /// This proves the gateway is consulted consistently — it does NOT prove
+    /// wasm egress is enforced in a production wasm runtime (the wasmtime HTTP
+    /// client is not yet plumbed; owned by wasmtime-backend / wasi-agent plans).
     #[test]
-    fn three_substrate_consistency_for_identical_egress_request() {
+    fn three_substrate_gateway_decision_is_consistent_seam_check() {
         let gateway = RecordingRuleGateway::default();
         let isolate =
             EgressRequest::from_fetch_url("GET", "https://api.example.test/v1/messages").unwrap();
@@ -508,39 +471,6 @@ mod tests {
         assert_eq!(
             wasm_authorization.matched_rule(),
             container_authorization.matched_rule()
-        );
-    }
-
-    #[test]
-    fn fetch_egress_gateway_can_deny_custom_clients() {
-        struct DenyCustomClientGateway;
-
-        impl EgressGateway for DenyCustomClientGateway {
-            fn authorize(&self, request: &EgressRequest) -> EgressAuthorization {
-                if request.uses_custom_client {
-                    EgressAuthorization::deny("custom fetch clients must route through the PEP")
-                } else {
-                    EgressAuthorization::allow("standard fetch path")
-                }
-            }
-        }
-
-        let request = EgressRequest::from_fetch_url_with_context(
-            "GET",
-            "https://api.example.test/",
-            true,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
-
-        let authorization = authorize_fetch_egress(Some(&DenyCustomClientGateway), &request);
-
-        assert!(!authorization.is_allowed());
-        assert_eq!(
-            authorization.reason(),
-            "custom fetch clients must route through the PEP"
         );
     }
 

@@ -6,6 +6,12 @@ use crate::policy::{CompiledEgressPolicy, EgressPolicy};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EgressEnforcementMode {
+    /// Nimbus no longer *produces* launch-metadata enforcement plans — every
+    /// backend builds [`EgressEnforcementPlan::supervisor_proxy`] directly. This
+    /// variant is retained as a *consumer* surface: the CLI sandbox supervisor
+    /// deserializes whatever enforcement contract it is handed and defensively
+    /// validates it, and `validate()` still fails closed on a launch-metadata
+    /// plan that falsely claims live reload.
     LaunchMetadata,
     SupervisorProxy,
 }
@@ -15,12 +21,6 @@ pub enum EgressEnforcementMode {
 pub enum EgressReloadPolicy {
     RecreateRequired,
     LiveReload,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EgressLaunchEnforcement {
-    LaunchMetadata,
-    ProcessSupervisorProxy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,15 +33,6 @@ pub struct EgressEnforcementPlan {
 }
 
 impl EgressEnforcementPlan {
-    pub fn launch_metadata(policy: &CompiledEgressPolicy) -> Self {
-        Self {
-            schema_version: EGRESS_ENFORCEMENT_SCHEMA_VERSION,
-            mode: EgressEnforcementMode::LaunchMetadata,
-            reload_policy: EgressReloadPolicy::RecreateRequired,
-            policy: policy.policy().clone(),
-        }
-    }
-
     pub fn supervisor_proxy(
         policy: &CompiledEgressPolicy,
         reload_policy: EgressReloadPolicy,
@@ -52,12 +43,6 @@ impl EgressEnforcementPlan {
             reload_policy,
             policy: policy.policy().clone(),
         }
-    }
-
-    pub fn from_launch_policy(policy: &EgressPolicy) -> std::result::Result<Self, String> {
-        policy
-            .compile()
-            .map(|compiled| Self::launch_metadata(&compiled))
     }
 
     pub fn policy(&self) -> &EgressPolicy {
@@ -83,21 +68,5 @@ impl EgressEnforcementPlan {
             }
         }
         self.policy.compile()
-    }
-}
-
-impl EgressLaunchEnforcement {
-    pub fn materialize(
-        self,
-        policy: &EgressPolicy,
-    ) -> std::result::Result<EgressEnforcementPlan, String> {
-        let compiled = policy.compile()?;
-        Ok(match self {
-            Self::LaunchMetadata => EgressEnforcementPlan::launch_metadata(&compiled),
-            Self::ProcessSupervisorProxy => EgressEnforcementPlan::supervisor_proxy(
-                &compiled,
-                EgressReloadPolicy::RecreateRequired,
-            ),
-        })
     }
 }
