@@ -405,7 +405,8 @@ fn env_s3_endpoint() -> Option<String> {
 fn required_env(key: &str, context: &str) -> Result<String> {
     std::env::var(key).map_err(|_| {
         Error::InvalidInput(format!(
-            "{context} requires {key} or secret-ref credentials"
+            "{} requires {} or secret-ref credentials",
+            context, key
         ))
     })
 }
