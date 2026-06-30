@@ -13,8 +13,27 @@ use nimbus_egress::EGRESS_RESERVED_ENV_KEYS;
 
 const DEFAULT_PATH_ENV: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const MIN_MEMORY_LIMIT_BYTES: u64 = 1024 * 1024;
-const KRUN_REQUIRED_CAPABILITIES: &[&str] =
-    &["CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE", "CAP_SYS_ADMIN"];
+/// Linux capability allowlist granted to the krun VMM (crun) process.
+///
+/// Deny-by-default and deliberately minimal: the VMM runs confined inside a
+/// host-created, netavark-configured deny-by-default network namespace, so it
+/// is granted only what a tap-less libkrun TSI microVM provably needs.
+///
+/// - `CAP_NET_BIND_SERVICE`: bind published service ports (including <1024).
+/// - `CAP_SYS_ADMIN`: mount the guest rootfs and pseudo-filesystems inside the
+///   VMM's private mount namespace.
+///
+/// `CAP_NET_ADMIN` is intentionally EXCLUDED. crun only *joins* an
+/// already-configured netns (it never creates or configures interfaces,
+/// routes, or nftables itself — `configure_network` does all of that on the
+/// host before the VMM launches), and libkrun TSI gives the guest no in-netns
+/// tap device for the VMM to manage. There is therefore no path in which a
+/// tap-less TSI microVM needs CAP_NET_ADMIN. Granting it would instead hand the
+/// confined VMM exactly the privilege to add a default route or flush the netns
+/// deny chain that pins its egress to the host-side PEP — the bypass this audit
+/// closes. `CAP_NET_RAW`/`CAP_NET_BROADCAST` are likewise excluded (raw sockets
+/// bypass the netns+PEP seam); see the `bundle_config_excludes_*` invariants.
+const KRUN_REQUIRED_CAPABILITIES: &[&str] = &["CAP_NET_BIND_SERVICE", "CAP_SYS_ADMIN"];
 const KRUN_SECCOMP_ALLOWLIST: &[&str] = &[
     "accept",
     "accept4",
@@ -891,7 +910,7 @@ mod tests {
         let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
             .expect("bundle config should build");
         let capabilities = &config["process"]["capabilities"];
-        let expected = json!(["CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE", "CAP_SYS_ADMIN"]);
+        let expected = json!(["CAP_NET_BIND_SERVICE", "CAP_SYS_ADMIN"]);
 
         assert_eq!(capabilities["bounding"], expected);
         assert_eq!(capabilities["effective"], expected);
@@ -939,6 +958,46 @@ mod tests {
                     "krun bundle capability set {set} must never contain {forbidden}: {granted:?}"
                 );
             }
+        }
+    }
+
+    /// Always-on negative invariant: the krun VMM capability set must never carry
+    /// `CAP_NET_ADMIN`. crun joins a host-configured deny-by-default netns and a
+    /// tap-less libkrun TSI microVM exposes no in-netns interface for the VMM to
+    /// manage, so CAP_NET_ADMIN is never needed — but it *would* let the confined
+    /// VMM add a default route or flush the netns deny chain that pins its egress
+    /// to the host PEP. A future cap-set edit that reintroduces it fails CI here.
+    #[test]
+    fn bundle_config_excludes_cap_net_admin() {
+        assert!(
+            !KRUN_REQUIRED_CAPABILITIES.contains(&"CAP_NET_ADMIN"),
+            "KRUN_REQUIRED_CAPABILITIES must never grant CAP_NET_ADMIN: it permits route/nftables edits that bypass the netns+PEP egress seam"
+        );
+
+        let config = build_bundle_config(
+            "nimbus-db",
+            &sample_spec(),
+            None,
+            &KrunBundleOptions::default(),
+        )
+        .expect("bundle config should build");
+        let capabilities = &config["process"]["capabilities"];
+        for set in [
+            "bounding",
+            "effective",
+            "permitted",
+            "inheritable",
+            "ambient",
+        ] {
+            let granted = capabilities[set]
+                .as_array()
+                .unwrap_or_else(|| panic!("capability set {set} should be an array"));
+            assert!(
+                granted
+                    .iter()
+                    .all(|cap| cap.as_str() != Some("CAP_NET_ADMIN")),
+                "krun bundle capability set {set} must never contain CAP_NET_ADMIN: {granted:?}"
+            );
         }
     }
 
