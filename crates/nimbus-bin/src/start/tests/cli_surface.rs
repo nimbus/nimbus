@@ -481,7 +481,7 @@ functions:
 "#,
     )
     .expect("runtime config should parse");
-    let operator_policy: nimbus_server::OperatorPolicyDocument = serde_yaml::from_str(
+    let operator_policy: nimbus_tenant::OperatorPolicyDocument = serde_yaml::from_str(
         r#"
 schema_version: 1
 tenant: tenant-a

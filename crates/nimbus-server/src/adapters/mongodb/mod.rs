@@ -9,7 +9,7 @@ use super::wire::WireProtocolAdapter;
 
 pub use listener::MongoAuthSource;
 pub use nimbus_mongodb::AuthConfig;
-pub use nimbus_mongodb::{CredentialRegistry, bson_bridge, wire};
+pub use nimbus_mongodb::CredentialRegistry;
 
 /// A MongoDB wire-protocol listener configuration.
 ///

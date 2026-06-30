@@ -23,7 +23,9 @@ use std::time::Duration;
 use std::time::Instant;
 
 #[cfg(target_os = "linux")]
-use nimbus::{ConvexRegistry, RuntimeBundle, ServiceInstanceCatalog};
+use nimbus::{RuntimeBundle, ServiceInstanceCatalog};
+#[cfg(target_os = "linux")]
+use nimbus_convex::ConvexRegistry;
 #[cfg(target_os = "linux")]
 use nimbus_testing::run_to_completion_snapshot_runtime_test_limits;
 

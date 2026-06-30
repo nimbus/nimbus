@@ -58,19 +58,6 @@ pub use artifact_verifier_effects::{
     ProcessArtifactVerifierCommandRunner, SbomVerifierBackend, SlsaVerifierBackend,
     admit_guest_executable_artifact, admit_runtime_bundle_artifact,
 };
-pub use nimbus_dynamodb::AccessKeyRegistry as DynamoDbAccessKeyRegistry;
-pub use nimbus_s3::AccessKeyRegistry as S3AccessKeyRegistry;
-pub mod adapters_mongodb {
-    pub use super::adapters::mongodb::bson_bridge;
-    pub use super::adapters::mongodb::listener;
-    pub use super::adapters::mongodb::wire;
-}
-/// Test-only re-export of the otherwise-crate-private DynamoDB adapter, so the
-/// `dynamodb_spec` parity runner can boot the listener (mirrors
-/// [`adapters_mongodb`]).
-pub mod adapters_dynamodb {
-    pub use super::adapters::dynamodb::listener;
-}
 pub use construction::{ServeOptions, serve};
 pub use license::{
     LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind, LicenseLoadError,
@@ -78,10 +65,8 @@ pub use license::{
     LicenseUsageSnapshot,
 };
 pub use local_server::{
-    LOCAL_ADMIN_HEADER_NAME, LOCAL_ADMIN_TOKEN_SCOPE, LocalAdminTokenRecord, LocalServerPaths,
-    LocalServerPlatform, LocalServerSecurityState, SERVER_DISCOVERY_PROTOCOL_VERSIONS,
-    ServerDiscoveryLease, ServerDiscoveryRecord, load_local_admin_token,
-    load_or_create_local_admin_token, read_live_server_discovery, rotate_local_admin_token_offline,
+    SERVER_DISCOVERY_PROTOCOL_VERSIONS, ServerDiscoveryLease, ServerDiscoveryRecord,
+    read_live_server_discovery,
 };
 pub use machine_lifecycle::{
     MachineCreateRequest, MachineLifecycleFuture, MachineLifecycleManager,
@@ -95,6 +80,8 @@ pub use nimbus_artifacts::{
     ArtifactVerifierError, ArtifactVerifierErrorKind, ArtifactVerifierResult,
     CompositeArtifactVerifierBackend,
 };
+pub use nimbus_dynamodb::AccessKeyRegistry as DynamoDbAccessKeyRegistry;
+pub use nimbus_s3::AccessKeyRegistry as S3AccessKeyRegistry;
 pub use nimbus_services::{
     BuiltInServiceSpec, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
     ExternalServiceSpec, LocalBuildAdmission, ServiceBackend, ServiceDefinitionCatalog,
@@ -112,7 +99,7 @@ pub use tenant::{
     OperatorImageSignaturePolicy, OperatorNetworkEndpointPolicy, OperatorNetworkPolicy,
     OperatorPolicyAcceptedRisk, OperatorPolicyAdvisory, OperatorPolicyAdvisoryKind,
     OperatorPolicyAdvisorySeverity, OperatorPolicyDecisionEvaluation, OperatorPolicyDefaults,
-    OperatorPolicyDiff, OperatorPolicyDiffSummary, OperatorPolicyDocument, OperatorPolicyDraft,
+    OperatorPolicyDiff, OperatorPolicyDiffSummary, OperatorPolicyDraft,
     OperatorPolicyDraftApproval, OperatorPolicyDraftKind, OperatorPolicyDraftStatus,
     OperatorPolicyEvaluation, OperatorPolicyImageSummary, OperatorPolicyLifecycle,
     OperatorPolicyMetadata, OperatorPolicyProofReport, OperatorPolicyQuotaSummary,
@@ -126,15 +113,14 @@ pub use tenant::{
     TenantImageAttestationEvidence, TenantImagePolicyDecision, TenantImageProvenanceRequirement,
     TenantImageSignatureEvidence, TenantImageSignatureRequirement, TenantImageVerificationEvidence,
     TenantImageVerificationProvider, TenantImageVerificationRequest, TenantIsolationAuditRecord,
-    TenantIsolationAuthorityDecision, TenantIsolationContext, TenantIsolationDecision,
-    TenantIsolationDecisionId, TenantIsolationEvent, TenantIsolationEventKind,
-    TenantIsolationEventResult, TenantIsolationEventValue, TenantIsolationMode,
-    TenantIsolationPolicyInput, TenantNetworkEndpointDecision, TenantNetworkPolicyDecision,
-    TenantQuotaPolicyDecision, TenantRuntimePolicyAdmission, TenantRuntimePolicyDecision,
-    TenantRuntimeScalingRequest, TenantSecretPolicyDecision, TenantServiceAccessDecision,
-    TenantServiceGrantPolicyDecision, TenantStorageAccessDecision, TenantStoragePolicyDecision,
-    TenantVolumePolicyDecision, WorkloadAttributes, WorkloadIdentity, WorkloadKind,
-    WorkloadLocation, admit_artifact_subject, normalize_artifact_sha256,
+    TenantIsolationAuthorityDecision, TenantIsolationContext, TenantIsolationEvent,
+    TenantIsolationEventKind, TenantIsolationEventResult, TenantIsolationEventValue,
+    TenantIsolationMode, TenantIsolationPolicyInput, TenantNetworkEndpointDecision,
+    TenantNetworkPolicyDecision, TenantQuotaPolicyDecision, TenantRuntimePolicyAdmission,
+    TenantRuntimePolicyDecision, TenantRuntimeScalingRequest, TenantSecretPolicyDecision,
+    TenantServiceAccessDecision, TenantServiceGrantPolicyDecision, TenantStorageAccessDecision,
+    TenantStoragePolicyDecision, TenantVolumePolicyDecision, WorkloadAttributes, WorkloadIdentity,
+    WorkloadKind, WorkloadLocation, admit_artifact_subject, normalize_artifact_sha256,
     redact_artifact_verifier_output,
 };
 pub use tenant_isolation_drift::{

@@ -2,9 +2,8 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use nimbus::Error;
-use nimbus_server::{
-    LocalServerPaths, ServerDiscoveryRecord, load_local_admin_token, read_live_server_discovery,
-};
+use nimbus_operator::{LocalServerPaths, load_local_admin_token};
+use nimbus_server::{ServerDiscoveryRecord, read_live_server_discovery};
 use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};

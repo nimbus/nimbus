@@ -9,8 +9,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::adapters::mongodb::listener::{MongoAuthSource, run_listener};
-use crate::adapters::mongodb::wire::OP_MSG;
 use nimbus_mongodb::CredentialRegistry;
+use nimbus_mongodb::wire::OP_MSG;
 
 type HmacSha256 = Hmac<Sha256>;
 

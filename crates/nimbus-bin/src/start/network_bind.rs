@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::net::IpAddr;
 
-use nimbus_server::LocalAdminTokenRecord;
+use nimbus_operator::LocalAdminTokenRecord;
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 

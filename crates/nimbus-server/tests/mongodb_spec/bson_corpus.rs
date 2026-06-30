@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use nimbus_core::types::TableName;
-use nimbus_server::adapters_mongodb::bson_bridge;
+use nimbus_mongodb::bson_bridge;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
