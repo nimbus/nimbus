@@ -773,10 +773,10 @@ where
                 document.fields.get(OBJECT_FIELD_BUCKET),
                 Some(Value::String(document_bucket)) if document_bucket == bucket
             );
-            let key_matches = matches!(
-                document.fields.get(OBJECT_FIELD_KEY),
-                Some(Value::String(key)) if key.starts_with(prefix)
-            );
+            let key_matches = match document.fields.get(OBJECT_FIELD_KEY) {
+                Some(Value::String(key)) => key.starts_with(prefix),
+                _ => false,
+            };
             Ok(bucket_matches && key_matches)
         })?
         .iter()
@@ -857,10 +857,10 @@ where
                 document.fields.get(OBJECT_FIELD_BUCKET),
                 Some(Value::String(document_bucket)) if document_bucket == bucket
             );
-            let key_matches = matches!(
-                document.fields.get(OBJECT_FIELD_KEY),
-                Some(Value::String(key)) if key.starts_with(prefix)
-            );
+            let key_matches = match document.fields.get(OBJECT_FIELD_KEY) {
+                Some(Value::String(key)) => key.starts_with(prefix),
+                _ => false,
+            };
             Ok(bucket_matches && key_matches)
         })?
         .iter()
