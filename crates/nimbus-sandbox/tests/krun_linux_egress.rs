@@ -597,12 +597,13 @@ sleep 30"#
 /// The shared bridge places every execute-mode sandbox's PEP on the same
 /// gateway address at a distinct port. The netns deny is route-based, so the
 /// on-link gateway is reachable on any port — without the per-sandbox egress
-/// pin a guest could open a connection to a sibling tenant's PEP
-/// (`gateway:other_port`) and egress under that tenant's policy and injected
-/// credentials. This test stands up TWO real execute-mode sandboxes that share
-/// the bridge: sibling `B` publishes its own injected proxy URL, then `A`
-/// proves it can still reach its OWN PEP (positive control — the pin does not
-/// break legitimate egress) but CANNOT reach `B`'s PEP.
+/// pin a guest could open a connection to a sibling sandbox's PEP
+/// (`gateway:other_port`) and egress under that sibling's policy and injected
+/// credentials. This test stands up TWO real execute-mode sandboxes of one
+/// tenant that share the bridge: sibling `B` publishes its own injected proxy
+/// URL, then `A` proves it can still reach its OWN PEP (positive control — the
+/// pin does not break legitimate egress) but CANNOT reach `B`'s PEP. (Isolating
+/// two *tenants* on the shared bridge is the separate M1 concern.)
 ///
 /// Gated behind `#[ignore]` + `/dev/kvm` + root like the other krun runtime
 /// proofs; it boots two real libkrun guests on KVM hardware.
@@ -623,13 +624,24 @@ fn krun_guest_cannot_reach_a_sibling_tenants_pep() {
     let image = env::var("NIMBUS_KRUN_EGRESS_IMAGE")
         .unwrap_or_else(|_| "docker://busybox:latest".to_owned());
 
+    // Both sandboxes share ONE backend / state root, so they share the bridge
+    // AND the per-tenant IPAM and PEP-port allocator: distinct on-link IPs and
+    // distinct PEP ports on one gateway — exactly the production shape this pin
+    // defends. (Two backends with separate IPAM would each allocate the bridge's
+    // first address and collide.) Sandbox B and A are two sandboxes of the SAME
+    // tenant: the H1 reach this pin closes is one sandbox using ANOTHER
+    // sandbox's PEP. Cross-tenant bridge/IPAM isolation is the separate M1
+    // concern (per-tenant bridge or one-tenant-per-host).
+    let (_temp, workdir) = test_workdir("krun-sibling");
+    let backend = KrunSandboxBackend::new(egress_backend_config(&workdir, 15700));
+    let tenant = TenantId::new("krun-sibling-tenant").expect("tenant id should parse");
+    let b_volume = "krun-egress-proof-b";
+    let a_volume = "krun-egress-proof-a";
+
     // --- Sibling B: bring its PEP up and publish the injected proxy URL, then
     // stay alive so the PEP keeps listening while A probes it.
-    let (_b_temp, b_workdir) = test_workdir("krun-sibling-b");
-    let b_backend = KrunSandboxBackend::new(egress_backend_config(&b_workdir, 15700));
-    let b_tenant = TenantId::new("krun-sibling-b").expect("tenant id should parse");
     let b_spec = SandboxSpec::new(
-        b_tenant.clone(),
+        tenant.clone(),
         SandboxOwnerSpec::standalone_named("krun-sibling-b"),
         SandboxBackendKind::Krun,
         SandboxRootSpec::oci_image_reference(image.clone()),
@@ -639,20 +651,17 @@ fn krun_guest_cannot_reach_a_sibling_tenants_pep() {
                 r#"printf '%s' "$HTTP_PROXY" > {RESULT_PATH_IN_GUEST}; sleep 300"#
             )]),
     )
-    .with_mount(SandboxMountSpec::tenant_volume(
-        RESULT_VOLUME,
-        "/nimbus-egress",
-    ))
+    .with_mount(SandboxMountSpec::tenant_volume(b_volume, "/nimbus-egress"))
     .with_egress_policy(policy.clone());
 
-    let b_handle = block_on(b_backend.start(b_spec)).expect("sibling B should start");
+    let b_handle = block_on(backend.start(b_spec)).expect("sibling B should start");
     let _b_teardown = ForceTeardownGuard::new(
-        b_backend.clone(),
+        backend.clone(),
         b_handle.id.clone(),
-        sandbox_netns_path(&b_workdir, &b_tenant, &b_handle.id),
+        sandbox_netns_path(&workdir, &tenant, &b_handle.id),
     );
 
-    let b_proxy_path = tenant_volume_path(&b_workdir, &b_tenant, RESULT_VOLUME).join("result");
+    let b_proxy_path = tenant_volume_path(&workdir, &tenant, b_volume).join("result");
     let b_proxy_url = wait_for_result(
         &b_proxy_path,
         Duration::from_secs(25),
@@ -666,11 +675,8 @@ fn krun_guest_cannot_reach_a_sibling_tenants_pep() {
     );
 
     // --- Sandbox A: reaches its OWN PEP, but not B's.
-    let (_a_temp, a_workdir) = test_workdir("krun-sibling-a");
-    let a_backend = KrunSandboxBackend::new(egress_backend_config(&a_workdir, 15800));
-    let a_tenant = TenantId::new("krun-sibling-a").expect("tenant id should parse");
     let a_spec = SandboxSpec::new(
-        a_tenant.clone(),
+        tenant.clone(),
         SandboxOwnerSpec::standalone_named("krun-sibling-a"),
         SandboxBackendKind::Krun,
         SandboxRootSpec::oci_image_reference(image),
@@ -678,20 +684,17 @@ fn krun_guest_cannot_reach_a_sibling_tenants_pep() {
             .with_entrypoint(["/bin/sh", "-c"])
             .with_command([sibling_reach_probe_command(&b_proxy_url, upstream_port)]),
     )
-    .with_mount(SandboxMountSpec::tenant_volume(
-        RESULT_VOLUME,
-        "/nimbus-egress",
-    ))
+    .with_mount(SandboxMountSpec::tenant_volume(a_volume, "/nimbus-egress"))
     .with_egress_policy(policy);
 
-    let a_handle = block_on(a_backend.start(a_spec)).expect("sandbox A should start");
+    let a_handle = block_on(backend.start(a_spec)).expect("sandbox A should start");
     let _a_teardown = ForceTeardownGuard::new(
-        a_backend.clone(),
+        backend.clone(),
         a_handle.id.clone(),
-        sandbox_netns_path(&a_workdir, &a_tenant, &a_handle.id),
+        sandbox_netns_path(&workdir, &tenant, &a_handle.id),
     );
 
-    let a_result_path = tenant_volume_path(&a_workdir, &a_tenant, RESULT_VOLUME).join("result");
+    let a_result_path = tenant_volume_path(&workdir, &tenant, a_volume).join("result");
     let a_result = wait_for_result(
         &a_result_path,
         Duration::from_secs(60),
