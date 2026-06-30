@@ -80,7 +80,7 @@ async fn resolve_open_url(
         Ok(minted) => Ok(format!("{}{}", client.base_url(), minted.url)),
         Err(error) => {
             tracing::warn!(
-                target: "nimbus_bin::ui",
+                target: "nimbus_cli::ui",
                 "failed to mint launch ticket; opening unauthenticated /ui/: {error}"
             );
             Ok(fallback)

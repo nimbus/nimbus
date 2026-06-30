@@ -13,66 +13,17 @@ workspace = true
 [features]
 # LR12: opt-in lane for the live hidden node workload executor integration
 # test against session systemd (mirrors nimbus-node's systemd-dbus-integration-tests).
-node-workload-executor-integration-tests = []
-bun-jsc-linked-adapter = [
-    "nimbus/bun-jsc-linked-adapter",
-    "nimbus-server/bun-jsc-linked-adapter",
+node-workload-executor-integration-tests = [
+    "nimbus-cli/node-workload-executor-integration-tests",
 ]
-v8-pointer-compression = ["nimbus/v8-pointer-compression"]
+bun-jsc-linked-adapter = ["nimbus-cli/bun-jsc-linked-adapter"]
+v8-pointer-compression = ["nimbus-cli/v8-pointer-compression"]
 
 [[bin]]
 name = "nimbus"
 path = "src/main.rs"
 
 [dependencies]
-aes-gcm-siv.workspace = true
-axum.workspace = true
-clap.workspace = true
-comfy-table.workspace = true
-fs2.workspace = true
-indicatif.workspace = true
-libc.workspace = true
-nimbus = { path = "../nimbus", features = ["aws-kms"] }
-nimbus-assets = { path = "../nimbus-assets", features = ["js-packages", "templates"] }
-nimbus-convex = { path = "../nimbus-convex" }
-nimbus-crypto = { path = "../nimbus-crypto" }
-nimbus-fs = { path = "../nimbus-fs" }
-nimbus-kv = { path = "../nimbus-kv" }
-nimbus-machine = { path = "../nimbus-machine" }
-nimbus-node = { path = "../nimbus-node" }
-nimbus-operator = { path = "../nimbus-operator" }
-nimbus-server = { path = "../nimbus-server" }
-nimbus-services = { path = "../nimbus-services" }
-nimbus-sandbox = { path = "../nimbus-sandbox" }
-nimbus-system = { path = "../nimbus-system" }
-nimbus-tenant = { path = "../nimbus-tenant" }
-nimbus-workloads = { path = "../nimbus-workloads" }
-open = "5.3"
-rand.workspace = true
-reqwest.workspace = true
-semver.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-serde_yaml.workspace = true
-sha2.workspace = true
-signal-hook-registry.workspace = true
-shell-words.workspace = true
-tar.workspace = true
-tempfile.workspace = true
-time.workspace = true
+nimbus-cli = { path = "../nimbus-cli" }
 tokio.workspace = true
-toml.workspace = true
-tracing.workspace = true
 tracing-subscriber.workspace = true
-zeroize.workspace = true
-flate2 = "1"
-oci-client = "0.16"
-zstd = "0.13"
-
-[build-dependencies]
-serde_json.workspace = true
-
-[dev-dependencies]
-nimbus-testing = { path = "../nimbus-testing" }
-serial_test.workspace = true
-tempfile.workspace = true

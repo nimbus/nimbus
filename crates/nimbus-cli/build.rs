@@ -25,5 +25,5 @@ fn main() {
     println!("cargo:rerun-if-changed=../../packages/codegen/package.json");
 
     // Staged package payload existence is checked by nimbus-assets/build.rs;
-    // nimbus-bin only owns package version metadata for scaffold rendering.
+    // nimbus-cli owns package version metadata for scaffold rendering.
 }

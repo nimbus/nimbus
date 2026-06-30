@@ -33,7 +33,7 @@ static TEST_CONFIG_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn write_test_config(contents: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
-        "nimbus-bin-config-{}-{}.json",
+        "nimbus-cli-config-{}-{}.json",
         std::process::id(),
         TEST_CONFIG_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));

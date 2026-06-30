@@ -4,7 +4,7 @@
 //! (`packages/nimbus-ui/tests/e2e/fixtures/nimbus-server.ts`) all read
 //! `server.json`. Any silent shape drift — a renamed field, a casing
 //! change, an unexpected `null` — would break the other two consumers
-//! without producing a `nimbus-bin` test failure.
+//! without producing a server-side test failure.
 //!
 //! This integration test builds a `ServerDiscoveryRecord` fixture,
 //! pretty-serialises it, byte-compares against a checked-in golden, and

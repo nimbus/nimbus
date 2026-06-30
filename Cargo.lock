@@ -6406,6 +6406,45 @@ dependencies = [
 name = "nimbus-bin"
 version = "0.1.44"
 dependencies = [
+ "nimbus-cli",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "nimbus-blob"
+version = "0.1.44"
+dependencies = [
+ "async-trait",
+ "blake3",
+ "bytes",
+ "nimbus-core",
+ "nimbus-crypto",
+ "object_store",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "nimbus-bridge"
+version = "0.1.44"
+dependencies = [
+ "base64 0.22.1",
+ "nimbus-core",
+ "nimbus-engine",
+ "nimbus-runtime",
+ "nimbus-tenant",
+ "nimbus-workloads",
+ "serde",
+ "serde_json",
+ "time",
+ "tracing",
+]
+
+[[package]]
+name = "nimbus-cli"
+version = "0.1.44"
+dependencies = [
  "aes-gcm-siv",
  "axum",
  "clap",
@@ -6448,39 +6487,8 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
- "tracing-subscriber",
  "zeroize",
  "zstd",
-]
-
-[[package]]
-name = "nimbus-blob"
-version = "0.1.44"
-dependencies = [
- "async-trait",
- "blake3",
- "bytes",
- "nimbus-core",
- "nimbus-crypto",
- "object_store",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "nimbus-bridge"
-version = "0.1.44"
-dependencies = [
- "base64 0.22.1",
- "nimbus-core",
- "nimbus-engine",
- "nimbus-runtime",
- "nimbus-tenant",
- "nimbus-workloads",
- "serde",
- "serde_json",
- "time",
- "tracing",
 ]
 
 [[package]]
