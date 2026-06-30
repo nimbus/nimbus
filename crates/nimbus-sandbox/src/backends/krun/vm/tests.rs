@@ -1456,3 +1456,22 @@ fn plan_writes_bundle_joining_the_planned_network_namespace() {
         "the bundle network namespace entry must point at the planned tenant-scoped netns"
     );
 }
+
+/// KME5 hardening: the krun microVM network must be resolver-free. The
+/// deny-by-default guest resolves names through the host PEP (`HTTP_PROXY`),
+/// so the backend's `network_config` turns `enable_dns` off, which stops
+/// netavark from binding an in-subnet aardvark-dns stub on the bridge gateway
+/// `:53` — closing the residual DNS-exfil channel and removing the
+/// `10.89.0.1:53` collision between two krun sandboxes.
+#[test]
+fn krun_network_config_disables_bridge_dns_resolver() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ));
+
+    assert!(
+        !backend.network_config().enable_dns,
+        "the krun backend must disable the bridge DNS resolver stub (enable_dns=false)"
+    );
+}

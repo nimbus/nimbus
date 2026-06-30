@@ -296,3 +296,18 @@ impl TestHttpServer {
         Self { addr }
     }
 }
+
+/// KME5 hardening companion: the container backend keeps the bridge DNS
+/// resolver (`enable_dns=true`). Only the krun microVM backend turns it off;
+/// container DNS behavior is unchanged by the krun-scoped split.
+#[test]
+fn container_network_config_keeps_bridge_dns_resolver() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let backend =
+        ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(temp_dir.path()));
+
+    assert!(
+        backend.network_config().enable_dns,
+        "the container backend must keep the bridge DNS resolver (enable_dns=true)"
+    );
+}
