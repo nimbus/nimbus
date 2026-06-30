@@ -15,6 +15,8 @@ pub(super) use tar::Builder;
 pub(super) use tempfile::TempDir;
 
 pub(super) use nimbus_core::TenantId;
+pub(super) use nimbus_egress::EgressPolicy;
+pub(super) use nimbus_proxy::{EgressProxy, EgressProxyConfig};
 
 pub(super) use super::super::{
     GUEST_USER_GID_ENV, GUEST_USER_HELPER_GUEST_PATH, GUEST_USER_UID_ENV, GuestUserIds,
@@ -39,6 +41,12 @@ pub(super) use crate::spec::{
 
 pub(super) fn sample_spec() -> SandboxSpec {
     sample_spec_with_rootfs(Path::new("/srv/rootfs"))
+}
+
+/// Loopback bind address (ephemeral port) for starting test egress PEPs without
+/// needing the bridge gateway interface.
+pub(super) fn loopback_addr() -> SocketAddr {
+    SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0)
 }
 
 pub(super) fn sample_spec_with_rootfs(rootfs: &Path) -> SandboxSpec {

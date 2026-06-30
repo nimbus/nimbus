@@ -167,6 +167,14 @@ impl KrunSandboxBackend {
         clear_last_exit_code: bool,
     ) -> Result<()> {
         self.ensure_egress_proxy_running(manifest)?;
+        // Fail-closed readiness gate: the last checkpoint before crun spawns the
+        // VMM into the namespace. Permit only when the platform supports
+        // enforcement (Linux), the deny-by-default netns is installed, and the
+        // per-sandbox egress PEP is running with an active policy generation. Any
+        // not-ready precondition returns Err here, which `launch_manifest`
+        // converts into a full netns/VMM teardown — no path reaches
+        // `spawn_background` with an unenforced egress.
+        self.ensure_execute_egress_enforced(manifest)?;
         spawn_background(&manifest.conmon_launch.create_command)?;
         let runtime_state = wait_for_runtime_state(
             &manifest.conmon_launch.state_command,
@@ -206,6 +214,64 @@ impl KrunSandboxBackend {
             return Err(error);
         }
         Ok(())
+    }
+
+    /// Fail-closed readiness gate evaluated immediately before the VMM launches.
+    ///
+    /// Permits the launch only when ALL hold: (1) the host platform supports
+    /// krun egress enforcement (Linux-KVM only), (2) the sandbox's
+    /// deny-by-default network namespace is installed, and (3) the per-sandbox
+    /// egress PEP is running AND ready (it reports an active policy generation).
+    /// Any missing precondition, any lookup error, or a not-ready PEP returns
+    /// `Err`, which the caller treats as deny: the VMM is never spawned and the
+    /// half-built namespace is torn down. The gate never degrades to allow.
+    pub(super) fn ensure_execute_egress_enforced(
+        &self,
+        manifest: &KrunSandboxManifest,
+    ) -> Result<()> {
+        // (3) Platform: krun execute is Linux-KVM only; deny everywhere else.
+        ensure_linux_host("krun")?;
+        self.ensure_execute_egress_preconditions(
+            &manifest.handle.id,
+            &manifest.network_layout.netns_path,
+        )
+    }
+
+    /// Platform-independent half of the readiness gate: deny unless the
+    /// deny-by-default netns is installed AND the egress PEP for `id` is running
+    /// with an active policy generation. Split out from
+    /// [`KrunSandboxBackend::ensure_execute_egress_enforced`] so the deny/permit
+    /// matrix is unit-testable without a Linux host or `/dev/kvm`.
+    pub(super) fn ensure_execute_egress_preconditions(
+        &self,
+        id: &SandboxId,
+        netns_path: &Path,
+    ) -> Result<()> {
+        // (1) The deny-by-default network namespace must already be installed.
+        if !netns_path.exists() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun sandbox {id} denied launch: deny-by-default network namespace {} is not installed",
+                    netns_path.display()
+                ),
+            });
+        }
+        // (2) The per-sandbox egress PEP must be running AND ready.
+        match self.egress_proxies.readiness(id)? {
+            None => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun sandbox {id} denied launch: no egress policy-enforcement proxy is running for the deny-by-default namespace"
+                ),
+            }),
+            Some(readiness) if !readiness.ready || readiness.policy_generation.is_none() => {
+                Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "krun sandbox {id} denied launch: egress policy-enforcement proxy is not ready (no active policy generation loaded)"
+                    ),
+                })
+            }
+            Some(_) => Ok(()),
+        }
     }
 
     /// Start the host-side egress PEP for this sandbox on the bridge gateway

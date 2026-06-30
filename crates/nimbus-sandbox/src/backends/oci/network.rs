@@ -1275,6 +1275,64 @@ mod tests {
     }
 
     #[test]
+    fn krun_inbound_dnat_publishes_only_on_operator_requested_host_address() {
+        // KME4 inbound DNAT reconciliation. The krun backend stands up its
+        // published-port DNAT through `setup_container_network` with
+        // `machine_port_forwarder = None`, i.e. `strip_host_ip = false`. That
+        // makes netavark bind the host side of the DNAT on exactly the
+        // operator-requested `host_address` (default 127.0.0.1) — the same
+        // address the libkrun TSI inbound bind defaults to (the `15bcf49`
+        // host_address=127.0.0.1 default) — and never a wildcard the operator
+        // did not request. The container-side DNAT target is the bridge IP at
+        // the guest port, so a published port is reachable from the host via
+        // DNAT and only at the requested address.
+        let config = OciNetworkConfig::default();
+        let assigned = [Ipv4Addr::new(10, 89, 0, 5)];
+        let id = crate::instance::SandboxId::new("db-01");
+
+        // Default binding: published on host loopback only, DNAT'd to the bridge
+        // IP at the guest port.
+        let default_binding = vec![SandboxPortBinding::tcp("pg", 15432, 5432)];
+        let request =
+            build_netavark_request(&config, &id, "db", "db", &assigned, &default_binding, false)
+                .expect("krun (machine_port_forwarder=None) request should build");
+        assert_eq!(request.port_mappings.len(), 1);
+        assert_eq!(
+            request.port_mappings[0].host_ip, "127.0.0.1",
+            "krun DNAT host side must bind the operator-requested loopback default"
+        );
+        assert_eq!(request.port_mappings[0].host_port, 15432);
+        assert_eq!(
+            request.port_mappings[0].container_port, 5432,
+            "the DNAT target is the bridge IP at the guest port"
+        );
+
+        // An operator-chosen host address flows through verbatim and is never
+        // blanked (blank host_ip == 0.0.0.0 == every host interface).
+        let explicit = vec![
+            SandboxPortBinding::tcp("http", 18080, 8080)
+                .with_host_address(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 5))),
+        ];
+        let request = build_netavark_request(&config, &id, "db", "db", &assigned, &explicit, false)
+            .expect("explicit-host request should build");
+        assert_eq!(request.port_mappings[0].host_ip, "127.0.0.5");
+        assert!(
+            !request.port_mappings[0].host_ip.is_empty(),
+            "krun DNAT must never publish on a host address the operator did not request"
+        );
+
+        // Contrast: only the machine-forwarder path (`strip_host_ip = true`)
+        // blanks the host_ip to a wildcard, and the krun backend never selects it.
+        let stripped =
+            build_netavark_request(&config, &id, "db", "db", &assigned, &default_binding, true)
+                .expect("machine-forwarder request should build");
+        assert_eq!(
+            stripped.port_mappings[0].host_ip, "",
+            "the wildcard host_ip is reachable only via the machine forwarder, which krun never uses"
+        );
+    }
+
+    #[test]
     fn netavark_request_preserves_explicit_direct_egress_allow_when_requested() {
         let config = OciNetworkConfig {
             direct_egress: OciNetworkDirectEgress::Allow,

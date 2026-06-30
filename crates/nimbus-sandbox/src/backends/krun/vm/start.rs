@@ -3,7 +3,6 @@ use super::*;
 
 impl KrunSandboxBackend {
     pub(super) fn plan_start(&self, spec: &SandboxSpec) -> Result<KrunStartPlan> {
-        self.ensure_execute_egress_enforcement_available()?;
         let sandbox_id = next_sandbox_id(spec.display_name());
         match &spec.root {
             SandboxRootSpec::Rootfs(_) => self.plan_start_with_id(spec, &sandbox_id, None, None),
@@ -55,17 +54,17 @@ impl KrunSandboxBackend {
                 ),
             });
         }
-        self.ensure_execute_egress_enforcement_available()?;
-
         let mut resolved_launch = resolve_start_spec(spec, launch_defaults)?;
         apply_guest_user_switch(&mut resolved_launch.spec, &resolved_launch.image_metadata)?;
         self.resource_quota_manager()
             .ensure_launch_quota(&resolved_launch.spec)?;
         // Execute-mode launches reach the guest through a host-side egress PEP
         // bound on the bridge gateway; plan-only materialization claims no live
-        // proxy. The fail-closed gate above means execute mode never reaches
-        // this point yet (lifted by KME4), but the assignment is wired so the
-        // launch path enforces egress the moment the gate is removed.
+        // proxy. Planning is platform-independent and never launches a VMM; the
+        // fail-closed readiness gate lives at launch time
+        // (`ensure_execute_egress_enforced`, run immediately before crun spawns
+        // the VMM), so this assignment only wires the proxy the gate later
+        // verifies is ready.
         let egress_proxy = (self.config.start_mode == KrunStartMode::Execute)
             .then(|| self.allocate_egress_proxy(&resolved_launch.spec))
             .transpose()?;
@@ -174,16 +173,6 @@ impl KrunSandboxBackend {
         };
 
         Ok(KrunStartPlan { manifest })
-    }
-
-    fn ensure_execute_egress_enforcement_available(&self) -> Result<()> {
-        if self.config.start_mode == KrunStartMode::PlanOnly {
-            return Ok(());
-        }
-
-        Err(SandboxError::InvalidSpec {
-            message: "krun execute-mode is fail-closed until Nimbus has a packet-level egress enforcement path for libkrun TSI; use the container backend for process-capable launches or plan-only krun materialization".to_owned(),
-        })
     }
 
     fn prepare_image_launch(
