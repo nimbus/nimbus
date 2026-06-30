@@ -6,7 +6,7 @@ use nimbus_auth::{
     firebase_emulator_verification_bypass_principal_from_bearer, normalize_principal_context,
     parse_bearer_value,
 };
-use nimbus_runtime::InvocationAuth;
+use nimbus_core::InvocationAuth;
 use tonic::{Status, metadata::MetadataMap};
 
 use crate::state::{AppError, AppState, DeploymentState};

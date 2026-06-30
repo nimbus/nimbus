@@ -1,4 +1,4 @@
-use nimbus_runtime::{
+use nimbus_core::{
     InvocationAuth, RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
 };
 

@@ -9,7 +9,6 @@ use tokio::sync::Notify;
 
 use crate::error::{NimbusRuntimeError, Result};
 use crate::execution_plan::RuntimeEffectClass;
-use crate::runtime::InvocationAuth;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -337,7 +336,7 @@ pub struct RuntimeAsyncFunctionCallPayload {
     #[serde(default)]
     pub host_call_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth: Option<InvocationAuth>,
+    pub auth: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

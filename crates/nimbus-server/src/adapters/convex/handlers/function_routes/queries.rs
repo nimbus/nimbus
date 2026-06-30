@@ -1,5 +1,6 @@
 use super::*;
 use crate::adapters::convex::execution::RuntimeInvocationContext;
+use crate::adapters::convex::runtime_auth_payload;
 use crate::latency::{LatencySegment, budgeted_segment};
 use nimbus_auth::normalize_principal_context;
 
@@ -47,7 +48,7 @@ pub(crate) async fn query(
                     args: request.args,
                     page_size: None,
                     cursor: None,
-                    auth: auth.clone(),
+                    auth: runtime_auth_payload(&auth),
                     services: context.runtime_services(),
                 },
                 request_cancellation.token(),
@@ -140,7 +141,7 @@ pub(crate) async fn paginated_query(
                     args: request.args,
                     page_size: Some(request.page_size),
                     cursor: request.cursor,
-                    auth: auth.clone(),
+                    auth: runtime_auth_payload(&auth),
                     services: context.runtime_services(),
                 },
                 request_cancellation.token(),

@@ -270,7 +270,7 @@ impl ConvexHostBridge {
                 args: args.clone(),
                 page_size: None,
                 cursor: None,
-                auth,
+                auth: auth.map(InvocationAuth::into_runtime_payload),
                 services: self.services().clone(),
             },
         })

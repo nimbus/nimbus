@@ -6398,7 +6398,6 @@ version = "0.1.44"
 dependencies = [
  "futures",
  "nimbus-core",
- "nimbus-runtime",
  "serde",
  "serde_json",
 ]

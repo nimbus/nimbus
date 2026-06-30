@@ -1,4 +1,4 @@
-use nimbus_runtime::{RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind};
+use nimbus_core::{RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 

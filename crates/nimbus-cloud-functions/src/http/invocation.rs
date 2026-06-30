@@ -3,9 +3,9 @@ use std::sync::Arc;
 use nimbus_auth::normalize_principal_context;
 use nimbus_bridge::admission::RuntimeExecutionAdmission;
 use nimbus_bridge::{RuntimeHostInvocation, RuntimeHostScope};
-use nimbus_core::{Result, TenantId};
+use nimbus_core::{InvocationAuth, Result, TenantId};
 use nimbus_engine::Engine;
-use nimbus_runtime::{InvocationAuth, InvocationKind, InvocationRequest};
+use nimbus_runtime::{InvocationKind, InvocationRequest};
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::{
     RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
@@ -101,7 +101,7 @@ pub fn execute_http_target(
         args,
         page_size: None,
         cursor: None,
-        auth: auth.clone(),
+        auth: auth.as_ref().map(InvocationAuth::to_runtime_payload),
         services: services.clone(),
     };
     let bridge = Arc::new(CloudFunctionsHostBridge::build(

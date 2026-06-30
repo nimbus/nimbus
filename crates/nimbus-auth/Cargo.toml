@@ -15,6 +15,5 @@ workspace = true
 [dependencies]
 futures.workspace = true
 nimbus-core = { path = "../nimbus-core" }
-nimbus-runtime = { path = "../nimbus-runtime" }
 serde.workspace = true
 serde_json.workspace = true

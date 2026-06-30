@@ -6,8 +6,8 @@ use axum::extract::OriginalUri;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::response::Response;
 use nimbus_cloud_functions::build_callable_request_args;
+use nimbus_core::InvocationAuth;
 use nimbus_core::{Error, StorageErrorKind, TenantId};
-use nimbus_runtime::InvocationAuth;
 use serde_json::Value;
 
 use super::*;

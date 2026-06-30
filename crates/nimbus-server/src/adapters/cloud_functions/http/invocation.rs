@@ -5,9 +5,8 @@ use nimbus_cloud_functions::http::{
     CloudFunctionsHttpInvocation, CloudFunctionsRuntimeContext,
     execute_http_target as execute_adapter_http_target,
 };
-use nimbus_core::TenantId;
+use nimbus_core::{InvocationAuth, TenantId};
 use nimbus_engine::Engine;
-use nimbus_runtime::InvocationAuth;
 use serde_json::Value;
 
 use super::response::build_http_response;

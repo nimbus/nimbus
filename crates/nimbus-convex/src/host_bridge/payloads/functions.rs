@@ -1,4 +1,5 @@
 use super::*;
+use nimbus_core::InvocationAuth;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

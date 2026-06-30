@@ -97,11 +97,11 @@ mod tests {
 
     use axum::http::header;
     use futures::future::BoxFuture;
-    use nimbus_core::{Query, TableName, TenantId};
-    use nimbus_engine::Engine;
-    use nimbus_runtime::{
-        InvocationAuth, RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
+    use nimbus_core::{
+        InvocationAuth, Query, RuntimeUserIdentity, TableName, TenantId, VerifiedUserIdentity,
+        VerifiedUserIdentityKind,
     };
+    use nimbus_engine::Engine;
     use nimbus_testing::{EngineFixture, ServerFixture};
     use reqwest::StatusCode;
     use serde_json::Value;

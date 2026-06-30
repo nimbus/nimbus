@@ -9,7 +9,7 @@ pub use nimbus_core::{
     FieldSchema, FieldType, Filter, FilterOp, IndexDefinition, JobId, Mutation, OrderBy,
     OrderDirection, Page, PaginatedQuery, Query, Result, ScheduleRequest, ScheduledJob,
     ScheduledJobOutcome, ScheduledJobResult, Schema, SequenceNumber, TableName, TableSchema,
-    TenantId, Timestamp, WriteOp, WriteOpType,
+    TenantId, Timestamp, VerifiedUserIdentity, VerifiedUserIdentityKind, WriteOp, WriteOpType,
 };
 // Engine coordination and persistence configuration.
 pub use nimbus_engine::{
@@ -37,7 +37,6 @@ pub use nimbus_runtime::{
     RuntimeMemoryPressureSourceStatus, RuntimePolicy, RuntimePoolKind,
     RuntimePrewarmScheduleDecision, RuntimeProfile, RuntimeScalingAdjustmentReason,
     RuntimeScalingLimit, RuntimeScalingPlanSet, RuntimeScalingPreset, RuntimeScalingTarget,
-    VerifiedUserIdentity, VerifiedUserIdentityKind,
 };
 // Tenant egress policy decision point.
 pub use nimbus_egress::{

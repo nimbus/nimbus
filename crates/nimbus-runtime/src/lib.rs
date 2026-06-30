@@ -103,8 +103,7 @@ pub use metrics::{
     RuntimeRequestCorrelationSnapshot, RuntimeTenantMetricsSnapshot,
 };
 pub use runtime::{
-    InvocationAuth, InvocationKind, InvocationRequest, InvocationServiceBinding,
-    InvocationServiceEndpoint, InvocationServiceProtocol, InvocationServices, NimbusRuntime,
-    RuntimeBundle, RuntimeBundleContent, RuntimeBundleWasmComponentContent, RuntimeComponentWorld,
-    RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
+    InvocationKind, InvocationRequest, InvocationServiceBinding, InvocationServiceEndpoint,
+    InvocationServiceProtocol, InvocationServices, NimbusRuntime, RuntimeBundle,
+    RuntimeBundleContent, RuntimeBundleWasmComponentContent, RuntimeComponentWorld,
 };

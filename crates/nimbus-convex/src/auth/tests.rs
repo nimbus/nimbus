@@ -1,4 +1,4 @@
-use nimbus_runtime::VerifiedUserIdentityKind;
+use nimbus_core::VerifiedUserIdentityKind;
 use serde_json::{Map, Value, json};
 
 use super::jwt::ParsedClaims;

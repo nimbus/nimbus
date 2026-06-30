@@ -8,8 +8,9 @@ use axum::extract::{
 };
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::Response;
+use nimbus_core::InvocationAuth;
 use nimbus_core::{ScheduleRequest, TenantId, Timestamp};
-use nimbus_runtime::{InvocationAuth, InvocationKind, InvocationRequest};
+use nimbus_runtime::{InvocationKind, InvocationRequest};
 use serde_json::Value;
 
 use super::execution::{

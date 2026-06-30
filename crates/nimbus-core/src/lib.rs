@@ -5,6 +5,7 @@ pub mod dependency;
 pub mod document;
 pub mod document_history;
 pub mod error;
+pub mod identity;
 pub mod index_history;
 pub mod mutation;
 pub mod mvcc;
@@ -34,6 +35,9 @@ pub use dependency::{
 pub use document::Document;
 pub use document_history::{DocumentVersion, DocumentVersionHistory};
 pub use error::{Error, HistoricalReadErrorKind, Result, StorageErrorKind};
+pub use identity::{
+    InvocationAuth, RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
+};
 pub use index_history::{
     HistoricalIndexCursor, HistoricalIndexHistory, HistoricalIndexNumberKey, HistoricalIndexPage,
     HistoricalIndexQuery, HistoricalIndexScalar, HistoricalIndexTuple, HistoricalIndexVersion,

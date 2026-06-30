@@ -2,7 +2,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use deno_fs::sync::MaybeArc;
-use serde_json::{Map, Value};
+use serde_json::{Value, json};
 use tokio::sync::Notify;
 use tokio::time::Instant;
 
@@ -457,32 +457,13 @@ pub(super) async fn invoke_on_single_worker(
         .await
 }
 
-pub(super) fn test_invocation_auth(token_identifier: &str) -> InvocationAuth {
-    InvocationAuth {
-        identity: Some(RuntimeUserIdentity {
-            token_identifier: token_identifier.to_string(),
-            subject: token_identifier.to_string(),
-            issuer: "https://issuer.example.com".to_string(),
-            name: None,
-            given_name: None,
-            family_name: None,
-            nickname: None,
-            preferred_username: None,
-            profile_url: None,
-            picture_url: None,
-            email: None,
-            email_verified: None,
-            gender: None,
-            birthday: None,
-            timezone: None,
-            language: None,
-            phone_number: None,
-            phone_number_verified: None,
-            address: None,
-            updated_at: None,
-            custom_claims: Map::new(),
-        }),
-        verified_identity: None,
-        throw_on_missing_identity: false,
-    }
+pub(super) fn test_invocation_auth(token_identifier: &str) -> Value {
+    json!({
+        "identity": {
+            "tokenIdentifier": token_identifier,
+            "subject": token_identifier,
+            "issuer": "https://issuer.example.com",
+        },
+        "throw_on_missing_identity": false,
+    })
 }
