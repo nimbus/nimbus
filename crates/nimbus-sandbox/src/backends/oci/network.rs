@@ -679,5 +679,17 @@ mod tests {
             ips_a, ips_b,
             "two tenants must never collide on one address (audit M1)"
         );
+
+        // MTN5: the egress PEP binds on the bridge gateway (allocate_egress_proxy
+        // derives its host from bridge_gateway_addr), so each tenant's PEP URL is
+        // distinct — no cross-tenant proxy aliasing.
+        let gw_a = super::bridge_gateway_addr(&config_a).expect("tenant-a gateway");
+        let gw_b = super::bridge_gateway_addr(&config_b).expect("tenant-b gateway");
+        assert_eq!(gw_a.to_string(), "10.0.0.1");
+        assert_eq!(gw_b.to_string(), "10.0.1.1");
+        assert_ne!(
+            gw_a, gw_b,
+            "each tenant's egress PEP binds a distinct gateway (no PEP URL aliasing)"
+        );
     }
 }
