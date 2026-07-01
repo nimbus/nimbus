@@ -664,4 +664,65 @@ export {{}};
         );
         assert!(!fetch_request.uses_custom_client);
     }
+
+    #[tokio::test]
+    async fn isolate_fetch_denied_by_gateway_rejects_end_to_end() {
+        // L17: end-to-end isolate-fetch DENY. A gateway that denies every request
+        // must make `fetch()` reject inside the guest — the deny verdict at the
+        // single consumption seam (`isolate_fetch_decision`) surfaces as a thrown
+        // error, not a silent allow. The bundle catches it and reports `denied`.
+        #[derive(Default)]
+        struct NoopHost;
+
+        impl crate::HostBridge for NoopHost {
+            fn call(&self, _request: crate::HostCallRequest) -> crate::Result<Value> {
+                Ok(Value::Null)
+            }
+        }
+
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__nimbusInvoke = async function () {
+  try {
+    await fetch("http://denied.example/secret");
+    return { fetch: "allowed" };
+  } catch (error) {
+    return { fetch: "denied", message: String((error && error.message) || error) };
+  }
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let runtime = crate::NimbusRuntime::with_policy(
+            Arc::new(NoopHost),
+            Arc::new(crate::RuntimePolicy::new(
+                crate::RuntimeLimits::application_node22(),
+            )),
+        )
+        .with_egress_gateway(Arc::new(DenyAllEgressGateway));
+        let request = crate::InvocationRequest {
+            kind: crate::InvocationKind::Query,
+            function_name: "messages:deniedFetch".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: Default::default(),
+        };
+
+        let result = runtime
+            .invoke_bundle(&crate::RuntimeBundle::new(&bundle_path), &request)
+            .await
+            .expect("bundle should run; the fetch is denied inside JS, not a host error");
+        assert_eq!(
+            result["fetch"], "denied",
+            "a gateway-denied fetch must reject in-guest, got: {result}"
+        );
+    }
 }
