@@ -52,7 +52,9 @@ pub use mvcc::{
     HistoricalQueryShape, HistoricalReadSnapshot, HistoricalReadSupport,
     HistoricalVersionVisibility, HistoryWindow, PolicySnapshotId, ReadTimestamp, RetentionFloor,
 };
-pub use net::{is_valid_dns_hostname, refuse_non_loopback_bind};
+pub use net::{
+    Cidr, CidrError, NetworkId, NetworkSegment, is_valid_dns_hostname, refuse_non_loopback_bind,
+};
 pub use query::{
     AggregationOperator, CollectionSelector, CompositeFilter, CompositeOperator, CountAggregation,
     Cursor, DistanceMeasure, FieldFilter, FieldFilterOperator, FieldReference, Filter, FilterOp,
