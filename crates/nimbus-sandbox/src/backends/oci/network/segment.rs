@@ -297,9 +297,8 @@ impl SingleNodeSegmentAllocator {
     /// `(tenant_id, sandbox_id)` pairs (from live manifests). Prune crash-leaked
     /// holds and, for every tenant left with no live sandbox, free its index and
     /// return its segment so the caller can reap the orphaned bridge. Fail-closed
-    /// on a missing super-net (never reclaim blind).
-    // Wired into backend startup in a follow-on MTN6 increment.
-    #[allow(dead_code)]
+    /// on a missing super-net (never reclaim blind). Wired into both backends'
+    /// startup via `reconcile_network_segment_orphans`.
     pub(crate) fn reconcile_orphans(
         &self,
         live: &BTreeSet<(String, String)>,
