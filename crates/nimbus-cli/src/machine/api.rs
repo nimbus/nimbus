@@ -296,6 +296,12 @@ fn sandbox_error_to_http_error(error: SandboxError) -> MachineApiHttpError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message,
         },
+        SandboxError::NetworkSubnetExhausted { subnet } => MachineApiHttpError {
+            // The node's per-tenant network-segment pool cannot host another
+            // sandbox — a capacity limit, not a client error.
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: format!("network subnet {subnet} is exhausted"),
+        },
     }
 }
 
