@@ -9,6 +9,11 @@ pub struct NodeCapacity {
     node_id: String,
     available_slots: u32,
     binding_keys: BTreeSet<String>,
+    /// Per-tenant network segments the node can still carve from its super-net
+    /// (the MTN6 address-pool dimension). `u32::MAX` means unbounded / not
+    /// segment-gated; `0` means the node's super-net is exhausted and it must not
+    /// admit a workload that needs a fresh tenant segment (fail-closed placement).
+    remaining_segments: u32,
 }
 
 impl NodeCapacity {
@@ -17,6 +22,7 @@ impl NodeCapacity {
             node_id: validate_component("node id", node_id)?,
             available_slots,
             binding_keys: BTreeSet::new(),
+            remaining_segments: u32::MAX,
         })
     }
 
@@ -24,6 +30,18 @@ impl NodeCapacity {
         self.binding_keys
             .insert(validate_component("binding key", binding_key)?);
         Ok(self)
+    }
+
+    /// Set the number of per-tenant network segments the node can still carve
+    /// (the MTN6 remaining-segment dimension). A node reporting `0` is rejected
+    /// for placement because it cannot allocate a new tenant a bridge subnet.
+    pub fn with_remaining_segments(mut self, remaining_segments: u32) -> Self {
+        self.remaining_segments = remaining_segments;
+        self
+    }
+
+    pub fn remaining_segments(&self) -> u32 {
+        self.remaining_segments
     }
 }
 
@@ -79,6 +97,14 @@ impl WorkloadPlacementEngine {
         for node in nodes {
             if node.available_slots == 0 {
                 rejected_nodes.insert(node.node_id.clone(), "node has no free slots".to_owned());
+                continue;
+            }
+            if node.remaining_segments == 0 {
+                rejected_nodes.insert(
+                    node.node_id.clone(),
+                    "node network-segment pool is exhausted (no per-tenant subnet available)"
+                        .to_owned(),
+                );
                 continue;
             }
             if let Some(binding_key) = workload.binding_key()
@@ -165,6 +191,46 @@ mod tests {
                 .get("node-b")
                 .expect("node-b should be rejected")
                 .contains("already reserved")
+        );
+    }
+
+    #[test]
+    fn segment_exhausted_node_is_rejected_fail_closed() {
+        let workload =
+            DesiredWorkload::service(tenant_id(), "api", DesiredWorkloadState::Running, 1)
+                .expect("desired workload should build");
+        let scheduler = WorkloadScheduler::new();
+        let plan = scheduler.schedule(
+            &workload,
+            &[
+                // Free slots, but its per-tenant network-segment pool is exhausted:
+                // it cannot carve a bridge subnet for a new tenant, so it is
+                // rejected fail-closed even though it has slots.
+                NodeCapacity::new("node-full", 4)
+                    .expect("node should build")
+                    .with_remaining_segments(0),
+                // Has free segments -> eligible.
+                NodeCapacity::new("node-ok", 1)
+                    .expect("node should build")
+                    .with_remaining_segments(3),
+            ],
+        );
+
+        assert_eq!(plan.node_id(), Some("node-ok"));
+        assert!(
+            plan.explanation()
+                .rejected_nodes()
+                .get("node-full")
+                .expect("segment-exhausted node should be rejected")
+                .contains("segment pool is exhausted")
+        );
+        // The dimension defaults to unbounded so non-segment-aware callers are
+        // unaffected.
+        assert_eq!(
+            NodeCapacity::new("n", 1)
+                .expect("node should build")
+                .remaining_segments(),
+            u32::MAX
         );
     }
 }
