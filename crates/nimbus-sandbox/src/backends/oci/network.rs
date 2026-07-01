@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+mod cluster;
 mod dto;
 mod egress_pin;
 mod forwarding;

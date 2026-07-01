@@ -28,6 +28,7 @@ REAPER="crates/nimbus-sandbox/src/backends/oci/network/reaper.rs"
 SCHEDULING="crates/nimbus-workloads/src/scheduling.rs"
 PLACEMENT="crates/nimbus-sandbox/src/backends/oci/network/placement.rs"
 KRUN_START="crates/nimbus-sandbox/src/backends/krun/vm/start.rs"
+CLUSTER="crates/nimbus-sandbox/src/backends/oci/network/cluster.rs"
 
 PASS=0
 FAIL=0
@@ -215,6 +216,25 @@ if grep -qE 'node_tenant_subnet_prefix' "${KRUN_VM}" \
   pass "tenant-subnet-prefix knob + grow-onto-second-block KVM proof (guest lands in block 1 + own PEP + nb-1 exists)"
 else
   fail "MTN6 KVM grow proof missing" "expected node_tenant_subnet_prefix knob + krun_tenant_grows_onto_a_second_block test with guest_ip/own_egress/nb-1 assertions"
+fi
+
+# -------- MTN7: cluster allocator seam (lease-gated, behind the SAME trait) --
+
+step 16 "MTN7 ClusterSegmentAllocator + lease seam + fencing + disjointness invariant"
+# The concrete raft-backed ClusterLeaseProvider is the HS lane's impl of the seam;
+# the allocator + fencing/admission LOGIC + the ∀ i≠j disjointness invariant are
+# built + tested here against an in-memory provider (non-vacuous).
+if grep -qE 'struct ClusterSegmentAllocator' "${CLUSTER}" \
+  && grep -qE 'trait ClusterLeaseProvider' "${CLUSTER}" \
+  && grep -qE 'fn assert_cluster_admission' "${CLUSTER}" \
+  && grep -qE 'fn requires_cluster_lease' "${SEG}" \
+  && grep -qE 'two_nodes_with_disjoint_leases_carve_disjoint_tenant_subnets' "${CLUSTER}" \
+  && grep -qE 'expired_lease_self_fences' "${CLUSTER}" \
+  && grep -qE 'no_committed_lease_fails_closed' "${CLUSTER}" \
+  && grep -qE 'reclaimed_supernet_new_epoch_fails_closed' "${CLUSTER}"; then
+  pass "cluster allocator behind the trait + lease seam + self-fence/epoch/admission fencing + cross-node disjointness test"
+else
+  fail "MTN7 cluster seam incomplete" "expected ClusterSegmentAllocator + ClusterLeaseProvider + assert_cluster_admission + requires_cluster_lease + the four fencing/disjointness tests"
 fi
 
 # -------- summary ----------------------------------------------------------
