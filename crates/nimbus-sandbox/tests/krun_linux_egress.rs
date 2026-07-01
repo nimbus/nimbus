@@ -713,3 +713,88 @@ fn sibling_reach_probe_command(sibling_proxy_url: &str, upstream_port: u16) -> S
         r#"TMP=/nimbus-egress/result.tmp; : > "$TMP"; if timeout 8 wget -T 5 -q -O /tmp/own "http://127.0.0.1:{upstream_port}/allowed" && grep -q shared-upstream-body /tmp/own; then echo own_pep=allowed >> "$TMP"; else echo own_pep=denied >> "$TMP"; fi; if http_proxy={sibling_proxy_url} HTTP_PROXY={sibling_proxy_url} timeout 8 wget -T 5 -q -O /tmp/sib "http://127.0.0.1:{upstream_port}/allowed"; then echo sibling_pep_reach=allowed >> "$TMP"; else echo sibling_pep_reach=denied >> "$TMP"; fi; mv "$TMP" {RESULT_PATH_IN_GUEST}; sleep 30"#
     )
 }
+
+/// MTN5 cross-tenant isolation proof: two DIFFERENT tenants get distinct
+/// per-tenant bridges (`nb-0` / `nb-1`), and the netavark `isolate` option
+/// installs a FORWARD DROP between them, so tenant B cannot reach tenant A's
+/// sandbox IP even though both bridges live in the host root netns with
+/// `ip_forward` on. A positive control (`own_egress=allowed`) proves B's own
+/// egress works, so the denial is isolation, not a broken network.
+///
+/// Assignment is deterministic on a fresh state root: tenant A (assigned first)
+/// gets `10.0.0.0/24` (sandbox `10.0.0.2`), tenant B gets `10.0.1.0/24`.
+#[test]
+#[ignore = "requires a Linux root host with /dev/kvm plus the full krun OCI runtime stack; boots two tenants to prove cross-tenant bridge isolation"]
+fn krun_two_tenants_cannot_reach_each_others_sandbox() {
+    if !egress_proof_preconditions_met() {
+        return;
+    }
+
+    let upstream = TestHttpServer::start("shared-upstream-body");
+    let upstream_port = upstream.addr.port();
+    let policy = parity_policy(upstream_port);
+    let image = env::var("NIMBUS_KRUN_EGRESS_IMAGE")
+        .unwrap_or_else(|_| "docker://busybox:latest".to_owned());
+    let (_temp, workdir) = test_workdir("krun-cross-tenant");
+    let backend = KrunSandboxBackend::new(egress_backend_config(&workdir, 15700));
+
+    // Tenant A (first -> 10.0.0.0/24, sandbox 10.0.0.2): serve a sentinel on
+    // :9000 in its own netns and stay alive.
+    let tenant_a = TenantId::new("cross-tenant-a").expect("tenant id should parse");
+    let a_command = "while true; do printf 'HTTP/1.1 200 OK\\r\\nContent-Length: 10\\r\\nConnection: close\\r\\n\\r\\nA-SENTINEL' | nc -l -p 9000; done".to_owned();
+    let a_spec = SandboxSpec::new(
+        tenant_a.clone(),
+        SandboxOwnerSpec::standalone_named("cross-tenant-a"),
+        SandboxBackendKind::Krun,
+        SandboxRootSpec::oci_image_reference(image.clone()),
+        SandboxProcessSpec::new(Vec::<String>::new())
+            .with_entrypoint(["/bin/sh", "-c"])
+            .with_command([a_command]),
+    )
+    .with_egress_policy(policy.clone());
+    let a_handle = block_on(backend.start(a_spec)).expect("tenant A should start");
+    let _a_teardown = ForceTeardownGuard::new(
+        backend.clone(),
+        a_handle.id.clone(),
+        sandbox_netns_path(&workdir, &tenant_a, &a_handle.id),
+    );
+
+    // Tenant B (second -> 10.0.1.0/24): reach its OWN PEP (positive control) but
+    // NOT tenant A's sandbox IP 10.0.0.2:9000 (blocked by the isolate FORWARD DROP).
+    let tenant_b = TenantId::new("cross-tenant-b").expect("tenant id should parse");
+    let b_command = format!(
+        r#"TMP=/nimbus-egress/result.tmp; : > "$TMP"; if timeout 8 wget -T 5 -q -O /tmp/own "http://127.0.0.1:{upstream_port}/allowed" && grep -q shared-upstream-body /tmp/own; then echo own_egress=allowed >> "$TMP"; else echo own_egress=denied >> "$TMP"; fi; if timeout 8 wget -T 5 -q -O /tmp/x "http://10.0.0.2:9000/" && grep -q A-SENTINEL /tmp/x; then echo cross_tenant_reach=allowed >> "$TMP"; else echo cross_tenant_reach=denied >> "$TMP"; fi; mv "$TMP" {RESULT_PATH_IN_GUEST}; sleep 30"#
+    );
+    let b_spec = SandboxSpec::new(
+        tenant_b.clone(),
+        SandboxOwnerSpec::standalone_named("cross-tenant-b"),
+        SandboxBackendKind::Krun,
+        SandboxRootSpec::oci_image_reference(image),
+        SandboxProcessSpec::new(Vec::<String>::new())
+            .with_entrypoint(["/bin/sh", "-c"])
+            .with_command([b_command]),
+    )
+    .with_mount(SandboxMountSpec::tenant_volume(
+        RESULT_VOLUME,
+        "/nimbus-egress",
+    ))
+    .with_egress_policy(policy);
+    let b_handle = block_on(backend.start(b_spec)).expect("tenant B should start");
+    let _b_teardown = ForceTeardownGuard::new(
+        backend.clone(),
+        b_handle.id.clone(),
+        sandbox_netns_path(&workdir, &tenant_b, &b_handle.id),
+    );
+
+    let b_result_path = tenant_volume_path(&workdir, &tenant_b, RESULT_VOLUME).join("result");
+    let b_result = wait_for_result(
+        &b_result_path,
+        Duration::from_secs(60),
+        "tenant B cross-tenant result",
+    );
+
+    // Positive control: B's own egress works (the denial below is isolation).
+    assert_result_line(&b_result, "own_egress=allowed");
+    // The MTN5 guarantee: B cannot reach a different tenant's sandbox.
+    assert_result_line(&b_result, "cross_tenant_reach=denied");
+}
