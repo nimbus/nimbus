@@ -26,7 +26,9 @@ pub(crate) use proxy::{MachinePortProxy, start_machine_port_proxies};
 pub(crate) use reaper::{
     purge_legacy_nimbus0_once, reap_bridge_interface, reconcile_network_segment_orphans,
 };
-pub(crate) use segment::{NetworkSegmentAllocator, ReleaseOutcome, SingleNodeSegmentAllocator};
+pub(crate) use segment::{
+    DEFAULT_TENANT_PREFIX, NetworkSegmentAllocator, ReleaseOutcome, SingleNodeSegmentAllocator,
+};
 
 pub(crate) const DEFAULT_NETAVARK_BINARY: &str = "netavark";
 pub(crate) const DEFAULT_AARDVARK_DNS_BINARY: &str = "aardvark-dns";
