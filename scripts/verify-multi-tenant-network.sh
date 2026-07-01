@@ -23,6 +23,7 @@ NETAVARK="crates/nimbus-sandbox/src/backends/oci/network/netavark.rs"
 NETWORK="crates/nimbus-sandbox/src/backends/oci/network.rs"
 CONTAINER_RT="crates/nimbus-sandbox/src/backends/container/runtime.rs"
 KRUN_VM="crates/nimbus-sandbox/src/backends/krun/vm.rs"
+EGRESS_PROOF="crates/nimbus-sandbox/tests/krun_linux_egress.rs"
 
 PASS=0
 FAIL=0
@@ -134,6 +135,34 @@ if grep -rqE '\.acquire\(&' ${CB} \
   pass "acquire hold + ReleaseOutcome::TenantDrained -> reap_tenant_bridge + legacy purge wired in both backends"
 else
   fail "MTN4 reaper not wired into the backends" "expected .acquire + ReleaseOutcome::TenantDrained + reap_tenant_bridge + purge_legacy_nimbus0_once call sites in container/ + krun/"
+fi
+
+# -------- MTN5: host-side inter-tenant isolation + DNS-off -----------------
+
+step 9 "MTN5 every tenant bridge sets the netavark isolate option (FORWARD DROP)"
+if grep -qE 'NETAVARK_OPTION_ISOLATE' "${NETAVARK}" \
+  && grep -qE 'build_bridge_network_isolates' "${NETWORK}"; then
+  pass "build_bridge_network sets isolate=true + a test proves it"
+else
+  fail "MTN5 isolate not wired" "expected the isolate option in build_bridge_network + a test"
+fi
+
+step 10 "MTN5 DNS-off on BOTH backends (no in-subnet aardvark resolver)"
+if grep -qE 'enable_dns: false' "${CONTAINER_RT}" \
+  && grep -qE 'enable_dns: false' "${KRUN_VM}" \
+  && ! grep -qE 'enable_dns: true' "${CONTAINER_RT}" "${KRUN_VM}"; then
+  pass "both backends resolve names via the PEP (enable_dns=false)"
+else
+  fail "MTN5 DNS not off on both backends" "expected enable_dns: false in both network_config methods"
+fi
+
+step 11 "MTN5 two-tenant cross-tenant KVM deny-proof present (with positive control)"
+if grep -qE 'fn krun_two_tenants_cannot_reach_each_others_sandbox' "${EGRESS_PROOF}" \
+  && grep -qE 'own_egress=allowed' "${EGRESS_PROOF}" \
+  && grep -qE 'cross_tenant_reach=denied' "${EGRESS_PROOF}"; then
+  pass "cross-tenant deny-proof present (own_egress positive control + cross_tenant_reach denied)"
+else
+  fail "MTN5 cross-tenant KVM proof missing" "expected krun_two_tenants_cannot_reach_each_others_sandbox with own_egress + cross_tenant_reach"
 fi
 
 # -------- summary ----------------------------------------------------------

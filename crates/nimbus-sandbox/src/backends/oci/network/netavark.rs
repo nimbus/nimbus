@@ -23,7 +23,9 @@ use super::ipam::{
     parse_ipv4_subnet_and_gateway,
 };
 use super::layout::{OciNetworkConfig, OciNetworkLayout};
-use super::{DEFAULT_CONTAINER_INTERFACE_NAME, NETAVARK_OPTION_NO_DEFAULT_ROUTE};
+use super::{
+    DEFAULT_CONTAINER_INTERFACE_NAME, NETAVARK_OPTION_ISOLATE, NETAVARK_OPTION_NO_DEFAULT_ROUTE,
+};
 
 pub(crate) fn setup_container_network(
     layout: &OciNetworkLayout,
@@ -222,6 +224,12 @@ pub(super) fn build_bridge_network(config: &OciNetworkConfig) -> Result<Netavark
             "true".to_owned(),
         );
     }
+    // Isolate every per-tenant bridge from the others: netavark installs a
+    // FORWARD DROP between isolated networks, so a guest cannot route to a
+    // sibling tenant's /24 even though all tenant bridges live in the host root
+    // netns with ip_forward on (audit M1 / MTN5). The per-netns H1 pin remains
+    // the intra-tenant sibling-PEP barrier; this closes the cross-tenant L3 path.
+    options.insert(NETAVARK_OPTION_ISOLATE.to_owned(), "true".to_owned());
     Ok(NetavarkNetwork {
         name: config.network_name.clone(),
         id: config.network_id.clone(),
