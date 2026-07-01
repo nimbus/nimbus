@@ -292,6 +292,39 @@ impl SingleNodeSegmentAllocator {
         state.supernet_epoch = Some(supernet.epoch);
         Ok(index)
     }
+
+    /// Startup orphan GC: reconcile persisted holds against the set of live
+    /// `(tenant_id, sandbox_id)` pairs (from live manifests). Prune crash-leaked
+    /// holds and, for every tenant left with no live sandbox, free its index and
+    /// return its segment so the caller can reap the orphaned bridge. Fail-closed
+    /// on a missing super-net (never reclaim blind).
+    // Wired into backend startup in a follow-on MTN6 increment.
+    #[allow(dead_code)]
+    pub(crate) fn reconcile_orphans(
+        &self,
+        live: &BTreeSet<(String, String)>,
+    ) -> Result<Vec<NetworkSegment>> {
+        let supernet = self.installed()?.clone();
+        self.with_state(|state| {
+            let mut drained = Vec::new();
+            let tenants: Vec<String> = state.tenants.keys().cloned().collect();
+            for tenant in tenants {
+                let entry = state
+                    .tenants
+                    .get_mut(&tenant)
+                    .expect("tenant key came from the same map");
+                entry
+                    .live_sandboxes
+                    .retain(|sandbox| live.contains(&(tenant.clone(), sandbox.clone())));
+                if entry.live_sandboxes.is_empty() {
+                    let index = entry.index;
+                    state.tenants.remove(&tenant);
+                    drained.push(self.segment_at(&supernet, index)?);
+                }
+            }
+            Ok(drained)
+        })
+    }
 }
 
 impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
@@ -540,5 +573,43 @@ mod tests {
             .acquire(&tenant("after"), &sandbox("sb"))
             .expect("acquire after drain");
         assert_eq!(segment.cidr().to_string(), "10.0.0.0/24");
+    }
+
+    #[test]
+    fn reconcile_orphans_prunes_leaked_holds_and_drains_empty_tenants() {
+        let dir = tempdir().expect("temp dir");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        // tenant-a holds two sandboxes; sb-1 will be a crash-leaked hold, sb-2 live.
+        allocator
+            .acquire(&tenant("tenant-a"), &sandbox("sb-1"))
+            .expect("acquire a/1");
+        allocator
+            .acquire(&tenant("tenant-a"), &sandbox("sb-2"))
+            .expect("acquire a/2");
+        // tenant-b holds one sandbox, fully crash-leaked (nothing live).
+        let b = allocator
+            .acquire(&tenant("tenant-b"), &sandbox("sb-b"))
+            .expect("acquire b");
+        assert_eq!(b.cidr().to_string(), "10.0.1.0/24");
+
+        // Only tenant-a/sb-2 is actually live at startup.
+        let mut live = BTreeSet::new();
+        live.insert(("tenant-a".to_owned(), "sb-2".to_owned()));
+        let drained = allocator.reconcile_orphans(&live).expect("reconcile");
+
+        // tenant-b fully orphaned -> drained (its bridge must be reaped), segment returned.
+        assert_eq!(drained.len(), 1, "only the fully-orphaned tenant drains");
+        assert_eq!(drained[0].cidr().to_string(), "10.0.1.0/24");
+        // tenant-a still holds sb-2, so its index 0 is retained; the freed index 1
+        // is what the next new tenant reuses.
+        let c = allocator
+            .acquire(&tenant("tenant-c"), &sandbox("sb-c"))
+            .expect("acquire c");
+        assert_eq!(c.cidr().to_string(), "10.0.1.0/24");
+        // tenant-a's still-live sandbox keeps its original segment.
+        let a = allocator
+            .acquire(&tenant("tenant-a"), &sandbox("sb-2"))
+            .expect("re-acquire a/2");
+        assert_eq!(a.cidr().to_string(), "10.0.0.0/24");
     }
 }
