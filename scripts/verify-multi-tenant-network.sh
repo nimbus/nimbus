@@ -25,6 +25,7 @@ CONTAINER_RT="crates/nimbus-sandbox/src/backends/container/runtime.rs"
 KRUN_VM="crates/nimbus-sandbox/src/backends/krun/vm.rs"
 EGRESS_PROOF="crates/nimbus-sandbox/tests/krun_linux_egress.rs"
 REAPER="crates/nimbus-sandbox/src/backends/oci/network/reaper.rs"
+SCHEDULING="crates/nimbus-workloads/src/scheduling.rs"
 
 PASS=0
 FAIL=0
@@ -178,6 +179,15 @@ if grep -qE 'reconcile_network_segment_orphans\(&config\.state_root' "${CONTAINE
   pass "reconcile_network_segment_orphans called in both new() + reconcile_orphans primitive + reclaim test"
 else
   fail "MTN6 orphan-GC not wired" "expected reconcile_network_segment_orphans in both backends' new() + a reclaim test"
+fi
+
+step 13 "MTN6 remaining-segment dimension on NodeCapacity (fail-closed placement)"
+if grep -qE 'remaining_segments' "${SCHEDULING}" \
+  && grep -qE 'segment pool is exhausted' "${SCHEDULING}" \
+  && grep -qE 'segment_exhausted_node_is_rejected_fail_closed' "${SCHEDULING}"; then
+  pass "NodeCapacity.remaining_segments + fail-closed placement when exhausted + test"
+else
+  fail "MTN6 NodeCapacity segment dimension missing" "expected remaining_segments + fail-closed placement + test in ${SCHEDULING}"
 fi
 
 # -------- summary ----------------------------------------------------------
