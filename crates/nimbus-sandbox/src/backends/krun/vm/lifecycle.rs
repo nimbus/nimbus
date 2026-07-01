@@ -383,13 +383,16 @@ impl KrunSandboxBackend {
             errors.push(error.to_string());
         }
         // Drop this sandbox's hold; on the LAST hold the tenant is drained, so
-        // reap its bridge (netavark won't auto-GC) and free the index for reuse.
+        // reap EVERY block bridge it grew (netavark won't auto-GC) and free all
+        // its indices for reuse.
         match self.segment_allocator() {
             Ok(allocator) => {
                 match allocator.release(&manifest.spec.tenant_id, &manifest.handle.id) {
-                    Ok(ReleaseOutcome::TenantDrained) => {
-                        if let Err(error) = reap_tenant_bridge(&manifest.network_config) {
-                            errors.push(error.to_string());
+                    Ok(ReleaseOutcome::TenantDrained { segments }) => {
+                        for segment in &segments {
+                            if let Err(error) = reap_bridge_interface(segment.network_interface()) {
+                                errors.push(error.to_string());
+                            }
                         }
                     }
                     Ok(ReleaseOutcome::StillLive) => {}

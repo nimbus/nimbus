@@ -12,16 +12,11 @@ use std::path::Path;
 
 use crate::error::{Result, SandboxError};
 
-use super::{OciNetworkConfig, SingleNodeSegmentAllocator};
+use super::SingleNodeSegmentAllocator;
 
-/// Remove the tenant's bridge interface once its last sandbox has drained
-/// (netavark won't auto-GC it). Idempotent / best-effort: a bridge that is
-/// already gone is success.
-pub(crate) fn reap_tenant_bridge(network_config: &OciNetworkConfig) -> Result<()> {
-    reap_bridge_interface(&network_config.network_interface)
-}
-
-/// Remove a bridge interface by name (idempotent / best-effort).
+/// Remove a tenant block-bridge interface by name once its last sandbox has
+/// drained (netavark won't auto-GC it). Idempotent / best-effort: a bridge that
+/// is already gone is success.
 pub(crate) fn reap_bridge_interface(interface: &str) -> Result<()> {
     delete_bridge(interface)
 }

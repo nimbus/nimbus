@@ -37,7 +37,7 @@ use crate::backends::oci::network::{
     DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, NetworkSegmentAllocator, OciNetworkConfig,
     OciNetworkDirectEgress, OciNetworkLayout, ReleaseOutcome, SingleNodeSegmentAllocator,
     create_persistent_network_namespace, pin_netns_egress_to_own_proxy, purge_legacy_nimbus0_once,
-    reap_tenant_bridge, reconcile_network_segment_orphans, remove_persistent_network_namespace,
+    reap_bridge_interface, reconcile_network_segment_orphans, remove_persistent_network_namespace,
     setup_container_network, teardown_container_network,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
