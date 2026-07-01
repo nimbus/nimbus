@@ -35,6 +35,7 @@ pub(crate) const DEFAULT_MACHINE_FORWARDER_PATH: &str = "/services/forwarder";
 const DEFAULT_CONTAINER_INTERFACE_NAME: &str = "eth0";
 const DEFAULT_NETWORK_ID: &str = "5e9b4c62f9f3e8b8d2c74b7388d8451f5e9b4c62f9f3e8b8d2c74b7388d8451f";
 const NETAVARK_OPTION_NO_DEFAULT_ROUTE: &str = "no_default_route";
+const NETAVARK_OPTION_ISOLATE: &str = "isolate";
 const MACHINE_FORWARDER_TIMEOUT: Duration = Duration::from_secs(2);
 const MACHINE_PORT_PROXY_ACCEPT_SLEEP: Duration = Duration::from_millis(50);
 const MACHINE_PORT_PROXY_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -205,6 +206,28 @@ mod tests {
             container_network.dns_enabled,
             "enable_dns=true must emit dns_enabled=true so container DNS behavior is unchanged"
         );
+    }
+
+    #[test]
+    fn build_bridge_network_isolates_every_tenant_bridge() {
+        // MTN5: every per-tenant bridge sets the netavark `isolate` option, which
+        // installs a FORWARD DROP between networks — a guest cannot route to a
+        // sibling tenant's /24 even though all tenant bridges share the host root
+        // netns with ip_forward on. Carried regardless of DNS shape.
+        for config in [
+            OciNetworkConfig::default(),
+            OciNetworkConfig {
+                enable_dns: false,
+                ..OciNetworkConfig::default()
+            },
+        ] {
+            let network = build_bridge_network(&config).expect("bridge network should build");
+            assert_eq!(
+                network.options.get("isolate").map(String::as_str),
+                Some("true"),
+                "every tenant bridge must set the netavark isolate option"
+            );
+        }
     }
 
     #[test]

@@ -146,10 +146,12 @@ impl ContainerSandboxBackend {
             network_interface: segment.network_interface().to_owned(),
             network_subnet: segment.cidr().to_string(),
             direct_egress: OciNetworkDirectEgress::Deny,
-            // Container workloads keep the bridge resolver for now; each per-tenant
-            // bridge has its own gateway, so aardvark no longer contends on a
-            // shared `:53`. MTN5 flips this to DNS-off + host-PEP resolution.
-            enable_dns: true,
+            // DNS-off on both backends (MTN5, owner-ratified): under the H1 pin
+            // the guest can't reach gateway:53 anyway, so an in-subnet aardvark is
+            // running-but-unreachable dead weight AND a cross-tenant DNS-leak
+            // surface on index reuse. Names resolve host-side through the egress
+            // PEP (the KME5 posture) — identical to the krun backend.
+            enable_dns: false,
             network_id: segment.network_id().as_str().to_owned(),
         })
     }

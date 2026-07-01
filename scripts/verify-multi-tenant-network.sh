@@ -136,6 +136,25 @@ else
   fail "MTN4 reaper not wired into the backends" "expected .acquire + ReleaseOutcome::TenantDrained + reap_tenant_bridge + purge_legacy_nimbus0_once call sites in container/ + krun/"
 fi
 
+# -------- MTN5: host-side inter-tenant isolation + DNS-off -----------------
+
+step 9 "MTN5 every tenant bridge sets the netavark isolate option (FORWARD DROP)"
+if grep -qE 'NETAVARK_OPTION_ISOLATE' "${NETAVARK}" \
+  && grep -qE 'build_bridge_network_isolates' "${NETWORK}"; then
+  pass "build_bridge_network sets isolate=true + a test proves it"
+else
+  fail "MTN5 isolate not wired" "expected the isolate option in build_bridge_network + a test"
+fi
+
+step 10 "MTN5 DNS-off on BOTH backends (no in-subnet aardvark resolver)"
+if grep -qE 'enable_dns: false' "${CONTAINER_RT}" \
+  && grep -qE 'enable_dns: false' "${KRUN_VM}" \
+  && ! grep -qE 'enable_dns: true' "${CONTAINER_RT}" "${KRUN_VM}"; then
+  pass "both backends resolve names via the PEP (enable_dns=false)"
+else
+  fail "MTN5 DNS not off on both backends" "expected enable_dns: false in both network_config methods"
+fi
+
 # -------- summary ----------------------------------------------------------
 
 printf '\n\033[1m========= multi-tenant-network verifier =========\033[0m\n'

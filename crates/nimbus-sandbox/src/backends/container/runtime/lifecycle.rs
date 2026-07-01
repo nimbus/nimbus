@@ -297,21 +297,22 @@ impl TestHttpServer {
     }
 }
 
-/// KME5 hardening companion: the container backend keeps the bridge DNS
-/// resolver (`enable_dns=true`). Only the krun microVM backend turns it off;
-/// container DNS behavior is unchanged by the krun-scoped split.
+/// MTN5 DNS-off posture: the container backend disables the in-subnet
+/// aardvark-dns resolver (`enable_dns=false`), matching the krun backend. Under
+/// the H1 pin gateway:53 is unreachable, so the resolver is dead weight and a
+/// cross-tenant DNS-leak surface; names resolve host-side through the egress PEP.
 #[test]
-fn container_network_config_keeps_bridge_dns_resolver() {
+fn container_network_config_disables_bridge_dns_resolver() {
     let temp_dir = TempDir::new().expect("tempdir should build");
     let backend =
         ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(temp_dir.path()));
 
     let tenant = nimbus_core::TenantId::new("dns-tenant").expect("tenant should parse");
     assert!(
-        backend
+        !backend
             .network_config(&tenant)
             .expect("network config should resolve")
             .enable_dns,
-        "the container backend must keep the bridge DNS resolver (enable_dns=true)"
+        "the container backend must disable the bridge DNS resolver (enable_dns=false)"
     );
 }
