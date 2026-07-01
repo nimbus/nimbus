@@ -219,9 +219,12 @@ impl KrunSandboxBackend {
     /// Reuses the container backend's shared netns free-functions; no
     /// netns/netavark/IPAM logic is forked here.
     fn configure_network(&self, manifest: &KrunSandboxManifest) -> Result<()> {
-        // Resolve this tenant's network segment once (distinct per-tenant subnet
-        // + bridge identity, audit M1); setup and the teardown path reuse it.
-        let network_config = self.network_config(&manifest.spec.tenant_id)?;
+        // One-shot: drop the legacy shared nimbus0 bridge before the first
+        // per-tenant setup (pre-launch migration, breaking).
+        purge_legacy_nimbus0_once(&self.config.state_root.join("networks"))?;
+        // Reuse the config resolved + persisted at manifest-prepare; never re-assign
+        // it (audit M1 / MTN4) so setup and teardown agree on the bridge.
+        let network_config = manifest.network_config.clone();
         create_persistent_network_namespace(&manifest.network_layout.netns_path)?;
         if let Err(error) = setup_container_network(
             &manifest.network_layout,
@@ -259,6 +262,10 @@ impl KrunSandboxBackend {
             let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
             return Err(error);
         }
+        // Take the tenant's refcount hold now the netns is up and pinned; the
+        // reaper frees the index + bridge when the last hold releases.
+        self.segment_allocator()?
+            .acquire(&manifest.spec.tenant_id, &manifest.handle.id)?;
         Ok(())
     }
 
@@ -360,25 +367,36 @@ impl KrunSandboxBackend {
         if let Err(error) = self.egress_proxies.stop(&manifest.handle.id) {
             errors.push(error.to_string());
         }
-        match self.network_config(&manifest.spec.tenant_id) {
-            Ok(network_config) => {
-                if let Err(error) = teardown_container_network(
-                    &manifest.network_layout,
-                    &network_config,
-                    &manifest.handle.id,
-                    manifest.spec.display_name(),
-                    &hostname_for(&manifest.spec),
-                    &manifest.spec.port_bindings,
-                    None,
-                ) {
-                    errors.push(error.to_string());
-                }
-            }
-            Err(error) => errors.push(error.to_string()),
+        if let Err(error) = teardown_container_network(
+            &manifest.network_layout,
+            &manifest.network_config,
+            &manifest.handle.id,
+            manifest.spec.display_name(),
+            &hostname_for(&manifest.spec),
+            &manifest.spec.port_bindings,
+            None,
+        ) {
+            errors.push(error.to_string());
         }
         if let Err(error) = remove_persistent_network_namespace(&manifest.network_layout.netns_path)
         {
             errors.push(error.to_string());
+        }
+        // Drop this sandbox's hold; on the LAST hold the tenant is drained, so
+        // reap its bridge (netavark won't auto-GC) and free the index for reuse.
+        match self.segment_allocator() {
+            Ok(allocator) => {
+                match allocator.release(&manifest.spec.tenant_id, &manifest.handle.id) {
+                    Ok(ReleaseOutcome::TenantDrained) => {
+                        if let Err(error) = reap_tenant_bridge(&manifest.network_config) {
+                            errors.push(error.to_string());
+                        }
+                    }
+                    Ok(ReleaseOutcome::StillLive) => {}
+                    Err(error) => errors.push(error.to_string()),
+                }
+            }
+            Err(error) => errors.push(error.to_string()),
         }
         if errors.is_empty() {
             Ok(())

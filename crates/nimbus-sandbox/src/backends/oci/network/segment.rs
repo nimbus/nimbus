@@ -25,6 +25,7 @@ use nimbus_core::TenantId;
 use nimbus_core::net::{Cidr, NetworkSegment};
 
 use crate::error::{Result, SandboxError};
+use crate::instance::SandboxId;
 
 /// The default single-node super-net: the node-0 `/16` slice of the cluster pool
 /// (`10.0.0.0/8`), so enrolling into a cluster later never re-carves live tenants.
@@ -47,15 +48,36 @@ pub(crate) struct InstalledSuperNet {
 /// Assigns a distinct, cluster-ready network segment per tenant. Injected into
 /// the OCI-family backends so the tenant→segment policy is defined once.
 pub(crate) trait NetworkSegmentAllocator: Send + Sync {
-    /// Idempotent: return the tenant's segment, assigning a fresh lowest-free
-    /// index on first call. Fail-closed if no super-net is installed or the pool
-    /// is exhausted.
+    /// Idempotent read-or-assign: return the tenant's segment (assigning a fresh
+    /// lowest-free index on first call) WITHOUT taking a sandbox hold. Fail-closed
+    /// if no super-net is installed or the pool is exhausted.
     fn segment_for(&self, tenant: &TenantId) -> Result<NetworkSegment>;
-    /// Free the tenant's index for reuse. MUST be called only after the tenant's
-    /// bridge/netns is torn down (the reaper's job, MTN4).
-    // The bridge reaper that calls this lands in MTN4; test-exercised until then.
-    #[allow(dead_code)]
-    fn release(&self, tenant: &TenantId) -> Result<()>;
+    /// Take a sandbox hold on the tenant's segment (assigning the index on the
+    /// first hold). Every started sandbox acquires; the index is not freed while
+    /// any hold is live — the crash-safe reaper's refcount.
+    fn acquire(&self, tenant: &TenantId, sandbox_id: &SandboxId) -> Result<NetworkSegment>;
+    /// Drop a sandbox's hold. Returns [`ReleaseOutcome::TenantDrained`] when the
+    /// last hold is gone (the caller must tear the tenant bridge down; the index
+    /// is now free for reuse), else [`ReleaseOutcome::StillLive`]. Idempotent.
+    fn release(&self, tenant: &TenantId, sandbox_id: &SandboxId) -> Result<ReleaseOutcome>;
+}
+
+/// The result of [`NetworkSegmentAllocator::release`].
+pub(crate) enum ReleaseOutcome {
+    /// The last sandbox released: the caller tears down the tenant bridge and the
+    /// index is now free for reuse.
+    TenantDrained,
+    /// Other sandboxes still hold the tenant's segment; keep the bridge.
+    StillLive,
+}
+
+/// A tenant's allocation: the assigned index plus the set of live sandbox ids
+/// holding its segment. The index is freed only when the last hold releases.
+#[derive(Default, Serialize, Deserialize)]
+struct TenantEntry {
+    index: u32,
+    #[serde(default)]
+    live_sandboxes: BTreeSet<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -65,8 +87,8 @@ struct SegmentState {
     /// silently reuse a stale-epoch block (the cluster reclamation-safety hook).
     supernet_cidr: Option<String>,
     supernet_epoch: Option<u64>,
-    /// tenant id → assigned index.
-    assignments: BTreeMap<String, u32>,
+    /// tenant id → its allocation (index + live-sandbox refcount).
+    tenants: BTreeMap<String, TenantEntry>,
 }
 
 /// Single-node allocator: carves per-tenant subnets from a locally-installed
@@ -240,32 +262,72 @@ impl SingleNodeSegmentAllocator {
     }
 }
 
+impl SingleNodeSegmentAllocator {
+    /// Get-or-assign the tenant's index under an already-held state lock,
+    /// fail-closed on a stale super-net or pool exhaustion.
+    fn assign_index(
+        &self,
+        supernet: &InstalledSuperNet,
+        state: &mut SegmentState,
+        tenant: &TenantId,
+    ) -> Result<u32> {
+        self.ensure_supernet_matches(supernet, state)?;
+        if let Some(entry) = state.tenants.get(tenant.as_str()) {
+            return Ok(entry.index);
+        }
+        let used: BTreeSet<u32> = state.tenants.values().map(|entry| entry.index).collect();
+        let index = (0u32..)
+            .find(|candidate| !used.contains(candidate))
+            .expect("the u32 index space cannot be exhausted by a live tenant set");
+        // Fail closed BEFORE committing if this index overflows the pool.
+        self.segment_at(supernet, index)?;
+        state.tenants.insert(
+            tenant.as_str().to_owned(),
+            TenantEntry {
+                index,
+                live_sandboxes: BTreeSet::new(),
+            },
+        );
+        state.supernet_cidr = Some(supernet.cidr.to_string());
+        state.supernet_epoch = Some(supernet.epoch);
+        Ok(index)
+    }
+}
+
 impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
     fn segment_for(&self, tenant: &TenantId) -> Result<NetworkSegment> {
         let supernet = self.installed()?.clone();
+        let index = self.with_state(|state| self.assign_index(&supernet, state, tenant))?;
+        self.segment_at(&supernet, index)
+    }
+
+    fn acquire(&self, tenant: &TenantId, sandbox_id: &SandboxId) -> Result<NetworkSegment> {
+        let supernet = self.installed()?.clone();
         let index = self.with_state(|state| {
-            self.ensure_supernet_matches(&supernet, state)?;
-            if let Some(&index) = state.assignments.get(tenant.as_str()) {
-                return Ok(index);
-            }
-            let used: BTreeSet<u32> = state.assignments.values().copied().collect();
-            let index = (0u32..)
-                .find(|candidate| !used.contains(candidate))
-                .expect("the u32 index space cannot be exhausted by a live tenant set");
-            // Fail closed BEFORE committing if this index overflows the pool.
-            self.segment_at(&supernet, index)?;
-            state.assignments.insert(tenant.as_str().to_owned(), index);
-            state.supernet_cidr = Some(supernet.cidr.to_string());
-            state.supernet_epoch = Some(supernet.epoch);
+            let index = self.assign_index(&supernet, state, tenant)?;
+            state
+                .tenants
+                .get_mut(tenant.as_str())
+                .expect("assign_index inserts the tenant entry")
+                .live_sandboxes
+                .insert(sandbox_id.as_str().to_owned());
             Ok(index)
         })?;
         self.segment_at(&supernet, index)
     }
 
-    fn release(&self, tenant: &TenantId) -> Result<()> {
+    fn release(&self, tenant: &TenantId, sandbox_id: &SandboxId) -> Result<ReleaseOutcome> {
         self.with_state(|state| {
-            state.assignments.remove(tenant.as_str());
-            Ok(())
+            let Some(entry) = state.tenants.get_mut(tenant.as_str()) else {
+                return Ok(ReleaseOutcome::StillLive);
+            };
+            entry.live_sandboxes.remove(sandbox_id.as_str());
+            if entry.live_sandboxes.is_empty() {
+                state.tenants.remove(tenant.as_str());
+                Ok(ReleaseOutcome::TenantDrained)
+            } else {
+                Ok(ReleaseOutcome::StillLive)
+            }
         })
     }
 }
@@ -277,6 +339,10 @@ mod tests {
 
     fn tenant(id: &str) -> TenantId {
         TenantId::new(id).expect("tenant id should parse")
+    }
+
+    fn sandbox(id: &str) -> SandboxId {
+        SandboxId::new(id)
     }
 
     #[test]
@@ -313,19 +379,54 @@ mod tests {
     }
 
     #[test]
-    fn release_frees_the_index_for_reuse() {
+    fn refcount_frees_the_index_only_after_the_last_sandbox_releases() {
         let dir = tempdir().expect("temp dir");
         let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
-        let a = allocator
-            .segment_for(&tenant("tenant-a"))
-            .expect("assign a");
-        assert_eq!(a.cidr().to_string(), "10.0.0.0/24");
-        allocator.release(&tenant("tenant-a")).expect("release a");
-        // The freed lowest index is handed to the next new tenant.
+        let a = tenant("tenant-a");
+
+        // Two sandboxes of tenant-a hold the same segment.
+        let s1 = allocator
+            .acquire(&a, &sandbox("sb-1"))
+            .expect("acquire sb-1");
+        let s2 = allocator
+            .acquire(&a, &sandbox("sb-2"))
+            .expect("acquire sb-2");
+        assert_eq!(s1.cidr().to_string(), "10.0.0.0/24");
+        assert_eq!(s1.cidr(), s2.cidr(), "same tenant shares one segment");
+
+        // Releasing one leaves the tenant live — the bridge stays, index held.
+        assert!(matches!(
+            allocator
+                .release(&a, &sandbox("sb-1"))
+                .expect("release sb-1"),
+            ReleaseOutcome::StillLive
+        ));
+        // A fresh tenant does NOT get tenant-a's still-held index.
+        let b = allocator
+            .acquire(&tenant("tenant-b"), &sandbox("sb-b"))
+            .expect("acquire b");
+        assert_eq!(b.cidr().to_string(), "10.0.1.0/24");
+
+        // Releasing the LAST sandbox drains the tenant and frees the index.
+        assert!(matches!(
+            allocator
+                .release(&a, &sandbox("sb-2"))
+                .expect("release sb-2"),
+            ReleaseOutcome::TenantDrained
+        ));
+        // The freed lowest index (10.0.0.0/24) is handed to the next new tenant.
         let c = allocator
-            .segment_for(&tenant("tenant-c"))
-            .expect("assign c");
+            .acquire(&tenant("tenant-c"), &sandbox("sb-c"))
+            .expect("acquire c");
         assert_eq!(c.cidr().to_string(), "10.0.0.0/24");
+
+        // Releasing an unknown sandbox is idempotent.
+        assert!(matches!(
+            allocator
+                .release(&tenant("nobody"), &sandbox("ghost"))
+                .expect("release ghost"),
+            ReleaseOutcome::StillLive
+        ));
     }
 
     #[test]
@@ -401,5 +502,43 @@ mod tests {
             format!("{error}").contains("epoch"),
             "must fail closed on epoch mismatch, got: {error}"
         );
+    }
+
+    #[test]
+    fn concurrent_acquire_release_across_threads_stays_consistent_under_the_lock() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = tempdir().expect("temp dir");
+        let root = Arc::new(dir.path().to_path_buf());
+        // 8 threads, each a distinct tenant, contending on the shared on-disk
+        // segments.json via the fs-exclusive lock: acquire a sole sandbox then
+        // release it, which must drain the tenant.
+        let handles: Vec<_> = (0..8u32)
+            .map(|i| {
+                let root = Arc::clone(&root);
+                thread::spawn(move || {
+                    let allocator = SingleNodeSegmentAllocator::single_node_default(&root);
+                    let tenant = tenant(&format!("t-{i}"));
+                    let sandbox = sandbox(&format!("sb-{i}"));
+                    let segment = allocator.acquire(&tenant, &sandbox).expect("acquire");
+                    assert!(segment.cidr().to_string().starts_with("10.0."));
+                    matches!(
+                        allocator.release(&tenant, &sandbox).expect("release"),
+                        ReleaseOutcome::TenantDrained
+                    )
+                })
+            })
+            .collect();
+        for handle in handles {
+            assert!(handle.join().expect("thread should not panic"));
+        }
+        // Every tenant drained, so the freed lowest index is reused: the next new
+        // tenant gets 10.0.0.0/24 (no leaked reservations under contention).
+        let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        let segment = allocator
+            .acquire(&tenant("after"), &sandbox("sb"))
+            .expect("acquire after drain");
+        assert_eq!(segment.cidr().to_string(), "10.0.0.0/24");
     }
 }

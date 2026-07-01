@@ -154,6 +154,9 @@ impl KrunSandboxBackend {
                 SandboxStatus::Starting,
             ),
         );
+        // Resolve the tenant's per-tenant network config ONCE and persist it so
+        // setup and teardown reuse the identical bridge without re-assigning (MTN4).
+        let network_config = self.network_config(&resolved_launch.spec.tenant_id)?;
         let manifest = KrunSandboxManifest {
             handle,
             spec: resolved_launch.spec,
@@ -162,6 +165,7 @@ impl KrunSandboxBackend {
             bundle_layout,
             conmon_layout,
             network_layout,
+            network_config,
             egress_proxy,
             conmon_launch,
             last_exit_code: None,

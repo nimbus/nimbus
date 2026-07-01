@@ -30,8 +30,9 @@ use crate::backends::oci::egress::{
 use crate::backends::oci::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
 use crate::backends::oci::network::{
     MachinePortProxy, NetworkSegmentAllocator, OciNetworkConfig, OciNetworkDirectEgress,
-    OciNetworkLayout, SingleNodeSegmentAllocator, create_persistent_network_namespace,
-    expose_machine_ports, pin_netns_egress_to_own_proxy, remove_persistent_network_namespace,
+    OciNetworkLayout, ReleaseOutcome, SingleNodeSegmentAllocator,
+    create_persistent_network_namespace, expose_machine_ports, pin_netns_egress_to_own_proxy,
+    purge_legacy_nimbus0_once, reap_tenant_bridge, remove_persistent_network_namespace,
     setup_container_network, start_machine_port_proxies, teardown_container_network,
     unexpose_machine_ports,
 };
@@ -125,16 +126,19 @@ impl ContainerSandboxBackend {
         )
     }
 
+    /// The per-node segment allocator, constructed on demand from the state root
+    /// (its state is the fs-locked segments.json, so it is stateless to hold).
+    fn segment_allocator(&self) -> Result<SingleNodeSegmentAllocator> {
+        SingleNodeSegmentAllocator::for_node_supernet(
+            &self.config.state_root,
+            &self.config.node_network_supernet,
+        )
+    }
+
     fn network_config(&self, tenant: &nimbus_core::TenantId) -> Result<OciNetworkConfig> {
         // Per-tenant segment: distinct subnet + bridge identity carved from the
         // node super-net, so two tenants never collide on one bridge (audit M1).
-        // The allocator is stateless to hold (its state is the fs-locked
-        // segments.json), so it is constructed on demand from the state root.
-        let segment = SingleNodeSegmentAllocator::for_node_supernet(
-            &self.config.state_root,
-            &self.config.node_network_supernet,
-        )?
-        .segment_for(tenant)?;
+        let segment = self.segment_allocator()?.segment_for(tenant)?;
         Ok(OciNetworkConfig {
             netavark_path: self.config.netavark_path.clone(),
             aardvark_dns_path: self.config.aardvark_dns_path.clone(),
@@ -456,6 +460,10 @@ impl ContainerSandboxBackend {
             ),
         );
 
+        // Resolve the tenant's per-tenant network config ONCE and persist it in
+        // the manifest so setup and teardown reuse the identical bridge without
+        // ever re-assigning (MTN4).
+        let network_config = self.network_config(&resolved_spec.tenant_id)?;
         Ok(ContainerStartPlan {
             manifest: ContainerSandboxManifest {
                 handle,
@@ -465,6 +473,7 @@ impl ContainerSandboxBackend {
                 bundle_layout,
                 conmon_layout,
                 network_layout,
+                network_config,
                 egress_proxy,
                 conmon_launch,
                 runner_config: ContainerRunnerExecutionConfig::from_backend_config(&self.config),
@@ -536,21 +545,16 @@ impl ContainerSandboxBackend {
         if let Err(error) = run_status_checked(&manifest.conmon_launch.delete_command) {
             errors.push(error.to_string());
         }
-        match self.network_config(&manifest.spec.tenant_id) {
-            Ok(network_config) => {
-                if let Err(error) = teardown_container_network(
-                    &manifest.network_layout,
-                    &network_config,
-                    &manifest.handle.id,
-                    manifest.spec.display_name(),
-                    &hostname_for(&manifest.spec),
-                    &manifest.spec.port_bindings,
-                    self.config.machine_port_forwarder.as_ref(),
-                ) {
-                    errors.push(error.to_string());
-                }
-            }
-            Err(error) => errors.push(error.to_string()),
+        if let Err(error) = teardown_container_network(
+            &manifest.network_layout,
+            &manifest.network_config,
+            &manifest.handle.id,
+            manifest.spec.display_name(),
+            &hostname_for(&manifest.spec),
+            &manifest.spec.port_bindings,
+            self.config.machine_port_forwarder.as_ref(),
+        ) {
+            errors.push(error.to_string());
         }
         if let Err(error) = remove_persistent_network_namespace(&manifest.network_layout.netns_path)
         {
@@ -707,10 +711,12 @@ impl ContainerSandboxBackend {
     }
 
     fn configure_network(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
-        // Resolve this tenant's network segment once (distinct per-tenant subnet
-        // + bridge identity); setup and every teardown path reuse the same
-        // config so they never disagree on the bridge (audit M1).
-        let network_config = self.network_config(&manifest.spec.tenant_id)?;
+        // One-shot: drop the legacy shared nimbus0 bridge before the first
+        // per-tenant setup (pre-launch migration, breaking).
+        purge_legacy_nimbus0_once(&self.config.state_root.join("networks"))?;
+        // Reuse the config resolved + persisted at manifest-prepare; never re-assign
+        // it (audit M1 / MTN4) so setup and teardown agree on the bridge.
+        let network_config = manifest.network_config.clone();
         create_persistent_network_namespace(&manifest.network_layout.netns_path)?;
         let assigned_ips = match setup_container_network(
             &manifest.network_layout,
@@ -782,6 +788,10 @@ impl ContainerSandboxBackend {
                 return Err(error);
             }
         }
+        // Take the tenant's refcount hold now the netns is up and pinned; the
+        // reaper frees the index + bridge when the last hold releases.
+        self.segment_allocator()?
+            .acquire(&manifest.spec.tenant_id, &manifest.handle.id)?;
         Ok(())
     }
 
@@ -833,25 +843,37 @@ impl ContainerSandboxBackend {
             errors.push(error.to_string());
         }
         let _ = run_status_best_effort(&manifest.conmon_launch.delete_command);
-        match self.network_config(&manifest.spec.tenant_id) {
-            Ok(network_config) => {
-                if let Err(error) = teardown_container_network(
-                    &manifest.network_layout,
-                    &network_config,
-                    &manifest.handle.id,
-                    manifest.spec.display_name(),
-                    &hostname_for(&manifest.spec),
-                    &manifest.spec.port_bindings,
-                    self.config.machine_port_forwarder.as_ref(),
-                ) {
-                    errors.push(error.to_string());
-                }
-            }
-            Err(error) => errors.push(error.to_string()),
+        if let Err(error) = teardown_container_network(
+            &manifest.network_layout,
+            &manifest.network_config,
+            &manifest.handle.id,
+            manifest.spec.display_name(),
+            &hostname_for(&manifest.spec),
+            &manifest.spec.port_bindings,
+            self.config.machine_port_forwarder.as_ref(),
+        ) {
+            errors.push(error.to_string());
         }
         if let Err(error) = remove_persistent_network_namespace(&manifest.network_layout.netns_path)
         {
             errors.push(error.to_string());
+        }
+        // Final teardown (not restart): drop this sandbox's hold; on the LAST hold
+        // the tenant is drained, so reap its bridge (netavark won't auto-GC) and
+        // free the index for reuse.
+        match self.segment_allocator() {
+            Ok(allocator) => {
+                match allocator.release(&manifest.spec.tenant_id, &manifest.handle.id) {
+                    Ok(ReleaseOutcome::TenantDrained) => {
+                        if let Err(error) = reap_tenant_bridge(&manifest.network_config) {
+                            errors.push(error.to_string());
+                        }
+                    }
+                    Ok(ReleaseOutcome::StillLive) => {}
+                    Err(error) => errors.push(error.to_string()),
+                }
+            }
+            Err(error) => errors.push(error.to_string()),
         }
         if let Some(forwarder) = self.config.machine_port_forwarder.as_ref() {
             let _ = unexpose_machine_ports(forwarder, &manifest.spec.port_bindings);

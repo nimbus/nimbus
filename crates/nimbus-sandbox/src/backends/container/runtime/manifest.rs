@@ -10,7 +10,9 @@ use crate::backends::oci::buildah::{ImageHealthcheck, MountedRootfsSession, OciE
 use crate::backends::oci::conmon::{OciConmonLaunchPlan, OciConmonLayout};
 use crate::backends::oci::egress::EgressProxyAssignment;
 use crate::backends::oci::materializer::MaterializedImageRootfs;
-use crate::backends::oci::network::{OciMachinePortForwarderConfig, OciNetworkLayout};
+use crate::backends::oci::network::{
+    OciMachinePortForwarderConfig, OciNetworkConfig, OciNetworkLayout,
+};
 use crate::instance::{SandboxHandle, SandboxStatus};
 use crate::spec::SandboxSpec;
 
@@ -30,6 +32,11 @@ pub(super) struct ContainerSandboxManifest {
     pub(super) bundle_layout: ContainerBundleLayout,
     pub(super) conmon_layout: OciConmonLayout,
     pub(super) network_layout: OciNetworkLayout,
+    /// The tenant's resolved per-tenant network config (subnet/bridge/id),
+    /// assigned once at manifest-prepare so setup AND teardown reuse the identical
+    /// bridge — never a re-assign at teardown (audit M1 / MTN4 reaper).
+    #[serde(default)]
+    pub(super) network_config: OciNetworkConfig,
     pub(super) egress_proxy: Option<EgressProxyAssignment>,
     pub(super) conmon_launch: OciConmonLaunchPlan,
     #[serde(default)]
