@@ -291,6 +291,11 @@ struct KrunSandboxManifest {
     bundle_layout: KrunBundleLayout,
     conmon_layout: OciConmonLayout,
     network_layout: OciNetworkLayout,
+    /// The tenant's resolved per-tenant network config, assigned once at
+    /// manifest-prepare so setup and teardown reuse the identical bridge without
+    /// re-assigning (audit M1 / MTN4 reaper).
+    #[serde(default)]
+    network_config: OciNetworkConfig,
     egress_proxy: Option<EgressProxyAssignment>,
     conmon_launch: OciConmonLaunchPlan,
     last_exit_code: Option<i32>,

@@ -190,6 +190,7 @@ pub(super) fn sample_manifest(spec: SandboxSpec, start_mode: KrunStartMode) -> K
             &crate::instance::SandboxId::new("sandbox-01"),
         ),
         network_layout,
+        network_config: Default::default(),
         egress_proxy: None,
         conmon_launch: super::super::OciConmonLaunchPlan {
             create_command: CommandSpec::new("/bin/true"),

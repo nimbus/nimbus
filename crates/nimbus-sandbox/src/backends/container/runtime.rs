@@ -456,6 +456,10 @@ impl ContainerSandboxBackend {
             ),
         );
 
+        // Resolve the tenant's per-tenant network config ONCE and persist it in
+        // the manifest so setup and teardown reuse the identical bridge without
+        // ever re-assigning (MTN4).
+        let network_config = self.network_config(&resolved_spec.tenant_id)?;
         Ok(ContainerStartPlan {
             manifest: ContainerSandboxManifest {
                 handle,
@@ -465,6 +469,7 @@ impl ContainerSandboxBackend {
                 bundle_layout,
                 conmon_layout,
                 network_layout,
+                network_config,
                 egress_proxy,
                 conmon_launch,
                 runner_config: ContainerRunnerExecutionConfig::from_backend_config(&self.config),
