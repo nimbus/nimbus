@@ -36,9 +36,9 @@ use crate::backends::oci::network::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
     DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, NetworkSegmentAllocator, OciNetworkConfig,
     OciNetworkDirectEgress, OciNetworkLayout, ReleaseOutcome, SingleNodeSegmentAllocator,
-    create_persistent_network_namespace, pin_netns_egress_to_own_proxy, purge_legacy_nimbus0_once,
-    reap_bridge_interface, reconcile_network_segment_orphans, remove_persistent_network_namespace,
-    setup_container_network, teardown_container_network,
+    create_persistent_network_namespace, pin_netns_egress_to_own_proxy, place_sandbox_on_block,
+    purge_legacy_nimbus0_once, reap_bridge_interface, reconcile_network_segment_orphans,
+    remove_persistent_network_namespace, setup_container_network, teardown_container_network,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -49,6 +49,7 @@ use crate::spec::{
     SandboxOciImageSource, SandboxResourceQuotaPolicy, SandboxRootSpec, SandboxRootfsSpec,
     SandboxSpec, resolve_process_without_image_defaults,
 };
+use nimbus_core::net::NetworkSegment;
 
 mod lifecycle;
 mod readiness;
@@ -194,11 +195,11 @@ impl KrunSandboxBackend {
         )
     }
 
-    fn network_config(&self, tenant: &nimbus_core::TenantId) -> Result<OciNetworkConfig> {
-        // Per-tenant segment: distinct subnet + bridge identity carved from the
-        // node super-net (audit M1).
-        let segment = self.segment_allocator()?.segment_for(tenant)?;
-        Ok(OciNetworkConfig {
+    /// Build the OCI network config for a specific resolved block segment. Shared
+    /// by the primary-block `network_config` and block-aware `place_sandbox_config`
+    /// (MTN6).
+    fn config_from_segment(&self, segment: &NetworkSegment) -> OciNetworkConfig {
+        OciNetworkConfig {
             netavark_path: self.config.netavark_path.clone(),
             aardvark_dns_path: self.config.aardvark_dns_path.clone(),
             network_name: segment.network_name().to_owned(),
@@ -211,7 +212,31 @@ impl KrunSandboxBackend {
             // is the residual DNS-exfil channel KME5 flagged.
             enable_dns: false,
             network_id: segment.network_id().as_str().to_owned(),
-        })
+        }
+    }
+
+    fn network_config(&self, tenant: &nimbus_core::TenantId) -> Result<OciNetworkConfig> {
+        // Per-tenant PRIMARY block: distinct subnet + bridge identity (audit M1).
+        let segment = self.segment_allocator()?.segment_for(tenant)?;
+        Ok(self.config_from_segment(&segment))
+    }
+
+    /// Block-aware placement (MTN6): resolve + reserve the block bridge that will
+    /// host `sandbox_id`, growing a new sibling block when the current `/24`s are
+    /// full. Fail-closed when the node super-net is exhausted.
+    fn place_sandbox_config(
+        &self,
+        tenant: &nimbus_core::TenantId,
+        layout: &OciNetworkLayout,
+        sandbox_id: &SandboxId,
+    ) -> Result<OciNetworkConfig> {
+        place_sandbox_on_block(
+            &self.segment_allocator()?,
+            tenant,
+            layout,
+            sandbox_id,
+            |segment| self.config_from_segment(segment),
+        )
     }
 
     fn remove_tenant_artifacts_sync(&self, tenant_id: &nimbus_core::TenantId) -> Result<()> {

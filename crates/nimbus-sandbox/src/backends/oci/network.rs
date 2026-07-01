@@ -7,6 +7,7 @@ mod ipam;
 mod layout;
 mod netavark;
 mod netns;
+mod placement;
 mod proxy;
 mod reaper;
 mod segment;
@@ -14,11 +15,13 @@ mod segment;
 pub(crate) use egress_pin::pin_netns_egress_to_own_proxy;
 pub use forwarding::OciMachinePortForwarderConfig;
 pub(crate) use forwarding::{expose_machine_ports, unexpose_machine_ports};
+pub(crate) use ipam::allocate_container_ips;
 pub(crate) use layout::{
     OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, bridge_gateway_addr,
 };
 pub(crate) use netavark::{setup_container_network, teardown_container_network};
 pub(crate) use netns::{create_persistent_network_namespace, remove_persistent_network_namespace};
+pub(crate) use placement::place_sandbox_on_block;
 pub(crate) use proxy::{MachinePortProxy, start_machine_port_proxies};
 pub(crate) use reaper::{
     purge_legacy_nimbus0_once, reap_bridge_interface, reconcile_network_segment_orphans,
@@ -45,10 +48,7 @@ const MACHINE_PORT_PROXY_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(test)]
 use forwarding::machine_forward_remote;
 #[cfg(test)]
-use ipam::{
-    allocate_container_ips, deallocate_container_ips, load_container_ips,
-    parse_ipv4_subnet_and_gateway,
-};
+use ipam::{deallocate_container_ips, load_container_ips, parse_ipv4_subnet_and_gateway};
 #[cfg(test)]
 use netavark::{
     build_bridge_network, build_netavark_request, netavark_path_env, netavark_port_bindings,
@@ -543,10 +543,11 @@ mod tests {
             first,
             vec!["10.0.0.2".parse::<Ipv4Addr>().expect("IPv4 should parse")]
         );
+        // Exhaustion is now a typed signal so block-aware placement (MTN6) can
+        // grow an additional block instead of failing the launch.
         assert!(matches!(
             second,
-            SandboxError::OperationFailed { message }
-                if message.contains("failed to find free OCI IPv4 address")
+            SandboxError::NetworkSubnetExhausted { subnet } if subnet == "10.0.0.0/30"
         ));
     }
 

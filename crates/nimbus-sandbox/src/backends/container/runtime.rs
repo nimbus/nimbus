@@ -32,15 +32,17 @@ use crate::backends::oci::network::{
     MachinePortProxy, NetworkSegmentAllocator, OciNetworkConfig, OciNetworkDirectEgress,
     OciNetworkLayout, ReleaseOutcome, SingleNodeSegmentAllocator,
     create_persistent_network_namespace, expose_machine_ports, pin_netns_egress_to_own_proxy,
-    purge_legacy_nimbus0_once, reap_bridge_interface, reconcile_network_segment_orphans,
-    remove_persistent_network_namespace, setup_container_network, start_machine_port_proxies,
-    teardown_container_network, unexpose_machine_ports,
+    place_sandbox_on_block, purge_legacy_nimbus0_once, reap_bridge_interface,
+    reconcile_network_segment_orphans, remove_persistent_network_namespace,
+    setup_container_network, start_machine_port_proxies, teardown_container_network,
+    unexpose_machine_ports,
 };
 use crate::backends::oci::port_manager::PortManager;
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
 use crate::spec::{SandboxOciImageSource, SandboxRootSpec, SandboxSpec};
+use nimbus_core::net::NetworkSegment;
 use nimbus_egress::EgressPolicy;
 
 pub use config::{ContainerSandboxBackendConfig, ContainerStartMode};
@@ -143,11 +145,11 @@ impl ContainerSandboxBackend {
         )
     }
 
-    fn network_config(&self, tenant: &nimbus_core::TenantId) -> Result<OciNetworkConfig> {
-        // Per-tenant segment: distinct subnet + bridge identity carved from the
-        // node super-net, so two tenants never collide on one bridge (audit M1).
-        let segment = self.segment_allocator()?.segment_for(tenant)?;
-        Ok(OciNetworkConfig {
+    /// Build the OCI network config for a specific resolved block segment — the
+    /// bridge identity + `/24` subnet + DNS-off + deny-egress policy. Shared by the
+    /// primary-block `network_config` and block-aware `place_sandbox_config` (MTN6).
+    fn config_from_segment(&self, segment: &NetworkSegment) -> OciNetworkConfig {
+        OciNetworkConfig {
             netavark_path: self.config.netavark_path.clone(),
             aardvark_dns_path: self.config.aardvark_dns_path.clone(),
             network_name: segment.network_name().to_owned(),
@@ -161,7 +163,36 @@ impl ContainerSandboxBackend {
             // PEP (the KME5 posture) — identical to the krun backend.
             enable_dns: false,
             network_id: segment.network_id().as_str().to_owned(),
-        })
+        }
+    }
+
+    fn network_config(&self, tenant: &nimbus_core::TenantId) -> Result<OciNetworkConfig> {
+        // Per-tenant PRIMARY block: distinct subnet + bridge identity carved from
+        // the node super-net, so two tenants never collide on one bridge (M1).
+        let segment = self.segment_allocator()?.segment_for(tenant)?;
+        Ok(self.config_from_segment(&segment))
+    }
+
+    /// Block-aware placement (MTN6): resolve the network config for the block
+    /// bridge that will host `sandbox_id`, reserving its IP. Tries the tenant's
+    /// blocks in order and, when a block's `/24` is exhausted, grows a new sibling
+    /// block bridge (a CREATE — netavark has no live subnet-add) and places there.
+    /// Fail-closed when the node super-net is exhausted. `allocate_container_ips`
+    /// is idempotent per sandbox, so `setup_container_network` later reuses the
+    /// reserved IP on the placed block.
+    fn place_sandbox_config(
+        &self,
+        tenant: &nimbus_core::TenantId,
+        layout: &OciNetworkLayout,
+        sandbox_id: &SandboxId,
+    ) -> Result<OciNetworkConfig> {
+        place_sandbox_on_block(
+            &self.segment_allocator()?,
+            tenant,
+            layout,
+            sandbox_id,
+            |segment| self.config_from_segment(segment),
+        )
     }
 
     fn start_sync(&self, spec: SandboxSpec) -> Result<SandboxHandle> {
@@ -237,7 +268,10 @@ impl ContainerSandboxBackend {
         if launch_plan.manifest.egress_proxy.is_some() {
             return Ok(());
         }
-        let egress_proxy = self.allocate_egress_proxy(&launch_plan.manifest.spec)?;
+        let egress_proxy = self.allocate_egress_proxy(
+            &launch_plan.manifest.network_config,
+            &launch_plan.manifest.spec,
+        )?;
         write_bundle_config(
             &launch_plan.manifest.bundle_layout,
             &hostname_for(&launch_plan.manifest.spec),
@@ -389,14 +423,24 @@ impl ContainerSandboxBackend {
                 &resolved_launch.image_metadata.exposed_ports,
             )?,
         );
-        let egress_proxy = (self.config.start_mode == ContainerStartMode::Execute)
-            .then(|| self.allocate_egress_proxy(&resolved_spec))
-            .transpose()?;
         let network_layout = OciNetworkLayout::new(
             &self.config.state_root,
             &resolved_spec.tenant_id,
             sandbox_id,
         );
+        network_layout.ensure_directories()?;
+        // Block-aware placement (MTN6): reserve the block bridge that will host
+        // this sandbox — growing a new sibling block when the current /24s are
+        // full — so the PEP + bridge below key on the PLACED block. Plan-only
+        // previews use the primary block without reserving an IP.
+        let network_config = if self.config.start_mode == ContainerStartMode::Execute {
+            self.place_sandbox_config(&resolved_spec.tenant_id, &network_layout, sandbox_id)?
+        } else {
+            self.network_config(&resolved_spec.tenant_id)?
+        };
+        let egress_proxy = (self.config.start_mode == ContainerStartMode::Execute)
+            .then(|| self.allocate_egress_proxy(&network_config, &resolved_spec))
+            .transpose()?;
         let bundle_layout = ContainerBundleLayout::new(crate::artifact_paths::bundle_dir(
             &self.config.bundle_root,
             &resolved_launch.spec.tenant_id,
@@ -433,7 +477,6 @@ impl ContainerSandboxBackend {
                     self.config.state_root.display()
                 ),
             })?;
-        network_layout.ensure_directories()?;
 
         let conmon_launch = build_launch_plan(
             &OciConmonConfig {
@@ -470,10 +513,9 @@ impl ContainerSandboxBackend {
             ),
         );
 
-        // Resolve the tenant's per-tenant network config ONCE and persist it in
-        // the manifest so setup and teardown reuse the identical bridge without
-        // ever re-assigning (MTN4).
-        let network_config = self.network_config(&resolved_spec.tenant_id)?;
+        // network_config was resolved by block-aware placement above and is
+        // persisted so setup + teardown reuse the identical placed block bridge
+        // without ever re-assigning (MTN4/MTN6).
         Ok(ContainerStartPlan {
             manifest: ContainerSandboxManifest {
                 handle,
@@ -805,12 +847,16 @@ impl ContainerSandboxBackend {
         Ok(())
     }
 
-    fn allocate_egress_proxy(&self, spec: &SandboxSpec) -> Result<EgressProxyAssignment> {
-        allocate_oci_egress_proxy(
-            &self.network_config(&spec.tenant_id)?,
-            &self.port_manager(),
-            &spec.port_bindings,
-        )
+    /// Bind the sandbox's egress PEP on the gateway of its PLACED block bridge
+    /// (`network_config`), so a sandbox on a grown block reaches its own on-link
+    /// PEP (a non-primary block's PEP on the primary gateway would be
+    /// isolate-dropped — MTN6).
+    fn allocate_egress_proxy(
+        &self,
+        network_config: &OciNetworkConfig,
+        spec: &SandboxSpec,
+    ) -> Result<EgressProxyAssignment> {
+        allocate_oci_egress_proxy(network_config, &self.port_manager(), &spec.port_bindings)
     }
 
     fn ensure_egress_proxy_running(&self, manifest: &ContainerSandboxManifest) -> Result<()> {

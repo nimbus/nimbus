@@ -1358,10 +1358,12 @@ fn execute_egress_proxy_binds_bridge_gateway_after_published_ports() {
     config.published_port_range = 15000..=15002;
     let backend = KrunSandboxBackend::new(config);
 
+    let spec = sample_spec().with_port_binding(SandboxPortBinding::tcp("extra", 15000, 8080));
+    let network_config = backend
+        .network_config(&spec.tenant_id)
+        .expect("primary network config resolves");
     let proxy = backend
-        .allocate_egress_proxy(
-            &sample_spec().with_port_binding(SandboxPortBinding::tcp("extra", 15000, 8080)),
-        )
+        .allocate_egress_proxy(&network_config, &spec)
         .expect("execute launches should assign a bridge-reachable egress proxy");
 
     assert_eq!(

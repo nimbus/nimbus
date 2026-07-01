@@ -58,15 +58,28 @@ impl KrunSandboxBackend {
         apply_guest_user_switch(&mut resolved_launch.spec, &resolved_launch.image_metadata)?;
         self.resource_quota_manager()
             .ensure_launch_quota(&resolved_launch.spec)?;
+        let network_layout = OciNetworkLayout::new(
+            &self.config.state_root,
+            &resolved_launch.spec.tenant_id,
+            sandbox_id,
+        );
+        network_layout.ensure_directories()?;
+        // Block-aware placement (MTN6): reserve the block bridge that will host
+        // this sandbox — growing a new sibling block when the current /24s are
+        // full — so the PEP + bridge below key on the PLACED block. Plan-only
+        // previews use the primary block without reserving an IP.
+        let network_config = if self.config.start_mode == KrunStartMode::Execute {
+            self.place_sandbox_config(&resolved_launch.spec.tenant_id, &network_layout, sandbox_id)?
+        } else {
+            self.network_config(&resolved_launch.spec.tenant_id)?
+        };
         // Execute-mode launches reach the guest through a host-side egress PEP
-        // bound on the bridge gateway; plan-only materialization claims no live
-        // proxy. Planning is platform-independent and never launches a VMM; the
-        // fail-closed readiness gate lives at launch time
-        // (`ensure_execute_egress_enforced`, run immediately before crun spawns
-        // the VMM), so this assignment only wires the proxy the gate later
-        // verifies is ready.
+        // bound on the PLACED block's bridge gateway; plan-only materialization
+        // claims no live proxy. Planning never launches a VMM; the fail-closed
+        // readiness gate lives at launch time (`ensure_execute_egress_enforced`),
+        // so this assignment only wires the proxy the gate later verifies.
         let egress_proxy = (self.config.start_mode == KrunStartMode::Execute)
-            .then(|| self.allocate_egress_proxy(&resolved_launch.spec))
+            .then(|| self.allocate_egress_proxy(&network_config, &resolved_launch.spec))
             .transpose()?;
         // Point the guest env at the assigned host-side PEP. Plan-only launches
         // claim no proxy, so no proxy env is injected for them.
@@ -74,11 +87,6 @@ impl KrunSandboxBackend {
             .as_ref()
             .map(EgressProxyAssignment::proxy_url)
             .transpose()?;
-        let network_layout = OciNetworkLayout::new(
-            &self.config.state_root,
-            &resolved_launch.spec.tenant_id,
-            sandbox_id,
-        );
         let bundle_layout = KrunBundleLayout::new(crate::artifact_paths::bundle_dir(
             &self.config.bundle_root,
             &resolved_launch.spec.tenant_id,
@@ -112,7 +120,6 @@ impl KrunSandboxBackend {
                     self.config.state_root.display()
                 ),
             })?;
-        network_layout.ensure_directories()?;
 
         let conmon_launch = build_launch_plan(
             &OciConmonConfig {
@@ -154,9 +161,9 @@ impl KrunSandboxBackend {
                 SandboxStatus::Starting,
             ),
         );
-        // Resolve the tenant's per-tenant network config ONCE and persist it so
-        // setup and teardown reuse the identical bridge without re-assigning (MTN4).
-        let network_config = self.network_config(&resolved_launch.spec.tenant_id)?;
+        // network_config was resolved by block-aware placement above and is
+        // persisted so setup + teardown reuse the identical placed block bridge
+        // without ever re-assigning (MTN4/MTN6).
         let manifest = KrunSandboxManifest {
             handle,
             spec: resolved_launch.spec,
@@ -311,12 +318,15 @@ impl KrunSandboxBackend {
     /// Assign a host-side egress PEP for an execute-mode launch: the proxy binds
     /// on the bridge gateway address so it is the only outbound path reachable
     /// from inside the sandbox's deny-by-default network namespace.
+    /// Bind the sandbox's egress PEP on the gateway of its PLACED block bridge, so
+    /// a sandbox on a grown block reaches its own on-link PEP (MTN6).
     pub(super) fn allocate_egress_proxy(
         &self,
+        network_config: &OciNetworkConfig,
         spec: &SandboxSpec,
     ) -> Result<EgressProxyAssignment> {
         crate::backends::oci::egress::allocate_egress_proxy(
-            &self.network_config(&spec.tenant_id)?,
+            network_config,
             &self.port_manager(),
             &spec.port_bindings,
         )

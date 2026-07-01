@@ -26,6 +26,8 @@ KRUN_VM="crates/nimbus-sandbox/src/backends/krun/vm.rs"
 EGRESS_PROOF="crates/nimbus-sandbox/tests/krun_linux_egress.rs"
 REAPER="crates/nimbus-sandbox/src/backends/oci/network/reaper.rs"
 SCHEDULING="crates/nimbus-workloads/src/scheduling.rs"
+PLACEMENT="crates/nimbus-sandbox/src/backends/oci/network/placement.rs"
+KRUN_START="crates/nimbus-sandbox/src/backends/krun/vm/start.rs"
 
 PASS=0
 FAIL=0
@@ -132,11 +134,11 @@ step 8 "MTN4 reaper WIRED into the backends (acquire hold, reap on drain, legacy
 CB="crates/nimbus-sandbox/src/backends/container/ crates/nimbus-sandbox/src/backends/krun/"
 if grep -rqE '\.acquire\(&' ${CB} \
   && grep -rqE 'ReleaseOutcome::TenantDrained' ${CB} \
-  && grep -rqE 'reap_tenant_bridge\(&' ${CB} \
+  && grep -rqE 'reap_bridge_interface\(' ${CB} \
   && grep -rqE 'purge_legacy_nimbus0_once\(' ${CB}; then
-  pass "acquire hold + ReleaseOutcome::TenantDrained -> reap_tenant_bridge + legacy purge wired in both backends"
+  pass "acquire hold + ReleaseOutcome::TenantDrained -> reap_bridge_interface (all blocks) + legacy purge wired in both backends"
 else
-  fail "MTN4 reaper not wired into the backends" "expected .acquire + ReleaseOutcome::TenantDrained + reap_tenant_bridge + purge_legacy_nimbus0_once call sites in container/ + krun/"
+  fail "MTN4 reaper not wired into the backends" "expected .acquire + ReleaseOutcome::TenantDrained + reap_bridge_interface + purge_legacy_nimbus0_once call sites in container/ + krun/"
 fi
 
 # -------- MTN5: host-side inter-tenant isolation + DNS-off -----------------
@@ -188,6 +190,20 @@ if grep -qE 'remaining_segments' "${SCHEDULING}" \
   pass "NodeCapacity.remaining_segments + fail-closed placement when exhausted + test"
 else
   fail "MTN6 NodeCapacity segment dimension missing" "expected remaining_segments + fail-closed placement + test in ${SCHEDULING}"
+fi
+
+step 14 "MTN6 block-aware placement wired into BOTH backends (grow-on-exhaustion)"
+# Anchor on the shared placement helper + grow_block + the call sites at planning
+# in both backends + the non-vacuous grow test — a defined-but-unwired placement
+# is vacuous (M21).
+if grep -qE 'fn place_sandbox_on_block' "${PLACEMENT}" \
+  && grep -qE 'placement_grows_onto_a_new_block' "${PLACEMENT}" \
+  && grep -qE 'fn grow_block' "${SEG}" \
+  && grep -qE 'place_sandbox_config\(&resolved_spec\.tenant_id' "${CONTAINER_RT}" \
+  && grep -qE 'place_sandbox_config\(&resolved_launch\.spec\.tenant_id' "${KRUN_START}"; then
+  pass "place_sandbox_on_block + grow_block + placement wired at planning in both backends + grow test"
+else
+  fail "MTN6 multi-block placement not wired" "expected place_sandbox_on_block + place_sandbox_config call sites in both backends' planning + a grow test"
 fi
 
 # -------- summary ----------------------------------------------------------

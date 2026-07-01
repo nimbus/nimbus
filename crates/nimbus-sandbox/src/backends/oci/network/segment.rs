@@ -63,9 +63,8 @@ pub(crate) trait NetworkSegmentAllocator: Send + Sync {
     /// Append an additional `/24` block (a new sibling bridge) to a tenant that has
     /// exhausted its current block(s). Fail-closed on pool exhaustion or the
     /// per-tenant block cap. On-demand growth is a bridge CREATE, never a mutation
-    /// of a live bridge (netavark has no live subnet-add — MTN6).
-    // Wired into block-aware sandbox placement in MTN6 PR-B; test-exercised until then.
-    #[allow(dead_code)]
+    /// of a live bridge (netavark has no live subnet-add — MTN6). Wired into
+    /// block-aware sandbox placement (`place_sandbox_on_block`).
     fn grow_block(&self, tenant: &TenantId) -> Result<NetworkSegment>;
 }
 
@@ -81,8 +80,6 @@ pub(crate) enum ReleaseOutcome {
 /// The maximum number of `/24` blocks (bridges) a single tenant may hold. Each
 /// block is 253 sandboxes, so 64 blocks is ~16k sandboxes/tenant — generous —
 /// while bounding a runaway tenant's consumption of the node super-net.
-// Consumed by grow_block, which block-aware placement wires in MTN6 PR-B.
-#[allow(dead_code)]
 const MAX_BLOCKS_PER_TENANT: usize = 64;
 
 /// A tenant's allocation: its ordered list of block indices (element 0 is the
