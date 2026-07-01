@@ -32,9 +32,9 @@ use crate::backends::oci::network::{
     MachinePortProxy, NetworkSegmentAllocator, OciNetworkConfig, OciNetworkDirectEgress,
     OciNetworkLayout, ReleaseOutcome, SingleNodeSegmentAllocator,
     create_persistent_network_namespace, expose_machine_ports, pin_netns_egress_to_own_proxy,
-    purge_legacy_nimbus0_once, reap_tenant_bridge, remove_persistent_network_namespace,
-    setup_container_network, start_machine_port_proxies, teardown_container_network,
-    unexpose_machine_ports,
+    purge_legacy_nimbus0_once, reap_tenant_bridge, reconcile_network_segment_orphans,
+    remove_persistent_network_namespace, setup_container_network, start_machine_port_proxies,
+    teardown_container_network, unexpose_machine_ports,
 };
 use crate::backends::oci::port_manager::PortManager;
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -69,6 +69,14 @@ pub struct PreparedContainerServiceWorkload {
 
 impl ContainerSandboxBackend {
     pub fn new(config: ContainerSandboxBackendConfig) -> Self {
+        // Startup orphan GC: reclaim segment holds whose sandbox netns is gone
+        // (best-effort; a fresh node with no persisted state is a no-op).
+        if let Ok(allocator) = SingleNodeSegmentAllocator::for_node_supernet(
+            &config.state_root,
+            &config.node_network_supernet,
+        ) {
+            let _ = reconcile_network_segment_orphans(&config.state_root, &allocator);
+        }
         Self {
             config,
             egress_proxies: EgressProxyRegistry::new(),

@@ -24,6 +24,7 @@ NETWORK="crates/nimbus-sandbox/src/backends/oci/network.rs"
 CONTAINER_RT="crates/nimbus-sandbox/src/backends/container/runtime.rs"
 KRUN_VM="crates/nimbus-sandbox/src/backends/krun/vm.rs"
 EGRESS_PROOF="crates/nimbus-sandbox/tests/krun_linux_egress.rs"
+REAPER="crates/nimbus-sandbox/src/backends/oci/network/reaper.rs"
 
 PASS=0
 FAIL=0
@@ -163,6 +164,20 @@ if grep -qE 'fn krun_two_tenants_cannot_reach_each_others_sandbox' "${EGRESS_PRO
   pass "cross-tenant deny-proof present (own_egress positive control + cross_tenant_reach denied)"
 else
   fail "MTN5 cross-tenant KVM proof missing" "expected krun_two_tenants_cannot_reach_each_others_sandbox with own_egress + cross_tenant_reach"
+fi
+
+# -------- MTN6: startup orphan GC (reclaims crash-leaked segment holds) -----
+
+step 12 "MTN6 startup orphan-GC WIRED into both backends' new() (reclaimed count)"
+# Anchor on the CALL sites in both backends' new() + the primitive + a reclaim
+# test — a defined-but-unwired GC is vacuous (M21).
+if grep -qE 'reconcile_network_segment_orphans\(&config\.state_root' "${CONTAINER_RT}" \
+  && grep -qE 'reconcile_network_segment_orphans\(&config\.state_root' "${KRUN_VM}" \
+  && grep -qE 'fn reconcile_orphans' "${SEG}" \
+  && grep -qE 'reconcile_reclaims_holds_whose_netns_is_gone' "${REAPER}"; then
+  pass "reconcile_network_segment_orphans called in both new() + reconcile_orphans primitive + reclaim test"
+else
+  fail "MTN6 orphan-GC not wired" "expected reconcile_network_segment_orphans in both backends' new() + a reclaim test"
 fi
 
 # -------- summary ----------------------------------------------------------

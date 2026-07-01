@@ -37,8 +37,8 @@ use crate::backends::oci::network::{
     DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, NetworkSegmentAllocator, OciNetworkConfig,
     OciNetworkDirectEgress, OciNetworkLayout, ReleaseOutcome, SingleNodeSegmentAllocator,
     create_persistent_network_namespace, pin_netns_egress_to_own_proxy, purge_legacy_nimbus0_once,
-    reap_tenant_bridge, remove_persistent_network_namespace, setup_container_network,
-    teardown_container_network,
+    reap_tenant_bridge, reconcile_network_segment_orphans, remove_persistent_network_namespace,
+    setup_container_network, teardown_container_network,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -171,6 +171,14 @@ pub struct KrunSandboxBackend {
 
 impl KrunSandboxBackend {
     pub fn new(config: KrunSandboxBackendConfig) -> Self {
+        // Startup orphan GC: reclaim segment holds whose sandbox netns is gone
+        // (best-effort; a fresh node with no persisted state is a no-op).
+        if let Ok(allocator) = SingleNodeSegmentAllocator::for_node_supernet(
+            &config.state_root,
+            &config.node_network_supernet,
+        ) {
+            let _ = reconcile_network_segment_orphans(&config.state_root, &allocator);
+        }
         Self {
             config,
             egress_proxies: EgressProxyRegistry::new(),
