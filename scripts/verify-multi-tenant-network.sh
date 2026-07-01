@@ -23,6 +23,7 @@ NETAVARK="crates/nimbus-sandbox/src/backends/oci/network/netavark.rs"
 NETWORK="crates/nimbus-sandbox/src/backends/oci/network.rs"
 CONTAINER_RT="crates/nimbus-sandbox/src/backends/container/runtime.rs"
 KRUN_VM="crates/nimbus-sandbox/src/backends/krun/vm.rs"
+EGRESS_PROOF="crates/nimbus-sandbox/tests/krun_linux_egress.rs"
 
 PASS=0
 FAIL=0
@@ -153,6 +154,15 @@ if grep -qE 'enable_dns: false' "${CONTAINER_RT}" \
   pass "both backends resolve names via the PEP (enable_dns=false)"
 else
   fail "MTN5 DNS not off on both backends" "expected enable_dns: false in both network_config methods"
+fi
+
+step 11 "MTN5 two-tenant cross-tenant KVM deny-proof present (with positive control)"
+if grep -qE 'fn krun_two_tenants_cannot_reach_each_others_sandbox' "${EGRESS_PROOF}" \
+  && grep -qE 'own_egress=allowed' "${EGRESS_PROOF}" \
+  && grep -qE 'cross_tenant_reach=denied' "${EGRESS_PROOF}"; then
+  pass "cross-tenant deny-proof present (own_egress positive control + cross_tenant_reach denied)"
+else
+  fail "MTN5 cross-tenant KVM proof missing" "expected krun_two_tenants_cannot_reach_each_others_sandbox with own_egress + cross_tenant_reach"
 fi
 
 # -------- summary ----------------------------------------------------------
