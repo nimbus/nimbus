@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 mod dto;
+mod egress_pin;
 mod forwarding;
 mod ipam;
 mod layout;
@@ -8,6 +9,7 @@ mod netavark;
 mod netns;
 mod proxy;
 
+pub(crate) use egress_pin::pin_netns_egress_to_own_proxy;
 pub use forwarding::OciMachinePortForwarderConfig;
 pub(crate) use forwarding::{expose_machine_ports, unexpose_machine_ports};
 pub(crate) use layout::{

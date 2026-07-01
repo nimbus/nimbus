@@ -212,11 +212,12 @@ impl KrunSandboxBackend {
     }
 
     /// Stand up the sandbox's deny-by-default network namespace: create the
-    /// persistent netns, then run the shared netavark setup (no-default-route
-    /// deny chain + inbound published-port DNAT). Fail-closed: if setup fails the
-    /// half-built namespace is removed so the VMM is never launched into an
-    /// unconfigured netns. Reuses the container backend's shared netns
-    /// free-functions; no netns/netavark/IPAM logic is forked here.
+    /// persistent netns, run the shared netavark setup (no-default-route deny
+    /// chain + inbound published-port DNAT), then pin egress to this sandbox's
+    /// own PEP. Fail-closed: on any failure the half-built namespace is torn
+    /// down so the VMM is never launched into an unconfigured or unpinned netns.
+    /// Reuses the container backend's shared netns free-functions; no
+    /// netns/netavark/IPAM logic is forked here.
     fn configure_network(&self, manifest: &KrunSandboxManifest) -> Result<()> {
         create_persistent_network_namespace(&manifest.network_layout.netns_path)?;
         if let Err(error) = setup_container_network(
@@ -228,6 +229,30 @@ impl KrunSandboxBackend {
             &manifest.spec.port_bindings,
             None,
         ) {
+            let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
+            return Err(error);
+        }
+        // Pin the netns so the ONLY reachable egress is this sandbox's own PEP.
+        // The netavark deny is route-based, but the shared bridge gateway is
+        // on-link and every sibling sandbox's PEP listens on it at a distinct
+        // port; without this pin an execute-mode guest could egress through a
+        // sibling tenant's proxy and its injected credentials (audit H1). Under
+        // libkrun TSI the guest's outbound sockets are issued by this host VMM
+        // process inside the netns, so the output-hook pin governs the guest
+        // exactly as it governs a container. Tear the namespace back down on
+        // failure so the VMM never launches into an unpinned netns.
+        if let Some(proxy) = manifest.egress_proxy.as_ref()
+            && let Err(error) = pin_netns_egress_to_own_proxy(&manifest.network_layout, proxy)
+        {
+            let _ = teardown_container_network(
+                &manifest.network_layout,
+                &self.network_config(),
+                &manifest.handle.id,
+                manifest.spec.display_name(),
+                &hostname_for(&manifest.spec),
+                &manifest.spec.port_bindings,
+                None,
+            );
             let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
             return Err(error);
         }

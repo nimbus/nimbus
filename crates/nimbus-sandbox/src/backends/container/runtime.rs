@@ -30,9 +30,9 @@ use crate::backends::oci::egress::{
 use crate::backends::oci::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
 use crate::backends::oci::network::{
     MachinePortProxy, OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout,
-    create_persistent_network_namespace, expose_machine_ports, remove_persistent_network_namespace,
-    setup_container_network, start_machine_port_proxies, teardown_container_network,
-    unexpose_machine_ports,
+    create_persistent_network_namespace, expose_machine_ports, pin_netns_egress_to_own_proxy,
+    remove_persistent_network_namespace, setup_container_network, start_machine_port_proxies,
+    teardown_container_network, unexpose_machine_ports,
 };
 use crate::backends::oci::port_manager::PortManager;
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -706,6 +706,28 @@ impl ContainerSandboxBackend {
                 return Err(error);
             }
         };
+        // Pin the netns so the ONLY reachable egress is this sandbox's own PEP.
+        // The netavark deny is route-based, but the shared bridge gateway is
+        // on-link and every sibling sandbox's PEP listens on it at a distinct
+        // port; without this pin an execute-mode container could egress through
+        // a sibling tenant's proxy and its injected credentials (audit H1).
+        // Fail-closed: tear the namespace back down so the workload never
+        // launches into an unpinned netns.
+        if let Some(proxy) = manifest.egress_proxy.as_ref()
+            && let Err(error) = pin_netns_egress_to_own_proxy(&manifest.network_layout, proxy)
+        {
+            let _ = teardown_container_network(
+                &manifest.network_layout,
+                &self.network_config(),
+                &manifest.handle.id,
+                manifest.spec.display_name(),
+                &hostname_for(&manifest.spec),
+                &manifest.spec.port_bindings,
+                self.config.machine_port_forwarder.as_ref(),
+            );
+            let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
+            return Err(error);
+        }
         if let Some(forwarder) = self.config.machine_port_forwarder.as_ref() {
             if let Err(error) = self.ensure_machine_port_proxies_running(
                 &manifest.handle.id,

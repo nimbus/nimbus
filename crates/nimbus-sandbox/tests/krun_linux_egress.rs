@@ -591,3 +591,132 @@ mv "$TMP" {RESULT_PATH_IN_GUEST}
 sleep 30"#
     )
 }
+
+/// Audit H1 proof: a guest cannot egress through a *sibling* sandbox's PEP.
+///
+/// The shared bridge places every execute-mode sandbox's PEP on the same
+/// gateway address at a distinct port. The netns deny is route-based, so the
+/// on-link gateway is reachable on any port — without the per-sandbox egress
+/// pin a guest could open a connection to a sibling sandbox's PEP
+/// (`gateway:other_port`) and egress under that sibling's policy and injected
+/// credentials. This test stands up TWO real execute-mode sandboxes of one
+/// tenant that share the bridge: sibling `B` publishes its own injected proxy
+/// URL, then `A` proves it can still reach its OWN PEP (positive control — the
+/// pin does not break legitimate egress) but CANNOT reach `B`'s PEP. (Isolating
+/// two *tenants* on the shared bridge is the separate M1 concern.)
+///
+/// Gated behind `#[ignore]` + `/dev/kvm` + root like the other krun runtime
+/// proofs; it boots two real libkrun guests on KVM hardware.
+#[test]
+#[ignore = "requires a Linux root host with /dev/kvm plus the full krun OCI runtime stack; boots two libkrun guests to prove sibling-PEP isolation"]
+fn krun_guest_cannot_reach_a_sibling_tenants_pep() {
+    if !egress_proof_preconditions_met() {
+        return;
+    }
+
+    // One shared upstream both tenants' policies permit. The pin — not policy —
+    // is what must make A's reach through B's PEP fail, so B would happily
+    // forward to this upstream if A could reach it.
+    let upstream = TestHttpServer::start("shared-upstream-body");
+    let upstream_port = upstream.addr.port();
+    let policy = parity_policy(upstream_port);
+
+    let image = env::var("NIMBUS_KRUN_EGRESS_IMAGE")
+        .unwrap_or_else(|_| "docker://busybox:latest".to_owned());
+
+    // Both sandboxes share ONE backend / state root, so they share the bridge
+    // AND the per-tenant IPAM and PEP-port allocator: distinct on-link IPs and
+    // distinct PEP ports on one gateway — exactly the production shape this pin
+    // defends. (Two backends with separate IPAM would each allocate the bridge's
+    // first address and collide.) Sandbox B and A are two sandboxes of the SAME
+    // tenant: the H1 reach this pin closes is one sandbox using ANOTHER
+    // sandbox's PEP. Cross-tenant bridge/IPAM isolation is the separate M1
+    // concern (per-tenant bridge or one-tenant-per-host).
+    let (_temp, workdir) = test_workdir("krun-sibling");
+    let backend = KrunSandboxBackend::new(egress_backend_config(&workdir, 15700));
+    let tenant = TenantId::new("krun-sibling-tenant").expect("tenant id should parse");
+    let b_volume = "krun-egress-proof-b";
+    let a_volume = "krun-egress-proof-a";
+
+    // --- Sibling B: bring its PEP up and publish the injected proxy URL, then
+    // stay alive so the PEP keeps listening while A probes it.
+    let b_spec = SandboxSpec::new(
+        tenant.clone(),
+        SandboxOwnerSpec::standalone_named("krun-sibling-b"),
+        SandboxBackendKind::Krun,
+        SandboxRootSpec::oci_image_reference(image.clone()),
+        SandboxProcessSpec::new(Vec::<String>::new())
+            .with_entrypoint(["/bin/sh", "-c"])
+            .with_command([format!(
+                r#"printf '%s' "$HTTP_PROXY" > {RESULT_PATH_IN_GUEST}; sleep 300"#
+            )]),
+    )
+    .with_mount(SandboxMountSpec::tenant_volume(b_volume, "/nimbus-egress"))
+    .with_egress_policy(policy.clone());
+
+    let b_handle = block_on(backend.start(b_spec)).expect("sibling B should start");
+    let _b_teardown = ForceTeardownGuard::new(
+        backend.clone(),
+        b_handle.id.clone(),
+        sandbox_netns_path(&workdir, &tenant, &b_handle.id),
+    );
+
+    let b_proxy_path = tenant_volume_path(&workdir, &tenant, b_volume).join("result");
+    let b_proxy_url = wait_for_result(
+        &b_proxy_path,
+        Duration::from_secs(25),
+        "sibling B injected proxy url",
+    )
+    .trim()
+    .to_owned();
+    assert!(
+        b_proxy_url.starts_with("http://"),
+        "sibling B must publish its injected PEP url, got {b_proxy_url:?}"
+    );
+
+    // --- Sandbox A: reaches its OWN PEP, but not B's.
+    let a_spec = SandboxSpec::new(
+        tenant.clone(),
+        SandboxOwnerSpec::standalone_named("krun-sibling-a"),
+        SandboxBackendKind::Krun,
+        SandboxRootSpec::oci_image_reference(image),
+        SandboxProcessSpec::new(Vec::<String>::new())
+            .with_entrypoint(["/bin/sh", "-c"])
+            .with_command([sibling_reach_probe_command(&b_proxy_url, upstream_port)]),
+    )
+    .with_mount(SandboxMountSpec::tenant_volume(a_volume, "/nimbus-egress"))
+    .with_egress_policy(policy);
+
+    let a_handle = block_on(backend.start(a_spec)).expect("sandbox A should start");
+    let _a_teardown = ForceTeardownGuard::new(
+        backend.clone(),
+        a_handle.id.clone(),
+        sandbox_netns_path(&workdir, &tenant, &a_handle.id),
+    );
+
+    let a_result_path = tenant_volume_path(&workdir, &tenant, a_volume).join("result");
+    let a_result = wait_for_result(
+        &a_result_path,
+        Duration::from_secs(60),
+        "sandbox A sibling-reach result",
+    );
+
+    // Positive control: the pin must NOT break A's own legitimate egress.
+    assert_result_line(&a_result, "own_pep=allowed");
+    // The H1 guarantee: A cannot egress through sibling B's PEP.
+    assert_result_line(&a_result, "sibling_pep_reach=denied");
+}
+
+fn sibling_reach_probe_command(sibling_proxy_url: &str, upstream_port: u16) -> String {
+    // ONE line, `;`-joined, no `#` comments and no apostrophes: the krun guest
+    // workload path mangles multi-line `sh -c` scripts (a comment line can eat
+    // the rest of the joined script), so the whole probe stays on a single line.
+    // Probe (1) is the positive control — A reaching the shared upstream through
+    // its OWN injected PEP (the pin permits A's own PEP port). Probe (2) is the
+    // H1 case — overriding the proxy env to B's gateway:port, which the netns
+    // pin must drop. Every probe is hard-bounded by `timeout` so a DROPped
+    // connection (no RST) cannot hang past its budget.
+    format!(
+        r#"TMP=/nimbus-egress/result.tmp; : > "$TMP"; if timeout 8 wget -T 5 -q -O /tmp/own "http://127.0.0.1:{upstream_port}/allowed" && grep -q shared-upstream-body /tmp/own; then echo own_pep=allowed >> "$TMP"; else echo own_pep=denied >> "$TMP"; fi; if http_proxy={sibling_proxy_url} HTTP_PROXY={sibling_proxy_url} timeout 8 wget -T 5 -q -O /tmp/sib "http://127.0.0.1:{upstream_port}/allowed"; then echo sibling_pep_reach=allowed >> "$TMP"; else echo sibling_pep_reach=denied >> "$TMP"; fi; mv "$TMP" {RESULT_PATH_IN_GUEST}; sleep 30"#
+    )
+}
