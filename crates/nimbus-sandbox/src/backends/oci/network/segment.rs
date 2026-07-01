@@ -503,4 +503,42 @@ mod tests {
             "must fail closed on epoch mismatch, got: {error}"
         );
     }
+
+    #[test]
+    fn concurrent_acquire_release_across_threads_stays_consistent_under_the_lock() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = tempdir().expect("temp dir");
+        let root = Arc::new(dir.path().to_path_buf());
+        // 8 threads, each a distinct tenant, contending on the shared on-disk
+        // segments.json via the fs-exclusive lock: acquire a sole sandbox then
+        // release it, which must drain the tenant.
+        let handles: Vec<_> = (0..8u32)
+            .map(|i| {
+                let root = Arc::clone(&root);
+                thread::spawn(move || {
+                    let allocator = SingleNodeSegmentAllocator::single_node_default(&root);
+                    let tenant = tenant(&format!("t-{i}"));
+                    let sandbox = sandbox(&format!("sb-{i}"));
+                    let segment = allocator.acquire(&tenant, &sandbox).expect("acquire");
+                    assert!(segment.cidr().to_string().starts_with("10.0."));
+                    matches!(
+                        allocator.release(&tenant, &sandbox).expect("release"),
+                        ReleaseOutcome::TenantDrained
+                    )
+                })
+            })
+            .collect();
+        for handle in handles {
+            assert!(handle.join().expect("thread should not panic"));
+        }
+        // Every tenant drained, so the freed lowest index is reused: the next new
+        // tenant gets 10.0.0.0/24 (no leaked reservations under contention).
+        let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        let segment = allocator
+            .acquire(&tenant("after"), &sandbox("sb"))
+            .expect("acquire after drain");
+        assert_eq!(segment.cidr().to_string(), "10.0.0.0/24");
+    }
 }
