@@ -708,19 +708,15 @@ fn krun_guest_cannot_reach_a_sibling_tenants_pep() {
 }
 
 fn sibling_reach_probe_command(sibling_proxy_url: &str, upstream_port: u16) -> String {
+    // ONE line, `;`-joined, no `#` comments and no apostrophes: the krun guest
+    // workload path mangles multi-line `sh -c` scripts (a comment line can eat
+    // the rest of the joined script), so the whole probe stays on a single line.
+    // Probe (1) is the positive control — A reaching the shared upstream through
+    // its OWN injected PEP (the pin permits A's own PEP port). Probe (2) is the
+    // H1 case — overriding the proxy env to B's gateway:port, which the netns
+    // pin must drop. Every probe is hard-bounded by `timeout` so a DROPped
+    // connection (no RST) cannot hang past its budget.
     format!(
-        r#"TMP=/nimbus-egress/result.tmp
-: > "$TMP"
-# (1) Positive control: reach the shared upstream through A's OWN injected PEP
-#     (the proxy env A was launched with). The pin permits A's own PEP port.
-#     Every probe is hard-bounded by `timeout` so a DROPped connection (which
-#     yields no RST) can never hang past its budget.
-if timeout 8 wget -T 5 -q -O /tmp/own "http://127.0.0.1:{upstream_port}/allowed" && grep -q shared-upstream-body /tmp/own; then echo own_pep=allowed >> "$TMP"; else echo own_pep=denied >> "$TMP"; fi
-# (2) H1: try to egress the same upstream through sibling B's PEP by overriding
-#     the proxy env to B's gateway:port. The netns pin drops every gateway port
-#     except A's own PEP, so the connection to B's PEP must fail.
-if http_proxy={sibling_proxy_url} HTTP_PROXY={sibling_proxy_url} timeout 8 wget -T 5 -q -O /tmp/sib "http://127.0.0.1:{upstream_port}/allowed"; then echo sibling_pep_reach=allowed >> "$TMP"; else echo sibling_pep_reach=denied >> "$TMP"; fi
-mv "$TMP" {RESULT_PATH_IN_GUEST}
-sleep 30"#
+        r#"TMP=/nimbus-egress/result.tmp; : > "$TMP"; if timeout 8 wget -T 5 -q -O /tmp/own "http://127.0.0.1:{upstream_port}/allowed" && grep -q shared-upstream-body /tmp/own; then echo own_pep=allowed >> "$TMP"; else echo own_pep=denied >> "$TMP"; fi; if http_proxy={sibling_proxy_url} HTTP_PROXY={sibling_proxy_url} timeout 8 wget -T 5 -q -O /tmp/sib "http://127.0.0.1:{upstream_port}/allowed"; then echo sibling_pep_reach=allowed >> "$TMP"; else echo sibling_pep_reach=denied >> "$TMP"; fi; mv "$TMP" {RESULT_PATH_IN_GUEST}; sleep 30"#
     )
 }
