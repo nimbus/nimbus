@@ -66,6 +66,13 @@ pub(crate) trait NetworkSegmentAllocator: Send + Sync {
     /// of a live bridge (netavark has no live subnet-add — MTN6). Wired into
     /// block-aware sandbox placement (`place_sandbox_on_block`).
     fn grow_block(&self, tenant: &TenantId) -> Result<NetworkSegment>;
+    /// Whether this allocator gates on a committed cluster lease (fail-closed
+    /// without one). The single-node allocator has a config-default super-net, so
+    /// this defaults to `false`; the cluster allocator returns `true`. Consumed by
+    /// fail-closed cluster admission (`assert_cluster_admission`, MTN7).
+    fn requires_cluster_lease(&self) -> bool {
+        false
+    }
 }
 
 /// The result of [`NetworkSegmentAllocator::release`].
