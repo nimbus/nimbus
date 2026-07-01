@@ -34,8 +34,9 @@ use crate::backends::oci::materializer::{
 };
 use crate::backends::oci::network::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
-    DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, OciNetworkConfig, OciNetworkDirectEgress,
-    OciNetworkLayout, create_persistent_network_namespace, pin_netns_egress_to_own_proxy,
+    DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, NetworkSegmentAllocator, OciNetworkConfig,
+    OciNetworkDirectEgress, OciNetworkLayout, SingleNodeSegmentAllocator,
+    create_persistent_network_namespace, pin_netns_egress_to_own_proxy,
     remove_persistent_network_namespace, setup_container_network, teardown_container_network,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
@@ -99,6 +100,10 @@ pub struct KrunSandboxBackendConfig {
     pub network_name: String,
     pub network_interface: String,
     pub network_subnet: String,
+    /// The node's network super-net that per-tenant `/24` subnets are carved
+    /// from (audit M1). Defaults to the node-0 `/16` slice of the cluster pool;
+    /// the cluster leg installs a raft-committed slice per node in MTN7.
+    pub node_network_supernet: String,
     pub published_port_range: RangeInclusive<u16>,
     pub max_published_ports_per_tenant: Option<usize>,
     pub resource_quota_policy: SandboxResourceQuotaPolicy,
@@ -145,6 +150,7 @@ impl Default for KrunSandboxBackendConfig {
             network_name: DEFAULT_NETWORK_NAME.to_owned(),
             network_interface: DEFAULT_NETWORK_INTERFACE.to_owned(),
             network_subnet: DEFAULT_NETWORK_SUBNET.to_owned(),
+            node_network_supernet: "10.0.0.0/16".to_owned(),
             published_port_range: DEFAULT_PUBLISHED_PORT_START..=DEFAULT_PUBLISHED_PORT_END,
             max_published_ports_per_tenant: Some(DEFAULT_MAX_PORTS_PER_TENANT),
             resource_quota_policy: SandboxResourceQuotaPolicy::default(),
@@ -170,21 +176,29 @@ impl KrunSandboxBackend {
         }
     }
 
-    fn network_config(&self) -> OciNetworkConfig {
-        OciNetworkConfig {
+    fn network_config(&self, tenant: &nimbus_core::TenantId) -> Result<OciNetworkConfig> {
+        // Per-tenant segment: distinct subnet + bridge identity carved from the
+        // node super-net (audit M1). The allocator is constructed on demand from
+        // the state root; its state is the fs-locked segments.json.
+        let segment = SingleNodeSegmentAllocator::for_node_supernet(
+            &self.config.state_root,
+            &self.config.node_network_supernet,
+        )?
+        .segment_for(tenant)?;
+        Ok(OciNetworkConfig {
             netavark_path: self.config.netavark_path.clone(),
             aardvark_dns_path: self.config.aardvark_dns_path.clone(),
-            network_name: self.config.network_name.clone(),
-            network_interface: self.config.network_interface.clone(),
-            network_subnet: self.config.network_subnet.clone(),
+            network_name: segment.network_name().to_owned(),
+            network_interface: segment.network_interface().to_owned(),
+            network_subnet: segment.cidr().to_string(),
             direct_egress: OciNetworkDirectEgress::Deny,
             // The deny-by-default microVM guest resolves names through the host
             // PEP (`HTTP_PROXY`), never a local resolver, so netavark must not
             // start an aardvark-dns stub on the bridge gateway `:53`. That stub
-            // is the residual DNS-exfil channel KME5 flagged, and two krun
-            // sandboxes binding the same `10.89.0.1:53` would also collide.
+            // is the residual DNS-exfil channel KME5 flagged.
             enable_dns: false,
-        }
+            network_id: segment.network_id().as_str().to_owned(),
+        })
     }
 
     fn remove_tenant_artifacts_sync(&self, tenant_id: &nimbus_core::TenantId) -> Result<()> {

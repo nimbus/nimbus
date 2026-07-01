@@ -27,7 +27,10 @@ fn container_launch_network_config_denies_direct_egress_for_supervised_processes
     let temp_dir = TempDir::new().expect("tempdir should build");
     let backend = sample_plan_only_backend(temp_dir.path());
 
-    let network_config = backend.network_config();
+    let tenant = nimbus_core::TenantId::new("egress-tenant").expect("tenant should parse");
+    let network_config = backend
+        .network_config(&tenant)
+        .expect("network config should resolve");
 
     assert_eq!(
         network_config.direct_egress,
@@ -52,7 +55,8 @@ fn execute_plan_assigns_bridge_reachable_egress_proxy_and_injects_proxy_env() {
         .egress_proxy
         .as_ref()
         .expect("execute launch should assign an egress proxy");
-    assert_eq!(egress_proxy.host, "10.89.0.1");
+    // First tenant on the node super-net gets 10.0.0.0/24, gateway 10.0.0.1.
+    assert_eq!(egress_proxy.host, "10.0.0.1");
     assert_eq!(egress_proxy.port, 15000);
     let config: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&plan.manifest.bundle_layout.config_path).unwrap())
@@ -64,14 +68,14 @@ fn execute_plan_assigns_bridge_reachable_egress_proxy_and_injects_proxy_env() {
         .map(|value| value.as_str().expect("env entries should be strings"))
         .collect::<Vec<_>>();
     assert!(
-        env.contains(&"HTTP_PROXY=http://10.89.0.1:15000")
-            && env.contains(&"http_proxy=http://10.89.0.1:15000")
+        env.contains(&"HTTP_PROXY=http://10.0.0.1:15000")
+            && env.contains(&"http_proxy=http://10.0.0.1:15000")
             && env.contains(&"NO_PROXY=")
             && env.contains(&"no_proxy="),
         "execute bundle should steer proxy-aware tools through the egress proxy: {env:?}"
     );
     assert!(
-        env.contains(&format!("{EGRESS_PROXY_URL_ENV}=http://10.89.0.1:15000").as_str()),
+        env.contains(&format!("{EGRESS_PROXY_URL_ENV}=http://10.0.0.1:15000").as_str()),
         "execute bundle should expose Nimbus egress proxy metadata: {env:?}"
     );
 }
@@ -163,7 +167,7 @@ fn plan_only_service_workload_prepares_runner_manifest_pointer_and_proxy_env() {
     let manifest: serde_json::Value =
         serde_json::from_slice(&manifest_bytes).expect("manifest should parse");
     assert_eq!(manifest["start_mode"], "plan_only");
-    assert_eq!(manifest["egress_proxy"]["host"], "10.89.0.1");
+    assert_eq!(manifest["egress_proxy"]["host"], "10.0.0.1");
     assert_eq!(manifest["egress_proxy"]["port"], 15000);
     assert_eq!(
         manifest["runner_config"]["netavark_path"],
@@ -206,9 +210,9 @@ fn plan_only_service_workload_prepares_runner_manifest_pointer_and_proxy_env() {
         .map(|value| value.as_str().expect("env entries should be strings"))
         .collect::<Vec<_>>();
     assert!(
-        env.contains(&"HTTP_PROXY=http://10.89.0.1:15000")
-            && env.contains(&"http_proxy=http://10.89.0.1:15000")
-            && env.contains(&format!("{EGRESS_PROXY_URL_ENV}=http://10.89.0.1:15000").as_str()),
+        env.contains(&"HTTP_PROXY=http://10.0.0.1:15000")
+            && env.contains(&"http_proxy=http://10.0.0.1:15000")
+            && env.contains(&format!("{EGRESS_PROXY_URL_ENV}=http://10.0.0.1:15000").as_str()),
         "service bundle should route proxy-aware tools through the runner-owned egress proxy: {env:?}"
     );
 }

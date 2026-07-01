@@ -1340,8 +1340,12 @@ fn launch_network_config_denies_direct_bridge_egress() {
         temp_dir.path().to_path_buf(),
     ));
 
+    let tenant = nimbus_core::TenantId::new("deny-tenant").expect("tenant should parse");
     assert_eq!(
-        backend.network_config().direct_egress,
+        backend
+            .network_config(&tenant)
+            .expect("network config should resolve")
+            .direct_egress,
         crate::backends::oci::network::OciNetworkDirectEgress::Deny,
         "krun VMMs must run inside a deny-by-default bridge with no ambient egress route"
     );
@@ -1364,7 +1368,7 @@ fn execute_egress_proxy_binds_bridge_gateway_after_published_ports() {
         proxy
             .bind_addr()
             .expect("egress proxy bind address should resolve"),
-        "10.89.0.1:15001"
+        "10.0.0.1:15001"
             .parse()
             .expect("bridge gateway socket address should parse"),
         "the egress PEP must bind on the bridge gateway and skip already-published host ports"
@@ -1470,8 +1474,12 @@ fn krun_network_config_disables_bridge_dns_resolver() {
         temp_dir.path().to_path_buf(),
     ));
 
+    let tenant = nimbus_core::TenantId::new("dns-tenant").expect("tenant should parse");
     assert!(
-        !backend.network_config().enable_dns,
+        !backend
+            .network_config(&tenant)
+            .expect("network config should resolve")
+            .enable_dns,
         "the krun backend must disable the bridge DNS resolver stub (enable_dns=false)"
     );
 }

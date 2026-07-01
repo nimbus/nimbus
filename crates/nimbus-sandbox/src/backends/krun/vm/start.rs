@@ -312,7 +312,7 @@ impl KrunSandboxBackend {
         spec: &SandboxSpec,
     ) -> Result<EgressProxyAssignment> {
         crate::backends::oci::egress::allocate_egress_proxy(
-            &self.network_config(),
+            &self.network_config(&spec.tenant_id)?,
             &self.port_manager(),
             &spec.port_bindings,
         )

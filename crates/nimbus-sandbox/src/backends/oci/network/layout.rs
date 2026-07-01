@@ -13,8 +13,8 @@ use crate::instance::SandboxId;
 
 use super::ipam::{parse_ipv4_address, parse_ipv4_subnet_and_gateway};
 use super::{
-    DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
-    DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET,
+    DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_ID,
+    DEFAULT_NETWORK_INTERFACE, DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,10 +85,19 @@ pub(crate) struct OciNetworkConfig {
     /// (de)serialization of older state.
     #[serde(default = "default_enable_dns")]
     pub enable_dns: bool,
+    /// The netavark network id. Per-tenant segments MUST carry a distinct id or
+    /// two tenants' bridges alias onto one netavark network (audit M1). Defaults
+    /// to the legacy shared id for older state that predates per-tenant segments.
+    #[serde(default = "default_network_id")]
+    pub network_id: String,
 }
 
 pub(super) fn default_enable_dns() -> bool {
     true
+}
+
+pub(super) fn default_network_id() -> String {
+    DEFAULT_NETWORK_ID.to_owned()
 }
 
 impl Default for OciNetworkConfig {
@@ -101,6 +110,7 @@ impl Default for OciNetworkConfig {
             network_subnet: DEFAULT_NETWORK_SUBNET.to_owned(),
             direct_egress: OciNetworkDirectEgress::Deny,
             enable_dns: default_enable_dns(),
+            network_id: default_network_id(),
         }
     }
 }

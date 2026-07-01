@@ -131,7 +131,7 @@ fn release_execution_artifacts_stops_running_egress_proxy() {
     let temp_dir = TempDir::new().expect("tempdir should build");
     let proxy_port = unused_loopback_port();
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.network_subnet = "127.0.0.0/24".to_owned();
+    config.node_network_supernet = "127.0.0.0/24".to_owned();
     config.published_port_range = proxy_port..=proxy_port;
     let backend = ContainerSandboxBackend::new(config);
     let mut manifest = backend
@@ -170,7 +170,7 @@ fn reload_egress_policy_updates_running_container_proxy() {
     let temp_dir = TempDir::new().expect("tempdir should build");
     let proxy_port = unused_loopback_port();
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.network_subnet = "127.0.0.0/24".to_owned();
+    config.node_network_supernet = "127.0.0.0/24".to_owned();
     config.published_port_range = proxy_port..=proxy_port;
     let backend = ContainerSandboxBackend::new(config);
     let manifest = backend
@@ -306,8 +306,12 @@ fn container_network_config_keeps_bridge_dns_resolver() {
     let backend =
         ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(temp_dir.path()));
 
+    let tenant = nimbus_core::TenantId::new("dns-tenant").expect("tenant should parse");
     assert!(
-        backend.network_config().enable_dns,
+        backend
+            .network_config(&tenant)
+            .expect("network config should resolve")
+            .enable_dns,
         "the container backend must keep the bridge DNS resolver (enable_dns=true)"
     );
 }

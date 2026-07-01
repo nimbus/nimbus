@@ -23,9 +23,7 @@ use super::ipam::{
     parse_ipv4_subnet_and_gateway,
 };
 use super::layout::{OciNetworkConfig, OciNetworkLayout};
-use super::{
-    DEFAULT_CONTAINER_INTERFACE_NAME, DEFAULT_NETWORK_ID, NETAVARK_OPTION_NO_DEFAULT_ROUTE,
-};
+use super::{DEFAULT_CONTAINER_INTERFACE_NAME, NETAVARK_OPTION_NO_DEFAULT_ROUTE};
 
 pub(crate) fn setup_container_network(
     layout: &OciNetworkLayout,
@@ -226,7 +224,7 @@ pub(super) fn build_bridge_network(config: &OciNetworkConfig) -> Result<Netavark
     }
     Ok(NetavarkNetwork {
         name: config.network_name.clone(),
-        id: DEFAULT_NETWORK_ID.to_owned(),
+        id: config.network_id.clone(),
         driver: "bridge".to_owned(),
         network_interface: config.network_interface.clone(),
         created: None,
