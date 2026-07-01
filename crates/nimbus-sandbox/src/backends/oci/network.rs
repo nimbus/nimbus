@@ -555,6 +555,45 @@ mod tests {
     }
 
     #[test]
+    fn grown_block_allocates_within_its_own_subnet_not_the_shared_cursor() {
+        // Regression for the KVM-found grow-egress bug: the per-tenant last-assigned
+        // cursor is shared across a tenant's block subnets, so when a sandbox grows
+        // onto a new block the cursor from the PREVIOUS block can point BELOW the new
+        // block's range. Without a lower-bound clamp, allocate_next_ipv4 returned an
+        // address outside the grown block (e.g. .3 of 10.0.0.0/30 for a 10.0.0.4/30
+        // block), so the sandbox's veth/route mismatched its PEP/pin gateway and
+        // egress was denied on the grown block.
+        let temp_dir = tempdir().expect("temp dir should create");
+        let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
+        let first_id = crate::instance::SandboxId::new("db-01");
+        let second_id = crate::instance::SandboxId::new("db-02");
+        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &first_id);
+
+        // Block 0 (10.0.0.0/30): the first sandbox takes the single host .2, leaving
+        // the shared per-tenant cursor at .2.
+        let block0 = OciNetworkConfig {
+            network_subnet: "10.0.0.0/30".to_owned(),
+            ..OciNetworkConfig::default()
+        };
+        let first = allocate_container_ips(&layout, &block0, &first_id).expect("block 0 host");
+        assert_eq!(first, vec!["10.0.0.2".parse::<Ipv4Addr>().unwrap()]);
+
+        // Block 1 (10.0.0.4/30) shares the same tenant ipam-state; the cursor .2 is
+        // BELOW this block's range (.5–.6). The grown block MUST allocate its own
+        // host .6, never .3 (block 0's broadcast, below block 1).
+        let block1 = OciNetworkConfig {
+            network_subnet: "10.0.0.4/30".to_owned(),
+            ..OciNetworkConfig::default()
+        };
+        let second = allocate_container_ips(&layout, &block1, &second_id).expect("block 1 host");
+        assert_eq!(
+            second,
+            vec!["10.0.0.6".parse::<Ipv4Addr>().unwrap()],
+            "a grown block must allocate within its own subnet, not below it from the shared cursor"
+        );
+    }
+
+    #[test]
     fn build_netavark_request_includes_allocated_static_ips() {
         let request = build_netavark_request(
             &OciNetworkConfig::default(),

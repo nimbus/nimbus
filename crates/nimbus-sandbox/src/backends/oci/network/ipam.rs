@@ -261,6 +261,15 @@ fn allocate_next_ipv4(config: &OciNetworkConfig, state: &IpamState) -> Result<Ip
         .map(|ip| parse_ipv4_address(ip).map(ipv4_to_u32))
         .collect::<Result<BTreeSet<_>>>()?;
     let gateway = ipv4_to_u32(subnet.gateway);
+    // The last-assigned cursor is per-tenant and SHARED across the tenant's block
+    // subnets (MTN6 on-demand blocks). When allocating in a freshly-grown block,
+    // the cursor left by a PREVIOUS block can fall OUTSIDE this block's range —
+    // above it OR below it. Clamp to the block: only trust the cursor when it lands
+    // within [range_start, range_end], else start at range_start. Without the
+    // lower bound a grown block would hand out an address from another block's
+    // subnet (e.g. cursor .2 from block 0 -> .3 returned for block 1 10.0.0.4/30),
+    // so the sandbox's veth/route mismatch its PEP/pin gateway and egress is denied
+    // — the KVM grow proof caught exactly this.
     let start_ip = state
         .last_assigned_ip
         .as_deref()
@@ -268,7 +277,7 @@ fn allocate_next_ipv4(config: &OciNetworkConfig, state: &IpamState) -> Result<Ip
         .transpose()?
         .map(ipv4_to_u32)
         .and_then(|last| last.checked_add(1))
-        .filter(|candidate| *candidate <= range_end)
+        .filter(|candidate| *candidate >= range_start && *candidate <= range_end)
         .unwrap_or(range_start);
 
     let mut current = start_ip;

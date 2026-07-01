@@ -210,10 +210,11 @@ fi
 step 15 "MTN6 KVM grow-on-exhaustion proof (tenant-prefix knob + grow test)"
 if grep -qE 'node_tenant_subnet_prefix' "${KRUN_VM}" \
   && grep -qE 'fn krun_tenant_grows_onto_a_second_block_when_the_first_is_full' "${EGRESS_PROOF}" \
-  && grep -qE 'guest_ip=10.0.0.6' "${EGRESS_PROOF}" \
   && grep -qE 'own_egress=allowed' "${EGRESS_PROOF}" \
-  && grep -qE 'host_bridge_exists\("nb-1"\)' "${EGRESS_PROOF}"; then
-  pass "tenant-subnet-prefix knob + grow-onto-second-block KVM proof (guest lands in block 1 + own PEP + nb-1 exists)"
+  && grep -qE 'sibling_pep_reach=denied' "${EGRESS_PROOF}" \
+  && grep -qE 'host_bridge_exists\("nb-1"\)' "${EGRESS_PROOF}" \
+  && grep -qE 'grown_block_allocates_within_its_own_subnet' "${NETWORK}"; then
+  pass "grow KVM proof: grown block reaches its OWN PEP + is DENIED the sibling PEP (H1) + nb-1 exists + shared-cursor IPAM regression test"
 else
   fail "MTN6 KVM grow proof missing" "expected node_tenant_subnet_prefix knob + krun_tenant_grows_onto_a_second_block test with guest_ip/own_egress/nb-1 assertions"
 fi
