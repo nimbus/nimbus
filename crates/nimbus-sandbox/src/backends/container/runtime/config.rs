@@ -43,6 +43,10 @@ pub struct ContainerSandboxBackendConfig {
     pub network_name: String,
     pub network_interface: String,
     pub network_subnet: String,
+    /// The node's network super-net that per-tenant `/24` subnets are carved
+    /// from (audit M1). Defaults to the node-0 `/16` slice of the cluster pool;
+    /// the cluster leg installs a raft-committed slice per node in MTN7.
+    pub node_network_supernet: String,
     pub machine_port_forwarder: Option<OciMachinePortForwarderConfig>,
     pub start_mode: ContainerStartMode,
     pub log_level: String,
@@ -87,6 +91,7 @@ impl Default for ContainerSandboxBackendConfig {
             network_name: crate::backends::oci::network::DEFAULT_NETWORK_NAME.to_owned(),
             network_interface: crate::backends::oci::network::DEFAULT_NETWORK_INTERFACE.to_owned(),
             network_subnet: crate::backends::oci::network::DEFAULT_NETWORK_SUBNET.to_owned(),
+            node_network_supernet: "10.0.0.0/16".to_owned(),
             machine_port_forwarder: None,
             start_mode: ContainerStartMode::Execute,
             log_level: "debug".to_owned(),

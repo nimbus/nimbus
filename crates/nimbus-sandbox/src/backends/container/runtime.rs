@@ -29,10 +29,11 @@ use crate::backends::oci::egress::{
 };
 use crate::backends::oci::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
 use crate::backends::oci::network::{
-    MachinePortProxy, OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout,
-    create_persistent_network_namespace, expose_machine_ports, pin_netns_egress_to_own_proxy,
-    remove_persistent_network_namespace, setup_container_network, start_machine_port_proxies,
-    teardown_container_network, unexpose_machine_ports,
+    MachinePortProxy, NetworkSegmentAllocator, OciNetworkConfig, OciNetworkDirectEgress,
+    OciNetworkLayout, SingleNodeSegmentAllocator, create_persistent_network_namespace,
+    expose_machine_ports, pin_netns_egress_to_own_proxy, remove_persistent_network_namespace,
+    setup_container_network, start_machine_port_proxies, teardown_container_network,
+    unexpose_machine_ports,
 };
 use crate::backends::oci::port_manager::PortManager;
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -124,18 +125,29 @@ impl ContainerSandboxBackend {
         )
     }
 
-    fn network_config(&self) -> OciNetworkConfig {
-        OciNetworkConfig {
+    fn network_config(&self, tenant: &nimbus_core::TenantId) -> Result<OciNetworkConfig> {
+        // Per-tenant segment: distinct subnet + bridge identity carved from the
+        // node super-net, so two tenants never collide on one bridge (audit M1).
+        // The allocator is stateless to hold (its state is the fs-locked
+        // segments.json), so it is constructed on demand from the state root.
+        let segment = SingleNodeSegmentAllocator::for_node_supernet(
+            &self.config.state_root,
+            &self.config.node_network_supernet,
+        )?
+        .segment_for(tenant)?;
+        Ok(OciNetworkConfig {
             netavark_path: self.config.netavark_path.clone(),
             aardvark_dns_path: self.config.aardvark_dns_path.clone(),
-            network_name: self.config.network_name.clone(),
-            network_interface: self.config.network_interface.clone(),
-            network_subnet: self.config.network_subnet.clone(),
+            network_name: segment.network_name().to_owned(),
+            network_interface: segment.network_interface().to_owned(),
+            network_subnet: segment.cidr().to_string(),
             direct_egress: OciNetworkDirectEgress::Deny,
-            // Container workloads keep the bridge resolver; DNS behavior here is
-            // unchanged from before the krun-scoped `enable_dns` split.
+            // Container workloads keep the bridge resolver for now; each per-tenant
+            // bridge has its own gateway, so aardvark no longer contends on a
+            // shared `:53`. MTN5 flips this to DNS-off + host-PEP resolution.
             enable_dns: true,
-        }
+            network_id: segment.network_id().as_str().to_owned(),
+        })
     }
 
     fn start_sync(&self, spec: SandboxSpec) -> Result<SandboxHandle> {
@@ -524,16 +536,21 @@ impl ContainerSandboxBackend {
         if let Err(error) = run_status_checked(&manifest.conmon_launch.delete_command) {
             errors.push(error.to_string());
         }
-        if let Err(error) = teardown_container_network(
-            &manifest.network_layout,
-            &self.network_config(),
-            &manifest.handle.id,
-            manifest.spec.display_name(),
-            &hostname_for(&manifest.spec),
-            &manifest.spec.port_bindings,
-            self.config.machine_port_forwarder.as_ref(),
-        ) {
-            errors.push(error.to_string());
+        match self.network_config(&manifest.spec.tenant_id) {
+            Ok(network_config) => {
+                if let Err(error) = teardown_container_network(
+                    &manifest.network_layout,
+                    &network_config,
+                    &manifest.handle.id,
+                    manifest.spec.display_name(),
+                    &hostname_for(&manifest.spec),
+                    &manifest.spec.port_bindings,
+                    self.config.machine_port_forwarder.as_ref(),
+                ) {
+                    errors.push(error.to_string());
+                }
+            }
+            Err(error) => errors.push(error.to_string()),
         }
         if let Err(error) = remove_persistent_network_namespace(&manifest.network_layout.netns_path)
         {
@@ -690,10 +707,14 @@ impl ContainerSandboxBackend {
     }
 
     fn configure_network(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
+        // Resolve this tenant's network segment once (distinct per-tenant subnet
+        // + bridge identity); setup and every teardown path reuse the same
+        // config so they never disagree on the bridge (audit M1).
+        let network_config = self.network_config(&manifest.spec.tenant_id)?;
         create_persistent_network_namespace(&manifest.network_layout.netns_path)?;
         let assigned_ips = match setup_container_network(
             &manifest.network_layout,
-            &self.network_config(),
+            &network_config,
             &manifest.handle.id,
             manifest.spec.display_name(),
             &hostname_for(&manifest.spec),
@@ -718,7 +739,7 @@ impl ContainerSandboxBackend {
         {
             let _ = teardown_container_network(
                 &manifest.network_layout,
-                &self.network_config(),
+                &network_config,
                 &manifest.handle.id,
                 manifest.spec.display_name(),
                 &hostname_for(&manifest.spec),
@@ -736,7 +757,7 @@ impl ContainerSandboxBackend {
             ) {
                 let _ = teardown_container_network(
                     &manifest.network_layout,
-                    &self.network_config(),
+                    &network_config,
                     &manifest.handle.id,
                     manifest.spec.display_name(),
                     &hostname_for(&manifest.spec),
@@ -750,7 +771,7 @@ impl ContainerSandboxBackend {
                 let _ = self.stop_machine_port_proxies(&manifest.handle.id);
                 let _ = teardown_container_network(
                     &manifest.network_layout,
-                    &self.network_config(),
+                    &network_config,
                     &manifest.handle.id,
                     manifest.spec.display_name(),
                     &hostname_for(&manifest.spec),
@@ -766,7 +787,7 @@ impl ContainerSandboxBackend {
 
     fn allocate_egress_proxy(&self, spec: &SandboxSpec) -> Result<EgressProxyAssignment> {
         allocate_oci_egress_proxy(
-            &self.network_config(),
+            &self.network_config(&spec.tenant_id)?,
             &self.port_manager(),
             &spec.port_bindings,
         )
@@ -812,16 +833,21 @@ impl ContainerSandboxBackend {
             errors.push(error.to_string());
         }
         let _ = run_status_best_effort(&manifest.conmon_launch.delete_command);
-        if let Err(error) = teardown_container_network(
-            &manifest.network_layout,
-            &self.network_config(),
-            &manifest.handle.id,
-            manifest.spec.display_name(),
-            &hostname_for(&manifest.spec),
-            &manifest.spec.port_bindings,
-            self.config.machine_port_forwarder.as_ref(),
-        ) {
-            errors.push(error.to_string());
+        match self.network_config(&manifest.spec.tenant_id) {
+            Ok(network_config) => {
+                if let Err(error) = teardown_container_network(
+                    &manifest.network_layout,
+                    &network_config,
+                    &manifest.handle.id,
+                    manifest.spec.display_name(),
+                    &hostname_for(&manifest.spec),
+                    &manifest.spec.port_bindings,
+                    self.config.machine_port_forwarder.as_ref(),
+                ) {
+                    errors.push(error.to_string());
+                }
+            }
+            Err(error) => errors.push(error.to_string()),
         }
         if let Err(error) = remove_persistent_network_namespace(&manifest.network_layout.netns_path)
         {

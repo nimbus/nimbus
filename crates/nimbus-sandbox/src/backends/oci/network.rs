@@ -19,6 +19,7 @@ pub(crate) use layout::{
 pub(crate) use netavark::{setup_container_network, teardown_container_network};
 pub(crate) use netns::{create_persistent_network_namespace, remove_persistent_network_namespace};
 pub(crate) use proxy::{MachinePortProxy, start_machine_port_proxies};
+pub(crate) use segment::{NetworkSegmentAllocator, SingleNodeSegmentAllocator};
 
 pub(crate) const DEFAULT_NETAVARK_BINARY: &str = "netavark";
 pub(crate) const DEFAULT_AARDVARK_DNS_BINARY: &str = "aardvark-dns";
@@ -599,32 +600,59 @@ mod tests {
     }
 
     #[test]
-    fn tenant_network_ipam_state_isolated_for_same_sandbox_id() {
+    fn per_tenant_segments_give_distinct_subnets_so_two_tenants_never_collide() {
+        // Audit M1: two DIFFERENT tenants must land on DISTINCT per-tenant subnets
+        // and bridges. They used to BOTH allocate 10.89.0.2 on the one shared
+        // `nimbus0` bridge (a real L3 collision proven on KVM); now the allocator
+        // carves 10.0.0.0/24 and 10.0.1.0/24, so the first sandbox in each is
+        // 10.0.0.2 and 10.0.1.2 — no shared address, no shared L2.
+        use super::{NetworkSegmentAllocator, SingleNodeSegmentAllocator};
+
         let temp_dir = tempdir().expect("temp dir should create");
-        let config = OciNetworkConfig::default();
+        let state_root = temp_dir.path();
         let tenant_a = TenantId::new("tenant-a").expect("tenant should parse");
         let tenant_b = TenantId::new("tenant-b").expect("tenant should parse");
         let sandbox_id = crate::instance::SandboxId::new("db-01");
-        let layout_a = OciNetworkLayout::new(temp_dir.path(), &tenant_a, &sandbox_id);
-        let layout_b = OciNetworkLayout::new(temp_dir.path(), &tenant_b, &sandbox_id);
 
-        let tenant_a_ips = allocate_container_ips(&layout_a, &config, &sandbox_id)
-            .expect("tenant-a allocation should succeed");
-        let tenant_b_ips = allocate_container_ips(&layout_b, &config, &sandbox_id)
-            .expect("tenant-b allocation should succeed");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(state_root);
+        let seg_a = allocator.segment_for(&tenant_a).expect("tenant-a segment");
+        let seg_b = allocator.segment_for(&tenant_b).expect("tenant-b segment");
+
+        // Distinct subnets, bridge interfaces, and netavark ids — no aliasing.
+        assert_ne!(seg_a.cidr(), seg_b.cidr());
+        assert!(
+            !seg_a.cidr().overlaps(&seg_b.cidr()),
+            "per-tenant subnets must not overlap"
+        );
+        assert_ne!(seg_a.network_interface(), seg_b.network_interface());
+        assert_ne!(seg_a.network_id().as_str(), seg_b.network_id().as_str());
+
+        // The per-tenant configs yield distinct first-sandbox IPs, not the old
+        // colliding 10.89.0.2/10.89.0.2.
+        let config_a = OciNetworkConfig {
+            network_subnet: seg_a.cidr().to_string(),
+            ..OciNetworkConfig::default()
+        };
+        let config_b = OciNetworkConfig {
+            network_subnet: seg_b.cidr().to_string(),
+            ..OciNetworkConfig::default()
+        };
+        let layout_a = OciNetworkLayout::new(state_root, &tenant_a, &sandbox_id);
+        let layout_b = OciNetworkLayout::new(state_root, &tenant_b, &sandbox_id);
+        let ips_a = allocate_container_ips(&layout_a, &config_a, &sandbox_id).expect("tenant-a IP");
+        let ips_b = allocate_container_ips(&layout_b, &config_b, &sandbox_id).expect("tenant-b IP");
 
         assert_eq!(
-            tenant_a_ips,
-            vec!["10.89.0.2".parse::<Ipv4Addr>().expect("IPv4 should parse")]
+            ips_a,
+            vec!["10.0.0.2".parse::<Ipv4Addr>().expect("IPv4 should parse")]
         );
         assert_eq!(
-            tenant_b_ips,
-            vec!["10.89.0.2".parse::<Ipv4Addr>().expect("IPv4 should parse")],
-            "each tenant gets an independent network/IPAM namespace"
+            ips_b,
+            vec!["10.0.1.2".parse::<Ipv4Addr>().expect("IPv4 should parse")]
         );
         assert_ne!(
-            layout_a.ipam_state_path, layout_b.ipam_state_path,
-            "tenant IPAM files must be distinct"
+            ips_a, ips_b,
+            "two tenants must never collide on one address (audit M1)"
         );
     }
 }

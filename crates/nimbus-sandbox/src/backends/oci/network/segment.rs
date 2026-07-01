@@ -14,12 +14,6 @@
 //! workload before its committed lease arrives, and a single-node node installs
 //! the node-0 slice at startup so the code path is identical.
 
-// MTN2 lands the allocator + its tests; MTN3 wires `segment_for`/`release` into
-// both OCI backends' `network_config(tenant)`. Until that wiring lands the
-// allocator is only exercised by unit tests, so the non-test build sees it as
-// dead code under `-D unused`. Drop this allow in MTN3 once the backends consume it.
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -34,6 +28,8 @@ use crate::error::{Result, SandboxError};
 
 /// The default single-node super-net: the node-0 `/16` slice of the cluster pool
 /// (`10.0.0.0/8`), so enrolling into a cluster later never re-carves live tenants.
+/// The backend configs default `node_network_supernet` to this same value.
+#[cfg(test)]
 pub(crate) const DEFAULT_NODE_SUPERNET: &str = "10.0.0.0/16";
 /// The default per-tenant subnet prefix (`/24` = 253 sandboxes). On-demand block
 /// growth for denser packing is MTN6.
@@ -57,6 +53,8 @@ pub(crate) trait NetworkSegmentAllocator: Send + Sync {
     fn segment_for(&self, tenant: &TenantId) -> Result<NetworkSegment>;
     /// Free the tenant's index for reuse. MUST be called only after the tenant's
     /// bridge/netns is torn down (the reaper's job, MTN4).
+    // The bridge reaper that calls this lands in MTN4; test-exercised until then.
+    #[allow(dead_code)]
     fn release(&self, tenant: &TenantId) -> Result<()>;
 }
 
@@ -93,6 +91,7 @@ impl SingleNodeSegmentAllocator {
     }
 
     /// The launch default: node-0 `/16` at epoch 0, `/24` per tenant.
+    #[cfg(test)]
     pub(crate) fn single_node_default(state_root: &Path) -> Self {
         let supernet = InstalledSuperNet {
             cidr: Cidr::parse(DEFAULT_NODE_SUPERNET)
@@ -102,8 +101,23 @@ impl SingleNodeSegmentAllocator {
         Self::new(state_root, Some(supernet), DEFAULT_TENANT_PREFIX)
     }
 
+    /// Build a single-node allocator carving `/24` tenant subnets from the given
+    /// node super-net (the configurable knob a backend passes from its config).
+    pub(crate) fn for_node_supernet(state_root: &Path, supernet: &str) -> Result<Self> {
+        let cidr = Cidr::parse(supernet).map_err(|error| SandboxError::InvalidSpec {
+            message: format!("invalid node network super-net {supernet:?}: {error}"),
+        })?;
+        Ok(Self::new(
+            state_root,
+            Some(InstalledSuperNet { cidr, epoch: 0 }),
+            DEFAULT_TENANT_PREFIX,
+        ))
+    }
+
     /// Install (or replace) the node super-net. The cluster leg calls this at
     /// membership-commit with its raft-committed, epoch-fenced lease.
+    // Wired by the cluster ClusterSegmentAllocator in MTN7; test-only until then.
+    #[allow(dead_code)]
     pub(crate) fn install_supernet(&mut self, supernet: InstalledSuperNet) {
         self.supernet = Some(supernet);
     }
