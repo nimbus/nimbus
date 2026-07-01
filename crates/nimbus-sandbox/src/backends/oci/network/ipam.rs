@@ -96,7 +96,7 @@ fn parse_ipv4_bridge_subnet(subnet_cidr: &str) -> Result<Ipv4BridgeSubnet> {
     })
 }
 
-pub(super) fn allocate_container_ips(
+pub(crate) fn allocate_container_ips(
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
@@ -282,11 +282,10 @@ fn allocate_next_ipv4(config: &OciNetworkConfig, state: &IpamState) -> Result<Ip
             current + 1
         };
         if current == start_ip {
-            return Err(SandboxError::OperationFailed {
-                message: format!(
-                    "failed to find free OCI IPv4 address in subnet {}",
-                    config.network_subnet
-                ),
+            // The block's /24 is full — a typed signal so block-aware placement
+            // grows an additional block bridge instead of failing the launch.
+            return Err(SandboxError::NetworkSubnetExhausted {
+                subnet: config.network_subnet.clone(),
             });
         }
     }

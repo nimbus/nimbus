@@ -12,4 +12,9 @@ pub enum SandboxError {
     NotFound { sandbox_id: String },
     #[error("sandbox operation failed: {message}")]
     OperationFailed { message: String },
+    /// A tenant block's `/24` has no free address left. Block-aware placement
+    /// (MTN6) treats this as the signal to grow an additional block bridge rather
+    /// than a hard failure.
+    #[error("network subnet {subnet} is exhausted: no free address remains")]
+    NetworkSubnetExhausted { subnet: String },
 }
