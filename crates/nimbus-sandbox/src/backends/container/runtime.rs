@@ -32,7 +32,7 @@ use crate::backends::oci::network::{
     MachinePortProxy, NetworkSegmentAllocator, OciNetworkConfig, OciNetworkDirectEgress,
     OciNetworkLayout, ReleaseOutcome, SingleNodeSegmentAllocator,
     create_persistent_network_namespace, expose_machine_ports, pin_netns_egress_to_own_proxy,
-    purge_legacy_nimbus0_once, reap_tenant_bridge, reconcile_network_segment_orphans,
+    purge_legacy_nimbus0_once, reap_bridge_interface, reconcile_network_segment_orphans,
     remove_persistent_network_namespace, setup_container_network, start_machine_port_proxies,
     teardown_container_network, unexpose_machine_ports,
 };
@@ -869,14 +869,16 @@ impl ContainerSandboxBackend {
             errors.push(error.to_string());
         }
         // Final teardown (not restart): drop this sandbox's hold; on the LAST hold
-        // the tenant is drained, so reap its bridge (netavark won't auto-GC) and
-        // free the index for reuse.
+        // the tenant is drained, so reap EVERY block bridge it grew (netavark
+        // won't auto-GC) and free all its indices for reuse.
         match self.segment_allocator() {
             Ok(allocator) => {
                 match allocator.release(&manifest.spec.tenant_id, &manifest.handle.id) {
-                    Ok(ReleaseOutcome::TenantDrained) => {
-                        if let Err(error) = reap_tenant_bridge(&manifest.network_config) {
-                            errors.push(error.to_string());
+                    Ok(ReleaseOutcome::TenantDrained { segments }) => {
+                        for segment in &segments {
+                            if let Err(error) = reap_bridge_interface(segment.network_interface()) {
+                                errors.push(error.to_string());
+                            }
                         }
                     }
                     Ok(ReleaseOutcome::StillLive) => {}
