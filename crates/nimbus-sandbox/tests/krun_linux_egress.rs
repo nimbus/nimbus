@@ -857,7 +857,7 @@ fn krun_tenant_grows_onto_a_second_block_when_the_first_is_full() {
     // block bridge (index 1 -> nb-1, host .6 in the second block). Report its own
     // guest IP and probe its OWN egress PEP.
     let s2_command = format!(
-        r#"TMP=/nimbus-egress/result.tmp; : > "$TMP"; if timeout 8 wget -T 5 -q -O /tmp/own "http://127.0.0.1:{upstream_port}/allowed" && grep -q grow-upstream-body /tmp/own; then echo own_egress=allowed >> "$TMP"; else echo own_egress=denied >> "$TMP"; fi; mv "$TMP" {RESULT_PATH_IN_GUEST}; sleep 30"#
+        r#"TMP=/nimbus-egress/result.tmp; : > "$TMP"; if timeout 8 wget -T 5 -q -O /tmp/own "http://127.0.0.1:{upstream_port}/allowed" && grep -q grow-upstream-body /tmp/own; then echo own_egress=allowed >> "$TMP"; else echo own_egress=denied >> "$TMP"; fi; if timeout 4 nc -w 2 10.0.0.1 15800 </dev/null >/dev/null 2>&1; then echo sibling_pep_reach=allowed >> "$TMP"; else echo sibling_pep_reach=denied >> "$TMP"; fi; mv "$TMP" {RESULT_PATH_IN_GUEST}; sleep 30"#
     );
     let s2_spec = SandboxSpec::new(
         tenant.clone(),
@@ -888,13 +888,19 @@ fn krun_tenant_grows_onto_a_second_block_when_the_first_is_full() {
         "grown-block sandbox result",
     );
 
-    // Positive control + the real proof: the grown-block sandbox reaches its OWN
-    // on-link PEP (bound on the grown block's gateway). This is what the grow-egress
-    // bug broke — the grown sandbox's veth landed in the wrong block (a shared-cursor
-    // IPAM bug) so its PEP was off-link. (The guest is a libkrun/TSI VMM with no
-    // normal eth0 IP, so we assert reachability, not a guest address, matching the
-    // MTN5 cross-tenant proof.)
+    // Positive control: the grown-block sandbox reaches its OWN on-link PEP (bound
+    // on the grown block's gateway). This is what the grow-egress bug broke — the
+    // grown sandbox's veth landed in the wrong block (a shared-cursor IPAM bug) so
+    // its PEP was off-link. (The guest is a libkrun/TSI VMM with no normal eth0 IP,
+    // so we assert reachability, not a guest address, matching the MTN5 proof.)
     assert_result_line(&s2_result, "own_egress=allowed");
+    // SECURITY invariant (H1, for grown blocks): enabling the grown block's egress
+    // must NOT open a hole. The grown-block sandbox must NOT reach the SIBLING
+    // block's PEP (the primary block 0's PEP on 10.0.0.1:15800) — that would let it
+    // egress under another sandbox's policy + injected credentials. The H1 pin
+    // (allow ONLY own PEP), no_default_route (off-link), and the isolate FORWARD
+    // drop each block it; the grow path must preserve all three, not just function.
+    assert_result_line(&s2_result, "sibling_pep_reach=denied");
     // Both of the tenant's block bridges exist on the host (grew one -> two),
     // confirming a distinct second block bridge was stood up.
     assert!(
