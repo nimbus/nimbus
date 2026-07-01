@@ -7,10 +7,6 @@
 //! bridge before the first per-tenant setup, since the routed per-tenant model
 //! deletes the shared bridge (pre-launch, breaking — no compat path).
 
-// Wired into both backends' start (purge) and teardown (reap on TenantDrained)
-// in the next MTN4 step, which handles restart-vs-final-stop; drop this then.
-#![allow(dead_code)]
-
 use std::path::Path;
 
 use crate::error::{Result, SandboxError};

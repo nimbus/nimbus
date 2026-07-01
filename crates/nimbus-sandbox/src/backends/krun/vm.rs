@@ -35,9 +35,10 @@ use crate::backends::oci::materializer::{
 use crate::backends::oci::network::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
     DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, NetworkSegmentAllocator, OciNetworkConfig,
-    OciNetworkDirectEgress, OciNetworkLayout, SingleNodeSegmentAllocator,
-    create_persistent_network_namespace, pin_netns_egress_to_own_proxy,
-    remove_persistent_network_namespace, setup_container_network, teardown_container_network,
+    OciNetworkDirectEgress, OciNetworkLayout, ReleaseOutcome, SingleNodeSegmentAllocator,
+    create_persistent_network_namespace, pin_netns_egress_to_own_proxy, purge_legacy_nimbus0_once,
+    reap_tenant_bridge, remove_persistent_network_namespace, setup_container_network,
+    teardown_container_network,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -176,15 +177,19 @@ impl KrunSandboxBackend {
         }
     }
 
-    fn network_config(&self, tenant: &nimbus_core::TenantId) -> Result<OciNetworkConfig> {
-        // Per-tenant segment: distinct subnet + bridge identity carved from the
-        // node super-net (audit M1). The allocator is constructed on demand from
-        // the state root; its state is the fs-locked segments.json.
-        let segment = SingleNodeSegmentAllocator::for_node_supernet(
+    /// The per-node segment allocator, constructed on demand from the state root
+    /// (its state is the fs-locked segments.json, so it is stateless to hold).
+    fn segment_allocator(&self) -> Result<SingleNodeSegmentAllocator> {
+        SingleNodeSegmentAllocator::for_node_supernet(
             &self.config.state_root,
             &self.config.node_network_supernet,
-        )?
-        .segment_for(tenant)?;
+        )
+    }
+
+    fn network_config(&self, tenant: &nimbus_core::TenantId) -> Result<OciNetworkConfig> {
+        // Per-tenant segment: distinct subnet + bridge identity carved from the
+        // node super-net (audit M1).
+        let segment = self.segment_allocator()?.segment_for(tenant)?;
         Ok(OciNetworkConfig {
             netavark_path: self.config.netavark_path.clone(),
             aardvark_dns_path: self.config.aardvark_dns_path.clone(),

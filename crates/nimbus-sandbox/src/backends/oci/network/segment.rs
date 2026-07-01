@@ -55,20 +55,14 @@ pub(crate) trait NetworkSegmentAllocator: Send + Sync {
     /// Take a sandbox hold on the tenant's segment (assigning the index on the
     /// first hold). Every started sandbox acquires; the index is not freed while
     /// any hold is live — the crash-safe reaper's refcount.
-    // Wired into both backends' start path in the MTN4 reaper step; test-only until then.
-    #[allow(dead_code)]
     fn acquire(&self, tenant: &TenantId, sandbox_id: &SandboxId) -> Result<NetworkSegment>;
     /// Drop a sandbox's hold. Returns [`ReleaseOutcome::TenantDrained`] when the
     /// last hold is gone (the caller must tear the tenant bridge down; the index
     /// is now free for reuse), else [`ReleaseOutcome::StillLive`]. Idempotent.
-    // Wired into both backends' teardown path in the MTN4 reaper step.
-    #[allow(dead_code)]
     fn release(&self, tenant: &TenantId, sandbox_id: &SandboxId) -> Result<ReleaseOutcome>;
 }
 
 /// The result of [`NetworkSegmentAllocator::release`].
-// The bridge reaper that matches TenantDrained lands in the same MTN4 wave.
-#[allow(dead_code)]
 pub(crate) enum ReleaseOutcome {
     /// The last sandbox released: the caller tears down the tenant bridge and the
     /// index is now free for reuse.

@@ -123,12 +123,17 @@ else
   fail "manifest does not persist the segment" "expected network_config: OciNetworkConfig on both manifests"
 fi
 
-step 8 "MTN4 last-release tears the tenant bridge down + one-shot legacy nimbus0 purge"
-if grep -rqE 'fn (reap_tenant_bridge|teardown_tenant_bridge|remove_tenant_bridge)' crates/nimbus-sandbox/src/backends/ \
-  && grep -rqE 'fn (purge_legacy_nimbus0|migrate_legacy_shared_bridge)' crates/nimbus-sandbox/src/backends/; then
-  pass "tenant-bridge reaper + legacy nimbus0 migration present"
+step 8 "MTN4 reaper WIRED into the backends (acquire hold, reap on drain, legacy purge)"
+# Anchor on CALL SITES in the backend start/teardown (container/ + krun/), not the
+# reaper.rs definitions under oci/network/ — a defined-but-unwired reaper is vacuous.
+CB="crates/nimbus-sandbox/src/backends/container/ crates/nimbus-sandbox/src/backends/krun/"
+if grep -rqE '\.acquire\(&' ${CB} \
+  && grep -rqE 'ReleaseOutcome::TenantDrained' ${CB} \
+  && grep -rqE 'reap_tenant_bridge\(&' ${CB} \
+  && grep -rqE 'purge_legacy_nimbus0_once\(' ${CB}; then
+  pass "acquire hold + ReleaseOutcome::TenantDrained -> reap_tenant_bridge + legacy purge wired in both backends"
 else
-  fail "MTN4 bridge reaper / legacy purge missing" "expected a tenant-bridge teardown + a legacy nimbus0 purge"
+  fail "MTN4 reaper not wired into the backends" "expected .acquire + ReleaseOutcome::TenantDrained + reap_tenant_bridge + purge_legacy_nimbus0_once call sites in container/ + krun/"
 fi
 
 # -------- summary ----------------------------------------------------------

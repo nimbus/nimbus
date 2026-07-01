@@ -20,7 +20,8 @@ pub(crate) use layout::{
 pub(crate) use netavark::{setup_container_network, teardown_container_network};
 pub(crate) use netns::{create_persistent_network_namespace, remove_persistent_network_namespace};
 pub(crate) use proxy::{MachinePortProxy, start_machine_port_proxies};
-pub(crate) use segment::{NetworkSegmentAllocator, SingleNodeSegmentAllocator};
+pub(crate) use reaper::{purge_legacy_nimbus0_once, reap_tenant_bridge};
+pub(crate) use segment::{NetworkSegmentAllocator, ReleaseOutcome, SingleNodeSegmentAllocator};
 
 pub(crate) const DEFAULT_NETAVARK_BINARY: &str = "netavark";
 pub(crate) const DEFAULT_AARDVARK_DNS_BINARY: &str = "aardvark-dns";
