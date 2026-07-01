@@ -76,6 +76,7 @@ impl ContainerSandboxBackend {
         if let Ok(allocator) = SingleNodeSegmentAllocator::for_node_supernet(
             &config.state_root,
             &config.node_network_supernet,
+            config.node_tenant_subnet_prefix,
         ) {
             let _ = reconcile_network_segment_orphans(&config.state_root, &allocator);
         }
@@ -142,6 +143,7 @@ impl ContainerSandboxBackend {
         SingleNodeSegmentAllocator::for_node_supernet(
             &self.config.state_root,
             &self.config.node_network_supernet,
+            self.config.node_tenant_subnet_prefix,
         )
     }
 

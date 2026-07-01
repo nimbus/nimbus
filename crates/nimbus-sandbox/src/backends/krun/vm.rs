@@ -34,11 +34,12 @@ use crate::backends::oci::materializer::{
 };
 use crate::backends::oci::network::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
-    DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, NetworkSegmentAllocator, OciNetworkConfig,
-    OciNetworkDirectEgress, OciNetworkLayout, ReleaseOutcome, SingleNodeSegmentAllocator,
-    create_persistent_network_namespace, pin_netns_egress_to_own_proxy, place_sandbox_on_block,
-    purge_legacy_nimbus0_once, reap_bridge_interface, reconcile_network_segment_orphans,
-    remove_persistent_network_namespace, setup_container_network, teardown_container_network,
+    DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX, NetworkSegmentAllocator,
+    OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, ReleaseOutcome,
+    SingleNodeSegmentAllocator, create_persistent_network_namespace, pin_netns_egress_to_own_proxy,
+    place_sandbox_on_block, purge_legacy_nimbus0_once, reap_bridge_interface,
+    reconcile_network_segment_orphans, remove_persistent_network_namespace,
+    setup_container_network, teardown_container_network,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -102,10 +103,14 @@ pub struct KrunSandboxBackendConfig {
     pub network_name: String,
     pub network_interface: String,
     pub network_subnet: String,
-    /// The node's network super-net that per-tenant `/24` subnets are carved
-    /// from (audit M1). Defaults to the node-0 `/16` slice of the cluster pool;
-    /// the cluster leg installs a raft-committed slice per node in MTN7.
+    /// The node's network super-net that per-tenant subnets are carved from
+    /// (audit M1). Defaults to the node-0 `/16` slice of the cluster pool; the
+    /// cluster leg installs a raft-committed slice per node in MTN7.
     pub node_network_supernet: String,
+    /// The prefix length of each per-tenant block subnet (MTN6). Defaults to
+    /// `/24` (253 sandboxes/block); a tenant that exceeds a block grows an
+    /// additional block bridge on demand.
+    pub node_tenant_subnet_prefix: u8,
     pub published_port_range: RangeInclusive<u16>,
     pub max_published_ports_per_tenant: Option<usize>,
     pub resource_quota_policy: SandboxResourceQuotaPolicy,
@@ -153,6 +158,7 @@ impl Default for KrunSandboxBackendConfig {
             network_interface: DEFAULT_NETWORK_INTERFACE.to_owned(),
             network_subnet: DEFAULT_NETWORK_SUBNET.to_owned(),
             node_network_supernet: "10.0.0.0/16".to_owned(),
+            node_tenant_subnet_prefix: DEFAULT_TENANT_PREFIX,
             published_port_range: DEFAULT_PUBLISHED_PORT_START..=DEFAULT_PUBLISHED_PORT_END,
             max_published_ports_per_tenant: Some(DEFAULT_MAX_PORTS_PER_TENANT),
             resource_quota_policy: SandboxResourceQuotaPolicy::default(),
@@ -177,6 +183,7 @@ impl KrunSandboxBackend {
         if let Ok(allocator) = SingleNodeSegmentAllocator::for_node_supernet(
             &config.state_root,
             &config.node_network_supernet,
+            config.node_tenant_subnet_prefix,
         ) {
             let _ = reconcile_network_segment_orphans(&config.state_root, &allocator);
         }
@@ -192,6 +199,7 @@ impl KrunSandboxBackend {
         SingleNodeSegmentAllocator::for_node_supernet(
             &self.config.state_root,
             &self.config.node_network_supernet,
+            self.config.node_tenant_subnet_prefix,
         )
     }
 

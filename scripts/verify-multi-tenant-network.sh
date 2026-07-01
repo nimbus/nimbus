@@ -206,6 +206,17 @@ else
   fail "MTN6 multi-block placement not wired" "expected place_sandbox_on_block + place_sandbox_config call sites in both backends' planning + a grow test"
 fi
 
+step 15 "MTN6 KVM grow-on-exhaustion proof (tenant-prefix knob + grow test)"
+if grep -qE 'node_tenant_subnet_prefix' "${KRUN_VM}" \
+  && grep -qE 'fn krun_tenant_grows_onto_a_second_block_when_the_first_is_full' "${EGRESS_PROOF}" \
+  && grep -qE 'guest_ip=10.0.0.6' "${EGRESS_PROOF}" \
+  && grep -qE 'own_egress=allowed' "${EGRESS_PROOF}" \
+  && grep -qE 'host_bridge_exists\("nb-1"\)' "${EGRESS_PROOF}"; then
+  pass "tenant-subnet-prefix knob + grow-onto-second-block KVM proof (guest lands in block 1 + own PEP + nb-1 exists)"
+else
+  fail "MTN6 KVM grow proof missing" "expected node_tenant_subnet_prefix knob + krun_tenant_grows_onto_a_second_block test with guest_ip/own_egress/nb-1 assertions"
+fi
+
 # -------- summary ----------------------------------------------------------
 
 printf '\n\033[1m========= multi-tenant-network verifier =========\033[0m\n'

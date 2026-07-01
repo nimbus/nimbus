@@ -150,14 +150,18 @@ impl SingleNodeSegmentAllocator {
 
     /// Build a single-node allocator carving `/24` tenant subnets from the given
     /// node super-net (the configurable knob a backend passes from its config).
-    pub(crate) fn for_node_supernet(state_root: &Path, supernet: &str) -> Result<Self> {
+    pub(crate) fn for_node_supernet(
+        state_root: &Path,
+        supernet: &str,
+        tenant_prefix: u8,
+    ) -> Result<Self> {
         let cidr = Cidr::parse(supernet).map_err(|error| SandboxError::InvalidSpec {
             message: format!("invalid node network super-net {supernet:?}: {error}"),
         })?;
         Ok(Self::new(
             state_root,
             Some(InstalledSuperNet { cidr, epoch: 0 }),
-            DEFAULT_TENANT_PREFIX,
+            tenant_prefix,
         ))
     }
 

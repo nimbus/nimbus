@@ -7,7 +7,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::backends::oci::network::{
-    DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, OciMachinePortForwarderConfig,
+    DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_TENANT_PREFIX,
+    OciMachinePortForwarderConfig,
 };
 use crate::backends::oci::port_manager::DEFAULT_MAX_PORTS_PER_TENANT;
 use crate::spec::SandboxResourceQuotaPolicy;
@@ -43,10 +44,15 @@ pub struct ContainerSandboxBackendConfig {
     pub network_name: String,
     pub network_interface: String,
     pub network_subnet: String,
-    /// The node's network super-net that per-tenant `/24` subnets are carved
-    /// from (audit M1). Defaults to the node-0 `/16` slice of the cluster pool;
-    /// the cluster leg installs a raft-committed slice per node in MTN7.
+    /// The node's network super-net that per-tenant subnets are carved from
+    /// (audit M1). Defaults to the node-0 `/16` slice of the cluster pool; the
+    /// cluster leg installs a raft-committed slice per node in MTN7.
     pub node_network_supernet: String,
+    /// The prefix length of each per-tenant block subnet carved from the
+    /// super-net (MTN6). Defaults to `/24` (253 sandboxes/block); a tenant that
+    /// exceeds a block grows an additional block bridge on demand. Smaller
+    /// prefixes (denser packing) trade address space for more blocks.
+    pub node_tenant_subnet_prefix: u8,
     pub machine_port_forwarder: Option<OciMachinePortForwarderConfig>,
     pub start_mode: ContainerStartMode,
     pub log_level: String,
@@ -92,6 +98,7 @@ impl Default for ContainerSandboxBackendConfig {
             network_interface: crate::backends::oci::network::DEFAULT_NETWORK_INTERFACE.to_owned(),
             network_subnet: crate::backends::oci::network::DEFAULT_NETWORK_SUBNET.to_owned(),
             node_network_supernet: "10.0.0.0/16".to_owned(),
+            node_tenant_subnet_prefix: DEFAULT_TENANT_PREFIX,
             machine_port_forwarder: None,
             start_mode: ContainerStartMode::Execute,
             log_level: "debug".to_owned(),

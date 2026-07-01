@@ -798,3 +798,108 @@ fn krun_two_tenants_cannot_reach_each_others_sandbox() {
     // The MTN5 guarantee: B cannot reach a different tenant's sandbox.
     assert_result_line(&b_result, "cross_tenant_reach=denied");
 }
+
+/// Does a bridge interface with this name exist on the host? (Run under sudo.)
+fn host_bridge_exists(interface: &str) -> bool {
+    std::process::Command::new("ip")
+        .args(["link", "show", interface])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+/// MTN6 on-demand multi-block, proven on real KVM. With a `/30` per-tenant prefix
+/// (one host address per block), a tenant's SECOND sandbox exhausts its first
+/// block and GROWS onto a new sibling block bridge (`nb-1`) — the grow path
+/// (`place_sandbox_config` -> `grow_block`) end-to-end. The grown-block sandbox
+/// boots on the new bridge, gets an address in the SECOND block, and reaches its
+/// OWN on-link PEP (positive control); both block bridges exist on the host.
+#[test]
+#[ignore = "requires /dev/kvm + root; run explicitly on the Linux KVM proof box"]
+fn krun_tenant_grows_onto_a_second_block_when_the_first_is_full() {
+    if !egress_proof_preconditions_met() {
+        return;
+    }
+
+    let upstream = TestHttpServer::start("grow-upstream-body");
+    let upstream_port = upstream.addr.port();
+    let policy = parity_policy(upstream_port);
+    let image = env::var("NIMBUS_KRUN_EGRESS_IMAGE")
+        .unwrap_or_else(|_| "docker://busybox:latest".to_owned());
+    let (_temp, workdir) = test_workdir("krun-grow-block");
+    // A `/30` per-tenant prefix packs ONE host address per block, so the tenant's
+    // second sandbox forces a grow onto a new block bridge.
+    let mut config = egress_backend_config(&workdir, 15800);
+    config.node_tenant_subnet_prefix = 30;
+    let backend = KrunSandboxBackend::new(config);
+
+    let tenant = TenantId::new("grow-tenant").expect("tenant id should parse");
+
+    // Sandbox 1 takes the tenant's PRIMARY block (index 0 -> nb-0, 10.0.0.2).
+    let s1_spec = SandboxSpec::new(
+        tenant.clone(),
+        SandboxOwnerSpec::standalone_named("grow-one"),
+        SandboxBackendKind::Krun,
+        SandboxRootSpec::oci_image_reference(image.clone()),
+        SandboxProcessSpec::new(Vec::<String>::new())
+            .with_entrypoint(["/bin/sh", "-c"])
+            .with_command(["sleep 120".to_owned()]),
+    )
+    .with_egress_policy(policy.clone());
+    let s1_handle = block_on(backend.start(s1_spec)).expect("sandbox 1 should start");
+    let _s1_teardown = ForceTeardownGuard::new(
+        backend.clone(),
+        s1_handle.id.clone(),
+        sandbox_netns_path(&workdir, &tenant, &s1_handle.id),
+    );
+
+    // Sandbox 2 for the SAME tenant cannot fit the `/30`, so placement grows a new
+    // block bridge (index 1 -> nb-1, host .6 in the second block). Report its own
+    // guest IP and probe its OWN egress PEP.
+    let s2_command = format!(
+        r#"TMP=/nimbus-egress/result.tmp; : > "$TMP"; echo guest_ip=$(ip -4 addr show eth0 | grep -oE '10[.]0[.]0[.][0-9]+' | head -1) >> "$TMP"; if timeout 8 wget -T 5 -q -O /tmp/own "http://127.0.0.1:{upstream_port}/allowed" && grep -q grow-upstream-body /tmp/own; then echo own_egress=allowed >> "$TMP"; else echo own_egress=denied >> "$TMP"; fi; mv "$TMP" {RESULT_PATH_IN_GUEST}; sleep 30"#
+    );
+    let s2_spec = SandboxSpec::new(
+        tenant.clone(),
+        SandboxOwnerSpec::standalone_named("grow-two"),
+        SandboxBackendKind::Krun,
+        SandboxRootSpec::oci_image_reference(image),
+        SandboxProcessSpec::new(Vec::<String>::new())
+            .with_entrypoint(["/bin/sh", "-c"])
+            .with_command([s2_command]),
+    )
+    .with_mount(SandboxMountSpec::tenant_volume(
+        RESULT_VOLUME,
+        "/nimbus-egress",
+    ))
+    .with_egress_policy(policy);
+    let s2_handle =
+        block_on(backend.start(s2_spec)).expect("sandbox 2 should start by growing a block");
+    let _s2_teardown = ForceTeardownGuard::new(
+        backend.clone(),
+        s2_handle.id.clone(),
+        sandbox_netns_path(&workdir, &tenant, &s2_handle.id),
+    );
+
+    let s2_result_path = tenant_volume_path(&workdir, &tenant, RESULT_VOLUME).join("result");
+    let s2_result = wait_for_result(
+        &s2_result_path,
+        Duration::from_secs(60),
+        "grown-block sandbox result",
+    );
+
+    // The grown-block sandbox landed in the SECOND block (host .6), NOT the first
+    // block's .2 — proving on-demand growth onto a new bridge.
+    assert_result_line(&s2_result, "guest_ip=10.0.0.6");
+    // Positive control: the grown block's own on-link PEP works.
+    assert_result_line(&s2_result, "own_egress=allowed");
+    // Both of the tenant's block bridges exist on the host (grew one -> two).
+    assert!(
+        host_bridge_exists("nb-0"),
+        "the tenant's first block bridge nb-0 must exist"
+    );
+    assert!(
+        host_bridge_exists("nb-1"),
+        "the grown second block bridge nb-1 must exist"
+    );
+}
