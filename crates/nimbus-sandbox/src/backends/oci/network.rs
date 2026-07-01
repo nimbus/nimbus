@@ -8,6 +8,7 @@ mod layout;
 mod netavark;
 mod netns;
 mod proxy;
+mod segment;
 
 pub(crate) use egress_pin::pin_netns_egress_to_own_proxy;
 pub use forwarding::OciMachinePortForwarderConfig;
