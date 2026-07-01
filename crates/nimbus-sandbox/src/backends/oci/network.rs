@@ -8,6 +8,7 @@ mod layout;
 mod netavark;
 mod netns;
 mod proxy;
+mod reaper;
 mod segment;
 
 pub(crate) use egress_pin::pin_netns_egress_to_own_proxy;
