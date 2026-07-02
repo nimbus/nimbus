@@ -67,6 +67,7 @@ jobs:
             buildah \
             conmon \
             crun \
+            iproute2 \
             netavark \
             nftables \
             uidmap
@@ -74,12 +75,36 @@ jobs:
       - name: Verify host tool versions
         run: |
           set -euxo pipefail
+          find_tool() {
+            local name="$1"
+            shift
+            if command -v "${name}" >/dev/null 2>&1; then
+              command -v "${name}"
+              return 0
+            fi
+            local candidate
+            for candidate in "$@"; do
+              if [ -x "${candidate}" ]; then
+                printf '%s\n' "${candidate}"
+                return 0
+              fi
+            done
+            printf 'missing required tool %s\n' "${name}" >&2
+            return 127
+          }
+          NETAVARK_BIN="$(find_tool netavark /usr/lib/podman/netavark /usr/libexec/podman/netavark)"
+          AARDVARK_DNS_BIN="$(find_tool aardvark-dns /usr/lib/podman/aardvark-dns /usr/libexec/podman/aardvark-dns)"
+          {
+            printf 'NIMBUS_NETAVARK=%s\n' "${NETAVARK_BIN}"
+            printf 'NIMBUS_AARDVARK_DNS=%s\n' "${AARDVARK_DNS_BIN}"
+          } >> "${GITHUB_ENV}"
           buildah --version
           conmon --version
           crun --version
-          netavark --version
-          aardvark-dns --version
+          "${NETAVARK_BIN}" --version
+          "${AARDVARK_DNS_BIN}" --version
           nft --version
+          ip -Version
           sudo true
           sudo nft list ruleset >/dev/null
 
@@ -117,9 +142,10 @@ jobs:
             buildah --version
             conmon --version
             crun --version
-            netavark --version
-            aardvark-dns --version
+            "${NIMBUS_NETAVARK:-netavark}" --version
+            "${NIMBUS_AARDVARK_DNS:-aardvark-dns}" --version
             nft --version
+            ip -Version
             echo
             echo "== nft ruleset =="
             sudo nft list ruleset
