@@ -164,7 +164,7 @@ jobs:
     timeout-minutes: 60
     if: github.event_name != 'schedule'
     env:
-      NIMBUS_CONTAINER_EGRESS_WORKDIR: ${{ runner.temp }}/nimbus-container-egress
+      NIMBUS_CONTAINER_EGRESS_WORKDIR: /tmp/nimbus-container-egress
 
     steps:
       - name: Check out repository

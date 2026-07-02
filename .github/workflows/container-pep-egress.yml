@@ -41,7 +41,7 @@ env:
   CARGO_PROFILE_TEST_DEBUG: "0"
   RUSTC_WRAPPER: sccache
   SCCACHE_GHA_ENABLED: "true"
-  NIMBUS_CONTAINER_EGRESS_WORKDIR: ${{ runner.temp }}/nimbus-container-egress
+  NIMBUS_CONTAINER_EGRESS_WORKDIR: /tmp/nimbus-container-egress
 
 jobs:
   container-pep-egress:
