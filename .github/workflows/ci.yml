@@ -158,6 +158,109 @@ jobs:
       - name: Third-party attribution gate unit tests
         run: bash scripts/verify-third-party-attribution-helper.sh
 
+  container-pep-egress:
+    name: Root-only container PEP egress
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    if: github.event_name != 'schedule'
+    env:
+      NIMBUS_CONTAINER_EGRESS_WORKDIR: ${{ runner.temp }}/nimbus-container-egress
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: ci-ubuntu-stable-container-pep-egress-v1
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Install OCI and network namespace tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            aardvark-dns \
+            buildah \
+            conmon \
+            crun \
+            iproute2 \
+            netavark \
+            nftables \
+            uidmap
+
+      - name: Verify host tool versions
+        run: |
+          set -euxo pipefail
+          buildah --version
+          conmon --version
+          crun --version
+          netavark --version
+          aardvark-dns --version
+          nft --version
+          ip -Version
+          sudo true
+          sudo nft list ruleset >/dev/null
+
+      - name: Run root-only container PEP egress proof
+        env:
+          NIMBUS_CONTAINER_EGRESS_IMAGE: docker.io/library/busybox:latest
+          NIMBUS_CONTAINER_EGRESS_TARGET: http://1.1.1.1
+        run: |
+          set -o pipefail
+          export CARGO_HOME="${CARGO_HOME:-${HOME}/.cargo}"
+          export RUSTUP_HOME="${RUSTUP_HOME:-${HOME}/.rustup}"
+          mkdir -p "${NIMBUS_CONTAINER_EGRESS_WORKDIR}"
+          sudo --preserve-env=HOME,PATH,CARGO_HOME,RUSTUP_HOME,RUSTC_WRAPPER,SCCACHE_GHA_ENABLED,CARGO_TERM_COLOR,CARGO_INCREMENTAL,CARGO_PROFILE_DEV_DEBUG,CARGO_PROFILE_TEST_DEBUG,CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS,CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS,OPENSSL_NO_VENDOR,NIMBUS_CONTAINER_EGRESS_WORKDIR,NIMBUS_CONTAINER_EGRESS_IMAGE,NIMBUS_CONTAINER_EGRESS_TARGET \
+            cargo test -p nimbus-sandbox --test container_linux_egress -- --ignored --nocapture \
+            2>&1 | tee "${RUNNER_TEMP}/container-pep-egress-test.log"
+
+      - name: Collect failure diagnostics
+        if: failure()
+        run: |
+          set +e
+          diagnostics="${RUNNER_TEMP}/container-pep-egress-diagnostics"
+          mkdir -p "${diagnostics}"
+          {
+            echo "== kernel =="
+            uname -a
+            echo
+            echo "== os-release =="
+            cat /etc/os-release
+            echo
+            echo "== ids =="
+            id
+            sudo id
+            echo
+            echo "== tool versions =="
+            buildah --version
+            conmon --version
+            crun --version
+            netavark --version
+            aardvark-dns --version
+            nft --version
+            ip -Version
+            echo
+            echo "== nft ruleset =="
+            sudo nft list ruleset
+            echo
+            echo "== network namespaces =="
+            sudo ip netns list
+            echo
+            echo "== sandbox state path =="
+            printf '%s\n' "${NIMBUS_CONTAINER_EGRESS_WORKDIR}"
+            find "${NIMBUS_CONTAINER_EGRESS_WORKDIR}" -maxdepth 5 -print
+          } > "${diagnostics}/host.txt" 2>&1
+          cp "${RUNNER_TEMP}/container-pep-egress-test.log" "${diagnostics}/test.log" 2>/dev/null || true
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-pep-egress-diagnostics
+          path: ${{ runner.temp }}/container-pep-egress-diagnostics
+          if-no-files-found: ignore
+
   rust-runtime-tests:
     name: Rust Runtime Tests
     runs-on: ubuntu-24.04
