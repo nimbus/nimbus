@@ -1701,7 +1701,8 @@ async fn invoke_node_compat_fixture_with_async_main_module(
     let permit =
         crate::executor::SharedInvocationPermit::new(runtime.policy(), None, None, true, None);
     let watchdog = crate::watchdog::WatchdogTimer::new();
-    let context = crate::context::RuntimeInvocationContext::top_level(request);
+    let context =
+        crate::context::RuntimeInvocationContext::top_level_for_tenant(request, "tenant-a");
     let mut driver = runtime.prepare_runtime_invocation_driver(RuntimeInvocationDriverPrepare {
         runtime: reusable_runtime,
         watchdog,
@@ -1857,7 +1858,9 @@ fn execute_upstream_node_compat_test_with_extra_files(
                     )
                     .await
                 } else {
-                    runtime.invoke_bundle(&bundle, &request).await
+                    runtime
+                        .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
+                        .await
                 }
             })
             .await

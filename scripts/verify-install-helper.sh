@@ -464,9 +464,20 @@ if PATH="${mock_linux_bin}:$PATH" GITHUB_TOKEN=test-token \
     sh "${repo_root}/scripts/install.sh" --dry-run \
     > "${output_dir}/linux-dry-run.txt" 2>&1; then
   if grep -q "Authorization: Bearer test-token" "${linux_curl_log}"; then
-    pass "dry-run uses GITHUB_TOKEN for GitHub API lookups"
+    pass "dry-run uses GITHUB_TOKEN for nimbus GitHub API lookup"
   else
-    fail "dry-run uses GITHUB_TOKEN for GitHub API lookups"
+    fail "dry-run uses GITHUB_TOKEN for nimbus GitHub API lookup"
+  fi
+  if grep -Eq "nimbus-crun/releases/latest|nimbus-libkrun/releases/latest" "${linux_curl_log}"; then
+    fail "Linux dry-run avoids fork latest lookups"
+  else
+    pass "Linux dry-run avoids fork latest lookups"
+  fi
+  if grep -q "nimbus-crun: v1.27.1-nimbus.2 (upstream 1.27.1)" "${output_dir}/linux-dry-run.txt" &&
+     grep -q "nimbus-libkrun: v1.18.1-nimbus.1 (upstream 1.18.1)" "${output_dir}/linux-dry-run.txt"; then
+    pass "Linux dry-run uses validated VMM tuple"
+  else
+    fail "Linux dry-run uses validated VMM tuple"
   fi
 else
   fail "Linux mocked dry-run exits successfully"

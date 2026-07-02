@@ -70,6 +70,19 @@ pub(super) const NEAR_HEAP_LIMIT_WARM_POOL_CASE: IsolatedRuntimeTestCase =
         "runtime::tests::warm_pool::warm_pool_condemns_checked_out_runtime_after_near_heap_limit_subprocess",
     );
 
+fn warm_pool_context(tenant_label: &str) -> RuntimeInvocationContext {
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "warm_pool:test".to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: None,
+        services: Default::default(),
+    };
+    RuntimeInvocationContext::top_level_for_tenant(&request, tenant_label)
+}
+
 #[test]
 #[should_panic(expected = "WarmPool requires CooperativeLocker")]
 fn warm_pool_with_run_to_completion_fails_fast() {
@@ -318,10 +331,17 @@ export {};
     let policy = Arc::new(RuntimePolicy::new(limits));
     let runtime_owner = NimbusRuntime::with_policy(Arc::new(AsyncEchoHost), policy);
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let tenant_a_context = warm_pool_context("tenant-a");
+    let tenant_b_context = warm_pool_context("tenant-b");
 
     // Step 1: Take a runtime for tenant-A (cold miss — pool is empty).
     let reusable_a = v8_runtime_pool
-        .take_runtime_with_options(&runtime_owner, &bundle_tenant_a, true)
+        .take_runtime_with_options_for_invocation(
+            &runtime_owner,
+            &bundle_tenant_a,
+            Some(&tenant_a_context),
+            true,
+        )
         .expect("tenant-a cold take should succeed");
     let metrics_after_cold = runtime_owner.policy.metrics_snapshot();
     assert_eq!(metrics_after_cold.warm_pool_misses, 1);
@@ -331,7 +351,7 @@ export {};
     v8_runtime_pool.return_runtime_for_invocation(
         &runtime_owner,
         &bundle_tenant_a,
-        None,
+        Some(&tenant_a_context),
         reusable_a,
     );
     assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 1);
@@ -339,7 +359,12 @@ export {};
     // Step 2: Attempt take for tenant-B → must be a cold miss because the
     // pooled entry belongs to tenant-A.
     let reusable_b = v8_runtime_pool
-        .take_runtime_with_options(&runtime_owner, &bundle_tenant_b, true)
+        .take_runtime_with_options_for_invocation(
+            &runtime_owner,
+            &bundle_tenant_b,
+            Some(&tenant_b_context),
+            true,
+        )
         .expect("tenant-b cold take should succeed");
     let metrics_after_cross = runtime_owner.policy.metrics_snapshot();
     assert_eq!(
@@ -358,14 +383,19 @@ export {};
     v8_runtime_pool.return_runtime_for_invocation(
         &runtime_owner,
         &bundle_tenant_b,
-        None,
+        Some(&tenant_b_context),
         reusable_b,
     );
     assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 2);
 
     // Step 3: Take for tenant-A again → must be a warm hit.
     let _reusable_a2 = v8_runtime_pool
-        .take_runtime_with_options(&runtime_owner, &bundle_tenant_a, true)
+        .take_runtime_with_options_for_invocation(
+            &runtime_owner,
+            &bundle_tenant_a,
+            Some(&tenant_a_context),
+            true,
+        )
         .expect("tenant-a warm take should succeed");
     let metrics_after_warm = runtime_owner.policy.metrics_snapshot();
     assert_eq!(
@@ -419,19 +449,25 @@ export {};
         NimbusRuntime::with_policy(Arc::new(AsyncEchoHost), adapter_granted_policy);
 
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let context = warm_pool_context("tenant-a");
 
     let native = v8_runtime_pool
-        .take_runtime_with_options(&native_runtime, &bundle, true)
+        .take_runtime_with_options_for_invocation(&native_runtime, &bundle, Some(&context), true)
         .expect("native service runtime cold take should succeed");
     let native_metrics_after_cold = native_runtime.policy.metrics_snapshot();
     assert_eq!(native_metrics_after_cold.warm_pool_misses, 1);
     assert_eq!(native_metrics_after_cold.warm_pool_hits, 0);
 
-    v8_runtime_pool.return_runtime_for_invocation(&native_runtime, &bundle, None, native);
+    v8_runtime_pool.return_runtime_for_invocation(&native_runtime, &bundle, Some(&context), native);
     assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 1);
 
     let adapter_granted = v8_runtime_pool
-        .take_runtime_with_options(&adapter_granted_runtime, &bundle, true)
+        .take_runtime_with_options_for_invocation(
+            &adapter_granted_runtime,
+            &bundle,
+            Some(&context),
+            true,
+        )
         .expect("adapter-granted runtime cold take should succeed");
     let adapter_granted_metrics = adapter_granted_runtime.policy.metrics_snapshot();
     assert_eq!(
@@ -451,13 +487,13 @@ export {};
     v8_runtime_pool.return_runtime_for_invocation(
         &adapter_granted_runtime,
         &bundle,
-        None,
+        Some(&context),
         adapter_granted,
     );
     assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 2);
 
     let _native_again = v8_runtime_pool
-        .take_runtime_with_options(&native_runtime, &bundle, true)
+        .take_runtime_with_options_for_invocation(&native_runtime, &bundle, Some(&context), true)
         .expect("same service-op state and exact service grants should reuse the native runtime");
     let native_metrics_after_reuse = native_runtime.policy.metrics_snapshot();
     assert_eq!(
@@ -500,7 +536,7 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let query_context = RuntimeInvocationContext::top_level(&query_request);
+    let query_context = RuntimeInvocationContext::top_level_for_tenant(&query_request, "tenant-a");
     let action_request = InvocationRequest {
         kind: InvocationKind::Action,
         function_name: "messages:warm".to_string(),
@@ -510,7 +546,8 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let action_context = RuntimeInvocationContext::top_level(&action_request);
+    let action_context =
+        RuntimeInvocationContext::top_level_for_tenant(&action_request, "tenant-a");
 
     let query = v8_runtime_pool
         .take_runtime_with_options_for_invocation(
@@ -606,10 +643,11 @@ export {};
         Arc::new(RuntimePolicy::new(limits)),
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let context = warm_pool_context("tenant-a");
 
     let snapshot_builds_before = v8_bootstrap_snapshot_build_count_for_test();
     let reusable = v8_runtime_pool
-        .take_runtime_with_options(&runtime_owner, &bundle, true)
+        .take_runtime_with_options_for_invocation(&runtime_owner, &bundle, Some(&context), true)
         .expect("node-compatible warm-pool cold take should succeed");
     let snapshot_builds_after = v8_bootstrap_snapshot_build_count_for_test();
 
@@ -650,12 +688,18 @@ export {};
         Arc::new(RuntimePolicy::new(limits)),
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let context = warm_pool_context("tenant-a");
 
     let reusable = v8_runtime_pool
-        .take_runtime_with_options(&runtime_owner, &bundle, true)
+        .take_runtime_with_options_for_invocation(&runtime_owner, &bundle, Some(&context), true)
         .expect("runtime cold take should succeed");
 
-    v8_runtime_pool.return_runtime_for_invocation(&runtime_owner, &bundle, None, reusable);
+    v8_runtime_pool.return_runtime_for_invocation(
+        &runtime_owner,
+        &bundle,
+        Some(&context),
+        reusable,
+    );
 
     assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 1);
     let maintenance = v8_runtime_pool
@@ -759,12 +803,18 @@ export {};
         Arc::new(RuntimePolicy::new(limits)),
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let context = warm_pool_context("tenant-a");
     let mut reusable = v8_runtime_pool
-        .take_runtime_with_options(&runtime_owner, &bundle, true)
+        .take_runtime_with_options_for_invocation(&runtime_owner, &bundle, Some(&context), true)
         .expect("runtime cold take should succeed");
     reusable.warm_reuse_count = 1;
 
-    v8_runtime_pool.return_runtime_for_invocation(&runtime_owner, &bundle, None, reusable);
+    v8_runtime_pool.return_runtime_for_invocation(
+        &runtime_owner,
+        &bundle,
+        Some(&context),
+        reusable,
+    );
 
     assert_eq!(
         v8_runtime_pool.warm_pool_count_for_test(),
@@ -807,10 +857,16 @@ export {};
     for tenant in ["tenant-a", "tenant-b", "tenant-c"] {
         let bundle = RuntimeBundle::for_tenant(&bundle_path, &expected_sha256, tenant)
             .expect("tenant bundle should build");
+        let context = warm_pool_context(tenant);
         let reusable = v8_runtime_pool
-            .take_runtime_with_options(&runtime_owner, &bundle, true)
+            .take_runtime_with_options_for_invocation(&runtime_owner, &bundle, Some(&context), true)
             .expect("tenant runtime cold take should succeed");
-        v8_runtime_pool.return_runtime_for_invocation(&runtime_owner, &bundle, None, reusable);
+        v8_runtime_pool.return_runtime_for_invocation(
+            &runtime_owner,
+            &bundle,
+            Some(&context),
+            reusable,
+        );
     }
 
     assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 3);
@@ -888,7 +944,7 @@ export {};
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
-    let context = RuntimeInvocationContext::top_level(&request);
+    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
 
     let error = runtime_owner
         .invoke_bundle_unmanaged(

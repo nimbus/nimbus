@@ -405,7 +405,7 @@ pub(super) async fn run_application_networking_canary_bundle(
         runtime_test_policy_with_real_fs(limits),
     );
     runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&app.bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -416,6 +416,7 @@ pub(super) async fn run_application_networking_canary_bundle(
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .unwrap_or_else(|error| {
@@ -434,7 +435,7 @@ pub(super) async fn run_application_sdk_canary_bundle(
         runtime_test_policy_with_real_fs(limits),
     );
     runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&app.bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -445,6 +446,7 @@ pub(super) async fn run_application_sdk_canary_bundle(
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .map_err(|error| format!("SDK canary bundle {bundle_fixture_name} should execute: {error}"))
@@ -461,7 +463,7 @@ pub(super) async fn run_application_host_heavy_canary_bundle(
         runtime_test_policy_with_real_fs(limits),
     );
     runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&app.bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -472,6 +474,7 @@ pub(super) async fn run_application_host_heavy_canary_bundle(
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .map_err(|error| {
@@ -490,7 +493,7 @@ pub(super) async fn run_tooling_canary_bundle(
         runtime_test_policy_with_real_fs(limits),
     );
     runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&app.bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -501,6 +504,7 @@ pub(super) async fn run_tooling_canary_bundle(
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .unwrap_or_else(|error| {

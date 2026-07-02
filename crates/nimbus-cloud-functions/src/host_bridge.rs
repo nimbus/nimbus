@@ -270,6 +270,7 @@ mod tests {
         // Denied by a policy that does not allow the host: the isolate verdict
         // and the container-plane PDP verdict are byte-for-byte the same.
         let isolate_deny = bridge.authorize(&runtime_request(
+            "tenant-cf-parity",
             EgressSubstrate::Isolate,
             "evil.example",
             "/v1/steal",
@@ -289,6 +290,7 @@ mod tests {
         // Allowed by a policy that allows the host, resolving the same rule the
         // container plane resolves.
         let isolate_allow = bridge.authorize(&runtime_request(
+            "tenant-cf-parity",
             EgressSubstrate::Isolate,
             "api.internal",
             "/v1/messages",
@@ -339,6 +341,7 @@ mod tests {
         );
 
         let plain = bridge.authorize(&runtime_request(
+            "tenant-cf-l7",
             EgressSubstrate::Isolate,
             "plain.internal",
             "/v1/ok",
@@ -350,6 +353,7 @@ mod tests {
         );
 
         let credentialed = bridge.authorize(&runtime_request(
+            "tenant-cf-l7",
             EgressSubstrate::Isolate,
             "secret.internal",
             "/v1/ok",
@@ -369,6 +373,7 @@ mod tests {
         let (_tempdir, bridge) = bridge_for_decision(default_decision("tenant-cf-no-policy"), None);
 
         let denial = bridge.authorize(&runtime_request(
+            "tenant-cf-no-policy",
             EgressSubstrate::Isolate,
             "api.internal",
             "/v1/messages",
@@ -377,6 +382,37 @@ mod tests {
         assert!(
             denial.reason().contains("default deny"),
             "no-policy cloud functions tenants must deny fetch by default: {}",
+            denial.reason()
+        );
+    }
+
+    #[test]
+    fn cloud_functions_egress_without_tenant_label_fails_closed() {
+        let (_tempdir, bridge) = bridge_for_policy(
+            "tenant-cf-missing-label",
+            EgressPolicy::new([EgressRule::new(
+                "api",
+                EgressProtocol::Https,
+                "api.internal",
+                443,
+            )]),
+            None,
+        );
+
+        let unlabeled = RuntimeEgressRequest {
+            tenant_label: None,
+            ..runtime_request(
+                "tenant-cf-missing-label",
+                EgressSubstrate::Isolate,
+                "api.internal",
+                "/",
+            )
+        };
+        let denial = bridge.authorize(&unlabeled);
+        assert!(!denial.is_allowed());
+        assert!(
+            denial.reason().contains("tenant label is absent"),
+            "cloud functions runtime egress without a tenant label must fail closed: {}",
             denial.reason()
         );
     }
@@ -407,6 +443,7 @@ mod tests {
         assert!(
             alpha
                 .authorize(&runtime_request(
+                    "tenant-cf-alpha",
                     EgressSubstrate::Isolate,
                     "alpha.example",
                     "/"
@@ -414,6 +451,7 @@ mod tests {
                 .is_allowed()
         );
         let denied_by_other_tenant = beta.authorize(&runtime_request(
+            "tenant-cf-beta",
             EgressSubstrate::Isolate,
             "alpha.example",
             "/",
@@ -427,7 +465,12 @@ mod tests {
 
         let mismatched_label = RuntimeEgressRequest {
             tenant_label: Some("tenant-cf-alpha".to_string()),
-            ..runtime_request(EgressSubstrate::Isolate, "beta.example", "/")
+            ..runtime_request(
+                "tenant-cf-beta",
+                EgressSubstrate::Isolate,
+                "beta.example",
+                "/",
+            )
         };
         let label_denial = beta.authorize(&mismatched_label);
         assert!(!label_denial.is_allowed());
@@ -457,6 +500,7 @@ mod tests {
         );
         let (_blocked_tempdir, blocked) = bridge_for_decision(decision.clone(), Some(not_ready));
         let denial = blocked.authorize(&runtime_request(
+            "tenant-cf-readiness",
             EgressSubstrate::Isolate,
             "api.internal",
             "/",
@@ -472,6 +516,7 @@ mod tests {
         assert!(
             ready
                 .authorize(&runtime_request(
+                    "tenant-cf-readiness",
                     EgressSubstrate::Isolate,
                     "api.internal",
                     "/"
@@ -496,7 +541,12 @@ mod tests {
 
         let custom_client_denial = bridge.authorize(&RuntimeEgressRequest {
             uses_custom_client: true,
-            ..runtime_request(EgressSubstrate::Isolate, "api.internal", "/")
+            ..runtime_request(
+                "tenant-cf-custom-client",
+                EgressSubstrate::Isolate,
+                "api.internal",
+                "/",
+            )
         });
         assert!(!custom_client_denial.is_allowed());
         assert!(
@@ -509,7 +559,12 @@ mod tests {
 
         let udp_denial = bridge.authorize(&RuntimeEgressRequest {
             protocol: RuntimeEgressProtocol::Udp,
-            ..runtime_request(EgressSubstrate::Isolate, "api.internal", "/")
+            ..runtime_request(
+                "tenant-cf-custom-client",
+                EgressSubstrate::Isolate,
+                "api.internal",
+                "/",
+            )
         });
         assert!(!udp_denial.is_allowed());
         assert!(
@@ -610,7 +665,12 @@ mod tests {
             .expect("tenant isolation decision should build")
     }
 
-    fn runtime_request(substrate: EgressSubstrate, host: &str, path: &str) -> RuntimeEgressRequest {
+    fn runtime_request(
+        tenant: &str,
+        substrate: EgressSubstrate,
+        host: &str,
+        path: &str,
+    ) -> RuntimeEgressRequest {
         RuntimeEgressRequest {
             substrate,
             protocol: RuntimeEgressProtocol::Https,
@@ -619,7 +679,7 @@ mod tests {
             host: host.to_string(),
             port: 443,
             path_and_query: Some(path.to_string()),
-            tenant_label: None,
+            tenant_label: Some(tenant.to_string()),
             session_id: Some("session-egress-gateway-test".to_string()),
             invocation_id: Some(1),
             uses_custom_client: false,

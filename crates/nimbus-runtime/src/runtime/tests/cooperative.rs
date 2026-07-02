@@ -448,7 +448,7 @@ export {};
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
-    let context = RuntimeInvocationContext::top_level(&request);
+    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
 
     let mut slot = runtime_owner
         .start_cooperative_locker_runtime_slot(
@@ -599,7 +599,7 @@ export {};
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
-    let context = RuntimeInvocationContext::top_level(&request);
+    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
 
     let mut slot = runtime_owner
         .start_cooperative_locker_runtime_slot(
@@ -718,7 +718,7 @@ export {};
             .acquire_initial(std::time::Instant::now())
             .await
             .expect("permit should admit invocation");
-        let context = RuntimeInvocationContext::top_level(&request);
+        let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
 
         let mut slot = runtime_owner
             .start_cooperative_locker_runtime_slot(
@@ -766,7 +766,9 @@ export {};
             v8_runtime_pool.return_runtime_for_invocation(
                 &runtime_owner,
                 &bundle,
-                Some(&RuntimeInvocationContext::top_level(&request)),
+                Some(&RuntimeInvocationContext::top_level_for_tenant(
+                    &request, "tenant-a",
+                )),
                 rt,
             );
         }
@@ -1380,7 +1382,7 @@ export {};
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
-    let context = RuntimeInvocationContext::top_level(&request);
+    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
 
     let slot = runtime_owner
         .start_cooperative_locker_runtime_slot(

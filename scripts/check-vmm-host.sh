@@ -2,6 +2,26 @@
 set -euo pipefail
 
 failures=0
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LINUX_DISTRIBUTION_CONTRACT_ENV="${NIMBUS_LINUX_DISTRIBUTION_CONTRACT_ENV:-${SCRIPT_DIR}/../packaging/linux-distribution-contract.env}"
+DEFAULT_NIMBUS_CRUN_VERSION="v1.27.1-nimbus.2"
+DEFAULT_NIMBUS_CRUN_UPSTREAM_VERSION="1.27.1"
+DEFAULT_NIMBUS_LIBKRUN_VERSION="v1.18.1-nimbus.1"
+DEFAULT_NIMBUS_LIBKRUN_UPSTREAM_VERSION="1.18.1"
+
+if [[ -r "${LINUX_DISTRIBUTION_CONTRACT_ENV}" ]]; then
+  # shellcheck disable=SC1090
+  source "${LINUX_DISTRIBUTION_CONTRACT_ENV}"
+fi
+
+EXPECTED_NIMBUS_CRUN_VERSION="${EXPECTED_NIMBUS_CRUN_VERSION:-${NIMBUS_CRUN_VERSION:-${DEFAULT_NIMBUS_CRUN_VERSION}}}"
+EXPECTED_NIMBUS_CRUN_UPSTREAM_VERSION="${EXPECTED_NIMBUS_CRUN_UPSTREAM_VERSION:-${NIMBUS_CRUN_UPSTREAM_VERSION:-${DEFAULT_NIMBUS_CRUN_UPSTREAM_VERSION}}}"
+EXPECTED_NIMBUS_LIBKRUN_VERSION="${EXPECTED_NIMBUS_LIBKRUN_VERSION:-${NIMBUS_LIBKRUN_VERSION:-${DEFAULT_NIMBUS_LIBKRUN_VERSION}}}"
+EXPECTED_NIMBUS_LIBKRUN_UPSTREAM_VERSION="${EXPECTED_NIMBUS_LIBKRUN_UPSTREAM_VERSION:-${NIMBUS_LIBKRUN_UPSTREAM_VERSION:-${DEFAULT_NIMBUS_LIBKRUN_UPSTREAM_VERSION}}}"
+EXPECTED_LIBKRUN_SONAME="${EXPECTED_LIBKRUN_SONAME:-libkrun.so.1}"
+EXPECTED_LIBKRUNFW_SONAME="${EXPECTED_LIBKRUNFW_SONAME:-libkrunfw.so.5}"
+EXPECTED_LIBKRUN_ABI_SYMBOL="${EXPECTED_LIBKRUN_ABI_SYMBOL:-krun_set_port_map_with_bind_address}"
+EXPECTED_CRUN_RUNPATH="${EXPECTED_CRUN_RUNPATH:-\$ORIGIN/lib}"
 
 print_line() {
   printf '%-22s %s\n' "$1" "$2"
@@ -13,6 +33,12 @@ compact_value() {
 
 mark_failure() {
   failures=$((failures + 1))
+}
+
+tuple_action() {
+  printf 'action=install validated tuple with scripts/install.sh --crun-version %s --libkrun-version %s' \
+    "${EXPECTED_NIMBUS_CRUN_VERSION}" \
+    "${EXPECTED_NIMBUS_LIBKRUN_VERSION}"
 }
 
 command_version_line() {
@@ -103,64 +129,71 @@ check_private_libkrun_stack() {
   local installed_version=""
   local crun_version=""
 
+  print_line "nimbus.expected_tuple" "nimbus-crun=${EXPECTED_NIMBUS_CRUN_VERSION} upstream-crun=${EXPECTED_NIMBUS_CRUN_UPSTREAM_VERSION} nimbus-libkrun=${EXPECTED_NIMBUS_LIBKRUN_VERSION} upstream-libkrun=${EXPECTED_NIMBUS_LIBKRUN_UPSTREAM_VERSION}"
+
   if [[ -f "${release_info}" ]]; then
     installed_version="$(awk -F= '$1 == "nimbus-libkrun" { print $2; exit }' "${release_info}" 2>/dev/null || true)"
-    print_line "nimbus.libkrun" "present path=${lib_root} version=${installed_version:-unknown}"
-  else
-    print_line "nimbus.libkrun" "missing path=${release_info}"
-    mark_failure
-  fi
-
-  if [[ -e "${lib_root}/libkrun.so.1" ]]; then
-    print_line "nimbus.libkrun.so" "present path=${lib_root}/libkrun.so.1"
-  else
-    print_line "nimbus.libkrun.so" "missing path=${lib_root}/libkrun.so.1"
-    mark_failure
-  fi
-
-  if [[ -e "${lib_root}/libkrunfw.so.5" ]]; then
-    print_line "nimbus.libkrunfw.so" "present path=${lib_root}/libkrunfw.so.5"
-  else
-    print_line "nimbus.libkrunfw.so" "missing path=${lib_root}/libkrunfw.so.5"
-    mark_failure
-  fi
-
-  if command -v nm >/dev/null 2>&1 && [[ -e "${lib_root}/libkrun.so.1" ]]; then
-    local nm_output=""
-    nm_output="$(nm -D "${lib_root}/libkrun.so.1" 2>/dev/null || true)"
-    if [[ "${nm_output}" == *" krun_set_port_map_with_bind_address"* ]]; then
-      print_line "nimbus.libkrun.symbol" "present krun_set_port_map_with_bind_address"
+    if [[ "${installed_version}" == "${EXPECTED_NIMBUS_LIBKRUN_VERSION}" ]]; then
+      print_line "nimbus.libkrun" "present path=${lib_root} version=${installed_version} expected=${EXPECTED_NIMBUS_LIBKRUN_VERSION}"
     else
-      print_line "nimbus.libkrun.symbol" "missing krun_set_port_map_with_bind_address"
+      print_line "nimbus.libkrun" "mismatch path=${release_info} actual=${installed_version:-unknown} expected=${EXPECTED_NIMBUS_LIBKRUN_VERSION} $(tuple_action)"
       mark_failure
     fi
   else
-    print_line "nimbus.libkrun.symbol" "missing (nm or libkrun unavailable)"
+    print_line "nimbus.libkrun" "missing path=${release_info} expected=${EXPECTED_NIMBUS_LIBKRUN_VERSION} $(tuple_action)"
+    mark_failure
+  fi
+
+  if [[ -e "${lib_root}/${EXPECTED_LIBKRUN_SONAME}" ]]; then
+    print_line "nimbus.libkrun.so" "present path=${lib_root}/${EXPECTED_LIBKRUN_SONAME} expected_soname=${EXPECTED_LIBKRUN_SONAME}"
+  else
+    print_line "nimbus.libkrun.so" "missing path=${lib_root}/${EXPECTED_LIBKRUN_SONAME} expected_soname=${EXPECTED_LIBKRUN_SONAME} $(tuple_action)"
+    mark_failure
+  fi
+
+  if [[ -e "${lib_root}/${EXPECTED_LIBKRUNFW_SONAME}" ]]; then
+    print_line "nimbus.libkrunfw.so" "present path=${lib_root}/${EXPECTED_LIBKRUNFW_SONAME} expected_soname=${EXPECTED_LIBKRUNFW_SONAME}"
+  else
+    print_line "nimbus.libkrunfw.so" "missing path=${lib_root}/${EXPECTED_LIBKRUNFW_SONAME} expected_soname=${EXPECTED_LIBKRUNFW_SONAME} $(tuple_action)"
+    mark_failure
+  fi
+
+  if command -v nm >/dev/null 2>&1 && [[ -e "${lib_root}/${EXPECTED_LIBKRUN_SONAME}" ]]; then
+    local nm_output=""
+    nm_output="$(nm -D "${lib_root}/${EXPECTED_LIBKRUN_SONAME}" 2>/dev/null || true)"
+    if [[ "${nm_output}" == *" ${EXPECTED_LIBKRUN_ABI_SYMBOL}"* ]]; then
+      print_line "nimbus.libkrun.symbol" "present expected_symbol=${EXPECTED_LIBKRUN_ABI_SYMBOL}"
+    else
+      print_line "nimbus.libkrun.symbol" "missing expected_symbol=${EXPECTED_LIBKRUN_ABI_SYMBOL} $(tuple_action)"
+      mark_failure
+    fi
+  else
+    print_line "nimbus.libkrun.symbol" "missing expected_symbol=${EXPECTED_LIBKRUN_ABI_SYMBOL} (nm or libkrun unavailable) $(tuple_action)"
     mark_failure
   fi
 
   if [[ -x "${crun_path}" ]]; then
     crun_version="$("${crun_path}" --version 2>/dev/null || true)"
     if echo "${crun_version}" | grep -q '+LIBKRUN'; then
-      print_line "nimbus.crun.version" "$(compact_value "${crun_version}")"
+      print_line "nimbus.crun.version" "present expected=${EXPECTED_NIMBUS_CRUN_VERSION} upstream=${EXPECTED_NIMBUS_CRUN_UPSTREAM_VERSION} actual=$(compact_value "${crun_version}")"
     else
-      print_line "nimbus.crun.version" "missing +LIBKRUN path=${crun_path}"
+      print_line "nimbus.crun.version" "missing +LIBKRUN path=${crun_path} expected=${EXPECTED_NIMBUS_CRUN_VERSION} $(tuple_action)"
       mark_failure
     fi
   else
-    print_line "nimbus.crun.version" "missing path=${crun_path}"
+    print_line "nimbus.crun.version" "missing path=${crun_path} expected=${EXPECTED_NIMBUS_CRUN_VERSION} $(tuple_action)"
     mark_failure
   fi
 
   if command -v readelf >/dev/null 2>&1 && [[ -x "${crun_path}" ]]; then
-    if readelf -d "${crun_path}" 2>/dev/null | grep -q '\$ORIGIN/lib'; then
-      print_line "nimbus.crun.runpath" 'present $ORIGIN/lib'
+    if readelf -d "${crun_path}" 2>/dev/null | grep -q "\$ORIGIN/lib"; then
+      print_line "nimbus.crun.runpath" "present expected=${EXPECTED_CRUN_RUNPATH}"
     else
-      print_line "nimbus.crun.runpath" 'missing $ORIGIN/lib'
+      print_line "nimbus.crun.runpath" "missing expected=${EXPECTED_CRUN_RUNPATH} $(tuple_action)"
       mark_failure
     fi
   else
-    print_line "nimbus.crun.runpath" "missing (readelf or crun unavailable)"
+    print_line "nimbus.crun.runpath" "missing expected=${EXPECTED_CRUN_RUNPATH} (readelf or crun unavailable) $(tuple_action)"
     mark_failure
   fi
 }

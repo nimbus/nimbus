@@ -9,5 +9,6 @@ pub use env::{
 };
 pub use policy::{
     CompiledEgressPolicy, EgressAuthorization, EgressCredentialInjection, EgressDlpRule,
-    EgressPolicy, EgressProtocol, EgressRequest, EgressRule,
+    EgressPolicy, EgressProtocol, EgressRequest, EgressRule, HostAuthorityError,
+    canonicalize_authority_host,
 };

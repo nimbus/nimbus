@@ -15,7 +15,9 @@ mod worker;
 mod tests;
 
 pub use credentials::CredentialSecretStore;
-pub use decision_log::{DecisionLogger, EgressDecisionLog};
+pub use decision_log::{
+    AppendOnlyDecisionLogSink, DecisionLogSinkContext, DecisionLogger, EgressDecisionLog,
+};
 pub use dns::{DnsCacheConfig, DnsResolution};
 pub use error::{EgressProxyError, Result};
 pub use phase::{EgressProxyRequestPhase, REQUEST_PHASE_ORDER};

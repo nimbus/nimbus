@@ -9,7 +9,7 @@ use std::sync::Arc;
 use clap::Args;
 use nimbus::{
     HostBridge, HostCallRequest, InvocationKind, InvocationRequest, NimbusRuntime, RuntimeBundle,
-    RuntimeExecutionModel, RuntimeLimits, RuntimePolicy, RuntimePoolKind,
+    RuntimeExecutionModel, RuntimeInvocationContext, RuntimeLimits, RuntimePolicy, RuntimePoolKind,
 };
 use tokio::process::Command;
 
@@ -22,6 +22,7 @@ use nimbus_assets::js_packages;
 const CODEGEN_RUNNER_ENV: &str = "NIMBUS_CODEGEN_RUNNER";
 const EMBEDDED_CODEGEN_BUNDLE_PREFIX: &str = ".nimbus-codegen-";
 const EMBEDDED_CODEGEN_BUNDLE_SUFFIX: &str = ".mjs";
+const EMBEDDED_CODEGEN_TENANT_LABEL: &str = "nimbus-tooling-codegen";
 const CODEGEN_BOOTSTRAP: &str = r#"
 import { pathToFileURL } from "node:url";
 
@@ -361,8 +362,11 @@ async fn run_embedded_codegen_for_app_dir(
         RuntimePolicy::new(limits).clone_with_file_system(nimbus_fs::default_file_system()?);
     let runtime =
         NimbusRuntime::with_policy(Arc::new(EmbeddedCodegenHost), Arc::new(runtime_policy));
+    let invocation_context =
+        RuntimeInvocationContext::top_level_for_tenant(&request, EMBEDDED_CODEGEN_TENANT_LABEL);
     let result = runtime
-        .invoke_bundle(&bundle, &request)
+        .executor()
+        .invoke_on_worker(runtime.clone(), bundle, request, invocation_context, None)
         .await
         .map_err(|error| {
             io::Error::other(format!(

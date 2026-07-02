@@ -629,7 +629,11 @@ export {{}};
         };
 
         let result = runtime
-            .invoke_bundle(&crate::RuntimeBundle::new(&bundle_path), &request)
+            .invoke_bundle_for_tenant(
+                &crate::RuntimeBundle::new(&bundle_path),
+                &request,
+                "tenant-a",
+            )
             .await
             .expect("bundle fetch should execute through the egress gateway");
 
@@ -717,7 +721,11 @@ export {};
         };
 
         let result = runtime
-            .invoke_bundle(&crate::RuntimeBundle::new(&bundle_path), &request)
+            .invoke_bundle_for_tenant(
+                &crate::RuntimeBundle::new(&bundle_path),
+                &request,
+                "tenant-a",
+            )
             .await
             .expect("bundle should run; the fetch is denied inside JS, not a host error");
         assert_eq!(

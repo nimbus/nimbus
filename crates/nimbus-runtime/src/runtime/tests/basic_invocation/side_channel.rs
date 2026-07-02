@@ -274,7 +274,7 @@ async fn invoke_probe(limits: RuntimeLimits) -> Value {
         Arc::new(RuntimePolicy::new(limits)),
     );
     runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -285,6 +285,7 @@ async fn invoke_probe(limits: RuntimeLimits) -> Value {
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("side-channel probe bundle should execute")
@@ -364,7 +365,7 @@ async fn pir3_node_worker_thread_side_channel_surface_is_hardened_inner() {
         )),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -375,6 +376,7 @@ async fn pir3_node_worker_thread_side_channel_surface_is_hardened_inner() {
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("side-channel worker probe bundle should execute");

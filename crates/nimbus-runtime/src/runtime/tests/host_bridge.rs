@@ -47,7 +47,7 @@ export {};
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -58,6 +58,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("async host bridge should satisfy async op");
@@ -117,7 +118,7 @@ export {};
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -128,6 +129,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("query context shape should be inspectable");
@@ -225,7 +227,7 @@ export {};
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Mutation,
@@ -236,6 +238,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("mutation context shape should be inspectable");
@@ -330,7 +333,7 @@ export {};
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Action,
@@ -341,6 +344,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("action context shape should be inspectable");
@@ -385,7 +389,7 @@ export {};
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -420,6 +424,7 @@ export {};
                 })),
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("runtime should expose both auth views");
@@ -482,7 +487,7 @@ export {};
         run_to_completion_policy_with_secret_and_identity_grants(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -493,6 +498,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("runtime should execute without materializing grants");
@@ -536,7 +542,7 @@ export {};
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -555,6 +561,7 @@ export {};
                 }))
                 .expect("service bindings should deserialize"),
             },
+            "tenant-a",
         )
         .await
         .expect("runtime should execute adapter context without service shortcuts");
@@ -622,7 +629,7 @@ export {};
         run_to_completion_policy_with_service_grant("db"),
     );
     let error = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -633,6 +640,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect_err("adapter-created runtime must not register the service lookup op");
@@ -724,7 +732,7 @@ export {};
         run_to_completion_policy_with_native_service_grant("db"),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -735,6 +743,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("native runtime should resolve service binding through the raw service op");
@@ -829,7 +838,7 @@ export {};
         run_to_completion_policy_with_native_service_grant("db"),
     );
     let error = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -840,6 +849,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect_err("native runtime should require an exact service grant");
@@ -889,7 +899,7 @@ export {};
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -900,6 +910,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("sync host bridge should satisfy query builder setup");
@@ -961,7 +972,7 @@ export {};
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Mutation,
@@ -972,6 +983,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("async host bridge should satisfy write and scheduler ops");
@@ -1064,7 +1076,7 @@ export {};
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Action,
@@ -1075,6 +1087,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("async host bridge should satisfy runtime extension calls");
@@ -1120,7 +1133,7 @@ export {};
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -1131,6 +1144,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("paginate query should succeed");
@@ -1205,7 +1219,7 @@ export {};
     let runtime =
         NimbusRuntime::with_policy(host, run_to_completion_snapshot_runtime_test_policy());
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -1216,6 +1230,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("paginate query should succeed");
@@ -1265,7 +1280,7 @@ export {};
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -1276,6 +1291,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("same-isolate nested entry should succeed");
@@ -1337,7 +1353,7 @@ export {};
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Action,
@@ -1348,6 +1364,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("async host bridge should satisfy ctx.run* fallback ops");

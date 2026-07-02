@@ -62,10 +62,11 @@ fn execute_launch_permits_when_netns_installed_and_pep_ready() {
     let id = SandboxId::new("kme4-ready");
     let netns_path = temp_dir.path().join("netns-installed");
     fs::write(&netns_path, b"netns").expect("netns marker should write");
+    let tenant = TenantId::new("tenant-kme4-ready").expect("tenant id should be valid");
 
     backend
         .egress_proxies
-        .ensure_running(&id, &EgressPolicy::deny_all(), loopback_addr())
+        .ensure_running(&tenant, &id, &EgressPolicy::deny_all(), loopback_addr())
         .expect("a ready PEP should start with a compiled policy");
     let readiness = backend
         .egress_proxies
@@ -92,9 +93,10 @@ fn execute_launch_denies_when_network_namespace_is_not_installed() {
     ));
     let id = SandboxId::new("kme4-no-netns");
     let missing_netns = temp_dir.path().join("netns").join("never-created");
+    let tenant = TenantId::new("tenant-kme4-no-netns").expect("tenant id should be valid");
     backend
         .egress_proxies
-        .ensure_running(&id, &EgressPolicy::deny_all(), loopback_addr())
+        .ensure_running(&tenant, &id, &EgressPolicy::deny_all(), loopback_addr())
         .expect("a ready PEP should start");
 
     let error = backend
@@ -155,9 +157,10 @@ fn execute_start_denies_fail_closed_off_linux() {
     let id = SandboxId::new("kme4-off-linux");
     let netns_path = temp_dir.path().join("netns-installed");
     fs::write(&netns_path, b"netns").expect("netns marker should write");
+    let tenant = TenantId::new("tenant-kme4-off-linux").expect("tenant id should be valid");
     backend
         .egress_proxies
-        .ensure_running(&id, &EgressPolicy::deny_all(), loopback_addr())
+        .ensure_running(&tenant, &id, &EgressPolicy::deny_all(), loopback_addr())
         .expect("a ready PEP should start");
     let mut manifest = sample_manifest(sample_spec(), KrunStartMode::Execute);
     manifest.handle.id = id;

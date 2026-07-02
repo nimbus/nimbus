@@ -451,7 +451,7 @@ pub(super) async fn invoke_on_single_worker(
             runtime,
             bundle.clone(),
             request.clone(),
-            RuntimeInvocationContext::top_level(&request),
+            RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a"),
             None,
         )
         .await

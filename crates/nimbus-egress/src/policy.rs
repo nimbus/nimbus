@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use nimbus_core::is_valid_dns_hostname;
@@ -105,9 +106,17 @@ impl CompiledEgressPolicy {
     }
 
     pub fn authorize(&self, request: &EgressRequest) -> EgressAuthorization {
+        let canonical_request_host = match request.canonical_host_result() {
+            Ok(host) => host,
+            Err(error) => {
+                return EgressAuthorization::deny(format!(
+                    "sandbox egress request host authority rejected: {error}"
+                ));
+            }
+        };
         let mut matched_but_denied = None;
         for rule in &self.policy.allow {
-            if !rule.matches_l4(request) {
+            if !rule.matches_l4(request, &canonical_request_host) {
                 continue;
             }
             if request.targets_internal_address() && !rule.allow_internal_ips {
@@ -144,6 +153,20 @@ impl CompiledEgressPolicy {
             "sandbox egress default deny: no rule matched {}",
             request.target_summary()
         ))
+    }
+
+    /// Hostname-only pre-DNS authorization used by the PEP to decide whether a
+    /// caller-controlled host is even eligible for resolution. This deliberately
+    /// clears `resolved_ip`: it is not the SSRF/internal-IP gate. The PEP must
+    /// call [`Self::authorize`] again with the exact selected resolved address
+    /// before dialing.
+    pub fn authorize_hostname_without_resolved_ip(
+        &self,
+        request: &EgressRequest,
+    ) -> EgressAuthorization {
+        let mut request = request.clone();
+        request.resolved_ip = None;
+        self.authorize(&request)
     }
 }
 
@@ -279,7 +302,8 @@ impl EgressRule {
         Self {
             name: self.name.clone(),
             protocol: self.protocol,
-            host: canonical_host(&self.host),
+            host: canonicalize_authority_host(&self.host)
+                .expect("egress rule host was validated before canonicalization"),
             port: self.port,
             methods,
             path_prefixes,
@@ -297,10 +321,10 @@ impl EgressRule {
         self.credential.is_some() || !self.dlp.is_empty()
     }
 
-    fn matches_l4(&self, request: &EgressRequest) -> bool {
+    fn matches_l4(&self, request: &EgressRequest, canonical_request_host: &str) -> bool {
         self.protocol == request.protocol
             && self.port == request.port
-            && self.host == canonical_host(&request.host)
+            && self.host == canonical_request_host
     }
 
     fn matches_l7(&self, request: &EgressRequest) -> bool {
@@ -504,11 +528,17 @@ impl EgressRequest {
     }
 
     fn targets_internal_address(&self) -> bool {
-        self.host
-            .parse::<IpAddr>()
+        let host = self
+            .canonical_host_result()
+            .unwrap_or_else(|_| self.host.to_ascii_lowercase());
+        host.parse::<IpAddr>()
             .is_ok_and(is_non_global_or_internal_ip)
             || self.resolved_ip.is_some_and(is_non_global_or_internal_ip)
-            || is_internal_hostname(&self.host)
+            || is_internal_hostname(&host)
+    }
+
+    fn canonical_host_result(&self) -> std::result::Result<String, HostAuthorityError> {
+        canonicalize_authority_host(&self.host)
     }
 
     fn target_summary(&self) -> String {
@@ -581,22 +611,17 @@ fn validate_rule_name(name: &str) -> std::result::Result<(), String> {
 }
 
 fn validate_egress_host(host: &str, allow_internal_ips: bool) -> std::result::Result<(), String> {
-    if host.trim().is_empty() || host != host.trim() || host == "*" || host.contains('*') {
+    if host == "*" || host.contains('*') {
         return Err(format!(
             "sandbox egress host `{host}` must be a concrete host without wildcards"
         ));
     }
-    if host.contains(char::is_whitespace) {
-        return Err(format!(
-            "sandbox egress host `{host}` must not contain whitespace"
-        ));
-    }
-    if host.contains("://") || host.contains('/') || host.contains('\\') || host.contains('@') {
-        return Err(format!(
-            "sandbox egress host `{host}` must be a bare DNS name or IP literal, not a URL or authority"
-        ));
-    }
-    if let Ok(ip) = host.parse::<IpAddr>() {
+    let canonical = canonicalize_authority_host(host).map_err(|error| {
+        format!(
+            "sandbox egress host `{host}` must be a strict bare DNS name or IP literal: {error}"
+        )
+    })?;
+    if let Ok(ip) = canonical.parse::<IpAddr>() {
         if is_non_global_or_internal_ip(ip) && !allow_internal_ips {
             return Err(format!(
                 "sandbox egress host `{host}` is internal/non-global and requires allow_internal_ips=true"
@@ -604,17 +629,7 @@ fn validate_egress_host(host: &str, allow_internal_ips: bool) -> std::result::Re
         }
         return Ok(());
     }
-    if host.starts_with('[') || host.ends_with(']') || host.contains(':') {
-        return Err(format!(
-            "sandbox egress host `{host}` must not include brackets, schemes, or ports"
-        ));
-    }
-    if !is_valid_dns_hostname(host) {
-        return Err(format!(
-            "sandbox egress host `{host}` must be a valid DNS hostname"
-        ));
-    }
-    if is_internal_hostname(host) && !allow_internal_ips {
+    if is_internal_hostname(&canonical) && !allow_internal_ips {
         return Err(format!(
             "sandbox egress host `{host}` is internal/non-global and requires allow_internal_ips=true"
         ));
@@ -706,10 +721,94 @@ fn is_internal_hostname(host: &str) -> bool {
         || host.ends_with(".localhost.localdomain")
 }
 
-fn canonical_host(host: &str) -> String {
-    host.parse::<IpAddr>()
-        .map(|ip| ip.to_string())
-        .unwrap_or_else(|_| host.to_ascii_lowercase())
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostAuthorityError {
+    Empty,
+    ControlOrWhitespace,
+    EncodedOrAmbiguousDelimiter,
+    BracketOrPort,
+    NonCanonicalNumericIp,
+    InvalidDnsName,
+}
+
+impl Display for HostAuthorityError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => f.write_str("host authority is empty"),
+            Self::ControlOrWhitespace => {
+                f.write_str("host authority contains null/control or whitespace characters")
+            }
+            Self::EncodedOrAmbiguousDelimiter => f.write_str(
+                "host authority contains userinfo, percent-encoding, or path delimiters",
+            ),
+            Self::BracketOrPort => f.write_str("host authority must not include brackets or ports"),
+            Self::NonCanonicalNumericIp => {
+                f.write_str("host authority is a non-canonical numeric IP form")
+            }
+            Self::InvalidDnsName => f.write_str("host authority is not a valid DNS hostname"),
+        }
+    }
+}
+
+impl std::error::Error for HostAuthorityError {}
+
+pub fn canonicalize_authority_host(host: &str) -> std::result::Result<String, HostAuthorityError> {
+    let trimmed = host.trim();
+    if trimmed.is_empty() || trimmed == "." {
+        return Err(HostAuthorityError::Empty);
+    }
+    if trimmed != host || trimmed.chars().any(char::is_control) {
+        return Err(HostAuthorityError::ControlOrWhitespace);
+    }
+    if trimmed.contains('%')
+        || trimmed.contains('@')
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains("://")
+    {
+        return Err(HostAuthorityError::EncodedOrAmbiguousDelimiter);
+    }
+    if let Ok(ip) = trimmed.parse::<IpAddr>() {
+        return Ok(ip.to_string());
+    }
+    if trimmed.starts_with('[') || trimmed.ends_with(']') || trimmed.contains(':') {
+        return Err(HostAuthorityError::BracketOrPort);
+    }
+    if looks_like_noncanonical_ipv4(trimmed) {
+        return Err(HostAuthorityError::NonCanonicalNumericIp);
+    }
+    let without_trailing_dot = trimmed.strip_suffix('.').unwrap_or(trimmed);
+    if without_trailing_dot.ends_with('.') {
+        return Err(HostAuthorityError::InvalidDnsName);
+    }
+    let canonical = without_trailing_dot.to_ascii_lowercase();
+    if !is_valid_dns_hostname(&canonical) {
+        return Err(HostAuthorityError::InvalidDnsName);
+    }
+    Ok(canonical)
+}
+
+fn looks_like_noncanonical_ipv4(host: &str) -> bool {
+    let lower = host.to_ascii_lowercase();
+    if lower.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    if let Some(rest) = lower.strip_prefix("0x")
+        && !rest.is_empty()
+        && rest.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return true;
+    }
+    if !lower.contains('.') {
+        return false;
+    }
+    lower.split('.').all(|label| {
+        !label.is_empty()
+            && (label.chars().all(|c| c.is_ascii_digit())
+                || label.strip_prefix("0x").is_some_and(|rest| {
+                    !rest.is_empty() && rest.chars().all(|c| c.is_ascii_hexdigit())
+                }))
+    })
 }
 
 fn is_non_global_or_internal_ip(ip: IpAddr) -> bool {
@@ -826,6 +925,56 @@ mod tests {
             denied.reason().contains("method/path"),
             "L7 denial should be named: {denied:?}"
         );
+    }
+
+    #[test]
+    fn sandbox_egress_policy_and_request_authority_canonicalization_agree() {
+        let policy = EgressPolicy::new([EgressRule::new(
+            "api",
+            EgressProtocol::Https,
+            "API.Example.COM.",
+            443,
+        )]);
+        let compiled = policy.compile().expect("policy should compile");
+        assert_eq!(compiled.policy().rules()[0].host, "api.example.com");
+
+        for host in ["api.example.com", "API.EXAMPLE.COM", "api.example.com."] {
+            let allowed = compiled.authorize(
+                &EgressRequest::new(EgressProtocol::Https, host, 443).with_http("POST", "/v1"),
+            );
+            assert!(
+                allowed.is_allowed(),
+                "case and one trailing-dot normalization should be explicit for {host:?}: {allowed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sandbox_egress_policy_denies_malformed_request_authority() {
+        let compiled = EgressPolicy::new([EgressRule::new(
+            "api",
+            EgressProtocol::Http,
+            "api.example.com",
+            80,
+        )])
+        .compile()
+        .expect("policy should compile");
+
+        for host in [
+            "api.example.com%2e.evil",
+            "api.example.com\0.evil",
+            "api.example.com\r.evil",
+            "user@api.example.com",
+            "2130706433",
+            "0x7f000001",
+            "0177.0.0.1",
+        ] {
+            let denied = compiled.authorize(&EgressRequest::new(EgressProtocol::Http, host, 80));
+            assert!(
+                !denied.is_allowed() && denied.reason().contains("host authority rejected"),
+                "malformed request host authority {host:?} must deny in the PDP before any allow: {denied:?}"
+            );
+        }
     }
 
     #[test]
@@ -965,6 +1114,42 @@ mod tests {
     }
 
     #[test]
+    fn sandbox_egress_hostname_precheck_ignores_resolved_ip_but_not_host_policy() {
+        let compiled = EgressPolicy::new([EgressRule::new(
+            "public-api",
+            EgressProtocol::Http,
+            "api.example.com",
+            80,
+        )])
+        .compile()
+        .expect("policy should compile");
+        let request = EgressRequest::new(EgressProtocol::Http, "API.Example.COM.", 80)
+            .with_resolved_ip(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+
+        let pre_dns = compiled.authorize_hostname_without_resolved_ip(&request);
+        assert!(
+            pre_dns.is_allowed(),
+            "pre-DNS host intent should pass before the resolved-IP SSRF gate: {pre_dns:?}"
+        );
+
+        let post_dns = compiled.authorize(&request);
+        assert!(
+            !post_dns.is_allowed() && post_dns.reason().contains("internal/non-global"),
+            "post-DNS authorization must still deny the selected internal resolved IP: {post_dns:?}"
+        );
+
+        let denied = compiled.authorize_hostname_without_resolved_ip(&EgressRequest::new(
+            EgressProtocol::Http,
+            "evil.example.com",
+            80,
+        ));
+        assert!(
+            !denied.is_allowed() && denied.reason().contains("default deny"),
+            "hostnames absent from policy must deny before DNS: {denied:?}"
+        );
+    }
+
+    #[test]
     fn sandbox_egress_policy_treats_reserved_and_mapped_addresses_as_internal() {
         let policy = EgressPolicy::new([EgressRule::new(
             "reserved-lookalike",
@@ -1053,6 +1238,14 @@ mod tests {
             "api.stripe.com/v1",
             "api.stripe.com:443",
             "api stripe com",
+            "api.stripe.com%2f.evil",
+            "api.stripe.com\0.evil",
+            "api.stripe.com\r.evil",
+            "user@api.stripe.com",
+            "api.stripe.com..",
+            "2130706433",
+            "0x7f000001",
+            "0177.0.0.1",
             "[::1]",
             "-bad.example.com",
         ] {

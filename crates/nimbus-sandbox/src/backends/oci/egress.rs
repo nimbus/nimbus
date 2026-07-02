@@ -9,12 +9,17 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use nimbus_core::TenantId;
 use nimbus_egress::{
     CompiledEgressPolicy, EGRESS_PROXY_URL_ENV, EGRESS_RESERVED_ENV_KEYS, EgressPolicy,
 };
-use nimbus_proxy::{EgressProxy, EgressProxyConfig, EgressProxyError, EgressProxyReadiness};
+use nimbus_proxy::{
+    AppendOnlyDecisionLogSink, DecisionLogSinkContext, EgressProxy, EgressProxyConfig,
+    EgressProxyError, EgressProxyReadiness,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::backends::oci::network::{OciNetworkConfig, bridge_gateway_addr};
@@ -26,14 +31,23 @@ use crate::spec::SandboxPortBinding;
 /// Registry of running per-sandbox egress proxies, shared by every sandbox
 /// backend. Cloning shares the underlying registry (it is `Arc`-backed), so a
 /// backend can hold one and hand clones to its async tasks.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct EgressProxyRegistry {
     proxies: Arc<Mutex<HashMap<SandboxId, EgressProxy>>>,
+    decision_log_root: Arc<PathBuf>,
 }
 
 impl EgressProxyRegistry {
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
-        Self::default()
+        Self::with_decision_log_root(std::env::temp_dir().join("nimbus-egress-decision-logs"))
+    }
+
+    pub(crate) fn with_decision_log_root(decision_log_root: impl Into<PathBuf>) -> Self {
+        Self {
+            proxies: Arc::new(Mutex::new(HashMap::new())),
+            decision_log_root: Arc::new(decision_log_root.into()),
+        }
     }
 
     /// Ensure a PEP is running for `id`, bound on `bind_addr`.
@@ -43,6 +57,7 @@ impl EgressProxyRegistry {
     /// and registers nothing — callers must treat that as deny.
     pub(crate) fn ensure_running(
         &self,
+        tenant_id: &TenantId,
         id: &SandboxId,
         policy: &EgressPolicy,
         bind_addr: SocketAddr,
@@ -54,8 +69,24 @@ impl EgressProxyRegistry {
         let compiled = policy
             .compile()
             .map_err(|message| SandboxError::InvalidSpec { message })?;
-        let proxy = EgressProxy::start(EgressProxyConfig::new(compiled).with_bind_addr(bind_addr))
-            .map_err(egress_proxy_error)?;
+        let decision_log_path = self.decision_log_path(tenant_id, id);
+        let decision_logger = AppendOnlyDecisionLogSink::open(
+            &decision_log_path,
+            DecisionLogSinkContext::new(tenant_id.as_str(), id.as_str()),
+        )
+        .map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to prepare append-only egress decision log for sandbox {id} at {}: {error}",
+                decision_log_path.display()
+            ),
+        })?
+        .logger();
+        let proxy = EgressProxy::start(
+            EgressProxyConfig::new(compiled)
+                .with_bind_addr(bind_addr)
+                .with_decision_logger(decision_logger),
+        )
+        .map_err(egress_proxy_error)?;
         proxies.insert(id.clone(), proxy);
         Ok(())
     }
@@ -103,6 +134,20 @@ impl EgressProxyRegistry {
         Ok(self.lock()?.contains_key(id))
     }
 
+    #[cfg(test)]
+    pub(crate) fn local_addr(&self, id: &SandboxId) -> Result<Option<SocketAddr>> {
+        Ok(self.lock()?.get(id).map(EgressProxy::local_addr))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn decision_log_path_for_test(
+        &self,
+        tenant_id: &TenantId,
+        id: &SandboxId,
+    ) -> PathBuf {
+        self.decision_log_path(tenant_id, id)
+    }
+
     /// Register an already-started proxy for `id` under test, so a readiness
     /// gate can be exercised against a not-ready (policy-less) PEP without a
     /// live VMM. Production code only ever registers a PEP through
@@ -120,6 +165,16 @@ impl EgressProxyRegistry {
                 message: "egress proxy registry lock is poisoned".to_owned(),
             })
     }
+
+    fn decision_log_path(&self, tenant_id: &TenantId, id: &SandboxId) -> PathBuf {
+        self.decision_log_root
+            .join(tenant_id.as_str())
+            .join(format!("{}.jsonl", id.as_str()))
+    }
+}
+
+pub(crate) fn egress_decision_log_root(state_root: &Path) -> PathBuf {
+    state_root.join("egress-decision-logs")
 }
 
 /// Map a `nimbus_proxy` error into a sandbox operation failure.
@@ -214,6 +269,7 @@ pub(crate) fn allocate_egress_proxy(
 /// the "no assignment means deny" invariant cannot drift between backends.
 pub(crate) fn ensure_egress_proxy_running(
     registry: &EgressProxyRegistry,
+    tenant_id: &TenantId,
     id: &SandboxId,
     assignment: Option<&EgressProxyAssignment>,
     policy: &EgressPolicy,
@@ -224,7 +280,7 @@ pub(crate) fn ensure_egress_proxy_running(
         });
     };
     let bind_addr = assignment.bind_addr()?;
-    registry.ensure_running(id, policy, bind_addr)
+    registry.ensure_running(tenant_id, id, policy, bind_addr)
 }
 
 /// Extract the key (`KEY` of `KEY=VALUE`) of an OCI process env entry, or `None`
@@ -249,24 +305,37 @@ pub(crate) fn scrub_reserved_egress_env(env: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
     use std::net::{IpAddr, Ipv4Addr};
+    use std::time::Duration;
 
     fn loopback() -> SocketAddr {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
     }
 
+    fn tenant() -> TenantId {
+        TenantId::new("tenant-egress").expect("test tenant id should be valid")
+    }
+
     #[test]
     fn ensure_running_registers_is_idempotent_and_stop_deregisters() {
         let registry = EgressProxyRegistry::new();
+        let tenant = tenant();
         let id = SandboxId::new("egress-seam-01");
         let policy = EgressPolicy::deny_all();
 
         assert!(!registry.contains(&id).unwrap());
-        registry.ensure_running(&id, &policy, loopback()).unwrap();
+        registry
+            .ensure_running(&tenant, &id, &policy, loopback())
+            .unwrap();
         assert!(registry.contains(&id).unwrap());
 
         // idempotent: a second ensure neither errors nor double-registers
-        registry.ensure_running(&id, &policy, loopback()).unwrap();
+        registry
+            .ensure_running(&tenant, &id, &policy, loopback())
+            .unwrap();
         assert!(registry.contains(&id).unwrap());
 
         registry.stop(&id).unwrap();
@@ -292,9 +361,10 @@ mod tests {
     #[test]
     fn readiness_reports_active_policy_for_a_running_proxy() {
         let registry = EgressProxyRegistry::new();
+        let tenant = tenant();
         let id = SandboxId::new("egress-seam-readiness-ready");
         registry
-            .ensure_running(&id, &EgressPolicy::deny_all(), loopback())
+            .ensure_running(&tenant, &id, &EgressPolicy::deny_all(), loopback())
             .unwrap();
 
         let readiness = registry
@@ -338,9 +408,10 @@ mod tests {
     #[test]
     fn reload_updates_a_running_proxy() {
         let registry = EgressProxyRegistry::new();
+        let tenant = tenant();
         let id = SandboxId::new("egress-seam-reload");
         registry
-            .ensure_running(&id, &EgressPolicy::deny_all(), loopback())
+            .ensure_running(&tenant, &id, &EgressPolicy::deny_all(), loopback())
             .unwrap();
         registry
             .reload(&id, CompiledEgressPolicy::deny_all())
@@ -424,9 +495,11 @@ mod tests {
     #[test]
     fn ensure_egress_proxy_running_denies_when_assignment_absent() {
         let registry = EgressProxyRegistry::new();
+        let tenant = tenant();
         let id = SandboxId::new("egress-no-assignment");
-        let error = ensure_egress_proxy_running(&registry, &id, None, &EgressPolicy::deny_all())
-            .expect_err("a missing assignment must fail closed");
+        let error =
+            ensure_egress_proxy_running(&registry, &tenant, &id, None, &EgressPolicy::deny_all())
+                .expect_err("a missing assignment must fail closed");
         assert!(matches!(error, SandboxError::OperationFailed { .. }));
         assert!(
             !registry.contains(&id).unwrap(),
@@ -437,14 +510,92 @@ mod tests {
     #[test]
     fn ensure_egress_proxy_running_starts_pep_for_assignment() {
         let registry = EgressProxyRegistry::new();
+        let tenant = tenant();
         let id = SandboxId::new("egress-with-assignment");
         let assignment = EgressProxyAssignment {
             host: "127.0.0.1".to_owned(),
             port: 0,
         };
-        ensure_egress_proxy_running(&registry, &id, Some(&assignment), &EgressPolicy::deny_all())
-            .expect("a valid assignment should start the PEP");
+        ensure_egress_proxy_running(
+            &registry,
+            &tenant,
+            &id,
+            Some(&assignment),
+            &EgressPolicy::deny_all(),
+        )
+        .expect("a valid assignment should start the PEP");
         assert!(registry.contains(&id).unwrap());
+        registry.stop(&id).unwrap();
+    }
+
+    #[test]
+    fn live_sandbox_pep_path_uses_decision_logger_not_noop() {
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory should exist");
+        let registry = EgressProxyRegistry::with_decision_log_root(temp_dir.path().join("logs"));
+        let tenant = tenant();
+        let id = SandboxId::new("egress-live-audit");
+        let assignment = EgressProxyAssignment {
+            host: "127.0.0.1".to_owned(),
+            port: 0,
+        };
+
+        ensure_egress_proxy_running(
+            &registry,
+            &tenant,
+            &id,
+            Some(&assignment),
+            &EgressPolicy::deny_all(),
+        )
+        .expect("a valid assignment should start the audited PEP");
+        let local_addr = registry
+            .local_addr(&id)
+            .expect("registry lookup should succeed")
+            .expect("a PEP should be registered");
+        let mut stream = TcpStream::connect(local_addr).expect("client should connect to PEP");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("read timeout should set");
+        stream
+            .write_all(
+                b"GET http://blocked.test:80/secret?token=supersecret HTTP/1.1\r\nHost: blocked.test\r\nAuthorization: Bearer topsecret\r\n\r\n",
+            )
+            .expect("client should write request");
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("client should read response");
+        assert!(
+            response.starts_with("HTTP/1.1 403 Forbidden"),
+            "deny-all live PEP should reject the request, got: {response}"
+        );
+
+        let log_path = registry.decision_log_path_for_test(&tenant, &id);
+        let log_text = fs::read_to_string(&log_path).unwrap_or_else(|error| {
+            panic!("decision log {} should read: {error}", log_path.display())
+        });
+        let lines = log_text.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines.len(),
+            1,
+            "live PEP decision_logger must emit exactly one terminal event, not use noop: {log_text:?}"
+        );
+        let event: serde_json::Value =
+            serde_json::from_str(lines[0]).expect("decision log line should be JSON");
+        assert_eq!(event["tenant_id"], tenant.as_str());
+        assert_eq!(event["workload_id"], id.as_str());
+        assert_eq!(event["policy_generation"], 1);
+        assert_eq!(event["decision"], "deny");
+        assert_eq!(event["reason_class"], "default_deny");
+        assert_eq!(event["protocol"], "http");
+        assert_eq!(event["canonical_host"], "blocked.test");
+        assert_eq!(event["port"], 80);
+        let rendered_event = event.to_string();
+        assert!(
+            rendered_event.contains("token=<redacted>")
+                && !rendered_event.contains("supersecret")
+                && !rendered_event.contains("topsecret"),
+            "live audit event must redact query values and omit bearer tokens: {rendered_event}"
+        );
         registry.stop(&id).unwrap();
     }
 

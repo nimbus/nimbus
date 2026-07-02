@@ -1,4 +1,4 @@
-use nimbus_egress::{EgressProtocol, EgressRequest};
+use nimbus_egress::{EgressProtocol, EgressRequest, canonicalize_authority_host};
 use url::Url;
 
 use crate::decision_log::EgressDecisionLog;
@@ -68,6 +68,8 @@ pub(crate) fn parse_proxy_request(
             body_offset,
         });
     }
+    let raw_authority_host = raw_absolute_uri_host(target)?;
+    let canonical_raw_host = canonicalize_proxy_host(raw_authority_host)?;
     let url = Url::parse(target).map_err(|_| {
         HttpProxyResponse::bad_request("egress proxy target must be an absolute URI")
     })?;
@@ -94,6 +96,11 @@ pub(crate) fn parse_proxy_request(
         .ok_or_else(|| HttpProxyResponse::bad_request("egress proxy target needs a host"))?
         .to_owned();
     let host = canonicalize_proxy_host(&host)?;
+    if host != canonical_raw_host {
+        return Err(HttpProxyResponse::bad_request(
+            "egress proxy canonical authority rejected parser-differential host",
+        ));
+    }
     let port = url.port_or_known_default().ok_or_else(|| {
         HttpProxyResponse::bad_request("egress proxy target needs an explicit port")
     })?;
@@ -206,6 +213,50 @@ fn parse_connect_authority(target: &str) -> std::result::Result<(String, u16), H
     Ok((canonicalize_proxy_host(&host)?, port))
 }
 
+fn raw_absolute_uri_host(target: &str) -> std::result::Result<&str, HttpProxyResponse> {
+    let Some((_, rest)) = target.split_once("://") else {
+        return Err(HttpProxyResponse::bad_request(
+            "egress proxy target must be an absolute URI",
+        ));
+    };
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.is_empty() {
+        return Err(HttpProxyResponse::bad_request(
+            "egress proxy target needs a host",
+        ));
+    }
+    if authority.contains('@') {
+        return Err(HttpProxyResponse::bad_request(
+            "egress proxy canonical authority must not include userinfo",
+        ));
+    }
+    if let Some(rest) = authority.strip_prefix('[') {
+        let Some((host, suffix)) = rest.split_once(']') else {
+            return Err(HttpProxyResponse::bad_request(
+                "egress proxy canonical authority rejected: host authority must not include brackets or ports",
+            ));
+        };
+        if !suffix.is_empty()
+            && !suffix.strip_prefix(':').is_some_and(|port| {
+                !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit())
+            })
+        {
+            return Err(HttpProxyResponse::bad_request(
+                "egress proxy canonical authority rejected parser-differential host",
+            ));
+        }
+        return Ok(host);
+    }
+    if let Some((host, port)) = authority.rsplit_once(':')
+        && !port.is_empty()
+        && port.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Ok(host);
+    }
+    Ok(authority)
+}
+
 fn origin_form(url: &Url) -> String {
     match url.query() {
         Some(query) => format!("{}?{query}", url.path()),
@@ -281,36 +332,9 @@ fn reject_bare_cr_or_lf(headers: &str) -> std::result::Result<(), HttpProxyRespo
 }
 
 fn canonicalize_proxy_host(host: &str) -> std::result::Result<String, HttpProxyResponse> {
-    let trimmed = host.trim();
-    if trimmed.is_empty() {
-        return Err(HttpProxyResponse::bad_request(
-            "egress proxy target needs a host",
-        ));
-    }
-    if trimmed.contains('%')
-        || trimmed.contains('@')
-        || trimmed.contains('/')
-        || trimmed.contains('\\')
-        || trimmed.chars().any(char::is_whitespace)
-    {
-        return Err(HttpProxyResponse::bad_request(
-            "egress proxy canonical authority rejected ambiguous host",
-        ));
-    }
-    let canonical = trimmed.trim_end_matches('.').to_ascii_lowercase();
-    // M7: CONNECT authorities skip the WHATWG IPv4 normalization that `Url::parse`
-    // gives ForwardHttp targets, so hex/octal/dword IPv4 obfuscation
-    // (`0x7f000001`, `2130706433`, `0177.0.0.1`) would otherwise reach the resolver
-    // unrecognized. A host that is purely IPv4-numeric-shaped must already be
-    // canonical dotted-decimal; reject every other numeric form. (audit M7.)
-    let ipv4_shaped = canonical
-        .chars()
-        .all(|c| c.is_ascii_hexdigit() || c == '.' || c == 'x' || c == 'X')
-        && canonical.chars().any(|c| c.is_ascii_digit());
-    if ipv4_shaped && canonical.parse::<std::net::Ipv4Addr>().is_err() {
-        return Err(HttpProxyResponse::bad_request(
-            "egress proxy rejected a non-canonical numeric authority",
-        ));
-    }
-    Ok(canonical)
+    canonicalize_authority_host(host).map_err(|error| {
+        HttpProxyResponse::bad_request(&format!(
+            "egress proxy canonical authority rejected: {error}"
+        ))
+    })
 }

@@ -253,7 +253,122 @@ fn egress_proxy_without_active_policy_denies_before_dns() {
 }
 
 #[test]
-fn egress_proxy_denies_dns_resolved_internal_targets() {
+fn egress_proxy_policy_denied_hostname_does_not_resolve() {
+    let resolver_calls = Arc::new(AtomicUsize::new(0));
+    let resolver_call_counter = Arc::clone(&resolver_calls);
+    let resolver = Arc::new(move |_host: &str, _port: u16| {
+        resolver_call_counter.fetch_add(1, Ordering::SeqCst);
+        Ok(vec![SocketAddr::from(([127, 0, 0, 1], 80))])
+    });
+    let proxy = EgressProxy::start(
+        EgressProxyConfig::new(allow_policy([EgressRule::new(
+            "allowed",
+            EgressProtocol::Http,
+            "allowed.test",
+            80,
+        )
+        .allow_internal_ips(true)]))
+        .with_resolver(resolver),
+    )
+    .expect("proxy should start");
+
+    let response = proxy_request(
+        proxy.local_addr(),
+        "GET http://denied.test:80/ok HTTP/1.1\r\nHost: denied.test\r\n\r\n".to_string(),
+    );
+
+    assert!(
+        response.starts_with("HTTP/1.1 403 Forbidden") && response.contains("default deny"),
+        "policy-denied hostnames must fail closed before DNS, got: {response}"
+    );
+    assert_eq!(
+        resolver_calls.load(Ordering::SeqCst),
+        0,
+        "policy-denied hostnames must not invoke the resolver"
+    );
+}
+
+#[test]
+fn egress_proxy_malformed_authority_denies_before_dns() {
+    let resolver_calls = Arc::new(AtomicUsize::new(0));
+    let resolver_call_counter = Arc::clone(&resolver_calls);
+    let resolver = Arc::new(move |_host: &str, _port: u16| {
+        resolver_call_counter.fetch_add(1, Ordering::SeqCst);
+        Ok(vec![SocketAddr::from(([127, 0, 0, 1], 443))])
+    });
+    let proxy = EgressProxy::start(
+        EgressProxyConfig::new(allow_policy([EgressRule::new(
+            "allowed",
+            EgressProtocol::Https,
+            "allowed.test",
+            443,
+        )
+        .allow_internal_ips(true)]))
+        .with_resolver(resolver),
+    )
+    .expect("proxy should start");
+
+    let response = proxy_request(
+        proxy.local_addr(),
+        "CONNECT allowed.test%2fmetadata:443 HTTP/1.1\r\nHost: allowed.test\r\n\r\n".to_string(),
+    );
+
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request")
+            && response.contains("canonical authority"),
+        "malformed authorities must fail before DNS, got: {response}"
+    );
+    assert_eq!(
+        resolver_calls.load(Ordering::SeqCst),
+        0,
+        "malformed authorities must not invoke the resolver"
+    );
+}
+
+#[test]
+fn egress_proxy_allowed_hostname_invokes_resolver_just_in_time() {
+    let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    let upstream_port = upstream.addr.port();
+    let resolver_calls = Arc::new(AtomicUsize::new(0));
+    let resolver_call_counter = Arc::clone(&resolver_calls);
+    let resolver = Arc::new(move |host: &str, port: u16| {
+        assert_eq!(host, "allowed.test");
+        assert_eq!(port, upstream_port);
+        resolver_call_counter.fetch_add(1, Ordering::SeqCst);
+        Ok(vec![SocketAddr::from(([127, 0, 0, 1], port))])
+    });
+    let proxy = EgressProxy::start(
+        EgressProxyConfig::new(allow_policy([EgressRule::new(
+            "allowed",
+            EgressProtocol::Http,
+            "allowed.test",
+            upstream_port,
+        )
+        .allow_internal_ips(true)]))
+        .with_resolver(resolver),
+    )
+    .expect("proxy should start");
+
+    let response = proxy_request(
+        proxy.local_addr(),
+        format!(
+            "GET http://Allowed.TEST.:{upstream_port}/ok HTTP/1.1\r\nHost: allowed.test\r\n\r\n"
+        ),
+    );
+
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK"),
+        "case/trailing-dot canonical hostnames should still resolve and forward just in time, got: {response}"
+    );
+    assert_eq!(
+        resolver_calls.load(Ordering::SeqCst),
+        1,
+        "allowed hostnames should invoke the resolver exactly when forwarding"
+    );
+}
+
+#[test]
+fn egress_proxy_resolved_internal_ip_still_denies_before_dial() {
     let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
     let proxy = start_test_proxy(allow_policy([EgressRule::new(
         "metadata-by-name",
@@ -517,6 +632,14 @@ fn egress_proxy_rejects_ambiguous_canonical_authorities() {
         proxy.local_addr(),
         "CONNECT allowed.test%2eexample:443 HTTP/1.1\r\nHost: allowed.test\r\n\r\n".to_string(),
     );
+    let null_byte = proxy_request(
+        proxy.local_addr(),
+        "CONNECT allowed.test\0example:443 HTTP/1.1\r\nHost: allowed.test\r\n\r\n".to_string(),
+    );
+    let numeric_http = proxy_request(
+        proxy.local_addr(),
+        "GET http://2130706433/ok HTTP/1.1\r\nHost: allowed.test\r\n\r\n".to_string(),
+    );
 
     assert!(
         userinfo.starts_with("HTTP/1.1 400 Bad Request")
@@ -526,6 +649,16 @@ fn egress_proxy_rejects_ambiguous_canonical_authorities() {
     assert!(
         encoded.starts_with("HTTP/1.1 400 Bad Request") && encoded.contains("canonical authority"),
         "encoded authority should reject, got: {encoded}"
+    );
+    assert!(
+        null_byte.starts_with("HTTP/1.1 400 Bad Request")
+            && null_byte.contains("canonical authority"),
+        "null/control authority should reject, got: {null_byte:?}"
+    );
+    assert!(
+        numeric_http.starts_with("HTTP/1.1 400 Bad Request")
+            && numeric_http.contains("canonical authority"),
+        "parser-differential numeric HTTP authority should reject before URL normalization, got: {numeric_http}"
     );
     assert_eq!(
         resolver_calls.load(Ordering::SeqCst),
@@ -552,6 +685,7 @@ fn egress_proxy_request_phase_model_holds_security_critical_orderings() {
     // Every phase appears exactly once.
     let all_phases = [
         EgressProxyRequestPhase::CanonicalizeAuthority,
+        EgressProxyRequestPhase::PreDnsAuthorize,
         EgressProxyRequestPhase::ResolveDns,
         EgressProxyRequestPhase::AuthorizeResolvedPeer,
         EgressProxyRequestPhase::SelectPoolKey,
@@ -575,6 +709,11 @@ fn egress_proxy_request_phase_model_holds_security_critical_orderings() {
     }
 
     // Security-critical orderings.
+    assert!(
+        position(EgressProxyRequestPhase::PreDnsAuthorize)
+            < position(EgressProxyRequestPhase::ResolveDns),
+        "host intent must be authorized before DNS"
+    );
     assert!(
         position(EgressProxyRequestPhase::ResolveDns)
             < position(EgressProxyRequestPhase::AuthorizeResolvedPeer),
@@ -1197,11 +1336,25 @@ fn egress_proxy_decision_logger_receives_redacted_allowed_request() {
     let log = log_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("decision logger should receive allowed request log");
+    assert!(
+        log.is_allowed(),
+        "the allow verdict must be audited as allowed = true"
+    );
+    assert_eq!(log.matched_rule(), Some("allowed"));
+    assert_eq!(log.policy_generation().map(PolicyGeneration::get), Some(1));
+    assert_eq!(log.reason_class(), "allowed");
+    assert_eq!(log.protocol(), EgressProtocol::Http);
+    assert_eq!(log.canonical_host(), "allowed.test");
+    assert_eq!(log.port(), upstream.addr.port());
     assert_eq!(log.credential_identity(), Some("api-token"));
     assert!(
         log.destination().contains("token=<redacted>") && !log.destination().contains("secret"),
         "decision log destination must redact query values: {}",
         log.destination()
+    );
+    assert!(
+        log_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "an allowed terminal decision must emit exactly one decision-log record"
     );
 }
 
@@ -1314,6 +1467,122 @@ fn egress_proxy_dlp_blocks_matching_body_and_truncated_or_unavailable_input() {
         unavailable.starts_with("HTTP/1.1 403 Forbidden")
             && unavailable.contains("DLP inspection input unavailable"),
         "DLP without bounded inspection input must fail closed, got: {unavailable}"
+    );
+}
+
+#[test]
+fn egress_proxy_audits_dlp_deny_with_exactly_one_terminal_event() {
+    let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    let (log_tx, log_rx) = mpsc::channel();
+    let proxy = start_test_proxy_with_store_and_logger(
+        allow_policy([EgressRule::new(
+            "allowed",
+            EgressProtocol::Http,
+            "allowed.test",
+            upstream.addr.port(),
+        )
+        .with_methods(["POST"])
+        .with_path_prefixes(["/upload"])
+        .allow_internal_ips(true)
+        .with_dlp_rules([
+            EgressDlpRule::new("no-secret", "secret").with_max_inspection_bytes(64)
+        ])]),
+        CredentialSecretStore::empty(),
+        Arc::new(move |log| {
+            let _ = log_tx.send(log);
+        }),
+    );
+
+    let body = "payload=secret";
+    let response = proxy_request(
+        proxy.local_addr(),
+        format!(
+            "POST http://allowed.test:{}/upload?token=topsecret HTTP/1.1\r\nHost: allowed.test\r\nContent-Length: {}\r\n\r\n{}",
+            upstream.addr.port(),
+            body.len(),
+            body
+        ),
+    );
+    assert!(
+        response.starts_with("HTTP/1.1 403 Forbidden") && response.contains("DLP rule"),
+        "DLP pattern match must block before dial, got: {response}"
+    );
+    let log = log_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("DLP deny must emit a decision-log record");
+    assert!(!log.is_allowed(), "DLP deny must be audited as false");
+    assert_eq!(log.matched_rule(), Some("allowed"));
+    assert_eq!(log.policy_generation().map(PolicyGeneration::get), Some(1));
+    assert_eq!(log.reason_class(), "dlp");
+    assert!(
+        log.destination().contains("token=<redacted>") && !log.destination().contains("topsecret"),
+        "DLP audit must redact query values: {}",
+        log.destination()
+    );
+    assert!(
+        log_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "a DLP terminal deny must emit exactly one decision-log record"
+    );
+    assert!(
+        upstream
+            .request
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "DLP-denied requests must not contact upstream"
+    );
+}
+
+#[test]
+fn append_only_decision_log_sink_writes_redacted_correlation_event() {
+    let temp_dir = tempfile::TempDir::new().expect("temporary directory should exist");
+    let path = temp_dir.path().join("audit").join("egress.jsonl");
+    let sink = AppendOnlyDecisionLogSink::open(
+        &path,
+        DecisionLogSinkContext::new("tenant-a", "sandbox-a"),
+    )
+    .expect("append-only decision log sink should open");
+    let parsed = match crate::request::parse_proxy_request(
+        b"GET http://allowed.test:443/path?token=supersecret HTTP/1.1\r\nHost: allowed.test\r\n\r\n",
+    ) {
+        Ok(parsed) => parsed,
+        Err(response) => panic!("proxy request should parse: {}", response.body()),
+    };
+    let log = EgressDecisionLog::allowed(
+        &parsed,
+        Some("Bearer credential-secret".to_owned()),
+        "allowed by rule".to_owned(),
+        Some("allow-rule".to_owned()),
+    )
+    .with_policy_generation(crate::policy_state::PolicyGeneration::initial());
+
+    sink.append(&log)
+        .expect("decision log append should succeed");
+    let log_text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("decision log {} should read: {error}", path.display()));
+    let lines = log_text.lines().collect::<Vec<_>>();
+    assert_eq!(
+        lines.len(),
+        1,
+        "append-only sink must write exactly one JSONL event per terminal decision"
+    );
+    let event: serde_json::Value =
+        serde_json::from_str(lines[0]).expect("decision log line should be JSON");
+    assert_eq!(event["tenant_id"], "tenant-a");
+    assert_eq!(event["workload_id"], "sandbox-a");
+    assert_eq!(event["policy_generation"], 1);
+    assert_eq!(event["rule_id"], "allow-rule");
+    assert_eq!(event["protocol"], "http");
+    assert_eq!(event["canonical_host"], "allowed.test");
+    assert_eq!(event["port"], 443);
+    assert_eq!(event["decision"], "allow");
+    assert_eq!(event["reason_class"], "allowed");
+    assert_eq!(event["credential_identity"], "<redacted>");
+    let rendered_event = event.to_string();
+    assert!(
+        rendered_event.contains("token=<redacted>")
+            && !rendered_event.contains("supersecret")
+            && !rendered_event.contains("credential-secret"),
+        "append-only sink must redact prohibited values: {rendered_event}"
     );
 }
 
@@ -1455,6 +1724,44 @@ fn egress_proxy_allows_https_connect_tunnel() {
     assert!(
         response.contains("pong"),
         "CONNECT tunnel should relay upstream payload, got: {response}"
+    );
+}
+
+#[test]
+fn egress_proxy_canonicalizes_connect_authority_case_and_trailing_dot() {
+    let upstream = TestTcpServer::start(b"pong");
+    let proxy = start_test_proxy(allow_policy([EgressRule::new(
+        "allowed-https",
+        EgressProtocol::Https,
+        "allowed.test",
+        upstream.addr.port(),
+    )
+    .allow_internal_ips(true)]));
+
+    let mut stream =
+        TcpStream::connect(proxy.local_addr()).expect("client should connect to proxy");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("read timeout should set");
+    stream
+        .write_all(
+            format!(
+                "CONNECT Allowed.TEST.:{} HTTP/1.1\r\nHost: allowed.test:{}\r\n\r\nping",
+                upstream.addr.port(),
+                upstream.addr.port()
+            )
+            .as_bytes(),
+        )
+        .expect("CONNECT request should write");
+    let upstream_payload = upstream
+        .request
+        .recv_timeout(Duration::from_secs(1))
+        .expect("upstream should receive tunneled bytes");
+    assert_eq!(upstream_payload, "ping");
+    let response = read_until_contains(&mut stream, "pong");
+    assert!(
+        response.starts_with("HTTP/1.1 200 Connection Established") && response.contains("pong"),
+        "CONNECT canonicalization should match HTTP authority normalization, got: {response}"
     );
 }
 
