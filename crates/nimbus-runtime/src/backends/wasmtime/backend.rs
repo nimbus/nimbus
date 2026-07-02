@@ -556,7 +556,7 @@ mod tests {
             NimbusRuntime::with_policy(Arc::new(NoopHost), Arc::new(RuntimePolicy::new(limits)));
 
         let response = runtime
-            .invoke_bundle(&bundle, &request())
+            .invoke_bundle_for_tenant(&bundle, &request(), "tenant-a")
             .await
             .expect("Wasmtime run-to-completion invocation should succeed");
 

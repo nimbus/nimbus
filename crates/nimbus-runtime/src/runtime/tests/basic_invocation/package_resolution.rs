@@ -33,7 +33,7 @@ export {};
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -44,6 +44,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -99,7 +100,7 @@ export {};
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -110,6 +111,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -445,7 +447,7 @@ module.exports.namedValue = 42;
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -456,6 +458,7 @@ module.exports.namedValue = 42;
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("commonjs package entry should load");
@@ -516,7 +519,7 @@ module.exports = {
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -527,6 +530,7 @@ module.exports = {
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("implicit CommonJS package entry should load");
@@ -578,7 +582,7 @@ module.exports.exportedValue = "exports-from-app-root";
         Arc::new(RuntimePolicy::new(RuntimeLimits::tooling_node22())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -589,6 +593,7 @@ module.exports.exportedValue = "exports-from-app-root";
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("tooling preset should resolve app-root CommonJS packages");
@@ -684,7 +689,7 @@ exports.build = function build() {
         Arc::new(RuntimePolicy::new(RuntimeLimits::tooling_node22())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -695,6 +700,7 @@ exports.build = function build() {
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("esbuild-style staged binary should execute in tooling preset");

@@ -25,7 +25,7 @@ use crate::backends::oci::builder::OciDockerfileBuilder;
 use crate::backends::oci::conmon::{OciConmonConfig, OciConmonLayout, build_launch_plan};
 use crate::backends::oci::egress::{
     EgressProxyAssignment, EgressProxyRegistry, allocate_egress_proxy as allocate_oci_egress_proxy,
-    ensure_egress_proxy_running as ensure_oci_egress_proxy_running,
+    egress_decision_log_root, ensure_egress_proxy_running as ensure_oci_egress_proxy_running,
 };
 use crate::backends::oci::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
 use crate::backends::oci::network::{
@@ -80,9 +80,12 @@ impl ContainerSandboxBackend {
         ) {
             let _ = reconcile_network_segment_orphans(&config.state_root, &allocator);
         }
+        let egress_proxies = EgressProxyRegistry::with_decision_log_root(egress_decision_log_root(
+            &config.state_root,
+        ));
         Self {
             config,
-            egress_proxies: EgressProxyRegistry::new(),
+            egress_proxies,
             machine_port_proxies: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -864,6 +867,7 @@ impl ContainerSandboxBackend {
     fn ensure_egress_proxy_running(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
         ensure_oci_egress_proxy_running(
             &self.egress_proxies,
+            &manifest.spec.tenant_id,
             &manifest.handle.id,
             manifest.egress_proxy.as_ref(),
             &manifest.spec.egress,

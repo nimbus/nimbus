@@ -49,17 +49,18 @@ impl RuntimePoolPartitionKey {
         bundle: &RuntimeBundle,
         context: Option<&RuntimeInvocationContext>,
         construction_mode: V8RuntimeConstructionMode,
-    ) -> Self {
+    ) -> Result<Self> {
         let runtime_limits = runtime_owner.policy().limits().clone();
         let permission_profile = RuntimePermissionProfile::for_limits(&runtime_limits);
-        Self {
+        Ok(Self {
             bundle_identity: bundle.identity().clone(),
-            affinity_key: runtime_affinity_key(runtime_limits.routing_affinity, context, bundle),
+            affinity_key: runtime_affinity_key(runtime_limits.routing_affinity, context, bundle)
+                .map_err(|error| crate::error::NimbusRuntimeError::Contract(error.to_string()))?,
             exact_service_grants: runtime_limits.grants.sorted_service_grants(),
             permission_profile,
             runtime_limits,
             construction_mode,
-        }
+        })
     }
 
     fn matches_exact(&self, other: &Self) -> bool {
@@ -153,7 +154,7 @@ impl V8WorkerRuntimePool {
                     bundle,
                     context,
                     construction_mode,
-                );
+                )?;
                 if let Some(entry) = self.take_warm_pool_entry(&partition_key) {
                     let WarmPoolEntry {
                         runtime,
@@ -214,12 +215,14 @@ impl V8WorkerRuntimePool {
         context: Option<&RuntimeInvocationContext>,
         runtime: ReusableV8Runtime,
     ) {
-        let partition_key = RuntimePoolPartitionKey::for_invocation(
+        let Ok(partition_key) = RuntimePoolPartitionKey::for_invocation(
             runtime_owner,
             bundle,
             context,
             runtime.construction_mode,
-        );
+        ) else {
+            return;
+        };
         self.return_runtime_with_partition(runtime_owner, runtime, partition_key);
     }
 
@@ -507,6 +510,16 @@ mod tests {
         }
     }
 
+    fn partition_key(
+        runtime_owner: &NimbusRuntime,
+        bundle: &RuntimeBundle,
+        context: Option<&RuntimeInvocationContext>,
+        construction_mode: V8RuntimeConstructionMode,
+    ) -> RuntimePoolPartitionKey {
+        RuntimePoolPartitionKey::for_invocation(runtime_owner, bundle, context, construction_mode)
+            .expect("valid tenant-scoped partition key should build")
+    }
+
     #[test]
     fn reusable_partition_key_preserves_tenant_affinity_for_unscoped_bundle() {
         let runtime_owner = runtime_owner_for_limits(RuntimeLimits::application_web_standard());
@@ -518,18 +531,10 @@ mod tests {
             runtime_owner.policy().limits().compatibility_target,
         );
 
-        let tenant_a_key = RuntimePoolPartitionKey::for_invocation(
-            &runtime_owner,
-            &bundle,
-            Some(&tenant_a),
-            construction_mode,
-        );
-        let tenant_b_key = RuntimePoolPartitionKey::for_invocation(
-            &runtime_owner,
-            &bundle,
-            Some(&tenant_b),
-            construction_mode,
-        );
+        let tenant_a_key =
+            partition_key(&runtime_owner, &bundle, Some(&tenant_a), construction_mode);
+        let tenant_b_key =
+            partition_key(&runtime_owner, &bundle, Some(&tenant_b), construction_mode);
 
         assert_ne!(tenant_a_key, tenant_b_key);
         assert!(
@@ -554,13 +559,13 @@ mod tests {
             runtime_owner.policy().limits().compatibility_target,
         );
 
-        let list_key = RuntimePoolPartitionKey::for_invocation(
+        let list_key = partition_key(
             &runtime_owner,
             &bundle,
             Some(&list_context),
             construction_mode,
         );
-        let send_key = RuntimePoolPartitionKey::for_invocation(
+        let send_key = partition_key(
             &runtime_owner,
             &bundle,
             Some(&send_context),
@@ -591,13 +596,13 @@ mod tests {
             db_runtime_owner.policy().limits().compatibility_target,
         );
 
-        let db_key = RuntimePoolPartitionKey::for_invocation(
+        let db_key = partition_key(
             &db_runtime_owner,
             &bundle,
             Some(&context),
             construction_mode,
         );
-        let cache_key = RuntimePoolPartitionKey::for_invocation(
+        let cache_key = partition_key(
             &cache_runtime_owner,
             &bundle,
             Some(&context),
@@ -623,7 +628,7 @@ mod tests {
         let construction_mode = V8RuntimeConstructionMode::for_compatibility_target(
             base_owner.policy().limits().compatibility_target,
         );
-        let base_key = RuntimePoolPartitionKey::for_invocation(
+        let base_key = partition_key(
             &base_owner,
             &base_bundle,
             Some(&tenant_a),
@@ -637,13 +642,13 @@ mod tests {
             RuntimeInvocationContext::top_level_for_tenant(&list_request, "tenant-a");
         let function_send_context =
             RuntimeInvocationContext::top_level_for_tenant(&send_request, "tenant-a");
-        let function_list_key = RuntimePoolPartitionKey::for_invocation(
+        let function_list_key = partition_key(
             &function_owner,
             &base_bundle,
             Some(&function_list_context),
             construction_mode,
         );
-        let function_send_key = RuntimePoolPartitionKey::for_invocation(
+        let function_send_key = partition_key(
             &function_owner,
             &base_bundle,
             Some(&function_send_context),
@@ -653,13 +658,13 @@ mod tests {
         let mut script_limits = context_recycle_limits();
         script_limits.routing_affinity = RuntimeRoutingAffinity::Script;
         let script_owner = runtime_owner_for_limits(script_limits);
-        let script_base_key = RuntimePoolPartitionKey::for_invocation(
+        let script_base_key = partition_key(
             &script_owner,
             &base_bundle,
             Some(&tenant_a),
             construction_mode,
         );
-        let script_alt_key = RuntimePoolPartitionKey::for_invocation(
+        let script_alt_key = partition_key(
             &script_owner,
             &alt_bundle,
             Some(&tenant_a),
@@ -667,7 +672,7 @@ mod tests {
         );
 
         let restricted_owner = runtime_owner_for_limits(context_recycle_restricted_limits());
-        let restricted_key = RuntimePoolPartitionKey::for_invocation(
+        let restricted_key = partition_key(
             &restricted_owner,
             &base_bundle,
             Some(&tenant_a),
@@ -677,29 +682,24 @@ mod tests {
         let mut db_limits = context_recycle_limits();
         db_limits.grants.service = vec!["db".to_string()];
         let db_owner = runtime_owner_for_limits(db_limits);
-        let db_key = RuntimePoolPartitionKey::for_invocation(
-            &db_owner,
-            &base_bundle,
-            Some(&tenant_a),
-            construction_mode,
-        );
+        let db_key = partition_key(&db_owner, &base_bundle, Some(&tenant_a), construction_mode);
         let mut cache_limits = context_recycle_limits();
         cache_limits.grants.service = vec!["cache".to_string()];
         let cache_owner = runtime_owner_for_limits(cache_limits);
-        let cache_key = RuntimePoolPartitionKey::for_invocation(
+        let cache_key = partition_key(
             &cache_owner,
             &base_bundle,
             Some(&tenant_a),
             construction_mode,
         );
 
-        let unsnapshotted_key = RuntimePoolPartitionKey::for_invocation(
+        let unsnapshotted_key = partition_key(
             &base_owner,
             &base_bundle,
             Some(&tenant_a),
             V8RuntimeConstructionMode::Unsnapshotted,
         );
-        let snapshotted_key = RuntimePoolPartitionKey::for_invocation(
+        let snapshotted_key = partition_key(
             &base_owner,
             &base_bundle,
             Some(&tenant_a),
@@ -723,7 +723,7 @@ mod tests {
 
         let cases = [
             ("tenant", base_key.clone(), {
-                RuntimePoolPartitionKey::for_invocation(
+                partition_key(
                     &base_owner,
                     &base_bundle,
                     Some(&tenant_b),

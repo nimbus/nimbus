@@ -111,13 +111,20 @@ pub fn authorize_runtime_egress(
     if let Err(reason) = readiness.ensure_ready(decision) {
         return RuntimeEgressAuthorization::deny(reason);
     }
-    if let Some(tenant_label) = request.tenant_label.as_deref()
-        && tenant_label != decision.tenant_id().as_str()
-    {
-        return RuntimeEgressAuthorization::deny(format!(
-            "egress gateway request tenant `{tenant_label}` does not match admitted tenant `{}`",
-            decision.tenant_id()
-        ));
+    match request.tenant_label.as_deref() {
+        Some(tenant_label) if tenant_label != decision.tenant_id().as_str() => {
+            return RuntimeEgressAuthorization::deny(format!(
+                "egress gateway request tenant `{tenant_label}` does not match admitted tenant `{}`",
+                decision.tenant_id()
+            ));
+        }
+        Some(_) => {}
+        None => {
+            return RuntimeEgressAuthorization::deny(format!(
+                "egress gateway request tenant label is absent; runtime egress requires a tenant label matching admitted tenant `{}`",
+                decision.tenant_id()
+            ));
+        }
     }
     if request.uses_custom_client {
         return RuntimeEgressAuthorization::deny(
@@ -172,4 +179,158 @@ fn runtime_authorization_from_policy(
         runtime_authorization = runtime_authorization.with_matched_rule(rule);
     }
     runtime_authorization
+}
+
+#[cfg(test)]
+mod tests {
+    use nimbus_core::{PrincipalContext, TenantId};
+    use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
+    use nimbus_runtime::{EgressSubstrate, RuntimePolicy};
+    use nimbus_tenant::{
+        RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
+        TenantIsolationPolicyInput, TenantNetworkPolicyDecision, TenantStoragePolicyDecision,
+        WorkloadAttributes,
+    };
+
+    use super::*;
+
+    #[test]
+    fn runtime_egress_absent_tenant_label_denies_before_policy() {
+        let decision = decision_for_policy(
+            "tenant-a",
+            EgressPolicy::new([EgressRule::new(
+                "api",
+                EgressProtocol::Https,
+                "api.internal",
+                443,
+            )]),
+        );
+        let readiness = EgressGatewayEnforcementReadiness::ready_for_decision(&decision);
+
+        let authorization = authorize_runtime_egress(
+            &decision,
+            &readiness,
+            &runtime_request(None, "api.internal"),
+        );
+
+        assert!(!authorization.is_allowed());
+        assert!(
+            authorization.reason().contains("tenant label is absent"),
+            "absent tenant label must fail closed before policy authorization: {}",
+            authorization.reason()
+        );
+    }
+
+    #[test]
+    fn runtime_egress_mismatched_tenant_label_denies_before_policy() {
+        let decision = decision_for_policy(
+            "tenant-a",
+            EgressPolicy::new([EgressRule::new(
+                "api",
+                EgressProtocol::Https,
+                "api.internal",
+                443,
+            )]),
+        );
+        let readiness = EgressGatewayEnforcementReadiness::ready_for_decision(&decision);
+
+        let authorization = authorize_runtime_egress(
+            &decision,
+            &readiness,
+            &runtime_request(Some("tenant-b"), "api.internal"),
+        );
+
+        assert!(!authorization.is_allowed());
+        assert!(
+            authorization
+                .reason()
+                .contains("does not match admitted tenant"),
+            "mismatched tenant label must fail closed before policy authorization: {}",
+            authorization.reason()
+        );
+    }
+
+    #[test]
+    fn runtime_egress_matching_tenant_label_preserves_policy_verdicts() {
+        let decision = decision_for_policy(
+            "tenant-a",
+            EgressPolicy::new([EgressRule::new(
+                "api",
+                EgressProtocol::Https,
+                "api.internal",
+                443,
+            )]),
+        );
+        let readiness = EgressGatewayEnforcementReadiness::ready_for_decision(&decision);
+
+        let allowed = authorize_runtime_egress(
+            &decision,
+            &readiness,
+            &runtime_request(Some("tenant-a"), "api.internal"),
+        );
+        assert!(
+            allowed.is_allowed(),
+            "matching tenant label should preserve policy allow verdict: {}",
+            allowed.reason()
+        );
+        assert_eq!(allowed.matched_rule(), Some("api"));
+
+        let denied = authorize_runtime_egress(
+            &decision,
+            &readiness,
+            &runtime_request(Some("tenant-a"), "blocked.internal"),
+        );
+        assert!(!denied.is_allowed());
+        assert!(
+            denied.reason().contains("default deny"),
+            "matching tenant label should still preserve policy deny verdict: {}",
+            denied.reason()
+        );
+    }
+
+    fn decision_for_policy(tenant: &str, policy: EgressPolicy) -> TenantIsolationDecision {
+        let context = TenantIsolationContext::application(
+            TenantId::new(tenant).expect("tenant id should build"),
+            PrincipalContext::anonymous(),
+            "egress_gateway_test",
+        );
+        let runtime_policy = RuntimePolicy::default();
+        let network = TenantNetworkPolicyDecision::new([])
+            .with_sandbox_egress(policy)
+            .expect("egress policy should compile");
+        context
+            .admit_decision(
+                TenantIsolationPolicyInput::new(WorkloadAttributes::runtime_function(
+                    "egress_gateway_test",
+                    RuntimeIsolationTier::InProcessUntrusted,
+                ))
+                .with_runtime_policy(
+                    &context,
+                    &runtime_policy,
+                    RuntimeIsolationTier::InProcessUntrusted,
+                    TenantIsolationMode::LocalDevelopment,
+                )
+                .with_network(network)
+                .with_storage(TenantStoragePolicyDecision::namespace(
+                    context.tenant_id().as_str(),
+                )),
+            )
+            .expect("tenant isolation decision should build")
+    }
+
+    fn runtime_request(tenant_label: Option<&str>, host: &str) -> RuntimeEgressRequest {
+        RuntimeEgressRequest {
+            substrate: EgressSubstrate::Isolate,
+            protocol: RuntimeEgressProtocol::Https,
+            method: Some("GET".to_string()),
+            url: Some(format!("https://{host}/v1/messages")),
+            host: host.to_string(),
+            port: 443,
+            path_and_query: Some("/v1/messages".to_string()),
+            tenant_label: tenant_label.map(str::to_string),
+            session_id: Some("session-egress-bridge-test".to_string()),
+            invocation_id: Some(1),
+            uses_custom_client: false,
+        }
+    }
 }

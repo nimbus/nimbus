@@ -42,7 +42,7 @@ export {};
     limits.execution_timeout = std::time::Duration::from_millis(50);
     let runtime = NimbusRuntime::with_limits(Arc::new(RecordingHost::default()), limits);
     let error = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -53,6 +53,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect_err("infinite loop should time out");
@@ -93,7 +94,7 @@ export {};
     });
 
     let error = runtime
-        .invoke_bundle_with_cancellation(
+        .invoke_bundle_for_tenant_with_cancellation(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -104,6 +105,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
             Some(cancellation),
         )
         .await
@@ -140,7 +142,7 @@ export {};
         limits,
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -151,6 +153,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("slow async host op should not burn user execution timeout");
@@ -187,7 +190,7 @@ export {};
         limits,
     );
     let error = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -198,6 +201,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect_err("slow async host op should trip system wall timeout");
@@ -239,7 +243,7 @@ export {};
     let runtime = NimbusRuntime::with_limits(Arc::new(FailingAsyncEnvelopeHost), limits);
     let error = tokio::time::timeout(
         std::time::Duration::from_secs(2),
-        runtime.invoke_bundle(
+        runtime.invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -250,6 +254,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         ),
     )
     .await
@@ -293,7 +298,7 @@ export {};
     ));
     let runtime = NimbusRuntime::with_limits(host.clone(), limits);
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -304,6 +309,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("waitUntil background work should drain after response readiness");
@@ -342,7 +348,7 @@ export {};
     ));
     let runtime = NimbusRuntime::with_limits(host.clone(), limits);
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -353,6 +359,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("waitUntil should receive a fresh system wall budget");
@@ -390,7 +397,7 @@ export {};
     ));
     let runtime = NimbusRuntime::with_limits(host.clone(), limits);
     let error = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -401,6 +408,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect_err("waitUntil background work should be bounded by system timeout");
@@ -437,7 +445,7 @@ export {};
     limits.system_timeout = std::time::Duration::from_millis(300);
     let runtime = NimbusRuntime::with_limits(Arc::new(RecordingHost::default()), limits);
     let error = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -448,6 +456,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect_err("unreferenced pending waitUntil work should be bounded by system timeout");
@@ -489,7 +498,7 @@ export {};
     ));
     let runtime = NimbusRuntime::with_limits(host.clone(), limits);
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -500,6 +509,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("cooperative waitUntil background work should drain before runtime reuse");

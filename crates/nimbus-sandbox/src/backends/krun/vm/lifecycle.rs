@@ -352,6 +352,7 @@ impl KrunSandboxBackend {
     fn ensure_egress_proxy_running(&self, manifest: &KrunSandboxManifest) -> Result<()> {
         crate::backends::oci::egress::ensure_egress_proxy_running(
             &self.egress_proxies,
+            &manifest.spec.tenant_id,
             &manifest.handle.id,
             manifest.egress_proxy.as_ref(),
             &manifest.spec.egress,

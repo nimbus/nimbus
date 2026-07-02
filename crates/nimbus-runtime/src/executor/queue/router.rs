@@ -125,8 +125,9 @@ impl RuntimeWorkerRouter {
             .ok_or_else(Self::closed_error)
     }
 
-    fn affinity_key(&self, job: &RuntimeWorkerJob) -> Option<RuntimeAffinityKey> {
+    fn affinity_key(&self, job: &RuntimeWorkerJob) -> Result<Option<RuntimeAffinityKey>> {
         runtime_affinity_key(self.routing_affinity, Some(&job.context), &job.bundle)
+            .map_err(|error| NimbusRuntimeError::Contract(error.to_string()))
     }
 
     fn choose_worker(&self, affinity_key: Option<&RuntimeAffinityKey>) -> WorkerRouteSelection {
@@ -259,7 +260,7 @@ impl RuntimeWorkerRouter {
     }
 
     async fn dispatch_job_inner(&self, job: RuntimeWorkerJob) -> Result<()> {
-        let affinity_key = self.affinity_key(&job);
+        let affinity_key = self.affinity_key(&job)?;
         let selection = self.choose_worker(affinity_key.as_ref());
         let dispatch_handle = job.dispatch_handle.clone();
         let sender = self.dispatch_sender(selection.worker_id)?;
@@ -294,7 +295,10 @@ impl RuntimeWorkerRouter {
         &self,
         job: RuntimeWorkerJob,
     ) -> std::result::Result<(), Box<RuntimeWorkerJob>> {
-        let affinity_key = self.affinity_key(&job);
+        let affinity_key = match self.affinity_key(&job) {
+            Ok(affinity_key) => affinity_key,
+            Err(_) => return Err(Box::new(job)),
+        };
         let selection = self.choose_worker(affinity_key.as_ref());
         let dispatch_handle = job.dispatch_handle.clone();
         let sender = match self.dispatch_sender(selection.worker_id) {

@@ -80,6 +80,34 @@ impl NimbusRuntime {
             .await
     }
 
+    pub async fn invoke_bundle_for_tenant(
+        &self,
+        bundle: &RuntimeBundle,
+        request: &InvocationRequest,
+        tenant_label: impl Into<String>,
+    ) -> Result<Value> {
+        self.invoke_bundle_for_tenant_with_cancellation(bundle, request, tenant_label, None)
+            .await
+    }
+
+    pub async fn invoke_bundle_for_tenant_with_cancellation(
+        &self,
+        bundle: &RuntimeBundle,
+        request: &InvocationRequest,
+        tenant_label: impl Into<String>,
+        cancellation: Option<HostCallCancellation>,
+    ) -> Result<Value> {
+        self.executor()
+            .invoke_on_worker(
+                self.clone(),
+                bundle.clone(),
+                request.clone(),
+                RuntimeInvocationContext::top_level_for_tenant(request, tenant_label),
+                cancellation,
+            )
+            .await
+    }
+
     pub fn invoke_bundle_blocking(
         &self,
         bundle: &RuntimeBundle,
@@ -99,6 +127,36 @@ impl NimbusRuntime {
             bundle.clone(),
             request.clone(),
             RuntimeInvocationContext::top_level(request),
+            cancellation,
+        )
+    }
+
+    pub fn invoke_bundle_blocking_for_tenant(
+        &self,
+        bundle: &RuntimeBundle,
+        request: &InvocationRequest,
+        tenant_label: impl Into<String>,
+    ) -> Result<Value> {
+        self.invoke_bundle_blocking_for_tenant_with_cancellation(
+            bundle,
+            request,
+            tenant_label,
+            None,
+        )
+    }
+
+    pub fn invoke_bundle_blocking_for_tenant_with_cancellation(
+        &self,
+        bundle: &RuntimeBundle,
+        request: &InvocationRequest,
+        tenant_label: impl Into<String>,
+        cancellation: Option<HostCallCancellation>,
+    ) -> Result<Value> {
+        self.executor().invoke_blocking_with_cancellation(
+            self.clone(),
+            bundle.clone(),
+            request.clone(),
+            RuntimeInvocationContext::top_level_for_tenant(request, tenant_label),
             cancellation,
         )
     }

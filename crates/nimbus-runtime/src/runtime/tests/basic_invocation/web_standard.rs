@@ -42,7 +42,7 @@ export {};
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -53,6 +53,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle invocation should succeed");
@@ -102,7 +103,7 @@ async fn runtime_requires_bundle_contract() {
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let error = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Action,
@@ -113,6 +114,7 @@ async fn runtime_requires_bundle_contract() {
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect_err("missing global invoke contract should fail");
@@ -155,7 +157,7 @@ export {};
     let runtime =
         NimbusRuntime::with_policy(host, run_to_completion_snapshot_runtime_test_policy());
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -166,6 +168,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("async bundle invocation should succeed");
@@ -211,7 +214,7 @@ export {};
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -222,6 +225,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should observe runtime globals");
@@ -265,7 +269,7 @@ export {};
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -276,6 +280,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute without exposing bootstrap globals");
@@ -326,11 +331,11 @@ export {};
     };
 
     let first = runtime
-        .invoke_bundle(&bundle, &request)
+        .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
         .await
         .expect("first convenience invocation should succeed");
     let second = runtime
-        .invoke_bundle(&bundle, &request)
+        .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
         .await
         .expect("second convenience invocation should succeed");
 
@@ -373,7 +378,7 @@ export {};
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_web_standard())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -384,6 +389,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");

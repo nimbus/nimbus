@@ -18,11 +18,11 @@ async fn wasmtime_store_pool_invokes_component_with_retained_store_pool() {
     let runtime = NimbusRuntime::with_policy(Arc::new(WasmtimeStorePoolHost), policy.clone());
 
     let first = runtime
-        .invoke_bundle(&bundle, &request())
+        .invoke_bundle_for_tenant(&bundle, &request(), "tenant-a")
         .await
         .expect("first retained Store pool invocation should succeed");
     let second = runtime
-        .invoke_bundle(&bundle, &request())
+        .invoke_bundle_for_tenant(&bundle, &request(), "tenant-a")
         .await
         .expect("second retained Store pool invocation should reuse a reset Store");
 
@@ -54,7 +54,7 @@ async fn wasmtime_store_pool_resource_limiter_enforces_max_heap_mb() {
     );
 
     let error = runtime
-        .invoke_bundle(&bundle, &request())
+        .invoke_bundle_for_tenant(&bundle, &request(), "tenant-a")
         .await
         .expect_err("ResourceLimiter should reject memory above max_heap_mb");
 

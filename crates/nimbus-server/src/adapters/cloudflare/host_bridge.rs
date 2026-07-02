@@ -268,31 +268,29 @@ export default {
         )
         .expect("worker bundle should write");
 
-        let result = runtime
-            .invoke_bundle(
-                &RuntimeBundle::new(&bundle_path),
-                &InvocationRequest {
-                    kind: InvocationKind::CloudflareWorkerFetch,
-                    function_name: "worker:fetch".to_string(),
-                    args: json!({
-                        "request": {
-                            "url": "https://example.com/kv",
-                            "method": "GET",
-                        },
-                        "env": {
-                            "NS": {
-                                "type": "kv_namespace",
-                                "tenant_id": tenant.as_str(),
-                                "namespace": "namespace-prod",
-                            },
-                        },
-                    }),
-                    page_size: None,
-                    cursor: None,
-                    auth: None,
-                    services: Default::default(),
+        let request = InvocationRequest {
+            kind: InvocationKind::CloudflareWorkerFetch,
+            function_name: "worker:fetch".to_string(),
+            args: json!({
+                "request": {
+                    "url": "https://example.com/kv",
+                    "method": "GET",
                 },
-            )
+                "env": {
+                    "NS": {
+                        "type": "kv_namespace",
+                        "tenant_id": tenant.as_str(),
+                        "namespace": "namespace-prod",
+                    },
+                },
+            }),
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: Default::default(),
+        };
+        let result = runtime
+            .invoke_bundle_for_tenant(&RuntimeBundle::new(&bundle_path), &request, tenant.as_str())
             .await
             .expect("Worker env.NS flow should execute");
 

@@ -44,7 +44,7 @@ export default {
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &cloudflare_worker_request(serde_json::json!({
                 "request": {
@@ -57,6 +57,7 @@ export default {
                     "MESSAGE": { "value": "from-env" },
                 },
             })),
+            "tenant-a",
         )
         .await
         .expect("Cloudflare Worker fetch should execute");
@@ -118,7 +119,7 @@ export default {
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &cloudflare_worker_request(serde_json::json!({
                 "request": {
@@ -133,6 +134,7 @@ export default {
                     },
                 },
             })),
+            "tenant-a",
         )
         .await
         .expect("Cloudflare Worker KV binding should execute");
@@ -201,7 +203,7 @@ export default {
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let error = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &cloudflare_worker_request(serde_json::json!({
                 "request": {
@@ -209,6 +211,7 @@ export default {
                     "method": "GET",
                 },
             })),
+            "tenant-a",
         )
         .await
         .expect_err("unsupported request.cf should fail by name");
@@ -244,7 +247,7 @@ export default {
         run_to_completion_snapshot_runtime_test_policy(),
     );
     let error = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &cloudflare_worker_request(serde_json::json!({
                 "request": {
@@ -252,6 +255,7 @@ export default {
                     "method": "GET",
                 },
             })),
+            "tenant-a",
         )
         .await
         .expect_err("rejected waitUntil should fail after response readiness");

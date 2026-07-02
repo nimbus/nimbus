@@ -112,7 +112,7 @@ export {};
             services: Default::default(),
         };
         let result = runtime_owner
-            .invoke_bundle(&bundle, &request)
+            .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
             .await
             .unwrap_or_else(|error| panic!("{target:?} metadata invocation should pass: {error}"));
         assert_eq!(
@@ -602,7 +602,7 @@ export {};
             auth: None,
             services: Default::default(),
         };
-        let context = RuntimeInvocationContext::top_level(&request);
+        let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
         bootstrap::reset_runtime_invocation_state(
             runtime,
             SharedInvocationPermit::new(runtime_owner.policy(), None, None, true, None),

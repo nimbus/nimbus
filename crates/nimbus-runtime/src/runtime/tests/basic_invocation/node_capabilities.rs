@@ -54,7 +54,7 @@ export {};
         runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -65,6 +65,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -156,9 +157,10 @@ export {};
     };
 
     let first = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&first_bundle_path),
             &request("snapshot:first"),
+            "tenant-a",
         )
         .await
         .expect("first bundle should execute");
@@ -173,9 +175,10 @@ export {};
     );
 
     let second = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&second_bundle_path),
             &request("snapshot:second"),
+            "tenant-b",
         )
         .await
         .expect("second bundle should execute");
@@ -220,7 +223,7 @@ export {};
         runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -231,6 +234,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -259,7 +263,7 @@ export {};
         runtime_test_policy_with_real_fs(RuntimeLimits::application_node22_local_development()),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -270,6 +274,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -377,7 +382,7 @@ export {};
         runtime_test_policy_with_real_fs(read_write_limits.clone()),
     );
     let written = writer_runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -391,6 +396,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("writer runtime should execute");
@@ -417,7 +423,7 @@ export {};
         runtime_test_policy_with_real_fs(worker_limits),
     );
     let worker_shared = worker_runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -431,6 +437,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("worker shared-env runtime should execute");
@@ -451,7 +458,7 @@ export {};
         runtime_test_policy_with_real_fs(read_write_limits),
     );
     let read = reader_runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -462,6 +469,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("reader runtime should execute");
@@ -485,7 +493,7 @@ export {};
         runtime_test_policy_with_real_fs(read_only_limits),
     );
     let denied = read_only_runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -496,6 +504,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("read-only runtime should execute");
@@ -538,7 +547,7 @@ export {};
         runtime_test_policy_with_real_fs(RuntimeLimits::tooling_node22()),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -549,6 +558,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -616,7 +626,7 @@ export {};
         runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -627,6 +637,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -672,7 +683,7 @@ export {};
         runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -683,6 +694,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute far enough to prove worker denial");
@@ -761,7 +773,7 @@ export {};
         runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -772,6 +784,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -854,7 +867,7 @@ export {};
         runtime_test_policy_with_real_fs(RuntimeLimits::tooling_node22()),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -865,6 +878,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");

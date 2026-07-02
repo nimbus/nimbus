@@ -19,7 +19,9 @@ set -eu
 
 NIMBUS_VERSION=""
 NIMBUS_CRUN_VERSION=""
+NIMBUS_CRUN_UPSTREAM_VERSION=""
 NIMBUS_LIBKRUN_VERSION=""
+NIMBUS_LIBKRUN_UPSTREAM_VERSION=""
 NIMBUS_PREFIX="/usr/local"
 INSTALL_BUN_JSC_ADAPTER="${NIMBUS_INSTALL_BUN_JSC_ADAPTER:-}"
 DRY_RUN=""
@@ -81,6 +83,17 @@ NIMBUS_LIBKRUN_RELEASES_API="https://api.github.com/repos/nimbus/nimbus-libkrun/
 NIMBUS_RELEASES_DOWNLOAD="https://github.com/nimbus/nimbus/releases/download"
 NIMBUS_CRUN_RELEASES_DOWNLOAD="https://github.com/nimbus/nimbus-crun/releases/download"
 NIMBUS_LIBKRUN_RELEASES_DOWNLOAD="https://github.com/nimbus/nimbus-libkrun/releases/download"
+
+# Default Linux VMM tuple. In a checked-out repo, load_linux_distribution_contract
+# consumes packaging/linux-distribution-contract.env as the source of truth. The
+# baked values keep standalone curl|sh installs pinned to the same validated
+# tuple instead of resolving fork artifacts through GitHub "latest".
+LINUX_DISTRIBUTION_CONTRACT_ENV="${NIMBUS_LINUX_DISTRIBUTION_CONTRACT_ENV:-packaging/linux-distribution-contract.env}"
+DEFAULT_NIMBUS_CRUN_VERSION="v1.27.1-nimbus.2"
+DEFAULT_NIMBUS_CRUN_UPSTREAM_VERSION="1.27.1"
+DEFAULT_NIMBUS_LIBKRUN_VERSION="v1.18.1-nimbus.1"
+DEFAULT_NIMBUS_LIBKRUN_UPSTREAM_VERSION="1.18.1"
+LINUX_DISTRIBUTION_CONTRACT_LOADED=""
 
 # --- Output helpers ---------------------------------------------------------
 
@@ -411,24 +424,7 @@ resolve_crun_version() {
     return 0
   fi
 
-  say_info "Resolving latest nimbus-crun version..."
-
-  response="$(download "${NIMBUS_CRUN_RELEASES_API}/latest" 2>/dev/null || true)"
-
-  if [ -z "$response" ]; then
-    err "failed to fetch latest nimbus-crun release — try --crun-version <tag> or set GITHUB_TOKEN"
-  fi
-
-  NIMBUS_CRUN_VERSION="$(echo "$response" | tr ',' '\n' | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
-
-  if [ -z "$NIMBUS_CRUN_VERSION" ]; then
-    if echo "$response" | grep -qi "rate limit"; then
-      err "GitHub API rate limit reached — try --crun-version <tag> or set GITHUB_TOKEN"
-    fi
-    err "failed to parse latest nimbus-crun version from GitHub API"
-  fi
-
-  say_info "Latest nimbus-crun version: $NIMBUS_CRUN_VERSION"
+  load_linux_distribution_contract
 }
 
 resolve_libkrun_version() {
@@ -440,24 +436,44 @@ resolve_libkrun_version() {
     return 0
   fi
 
-  say_info "Resolving latest nimbus-libkrun version..."
+  load_linux_distribution_contract
+}
 
-  response="$(download "${NIMBUS_LIBKRUN_RELEASES_API}/latest" 2>/dev/null || true)"
+load_linux_distribution_contract() {
+  if [ -n "$LINUX_DISTRIBUTION_CONTRACT_LOADED" ]; then
+    return 0
+  fi
+  LINUX_DISTRIBUTION_CONTRACT_LOADED="1"
 
-  if [ -z "$response" ]; then
-    err "failed to fetch latest nimbus-libkrun release — try --libkrun-version <tag> or set GITHUB_TOKEN"
+  crun_override="$NIMBUS_CRUN_VERSION"
+  libkrun_override="$NIMBUS_LIBKRUN_VERSION"
+  contract_source="embedded installer defaults"
+  if [ -r "$LINUX_DISTRIBUTION_CONTRACT_ENV" ]; then
+    # shellcheck disable=SC1090
+    . "$LINUX_DISTRIBUTION_CONTRACT_ENV"
+    contract_source="$LINUX_DISTRIBUTION_CONTRACT_ENV"
+  fi
+  if [ -n "$crun_override" ]; then
+    NIMBUS_CRUN_VERSION="$crun_override"
+  fi
+  if [ -n "$libkrun_override" ]; then
+    NIMBUS_LIBKRUN_VERSION="$libkrun_override"
   fi
 
-  NIMBUS_LIBKRUN_VERSION="$(echo "$response" | tr ',' '\n' | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
-
+  if [ -z "$NIMBUS_CRUN_VERSION" ]; then
+    NIMBUS_CRUN_VERSION="$DEFAULT_NIMBUS_CRUN_VERSION"
+  fi
+  if [ -z "$NIMBUS_CRUN_UPSTREAM_VERSION" ]; then
+    NIMBUS_CRUN_UPSTREAM_VERSION="$DEFAULT_NIMBUS_CRUN_UPSTREAM_VERSION"
+  fi
   if [ -z "$NIMBUS_LIBKRUN_VERSION" ]; then
-    if echo "$response" | grep -qi "rate limit"; then
-      err "GitHub API rate limit reached — try --libkrun-version <tag> or set GITHUB_TOKEN"
-    fi
-    err "failed to parse latest nimbus-libkrun version from GitHub API"
+    NIMBUS_LIBKRUN_VERSION="$DEFAULT_NIMBUS_LIBKRUN_VERSION"
+  fi
+  if [ -z "$NIMBUS_LIBKRUN_UPSTREAM_VERSION" ]; then
+    NIMBUS_LIBKRUN_UPSTREAM_VERSION="$DEFAULT_NIMBUS_LIBKRUN_UPSTREAM_VERSION"
   fi
 
-  say_info "Latest nimbus-libkrun version: $NIMBUS_LIBKRUN_VERSION"
+  say_info "Using validated Linux VMM tuple from ${contract_source}: nimbus-crun ${NIMBUS_CRUN_VERSION} (upstream ${NIMBUS_CRUN_UPSTREAM_VERSION}), nimbus-libkrun ${NIMBUS_LIBKRUN_VERSION} (upstream ${NIMBUS_LIBKRUN_UPSTREAM_VERSION})"
 }
 
 # --- Asset naming -----------------------------------------------------------
@@ -834,8 +850,8 @@ print_install_plan() {
   say "Versions:"
   say "  nimbus:      ${NIMBUS_VERSION:-latest}"
   if [ "$PLATFORM" = "linux" ]; then
-    say "  nimbus-libkrun: ${NIMBUS_LIBKRUN_VERSION:-latest}"
-    say "  nimbus-crun: ${NIMBUS_CRUN_VERSION:-latest}"
+    say "  nimbus-libkrun: ${NIMBUS_LIBKRUN_VERSION:-validated tuple} (upstream ${NIMBUS_LIBKRUN_UPSTREAM_VERSION:-unknown})"
+    say "  nimbus-crun: ${NIMBUS_CRUN_VERSION:-validated tuple} (upstream ${NIMBUS_CRUN_UPSTREAM_VERSION:-unknown})"
     if [ -n "$INSTALL_BUN_JSC_ADAPTER" ]; then
       say "  nimbus-bun-jsc-adapter: ${NIMBUS_VERSION:-latest}"
     fi
@@ -1988,6 +2004,9 @@ main() {
   check_platform_support
   detect_distro
   warn_ignored_args_for_platform
+  if [ "$PLATFORM" = "linux" ]; then
+    load_linux_distribution_contract
+  fi
 
   if [ -n "$UNINSTALL" ]; then
     case "$PLATFORM" in

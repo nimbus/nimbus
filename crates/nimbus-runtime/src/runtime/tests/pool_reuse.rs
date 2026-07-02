@@ -348,7 +348,7 @@ async fn direct_path_webstandard_unsnapshotted_no_crash_after_fix() {
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
-    let context = RuntimeInvocationContext::top_level(&request);
+    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
 
     let result = runtime_owner
         .invoke_bundle_unmanaged(
@@ -4641,7 +4641,7 @@ module.exports = { marker: "commonjs-default" };
         };
 
         let startup_snapshot_result = runtime_owner
-            .invoke_bundle(&bundle, &request)
+            .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
             .await
             .unwrap_or_else(|error| {
                 panic!("{target:?}: startup-snapshot invocation should succeed: {error}")
@@ -7332,7 +7332,7 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level(&request);
+    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),
@@ -7435,7 +7435,7 @@ async fn reused_runtime_uses_bound_host_call_session_before_next_invoke() {
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level(&request);
+    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),
@@ -7530,7 +7530,7 @@ async fn fresh_realm_installs_bootstrap_and_uses_bound_host_bridge() {
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level(&request);
+    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),

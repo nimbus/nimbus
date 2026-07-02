@@ -22,9 +22,10 @@ pub(in super::super) async fn op_nimbus_runtime_test_spawn(
     let mut result = runtime_test_spawn_result_from_value(
         prepared
             .runtime
-            .invoke_bundle(
+            .invoke_bundle_for_tenant(
                 &RuntimeBundle::with_side_entrypoint(&prepared.bundle_path),
                 &prepared.request,
+                "tenant-a",
             )
             .await,
     );
@@ -43,10 +44,12 @@ pub(in super::super) fn op_nimbus_runtime_test_spawn_sync(
     #[serde] payload: RuntimeTestSpawnPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
     let prepared = prepare_runtime_test_spawn_invocation(state, payload)?;
-    let mut result = runtime_test_spawn_result_from_value(prepared.runtime.invoke_bundle_blocking(
-        &RuntimeBundle::with_side_entrypoint(&prepared.bundle_path),
-        &prepared.request,
-    ));
+    let mut result =
+        runtime_test_spawn_result_from_value(prepared.runtime.invoke_bundle_blocking_for_tenant(
+            &RuntimeBundle::with_side_entrypoint(&prepared.bundle_path),
+            &prepared.request,
+            "tenant-a",
+        ));
     if let Ok(result) = result.as_mut() {
         normalize_runtime_test_spawn_result_paths(result, &prepared.output_path_rewrites);
     }

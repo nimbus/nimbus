@@ -474,9 +474,10 @@ mod tests {
             services: BTreeMap::new(),
         };
         let error = runtime
-            .invoke_bundle_blocking(
+            .invoke_bundle_blocking_for_tenant(
                 &RuntimeBundle::new("unused-bun-jsc-proof-bundle.mjs"),
                 &request,
+                "tenant-a",
             )
             .expect_err("default Bun/JSC runtime must fail closed until an adapter is linked");
 
@@ -899,7 +900,11 @@ globalThis.__nimbusInvoke = async function(request) {
         };
 
         let first_v8_result = v8_runtime
-            .invoke_bundle_blocking(&RuntimeBundle::new(&v8_bundle_path), &v8_request("before"))
+            .invoke_bundle_blocking_for_tenant(
+                &RuntimeBundle::new(&v8_bundle_path),
+                &v8_request("before"),
+                "tenant-a",
+            )
             .expect("V8 invocation before Bun/JSC should run");
         assert_eq!(
             first_v8_result,
@@ -951,7 +956,11 @@ globalThis.__nimbusInvoke = async function(request) {
         );
 
         let second_v8_result = v8_runtime
-            .invoke_bundle_blocking(&RuntimeBundle::new(&v8_bundle_path), &v8_request("after"))
+            .invoke_bundle_blocking_for_tenant(
+                &RuntimeBundle::new(&v8_bundle_path),
+                &v8_request("after"),
+                "tenant-a",
+            )
             .expect("V8 invocation after Bun/JSC should still run");
         assert_eq!(
             second_v8_result,

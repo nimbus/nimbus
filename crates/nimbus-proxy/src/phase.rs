@@ -5,9 +5,9 @@
 //! a testable PEP invariant. The worker does NOT iterate this constant today —
 //! `worker.rs::handle_client` encodes the same ordering inline. The model is
 //! kept here so the security-critical orderings (resolve DNS before authorizing
-//! the resolved peer, authorize before dialing, select the pool key before
-//! dialing) have one named, test-guarded source of truth ahead of the dispatch
-//! refactor.
+//! the resolved peer, authorize hostnames before DNS, authorize before dialing,
+//! select the pool key before dialing) have one named, test-guarded source of
+//! truth ahead of the dispatch refactor.
 
 /// One phase of egress-proxy request handling. See the module docs: this is the
 /// documented model for planned phase-driven dispatch, not the worker's current
@@ -15,6 +15,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EgressProxyRequestPhase {
     CanonicalizeAuthority,
+    PreDnsAuthorize,
     ResolveDns,
     AuthorizeResolvedPeer,
     SelectPoolKey,
@@ -22,8 +23,9 @@ pub enum EgressProxyRequestPhase {
     Relay,
 }
 
-pub const REQUEST_PHASE_ORDER: [EgressProxyRequestPhase; 6] = [
+pub const REQUEST_PHASE_ORDER: [EgressProxyRequestPhase; 7] = [
     EgressProxyRequestPhase::CanonicalizeAuthority,
+    EgressProxyRequestPhase::PreDnsAuthorize,
     EgressProxyRequestPhase::ResolveDns,
     EgressProxyRequestPhase::AuthorizeResolvedPeer,
     EgressProxyRequestPhase::SelectPoolKey,

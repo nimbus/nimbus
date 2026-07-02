@@ -206,6 +206,72 @@ async fn worker_router_can_affinitize_by_function() {
 }
 
 #[tokio::test]
+async fn worker_router_rejects_missing_tenant_for_tenant_affinity() {
+    let _test_lock = runtime_executor_test_lock().lock().await;
+    let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.routing_affinity = crate::limits::RuntimeRoutingAffinity::Tenant;
+    limits.max_concurrent_runtime_instances = 2;
+    limits.worker_threads = 2;
+    let policy = Arc::new(RuntimePolicy::new(limits));
+    let executor = RuntimeExecutor::new(policy.clone());
+    let test_state = executor.test_state();
+    let host = Arc::new(WorkerRuntimeIdHost { test_state });
+    let request = test_request("messages:list");
+
+    let error = executor
+        .invoke_on_worker(
+            NimbusRuntime::with_policy(host, policy),
+            RuntimeBundle::new(&bundle_path),
+            request.clone(),
+            RuntimeInvocationContext::top_level(&request),
+            None,
+        )
+        .await
+        .expect_err("tenant affinity must fail closed without a tenant label");
+
+    assert!(
+        error.to_string().contains("requires a tenant label"),
+        "missing tenant label should be reported as an affinity contract error: {error}"
+    );
+    let metrics = executor.policy().metrics_snapshot();
+    assert_eq!(metrics.worker_dispatched_invocations, 0);
+}
+
+#[tokio::test]
+async fn worker_router_rejects_missing_tenant_for_function_affinity() {
+    let _test_lock = runtime_executor_test_lock().lock().await;
+    let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.routing_affinity = crate::limits::RuntimeRoutingAffinity::Function;
+    limits.max_concurrent_runtime_instances = 2;
+    limits.worker_threads = 2;
+    let policy = Arc::new(RuntimePolicy::new(limits));
+    let executor = RuntimeExecutor::new(policy.clone());
+    let test_state = executor.test_state();
+    let host = Arc::new(WorkerRuntimeIdHost { test_state });
+    let request = test_request("messages:list");
+
+    let error = executor
+        .invoke_on_worker(
+            NimbusRuntime::with_policy(host, policy),
+            RuntimeBundle::new(&bundle_path),
+            request.clone(),
+            RuntimeInvocationContext::top_level(&request),
+            None,
+        )
+        .await
+        .expect_err("function affinity must fail closed without a tenant label");
+
+    assert!(
+        error.to_string().contains("requires a tenant label"),
+        "missing tenant label should be reported as an affinity contract error: {error}"
+    );
+    let metrics = executor.policy().metrics_snapshot();
+    assert_eq!(metrics.worker_dispatched_invocations, 0);
+}
+
+#[tokio::test]
 async fn worker_router_can_affinitize_by_script_identity() {
     let _test_lock = runtime_executor_test_lock().lock().await;
     let (_bundle_dir_a, bundle_path_a) = write_runtime_id_bundle();
@@ -264,6 +330,40 @@ async fn worker_router_can_affinitize_by_script_identity() {
     assert_eq!(
         script_b_second_worker, script_b_worker,
         "matching bundle identity should route back to the warmed worker"
+    );
+}
+
+#[tokio::test]
+async fn worker_router_script_affinity_allows_missing_invocation_tenant() {
+    let _test_lock = runtime_executor_test_lock().lock().await;
+    let (_bundle_dir, bundle_path) = write_runtime_id_bundle();
+    let mut limits = cooperative_warm_pool_runtime_test_limits();
+    limits.routing_affinity = crate::limits::RuntimeRoutingAffinity::Script;
+    limits.max_concurrent_runtime_instances = 2;
+    limits.worker_threads = 2;
+    let policy = Arc::new(RuntimePolicy::new(limits));
+    let executor = RuntimeExecutor::new(policy.clone());
+    let test_state = executor.test_state();
+    let host = Arc::new(WorkerRuntimeIdHost { test_state });
+    let request = test_request("messages:list");
+
+    let result = executor
+        .invoke_on_worker(
+            NimbusRuntime::with_policy(host, policy),
+            RuntimeBundle::new(&bundle_path),
+            request.clone(),
+            RuntimeInvocationContext::top_level(&request),
+            None,
+        )
+        .await
+        .expect("script affinity is anchored by bundle identity, not invocation tenant label");
+
+    assert!(
+        result
+            .get("workerRuntimeId")
+            .and_then(Value::as_u64)
+            .is_some(),
+        "script-affinitized invocation should execute and return its worker id"
     );
 }
 

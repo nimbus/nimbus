@@ -333,13 +333,15 @@ fn deny_terminal(
     decision_logger: &DecisionLogger,
     parsed: &ParsedProxyRequest,
     matched_rule: Option<String>,
+    policy_generation: Option<PolicyGeneration>,
     response: HttpProxyResponse,
 ) -> io::Result<()> {
-    decision_logger(EgressDecisionLog::denied(
-        parsed,
-        response.body().to_owned(),
-        matched_rule,
-    ));
+    let mut decision_log =
+        EgressDecisionLog::denied(parsed, response.body().to_owned(), matched_rule);
+    if let Some(policy_generation) = policy_generation {
+        decision_log = decision_log.with_policy_generation(policy_generation);
+    }
+    decision_logger(decision_log);
     write_http_response(client, response)
 }
 
@@ -366,11 +368,24 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
             &context.decision_logger,
             &parsed,
             None,
+            None,
             HttpProxyResponse::forbidden(
                 "egress proxy default deny: no active policy generation is ready",
             ),
         );
     };
+
+    let pre_dns_authorization = authorize_hostname_before_dns(&active_policy.policy, &parsed);
+    if !pre_dns_authorization.is_allowed() {
+        return deny_terminal(
+            &mut client,
+            &context.decision_logger,
+            &parsed,
+            pre_dns_authorization.matched_rule().map(ToOwned::to_owned),
+            Some(active_policy.policy_generation),
+            HttpProxyResponse::forbidden(pre_dns_authorization.reason()),
+        );
+    }
 
     let dns_resolution = match resolve_dns(
         &context.resolver,
@@ -385,6 +400,7 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
                 &context.decision_logger,
                 &parsed,
                 None,
+                Some(active_policy.policy_generation),
                 HttpProxyResponse::bad_gateway("egress proxy DNS resolution returned no addresses"),
             );
         }
@@ -394,6 +410,7 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
                 &context.decision_logger,
                 &parsed,
                 None,
+                Some(active_policy.policy_generation),
                 HttpProxyResponse::forbidden(&format!(
                     "egress proxy DNS cache overflow default deny: {error}"
                 )),
@@ -405,6 +422,7 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
                 &context.decision_logger,
                 &parsed,
                 None,
+                Some(active_policy.policy_generation),
                 HttpProxyResponse::bad_gateway(&format!(
                     "egress proxy DNS resolution failed: {error}"
                 )),
@@ -423,6 +441,7 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
             &context.decision_logger,
             &parsed,
             None,
+            Some(active_policy.policy_generation),
             HttpProxyResponse::forbidden(authorization.reason()),
         );
     }
@@ -445,6 +464,7 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
                 &context.decision_logger,
                 &parsed,
                 matched_rule,
+                Some(active_policy.policy_generation),
                 response,
             );
         }
@@ -460,6 +480,7 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
             &context.decision_logger,
             &parsed,
             matched_rule,
+            Some(active_policy.policy_generation),
             HttpProxyResponse::bad_request(
                 "egress proxy HTTP request bodies require Content-Length",
             ),
@@ -468,7 +489,12 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
 
     // The policy decision is final and allowed; record it exactly once before
     // dialing so every request emits a single terminal decision log.
-    (context.decision_logger)(prepared.decision_log.clone());
+    (context.decision_logger)(
+        prepared
+            .decision_log
+            .clone()
+            .with_policy_generation(active_policy.policy_generation),
+    );
 
     let mut upstream = match TcpStream::connect_timeout(&upstream_addr, context.connect_timeout) {
         Ok(upstream) => upstream,
@@ -510,6 +536,13 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
             tunnel_connect(client, upstream, &buffer[parsed.body_offset..])
         }
     }
+}
+
+fn authorize_hostname_before_dns(
+    policy: &CompiledEgressPolicy,
+    parsed: &ParsedProxyRequest,
+) -> nimbus_egress::EgressAuthorization {
+    policy.authorize_hostname_without_resolved_ip(&parsed.egress_request)
 }
 
 fn read_http_headers(client: &mut TcpStream, buffer: &mut Vec<u8>) -> io::Result<()> {

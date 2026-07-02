@@ -6815,6 +6815,8 @@ version = "0.1.44"
 dependencies = [
  "nimbus-core",
  "nimbus-egress",
+ "serde_json",
+ "tempfile",
  "url",
 ]
 
@@ -7402,8 +7404,6 @@ dependencies = [
 [[package]]
 name = "object_store"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "765784b4390c6bcf80316e5a22f4e3661b639c9d8c83246856643c27d8ce9dbe"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
@@ -8804,9 +8804,9 @@ checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 
 [[package]]
 name = "quick-xml"
-version = "0.40.1"
+version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2474bd2e5029e7ccb6abb2ba48cf2383a333851dedf495901544281590c7da7f"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
 dependencies = [
  "memchr",
  "serde",
@@ -9641,8 +9641,6 @@ checksum = "dd29631678d6fb0903b69223673e122c32e9ae559d0960a38d574695ebc0ea15"
 [[package]]
 name = "s3s"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e341bfbafd2e85755343f72c58a9d94b3be37f54f5ba454bf3c3222bf8384b25"
 dependencies = [
  "arc-swap",
  "arrayvec",

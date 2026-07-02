@@ -64,7 +64,7 @@ export {};
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -75,6 +75,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -121,7 +122,7 @@ export {};
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -132,6 +133,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -178,7 +180,7 @@ export {};
         Arc::new(RuntimePolicy::new(limits)),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -189,6 +191,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -222,7 +225,7 @@ export {};
         Arc::new(RuntimePolicy::new(limits)),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -233,6 +236,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -276,7 +280,7 @@ export {};
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node26())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -287,6 +291,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -338,7 +343,7 @@ export {};
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -349,6 +354,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -414,7 +420,7 @@ export {};
         runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -425,6 +431,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -524,7 +531,7 @@ export {};
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -535,6 +542,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -586,7 +594,7 @@ export {};
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -597,6 +605,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -645,7 +654,7 @@ export {};
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -656,6 +665,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
@@ -734,7 +744,7 @@ export {};
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -745,6 +755,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("core semantics builtins should execute");
@@ -840,7 +851,7 @@ module.exports = function runCorePackage() {
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -851,6 +862,7 @@ module.exports = function runCorePackage() {
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("commonjs package should require core builtins");
@@ -899,7 +911,7 @@ export {};
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
     );
     let result = runtime
-        .invoke_bundle(
+        .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -910,6 +922,7 @@ export {};
                 auth: None,
                 services: Default::default(),
             },
+            "tenant-a",
         )
         .await
         .expect("bundle should execute");
