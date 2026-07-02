@@ -16,8 +16,8 @@
 //!
 //! Blobs are opaque content-addressed bytes (BLAKE3); the *named* object plane
 //! (manifests, metadata, the S3 surface) lives in `nimbus-s3` over this byte
-//! plane. `ChunkRead` is **not** defined here — it belongs to `nimbus-fs`; the
-//! streaming read side is served by [`BlobStore::get_stream`].
+//! plane. There is no separate `ChunkRead` trait; the streaming read side is
+//! served directly by [`BlobStore::get_stream`].
 //!
 //! Composition order is **encrypt below placement**, so every placement leg
 //! stores identical ciphertext under the same content address:

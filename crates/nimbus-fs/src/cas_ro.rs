@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::io;
+use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::rc::Rc;
@@ -12,7 +13,7 @@ use deno_fs::sync::MaybeArc;
 use deno_fs::{FileSystem, FsDirEntry, FsFileType, FsReadDir, FsReadDirRc, OpenOptions};
 use deno_io::fs::{File, FsError, FsResult, FsStat, FsStatFs};
 use deno_permissions::{CheckedPath, CheckedPathBuf};
-use nimbus_blob::{BlobHash, BlobStore};
+use nimbus_blob::{BlobHash, BlobStore, ByteStream};
 use tokio::io::AsyncReadExt;
 
 #[derive(Clone)]
@@ -104,12 +105,12 @@ impl CasReadOnlyBackend {
         for chunk in chunks {
             let chunk_end = chunk_start + chunk.len;
             if request_start < chunk_end && request_end > chunk_start {
-                let bytes = self.read_blob_chunk(&chunk.hash)?;
                 let start = request_start.saturating_sub(chunk_start) as usize;
                 let end = (request_end.min(chunk_end) - chunk_start) as usize;
-                let slice = &bytes[start..end];
-                buf[written..written + slice.len()].copy_from_slice(slice);
-                written += slice.len();
+                let len = end - start;
+                let bytes = self.read_blob_range(&chunk.hash, start as u64..end as u64)?;
+                buf[written..written + len].copy_from_slice(&bytes);
+                written += len;
                 if written == max_read {
                     break;
                 }
@@ -120,16 +121,27 @@ impl CasReadOnlyBackend {
         Ok(written)
     }
 
-    fn read_blob_chunk(&self, hash: &BlobHash) -> FsResult<Vec<u8>> {
+    fn read_blob_range(&self, hash: &BlobHash, range: Range<u64>) -> FsResult<Vec<u8>> {
+        let len = range
+            .end
+            .checked_sub(range.start)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid CAS read range"))?;
+        let len = usize::try_from(len).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "CAS read range does not fit in memory",
+            )
+        })?;
+        if len == 0 {
+            return Ok(Vec::new());
+        }
         let store = self.store.clone();
         let hash = *hash;
         block_on_blob(async move {
             let mut stream = store.get_stream(&hash).await.map_err(blob_error)?;
-            let mut bytes = Vec::new();
-            stream
-                .read_to_end(&mut bytes)
-                .await
-                .map_err(|error| io::Error::other(format!("read CAS blob stream: {error}")))?;
+            skip_stream_bytes(&mut stream, range.start).await?;
+            let mut bytes = vec![0; len];
+            read_exact_window(&mut stream, &mut bytes).await?;
             Ok(bytes)
         })
     }
@@ -871,6 +883,43 @@ fn blob_error(error: nimbus_core::Error) -> io::Error {
         nimbus_core::Error::NotFound(message) => io::Error::new(io::ErrorKind::NotFound, message),
         other => io::Error::other(other.to_string()),
     }
+}
+
+async fn skip_stream_bytes(stream: &mut ByteStream, mut remaining: u64) -> io::Result<()> {
+    let mut scratch = [0_u8; 8192];
+    while remaining > 0 {
+        let len = remaining.min(scratch.len() as u64) as usize;
+        let nread = stream
+            .read(&mut scratch[..len])
+            .await
+            .map_err(|error| io::Error::other(format!("skip CAS blob stream: {error}")))?;
+        if nread == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "CAS blob stream ended before requested range",
+            ));
+        }
+        remaining -= nread as u64;
+    }
+    Ok(())
+}
+
+async fn read_exact_window(stream: &mut ByteStream, output: &mut [u8]) -> io::Result<()> {
+    let mut written = 0usize;
+    while written < output.len() {
+        let nread = stream
+            .read(&mut output[written..])
+            .await
+            .map_err(|error| io::Error::other(format!("read CAS blob stream: {error}")))?;
+        if nread == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "CAS blob stream ended before requested range",
+            ));
+        }
+        written += nread;
+    }
+    Ok(())
 }
 
 fn block_on_blob<T, F>(future: F) -> FsResult<T>
