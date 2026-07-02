@@ -87,7 +87,7 @@ check_selh2() {
   require_file SELH2 ".github/workflows/container-pep-egress.yml" "container PEP workflow exists"
   require_grep SELH2 "ubuntu-24\\.04" ".github/workflows/container-pep-egress.yml" "workflow runs on ubuntu-24.04"
   require_grep SELH2 "buildah.*conmon.*crun.*netavark.*aardvark-dns|buildah" ".github/workflows/container-pep-egress.yml" "workflow installs or verifies OCI host tools"
-  require_grep SELH2 "cargo test -p nimbus-sandbox --test container_linux_egress -- --ignored --nocapture" ".github/workflows/container-pep-egress.yml" "workflow runs the ignored container egress proof"
+  require_grep SELH2 "(cargo|CARGO_BIN.*) test -p nimbus-sandbox --test container_linux_egress -- --ignored --nocapture" ".github/workflows/container-pep-egress.yml" "workflow runs the ignored container egress proof"
   require_grep SELH2 "nft.*list ruleset|netavark.*--version|aardvark-dns.*--version" ".github/workflows/container-pep-egress.yml" "workflow publishes failure diagnostics"
   require_grep SELH2 "crates/nimbus-sandbox|crates/nimbus-egress|crates/nimbus-proxy|container-pep-egress" ".github/workflows/container-pep-egress.yml" "path filters cover sandbox, egress, proxy, and workflow edits"
   require_file SELH2 "docs/private/plans/proof/nimbus-sandbox-egress-launch-hardening/selh2-container-pep-ci.md" "container PEP CI proof exists"
