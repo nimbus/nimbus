@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the Multi-Tenant-Per-Node Network plan
-# (`docs/private/plans/multi-tenant-node-network-plan.md`).
+# (`docs/private/plans/archive/multi-tenant-node-network-plan.md`).
 #
 # Exits 0 iff every landed-band condition holds. Created in MTN4; MTN4..MTN7
 # progressively add conditions and flip them FAIL->PASS. Structural (anchors on

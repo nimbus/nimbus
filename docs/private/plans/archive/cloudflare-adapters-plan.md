@@ -1,5 +1,10 @@
 # Cloudflare Adapters Plan (CFA, Archived)
 
+> Archived 2026-07-02 as the completed CFA0..CFA9 baseline. The combined
+> NKV/Cloudflare foundation work landed through PR #37; future Cloudflare R2,
+> D1, full Workers-runtime API, production auth, or cluster-scale DO routing
+> needs a new active follow-on plan.
+
 Nimbus already ships **inbound compatibility adapters** that impersonate an
 external service so its client code runs unchanged on a single Nimbus binary:
 MongoDB and DynamoDB (wire/HTTP listeners), Firestore and Cloud Functions
@@ -40,7 +45,7 @@ review) make a Cloudflare adapter tractable now:
    surfaces over them, and reimplement the Workers runtime as a profile on
    `nimbus-runtime` whose bindings resolve to those primitives.**
 3. **The primitives already have homes in the storage-seam architecture.** The
-   2026-06-22 review (`docs/private/architecture/storage-seams-architecture.md`)
+   2026-06-22 review (`docs/private/plans/storage-seams-architecture.md`)
    places each one precisely — see the table below — so CFA extends the existing
    seams rather than inventing a parallel stack.
 

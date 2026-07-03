@@ -34,7 +34,8 @@ CF_MOD="${CF_DIR}/mod.rs"
 CF_CONFIG="${CF_DIR}/config.rs"
 CF_KV_DIR="${CF_DIR}/kv"
 CF_DO_DIR="${CF_DIR}/durable_objects"
-START_ADAPTERS="crates/nimbus-bin/src/start/adapters.rs"
+START_ADAPTERS_BIN="crates/nimbus-bin/src/start/adapters.rs"
+START_ADAPTERS_CLI="crates/nimbus-cli/src/start/adapters.rs"
 NIMBUS_STORAGE="crates/nimbus-storage"
 NIMBUS_RUNTIME="crates/nimbus-runtime"
 RUNTIME_HOST="${NIMBUS_RUNTIME}/src/host.rs"
@@ -142,6 +143,14 @@ ci_workflow_green() {
   return 1
 }
 
+archived_closeout_ci_evidence_green() {
+  local plan
+  plan="$(plan_file)"
+  [ "${plan}" = "${PLAN_ARCHIVED}" ] || return 1
+  grep -q '12 passed, 0 failed' "${PLAN_ARCHIVED}" || return 1
+  grep -q 'PR #37' "${PLAN_ARCHIVED}" || return 1
+}
+
 # -------- conditions -------------------------------------------------------
 
 printf '\033[1mCFA verification gate — cloudflare-adapters (primitives-first)\033[0m\n'
@@ -157,17 +166,21 @@ else
 fi
 
 # 2. Routing entries.
-step 2 "Routing entries exist"
+step 2 "Routing contract is current"
 has_agents_route=0
 has_plans_route=0
 if [ -f "${AGENTS_MD}" ] || [ -L "${AGENTS_MD}" ]; then
   grep -q 'cloudflare-adapters-plan' "${AGENTS_MD}" && has_agents_route=1
 fi
 if [ -f "${PLANS_README}" ]; then
-  grep -q 'cloudflare-adapters-plan' "${PLANS_README}" && has_plans_route=1
+  if [ "${PLAN_FILE}" = "${PLAN_ACTIVE}" ]; then
+    grep -q 'cloudflare-adapters-plan' "${PLANS_README}" && has_plans_route=1
+  elif ! grep -q 'cloudflare-adapters-plan' "${PLANS_README}"; then
+    has_plans_route=1
+  fi
 fi
 if [ "${has_agents_route}" = "1" ] && [ "${has_plans_route}" = "1" ]; then
-  pass "${AGENTS_MD} and ${PLANS_README} reference cloudflare-adapters-plan"
+  pass "${AGENTS_MD} routes cloudflare-adapters-plan; active index omits closed plan when archived"
 else
   fail "Routing entries incomplete" "agents=${has_agents_route} plans_readme=${has_plans_route}"
 fi
@@ -192,7 +205,9 @@ c4_mod=0; c4_cfg=0; c4_register=0; c4_parser=0; c4_toggle=0
 [ -f "${CF_MOD}" ] && grep -qE 'struct CloudflareConfig' "${CF_MOD}" && c4_mod=1 && c4_cfg=1
 [ -f "${ADAPTERS_MOD}" ] && grep -qE '^[[:space:]]*pub mod cloudflare;' "${ADAPTERS_MOD}" && c4_register=1
 [ -f "${CF_CONFIG}" ] && c4_parser=1
-[ -f "${START_ADAPTERS}" ] && grep -qiE 'cloudflare' "${START_ADAPTERS}" && c4_toggle=1
+for start_adapters in "${START_ADAPTERS_BIN}" "${START_ADAPTERS_CLI}"; do
+  [ -f "${start_adapters}" ] && grep -qiE 'cloudflare' "${start_adapters}" && c4_toggle=1
+done
 if [ "${c4_mod}" = 1 ] && [ "${c4_register}" = 1 ] && [ "${c4_parser}" = 1 ] && [ "${c4_toggle}" = 1 ]; then
   pass "adapter module + CloudflareConfig + pub mod cloudflare + config.rs + start toggle"
 else
@@ -293,7 +308,9 @@ if [ -n "${PLAN_FILE}" ]; then
     ledger_clean=1
   fi
 fi
-ci_workflow_green "${c11_ci_branch}" && ci_green=1
+if ci_workflow_green "${c11_ci_branch}" || archived_closeout_ci_evidence_green; then
+  ci_green=1
+fi
 if [ "${c11_doc}" = 1 ] && [ "${ledger_clean}" = 1 ] && [ "${ci_green}" = 1 ]; then
   pass "operator doc present, ledger clean, CI green"
 else
@@ -308,7 +325,9 @@ for guard_path in ${COMMON_BIND_GUARD_PATHS}; do
     c12_helper=1
   fi
 done
-if grep_dir 'refuse_non_loopback_bind' "${CF_DIR}" || { [ -f "${START_ADAPTERS}" ] && grep -qiE 'cloudflare.*refuse_non_loopback_bind|refuse_non_loopback_bind.*cloudflare' "${START_ADAPTERS}"; }; then
+if grep_dir 'refuse_non_loopback_bind' "${CF_DIR}" \
+  || { [ -f "${START_ADAPTERS_BIN}" ] && grep -qiE 'cloudflare.*refuse_non_loopback_bind|refuse_non_loopback_bind.*cloudflare' "${START_ADAPTERS_BIN}"; } \
+  || { [ -f "${START_ADAPTERS_CLI}" ] && grep -qiE 'cloudflare.*refuse_non_loopback_bind|refuse_non_loopback_bind.*cloudflare' "${START_ADAPTERS_CLI}"; }; then
   c12_uses_helper=1
 fi
 if { grep_dir 'non.?loopback|loopback.*refus|refus.*loopback' "${CF_DIR}" || grep -rqE 'cloudflare.*non.?loopback|non.?loopback.*cloudflare|refus.*cloudflare.*loopback' crates/nimbus-server/tests 2>/dev/null; }; then

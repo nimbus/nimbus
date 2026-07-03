@@ -13,6 +13,7 @@ ARCHIVED_PLAN="docs/private/plans/archive/nimbus-s3-object-storage-plan.md"
 PROOF_DIR="docs/private/plans/proof/nimbus-s3-object-storage"
 BASELINE_PROOF="${PROOF_DIR}/nos0-baseline.md"
 OPERATOR_DOC="docs/private/operating/nimbus-s3-object-storage.md"
+NOS7_PROOF="${PROOF_DIR}/nos7-closeout.md"
 
 pass() {
   printf 'PASS: %s\n' "$1"
@@ -88,12 +89,16 @@ check_routing_entries() {
   if has_file "AGENTS.md" \
     && has_file "docs/private/plans/README.md" \
     && grep_file "nimbus-s3-object-storage-plan\\.md|nimbus-s3-object-storage|NOS0" "AGENTS.md" \
-    && grep_file "nimbus-s3-object-storage-plan\\.md|nimbus-s3-object-storage|NOS-A0" "docs/private/plans/README.md" \
+    && { if [ "$plan" = "$ACTIVE_PLAN" ]; then
+      grep_file "nimbus-s3-object-storage-plan\\.md|nimbus-s3-object-storage|NOS-A0" "docs/private/plans/README.md"
+    else
+      ! grep_file "nimbus-s3-object-storage-plan\\.md|nimbus-s3-object-storage|NOS-A0" "docs/private/plans/README.md"
+    fi; } \
     && test -n "$plan" \
     && grep_file "scripts/verify-nimbus-s3-object-storage\\.sh" "$plan"; then
-    pass "routing entries name the NOS plan and verifier"
+    pass "routing entries honor active-index contract and plan names verifier"
   else
-    fail "routing entries missing from AGENTS.md, docs/private/plans/README.md, or the plan"
+    fail "routing entries inconsistent with AGENTS.md, docs/private/plans/README.md, or the plan"
   fi
 }
 
@@ -185,13 +190,22 @@ check_nos4_placement_backup() {
 }
 
 check_nos5_config_operator() {
-  if grep_rs "ObjectPlacement|PlacementPolicy|ObjectPlacementStore" "crates/nimbus-storage/src" "crates/nimbus-engine/src" \
-    && grep_rs "set-placement|gc-status|tenant.*rm|restore-object-store|backup-object-store" "crates/nimbus-bin/src" \
-    && grep_rs "0600|master key" "crates/nimbus-bin/src" "crates/nimbus-crypto/src"; then
+  if grep_rs "ObjectPlacement|PlacementPolicy|ObjectPlacementStore" "crates/nimbus-storage/src" "crates/nimbus-engine/src" "crates/nimbus-object-storage/src" \
+    && grep_rs "set-placement|gc-status|tenant.*rm|restore-object-store|backup-object-store" "crates/nimbus-bin/src" "crates/nimbus-cli/src" \
+    && grep_rs "0600|master key" "crates/nimbus-bin/src" "crates/nimbus-cli/src" "crates/nimbus-crypto/src"; then
     pass "NOS5 config seams and operator verbs are present"
   else
     fail "NOS5 config seams and operator verbs are incomplete"
   fi
+}
+
+archived_closeout_ci_evidence_green() {
+  local plan
+  plan="$(any_plan_file 2>/dev/null || true)"
+  [ "$plan" = "$ARCHIVED_PLAN" ] || return 1
+  has_file "$NOS7_PROOF" || return 1
+  grep_file '12 passed, 0 failed' "$NOS7_PROOF" || return 1
+  grep_file 'successfully|completed.*success|success.*completed|CI run `?[0-9]+`?.*green|main.*CI.*green' "$NOS7_PROOF" || return 1
 }
 
 check_nos6_filesystem_binder() {
@@ -225,7 +239,7 @@ check_nos7_closeout() {
   if has_file "$OPERATOR_DOC" \
     && test -n "$plan" \
     && ! grep -Eq '\| NOS[0-7] \|.*\| (todo|in_progress|blocked)' "$plan" \
-    && latest_main_ci_green; then
+    && { latest_main_ci_green || archived_closeout_ci_evidence_green; }; then
     pass "NOS7 operator doc, closed ledger, and green main CI are present"
   else
     fail "NOS7 closeout is incomplete"

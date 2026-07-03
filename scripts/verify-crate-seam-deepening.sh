@@ -4,9 +4,21 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-plan="docs/private/plans/crate-seam-deepening-plan.md"
+plan_active="docs/private/plans/crate-seam-deepening-plan.md"
+plan_archived="docs/private/plans/archive/crate-seam-deepening-plan.md"
+if [ -f "$plan_active" ]; then
+  plan="$plan_active"
+else
+  plan="$plan_archived"
+fi
 index="docs/private/plans/README.md"
-predecessor="docs/private/plans/crate-architecture-modularity-plan.md"
+predecessor_active="docs/private/plans/crate-architecture-modularity-plan.md"
+predecessor_archived="docs/private/plans/archive/crate-architecture-modularity-plan.md"
+if [ -f "$predecessor_active" ]; then
+  predecessor="$predecessor_active"
+else
+  predecessor="$predecessor_archived"
+fi
 proof_root="docs/private/plans/proof/crate-seam-deepening"
 cas0_proof="$proof_root/cas0-baseline.md"
 
@@ -82,8 +94,12 @@ core_io_hits() {
 
 condition_1() {
   [ -f "$plan" ] \
-    && grep -q 'crate-seam-deepening-plan.md' "$index" \
-    && grep -q 'CAS0..CAS8 (active)' "$index" \
+    && [ -f "$index" ] \
+    && { if [ "$plan" = "$plan_active" ]; then
+      grep -q 'crate-seam-deepening-plan.md' "$index"
+    else
+      ! grep -q 'crate-seam-deepening-plan.md' "$index"
+    fi; } \
     && grep -Eq '(Closed|Completed) predecessor' "$predecessor"
 }
 

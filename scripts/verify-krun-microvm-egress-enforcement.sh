@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the Krun MicroVM Egress Enforcement
-# plan (`docs/private/plans/krun-microvm-egress-enforcement-plan.md`).
+# plan (`docs/private/plans/archive/krun-microvm-egress-enforcement-plan.md`).
 #
 # Exits 0 iff every condition in the plan's Completion Gate is satisfied.
 # Ships in KME0 so /goal is verifiable from day one; KME1-KME5 progressively
@@ -84,11 +84,11 @@ else
   fail "no routing pointer in ${AGENTS_MD}"
 fi
 
-step 3 "plans/README.md ownership entry exists"
-if [ -f "${PLANS_README}" ] && grep -q "krun-microvm-egress-enforcement-plan.md" "${PLANS_README}"; then
-  pass "ownership entry present in README"
+step 3 "plans/README.md does not route completed KME as active work"
+if [ -f "${PLANS_README}" ] && ! grep -q "krun-microvm-egress-enforcement-plan.md" "${PLANS_README}"; then
+  pass "completed KME is absent from active README routing"
 else
-  fail "no ownership entry in ${PLANS_README}"
+  fail "completed KME should not be routed in ${PLANS_README}"
 fi
 
 step 4 "KME0 baseline proof exists"

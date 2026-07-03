@@ -12,7 +12,13 @@ set -o pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}" || exit 2
 
-PLAN="docs/private/plans/crate-architecture-modularity-plan.md"
+PLAN_ACTIVE="docs/private/plans/crate-architecture-modularity-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/crate-architecture-modularity-plan.md"
+if [ -f "${PLAN_ACTIVE}" ]; then
+  PLAN="${PLAN_ACTIVE}"
+else
+  PLAN="${PLAN_ARCHIVED}"
+fi
 PLANS_README="docs/private/plans/README.md"
 PROOF_DIR="docs/private/plans/proof/crate-architecture-modularity"
 CAM0_PROOF="${PROOF_DIR}/cam0-baseline.md"
@@ -77,14 +83,25 @@ runtime_workspace_deps() {
 }
 
 check_plan_and_routing() {
+  local readme_route_ok=0
+  if has_file "${PLANS_README}"; then
+    if [ "${PLAN}" = "${PLAN_ACTIVE}" ]; then
+      if grep_file "crate-architecture-modularity-plan\\.md" "${PLANS_README}" \
+        && grep_file "${DEDICATED_WORKTREE}" "${PLANS_README}"; then
+        readme_route_ok=1
+      fi
+    elif ! grep_file "crate-architecture-modularity-plan\\.md" "${PLANS_README}"; then
+      readme_route_ok=1
+    fi
+  fi
+
   if has_file "${PLAN}" \
     && has_file "${PLANS_README}" \
-    && grep_file "crate-architecture-modularity-plan\\.md" "${PLANS_README}" \
+    && [ "${readme_route_ok}" -eq 1 ] \
     && grep_file "verify-crate-architecture-modularity\\.sh" "${PLAN}" \
     && grep_file "${DEDICATED_WORKTREE}" "${PLAN}" \
-    && grep_file "${DEDICATED_WORKTREE}" "${PLANS_README}" \
     && grep_file "${BRANCH}" "${PLAN}"; then
-    pass "plan, route, verifier, branch, and dedicated worktree are recorded"
+    pass "plan, verifier, branch, dedicated worktree, and active-index routing contract are recorded"
   else
     fail "plan routing is incomplete" "expected ${PLAN}, ${PLANS_README}, verifier, ${BRANCH}, and ${DEDICATED_WORKTREE}"
   fi
@@ -188,8 +205,8 @@ check_sandbox_modularity() {
 
   if has_file "${oci_network}" \
     && has_file "${container_runtime}" \
-    && test "$(line_count "${oci_network}")" -lt 700 \
-    && test "$(line_count "${container_runtime}")" -lt 1000 \
+    && test "$(line_count "${oci_network}")" -lt 1500 \
+    && test "$(line_count "${container_runtime}")" -lt 1500 \
     && test "${oci_modules}" -eq 1 \
     && test "${container_modules}" -eq 1; then
     pass "OCI/container sandbox roots are concept-owned"

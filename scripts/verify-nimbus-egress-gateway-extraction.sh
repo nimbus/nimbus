@@ -56,14 +56,16 @@ else
   fail "plan file exists at active or archived path"
 fi
 
-if contains AGENTS.md 'nimbus-egress-gateway-extraction-plan\.md' \
-  && contains CLAUDE.md 'nimbus-egress-gateway-extraction-plan\.md' \
-  && contains docs/private/plans/README.md 'nimbus-egress-gateway-extraction-plan\.md' \
-  && contains docs/private/plans/README.md 'nimbus-egress' \
-  && contains docs/private/plans/README.md 'nimbus-proxy'; then
-  pass "routing entries name the NEG plan and PDP/PEP split"
+if { if [ "${PLAN_PATH}" = "docs/private/plans/nimbus-egress-gateway-extraction-plan.md" ]; then
+    contains docs/private/plans/README.md 'nimbus-egress-gateway-extraction-plan\.md'
+  else
+    ! contains docs/private/plans/README.md 'nimbus-egress-gateway-extraction-plan\.md' \
+      && contains "${PLAN_PATH}" 'Archived' \
+      && contains docs/private/plans/nimbus-modernization-roadmap-plan-map.md 'archived NEG plan remains evidence'
+  fi; }; then
+  pass "routing entries keep NEG in the active index only while active, and preserve archived evidence after closeout"
 else
-  fail "routing entries name the NEG plan in AGENTS.md, CLAUDE.md, and docs/private/plans/README.md"
+  fail "routing entries for the NEG plan are inconsistent with the active-index contract"
 fi
 
 NEG0_PROOF=docs/private/plans/proof/nimbus-egress-gateway-extraction/neg0-baseline.md

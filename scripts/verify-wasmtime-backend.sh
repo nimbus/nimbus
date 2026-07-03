@@ -90,7 +90,7 @@ step 1 "Plan routing"
 PLAN_FILE="$(plan_file)"
 if [ -n "${PLAN_FILE}" ] \
   && grep_file 'wasmtime-backend-plan\.md' "${PLANS_README}" \
-  && grep_file 'active as of 2026-06-27|WASM runtime' "${PLANS_README}"; then
+  && grep_file 'Runtime, Filesystem, And WASM Substrates|Wasmtime backend' "${PLANS_README}"; then
   pass "Plan exists at ${PLAN_FILE} and ${PLANS_README} routes to it"
 else
   fail "Plan routing incomplete" "plan=${PLAN_FILE:-missing} plans_readme=$(test -f "${PLANS_README}" && printf present || printf missing)"
@@ -102,11 +102,11 @@ if [ -f "${PROOF_W0}" ] \
   && grep_file 'Activation gate.*MET|activation gate.*MET' "${PROOF_W0}" \
   && grep_file 'no Wasmtime backend variant' "${PROOF_W0}" \
   && grep_file 'codex/wasmtime-backend' "${PROOF_W0}" \
-  && grep_file 'NFS5.*NEG6.*WAC' "${PROOF_W0}" \
+  && grep_file 'NFS5.*NEG6.*K11P.*WAC|NFS5.*NEG6.*WAC.*K11P' "${PROOF_W0}" \
   && grep_file '3 passed, 7 failed' "${PROOF_W0}"; then
   pass "W0 proof records activation, baseline absence, branch workflow, joins, and expected verifier count"
 else
-  fail "W0 proof incomplete" "Expected ${PROOF_W0} with activation/no-backend/branch/NFS5-NEG6-WAC/verifier anchors"
+  fail "W0 proof incomplete" "Expected ${PROOF_W0} with activation/no-backend/branch/NFS5-NEG6-K11P-WAC/verifier anchors"
 fi
 
 # 3. W0 runtime baseline confirms the historical no-backend starting point.

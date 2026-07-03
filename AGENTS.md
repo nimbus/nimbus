@@ -6,6 +6,19 @@ When working on Convex-compatible code (`packages/convex/`, `demos/convex/`, or 
 
 # Nimbus
 
+## What Nimbus Is
+
+Nimbus is a source-available, single-binary backend for apps and AI agents. It
+speaks Convex, Firestore/Firebase, Cloud Functions, MongoDB, and DynamoDB
+surfaces, but routes them through one engine, storage layer, runtime, and trust
+model.
+
+Its big pieces are: server/adapters for protocol front doors, `nimbus-engine`
+for reads/writes/subscriptions/scheduling, `nimbus-storage` for durable state,
+`nimbus-runtime` plus `nimbus-bridge` for V8 TypeScript execution, sandbox/node
+crates for agent and service workloads, and `packages/*` for SDKs, compatibility
+packages, codegen, and the embedded UI.
+
 The role of this file is to capture common mistakes and recurring confusion points for agents working in this repo.
 
 If you hit a surprise that is likely to trip up another agent, tell the developer. Ask before adding a brief principle-first note here. If the guidance needs more than a few bullets, it probably belongs in `docs/*.md` or beside the code instead of here.
@@ -17,6 +30,61 @@ If you hit a surprise that is likely to trip up another agent, tell the develope
 - Prefer principle-first notes over historical bug writeups.
 - Link to canonical docs for architecture details instead of copying them here.
 - Do not use this file as a changelog, ownership map, or deep implementation manual.
+
+## Picking the right models for workflows and subagents
+
+Rankings, higher = better. Cost reflects what I actually pay, not list price.
+OpenAI is lower-cost in this setup because of generous limits, but not free.
+Intelligence is how hard a problem you can hand the model unsupervised. Taste
+covers UI/UX, code quality, API design, and copy.
+
+| model | cost | intelligence | taste |
+| --- | --- | --- | --- |
+| gpt-5.5 | 9 | 8 | 5 |
+| sonnet-5 | 5 | 5 | 7 |
+| opus-4.8 | 4 | 7 | 8 |
+| fable-5 | 2 | 9 | 9 |
+
+How to apply:
+
+- These are defaults, not limits. You have standing permission to override
+  them: if a cheaper model's output doesn't meet the bar, rerun or redo the
+  work with a smarter model without asking. Judge the output, not the price tag.
+  Escalating costs less than shipping mediocre work.
+- Cost is a tie-breaker only; when axes conflict for anything that ships,
+  intelligence > taste > cost.
+- Bulk/mechanical work (clear-spec implementation, data analysis, migrations):
+  gpt-5.5 – it is lower-cost and token-efficient for this workload.
+- Anything user-facing (UI, copy, API design) needs taste ≥ 7.
+- Reviews of plans/implementations: fable-5 or opus-4.8, optionally gpt-5.5 as
+  an extra independent perspective.
+- Never use Haiku.
+- Mechanics: gpt-5.5 is handled natively via the `openai/codex-plugin-cc`
+  plugin inside Claude Code, automatically adopting your user-level
+  configuration from `~/.codex/config.toml`. Avoid writing custom Bash scripts;
+  use the plugin's built-in tools and skills instead:
+  - `/codex:review` - Run non-destructive, read-only code quality assessments.
+    Supports `--base <ref>` for branch analysis.
+  - `/codex:adversarial-review` - Perform a skeptical design review to
+    pressure-test tradeoffs, auth, and reliability. Append custom focus text at
+    the end of the command to steer the focus.
+  - `/codex:rescue` - Subcontract active debugging, multi-file refactoring, or
+    implementation loops to Codex when a second pass is required.
+  - `/codex:status` / `/codex:result` / `/codex:cancel` - Use these to check,
+    fetch, or abort asynchronous jobs when using the `--background` flag on
+    heavy tasks.
+- Claude models (sonnet-5, opus-4.8, fable-5) run via the Agent/Workflow model
+  parameter.
+
+Using gpt-5.5 inside workflows and subagents:
+
+- Subagents and automated workflows should call the plugin's native slash
+  commands or its exposed `codex-cli-runtime` skills to delegate tasks directly,
+  omitting the need for raw terminal wrappers.
+- For closed-loop quality assurance, keep the review gate turned on via
+  `/codex:setup --enable-review-gate`. This ensures a stop hook automatically
+  challenges Claude's outputs using Codex before finalizing, preventing broken
+  code or weak design assumptions from reaching the main session unvetted.
 
 ## Pre-Launch Status
 
@@ -42,344 +110,21 @@ If you find yourself writing compatibility code, stop and make the breaking chan
 - Load one roadmap item at a time plus only the immediately relevant code,
   tests, and docs.
 
-### Routing By Work Type
+### Routing
 
-- Public docs site (nimbusdocs.com), the five public `docs/` groups,
-  `website/`, llms.txt artifacts, or README/repo front-door messaging:
-  `.agents/skills/docs/SKILL.md` (IA, Diátaxis rules, `docs/private/`
-  fence, messaging canon, verification gates), gated on
-  `bash scripts/verify-nimbus-docs-site.sh` and
-  `bash scripts/check-docs.sh`. Promote a new active plan before
-  another docs-site wave.
-- Launch-readiness gap closure (deploy admin handshake, `X-Nimbus-Api-Key`
-  decision, admin-token rotation gate, configurable CORS, CLI wiring for
-  Firestore/MongoDB/DynamoDB, `rest.ts` parity, TLS termination, backup
-  command, systemd unit, apt channel, hidden node workload executor
-  caller): `docs/private/operating/deploy-admin-api.md` for the deploy
-  admin handshake and `NIMBUS_DEPLOY_TOKEN` Bearer contract, gated on
-  `bash scripts/verify-launch-readiness.sh` (14 conditions). Promote a
-  new active plan before another launch-readiness wave.
-- Generic maintainability, refactor, modularity, reliability hardening, or
-  canonical naming:
-  `docs/private/architecture/testing/reliability-posture.md`,
-  `docs/private/architecture/testing/ci-failure-investigation.md`
-- Adapter/runtime/auth/trust cleanup:
-  `docs/private/architecture/server/adapter-expectations.md`,
-  `docs/private/architecture/runtime/adapter-boundary.md`,
-  `docs/private/architecture/server/auth-runtime-trust.md`
-- Runtime capability segregation, exact service grants, adapter context service
-  shortcut removal, private Nimbus-managed isolate host-transport gating,
-  Bun/JSC service-capability fail-closed parity, principal-class service route
-  policy, engine `Service` -> `Engine` naming, or JS SDK authority boundaries:
-  `docs/private/architecture/server/auth-runtime-trust.md`,
-  `docs/private/architecture/runtime/adapter-boundary.md`,
-  `docs/private/architecture/sandbox/service-sandbox-session-model.md`,
-  verifier `bash scripts/verify-nimbus-capability-segregation.sh` 10/0.
-- Cross-cutting multi-backend / multi-adapter hardening (storage trait
-  segregation, adapter/backend registration seam decision,
-  `RuntimeHooks` for backend-coupled workers, dual-target tests per
-  adapter, auth-caching ADR, per-backend SQL-safety ADRs, per-segment
-  latency budgets, trait object-safety audit, stable logical table identity +
-  backend-owned physical-layout decision, typed-column key storage,
-  read-consistency routing, hybrid event-capture pattern, cross-cutting
-  `docs/private/technical-debt.md`):
-  `docs/private/operating/multi-backend-adapter-hardening.md` for the current
-  contract, gated on
-  `bash scripts/verify-multi-backend-adapter-hardening.sh` (fifteen
-  conditions). Inspiration source is ExtendDB (Apache-2.0 DynamoDB adapter
-  on PostgreSQL) at `~/src/github.com/ExtendDB/extenddb`. Applies across
-  every existing backend and adapter, not only the DynamoDB lane.
-- Convex-informed storage trust gaps (table lifecycle after stable
-  `table_catalog`, table-aware Convex document identity validation,
-  `TableId`-based dependency tracking, stable index identity/lifecycle,
-  history/repeatable-read posture, table identity diagnostics, and
-  cross-backend conformance after comparing against Convex internals):
-  `docs/private/architecture/storage/table-identity.md`,
-  `docs/private/architecture/storage/consistency-routing.md`, and
-  `docs/private/architecture/storage/persistence-engine-baseline.md` for the
-  current contract. Use local Convex source at
-  `~/src/github.com/get-convex/convex-backend` for comparison. Promote a new
-  active plan before another Convex-informed storage trust wave.
-- Sandbox, machine lifecycle, or CLI UX:
-  `docs/private/architecture/sandbox/service-sandbox-session-model.md`,
-  `docs/private/architecture/sandbox/microvm-service-baseline.md`,
-  `docs/private/architecture/sandbox/macos-machine-flow.md` when relevant,
-  `docs/private/operating/cli.md`, and the active platform plan from
-  `docs/private/plans/README.md`
-- SDK services/sandboxes/sessions resource model, built-in/external/sandbox-backed
-  service implementations, dynamic services, sandbox APIs, runtime-isolate
-  non-resource semantics, future `profile: "isolate"` sandbox semantics, or
-  session target semantics:
-  `docs/private/architecture/sandbox/service-sandbox-session-model.md`
-- In-process filesystem (NimbusFS mount table + V8/WASI binders + tier-gated
-  backends + `FsCaps`, replacing `deno_fs::RealFs`), object storage (two-plane
-  content-addressed chunk core + `s3s` S3 surface + Local/Mirror/Tier/
-  Cloud-primary placement over `object_store` + "an S3 becomes a mount" FS
-  binder), tier-neutral egress (extracting `EgressPolicy`/`EgressGateway` from
-  the container-only `SandboxEgressProxy`, binding isolate/wasm `fetch`), or
-  at-rest crypto extraction (`nimbus-crypto`):
-  the isolate substrate portfolio from the `/tmp/nimbus-isolate-architecture.html`
-  deep-dive plus
-  `docs/private/plans/archive/nimbus-crypto-extraction-plan.md`.
-  Read `docs/private/plans/archive/nimbus-crypto-extraction-plan.md` (NC0..NC4),
-  `docs/private/plans/nimbus-isolate-filesystem-plan.md` (NFS0..NFS7),
-  `docs/private/plans/nimbus-s3-object-storage-plan.md` (NOS0..NOS7), and
-  `docs/private/plans/nimbus-egress-gateway-extraction-plan.md` (NEG0..NEG7).
-  NC is the archived completed predecessor for NOS byte-plane crypto; NOS may do
-  metadata/interface design before NC, but do not duplicate the encryption
-  stack instead of sourcing it from `nimbus-crypto`. The NC verifier exists at
-  `bash scripts/verify-nimbus-crypto-extraction.sh` and is green; NFS/NOS/NEG
-  verifier scripts are created by their phase-0 scaffold bands, so before those
-  bands land, a missing verifier is expected, not a green signal. Honor the
-  `nimbus-runtime` zero-workspace-dep and `nimbus-core` zero-I/O invariants via
-  injected traits (`NimbusFsBackend`, `EgressGateway` — both the HostBridge
-  pattern). If NFS and
-  NEG are active together, land a small runtime bootstrap extension registry
-  first so both plans do not hand-edit `extensions.rs` independently. Coordinate
-  the NimbusFS WASI binder and the egress wasm binding with
-  `docs/private/plans/wasi-agent-capabilities-plan.md` /
-  `docs/private/plans/wasmtime-backend-plan.md`.
-- Sandbox backend / snapshot / desktop / GPU (unified-lift roadmap on
-  `nimbus-libkrun`): `docs/private/plans/nimbus-sandbox-plan.md` is the single
-  active execution plan. Bands route as **B** (backend / capability
-  profiles / nimbus-guest), **S** (Linux-KVM snapshot + fork, S0..S5),
-  **D** (desktop profile / computer use, D1..D10), **G** (GPU profile,
-  G1..G13). Decision baseline D1-D12 in
-  `docs/private/plans/research/vmm-landscape-2026.md`. Subject research:
-  `docs/private/plans/research/libkrun-session-sandbox.md` (backend),
-  `docs/private/plans/research/gpu-sandbox-backends.md` (GPU mediation),
-  `docs/private/plans/research/computer-use-capabilities-audit.md` (desktop
-  capability gaps), `docs/private/plans/research/nimbus-libkrun-fork-inventory.md`
-  (fork delta + muvm lift map),
-  `docs/private/plans/research/macos-host-vs-guest-control-plane-rationale.md`
-  (per-host topology), `docs/private/architecture/sandbox/macos-machine-flow.md`
-  (macOS outer-VM flow). Firecracker-as-separate-VMM was dropped per D2.
-  Macros: Linux production
-  runs direct libkrun-on-KVM microVMs per service; macOS dev runs ONE
-  outer machine-os Linux VM and per-workload sandboxes inside it are
-  standard Linux containers (crun), NOT nested microVMs (D11/D12).
-  Snapshot/fork S0..S5 is Linux-KVM-only by construction.
-- Krun microVM egress enforcement (lifting the fail-closed Linux-production
-  execute path): `docs/private/plans/krun-microvm-egress-enforcement-plan.md`
-  (KME0..KME6). The conmon/crun `KrunSandboxBackend` execute mode is
-  fail-closed at `crates/nimbus-sandbox/src/backends/krun/vm/start.rs`
-  (`ensure_execute_egress_enforcement_available`) because Nimbus's egress PEP
-  is interface/packet-oriented and libkrun **TSI** (transparent socket
-  impersonation) exposes no virtio-net tap in the host netns to bind it to.
-  **That is a PEP-shape limitation, not unenforceability.** Under TSI the guest
-  has no network stack; its `connect()`/`sendto()` are issued as **real host
-  sockets by the VMM process** (`tsi_stream.rs`/`tsi_dgram.rs`), so confining
-  the VMM to a Linux **network namespace** confines the guest's egress.
-  Owner-ratified decision (2026-06-22), **re-verified 2026-06-29** (source +
-  adversarial-refuter workflow; libkrun's own README prescribes namespaces as
-  "the primary mechanism"): **TSI + netns is the primary path — zero libkrun
-  patch**, proven on real KVM (KME1/KME1b: routeless netns → ENETUNREACH;
-  container and krun microVM enforced identically through forked crun). The
-  microVM becomes the **fourth NEG enforcement point** (container/isolate/wasm/
-  microVM, one PDP decision) by reusing the **container backend's netns +
-  netavark chain**, NOT a libkrun fork. The pivot is enforcement
-  **granularity**: L3/L4 allow-deny works today via nftables on the VMM's
-  netns; L7 credential injection needs `nat OUTPUT redirect` → `nimbus-proxy`
-  inside that netns (redsocks-style, exempt the proxy by uid). **passt is a
-  fallback only** (interface-bound tooling); it is itself netns-confined, NOT
-  an escape from netns, and is opt-in while TSI is the auto-default. KME
-  **consumes** NEG's `nimbus-egress` PDP + `nimbus-proxy` PEP (sequence after
-  NEG1/NEG4). **Caveat:** TSI also impersonates AF_UNIX, governed by the mount
-  namespace not netns — if the VMM shares host `/` (`krun_set_root`) a guest
-  can reach host AF_UNIX services a netns firewall won't block, so confine the
-  VMM's mount-ns/virtiofs too. The existing TSI *inbound* bind-address patch
-  (`15bcf49`) is kept. KME lifts the *execute gate* only; "thousands of
-  microVMs" still needs Band S snapshot/fork. Gated on
-  `bash scripts/verify-krun-microvm-egress-enforcement.sh` (10 conditions,
-  created by KME0; before it lands a missing verifier is expected, not green).
-  The TSI+netns primary path needs no `nimbus-crun`/`nimbus-libkrun` fork
-  patch; only an interface-mode fallback would touch the forks (add the
-  `nimbus-crun` fork-health budget row first). LOCAL-ONLY plan; only the
-  verifier + this routing pointer are tracked.
-- Node-side systemd D-Bus binding (`SystemdDbusClient` /
-  `SystemdTransientUnitBackend` / `NodeWorkloadReconciler`):
-  `docs/private/operating/node-dbus-binding.md` for the canonical contract,
-  with decision rationale and option matrix in
-  `docs/private/plans/research/systemd-dbus-binding-rust-2026.md`. The binding
-  attaches `lucab/zbus_systemd` (pin `=0.26000.0`, features `systemd1` +
-  `zbus-async-tokio`) and direct `zbus` to the trait at
-  `crates/nimbus-node/src/systemd_transient.rs:15-32`. Signal-correlated job
-  completion (call systemd `Manager.Subscribe`, establish the `JobRemoved`
-  stream *before* calling `StartTransientUnit`/`StopUnit`, complete only on
-  matching signal `result`) is the trust-critical path, not polling. Linux
-  builds default to `ZbusSystemdClient` instead of
-  `UnavailableSystemdDbusClient`; the `node-dbus-integration` CI lane on
-  `ubuntu-24.04` runs the `systemctl --user` integration tests. Gated on
-  `bash scripts/verify-node-dbus-binding.sh` (10 conditions). No production
-  caller for `NodeWorkloadReconciler` is wired yet — that needs its own
-  follow-up plan.
-- CLI daemon canonicalization, walk-up boundaries, or banner shape:
-  `docs/private/operating/cli.md`. Promote a new active plan before another
-  CLI-canonicalization wave.
-- Localhost/server security:
-  `docs/private/architecture/server/auth-runtime-trust.md` (see "Localhost
-  Server Hardening"), implemented in `crates/nimbus-server/src/local_server/`
-  (`middleware.rs`, `mod.rs`, `discovery.rs`) and wired through
-  `crates/nimbus-server/src/router.rs`.
-- Install script work:
-  `docs/private/plans/distribution-plan.md` as parent context; promote a new
-  active plan before another install-script wave
-- Local-dev / build-contract / Make-vs-Cargo orchestration:
-  `docs/private/operating/local-dev.md` for the user-facing contract. The Makefile UI
-  dependency graph at the top of `Makefile` (`UI_PKG`, `UI_DIST_INDEX`,
-  etc.) is the source of truth for cross-toolchain prerequisites;
-  `crates/nimbus-server/build.rs` only asserts that those inputs exist
-  and errors actionably otherwise. Promote a new active plan before
-  another local-dev / build-graph wave.
-- CI caching / sccache / Swatinem orchestration:
-  `docs/private/operating/ci-caching.md` for the canonical caching contract
-  (sccache rollout across every Rust job in `.github/workflows/*.yml`,
-  Swatinem `shared-key` rotation, `save-if: refs/heads/main` for
-  PR-cannot-poison-main saves, the `ui-artifacts` and `warm-sccache` leader
-  jobs, and the `mozilla-actions/sccache-action@v0.0.6` GHA-cache-v2 pin
-  floor). Promote a new active plan before another CI caching /
-  sccache / Swatinem wave.
-- CI infrastructure modernization (composite actions, SHA pinning,
-  runner determinism, job summaries, SAST):
-  `docs/private/operating/ci-modernization.md` for the canonical contract
-  (the cross-workflow Rust + sccache + Swatinem composite action at
-  `.github/actions/setup-rust-cached/`, SHA-pinning every non-`actions/*`
-  `uses:` reference with a `# vX.Y.Z` version-name comment, pinning
-  `runs-on:` to `ubuntu-24.04`, `$GITHUB_STEP_SUMMARY` markdown emission,
-  and `.github/workflows/codeql.yml`), gated on
-  `bash scripts/verify-ci-modernization.sh` (12 conditions). Promote
-  a new active plan before another CI infrastructure / SAST /
-  composite-action wave.
-- Coverage / release-pipeline acceleration (mold linker, coverage
-  parallelism + sharding, release.yml composite adoption, Windows
-  release-build investigation): `docs/private/operating/ci-modernization.md`
-  for the canonical contract (see "Coverage and release acceleration"
-  section). `mold` is installed in the `setup-rust-cached` composite via
-  `CARGO_TARGET_*_RUSTFLAGS=-C link-arg=-fuse-ld=mold` (NOT
-  `LINKER=mold` — that invocation fails with `mold: fatal: unknown
-  -m argument: 64`); Coverage runs `-j 4` sharded into 3 lanes
-  (`server` / `engine` / `rest`) feeding a `cargo llvm-cov report --lcov`
-  reducer via `target/llvm-cov-target/profraw/`. The Windows release pole
-  (vendored OpenSSL, V8 link, cold-target build) is deferred to a follow-on
-  release-acceleration plan. Promote a new active plan before another
-  coverage / release acceleration wave.
-- PR CI wall acceleration (verification-harness sharding, workspace-
-  tests sharding via cargo-nextest --partition, external-provider
-  matrix split by provider, warm-sccache shrink):
-  `docs/private/operating/ci-modernization.md` for the canonical contract
-  ("PR critical-path acceleration" section). The sharding env-vars are
-  `NIMBUS_HARNESS_SHARD=N/M` (in-test corpus filter for the server
-  verification harness), `NIMBUS_NEXTEST_PARTITION=N/M` (Makefile forwarding
-  to nextest `--partition hash:N/M` for workspace tests), and
-  `NIMBUS_PROVIDER_FILTER=postgres|mysql|libsql` (per-provider
-  external-provider test-script filter). Promote a new active plan before
-  another PR-wall acceleration wave.
-- CI PR-wall sub-15 (post-CW pole attack — libsql image pin +
-  docker-image cache, coverage extraction to its own workflow,
-  branch-conditional concurrency cap, warm-sccache retain-or-retire
-  decision): `docs/private/operating/ci-pr-wall.md` for the canonical
-  contract. `ghcr.io/tursodatabase/libsql-server` is pinned to a `vX.Y.Z`
-  tag chosen by probing GHCR directly (the upstream GitHub release list can
-  contain tags that 404 on GHCR), wrapped in a three-step `actions/cache@v5`
-  lane keyed on `libsql-image-vX.Y.Z`; the Coverage shards + reducer live in
-  `.github/workflows/coverage.yml` on `push.main + schedule +
-  workflow_dispatch` (off `rust-gate-summary.needs:`, so never gating merge);
-  ci.yml's `cancel-in-progress` is `${{ github.ref != 'refs/heads/main' }}`
-  so cancelled main runs no longer abandon cache saves mid-flight;
-  warm-sccache is retained (libsql shard hits Swatinem 0% while harness lanes
-  hit 76%+). Promote a new active plan before another PR-wall
-  acceleration wave.
-- Firebase/Firestore compatibility:
-  `docs/private/adapters/firebase/compatibility.md`,
-  `docs/private/adapters/firebase/migration.md`,
-  `docs/private/adapters/firebase/auth-contract.md`,
-  `docs/private/architecture/runtime/adapter-boundary.md`,
-  `docs/private/architecture/server/auth-runtime-trust.md`
-- Cloud Functions compatibility:
-  `docs/private/adapters/cloud-functions/compatibility.md`,
-  `docs/private/adapters/cloud-functions/migration.md`,
-  `docs/private/architecture/runtime/adapter-boundary.md`,
-  `docs/private/architecture/server/auth-runtime-trust.md`
-- Data / KV substrate (`nimbus-kv` Foundation, RESP/Valkey-compatible KV
-  primitive, `TenantKvStore`, or Cloudflare Workers KV prerequisite work):
-  `docs/private/plans/nimbus-kv-foundation-plan.md` is the active control plane
-  (NKV0 F0..F5), gated on
-  `bash scripts/verify-nimbus-kv-foundation.sh` (9 conditions). Contract source
-  of truth is `docs/private/plans/research/nimbus-kv-architecture-2026.md`.
-  Start with NKV0 F0-F2 before Cloudflare CFA3/CFA5: F0 creates the verifier
-  and baseline proof, F1 creates the RESP server, and F2 lands `TenantKvStore`
-  in `nimbus-storage` with the redb implementation plus the required
-  redb-vs-fjall proof.
-- Cloudflare adapters (inbound Workers / Workers KV / D1 / R2 / Durable Objects
-  compatibility): `docs/private/plans/archive/cloudflare-adapters-plan.md`
-  (formerly `docs/private/plans/cloudflare-adapters-plan.md`) is the completed
-  CFA0..CFA9 baseline, gated on
-  `bash scripts/verify-cloudflare-adapters.sh` (12 conditions). Contract source
-  of truth is `docs/private/plans/research/cloudflare-adapters-2026.md` (do not
-  re-derive Cloudflare API contracts from memory). **Primitives-first** (owner
-  decision 2026-06-22): adapters are thin compat surfaces over Nimbus
-  primitives, not foreign-runtime embeds. Landed baseline: `TenantKvStore`
-  prerequisite from NKV0, Workers KV REST, `env.NS` in a real Worker, minimal
-  Workers runtime slice, and single-node Durable Object substrate. Future R2,
-  D1, full Workers-runtime API, production auth, or cluster-scale DO routing
-  needs a new active follow-on plan. Cross-lane deps remain: **R2 is gated on
-  NOS Phase 3** (`nimbus-s3-object-storage` S3 surface); cluster-scale
-  single-instance DO routing is **HS5**'s (`horizontal-scaling`); D1 over the
-  existing SQLite/libSQL family is an independent follow-on. Also read
-  `docs/private/architecture/storage-seams-architecture.md`,
-  `docs/private/architecture/runtime/adapter-boundary.md`, and
-  `docs/private/architecture/server/auth-runtime-trust.md`.
-- Horizontal scaling, cluster substrate, cluster-riding secret management,
-  workload identity/provider auth, or the agent browser service:
-  `docs/private/plans/horizontal-scaling-plan.md` leads the lane and creates
-  `scripts/verify-horizontal-scaling.sh` in HS0. Then read
-  `docs/private/plans/secret-management-plan.md`,
-  `docs/private/plans/service-identity-provider-auth-plan.md`, and
-  `docs/private/plans/agent-browser-service-plan.md` as consumers. Single-node
-  remains the launch baseline; promote this lane only for a concrete multi-node
-  deployment or named consumer.
-- Convex or Nimbus CLI/codegen workflow:
-  `docs/private/adapters/convex/ai-guidelines.md`,
-  `docs/private/operating/cli.md`,
-  `docs/private/adapters/convex/compatibility.md`
-- Function source visibility, source packages, module code navigation, console
-  Source tab, or deploy-time type hover/typecheck:
-  `docs/private/plans/archive/nimbus-function-source-visibility-plan.md` is a
-  completed local baseline, not active roadmap work. The verifier is
-  `bash scripts/verify-nimbus-function-source-visibility.sh` and was green at
-  21 passed / 0 failed on 2026-06-18. New work needs a follow-on plan.
-- Node-compatible runtime / `deno_core` / `rusty_v8` / embedded-codegen:
-  `docs/private/architecture/runtime/adapter-boundary.md` and
-  `docs/private/architecture/server/auth-runtime-trust.md` after the top-level docs.
-  Node default-quality hardening is complete (merged PR #10, Cycle 37,
-  2026-06-16): Node24 is a well-supported default, Node22/Node24 carry
-  expanded official fixture + package evidence, Node26 has real Current-line
-  fixture evidence, and `v8_isolate_required` is at 100% across
-  node22/node24/node26. If new Node-compat roadmap work is needed, create or
-  adopt a fresh active plan before starting a new wave.
-  `~/src/github.com/nimbus/deno` as the canonical Deno-family fork,
-  `~/src/github.com/nimbus/rusty_v8` as the matching V8 fork,
-  `~/src/github.com/nimbus/deno` only as historical delta context,
-  `~/src/github.com/denoland/deno` for upstream comparison, and
-  `~/src/github.com/nodejs/node` for upstream Node source/tests.
-  Prefer working and verifying against those canonical worktrees with normal
-  sandbox approval when needed. Do not make `/private/tmp` checkout copies or
-  alternate Cargo-source workspaces the default workflow.
-  For Deno-owner changes, temporarily unpin Nimbus from the published
-  `nimbus/deno` tag and point the Deno-family dependencies at the
-  canonical `~/src/github.com/nimbus/deno` worktree while proving the
-  fix. Do not create shadow checkout copies to mimic the pin.
-  Once the fork change is verified, commit/tag/push it in
-  `~/src/github.com/nimbus/deno`, then repin `Cargo.toml` and
-  `Cargo.lock` back to the published tag/revision and rerun Nimbus
-  verification on that repinned baseline before updating the control plane.
-  Keep Nimbus-specific bootstrap/profile/capability fixes local. Promote a fix
-  to `nimbus/deno` when the local alternative would duplicate Deno/Node
-  builtin semantics, shadow internal behavior long-term, or add avoidable
-  hot-path overhead. For one-off macOS fork verification that must bypass the
-  checked-in `-fuse-ld=lld` target flag, prefer `CARGO_ENCODED_RUSTFLAGS`.
-  Use `/private/tmp` Cargo overrides only as short-lived last-resort proof
-  paths, never as progress state or the main source of truth.
+Keep routing detail in the local indexes, not in this bootstrap file:
+
+- Private control-plane routing: `docs/private/README.md`
+- Active implementation order and plan promotion: `docs/private/plans/README.md`
+- Architecture, trust boundaries, runtime, sandbox, and storage seams: `docs/private/architecture/README.md`
+- Operating, CI, release, deploy, install, local-dev, and node runbooks: `docs/private/operating/README.md`
+- Adapter-family routing: `docs/private/adapters/README.md`
+- Public docs site work: `.agents/skills/docs/SKILL.md` and `docs/README.md`
+
+Choose the active plan owner before editing. If no plan owns a concrete
+implementation topic, promote exactly one owner plan and update the roadmap map
+when the work came from that roadmap. Keep completed-plan evidence in the owning
+plan or proof directory, not here.
 
 ### Workspace layout
 
@@ -391,10 +136,13 @@ The repo is a Rust workspace + npm monorepo. Names overlap — know which you me
 | `nimbus-adapters` | `crates/nimbus-adapters/` | Optional adapter-family aggregation crate |
 | `nimbus-auth` | `crates/nimbus-auth/` | Shared auth and identity primitives |
 | `nimbus-bin` | `crates/nimbus-bin/` | CLI binary entry point |
+| `nimbus-blob` | `crates/nimbus-blob/` | Content-addressed byte plane (`BlobStore`, Seam A) |
 | `nimbus-core` | `crates/nimbus-core/` | Shared types and validation (zero I/O) |
 | `nimbus-engine` | `crates/nimbus-engine/` | Central coordinator (`Engine`) |
+| `nimbus-fs` | `crates/nimbus-fs/` | In-process isolate/WASI filesystem: mount table, `FsCaps`, backends (Seam C) |
 | `nimbus-node` | `crates/nimbus-node/` | Host-local workload reconciliation and systemd integration |
 | `nimbus-runtime` | `crates/nimbus-runtime/` | V8 execution (zero workspace deps) |
+| `nimbus-s3` | `crates/nimbus-s3/` | S3 wire surface over the blob/metadata planes (Seam D) |
 | `nimbus-sandbox` | `crates/nimbus-sandbox/` | Generic sandbox and isolation seam |
 | `nimbus-server` | `crates/nimbus-server/` | HTTP/WebSocket transport |
 | `nimbus-services` | `crates/nimbus-services/` | Service, sandbox, and session resource manager |
@@ -501,8 +249,8 @@ A table without a schema accepts any document. Setting a schema adds constraints
 
 - **Format check:** `cargo fmt --all --check`
 - **Workspace check:** `make check`
-- **Full test suite:** `make test`
-- **Lint:** `make clippy`
+- **Rust test suite:** `make test`
+- **Rust lint:** `make clippy`
 - **Dependency audit:** `make deny`
 - **Third-party attribution gate (G4):** `make verify-third-party-attribution` (unit tests: `make verify-third-party-attribution-helper`)
 - **Harness focused lanes:** `make verify-harness` or `make verify-harness SURFACE=runtime`
@@ -511,7 +259,9 @@ A table without a schema accepts any document. Setting a schema adds constraints
 - **JS typecheck:** `npm run typecheck`
 - **JS tests:** `npm run test`
 - **JS build:** `npm run build`
-- **All at once:** `make ci`
+- **JS capability-boundary lint:** `npm run lint:capability-boundary`
+- **Docs gates:** `bash scripts/check-docs.sh` and `bash scripts/verify-nimbus-docs-site.sh`
+- **Required local CI gate:** `make ci` (alias for `make ci-required`; hosted CI still owns coverage upload and scheduled/manual Node compatibility evidence)
 
 See `docs/private/operating/local-dev.md` for the build contract; Node is a dev
 build dependency for any Rust target that touches `nimbus-server`.
@@ -529,8 +279,12 @@ process to finish, or by stopping the genuinely stale/hung process and rerunning
 on the shared target. Do not treat alternate artifact directories as the
 default recovery path.
 
-Run `cargo fmt --all --check` and `make clippy` before opening a PR. CI enforces
-those checks plus `make deny` and `make verify-third-party-attribution`
-(the latter is currently a pre-existence pass — it begins enforcing
-provenance headers once `crates/nimbus-guest/` or
-`crates/nimbus-libkrun-*/` lands).
+Run `cargo fmt --all --check` and `make clippy` before opening a PR. For
+PR-ready code changes, prefer `make ci` locally when feasible; it covers fmt,
+clippy, deny, runtime/workspace/doc Rust tests, the required verification
+harness, JS build/test, and proof helpers.
+
+Hosted CI is broader and remains the merge source of truth. It also gates
+runtime pointer-compression, the Bun runtime contract, external-provider tests,
+Node/FaaS compatibility, node D-Bus integration, JS capability-boundary lint,
+and separate coverage / scheduled Node-compatibility evidence workflows.

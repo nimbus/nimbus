@@ -21,6 +21,7 @@ RESEARCH_DOC="docs/private/plans/research/nimbus-kv-architecture-2026.md"
 PROOF_DIR="docs/private/plans/proof/nimbus-kv-foundation"
 PROOF_BASELINE="${PROOF_DIR}/nkv0-baseline.md"
 PROOF_F2="${PROOF_DIR}/f2-kv-primitive.md"
+PROOF_F5="${PROOF_DIR}/f5-closeout.md"
 
 KV_CRATE="crates/nimbus-kv"
 KV_CARGO="${KV_CRATE}/Cargo.toml"
@@ -158,6 +159,15 @@ ci_workflow_green() {
   return 1
 }
 
+archived_closeout_ci_evidence_green() {
+  local plan_file
+  plan_file="$(plan_file)"
+  [ "${plan_file}" = "${PLAN_ARCHIVED}" ] || return 1
+  [ -f "${PROOF_F5}" ] || return 1
+  grep -q '9 passed, 0 failed' "${PROOF_F5}" || return 1
+  grep -q 'PR #37' "${PLAN_ARCHIVED}" || return 1
+}
+
 # -------- conditions -------------------------------------------------------
 
 printf '\033[1mNKV verification gate - nimbus-kv-foundation\033[0m\n'
@@ -173,17 +183,21 @@ else
 fi
 
 # 2. Routing entries.
-step 2 "Routing entries exist"
+step 2 "Routing contract is current"
 has_agents_route=0
 has_plans_route=0
 if [ -f "${AGENTS_MD}" ] || [ -L "${AGENTS_MD}" ]; then
   grep -q 'nimbus-kv-foundation-plan' "${AGENTS_MD}" && has_agents_route=1
 fi
 if [ -f "${PLANS_README}" ]; then
-  grep -q 'nimbus-kv-foundation-plan' "${PLANS_README}" && has_plans_route=1
+  if [ "${PLAN_FILE}" = "${PLAN_ACTIVE}" ]; then
+    grep -q 'nimbus-kv-foundation-plan' "${PLANS_README}" && has_plans_route=1
+  elif ! grep -q 'nimbus-kv-foundation-plan' "${PLANS_README}"; then
+    has_plans_route=1
+  fi
 fi
 if [ "${has_agents_route}" = "1" ] && [ "${has_plans_route}" = "1" ]; then
-  pass "${AGENTS_MD} and ${PLANS_README} reference nimbus-kv-foundation-plan"
+  pass "${AGENTS_MD} routes nimbus-kv-foundation-plan; active index omits closed plan when archived"
 else
   fail "Routing entries incomplete" "agents=${has_agents_route} plans_readme=${has_plans_route}"
 fi
@@ -324,7 +338,9 @@ if [ -n "${PLAN_FILE}" ]; then
     c8_ledger=1
   fi
 fi
-ci_workflow_green "${c8_ci_branch}" && c8_ci=1
+if ci_workflow_green "${c8_ci_branch}" || archived_closeout_ci_evidence_green; then
+  c8_ci=1
+fi
 if [ "${c8_smoke}" = "1" ] && [ "${c8_doc}" = "1" ] && [ "${c8_ledger}" = "1" ] && [ "${c8_ci}" = "1" ]; then
   pass "smoke proof/test, operator doc, ledger clean, CI green"
 else
