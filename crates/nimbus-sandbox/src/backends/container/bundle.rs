@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::backends::oci::egress::{egress_proxy_env_entries, scrub_reserved_egress_env};
+use crate::backends::oci::egress::{
+    egress_proxy_env_entries, egress_trust_anchor_env_entries, scrub_reserved_egress_env,
+};
 use crate::backends::oci::hardening::{masked_paths_json, readonly_paths_json};
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
@@ -23,6 +25,7 @@ pub(crate) struct ContainerBundleLayout {
 pub(crate) struct ContainerBundleOptions {
     pub additional_mounts: Vec<ContainerBundleMount>,
     pub egress_proxy_url: Option<String>,
+    pub egress_trust_anchor_guest_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +123,7 @@ pub(crate) fn build_bundle_config(
         spec,
         &egress_enforcement,
         options.egress_proxy_url.as_deref(),
+        options.egress_trust_anchor_guest_path.as_deref(),
     )?;
 
     let mut linux = serde_json::Map::new();
@@ -303,6 +307,7 @@ fn process_env(
     spec: &SandboxSpec,
     egress_enforcement: &EgressEnforcementPlan,
     egress_proxy_url: Option<&str>,
+    egress_trust_anchor_guest_path: Option<&str>,
 ) -> Result<Vec<String>> {
     let mut env = if spec.process.env.is_empty() {
         vec![DEFAULT_PATH_ENV.to_owned()]
@@ -318,6 +323,9 @@ fn process_env(
     env.push(format!("{EGRESS_ENFORCEMENT_ENV}={rendered}"));
     if let Some(egress_proxy_url) = egress_proxy_url {
         env.extend(egress_proxy_env_entries(egress_proxy_url));
+    }
+    if let Some(guest_path) = egress_trust_anchor_guest_path {
+        env.extend(egress_trust_anchor_env_entries(guest_path));
     }
     Ok(env)
 }
@@ -381,9 +389,10 @@ mod tests {
         SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
     };
     use nimbus_egress::{
-        EGRESS_ENFORCEMENT_ENV, EGRESS_ENFORCEMENT_SCHEMA_VERSION, EGRESS_LEGACY_POLICY_ENV,
-        EGRESS_PROXY_URL_ENV, EgressEnforcementMode, EgressEnforcementPlan, EgressPolicy,
-        EgressProtocol, EgressReloadPolicy, EgressRule,
+        EGRESS_CA_BUNDLE_ENV, EGRESS_ENFORCEMENT_ENV, EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+        EGRESS_LEGACY_POLICY_ENV, EGRESS_NODE_EXTRA_CA_CERTS_ENV, EGRESS_PROXY_URL_ENV,
+        EgressEnforcementMode, EgressEnforcementPlan, EgressPolicy, EgressProtocol,
+        EgressReloadPolicy, EgressRule,
     };
 
     fn egress_enforcement_from_config(config: &serde_json::Value) -> EgressEnforcementPlan {
@@ -564,6 +573,8 @@ mod tests {
             "HTTPS_PROXY=http://attacker.invalid:3".to_owned(),
             "NO_PROXY=metadata.google.internal,169.254.169.254".to_owned(),
             format!("{EGRESS_PROXY_URL_ENV}=http://attacker.invalid:4"),
+            format!("{EGRESS_CA_BUNDLE_ENV}=/tmp/attacker-ca.pem"),
+            format!("{EGRESS_NODE_EXTRA_CA_CERTS_ENV}=/tmp/attacker-node-ca.pem"),
         ];
 
         let config = build_bundle_config(
@@ -572,8 +583,21 @@ mod tests {
             None,
             None,
             &crate::backends::container::bundle::ContainerBundleOptions {
+                additional_mounts: vec![crate::backends::container::bundle::ContainerBundleMount {
+                    destination: "/run/nimbus/egress/ca.pem".to_owned(),
+                    source: PathBuf::from(
+                        "/var/lib/nimbus/state/egress-trust-anchors/tenant/db.pem",
+                    ),
+                    options: vec![
+                        "rbind".to_owned(),
+                        "ro".to_owned(),
+                        "nosuid".to_owned(),
+                        "nodev".to_owned(),
+                        "noexec".to_owned(),
+                    ],
+                }],
                 egress_proxy_url: Some("http://10.89.0.1:15000".to_owned()),
-                ..Default::default()
+                egress_trust_anchor_guest_path: Some("/run/nimbus/egress/ca.pem".to_owned()),
             },
         )
         .expect("bundle should render");
@@ -582,6 +606,8 @@ mod tests {
         assert!(env.contains(&"PATH=/usr/bin"));
         for expected in [
             format!("{EGRESS_PROXY_URL_ENV}=http://10.89.0.1:15000"),
+            format!("{EGRESS_CA_BUNDLE_ENV}=/run/nimbus/egress/ca.pem"),
+            format!("{EGRESS_NODE_EXTRA_CA_CERTS_ENV}=/run/nimbus/egress/ca.pem"),
             "HTTP_PROXY=http://10.89.0.1:15000".to_owned(),
             "http_proxy=http://10.89.0.1:15000".to_owned(),
             "HTTPS_PROXY=http://10.89.0.1:15000".to_owned(),
@@ -600,6 +626,32 @@ mod tests {
             env.iter().all(|entry| !entry.contains("attacker.invalid")),
             "operator-provided proxy env must be scrubbed: {env:?}"
         );
+        assert!(
+            env.iter().all(|entry| !entry.contains("attacker-ca.pem")),
+            "operator-provided trust env must be scrubbed: {env:?}"
+        );
+        let mounts = config["mounts"].as_array().expect("mounts should render");
+        let trust_mount = mounts
+            .iter()
+            .find(|mount| mount["destination"] == "/run/nimbus/egress/ca.pem")
+            .expect("the egress trust anchor must be mounted into the workload");
+        assert_eq!(trust_mount["type"], "bind");
+        assert_eq!(
+            trust_mount["source"],
+            "/var/lib/nimbus/state/egress-trust-anchors/tenant/db.pem"
+        );
+        let mount_options = trust_mount["options"]
+            .as_array()
+            .expect("trust mount options should render")
+            .iter()
+            .map(|option| option.as_str().expect("mount options are strings"))
+            .collect::<Vec<_>>();
+        for required in ["ro", "nosuid", "nodev", "noexec"] {
+            assert!(
+                mount_options.contains(&required),
+                "trust anchor bind mount must be read-only and inert: {mount_options:?}"
+            );
+        }
     }
 
     #[test]

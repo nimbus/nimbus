@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::backends::oci::egress::{egress_proxy_env_entries, scrub_reserved_egress_env};
+use crate::backends::oci::egress::{
+    egress_proxy_env_entries, egress_trust_anchor_env_entries, scrub_reserved_egress_env,
+};
 use crate::backends::oci::hardening::{masked_paths_json, readonly_paths_json};
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
@@ -180,6 +182,7 @@ pub(crate) struct KrunBundleOptions {
     /// guest env is pointed at this PEP via the shared container-shape proxy
     /// env; when absent (plan-only / no assignment) no proxy env is injected.
     pub egress_proxy_url: Option<String>,
+    pub egress_trust_anchor_guest_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -267,7 +270,11 @@ pub(crate) fn build_bundle_config(
     spec.egress
         .compile()
         .map_err(|message| SandboxError::InvalidSpec { message })?;
-    let process_env = process_env(spec, options.egress_proxy_url.as_deref());
+    let process_env = process_env(
+        spec,
+        options.egress_proxy_url.as_deref(),
+        options.egress_trust_anchor_guest_path.as_deref(),
+    );
 
     // krun VMMs always run as root because the crun process needs /dev/kvm access.
     // Any image USER is applied later inside the guest after the VMM is already
@@ -443,7 +450,11 @@ fn process_cwd(process: &SandboxProcessSpec) -> String {
     }
 }
 
-fn process_env(spec: &SandboxSpec, egress_proxy_url: Option<&str>) -> Vec<String> {
+fn process_env(
+    spec: &SandboxSpec,
+    egress_proxy_url: Option<&str>,
+    egress_trust_anchor_guest_path: Option<&str>,
+) -> Vec<String> {
     let mut env = if spec.process.env.is_empty() {
         vec![DEFAULT_PATH_ENV.to_owned()]
     } else {
@@ -454,6 +465,9 @@ fn process_env(spec: &SandboxSpec, egress_proxy_url: Option<&str>) -> Vec<String
     scrub_reserved_egress_env(&mut env);
     if let Some(egress_proxy_url) = egress_proxy_url {
         env.extend(egress_proxy_env_entries(egress_proxy_url));
+    }
+    if let Some(guest_path) = egress_trust_anchor_guest_path {
+        env.extend(egress_trust_anchor_env_entries(guest_path));
     }
     env
 }
@@ -598,8 +612,9 @@ mod tests {
         SandboxProcessSpec, SandboxResourceLimits, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
     };
     use nimbus_egress::{
-        EGRESS_ENFORCEMENT_ENV, EGRESS_LEGACY_POLICY_ENV, EGRESS_PROXY_URL_ENV,
-        EGRESS_RESERVED_ENV_KEYS, EgressPolicy, EgressProtocol, EgressRule,
+        EGRESS_CA_BUNDLE_ENV, EGRESS_ENFORCEMENT_ENV, EGRESS_LEGACY_POLICY_ENV,
+        EGRESS_NODE_EXTRA_CA_CERTS_ENV, EGRESS_PROXY_URL_ENV, EGRESS_RESERVED_ENV_KEYS,
+        EgressPolicy, EgressProtocol, EgressRule,
     };
 
     fn env_from_config(config: &serde_json::Value) -> Vec<&str> {
@@ -772,6 +787,8 @@ mod tests {
             format!("{EGRESS_ENFORCEMENT_ENV}={{\"schema_version\":0}}"),
             format!("{EGRESS_LEGACY_POLICY_ENV}={{\"allow\":[]}}"),
             format!("{EGRESS_PROXY_URL_ENV}=http://attacker.invalid:4"),
+            format!("{EGRESS_CA_BUNDLE_ENV}=/tmp/attacker-ca.pem"),
+            format!("{EGRESS_NODE_EXTRA_CA_CERTS_ENV}=/tmp/attacker-node-ca.pem"),
         ];
 
         let config = build_bundle_config(
@@ -779,8 +796,20 @@ mod tests {
             &spec,
             None,
             &KrunBundleOptions {
+                additional_mounts: vec![KrunBundleMount {
+                    destination: "/run/nimbus/egress/ca.pem".to_owned(),
+                    source: Path::new("/var/lib/nimbus/state/egress-trust-anchors/tenant/db.pem")
+                        .into(),
+                    options: vec![
+                        "rbind".to_owned(),
+                        "ro".to_owned(),
+                        "nosuid".to_owned(),
+                        "nodev".to_owned(),
+                        "noexec".to_owned(),
+                    ],
+                }],
                 egress_proxy_url: Some("http://10.89.0.1:15000".to_owned()),
-                ..Default::default()
+                egress_trust_anchor_guest_path: Some("/run/nimbus/egress/ca.pem".to_owned()),
             },
         )
         .expect("bundle config should build");
@@ -789,6 +818,8 @@ mod tests {
         assert!(env.contains(&"PATH=/usr/bin"));
         for expected in [
             format!("{EGRESS_PROXY_URL_ENV}=http://10.89.0.1:15000"),
+            format!("{EGRESS_CA_BUNDLE_ENV}=/run/nimbus/egress/ca.pem"),
+            format!("{EGRESS_NODE_EXTRA_CA_CERTS_ENV}=/run/nimbus/egress/ca.pem"),
             "HTTP_PROXY=http://10.89.0.1:15000".to_owned(),
             "http_proxy=http://10.89.0.1:15000".to_owned(),
             "HTTPS_PROXY=http://10.89.0.1:15000".to_owned(),
@@ -807,6 +838,32 @@ mod tests {
             env.iter().all(|entry| !entry.contains("attacker.invalid")),
             "tenant-provided proxy env must be scrubbed: {env:?}"
         );
+        assert!(
+            env.iter().all(|entry| !entry.contains("attacker-ca.pem")),
+            "tenant-provided trust env must be scrubbed: {env:?}"
+        );
+        let mounts = config["mounts"].as_array().expect("mounts should render");
+        let trust_mount = mounts
+            .iter()
+            .find(|mount| mount["destination"] == "/run/nimbus/egress/ca.pem")
+            .expect("the egress trust anchor must be mounted into the microVM");
+        assert_eq!(trust_mount["type"], "bind");
+        assert_eq!(
+            trust_mount["source"],
+            "/var/lib/nimbus/state/egress-trust-anchors/tenant/db.pem"
+        );
+        let mount_options = trust_mount["options"]
+            .as_array()
+            .expect("trust mount options should render")
+            .iter()
+            .map(|option| option.as_str().expect("mount options are strings"))
+            .collect::<Vec<_>>();
+        for required in ["ro", "nosuid", "nodev", "noexec"] {
+            assert!(
+                mount_options.contains(&required),
+                "trust anchor bind mount must be read-only and inert: {mount_options:?}"
+            );
+        }
         // The retired guest-cooperative supervisor-proxy contract is gone: the
         // krun bundle never emits an egress enforcement plan for the guest to
         // self-enforce. Egress is host-enforced by the PEP the proxy env names.

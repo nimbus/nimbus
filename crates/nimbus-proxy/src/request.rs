@@ -4,6 +4,7 @@ use url::Url;
 use crate::decision_log::EgressDecisionLog;
 use crate::response::HttpProxyResponse;
 
+#[derive(Debug, Clone)]
 pub(crate) struct ParsedProxyRequest {
     pub(crate) egress_request: EgressRequest,
     pub(crate) upstream_host: String,
@@ -16,6 +17,7 @@ pub(crate) struct ParsedProxyRequest {
     pub(crate) body_offset: usize,
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct PreparedProxyRequest {
     pub(crate) header_lines: Vec<String>,
     pub(crate) inspected_body: Option<Vec<u8>>,
@@ -138,34 +140,6 @@ pub(crate) fn parse_proxy_request(
     })
 }
 
-pub(crate) fn render_upstream_request(
-    parsed: &ParsedProxyRequest,
-    header_lines: &[String],
-) -> String {
-    let ProxyRequestMode::ForwardHttp { origin_form } = &parsed.mode else {
-        return String::new();
-    };
-    let mut rendered = format!("{} {} {}\r\n", parsed.method, origin_form, parsed.version);
-    // Normalize the Host header to the authorized authority. The caller's Host
-    // header is advisory and must never be forwarded verbatim: the policy
-    // authorized `upstream_host:upstream_port`, so that is the only authority
-    // the upstream may be told it is serving. Any caller-supplied Host lines
-    // are dropped and replaced.
-    rendered.push_str(&format!(
-        "Host: {}:{}\r\n",
-        parsed.upstream_host, parsed.upstream_port
-    ));
-    for line in header_lines {
-        if is_host_header(line) {
-            continue;
-        }
-        rendered.push_str(line);
-        rendered.push_str("\r\n");
-    }
-    rendered.push_str("Connection: close\r\n\r\n");
-    rendered
-}
-
 fn parse_connect_authority(target: &str) -> std::result::Result<(String, u16), HttpProxyResponse> {
     if target.contains("://") || target.contains('/') || target.contains('@') {
         return Err(HttpProxyResponse::bad_request(
@@ -286,12 +260,6 @@ fn content_length(
         parsed = Some(value);
     }
     Ok(parsed)
-}
-
-fn is_host_header(line: &str) -> bool {
-    line.split_once(':')
-        .map(|(name, _)| name.trim().eq_ignore_ascii_case("host"))
-        .unwrap_or(false)
 }
 
 fn has_header(header_lines: &[String], expected: &str) -> bool {

@@ -8,17 +8,19 @@
 //! here once instead of being forked per backend.
 
 use std::collections::HashMap;
+use std::fs;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use nimbus_core::TenantId;
 use nimbus_egress::{
-    CompiledEgressPolicy, EGRESS_PROXY_URL_ENV, EGRESS_RESERVED_ENV_KEYS, EgressPolicy,
+    CompiledEgressPolicy, EGRESS_CA_BUNDLE_ENV, EGRESS_NODE_EXTRA_CA_CERTS_ENV,
+    EGRESS_PROXY_URL_ENV, EGRESS_RESERVED_ENV_KEYS, EgressPolicy,
 };
 use nimbus_proxy::{
     AppendOnlyDecisionLogSink, DecisionLogSinkContext, EgressProxy, EgressProxyConfig,
-    EgressProxyError, EgressProxyReadiness,
+    EgressProxyError, EgressProxyReadiness, EgressProxyTlsAuthority,
 };
 use serde::{Deserialize, Serialize};
 
@@ -33,8 +35,17 @@ use crate::spec::SandboxPortBinding;
 /// backend can hold one and hand clones to its async tasks.
 #[derive(Clone)]
 pub(crate) struct EgressProxyRegistry {
-    proxies: Arc<Mutex<HashMap<SandboxId, EgressProxy>>>,
+    proxies: Arc<Mutex<HashMap<SandboxId, RegisteredPep>>>,
     decision_log_root: Arc<PathBuf>,
+    trust_anchor_root: Arc<PathBuf>,
+}
+
+/// One registered PEP plus the workload-facing trust-anchor file it published.
+/// The two live in a single registry entry (under one lock) so the published
+/// CA file can never belong to a different proxy than the one registered.
+struct RegisteredPep {
+    proxy: EgressProxy,
+    trust_anchor_path: Option<PathBuf>,
 }
 
 impl EgressProxyRegistry {
@@ -43,10 +54,24 @@ impl EgressProxyRegistry {
         Self::with_decision_log_root(std::env::temp_dir().join("nimbus-egress-decision-logs"))
     }
 
+    #[cfg(test)]
     pub(crate) fn with_decision_log_root(decision_log_root: impl Into<PathBuf>) -> Self {
+        let decision_log_root = decision_log_root.into();
+        let trust_anchor_root = decision_log_root
+            .parent()
+            .map(|parent| parent.join("egress-trust-anchors"))
+            .unwrap_or_else(|| PathBuf::from("egress-trust-anchors"));
+        Self::with_roots(decision_log_root, trust_anchor_root)
+    }
+
+    pub(crate) fn with_roots(
+        decision_log_root: impl Into<PathBuf>,
+        trust_anchor_root: impl Into<PathBuf>,
+    ) -> Self {
         Self {
             proxies: Arc::new(Mutex::new(HashMap::new())),
             decision_log_root: Arc::new(decision_log_root.into()),
+            trust_anchor_root: Arc::new(trust_anchor_root.into()),
         }
     }
 
@@ -62,14 +87,17 @@ impl EgressProxyRegistry {
         policy: &EgressPolicy,
         bind_addr: SocketAddr,
     ) -> Result<()> {
-        let mut proxies = self.lock()?;
-        if proxies.contains_key(id) {
+        let decision_log_path = self.decision_log_path(tenant_id, id);
+        let trust_anchor_path = self.trust_anchor_path(tenant_id, id);
+        if self.lock()?.contains_key(id) {
             return Ok(());
         }
+        // Expensive preparation (policy compile, decision-log open, CA keypair
+        // generation) runs outside the registry lock so one slow start cannot
+        // stall reload/readiness/stop for every other sandbox.
         let compiled = policy
             .compile()
             .map_err(|message| SandboxError::InvalidSpec { message })?;
-        let decision_log_path = self.decision_log_path(tenant_id, id);
         let decision_logger = AppendOnlyDecisionLogSink::open(
             &decision_log_path,
             DecisionLogSinkContext::new(tenant_id.as_str(), id.as_str()),
@@ -81,13 +109,38 @@ impl EgressProxyRegistry {
             ),
         })?
         .logger();
+        let tls_authority =
+            EgressProxyTlsAuthority::generate_ephemeral().map_err(egress_proxy_error)?;
+        // Publish + register under one lock hold: a concurrent winner is
+        // re-checked first, and the trust-anchor file on disk is written by the
+        // same call that registers its proxy, so the file can never carry a
+        // different CA than the PEP the workload is routed through.
+        let mut proxies = self.lock()?;
+        if proxies.contains_key(id) {
+            return Ok(());
+        }
+        write_trust_anchor_file(
+            &self.trust_anchor_root,
+            &trust_anchor_path,
+            &tls_authority.trust_anchor_pem(),
+        )?;
         let proxy = EgressProxy::start(
             EgressProxyConfig::new(compiled)
                 .with_bind_addr(bind_addr)
+                .with_tls_authority(tls_authority)
                 .with_decision_logger(decision_logger),
         )
-        .map_err(egress_proxy_error)?;
-        proxies.insert(id.clone(), proxy);
+        .map_err(|error| {
+            let _ = remove_trust_anchor_file(&trust_anchor_path);
+            egress_proxy_error(error)
+        })?;
+        proxies.insert(
+            id.clone(),
+            RegisteredPep {
+                proxy,
+                trust_anchor_path: Some(trust_anchor_path),
+            },
+        );
         Ok(())
     }
 
@@ -97,19 +150,32 @@ impl EgressProxyRegistry {
     /// running first). Fail-closed: a reload error is surfaced, not swallowed.
     pub(crate) fn reload(&self, id: &SandboxId, compiled: CompiledEgressPolicy) -> Result<()> {
         let proxies = self.lock()?;
-        let proxy = proxies
+        let registered = proxies
             .get(id)
             .ok_or_else(|| SandboxError::OperationFailed {
                 message: format!("egress proxy for sandbox {id} is not running"),
             })?;
-        proxy.reload_policy(compiled).map_err(egress_proxy_error)?;
+        registered
+            .proxy
+            .reload_policy(compiled)
+            .map_err(egress_proxy_error)?;
         Ok(())
     }
 
     /// Stop and deregister the PEP for `id`. Dropping the `EgressProxy` stops it.
     /// No-op if none is registered.
     pub(crate) fn stop(&self, id: &SandboxId) -> Result<()> {
-        self.lock()?.remove(id);
+        let removed = self.lock()?.remove(id);
+        let Some(removed) = removed else {
+            return Ok(());
+        };
+        // Stop the proxy before deleting its published trust anchor so a
+        // still-running PEP is never left serving leaves the workload can no
+        // longer verify.
+        drop(removed.proxy);
+        if let Some(trust_anchor_path) = removed.trust_anchor_path {
+            remove_trust_anchor_file(&trust_anchor_path)?;
+        }
         Ok(())
     }
 
@@ -124,7 +190,7 @@ impl EgressProxyRegistry {
         let proxies = self.lock()?;
         proxies
             .get(id)
-            .map(|proxy| proxy.readiness().map_err(egress_proxy_error))
+            .map(|registered| registered.proxy.readiness().map_err(egress_proxy_error))
             .transpose()
     }
 
@@ -136,7 +202,10 @@ impl EgressProxyRegistry {
 
     #[cfg(test)]
     pub(crate) fn local_addr(&self, id: &SandboxId) -> Result<Option<SocketAddr>> {
-        Ok(self.lock()?.get(id).map(EgressProxy::local_addr))
+        Ok(self
+            .lock()?
+            .get(id)
+            .map(|registered| registered.proxy.local_addr()))
     }
 
     #[cfg(test)]
@@ -148,17 +217,32 @@ impl EgressProxyRegistry {
         self.decision_log_path(tenant_id, id)
     }
 
+    #[cfg(test)]
+    pub(crate) fn trust_anchor_path_for_test(
+        &self,
+        tenant_id: &TenantId,
+        id: &SandboxId,
+    ) -> PathBuf {
+        self.trust_anchor_path(tenant_id, id)
+    }
+
     /// Register an already-started proxy for `id` under test, so a readiness
     /// gate can be exercised against a not-ready (policy-less) PEP without a
     /// live VMM. Production code only ever registers a PEP through
     /// [`EgressProxyRegistry::ensure_running`], which always loads a policy.
     #[cfg(test)]
     pub(crate) fn insert_running_for_test(&self, id: &SandboxId, proxy: EgressProxy) -> Result<()> {
-        self.lock()?.insert(id.clone(), proxy);
+        self.lock()?.insert(
+            id.clone(),
+            RegisteredPep {
+                proxy,
+                trust_anchor_path: None,
+            },
+        );
         Ok(())
     }
 
-    fn lock(&self) -> Result<MutexGuard<'_, HashMap<SandboxId, EgressProxy>>> {
+    fn lock(&self) -> Result<MutexGuard<'_, HashMap<SandboxId, RegisteredPep>>> {
         self.proxies
             .lock()
             .map_err(|_| SandboxError::OperationFailed {
@@ -171,10 +255,213 @@ impl EgressProxyRegistry {
             .join(tenant_id.as_str())
             .join(format!("{}.jsonl", id.as_str()))
     }
+
+    fn trust_anchor_path(&self, tenant_id: &TenantId, id: &SandboxId) -> PathBuf {
+        egress_trust_anchor_path(&self.trust_anchor_root, tenant_id, id)
+    }
 }
 
 pub(crate) fn egress_decision_log_root(state_root: &Path) -> PathBuf {
     state_root.join("egress-decision-logs")
+}
+
+pub(crate) fn egress_trust_anchor_root(state_root: &Path) -> PathBuf {
+    state_root.join("egress-trust-anchors")
+}
+
+pub(crate) const EGRESS_TRUST_ANCHOR_GUEST_PATH: &str = "/run/nimbus/egress/ca.pem";
+
+const EGRESS_TRUST_ANCHOR_PLACEHOLDER: &str =
+    "# Nimbus egress trust anchor placeholder; overwritten before launch\n";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EgressTrustAnchorMount {
+    pub(crate) host_path: PathBuf,
+    pub(crate) guest_path: String,
+}
+
+pub(crate) fn egress_trust_anchor_mount(
+    state_root: &Path,
+    tenant_id: &TenantId,
+    id: &SandboxId,
+) -> Result<EgressTrustAnchorMount> {
+    let trust_anchor_root = egress_trust_anchor_root(state_root);
+    let host_path = egress_trust_anchor_path(&trust_anchor_root, tenant_id, id);
+    prepare_egress_trust_anchor_file(&trust_anchor_root, &host_path)?;
+    Ok(EgressTrustAnchorMount {
+        host_path,
+        guest_path: EGRESS_TRUST_ANCHOR_GUEST_PATH.to_owned(),
+    })
+}
+
+pub(crate) fn egress_trust_anchor_path(
+    trust_anchor_root: &Path,
+    tenant_id: &TenantId,
+    id: &SandboxId,
+) -> PathBuf {
+    trust_anchor_root
+        .join(tenant_id.as_str())
+        .join(format!("{}.pem", id.as_str()))
+}
+
+pub(crate) fn prepare_egress_trust_anchor_file(
+    trust_anchor_root: &Path,
+    path: &Path,
+) -> Result<()> {
+    write_trust_anchor_file(trust_anchor_root, path, EGRESS_TRUST_ANCHOR_PLACEHOLDER)
+}
+
+/// Canonical trust-anchor writer: every trust-anchor byte that reaches disk
+/// goes through here. The write is rooted (the target must sit inside
+/// `trust_anchor_root` with no traversal components), permissioned explicitly
+/// (0644 — the guest bind-mounts the file read-only and must be able to read
+/// it), durable (file fsync before rename, directory fsync after), and atomic
+/// (temp file in the target directory, then rename), so a concurrent reader —
+/// including a guest that already bind-mounted the path — can never observe a
+/// torn or half-written PEM.
+///
+/// Trust boundary: the root is host-owned Nimbus state that only this writer
+/// populates, and the tenant/sandbox ids are validated, so the path guards are
+/// defense-in-depth against a path-construction bug or a tampered/stale state
+/// tree — not a sandbox against an attacker who already holds host write access
+/// under our state dir.
+fn write_trust_anchor_file(trust_anchor_root: &Path, path: &Path, contents: &str) -> Result<()> {
+    validate_trust_anchor_path(trust_anchor_root, path)?;
+    let parent = path.parent().ok_or_else(|| SandboxError::OperationFailed {
+        message: format!(
+            "egress trust-anchor path {} has no parent directory",
+            path.display()
+        ),
+    })?;
+    fs::create_dir_all(parent).map_err(|error| SandboxError::OperationFailed {
+        message: format!(
+            "failed to create egress trust-anchor directory {}: {error}",
+            parent.display()
+        ),
+    })?;
+    // Tamper tripwire the lexical check can't provide: fail closed if any
+    // directory component under the root is a symlink, so a tampered state tree
+    // can never redirect where the anchor lands. The final-component write is
+    // already symlink-safe on its own — `create_new` refuses a symlinked temp
+    // path and `rename` replaces the destination name without following it — so
+    // together no anchor bytes are ever written through a symlink.
+    reject_symlinked_components(trust_anchor_root, parent)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| SandboxError::OperationFailed {
+            message: format!(
+                "egress trust-anchor path {} has no file name",
+                path.display()
+            ),
+        })?;
+    static TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let temp_path = parent.join(format!(
+        ".{file_name}.tmp-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let write_result = (|| -> std::io::Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut temp_file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o644)
+            .open(&temp_path)?;
+        temp_file.write_all(contents.as_bytes())?;
+        temp_file.sync_all()?;
+        fs::rename(&temp_path, path)?;
+        // Make the rename itself durable: fsync the containing directory so a
+        // crash cannot resurrect the old entry after the guest saw the new one.
+        fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    write_result.map_err(|error| {
+        let _ = fs::remove_file(&temp_path);
+        SandboxError::OperationFailed {
+            message: format!(
+                "failed to write egress trust anchor {}: {error}",
+                path.display()
+            ),
+        }
+    })
+}
+
+/// Fail closed if any path component from `trust_anchor_root` down to and
+/// including `parent` is a symlink. `lstat`-based, so it never follows a link;
+/// combined with the symlink-safe final-component write it guarantees no anchor
+/// bytes are written through a symlinked directory. Callers pass a `parent`
+/// already validated to sit under the root by [`validate_trust_anchor_path`].
+fn reject_symlinked_components(trust_anchor_root: &Path, parent: &Path) -> Result<()> {
+    let Ok(relative) = parent.strip_prefix(trust_anchor_root) else {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "egress trust-anchor directory {} is not under root {}",
+                parent.display(),
+                trust_anchor_root.display()
+            ),
+        });
+    };
+    let mut current = trust_anchor_root.to_path_buf();
+    for component in relative.components() {
+        current.push(component);
+        let metadata =
+            fs::symlink_metadata(&current).map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to stat egress trust-anchor component {}: {error}",
+                    current.display()
+                ),
+            })?;
+        if metadata.file_type().is_symlink() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "egress trust-anchor component {} is a symlink; refusing to write through it",
+                    current.display()
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Reject any trust-anchor target that does not sit strictly inside
+/// `trust_anchor_root` via normal path components. The tenant/sandbox
+/// identifiers that build these paths are already validated, so this is a
+/// defense-in-depth boundary: no caller can turn the canonical writer into an
+/// arbitrary-file write primitive.
+fn validate_trust_anchor_path(trust_anchor_root: &Path, path: &Path) -> Result<()> {
+    let invalid = || SandboxError::OperationFailed {
+        message: format!(
+            "egress trust-anchor path {} escapes trust-anchor root {}",
+            path.display(),
+            trust_anchor_root.display()
+        ),
+    };
+    let relative = path
+        .strip_prefix(trust_anchor_root)
+        .map_err(|_| invalid())?;
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+fn remove_trust_anchor_file(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SandboxError::OperationFailed {
+            message: format!(
+                "failed to remove egress trust anchor {}: {error}",
+                path.display()
+            ),
+        }),
+    }
 }
 
 /// Map a `nimbus_proxy` error into a sandbox operation failure.
@@ -204,6 +491,18 @@ pub(crate) fn egress_proxy_env_entries(egress_proxy_url: &str) -> Vec<String> {
         ("all_proxy", egress_proxy_url),
         ("NO_PROXY", ""),
         ("no_proxy", ""),
+    ]
+    .into_iter()
+    .map(|(key, value)| format!("{key}={value}"))
+    .collect()
+}
+
+/// Build trust-anchor env entries for workloads that are routed through a
+/// host-side PEP capable of selective HTTPS interception.
+pub(crate) fn egress_trust_anchor_env_entries(guest_path: &str) -> Vec<String> {
+    [
+        (EGRESS_CA_BUNDLE_ENV, guest_path),
+        (EGRESS_NODE_EXTRA_CA_CERTS_ENV, guest_path),
     ]
     .into_iter()
     .map(|(key, value)| format!("{key}={value}"))
@@ -325,12 +624,17 @@ mod tests {
         let tenant = tenant();
         let id = SandboxId::new("egress-seam-01");
         let policy = EgressPolicy::deny_all();
+        let trust_anchor_path = registry.trust_anchor_path_for_test(&tenant, &id);
 
         assert!(!registry.contains(&id).unwrap());
         registry
             .ensure_running(&tenant, &id, &policy, loopback())
             .unwrap();
         assert!(registry.contains(&id).unwrap());
+        assert!(
+            trust_anchor_path.is_file(),
+            "starting a PEP must publish a workload-scoped trust anchor"
+        );
 
         // idempotent: a second ensure neither errors nor double-registers
         registry
@@ -340,8 +644,89 @@ mod tests {
 
         registry.stop(&id).unwrap();
         assert!(!registry.contains(&id).unwrap());
+        assert!(
+            !trust_anchor_path.exists(),
+            "stopping a PEP must clean up its workload-scoped trust anchor"
+        );
         // stop is a no-op when nothing is registered
         registry.stop(&id).unwrap();
+    }
+
+    #[test]
+    fn ensure_running_replaces_placeholder_with_public_trust_anchor_only() {
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory should exist");
+        let registry = EgressProxyRegistry::with_roots(
+            temp_dir.path().join("logs"),
+            temp_dir.path().join("trust"),
+        );
+        let tenant = tenant();
+        let id = SandboxId::new("egress-trust-anchor");
+        let trust_anchor_path = registry.trust_anchor_path_for_test(&tenant, &id);
+        prepare_egress_trust_anchor_file(&temp_dir.path().join("trust"), &trust_anchor_path)
+            .expect("planning should materialize a placeholder trust-anchor file");
+        assert!(
+            fs::read_to_string(&trust_anchor_path)
+                .expect("placeholder should read")
+                .contains("placeholder"),
+            "planning should create a placeholder at the deterministic mount source"
+        );
+
+        registry
+            .ensure_running(&tenant, &id, &EgressPolicy::deny_all(), loopback())
+            .expect("starting a PEP should publish the real public trust anchor");
+
+        let pem = fs::read_to_string(&trust_anchor_path).expect("trust anchor should read");
+        assert!(
+            pem.contains("-----BEGIN CERTIFICATE-----")
+                && pem.contains("-----END CERTIFICATE-----")
+                && !pem.contains("PRIVATE KEY")
+                && !pem.contains("placeholder"),
+            "workloads must receive only the public CA certificate, never the private key or stale placeholder: {pem}"
+        );
+        registry.stop(&id).expect("PEP stop should clean up");
+        assert!(
+            !trust_anchor_path.exists(),
+            "trust-anchor cleanup should remove the workload-scoped CA file"
+        );
+    }
+
+    #[test]
+    fn distinct_sandboxes_receive_distinct_ephemeral_cas() {
+        // Cross-sandbox isolation invariant: the registry must publish a
+        // DIFFERENT ephemeral CA per sandbox. A shared/centralized CA would be a
+        // cross-tenant MITM blast radius — the property that distinguishes our
+        // per-sandbox PEP from the shared-CA gateway designs.
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory should exist");
+        let registry = EgressProxyRegistry::with_roots(
+            temp_dir.path().join("logs"),
+            temp_dir.path().join("trust"),
+        );
+        let tenant = tenant();
+        let first = SandboxId::new("egress-ca-a");
+        let second = SandboxId::new("egress-ca-b");
+        registry
+            .ensure_running(&tenant, &first, &EgressPolicy::deny_all(), loopback())
+            .expect("first PEP should start");
+        registry
+            .ensure_running(&tenant, &second, &EgressPolicy::deny_all(), loopback())
+            .expect("second PEP should start");
+
+        let first_pem = fs::read_to_string(registry.trust_anchor_path_for_test(&tenant, &first))
+            .expect("first trust anchor should read");
+        let second_pem = fs::read_to_string(registry.trust_anchor_path_for_test(&tenant, &second))
+            .expect("second trust anchor should read");
+        assert!(
+            first_pem.contains("-----BEGIN CERTIFICATE-----")
+                && !first_pem.contains("PRIVATE KEY")
+                && !second_pem.contains("PRIVATE KEY"),
+            "each published anchor must be public-cert-only"
+        );
+        assert_ne!(
+            first_pem, second_pem,
+            "two sandboxes must receive distinct ephemeral CAs, never a shared one"
+        );
+        registry.stop(&first).expect("first stop");
+        registry.stop(&second).expect("second stop");
     }
 
     #[test]
@@ -445,6 +830,29 @@ mod tests {
                 .iter()
                 .all(|entry| entry != "NO_PROXY=http://10.89.0.1:15000"),
             "NO_PROXY must remain empty so no destination bypasses the PEP: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn egress_trust_anchor_env_entries_emit_additive_trust_shape() {
+        let entries = egress_trust_anchor_env_entries(EGRESS_TRUST_ANCHOR_GUEST_PATH);
+
+        for expected in [
+            format!("{EGRESS_CA_BUNDLE_ENV}={EGRESS_TRUST_ANCHOR_GUEST_PATH}"),
+            format!("{EGRESS_NODE_EXTRA_CA_CERTS_ENV}={EGRESS_TRUST_ANCHOR_GUEST_PATH}"),
+        ] {
+            assert!(
+                entries.contains(&expected),
+                "expected shared trust-anchor env entry {expected:?} in {entries:?}"
+            );
+        }
+        assert!(
+            entries
+                .iter()
+                .all(|entry| !entry.starts_with("SSL_CERT_FILE=")
+                    && !entry.starts_with("CURL_CA_BUNDLE=")
+                    && !entry.starts_with("REQUESTS_CA_BUNDLE=")),
+            "trust env must be additive and not replace system roots: {entries:?}"
         );
     }
 
@@ -600,11 +1008,171 @@ mod tests {
     }
 
     #[test]
+    fn trust_anchor_writer_rejects_paths_outside_root() {
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory should exist");
+        let root = temp_dir.path().join("trust");
+
+        for escape in [
+            temp_dir.path().join("elsewhere/ca.pem"),
+            root.join("../escaped.pem"),
+            root.join("tenant/../../escaped.pem"),
+            root.clone(),
+        ] {
+            let error = prepare_egress_trust_anchor_file(&root, &escape)
+                .expect_err("a target outside the trust-anchor root must fail closed");
+            assert!(
+                matches!(error, SandboxError::OperationFailed { .. }),
+                "path {} must be rejected",
+                escape.display()
+            );
+            assert!(
+                !escape.is_file(),
+                "no file may be created at the rejected target {}",
+                escape.display()
+            );
+        }
+    }
+
+    #[test]
+    fn trust_anchor_writer_rejects_symlinked_directory_escape() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory should exist");
+        let root = temp_dir.path().join("trust");
+        let outside = temp_dir.path().join("outside");
+        fs::create_dir_all(&root).expect("trust root should create");
+        fs::create_dir_all(&outside).expect("outside dir should create");
+        // A tenant directory under the root is a symlink pointing outside it:
+        // the lexical component check passes, but the canonical parent escapes.
+        symlink(&outside, root.join("tenant-a")).expect("symlink should create");
+
+        let escaped = root.join("tenant-a/sandbox-a.pem");
+        let error = prepare_egress_trust_anchor_file(&root, &escaped)
+            .expect_err("a symlinked directory escape must fail closed");
+        assert!(matches!(error, SandboxError::OperationFailed { .. }));
+        assert!(
+            !outside.join("sandbox-a.pem").exists(),
+            "no trust-anchor bytes may be written through an escaping symlink"
+        );
+    }
+
+    #[test]
+    fn trust_anchor_writer_publishes_atomically_with_explicit_permissions() {
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory should exist");
+        let root = temp_dir.path().join("trust");
+        let path = root.join("tenant-a/sandbox-a.pem");
+
+        prepare_egress_trust_anchor_file(&root, &path).expect("placeholder should publish");
+        // Overwrite (placeholder -> real content) must also go through the
+        // temp+rename path and leave no temp residue beside the target.
+        prepare_egress_trust_anchor_file(&root, &path).expect("re-publish should succeed");
+
+        let entries: Vec<String> = fs::read_dir(path.parent().unwrap())
+            .expect("trust-anchor directory should list")
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            entries,
+            vec!["sandbox-a.pem".to_owned()],
+            "the writer must leave only the published file, no temp residue"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path)
+                .expect("published trust anchor should stat")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(
+                mode, 0o644,
+                "trust anchor must be world-readable for the guest bind mount and writable only by the owner"
+            );
+        }
+    }
+
+    #[test]
+    fn ensure_running_fails_closed_when_trust_anchor_root_is_unwritable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory should exist");
+        let trust_root = temp_dir.path().join("trust");
+        fs::create_dir_all(&trust_root).expect("trust root should create");
+        fs::set_permissions(&trust_root, fs::Permissions::from_mode(0o555))
+            .expect("trust root should become read-only");
+
+        let registry =
+            EgressProxyRegistry::with_roots(temp_dir.path().join("logs"), trust_root.clone());
+        let tenant = tenant();
+        let id = SandboxId::new("egress-unwritable-trust-root");
+        let result = registry.ensure_running(&tenant, &id, &EgressPolicy::deny_all(), loopback());
+
+        // Restore permissions before asserting so TempDir cleanup succeeds
+        // even if an assertion fails.
+        fs::set_permissions(&trust_root, fs::Permissions::from_mode(0o755))
+            .expect("trust root permissions should restore");
+
+        let error = result.expect_err("an unwritable trust-anchor root must fail the PEP start");
+        assert!(matches!(error, SandboxError::OperationFailed { .. }));
+        assert!(
+            !registry.contains(&id).unwrap(),
+            "a failed trust-anchor publish must register no PEP"
+        );
+    }
+
+    #[test]
+    fn concurrent_ensure_running_registers_exactly_one_pep() {
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory should exist");
+        let registry = EgressProxyRegistry::with_roots(
+            temp_dir.path().join("logs"),
+            temp_dir.path().join("trust"),
+        );
+        let tenant = tenant();
+        let id = SandboxId::new("egress-concurrent-start");
+        let trust_anchor_path = registry.trust_anchor_path_for_test(&tenant, &id);
+
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..4)
+                .map(|_| {
+                    let registry = registry.clone();
+                    let tenant = tenant.clone();
+                    let id = id.clone();
+                    scope.spawn(move || {
+                        registry.ensure_running(&tenant, &id, &EgressPolicy::deny_all(), loopback())
+                    })
+                })
+                .collect();
+            for handle in handles {
+                handle
+                    .join()
+                    .expect("ensure_running thread should not panic")
+                    .expect("every concurrent ensure_running must succeed");
+            }
+        });
+
+        assert!(registry.contains(&id).unwrap());
+        let pem = fs::read_to_string(&trust_anchor_path)
+            .expect("the winning PEP must have published its trust anchor");
+        assert!(
+            pem.contains("-----BEGIN CERTIFICATE-----") && !pem.contains("PRIVATE KEY"),
+            "published trust anchor must be the public certificate: {pem}"
+        );
+        registry.stop(&id).expect("PEP stop should clean up");
+        assert!(
+            !trust_anchor_path.exists(),
+            "stop must remove the published trust anchor"
+        );
+    }
+
+    #[test]
     fn scrub_reserved_egress_env_removes_only_reserved_keys_and_keeps_others() {
         let mut env = vec![
             "PATH=/usr/bin".to_owned(),
             "HTTP_PROXY=http://attacker:1".to_owned(),
             "https_proxy=http://attacker:2".to_owned(),
+            format!("{EGRESS_CA_BUNDLE_ENV}=/tmp/attacker-ca.pem"),
+            format!("{EGRESS_NODE_EXTRA_CA_CERTS_ENV}=/tmp/attacker-node-ca.pem"),
             "MALFORMED".to_owned(),
             "API_KEY=keep-me".to_owned(),
         ];

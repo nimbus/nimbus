@@ -10,10 +10,24 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+async-trait.workspace = true
+base64.workspace = true
+blake3.workspace = true
+bytes.workspace = true
+http.workspace = true
 nimbus-core = { path = "../nimbus-core" }
 nimbus-egress = { path = "../nimbus-egress" }
+pingora-core = { version = "0.8.1", default-features = false }
+pingora-http = { version = "0.8.1", default-features = false }
+pingora-proxy = { version = "0.8.1", default-features = false }
+rcgen = { version = "0.14.8", default-features = false, features = ["crypto", "pem", "ring"] }
+rustls = { version = "0.23.31", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 serde_json.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 url.workspace = true
+webpki-roots = "1.0.8"
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -1,62 +1,126 @@
-use std::io::Read;
-use std::net::TcpStream;
-
 use nimbus_egress::{CompiledEgressPolicy, EgressCredentialInjection, EgressDlpRule, EgressRule};
 
-use crate::credentials::CredentialSecretStore;
 use crate::decision_log::EgressDecisionLog;
+use crate::phase::{EgressProxyRequestPhase, RequestPhaseRecorder};
 use crate::request::{ParsedProxyRequest, PreparedProxyRequest, ProxyRequestMode};
 use crate::response::HttpProxyResponse;
 
-pub(crate) fn prepare_proxy_request_enforcement(
-    client: &mut TcpStream,
-    buffer: &mut Vec<u8>,
-    parsed: &ParsedProxyRequest,
-    policy: &CompiledEgressPolicy,
-    matched_rule: Option<&str>,
-    reason: &str,
-    credential_store: &CredentialSecretStore,
-) -> std::result::Result<PreparedProxyRequest, HttpProxyResponse> {
-    let Some(rule) = matched_rule.and_then(|name| {
-        policy
+pub(crate) struct ProxyRequestEnforcementContext<'a> {
+    pub(crate) policy: &'a CompiledEgressPolicy,
+    pub(crate) matched_rule: Option<&'a str>,
+    pub(crate) reason: &'a str,
+    pub(crate) credential_provider: &'a dyn crate::credentials::CredentialSecretProvider,
+    pub(crate) phase_recorder: &'a RequestPhaseRecorder,
+}
+
+pub(crate) struct ProxyRequestEnforcementPlan<'a> {
+    parsed: &'a ParsedProxyRequest,
+    header_lines: Vec<String>,
+    dlp_rules: &'a [EgressDlpRule],
+    decision_log: EgressDecisionLog,
+}
+
+impl ProxyRequestEnforcementPlan<'_> {
+    pub(crate) fn requires_dlp(&self) -> bool {
+        !self.dlp_rules.is_empty()
+    }
+
+    /// The PEP's whole-body read budget for this request: the tightest rule
+    /// cap, clamped by the platform-owned [`MAX_DLP_INSPECTION_BYTES`]. The
+    /// clamp is belt-and-suspenders — policy validation already rejects larger
+    /// rule values — so a policy that bypassed validation can still never
+    /// steer the PEP into unbounded buffering.
+    pub(crate) fn dlp_max_inspection_bytes(&self) -> Option<usize> {
+        self.dlp_rules
+            .iter()
+            .map(|rule| rule.max_inspection_bytes)
+            .min()
+            .map(|max| max.min(nimbus_egress::MAX_DLP_INSPECTION_BYTES))
+    }
+
+    pub(crate) fn finish(
+        self,
+        inspected_body: Option<Vec<u8>>,
+    ) -> std::result::Result<PreparedProxyRequest, HttpProxyResponse> {
+        let inspected_body = enforce_dlp_rules(self.parsed, self.dlp_rules, inspected_body)?;
+        Ok(PreparedProxyRequest {
+            header_lines: self.header_lines,
+            inspected_body,
+            decision_log: self.decision_log,
+        })
+    }
+}
+
+pub(crate) fn prepare_proxy_request_enforcement<'a>(
+    parsed: &'a ParsedProxyRequest,
+    context: ProxyRequestEnforcementContext<'a>,
+) -> std::result::Result<ProxyRequestEnforcementPlan<'a>, HttpProxyResponse> {
+    let Some(rule) = context.matched_rule.and_then(|name| {
+        context
+            .policy
             .policy()
             .rules()
             .iter()
             .find(|rule| rule.name == name)
     }) else {
-        return Ok(PreparedProxyRequest {
+        return Ok(ProxyRequestEnforcementPlan {
+            parsed,
             header_lines: parsed.header_lines.clone(),
-            inspected_body: None,
+            dlp_rules: &[],
             decision_log: EgressDecisionLog::allowed(
                 parsed,
                 None,
-                reason.to_owned(),
-                matched_rule.map(ToOwned::to_owned),
+                context.reason.to_owned(),
+                context.matched_rule.map(ToOwned::to_owned),
             ),
         });
     };
+
     let mut header_lines = parsed.header_lines.clone();
+    context
+        .phase_recorder
+        .record(EgressProxyRequestPhase::CredentialHeaderMutation);
     let credential_identity =
-        apply_credential_injection(rule, &mut header_lines, parsed, credential_store)?;
-    let inspected_body = enforce_dlp_rules(client, buffer, parsed, &rule.dlp)?;
+        apply_credential_injection(rule, &mut header_lines, parsed, context.credential_provider)?;
+    context
+        .phase_recorder
+        .record(EgressProxyRequestPhase::BoundedDlpInspection);
     let decision_log = EgressDecisionLog::allowed(
         parsed,
         credential_identity.clone(),
-        reason.to_owned(),
-        matched_rule.map(ToOwned::to_owned),
+        context.reason.to_owned(),
+        context.matched_rule.map(ToOwned::to_owned),
     );
-    Ok(PreparedProxyRequest {
+    Ok(ProxyRequestEnforcementPlan {
+        parsed,
         header_lines,
-        inspected_body,
+        dlp_rules: &rule.dlp,
         decision_log,
     })
+}
+
+pub(crate) fn reject_unapproved_caller_credentials_for_rule(
+    policy: &CompiledEgressPolicy,
+    matched_rule: Option<&str>,
+    header_lines: &[String],
+) -> std::result::Result<(), HttpProxyResponse> {
+    let credential = matched_rule
+        .and_then(|name| {
+            policy
+                .policy()
+                .rules()
+                .iter()
+                .find(|rule| rule.name == name)
+        })
+        .and_then(|rule| rule.credential.as_ref());
+    deny_unapproved_credential_headers(header_lines, credential)
 }
 
 fn apply_credential_injection(
     rule: &EgressRule,
     header_lines: &mut Vec<String>,
     parsed: &ParsedProxyRequest,
-    credential_store: &CredentialSecretStore,
+    credential_provider: &dyn crate::credentials::CredentialSecretProvider,
 ) -> std::result::Result<Option<String>, HttpProxyResponse> {
     deny_unapproved_credential_headers(header_lines, rule.credential.as_ref())?;
     let Some(credential) = &rule.credential else {
@@ -78,7 +142,8 @@ fn apply_credential_injection(
             "credential-bearing caller header denied by egress policy",
         ));
     }
-    let Some(secret) = credential_store.get(&credential.credential_ref) else {
+    let Some(secret) = credential_provider.resolve_credential_secret(&credential.credential_ref)
+    else {
         return Err(HttpProxyResponse::forbidden(
             "credential injection failed closed: credential material is unavailable",
         ));
@@ -107,7 +172,9 @@ fn deny_unapproved_credential_headers(
         if !approved
             && (name.eq_ignore_ascii_case("authorization")
                 || name.eq_ignore_ascii_case("proxy-authorization")
-                || name.eq_ignore_ascii_case("cookie"))
+                || name.eq_ignore_ascii_case("cookie")
+                || credential
+                    .is_some_and(|credential| name.eq_ignore_ascii_case(&credential.header_name)))
         {
             return Err(HttpProxyResponse::forbidden(
                 "credential-bearing caller header denied by egress policy",
@@ -118,10 +185,9 @@ fn deny_unapproved_credential_headers(
 }
 
 fn enforce_dlp_rules(
-    client: &mut TcpStream,
-    buffer: &mut Vec<u8>,
     parsed: &ParsedProxyRequest,
     dlp_rules: &[EgressDlpRule],
+    inspected_body: Option<Vec<u8>>,
 ) -> std::result::Result<Option<Vec<u8>>, HttpProxyResponse> {
     if dlp_rules.is_empty() {
         return Ok(None);
@@ -131,12 +197,14 @@ fn enforce_dlp_rules(
             "DLP inspection input unavailable for CONNECT tunnels",
         ));
     }
-    // Reuse the Content-Length that `request.rs` already parsed and validated
-    // (it rejects non-numeric and conflicting headers at parse time), instead of
-    // re-parsing the header lines here. (egress audit L2.)
     let content_length = parsed.content_length.ok_or_else(|| {
         HttpProxyResponse::forbidden("DLP inspection input unavailable: missing Content-Length")
     })?;
+    if content_length > nimbus_egress::MAX_DLP_INSPECTION_BYTES {
+        return Err(HttpProxyResponse::forbidden(
+            "DLP inspection input exceeds the proxy inspection cap",
+        ));
+    }
     if dlp_rules
         .iter()
         .any(|rule| content_length > rule.max_inspection_bytes)
@@ -145,7 +213,11 @@ fn enforce_dlp_rules(
             "DLP inspection input truncated by max_inspection_bytes",
         ));
     }
-    let body = read_exact_request_body(client, buffer, parsed.body_offset, content_length)?;
+    let Some(body) = inspected_body else {
+        return Err(HttpProxyResponse::forbidden(
+            "DLP inspection input unavailable while reading body",
+        ));
+    };
     for rule in dlp_rules {
         if contains_bytes(&body, rule.pattern.as_bytes()) {
             return Err(HttpProxyResponse::forbidden(&format!(
@@ -155,29 +227,6 @@ fn enforce_dlp_rules(
         }
     }
     Ok(Some(body))
-}
-
-fn read_exact_request_body(
-    client: &mut TcpStream,
-    buffer: &mut Vec<u8>,
-    body_offset: usize,
-    content_length: usize,
-) -> std::result::Result<Vec<u8>, HttpProxyResponse> {
-    while buffer.len().saturating_sub(body_offset) < content_length {
-        let mut chunk = [0_u8; 1024];
-        let read = client.read(&mut chunk).map_err(|_| {
-            HttpProxyResponse::forbidden("DLP inspection input unavailable while reading body")
-        })?;
-        if read == 0 {
-            return Err(HttpProxyResponse::forbidden(
-                "DLP inspection input unavailable: client closed early",
-            ));
-        }
-        buffer.extend_from_slice(&chunk[..read]);
-    }
-    let mut body = buffer[body_offset..].to_vec();
-    body.truncate(content_length);
-    Ok(body)
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
