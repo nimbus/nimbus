@@ -675,6 +675,8 @@ async fn handle_client(
                         credential_provider: context.credential_provider.as_ref(),
                         tls_authority,
                         phase_recorder: &phase_recorder,
+                        decision_logger: &context.decision_logger,
+                        policy_generation: active_policy.policy_generation,
                         connect_timeout: context.connect_timeout,
                         io_timeout: context.io_timeout,
                     },
@@ -692,7 +694,12 @@ async fn handle_client(
                     )
                     .with_policy_generation(active_policy.policy_generation),
                 };
-                emit_terminal_log(&phase_recorder, &context.decision_logger, decision_log);
+                // Client-visible denies inside the intercept path emit their
+                // terminal log BEFORE writing the response (log-before-respond,
+                // matching `deny_terminal`); skip re-emission for those.
+                if !phase_recorder.terminal_recorded() {
+                    emit_terminal_log(&phase_recorder, &context.decision_logger, decision_log);
+                }
                 Ok(())
             }
         },

@@ -15,13 +15,14 @@ use crate::body::{
     stream_content_length_body, timeout_io,
 };
 use crate::credentials::CredentialSecretProvider;
-use crate::decision_log::EgressDecisionLog;
+use crate::decision_log::{DecisionLogger, EgressDecisionLog};
 use crate::enforcement::{
     ProxyRequestEnforcementContext, prepare_proxy_request_enforcement,
     reject_unapproved_caller_credentials_for_rule,
 };
-use crate::phase::RequestPhaseRecorder;
+use crate::phase::{EgressProxyRequestPhase, RequestPhaseRecorder};
 use crate::pingora_io::PrereadStream;
+use crate::policy_state::PolicyGeneration;
 use crate::request::{ParsedProxyRequest, ProxyRequestMode};
 use crate::response::{HttpProxyResponse, write_http_response_async};
 use crate::tls_authority::EgressProxyTlsAuthority;
@@ -58,8 +59,22 @@ pub(crate) struct HttpsInterceptContext<'a> {
     pub(crate) credential_provider: &'a dyn CredentialSecretProvider,
     pub(crate) tls_authority: &'a EgressProxyTlsAuthority,
     pub(crate) phase_recorder: &'a RequestPhaseRecorder,
+    pub(crate) decision_logger: &'a DecisionLogger,
+    pub(crate) policy_generation: PolicyGeneration,
     pub(crate) connect_timeout: Duration,
     pub(crate) io_timeout: Duration,
+}
+
+/// Records the terminal phase and emits the decision log BEFORE any
+/// client-visible response bytes, matching the plaintext `deny_terminal`
+/// ordering: a denial is never observable by the client before it is logged.
+/// Sets `terminal_recorded`, so the worker's post-intercept emit (and the
+/// abort guard) skip re-emission.
+fn emit_inner_terminal(context: &HttpsInterceptContext<'_>, decision_log: &EgressDecisionLog) {
+    context
+        .phase_recorder
+        .record(EgressProxyRequestPhase::TerminalLog);
+    (context.decision_logger)(decision_log.clone());
 }
 
 pub(crate) async fn intercept_connect_h1(
@@ -104,13 +119,15 @@ pub(crate) async fn intercept_connect_h1(
     let mut inner_buffer = Vec::new();
     if let Err(response) = read_inner_h1_headers(&mut client_tls, &mut inner_buffer, &context).await
     {
-        let reason = response.body().to_owned();
-        let _ = write_http_response_async(&mut client_tls, response).await;
-        return Ok(connect_denied_log(
+        let decision_log = connect_denied_log(
             context.parsed_connect,
-            reason,
-            context.outer_matched_rule,
-        ));
+            response.body().to_owned(),
+            context.outer_matched_rule.clone(),
+        )
+        .with_policy_generation(context.policy_generation);
+        emit_inner_terminal(&context, &decision_log);
+        let _ = write_http_response_async(&mut client_tls, response).await;
+        return Ok(decision_log);
     }
     let inner = match parse_intercepted_h1_request(
         &inner_buffer,
@@ -119,13 +136,15 @@ pub(crate) async fn intercept_connect_h1(
     ) {
         Ok(inner) => inner,
         Err(response) => {
-            let reason = response.body().to_owned();
-            let _ = write_http_response_async(&mut client_tls, response).await;
-            return Ok(connect_denied_log(
+            let decision_log = connect_denied_log(
                 context.parsed_connect,
-                reason,
-                context.outer_matched_rule,
-            ));
+                response.body().to_owned(),
+                context.outer_matched_rule.clone(),
+            )
+            .with_policy_generation(context.policy_generation);
+            emit_inner_terminal(&context, &decision_log);
+            let _ = write_http_response_async(&mut client_tls, response).await;
+            return Ok(decision_log);
         }
     };
 
@@ -137,6 +156,7 @@ pub(crate) async fn intercept_connect_h1(
     if !authorization.is_allowed() {
         let response = HttpProxyResponse::forbidden(authorization.reason());
         return write_inner_deny(
+            &context,
             &mut client_tls,
             &inner,
             response,
@@ -151,6 +171,7 @@ pub(crate) async fn intercept_connect_h1(
         &inner.header_lines,
     ) {
         return write_inner_deny(
+            &context,
             &mut client_tls,
             &inner,
             response,
@@ -173,6 +194,7 @@ pub(crate) async fn intercept_connect_h1(
         Ok(enforcement) => enforcement,
         Err(response) => {
             return write_inner_deny(
+                &context,
                 &mut client_tls,
                 &inner,
                 response,
@@ -199,6 +221,7 @@ pub(crate) async fn intercept_connect_h1(
                     Ok(body) => Some(body),
                     Err(response) => {
                         return write_inner_deny(
+                            &context,
                             &mut client_tls,
                             &inner,
                             response,
@@ -220,6 +243,7 @@ pub(crate) async fn intercept_connect_h1(
         Ok(prepared) => prepared,
         Err(response) => {
             return write_inner_deny(
+                &context,
                 &mut client_tls,
                 &inner,
                 response,
@@ -234,6 +258,7 @@ pub(crate) async fn intercept_connect_h1(
         && enforcement_buffer.len() > inner.body_offset
     {
         return write_inner_deny(
+            &context,
             &mut client_tls,
             &inner,
             HttpProxyResponse::bad_request(
@@ -251,6 +276,7 @@ pub(crate) async fn intercept_connect_h1(
         Ok(upstream_tls) => upstream_tls,
         Err(InterceptUpstreamError::Dial) => {
             return write_inner_deny(
+                &context,
                 &mut client_tls,
                 &inner,
                 HttpProxyResponse::bad_gateway(
@@ -262,6 +288,7 @@ pub(crate) async fn intercept_connect_h1(
         }
         Err(InterceptUpstreamError::Tls(error)) => {
             return write_inner_deny(
+                &context,
                 &mut client_tls,
                 &inner,
                 HttpProxyResponse::bad_gateway(&format!(
@@ -282,6 +309,7 @@ pub(crate) async fn intercept_connect_h1(
     .is_err()
     {
         return write_inner_deny(
+            &context,
             &mut client_tls,
             &inner,
             HttpProxyResponse::bad_gateway(
@@ -297,6 +325,7 @@ pub(crate) async fn intercept_connect_h1(
             .is_err()
         {
             return write_inner_deny(
+                &context,
                 &mut client_tls,
                 &inner,
                 HttpProxyResponse::bad_gateway(
@@ -318,6 +347,7 @@ pub(crate) async fn intercept_connect_h1(
         .is_err()
     {
         return write_inner_deny(
+            &context,
             &mut client_tls,
             &inner,
             HttpProxyResponse::bad_gateway(
@@ -332,6 +362,7 @@ pub(crate) async fn intercept_connect_h1(
         .is_err()
     {
         return write_inner_deny(
+            &context,
             &mut client_tls,
             &inner,
             HttpProxyResponse::bad_gateway(
@@ -347,6 +378,7 @@ pub(crate) async fn intercept_connect_h1(
             Ok(head) => head,
             Err(_) => {
                 return write_inner_deny(
+                    &context,
                     &mut client_tls,
                     &inner,
                     HttpProxyResponse::bad_gateway(
@@ -383,6 +415,7 @@ pub(crate) async fn intercept_connect_h1(
 }
 
 async fn write_inner_deny<W>(
+    context: &HttpsInterceptContext<'_>,
     client_tls: &mut W,
     parsed: &ParsedProxyRequest,
     response: HttpProxyResponse,
@@ -392,8 +425,11 @@ where
     W: AsyncWrite + Unpin,
 {
     let reason = response.body().to_owned();
+    let decision_log = EgressDecisionLog::denied(parsed, reason, matched_rule)
+        .with_policy_generation(context.policy_generation);
+    emit_inner_terminal(context, &decision_log);
     let _ = write_http_response_async(client_tls, response).await;
-    Ok(EgressDecisionLog::denied(parsed, reason, matched_rule))
+    Ok(decision_log)
 }
 
 #[derive(Debug)]
