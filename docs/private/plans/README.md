@@ -62,14 +62,6 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
 
 ### Phase 2 - Runtime, Filesystem, And WASM Substrates
 
-- `nimbus-fs-capability-wiring-plan.md` - `active`. Owns turning the NFS
-  capability model from mechanism into enforced default: grant-resolved
-  `FileSystemRc` construction (no ungated `default_file_system()` in live
-  wiring), `BlobStore::get_range` reads through a shared blocking bridge,
-  the resolver property/TOCTOU corpus, and the Node-compat absolute-symlink
-  confirmation. Successor to the completed
-  `archive/nimbus-isolate-filesystem-plan.md`, which holds the NimbusFS
-  history, the 2026-07-02 post-archive audit, and the punch-list provenance.
 - `wasmtime-backend-plan.md` - `active`. Owns the Wasmtime backend alongside the
   V8 backend: runtime-engine seam hardening, component model support, WIT
   interfaces, cooperative scheduling, module cache, and bundle-format extension.
