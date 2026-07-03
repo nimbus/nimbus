@@ -21,6 +21,25 @@ use deno_io::{
 };
 use deno_permissions::{CheckedPath, CheckedPathBuf};
 
+/// Ambient-root carve-out: a `PassthroughBackend` rooted at `/` has no
+/// boundary to protect — every real absolute path is already "inside" a root
+/// of `/`, so the cap-std sandbox is vacuous there. For that case this
+/// backend delegates the full operation surface to the ambient inner
+/// `RealFs`, which restores exact RealFs/Node parity (including absolute
+/// symlink creation and traversal). A backend rooted anywhere else keeps the
+/// strict cap-std-rooted behavior unchanged: absolute symlink targets are
+/// rejected at both creation and traversal, because there a real boundary
+/// exists and must hold. `FsCaps`/`CappedBackend` rights gating sits above
+/// this backend either way and is unaffected by which path a given root
+/// takes.
+macro_rules! ambient_root_delegate {
+    ($self:expr, $call:expr) => {
+        if $self.root.is_ambient_root() {
+            return $call;
+        }
+    };
+}
+
 #[derive(Debug, Clone)]
 pub struct PassthroughBackend {
     inner: deno_fs::RealFs,
@@ -249,6 +268,14 @@ impl RootCapability {
         }
     }
 
+    /// Whether this root has no boundary to protect: rooted at `/`, where
+    /// every real absolute path is already inside the root, so the cap-std
+    /// sandbox is vacuous and the ambient inner `RealFs` can own the full
+    /// operation surface instead.
+    fn is_ambient_root(&self) -> bool {
+        self.ambient_fallback_allowed
+    }
+
     fn virtual_path(&self, relative: PathBuf) -> PathBuf {
         if relative.as_os_str().is_empty() || relative == Path::new(".") {
             PathBuf::from("/")
@@ -422,6 +449,7 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn open_sync(&self, path: &CheckedPath<'_>, options: OpenOptions) -> FsResult<Rc<dyn File>> {
+        ambient_root_delegate!(self, self.inner.open_sync(path, options));
         let file = self.cap_file(path, options)?;
         Ok(self.deno_file(file, None))
     }
@@ -431,6 +459,7 @@ impl FileSystem for PassthroughBackend {
         path: CheckedPathBuf,
         options: OpenOptions,
     ) -> FsResult<Rc<dyn File>> {
+        ambient_root_delegate!(self, self.inner.open_async(path, options).await);
         let file = self.cap_file(&path.into_path_buf(), options)?;
         Ok(self.deno_file(file, None))
     }
@@ -441,6 +470,7 @@ impl FileSystem for PassthroughBackend {
         recursive: bool,
         mode: Option<u32>,
     ) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.mkdir_sync(path, recursive, mode));
         let relative = self.relative_path(path)?;
         let cap_path = self.root.cap_path(relative.as_path());
         if recursive {
@@ -470,6 +500,7 @@ impl FileSystem for PassthroughBackend {
 
     #[cfg(unix)]
     fn chmod_sync(&self, path: &CheckedPath<'_>, mode: u32) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.chmod_sync(path, mode));
         let relative = self.relative_path(path)?;
         self.root
             .dir
@@ -548,6 +579,7 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn remove_sync(&self, path: &CheckedPath<'_>, recursive: bool) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.remove_sync(path, recursive));
         let relative = self.relative_path(path)?;
         let cap_path = self.root.cap_path(relative.as_path());
         if recursive {
@@ -579,6 +611,7 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn copy_file_sync(&self, oldpath: &CheckedPath<'_>, newpath: &CheckedPath<'_>) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.copy_file_sync(oldpath, newpath));
         let oldpath = self.relative_path(oldpath)?;
         let newpath = self.relative_path(newpath)?;
         self.root
@@ -601,6 +634,7 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn cp_sync(&self, path: &CheckedPath<'_>, new_path: &CheckedPath<'_>) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.cp_sync(path, new_path));
         self.copy_tree(path, new_path)
     }
 
@@ -609,6 +643,7 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn stat_sync(&self, path: &CheckedPath<'_>) -> FsResult<FsStat> {
+        ambient_root_delegate!(self, self.inner.stat_sync(path));
         self.root.metadata(path).map(cap_metadata_to_fs_stat)
     }
 
@@ -617,6 +652,7 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn lstat_sync(&self, path: &CheckedPath<'_>) -> FsResult<FsStat> {
+        ambient_root_delegate!(self, self.inner.lstat_sync(path));
         self.root
             .symlink_metadata(path)
             .map(cap_metadata_to_fs_stat)
@@ -637,6 +673,7 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn realpath_sync(&self, path: &CheckedPath<'_>) -> FsResult<PathBuf> {
+        ambient_root_delegate!(self, self.inner.realpath_sync(path));
         let relative = self.relative_path(path)?;
         self.root
             .dir
@@ -650,6 +687,7 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn read_dir_sync(&self, path: &CheckedPath<'_>) -> FsResult<Vec<FsDirEntry>> {
+        ambient_root_delegate!(self, self.inner.read_dir_sync(path));
         let relative = self.relative_path(path)?;
         self.root
             .dir
@@ -659,6 +697,7 @@ impl FileSystem for PassthroughBackend {
     }
 
     async fn read_dir_async(&self, path: CheckedPathBuf) -> FsResult<FsReadDirRc> {
+        ambient_root_delegate!(self, self.inner.read_dir_async(path).await);
         let relative = self.relative_path(&path.into_path_buf())?;
         let read_dir = self
             .root
@@ -668,6 +707,7 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn rename_sync(&self, oldpath: &CheckedPath<'_>, newpath: &CheckedPath<'_>) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.rename_sync(oldpath, newpath));
         let oldpath = self.relative_path(oldpath)?;
         let newpath = self.relative_path(newpath)?;
         self.root
@@ -685,6 +725,7 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn rmdir_sync(&self, path: &CheckedPath<'_>) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.rmdir_sync(path));
         let relative = self.relative_path(path)?;
         self.root
             .dir
@@ -697,6 +738,7 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn link_sync(&self, oldpath: &CheckedPath<'_>, newpath: &CheckedPath<'_>) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.link_sync(oldpath, newpath));
         let oldpath = self.relative_path(oldpath)?;
         let newpath = self.relative_path(newpath)?;
         self.root
@@ -719,6 +761,7 @@ impl FileSystem for PassthroughBackend {
         newpath: &CheckedPath<'_>,
         file_type: Option<FsFileType>,
     ) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.symlink_sync(oldpath, newpath, file_type));
         ensure_relative_symlink_target(oldpath)?;
         let newpath = self.relative_path(newpath)?;
         #[cfg(not(windows))]
@@ -759,6 +802,7 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn read_link_sync(&self, path: &CheckedPath<'_>) -> FsResult<PathBuf> {
+        ambient_root_delegate!(self, self.inner.read_link_sync(path));
         let relative = self.relative_path(path)?;
         self.root
             .dir
@@ -771,6 +815,7 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn truncate_sync(&self, path: &CheckedPath<'_>, len: u64) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.truncate_sync(path, len));
         let relative = self.relative_path(path)?;
         let mut options = CapOpenOptions::new();
         options.write(true);
@@ -850,6 +895,7 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn exists_sync(&self, path: &CheckedPath<'_>) -> bool {
+        ambient_root_delegate!(self, self.inner.exists_sync(path));
         self.root.symlink_metadata(path).is_ok()
     }
 
