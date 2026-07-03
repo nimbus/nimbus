@@ -15,11 +15,14 @@ use tokio::io::{AsyncRead, ReadBuf};
 use super::checked;
 use crate::{CasBlobChunk, CasReadOnlyBackend, CasReadOnlyManifest};
 
+type RangeCallLog = Arc<Mutex<Vec<(BlobHash, Range<u64>)>>>;
+
 #[derive(Default)]
 struct TrackingBlobStore {
     inner: MemoryBlobStore,
     get_stream_calls: Arc<Mutex<Vec<BlobHash>>>,
     get_calls: Arc<Mutex<usize>>,
+    get_range_calls: RangeCallLog,
 }
 
 struct AccountingBlobStore {
@@ -42,12 +45,21 @@ impl TrackingBlobStore {
         self.get_stream_calls.lock().unwrap().clone()
     }
 
-    fn clear_stream_calls(&self) {
-        self.get_stream_calls.lock().unwrap().clear();
-    }
-
     fn get_call_count(&self) -> usize {
         *self.get_calls.lock().unwrap()
+    }
+
+    fn range_calls(&self) -> Vec<(BlobHash, Range<u64>)> {
+        self.get_range_calls.lock().unwrap().clone()
+    }
+
+    fn range_bytes_requested(&self) -> u64 {
+        self.get_range_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, range)| range.end - range.start)
+            .sum()
     }
 }
 
@@ -123,6 +135,10 @@ impl BlobStore for TrackingBlobStore {
     }
 
     async fn get_range(&self, hash: &BlobHash, range: Range<u64>) -> NimbusResult<Bytes> {
+        self.get_range_calls
+            .lock()
+            .unwrap()
+            .push((*hash, range.clone()));
         self.inner.get_range(hash, range).await
     }
 
@@ -167,7 +183,9 @@ impl BlobStore for AccountingBlobStore {
     async fn get_range(&self, hash: &BlobHash, range: Range<u64>) -> NimbusResult<Bytes> {
         self.range_calls.fetch_add(1, Ordering::SeqCst);
         assert_eq!(*hash, self.hash);
-        Ok(self.bytes.slice(range.start as usize..range.end as usize))
+        let slice = self.bytes.slice(range.start as usize..range.end as usize);
+        self.bytes_read.fetch_add(slice.len(), Ordering::SeqCst);
+        Ok(slice)
     }
 
     async fn has(&self, hash: &BlobHash) -> NimbusResult<bool> {
@@ -180,11 +198,15 @@ impl BlobStore for AccountingBlobStore {
 }
 
 fn put_test_blob(store: &TrackingBlobStore, bytes: &'static [u8]) -> BlobHash {
+    put_test_blob_bytes(store, Bytes::from_static(bytes))
+}
+
+fn put_test_blob_bytes(store: &TrackingBlobStore, bytes: Bytes) -> BlobHash {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap()
-        .block_on(store.put(Bytes::from_static(bytes)))
+        .block_on(store.put(bytes))
         .unwrap()
 }
 
@@ -230,22 +252,26 @@ fn cas_ro_partial_read_does_not_drain_whole_blob_stream() {
 
     assert_eq!(nread, buf.len());
     assert_eq!(&buf, b"xxxxxxxx");
-    assert_eq!(store.stream_calls(), 1);
-    assert_eq!(store.get_calls(), 0, "CAS-RO must not use BlobStore::get");
     assert_eq!(
         store.range_calls(),
-        0,
-        "CAS-RO range reads stay on BlobStore::get_stream"
+        1,
+        "a single positional read is a single BlobStore::get_range call"
     );
     assert_eq!(
+        store.stream_calls(),
+        0,
+        "CAS-RO must not fall back to BlobStore::get_stream"
+    );
+    assert_eq!(store.get_calls(), 0, "CAS-RO must not use BlobStore::get");
+    assert_eq!(
         store.bytes_read(),
-        position as usize + buf.len(),
-        "CAS-RO must drain only the skipped prefix plus the requested window"
+        buf.len(),
+        "get_range must transfer only the requested window, not a skipped prefix"
     );
 }
 
 #[test]
-fn cas_ro_reads_multi_blob_file_from_get_stream() {
+fn cas_ro_reads_multi_blob_file_from_get_range() {
     let (store, backend, first, second) = cas_ro_fixture();
 
     let data = backend
@@ -253,7 +279,20 @@ fn cas_ro_reads_multi_blob_file_from_get_stream() {
         .unwrap();
 
     assert_eq!(data.as_ref(), b"hello world");
-    assert_eq!(store.stream_calls(), vec![first, second]);
+    assert_eq!(
+        store
+            .range_calls()
+            .into_iter()
+            .map(|(hash, _)| hash)
+            .collect::<Vec<_>>(),
+        vec![first, second],
+        "a whole-file read fetches each overlapping chunk once via get_range"
+    );
+    assert_eq!(
+        store.stream_calls(),
+        Vec::<BlobHash>::new(),
+        "CAS-RO must not use BlobStore::get_stream"
+    );
     assert_eq!(
         store.get_call_count(),
         0,
@@ -264,7 +303,6 @@ fn cas_ro_reads_multi_blob_file_from_get_stream() {
 #[test]
 fn cas_ro_partial_read_streams_only_overlapping_blob() {
     let (store, backend, _first, second) = cas_ro_fixture();
-    store.clear_stream_calls();
     let file = backend
         .open_sync(&checked(Path::new("/bundle/app.txt")), OpenOptions::read())
         .unwrap();
@@ -275,7 +313,11 @@ fn cas_ro_partial_read_streams_only_overlapping_blob() {
     assert_eq!(nread, 3);
     assert_eq!(&buf, b"wor");
     assert_eq!(
-        store.stream_calls(),
+        store
+            .range_calls()
+            .into_iter()
+            .map(|(hash, _)| hash)
+            .collect::<Vec<_>>(),
         vec![second],
         "partial reads fetch only overlapping blob chunks"
     );
@@ -359,4 +401,97 @@ fn cas_ro_rejects_every_mutation_with_erofs() {
             "unexpected {label} error: {error}"
         );
     }
+}
+
+#[test]
+fn sequential_chunked_reads_transfer_o_of_requested_bytes() {
+    // Five 64KiB chunks (320KiB total), each filled with a distinct byte so
+    // reads across chunk boundaries can be verified for correctness, not
+    // just cost.
+    const CHUNK_LEN: usize = 64 * 1024;
+    const CHUNK_COUNT: usize = 5;
+    let chunks: Vec<Bytes> = (0..CHUNK_COUNT)
+        .map(|i| Bytes::from(vec![i as u8; CHUNK_LEN]))
+        .collect();
+
+    let store = Arc::new(TrackingBlobStore::default());
+    let mut manifest_chunks = Vec::new();
+    for chunk in &chunks {
+        let hash = put_test_blob_bytes(&store, chunk.clone());
+        manifest_chunks.push(CasBlobChunk::new(hash, chunk.len() as u64));
+    }
+    let manifest = CasReadOnlyManifest::new()
+        .add_file("/sequential.bin", manifest_chunks, 0o444)
+        .unwrap();
+    let backend = CasReadOnlyBackend::new(store.clone(), manifest);
+    let file = backend
+        .open_sync(&checked(Path::new("/sequential.bin")), OpenOptions::read())
+        .unwrap();
+
+    // 64 sequential reads of 4KiB each, covering the first 256KiB — crossing
+    // a chunk boundary every 16 reads (64KiB / 4KiB).
+    const WINDOW: usize = 4096;
+    const READS: usize = 64;
+    let mut buf = [0_u8; WINDOW];
+    for i in 0..READS {
+        let position = (i * WINDOW) as u64;
+        let nread = file.clone().read_at_sync(&mut buf, position).unwrap();
+        assert_eq!(nread, WINDOW);
+        let expected_chunk = (i * WINDOW) / CHUNK_LEN;
+        assert!(
+            buf.iter().all(|byte| *byte == expected_chunk as u8),
+            "read at position {position} crossed into unexpected chunk content"
+        );
+    }
+
+    let requested_total = (READS * WINDOW) as u64;
+    let bytes_transferred = store.range_bytes_requested();
+
+    assert_eq!(
+        bytes_transferred, requested_total,
+        "get_range assembly must transfer exactly the requested bytes, not O(reads * offset)"
+    );
+    // The exact-equality assertion above is strictly stronger than this, but
+    // this is the bound the FCW2 spec calls out explicitly.
+    assert!(
+        bytes_transferred < requested_total * 2,
+        "bytes transferred must stay within 2x the requested total"
+    );
+    assert_eq!(
+        store.get_call_count(),
+        0,
+        "sequential chunked reads must not use BlobStore::get"
+    );
+    assert_eq!(
+        store.stream_calls(),
+        Vec::<BlobHash>::new(),
+        "sequential chunked reads must not use BlobStore::get_stream (the O(n^2) reopen+skip path)"
+    );
+}
+
+#[test]
+fn dropping_file_mid_sequence_does_not_poison_shared_bridge_runtime() {
+    let (_store, backend, _first, _second) = cas_ro_fixture();
+    {
+        let file = backend
+            .open_sync(&checked(Path::new("/bundle/app.txt")), OpenOptions::read())
+            .unwrap();
+        let mut buf = [0_u8; 3];
+        let nread = file.read_at_sync(&mut buf, 0).unwrap();
+        assert_eq!(nread, 3);
+        assert_eq!(&buf, b"hel");
+        // `file` (and the Rc it wraps) is dropped here, mid-sequence, before
+        // the rest of "/bundle/app.txt" is ever read.
+    }
+
+    // A fresh handle proves the shared bridge runtime (a process-lifetime
+    // `OnceLock` singleton) is still alive and serviceable after a `File` is
+    // dropped mid-read: it does not require one runtime per `File`, and
+    // dropping a `File` early does not poison or shut down the runtime that
+    // earlier reads used.
+    let file = backend
+        .open_sync(&checked(Path::new("/bundle/app.txt")), OpenOptions::read())
+        .unwrap();
+    let data = file.read_all_sync().unwrap();
+    assert_eq!(data.as_ref(), b"hello world");
 }

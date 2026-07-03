@@ -21,6 +21,7 @@ use std::rc::Rc;
 use std::sync::Mutex;
 
 pub mod backend;
+mod bridge;
 pub mod cache;
 pub mod caps;
 pub mod cas_ro;

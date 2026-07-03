@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::future::Future;
 use std::io;
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
@@ -13,8 +12,9 @@ use deno_fs::sync::MaybeArc;
 use deno_fs::{FileSystem, FsDirEntry, FsFileType, FsReadDir, FsReadDirRc, OpenOptions};
 use deno_io::fs::{File, FsError, FsResult, FsStat, FsStatFs};
 use deno_permissions::{CheckedPath, CheckedPathBuf};
-use nimbus_blob::{BlobHash, BlobStore, ByteStream};
-use tokio::io::AsyncReadExt;
+use nimbus_blob::{BlobHash, BlobStore};
+
+use crate::bridge::block_on_byte_plane;
 
 #[derive(Clone)]
 pub struct CasReadOnlyBackend {
@@ -121,29 +121,39 @@ impl CasReadOnlyBackend {
         Ok(written)
     }
 
+    /// Reads a bounded byte window of `hash` through `BlobStore::get_range`.
+    ///
+    /// CAS reads previously used `BlobStore::get_stream` plus a byte-skip
+    /// loop per read (`skip_stream_bytes`/`read_exact_window`): every
+    /// positional read re-opened the stream and drained it from offset zero,
+    /// making sequential chunked reads O(n^2) in the read offset. FCW2
+    /// replaced that with `BlobStore::get_range`, which serves any
+    /// positional window in one call without re-opening or re-draining
+    /// anything ahead of the requested bytes.
     fn read_blob_range(&self, hash: &BlobHash, range: Range<u64>) -> FsResult<Vec<u8>> {
         let len = range
             .end
             .checked_sub(range.start)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid CAS read range"))?;
-        let len = usize::try_from(len).map_err(|_| {
-            io::Error::new(
+        if usize::try_from(len).is_err() {
+            return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "CAS read range does not fit in memory",
             )
-        })?;
+            .into());
+        }
         if len == 0 {
             return Ok(Vec::new());
         }
         let store = self.store.clone();
         let hash = *hash;
-        block_on_blob(async move {
-            let mut stream = store.get_stream(&hash).await.map_err(blob_error)?;
-            skip_stream_bytes(&mut stream, range.start).await?;
-            let mut bytes = vec![0; len];
-            read_exact_window(&mut stream, &mut bytes).await?;
-            Ok(bytes)
-        })
+        let bytes = block_on_byte_plane(async move {
+            store
+                .get_range(&hash, range)
+                .await
+                .map_err(|error| blob_error(error).into())
+        })?;
+        Ok(bytes.to_vec())
     }
 
     fn readonly<T>(&self) -> FsResult<T> {
@@ -882,63 +892,5 @@ fn blob_error(error: nimbus_core::Error) -> io::Error {
     match error {
         nimbus_core::Error::NotFound(message) => io::Error::new(io::ErrorKind::NotFound, message),
         other => io::Error::other(other.to_string()),
-    }
-}
-
-async fn skip_stream_bytes(stream: &mut ByteStream, mut remaining: u64) -> io::Result<()> {
-    let mut scratch = [0_u8; 8192];
-    while remaining > 0 {
-        let len = remaining.min(scratch.len() as u64) as usize;
-        let nread = stream
-            .read(&mut scratch[..len])
-            .await
-            .map_err(|error| io::Error::other(format!("skip CAS blob stream: {error}")))?;
-        if nread == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "CAS blob stream ended before requested range",
-            ));
-        }
-        remaining -= nread as u64;
-    }
-    Ok(())
-}
-
-async fn read_exact_window(stream: &mut ByteStream, output: &mut [u8]) -> io::Result<()> {
-    let mut written = 0usize;
-    while written < output.len() {
-        let nread = stream
-            .read(&mut output[written..])
-            .await
-            .map_err(|error| io::Error::other(format!("read CAS blob stream: {error}")))?;
-        if nread == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "CAS blob stream ended before requested range",
-            ));
-        }
-        written += nread;
-    }
-    Ok(())
-}
-
-fn block_on_blob<T, F>(future: F) -> FsResult<T>
-where
-    T: Send + 'static,
-    F: Future<Output = FsResult<T>> + Send + 'static,
-{
-    let runner = move || {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| io::Error::other(format!("build CAS runtime: {error}")))?
-            .block_on(future)
-    };
-    if tokio::runtime::Handle::try_current().is_ok() {
-        std::thread::spawn(runner)
-            .join()
-            .map_err(|_| io::Error::other("CAS stream thread panicked"))?
-    } else {
-        runner()
     }
 }
