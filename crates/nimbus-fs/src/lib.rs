@@ -58,7 +58,7 @@ impl NimbusFs {
     where
         B: NimbusFsBackend + 'static,
     {
-        Self::with_backend_rc(MaybeArc::new(backend), configured_process_cwd())
+        Self::with_backend_rc(MaybeArc::new(backend), PathBuf::from("/"))
     }
 
     pub fn with_cwd<B>(backend: B, cwd: impl Into<PathBuf>) -> Self
@@ -140,10 +140,6 @@ impl NimbusFs {
     fn virtualize_backend_path(&self, resolved: &ResolvedPath, backend_path: PathBuf) -> PathBuf {
         resolver::virtual_path_for_backend(&resolved.mount_prefix, &backend_path)
     }
-}
-
-fn configured_process_cwd() -> PathBuf {
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
 }
 
 pub fn default_file_system() -> io::Result<deno_fs::FileSystemRc> {

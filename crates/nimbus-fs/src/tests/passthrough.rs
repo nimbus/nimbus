@@ -50,6 +50,13 @@ fn passthrough_round_trip_matches_realfs_for_common_operations() {
 }
 
 #[test]
+fn default_nimbusfs_cwd_is_configured_root_not_process_cwd() {
+    let fs = NimbusFs::new(passthrough_backend());
+
+    assert_eq!(fs.cwd().unwrap(), PathBuf::from("/"));
+}
+
+#[test]
 fn chdir_is_instance_local_and_does_not_touch_process_cwd() {
     let original = std::env::current_dir().unwrap();
     let a = tempfile::tempdir().unwrap();

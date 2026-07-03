@@ -49,10 +49,15 @@ any_plan_file() {
 }
 
 check_plan_exists() {
-  if any_plan_file >/dev/null; then
-    pass "plan file exists at active or archived path"
+  local plan
+  plan="$(any_plan_file 2>/dev/null || true)"
+  if test -n "$plan" \
+    && grep_file "^## Plan Outcome$" "$plan" \
+    && grep_file "^## Autonomous /goal Prompt$" "$plan" \
+    && grep_file "^## Control-Plane Acceptance Summary$" "$plan"; then
+    pass "plan file exists with outcome, autonomous goal, and acceptance summary"
   else
-    fail "plan file missing from active and archived paths"
+    fail "plan file missing or lacks outcome/autonomous goal/acceptance summary"
   fi
 }
 
@@ -61,10 +66,10 @@ check_routing_entries() {
   plan="$(any_plan_file 2>/dev/null || true)"
   if has_file "AGENTS.md" \
     && has_file "docs/private/plans/README.md" \
-    && grep_file "nimbus-isolate-filesystem-plan\\.md|nimbus-isolate-filesystem" "AGENTS.md" \
-    && grep_file "nimbus-isolate-filesystem-plan\\.md|NimbusFS|NFS0" "docs/private/plans/README.md" \
+    && grep_file "docs/private/plans/README\\.md|Active implementation order|Private control-plane routing" "AGENTS.md" \
+    && grep_file "nimbus-isolate-filesystem-plan\\.md|NimbusFS|NFS" "docs/private/plans/README.md" \
     && { test -z "$plan" || grep_file "scripts/verify-nimbus-isolate-filesystem\\.sh" "$plan"; }; then
-    pass "routing entries name the NFS plan and verifier"
+    pass "routing entries name the NFS plan or route through the private plan index"
   else
     fail "routing entries missing from AGENTS.md, docs/private/plans/README.md, or the plan"
   fi
@@ -97,7 +102,7 @@ check_direct_bypass_scan() {
     crates/nimbus-runtime/src/fs crates/nimbus-runtime/src/runtime/bootstrap/ops/runtime_local \
     crates/nimbus-server/src/execution/invocations \
     --glob '*.rs' 2>/dev/null \
-    | grep -Ev 'crates/nimbus-fs/src/(passthrough|tests|test_support|memfs|cas_ro|cache)\\.rs|crates/nimbus-fs/src/.*/tests\\.rs' \
+    | grep -Ev 'crates/nimbus-fs/src/(passthrough|test_support|memfs|cas_ro|cache)\\.rs|crates/nimbus-fs/src/tests/|crates/nimbus-fs/src/.*/tests\\.rs' \
     || true)"
   test -z "$findings"
 }
@@ -113,8 +118,9 @@ check_nfs1() {
     && grep_file "RootCapability" "crates/nimbus-fs/src/passthrough.rs" \
     && grep_file "cap_std::fs::Dir|Dir as CapDir" "crates/nimbus-fs/src/passthrough.rs" \
     && grep_file "cap-std" "crates/nimbus-fs/Cargo.toml" \
-    && grep_file "raw_passthrough_chdir_does_not_touch_process_cwd" "crates/nimbus-fs/src/tests.rs" \
-    && grep_file "rooted_passthrough_rejects_parent_escape_before_create" "crates/nimbus-fs/src/tests.rs" \
+    && grep_file "raw_passthrough_chdir_does_not_touch_process_cwd" "crates/nimbus-fs/src/tests/passthrough.rs" \
+    && grep_file "rooted_passthrough_rejects_parent_escape_before_create" "crates/nimbus-fs/src/tests/passthrough.rs" \
+    && grep_file "default_nimbusfs_cwd_is_configured_root_not_process_cwd" "crates/nimbus-fs/src/tests/passthrough.rs" \
     && ! grep_file "MaybeArc::new\\(deno_fs::RealFs\\)" "crates/nimbus-runtime/src/runtime/bootstrap/extensions.rs" \
     && grep_file "file_system\\(\\)" "crates/nimbus-runtime/src/runtime/driver/construction.rs" \
     && check_direct_bypass_scan \
@@ -148,6 +154,8 @@ check_nfs3() {
     && grep_file "CasReadOnlyBackend" "crates/nimbus-fs/src/cas_ro.rs" \
     && grep_file "BlobStore" "crates/nimbus-fs/src/cas_ro.rs" \
     && grep_file "get_stream" "crates/nimbus-fs/src/cas_ro.rs" \
+    && grep_file "skip_stream_bytes|read_exact_window" "crates/nimbus-fs/src/cas_ro.rs" \
+    && ! grep_file "read_to_end" "crates/nimbus-fs/src/cas_ro.rs" \
     && grep_file "EROFS|ReadOnly" "crates/nimbus-fs/src/cas_ro.rs" \
     && has_file "$PROOF_DIR/nfs3-cas-ro.md"; then
     pass "NFS3 CAS read-only backend consumes BlobStore::get_stream and records proof"
@@ -180,7 +188,9 @@ check_nfs5() {
     && grep_file "FilePerms" "crates/nimbus-fs/src/wasi.rs" \
     && grep_file "WRITE" "crates/nimbus-fs/src/wasi.rs" \
     && grep_file "cross.*binder|binder.*consistency" "crates/nimbus-fs/src/wasi.rs" \
-    && has_file "$PROOF_DIR/nfs5-wasi-binder.md"; then
+    && has_file "$PROOF_DIR/nfs5-wasi-binder.md" \
+    && grep_file "hardlink/rename" "$PROOF_DIR/nfs5-wasi-binder.md" \
+    && grep_file "Wasmtime/WAC" "$PROOF_DIR/nfs5-wasi-binder.md"; then
     pass "NFS5 WASI preopen binder maps FsCaps to DirPerms/FilePerms"
   else
     fail "NFS5 WASI binder/proof condition is incomplete"
@@ -190,9 +200,10 @@ check_nfs5() {
 check_nfs6() {
   if has_file "crates/nimbus-fs/src/backend.rs" \
     && has_file "crates/nimbus-fs/src/cache.rs" \
+    && has_file "crates/nimbus-fs/src/object/mod.rs" \
     && grep_file "BackendRegistry|register" "crates/nimbus-fs/src/backend.rs" \
-    && grep_file "ObjectRwBackend" "crates/nimbus-fs/src/backend.rs" \
-    && grep_file "random write|hardlink|symlink|directory rename|unsupported" "crates/nimbus-fs/src/backend.rs" \
+    && grep_file "ObjectRwBackend" "crates/nimbus-fs/src/object/mod.rs" \
+    && grep_file "random write|hardlink|symlink|directory rename|unsupported" "crates/nimbus-fs/src/object/mod.rs" \
     && grep_file "evict|cache hit|Cache" "crates/nimbus-fs/src/cache.rs" \
     && has_file "$PROOF_DIR/nfs6-backend-slot.md"; then
     pass "NFS6 registration ABI, cache, object-store slot, and proof are present"
@@ -210,7 +221,7 @@ check_nfs7() {
     && grep_file "FsCaps" "docs/private/operating/nimbus-isolate-filesystem.md" \
     && grep_file "container substrates use the sandbox bundle|sandbox bundle" "docs/private/operating/nimbus-isolate-filesystem.md" \
     && test -n "$plan" \
-    && ! grep -Eq '\\| NFS[0-7] \\|.*\\| (todo|in_progress|blocked)' "$plan" \
+    && ! grep -Eq '^\| NFS[0-7] \|.*\| (todo|in_progress|blocked)' "$plan" \
     && grep_file "CI.*green" "$PROOF_DIR/nfs7-closeout.md"; then
     pass "NFS7 operator doc, closed ledger, and closeout proof are present"
   else

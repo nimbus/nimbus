@@ -1,12 +1,16 @@
 use std::io;
 use std::ops::Range;
 use std::path::Path;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use deno_fs::{FileSystem, OpenOptions};
 use nimbus_blob::{BlobHash, BlobStore, ByteStream, MemoryBlobStore};
-use nimbus_core::Result as NimbusResult;
+use nimbus_core::{Error, Result as NimbusResult, StorageErrorKind};
+use tokio::io::{AsyncRead, ReadBuf};
 
 use super::checked;
 use crate::{CasBlobChunk, CasReadOnlyBackend, CasReadOnlyManifest};
@@ -16,6 +20,21 @@ struct TrackingBlobStore {
     inner: MemoryBlobStore,
     get_stream_calls: Arc<Mutex<Vec<BlobHash>>>,
     get_calls: Arc<Mutex<usize>>,
+}
+
+struct AccountingBlobStore {
+    hash: BlobHash,
+    bytes: Bytes,
+    stream_calls: AtomicUsize,
+    get_calls: AtomicUsize,
+    range_calls: AtomicUsize,
+    bytes_read: Arc<AtomicUsize>,
+}
+
+struct AccountingStream {
+    bytes: Bytes,
+    position: usize,
+    bytes_read: Arc<AtomicUsize>,
 }
 
 impl TrackingBlobStore {
@@ -29,6 +48,57 @@ impl TrackingBlobStore {
 
     fn get_call_count(&self) -> usize {
         *self.get_calls.lock().unwrap()
+    }
+}
+
+impl AccountingBlobStore {
+    fn new(bytes: Bytes) -> Self {
+        Self {
+            hash: BlobHash::of(bytes.as_ref()),
+            bytes,
+            stream_calls: AtomicUsize::new(0),
+            get_calls: AtomicUsize::new(0),
+            range_calls: AtomicUsize::new(0),
+            bytes_read: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn hash(&self) -> BlobHash {
+        self.hash
+    }
+
+    fn stream_calls(&self) -> usize {
+        self.stream_calls.load(Ordering::SeqCst)
+    }
+
+    fn get_calls(&self) -> usize {
+        self.get_calls.load(Ordering::SeqCst)
+    }
+
+    fn range_calls(&self) -> usize {
+        self.range_calls.load(Ordering::SeqCst)
+    }
+
+    fn bytes_read(&self) -> usize {
+        self.bytes_read.load(Ordering::SeqCst)
+    }
+}
+
+impl AsyncRead for AccountingStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        if self.position >= self.bytes.len() || buf.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        let len = (self.bytes.len() - self.position).min(buf.remaining());
+        let end = self.position + len;
+        buf.put_slice(&self.bytes[self.position..end]);
+        self.position = end;
+        self.bytes_read.fetch_add(len, Ordering::SeqCst);
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -65,6 +135,50 @@ impl BlobStore for TrackingBlobStore {
     }
 }
 
+#[async_trait::async_trait]
+impl BlobStore for AccountingBlobStore {
+    async fn put(&self, bytes: Bytes) -> NimbusResult<BlobHash> {
+        Ok(BlobHash::of(bytes.as_ref()))
+    }
+
+    async fn put_stream(&self, _src: ByteStream) -> NimbusResult<BlobHash> {
+        Err(Error::storage(
+            StorageErrorKind::Unavailable,
+            "accounting store does not accept writes",
+        ))
+    }
+
+    async fn get(&self, hash: &BlobHash) -> NimbusResult<Bytes> {
+        self.get_calls.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(*hash, self.hash);
+        Ok(self.bytes.clone())
+    }
+
+    async fn get_stream(&self, hash: &BlobHash) -> NimbusResult<ByteStream> {
+        self.stream_calls.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(*hash, self.hash);
+        Ok(Box::new(AccountingStream {
+            bytes: self.bytes.clone(),
+            position: 0,
+            bytes_read: self.bytes_read.clone(),
+        }))
+    }
+
+    async fn get_range(&self, hash: &BlobHash, range: Range<u64>) -> NimbusResult<Bytes> {
+        self.range_calls.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(*hash, self.hash);
+        Ok(self.bytes.slice(range.start as usize..range.end as usize))
+    }
+
+    async fn has(&self, hash: &BlobHash) -> NimbusResult<bool> {
+        Ok(*hash == self.hash)
+    }
+
+    async fn release(&self, _hash: &BlobHash) -> NimbusResult<()> {
+        Ok(())
+    }
+}
+
 fn put_test_blob(store: &TrackingBlobStore, bytes: &'static [u8]) -> BlobHash {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -92,6 +206,42 @@ fn cas_ro_fixture() -> (
         .unwrap();
     let backend = CasReadOnlyBackend::new(store.clone(), manifest);
     (store, backend, first, second)
+}
+
+#[test]
+fn cas_ro_partial_read_does_not_drain_whole_blob_stream() {
+    let payload = Bytes::from(vec![b'x'; 1024 * 1024]);
+    let store = Arc::new(AccountingBlobStore::new(payload.clone()));
+    let manifest = CasReadOnlyManifest::new()
+        .add_file(
+            "/large.bin",
+            vec![CasBlobChunk::new(store.hash(), payload.len() as u64)],
+            0o444,
+        )
+        .unwrap();
+    let backend = CasReadOnlyBackend::new(store.clone(), manifest);
+    let file = backend
+        .open_sync(&checked(Path::new("/large.bin")), OpenOptions::read())
+        .unwrap();
+    let mut buf = [0_u8; 8];
+    let position = 4096;
+
+    let nread = file.read_at_sync(&mut buf, position).unwrap();
+
+    assert_eq!(nread, buf.len());
+    assert_eq!(&buf, b"xxxxxxxx");
+    assert_eq!(store.stream_calls(), 1);
+    assert_eq!(store.get_calls(), 0, "CAS-RO must not use BlobStore::get");
+    assert_eq!(
+        store.range_calls(),
+        0,
+        "CAS-RO range reads stay on BlobStore::get_stream"
+    );
+    assert_eq!(
+        store.bytes_read(),
+        position as usize + buf.len(),
+        "CAS-RO must drain only the skipped prefix plus the requested window"
+    );
 }
 
 #[test]
