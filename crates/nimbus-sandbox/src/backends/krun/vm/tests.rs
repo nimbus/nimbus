@@ -1,6 +1,17 @@
 mod support;
 use support::*;
 
+use nimbus_egress::{EGRESS_CA_BUNDLE_ENV, EGRESS_NODE_EXTRA_CA_CERTS_ENV, EGRESS_PROXY_URL_ENV};
+
+fn env_from_config(config: &serde_json::Value) -> Vec<&str> {
+    config["process"]["env"]
+        .as_array()
+        .expect("env should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("env entries should be strings"))
+        .collect()
+}
+
 // KME4 readiness gate: the execute path no longer fails closed unconditionally;
 // it is gated immediately before the VMM launches and permits the launch IFF the
 // deny-by-default netns is installed AND the per-sandbox egress PEP is running
@@ -1381,6 +1392,74 @@ fn execute_egress_proxy_binds_bridge_gateway_after_published_ports() {
 }
 
 #[test]
+fn execute_plan_injects_proxy_env_and_workload_scoped_trust_anchor() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
+    config.published_port_range = 15000..=15002;
+    let backend = KrunSandboxBackend::new(config);
+    let sandbox_id = SandboxId::new("db-01");
+
+    let plan = backend
+        .plan_start_with_id(&sample_spec(), &sandbox_id, None, None)
+        .expect("execute krun plan should lower");
+
+    let egress_proxy = plan
+        .manifest
+        .egress_proxy
+        .as_ref()
+        .expect("execute krun plan should assign an egress proxy");
+    assert_eq!(egress_proxy.host, "10.0.0.1");
+    assert_eq!(egress_proxy.port, 15000);
+    let config: serde_json::Value = serde_json::from_slice(
+        &fs::read(&plan.manifest.bundle_layout.config_path).expect("bundle config should read"),
+    )
+    .expect("bundle config should parse");
+    let env = env_from_config(&config);
+    for expected in [
+        format!("{EGRESS_PROXY_URL_ENV}=http://10.0.0.1:15000"),
+        "HTTP_PROXY=http://10.0.0.1:15000".to_owned(),
+        "HTTPS_PROXY=http://10.0.0.1:15000".to_owned(),
+        "NO_PROXY=".to_owned(),
+        format!("{EGRESS_CA_BUNDLE_ENV}=/run/nimbus/egress/ca.pem"),
+        format!("{EGRESS_NODE_EXTRA_CA_CERTS_ENV}=/run/nimbus/egress/ca.pem"),
+    ] {
+        assert!(
+            env.contains(&expected.as_str()),
+            "execute krun bundle should carry proxy and trust env {expected:?}: {env:?}"
+        );
+    }
+
+    let trust_anchor_path = temp_dir
+        .path()
+        .join("state")
+        .join("egress-trust-anchors")
+        .join("tenant")
+        .join("db-01.pem");
+    assert!(
+        trust_anchor_path.is_file(),
+        "execute krun planning must materialize the deterministic trust-anchor mount source"
+    );
+    assert!(
+        fs::read_to_string(&trust_anchor_path)
+            .expect("trust-anchor placeholder should read")
+            .contains("placeholder"),
+        "the planner writes a placeholder that the live PEP overwrites before launch"
+    );
+    let mounts = config["mounts"]
+        .as_array()
+        .expect("mounts should be an array");
+    let trust_mount = mounts
+        .iter()
+        .find(|mount| mount["destination"] == "/run/nimbus/egress/ca.pem")
+        .expect("execute krun bundle should mount the trust anchor");
+    assert_eq!(trust_mount["type"], "bind");
+    assert_eq!(
+        trust_mount["source"].as_str(),
+        Some(trust_anchor_path.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
 fn plan_scopes_network_namespace_path_by_tenant() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
@@ -1447,6 +1526,15 @@ fn plan_writes_bundle_joining_the_planned_network_namespace() {
             .expect("bundle config should be readable"),
     )
     .expect("bundle config should parse");
+    let env = env_from_config(&config);
+    assert!(
+        env.iter().all(|entry| {
+            !entry.starts_with("HTTP_PROXY=")
+                && !entry.starts_with(&format!("{EGRESS_CA_BUNDLE_ENV}="))
+                && !entry.starts_with(&format!("{EGRESS_NODE_EXTRA_CA_CERTS_ENV}="))
+        }),
+        "plan-only krun bundles must not inject live proxy or trust env: {env:?}"
+    );
     let namespaces = config["linux"]["namespaces"]
         .as_array()
         .expect("linux.namespaces should be an array");

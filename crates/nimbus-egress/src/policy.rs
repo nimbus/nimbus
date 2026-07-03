@@ -468,9 +468,21 @@ impl EgressDlpRule {
                 self.name
             ));
         }
+        if self.max_inspection_bytes > MAX_DLP_INSPECTION_BYTES {
+            return Err(format!(
+                "sandbox egress rule `{rule_name}` DLP rule `{}` max_inspection_bytes {} exceeds the PEP inspection cap {MAX_DLP_INSPECTION_BYTES}",
+                self.name, self.max_inspection_bytes
+            ));
+        }
         Ok(())
     }
 }
+
+/// Hard upper bound on `max_inspection_bytes`, enforced at policy validation
+/// and again by the PEP at request time. DLP inspection is the only place the
+/// proxy whole-body-buffers, and policies are tenant-supplied, so the buffer
+/// budget must be capped by the platform, not by policy content alone.
+pub const MAX_DLP_INSPECTION_BYTES: usize = 1024 * 1024;
 
 fn default_dlp_max_inspection_bytes() -> usize {
     64 * 1024
@@ -1446,10 +1458,29 @@ mod tests {
         .with_dlp_rules([EgressDlpRule::new("ssn", "secret").with_max_inspection_bytes(0)])]);
         let error = policy
             .validate()
-            .expect_err("zero DLP inspection budget must be rejected");
+            .expect_err("zero max_inspection_bytes must be rejected");
         assert!(
             error.contains("max_inspection_bytes must be greater than 0"),
-            "zero-byte DLP budget error should be named: {error}"
+            "zero max_inspection_bytes error should be named: {error}"
+        );
+    }
+
+    #[test]
+    fn dlp_validate_rejects_inspection_bytes_above_pep_cap() {
+        let policy = EgressPolicy::new([EgressRule::new(
+            "dlp-host",
+            EgressProtocol::Https,
+            "api.example.com",
+            443,
+        )
+        .with_dlp_rules([EgressDlpRule::new("ssn", "secret")
+            .with_max_inspection_bytes(MAX_DLP_INSPECTION_BYTES + 1)])]);
+        let error = policy
+            .validate()
+            .expect_err("an inspection budget above the PEP cap must be rejected");
+        assert!(
+            error.contains("exceeds the PEP inspection cap"),
+            "over-cap DLP budget error should be named: {error}"
         );
     }
 }

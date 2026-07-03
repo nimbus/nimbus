@@ -1,7 +1,7 @@
 use super::support::*;
 
 use crate::backends::oci::network::{OciMachinePortForwarderConfig, OciNetworkDirectEgress};
-use nimbus_egress::EGRESS_PROXY_URL_ENV;
+use nimbus_egress::{EGRESS_CA_BUNDLE_ENV, EGRESS_NODE_EXTRA_CA_CERTS_ENV, EGRESS_PROXY_URL_ENV};
 use tempfile::TempDir;
 
 #[test]
@@ -78,6 +78,43 @@ fn execute_plan_assigns_bridge_reachable_egress_proxy_and_injects_proxy_env() {
         env.contains(&format!("{EGRESS_PROXY_URL_ENV}=http://10.0.0.1:15000").as_str()),
         "execute bundle should expose Nimbus egress proxy metadata: {env:?}"
     );
+    for expected in [
+        format!("{EGRESS_CA_BUNDLE_ENV}=/run/nimbus/egress/ca.pem"),
+        format!("{EGRESS_NODE_EXTRA_CA_CERTS_ENV}=/run/nimbus/egress/ca.pem"),
+    ] {
+        assert!(
+            env.contains(&expected.as_str()),
+            "execute bundle should expose the workload-scoped trust anchor: {env:?}"
+        );
+    }
+    let trust_anchor_path = temp_dir
+        .path()
+        .join("state")
+        .join("egress-trust-anchors")
+        .join("svc-demo")
+        .join("db-01.pem");
+    assert!(
+        trust_anchor_path.is_file(),
+        "execute planning must materialize the deterministic trust-anchor mount source"
+    );
+    assert!(
+        std::fs::read_to_string(&trust_anchor_path)
+            .expect("trust-anchor placeholder should read")
+            .contains("placeholder"),
+        "the planner writes a placeholder that the live PEP overwrites before launch"
+    );
+    let mounts = config["mounts"]
+        .as_array()
+        .expect("mounts should be an array");
+    let trust_mount = mounts
+        .iter()
+        .find(|mount| mount["destination"] == "/run/nimbus/egress/ca.pem")
+        .expect("execute bundle should mount the trust anchor");
+    assert_eq!(trust_mount["type"], "bind");
+    assert_eq!(
+        trust_mount["source"].as_str(),
+        Some(trust_anchor_path.to_string_lossy().as_ref())
+    );
 }
 
 #[test]
@@ -126,8 +163,10 @@ fn plan_only_launches_do_not_materialize_live_proxy_env() {
         .map(|value| value.as_str().expect("env entries should be strings"))
         .collect::<Vec<_>>();
     assert!(
-        env.iter()
-            .all(|entry| !entry.starts_with("HTTP_PROXY=") && !entry.starts_with("http_proxy=")),
+        env.iter().all(|entry| !entry.starts_with("HTTP_PROXY=")
+            && !entry.starts_with("http_proxy=")
+            && !entry.starts_with(&format!("{EGRESS_CA_BUNDLE_ENV}="))
+            && !entry.starts_with(&format!("{EGRESS_NODE_EXTRA_CA_CERTS_ENV}="))),
         "plan-only bundles should keep live proxy env absent: {env:?}"
     );
 }
@@ -212,8 +251,22 @@ fn plan_only_service_workload_prepares_runner_manifest_pointer_and_proxy_env() {
     assert!(
         env.contains(&"HTTP_PROXY=http://10.0.0.1:15000")
             && env.contains(&"http_proxy=http://10.0.0.1:15000")
-            && env.contains(&format!("{EGRESS_PROXY_URL_ENV}=http://10.0.0.1:15000").as_str()),
+            && env.contains(&format!("{EGRESS_PROXY_URL_ENV}=http://10.0.0.1:15000").as_str())
+            && env.contains(&format!("{EGRESS_CA_BUNDLE_ENV}=/run/nimbus/egress/ca.pem").as_str())
+            && env.contains(
+                &format!("{EGRESS_NODE_EXTRA_CA_CERTS_ENV}=/run/nimbus/egress/ca.pem").as_str()
+            ),
         "service bundle should route proxy-aware tools through the runner-owned egress proxy: {env:?}"
+    );
+    let trust_anchor_path = temp_dir
+        .path()
+        .join("state")
+        .join("egress-trust-anchors")
+        .join("svc-demo")
+        .join(format!("{}.pem", prepared.handle.id.as_str()));
+    assert!(
+        trust_anchor_path.is_file(),
+        "service workload planning must materialize the runner-owned trust-anchor mount source"
     );
 }
 

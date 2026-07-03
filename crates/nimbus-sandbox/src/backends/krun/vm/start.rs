@@ -81,12 +81,6 @@ impl KrunSandboxBackend {
         let egress_proxy = (self.config.start_mode == KrunStartMode::Execute)
             .then(|| self.allocate_egress_proxy(&network_config, &resolved_launch.spec))
             .transpose()?;
-        // Point the guest env at the assigned host-side PEP. Plan-only launches
-        // claim no proxy, so no proxy env is injected for them.
-        let egress_proxy_url = egress_proxy
-            .as_ref()
-            .map(EgressProxyAssignment::proxy_url)
-            .transpose()?;
         let bundle_layout = KrunBundleLayout::new(crate::artifact_paths::bundle_dir(
             &self.config.bundle_root,
             &resolved_launch.spec.tenant_id,
@@ -97,14 +91,13 @@ impl KrunSandboxBackend {
             &hostname_for(&resolved_launch.spec),
             &resolved_launch.spec,
             Some(network_layout.netns_path.as_path()),
-            &KrunBundleOptions {
-                additional_mounts: krun_additional_mounts(
-                    &self.config,
-                    &resolved_launch.spec,
-                    &resolved_launch.image_metadata,
-                )?,
-                egress_proxy_url,
-            },
+            &krun_bundle_options(
+                &self.config,
+                &resolved_launch.spec,
+                &resolved_launch.image_metadata,
+                sandbox_id,
+                egress_proxy.as_ref(),
+            )?,
         )?;
 
         let conmon_layout = OciConmonLayout::new_for_tenant(
@@ -294,24 +287,18 @@ impl KrunSandboxBackend {
         manifest.spec.port_bindings.extend(auto_bindings);
         manifest.handle.published_endpoints =
             visible_published_endpoints(manifest.start_mode, &manifest.spec, manifest.status);
-        let egress_proxy_url = manifest
-            .egress_proxy
-            .as_ref()
-            .map(EgressProxyAssignment::proxy_url)
-            .transpose()?;
         write_bundle_config(
             &manifest.bundle_layout,
             &hostname_for(&manifest.spec),
             &manifest.spec,
             Some(manifest.network_layout.netns_path.as_path()),
-            &KrunBundleOptions {
-                additional_mounts: krun_additional_mounts(
-                    &self.config,
-                    &manifest.spec,
-                    &manifest.image_metadata,
-                )?,
-                egress_proxy_url,
-            },
+            &krun_bundle_options(
+                &self.config,
+                &manifest.spec,
+                &manifest.image_metadata,
+                &manifest.handle.id,
+                manifest.egress_proxy.as_ref(),
+            )?,
         )
     }
 
@@ -560,6 +547,34 @@ fn krun_additional_mounts(
     Ok(mounts)
 }
 
+fn krun_bundle_options(
+    config: &KrunSandboxBackendConfig,
+    spec: &SandboxSpec,
+    image_metadata: &KrunImageMetadata,
+    sandbox_id: &SandboxId,
+    egress_proxy: Option<&EgressProxyAssignment>,
+) -> Result<KrunBundleOptions> {
+    let mut additional_mounts = krun_additional_mounts(config, spec, image_metadata)?;
+    let mut egress_trust_anchor_guest_path = None;
+    if egress_proxy.is_some() {
+        let trust_anchor =
+            egress_trust_anchor_mount(&config.state_root, &spec.tenant_id, sandbox_id)?;
+        egress_trust_anchor_guest_path = Some(trust_anchor.guest_path.clone());
+        additional_mounts.push(KrunBundleMount {
+            destination: trust_anchor.guest_path,
+            source: trust_anchor.host_path,
+            options: egress_trust_anchor_mount_options(),
+        });
+    }
+    Ok(KrunBundleOptions {
+        additional_mounts,
+        egress_proxy_url: egress_proxy
+            .map(EgressProxyAssignment::proxy_url)
+            .transpose()?,
+        egress_trust_anchor_guest_path,
+    })
+}
+
 fn tenant_volume_mounts(state_root: &Path, spec: &SandboxSpec) -> Result<Vec<KrunBundleMount>> {
     crate::spec::validate_sandbox_mounts(&spec.mounts)
         .map_err(|message| SandboxError::InvalidSpec { message })?;
@@ -596,6 +611,16 @@ fn tenant_volume_mount_options(read_only: bool) -> Vec<String> {
         if read_only { "ro" } else { "rw" }.to_owned(),
         "nosuid".to_owned(),
         "nodev".to_owned(),
+    ]
+}
+
+fn egress_trust_anchor_mount_options() -> Vec<String> {
+    vec![
+        "rbind".to_owned(),
+        "ro".to_owned(),
+        "nosuid".to_owned(),
+        "nodev".to_owned(),
+        "noexec".to_owned(),
     ]
 }
 

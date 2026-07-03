@@ -25,7 +25,8 @@ use crate::backends::oci::builder::OciDockerfileBuilder;
 use crate::backends::oci::conmon::{OciConmonConfig, OciConmonLayout, build_launch_plan};
 use crate::backends::oci::egress::{
     EgressProxyAssignment, EgressProxyRegistry, allocate_egress_proxy as allocate_oci_egress_proxy,
-    egress_decision_log_root, ensure_egress_proxy_running as ensure_oci_egress_proxy_running,
+    egress_decision_log_root, egress_trust_anchor_mount, egress_trust_anchor_root,
+    ensure_egress_proxy_running as ensure_oci_egress_proxy_running,
 };
 use crate::backends::oci::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
 use crate::backends::oci::network::{
@@ -80,9 +81,10 @@ impl ContainerSandboxBackend {
         ) {
             let _ = reconcile_network_segment_orphans(&config.state_root, &allocator);
         }
-        let egress_proxies = EgressProxyRegistry::with_decision_log_root(egress_decision_log_root(
-            &config.state_root,
-        ));
+        let egress_proxies = EgressProxyRegistry::with_roots(
+            egress_decision_log_root(&config.state_root),
+            egress_trust_anchor_root(&config.state_root),
+        );
         Self {
             config,
             egress_proxies,
@@ -283,13 +285,12 @@ impl ContainerSandboxBackend {
             &launch_plan.manifest.spec,
             launch_plan.manifest.image_metadata.user.as_deref(),
             Some(launch_plan.manifest.network_layout.netns_path.as_path()),
-            &ContainerBundleOptions {
-                additional_mounts: container_tenant_volume_mounts(
-                    &self.config.state_root,
-                    &launch_plan.manifest.spec,
-                )?,
-                egress_proxy_url: Some(egress_proxy.proxy_url()?),
-            },
+            &container_bundle_options(
+                &self.config.state_root,
+                &launch_plan.manifest.spec,
+                &launch_plan.manifest.handle.id,
+                Some(&egress_proxy),
+            )?,
         )?;
         launch_plan.manifest.egress_proxy = Some(egress_proxy);
         Ok(())
@@ -457,16 +458,12 @@ impl ContainerSandboxBackend {
             &resolved_spec,
             resolved_launch.image_metadata.user.as_deref(),
             Some(network_layout.netns_path.as_path()),
-            &ContainerBundleOptions {
-                additional_mounts: container_tenant_volume_mounts(
-                    &self.config.state_root,
-                    &resolved_spec,
-                )?,
-                egress_proxy_url: egress_proxy
-                    .as_ref()
-                    .map(EgressProxyAssignment::proxy_url)
-                    .transpose()?,
-            },
+            &container_bundle_options(
+                &self.config.state_root,
+                &resolved_spec,
+                sandbox_id,
+                egress_proxy.as_ref(),
+            )?,
         )?;
 
         let conmon_layout = OciConmonLayout::new_for_tenant(
@@ -1065,12 +1062,48 @@ fn container_tenant_volume_mounts(
     Ok(mounts)
 }
 
+fn container_bundle_options(
+    state_root: &Path,
+    spec: &SandboxSpec,
+    sandbox_id: &SandboxId,
+    egress_proxy: Option<&EgressProxyAssignment>,
+) -> Result<ContainerBundleOptions> {
+    let mut additional_mounts = container_tenant_volume_mounts(state_root, spec)?;
+    let mut egress_trust_anchor_guest_path = None;
+    if egress_proxy.is_some() {
+        let trust_anchor = egress_trust_anchor_mount(state_root, &spec.tenant_id, sandbox_id)?;
+        egress_trust_anchor_guest_path = Some(trust_anchor.guest_path.clone());
+        additional_mounts.push(ContainerBundleMount {
+            destination: trust_anchor.guest_path,
+            source: trust_anchor.host_path,
+            options: egress_trust_anchor_mount_options(),
+        });
+    }
+    Ok(ContainerBundleOptions {
+        additional_mounts,
+        egress_proxy_url: egress_proxy
+            .map(EgressProxyAssignment::proxy_url)
+            .transpose()?,
+        egress_trust_anchor_guest_path,
+    })
+}
+
 fn tenant_volume_mount_options(read_only: bool) -> Vec<String> {
     vec![
         "rbind".to_owned(),
         if read_only { "ro" } else { "rw" }.to_owned(),
         "nosuid".to_owned(),
         "nodev".to_owned(),
+    ]
+}
+
+fn egress_trust_anchor_mount_options() -> Vec<String> {
+    vec![
+        "rbind".to_owned(),
+        "ro".to_owned(),
+        "nosuid".to_owned(),
+        "nodev".to_owned(),
+        "noexec".to_owned(),
     ]
 }
 

@@ -1,28 +1,51 @@
-use std::io::{self, Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::sync::{
-    Arc, RwLock,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-};
-use std::thread::{self, JoinHandle};
+use std::io;
+use std::net::{SocketAddr, TcpListener};
+use std::sync::mpsc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use nimbus_egress::{CompiledEgressPolicy, EgressPolicy};
+use nimbus_egress::{CompiledEgressPolicy, EgressPolicy, EgressProtocol, EgressRule};
+use pingora_core::apps::HttpServerApp;
+use pingora_core::protocols::http::ServerSession as HttpSession;
+use pingora_core::server::configuration::ServerConf;
+use pingora_proxy::http_proxy;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tokio::sync::{Semaphore, watch};
+use tokio::task::JoinSet;
 
-use crate::credentials::CredentialSecretStore;
+use crate::body::read_exact_body_into_buffer;
+use crate::connect::{connect_upstream, splice_connect};
+use crate::credentials::{CredentialSecretProviderRef, CredentialSecretStore};
 use crate::decision_log::{DecisionLogger, EgressDecisionLog, noop_decision_logger};
 use crate::dns::{DnsCacheConfig, Resolver, resolve_dns, resolve_socket_addrs};
-use crate::enforcement::prepare_proxy_request_enforcement;
-use crate::error::{EgressProxyError, Result};
-use crate::policy_state::{EgressProxyPolicyState, EgressProxyReadiness, PolicyGeneration};
-use crate::request::{
-    ParsedProxyRequest, ProxyRequestMode, find_header_end, parse_proxy_request,
-    render_upstream_request,
+use crate::enforcement::{
+    ProxyRequestEnforcementContext, prepare_proxy_request_enforcement,
+    reject_unapproved_caller_credentials_for_rule,
 };
-use crate::response::{HttpProxyResponse, write_http_response};
+use crate::error::{EgressProxyError, Result};
+use crate::https_intercept::{
+    ConnectInterceptAction, HttpsInterceptContext, classify_connect, intercept_connect_h1,
+};
+use crate::phase::{
+    EgressProxyRequestPhase, PhaseObserver, RequestPhaseRecorder, noop_phase_observer,
+};
+use crate::pingora_app::{ForwardRequestPlan, NimbusForwardApp, downstream_target};
+use crate::pingora_identity::PingoraPeerPlan;
+use crate::pingora_io::PrereadStream;
+use crate::policy_state::{EgressProxyPolicyState, EgressProxyReadiness, PolicyGeneration};
+use crate::pool::{
+    EgressProxyCredentialDlpMode, EgressProxyPoolIdentity, EgressProxyPoolKey, TlsVerificationMode,
+};
+use crate::request::{ParsedProxyRequest, ProxyRequestMode, find_header_end, parse_proxy_request};
+use crate::response::{HttpProxyResponse, write_http_response_async};
+use crate::substrate::ProxySubstrate;
+use crate::tls_authority::EgressProxyTlsAuthority;
 use crate::{
     DEFAULT_CONNECT_TIMEOUT, DEFAULT_IO_TIMEOUT, DEFAULT_MAX_CONNECTIONS, MAX_HTTP_HEADER_BYTES,
 };
+
+const SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub struct EgressProxyConfig {
     pub bind_addr: SocketAddr,
@@ -32,15 +55,17 @@ pub struct EgressProxyConfig {
     pub max_connections: usize,
     pub dns_cache: DnsCacheConfig,
     pub credential_store: CredentialSecretStore,
+    pub pool_identity: EgressProxyPoolIdentity,
+    pub tls_authority: Option<EgressProxyTlsAuthority>,
+    pub substrate: ProxySubstrate,
+    credential_provider: Option<CredentialSecretProviderRef>,
     decision_logger: DecisionLogger,
+    phase_observer: PhaseObserver,
     resolver: Resolver,
 }
 
 impl EgressProxyConfig {
     pub fn new(policy: CompiledEgressPolicy) -> Self {
-        // Delegate to the policy-less constructor so the full default field set
-        // lives in exactly one place; only the active policy differs. (egress
-        // audit L13.)
         Self {
             policy: Some(policy),
             ..Self::without_active_policy()
@@ -56,7 +81,12 @@ impl EgressProxyConfig {
             max_connections: DEFAULT_MAX_CONNECTIONS,
             dns_cache: DnsCacheConfig::default(),
             credential_store: CredentialSecretStore::empty(),
+            pool_identity: EgressProxyPoolIdentity::default(),
+            tls_authority: None,
+            substrate: ProxySubstrate::shared(),
+            credential_provider: None,
             decision_logger: noop_decision_logger(),
+            phase_observer: noop_phase_observer(),
             resolver: Arc::new(resolve_socket_addrs),
         }
     }
@@ -84,11 +114,41 @@ impl EgressProxyConfig {
 
     pub fn with_credential_store(mut self, credential_store: CredentialSecretStore) -> Self {
         self.credential_store = credential_store;
+        self.credential_provider = None;
+        self
+    }
+
+    pub fn with_credential_provider(
+        mut self,
+        credential_provider: CredentialSecretProviderRef,
+    ) -> Self {
+        self.credential_provider = Some(credential_provider);
+        self
+    }
+
+    pub fn with_pool_identity(mut self, pool_identity: EgressProxyPoolIdentity) -> Self {
+        self.pool_identity = pool_identity;
+        self
+    }
+
+    pub fn with_tls_authority(mut self, tls_authority: EgressProxyTlsAuthority) -> Self {
+        self.tls_authority = Some(tls_authority);
+        self
+    }
+
+    pub fn with_substrate(mut self, substrate: ProxySubstrate) -> Self {
+        self.substrate = substrate;
         self
     }
 
     pub fn with_decision_logger(mut self, decision_logger: DecisionLogger) -> Self {
         self.decision_logger = decision_logger;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_phase_observer(mut self, phase_observer: PhaseObserver) -> Self {
+        self.phase_observer = phase_observer;
         self
     }
 
@@ -101,8 +161,9 @@ impl EgressProxyConfig {
 
 pub struct EgressProxy {
     local_addr: SocketAddr,
-    shutdown: Arc<AtomicBool>,
-    join: Option<JoinHandle<()>>,
+    shutdown: watch::Sender<bool>,
+    shutdown_ack: Option<mpsc::Receiver<()>>,
+    _substrate: ProxySubstrate,
     policy_state: Arc<RwLock<EgressProxyPolicyState>>,
 }
 
@@ -133,36 +194,40 @@ impl EgressProxy {
                 message: format!("failed to configure egress proxy listener: {error}"),
             })?;
 
-        let shutdown = Arc::new(AtomicBool::new(false));
         let policy_state = Arc::new(RwLock::new(
             config
                 .policy
                 .map(EgressProxyPolicyState::with_policy)
                 .unwrap_or_default(),
         ));
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let (ack_tx, ack_rx) = mpsc::channel();
+        let substrate = config.substrate;
         let worker = ProxyWorker {
             listener,
-            shutdown: Arc::clone(&shutdown),
             policy_state: Arc::clone(&policy_state),
             resolver: config.resolver,
             dns_cache: config.dns_cache,
-            credential_store: config.credential_store,
+            credential_provider: config
+                .credential_provider
+                .unwrap_or_else(|| config.credential_store.into_provider()),
+            pool_identity: config.pool_identity,
+            tls_authority: config.tls_authority,
             decision_logger: config.decision_logger,
+            phase_observer: config.phase_observer,
             connect_timeout: config.connect_timeout,
             io_timeout: config.io_timeout,
-            connection_limiter: ConnectionLimiter::new(config.max_connections),
+            max_connections: config.max_connections,
+            server_conf: substrate.server_conf(),
+            dns_limiter: substrate.dns_limiter(),
         };
-        let join = thread::Builder::new()
-            .name("nimbus-egress-proxy".to_owned())
-            .spawn(move || worker.run())
-            .map_err(|error| EgressProxyError::OperationFailed {
-                message: format!("failed to spawn egress proxy: {error}"),
-            })?;
+        substrate.handle().spawn(worker.run(shutdown_rx, ack_tx));
 
         Ok(Self {
             local_addr,
             shutdown,
-            join: Some(join),
+            shutdown_ack: Some(ack_rx),
+            _substrate: substrate,
             policy_state,
         })
     }
@@ -203,65 +268,112 @@ impl EgressProxy {
 
 impl Drop for EgressProxy {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::SeqCst);
-        let _ = TcpStream::connect_timeout(&self.local_addr, Duration::from_millis(100));
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
+        let _ = self.shutdown.send(true);
+        if let Some(shutdown_ack) = self.shutdown_ack.take() {
+            let _ = shutdown_ack.recv_timeout(SHUTDOWN_ACK_TIMEOUT);
         }
     }
 }
 
 struct ProxyWorker {
     listener: TcpListener,
-    shutdown: Arc<AtomicBool>,
     policy_state: Arc<RwLock<EgressProxyPolicyState>>,
     resolver: Resolver,
     dns_cache: DnsCacheConfig,
-    credential_store: CredentialSecretStore,
+    credential_provider: CredentialSecretProviderRef,
+    pool_identity: EgressProxyPoolIdentity,
+    tls_authority: Option<EgressProxyTlsAuthority>,
     decision_logger: DecisionLogger,
+    phase_observer: PhaseObserver,
     connect_timeout: Duration,
     io_timeout: Duration,
-    connection_limiter: ConnectionLimiter,
+    max_connections: usize,
+    server_conf: Arc<ServerConf>,
+    dns_limiter: Arc<Semaphore>,
 }
 
 impl ProxyWorker {
-    fn handler_context(&self) -> ClientHandlerContext {
-        ClientHandlerContext {
-            policy_state: Arc::clone(&self.policy_state),
-            resolver: Arc::clone(&self.resolver),
-            dns_cache: self.dns_cache.clone(),
-            credential_store: self.credential_store.clone(),
-            decision_logger: Arc::clone(&self.decision_logger),
+    async fn run(self, shutdown: watch::Receiver<bool>, shutdown_ack: mpsc::Sender<()>) {
+        let listener = match tokio::net::TcpListener::from_std(self.listener) {
+            Ok(listener) => listener,
+            Err(_) => {
+                let _ = shutdown_ack.send(());
+                return;
+            }
+        };
+        let limiter = Arc::new(Semaphore::new(self.max_connections));
+        let context = Arc::new(ClientHandlerContext {
+            policy_state: self.policy_state,
+            resolver: self.resolver,
+            dns_cache: self.dns_cache,
+            credential_provider: self.credential_provider,
+            pool_identity: self.pool_identity,
+            tls_authority: self.tls_authority,
+            decision_logger: self.decision_logger,
+            phase_observer: self.phase_observer,
             connect_timeout: self.connect_timeout,
             io_timeout: self.io_timeout,
+            server_conf: self.server_conf,
+            dns_limiter: self.dns_limiter,
+        });
+        accept_loop(listener, context, limiter, shutdown).await;
+        let _ = shutdown_ack.send(());
+    }
+}
+
+async fn accept_loop(
+    listener: tokio::net::TcpListener,
+    context: Arc<ClientHandlerContext>,
+    limiter: Arc<Semaphore>,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    let mut connections = JoinSet::new();
+    loop {
+        tokio::select! {
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    break;
+                }
+            }
+            joined = connections.join_next(), if !connections.is_empty() => {
+                let _ = joined;
+            }
+            accepted = listener.accept() => {
+                let Ok((mut client, _)) = accepted else {
+                    break;
+                };
+                let Ok(permit) = Arc::clone(&limiter).try_acquire_owned() else {
+                    let _ = write_http_response_async(
+                        &mut client,
+                        HttpProxyResponse::service_unavailable(
+                            "egress proxy connection limit exceeded",
+                        ),
+                    )
+                    .await;
+                    let _ = client.flush().await;
+                    let _ = client.shutdown().await;
+                    drain_over_limit_client(&mut client).await;
+                    continue;
+                };
+                let handler_context = Arc::clone(&context);
+                let connection_shutdown = shutdown.clone();
+                connections.spawn(async move {
+                    let _permit = permit;
+                    let _ = handle_client(client, handler_context, connection_shutdown).await;
+                });
+            }
         }
     }
+    connections.abort_all();
+    while connections.join_next().await.is_some() {}
+}
 
-    fn run(self) {
-        while !self.shutdown.load(Ordering::SeqCst) {
-            match self.listener.accept() {
-                Ok((mut client, _)) => {
-                    let Some(connection_permit) = self.connection_limiter.try_acquire() else {
-                        let _ = client.set_write_timeout(Some(self.io_timeout));
-                        let _ = write_http_response(
-                            &mut client,
-                            HttpProxyResponse::service_unavailable(
-                                "egress proxy connection limit exceeded",
-                            ),
-                        );
-                        continue;
-                    };
-                    let handler_context = self.handler_context();
-                    thread::spawn(move || {
-                        let _connection_permit = connection_permit;
-                        let _ = handle_client(client, handler_context);
-                    });
-                }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(_) => break,
-            }
+async fn drain_over_limit_client(client: &mut TcpStream) {
+    let mut buffer = [0_u8; 1024];
+    loop {
+        match tokio::time::timeout(Duration::from_millis(10), client.read(&mut buffer)).await {
+            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
+            Ok(Ok(_)) => {}
         }
     }
 }
@@ -271,89 +383,68 @@ struct ClientHandlerContext {
     policy_state: Arc<RwLock<EgressProxyPolicyState>>,
     resolver: Resolver,
     dns_cache: DnsCacheConfig,
-    credential_store: CredentialSecretStore,
+    credential_provider: CredentialSecretProviderRef,
+    pool_identity: EgressProxyPoolIdentity,
+    tls_authority: Option<EgressProxyTlsAuthority>,
     decision_logger: DecisionLogger,
+    phase_observer: PhaseObserver,
     connect_timeout: Duration,
     io_timeout: Duration,
+    server_conf: Arc<ServerConf>,
+    dns_limiter: Arc<Semaphore>,
 }
 
-#[derive(Clone)]
-pub(crate) struct ConnectionLimiter {
-    active: Arc<AtomicUsize>,
-    max: usize,
-}
-
-impl ConnectionLimiter {
-    pub(crate) fn new(max: usize) -> Self {
-        Self {
-            active: Arc::new(AtomicUsize::new(0)),
-            max,
-        }
-    }
-
-    pub(crate) fn try_acquire(&self) -> Option<ConnectionPermit> {
-        let mut current = self.active.load(Ordering::Acquire);
-        loop {
-            if current >= self.max {
-                return None;
-            }
-            match self.active.compare_exchange_weak(
-                current,
-                current + 1,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => {
-                    return Some(ConnectionPermit {
-                        active: Arc::clone(&self.active),
-                    });
-                }
-                Err(observed) => current = observed,
-            }
-        }
-    }
-}
-
-pub(crate) struct ConnectionPermit {
-    active: Arc<AtomicUsize>,
-}
-
-impl Drop for ConnectionPermit {
-    fn drop(&mut self) {
-        self.active.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
-/// Audits a terminal deny and writes the matching fail-closed response. Every
-/// post-parse deny path funnels through here so a blocked request emits exactly
-/// one decision-log record (`allowed = false`) carrying the reason and matched
-/// rule, mirroring the response body without leaking secret material.
-fn deny_terminal(
-    client: &mut TcpStream,
-    decision_logger: &DecisionLogger,
-    parsed: &ParsedProxyRequest,
-    matched_rule: Option<String>,
-    policy_generation: Option<PolicyGeneration>,
-    response: HttpProxyResponse,
+async fn handle_client(
+    mut client: TcpStream,
+    context: Arc<ClientHandlerContext>,
+    shutdown: watch::Receiver<bool>,
 ) -> io::Result<()> {
-    let mut decision_log =
-        EgressDecisionLog::denied(parsed, response.body().to_owned(), matched_rule);
-    if let Some(policy_generation) = policy_generation {
-        decision_log = decision_log.with_policy_generation(policy_generation);
-    }
-    decision_logger(decision_log);
-    write_http_response(client, response)
-}
-
-fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Result<()> {
-    client.set_read_timeout(Some(context.io_timeout))?;
-    client.set_write_timeout(Some(context.io_timeout))?;
-
+    let phase_recorder = RequestPhaseRecorder::new(Arc::clone(&context.phase_observer));
     let mut buffer = Vec::new();
-    read_http_headers(&mut client, &mut buffer)?;
+    match read_http_headers(&mut client, &mut buffer, context.io_timeout).await {
+        Ok(()) => {}
+        Err(ReadHeaderError::Response(response)) => {
+            return malformed_terminal(
+                &mut client,
+                &phase_recorder,
+                &context.decision_logger,
+                response,
+            )
+            .await;
+        }
+        Err(ReadHeaderError::Io(error)) => return Err(error),
+    }
+    phase_recorder.record(EgressProxyRequestPhase::CanonicalizeAuthority);
     let parsed = match parse_proxy_request(&buffer) {
         Ok(parsed) => parsed,
-        Err(response) => return write_http_response(&mut client, response),
+        Err(response) => {
+            // Strict-parser rejects are the smuggling guards (bare CR/LF,
+            // Transfer-Encoding, parser-differential authorities); blocked
+            // attempts must reach the audit log even without a parsed
+            // authority.
+            return malformed_terminal(
+                &mut client,
+                &phase_recorder,
+                &context.decision_logger,
+                response,
+            )
+            .await;
+        }
+    };
+    phase_recorder.record(EgressProxyRequestPhase::RejectMalformedOrCallerCredentials);
+
+    // From here the request has a parsed authority. If the PEP is torn down
+    // mid-request (drop aborts this task), the guard emits the terminal event
+    // the aborted path never reached, so an already-authorized request that
+    // touched upstream can never vanish from the audit log.
+    let _abort_guard = AbortTerminalGuard {
+        phase_recorder: phase_recorder.clone(),
+        decision_logger: Arc::clone(&context.decision_logger),
+        decision_log: EgressDecisionLog::denied(
+            &parsed,
+            "egress proxy terminated the request before a decision was recorded".to_owned(),
+            None,
+        ),
     };
 
     let active_policy = context
@@ -365,6 +456,7 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
     let Some(active_policy) = active_policy else {
         return deny_terminal(
             &mut client,
+            &phase_recorder,
             &context.decision_logger,
             &parsed,
             None,
@@ -372,41 +464,70 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
             HttpProxyResponse::forbidden(
                 "egress proxy default deny: no active policy generation is ready",
             ),
-        );
+        )
+        .await;
     };
 
+    phase_recorder.record(EgressProxyRequestPhase::PreDnsAuthorize);
     let pre_dns_authorization = authorize_hostname_before_dns(&active_policy.policy, &parsed);
     if !pre_dns_authorization.is_allowed() {
         return deny_terminal(
             &mut client,
+            &phase_recorder,
             &context.decision_logger,
             &parsed,
             pre_dns_authorization.matched_rule().map(ToOwned::to_owned),
             Some(active_policy.policy_generation),
             HttpProxyResponse::forbidden(pre_dns_authorization.reason()),
-        );
+        )
+        .await;
     }
 
-    let dns_resolution = match resolve_dns(
-        &context.resolver,
-        &context.dns_cache,
-        &parsed.upstream_host,
-        parsed.upstream_port,
+    if let Err(response) = reject_unapproved_caller_credentials_for_rule(
+        &active_policy.policy,
+        pre_dns_authorization.matched_rule(),
+        &parsed.header_lines,
     ) {
+        return deny_terminal(
+            &mut client,
+            &phase_recorder,
+            &context.decision_logger,
+            &parsed,
+            pre_dns_authorization.matched_rule().map(ToOwned::to_owned),
+            Some(active_policy.policy_generation),
+            response,
+        )
+        .await;
+    }
+
+    phase_recorder.record(EgressProxyRequestPhase::ResolveDns);
+    let dns_resolution = match resolve_dns_async(
+        Arc::clone(&context.dns_limiter),
+        Arc::clone(&context.resolver),
+        context.dns_cache.clone(),
+        parsed.upstream_host.clone(),
+        parsed.upstream_port,
+        context.connect_timeout,
+    )
+    .await
+    {
         Ok(resolution) if !resolution.addresses.is_empty() => resolution,
         Ok(_) => {
             return deny_terminal(
                 &mut client,
+                &phase_recorder,
                 &context.decision_logger,
                 &parsed,
                 None,
                 Some(active_policy.policy_generation),
                 HttpProxyResponse::bad_gateway("egress proxy DNS resolution returned no addresses"),
-            );
+            )
+            .await;
         }
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
             return deny_terminal(
                 &mut client,
+                &phase_recorder,
                 &context.decision_logger,
                 &parsed,
                 None,
@@ -414,11 +535,13 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
                 HttpProxyResponse::forbidden(&format!(
                     "egress proxy DNS cache overflow default deny: {error}"
                 )),
-            );
+            )
+            .await;
         }
         Err(error) => {
             return deny_terminal(
                 &mut client,
+                &phase_recorder,
                 &context.decision_logger,
                 &parsed,
                 None,
@@ -426,7 +549,8 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
                 HttpProxyResponse::bad_gateway(&format!(
                     "egress proxy DNS resolution failed: {error}"
                 )),
-            );
+            )
+            .await;
         }
     };
     let upstream_addr = dns_resolution.addresses[0];
@@ -434,108 +558,454 @@ fn handle_client(mut client: TcpStream, context: ClientHandlerContext) -> io::Re
         .egress_request
         .clone()
         .with_resolved_ip(upstream_addr.ip());
+    phase_recorder.record(EgressProxyRequestPhase::AuthorizeResolvedIp);
     let authorization = active_policy.policy.authorize(&egress_request);
     if !authorization.is_allowed() {
         return deny_terminal(
             &mut client,
+            &phase_recorder,
             &context.decision_logger,
             &parsed,
             None,
             Some(active_policy.policy_generation),
             HttpProxyResponse::forbidden(authorization.reason()),
-        );
+        )
+        .await;
     }
+    let matched_rule_ref = find_matched_rule(&active_policy.policy, authorization.matched_rule());
     let matched_rule = authorization.matched_rule().map(ToOwned::to_owned);
-    let prepared = match prepare_proxy_request_enforcement(
-        &mut client,
-        &mut buffer,
+    let pool_key = build_pool_key(
+        &context.pool_identity,
+        active_policy.policy_generation,
         &parsed,
-        &active_policy.policy,
-        authorization.matched_rule(),
-        authorization.reason(),
-        &context.credential_store,
+        upstream_addr,
+        matched_rule_ref,
+    );
+    phase_recorder.record(EgressProxyRequestPhase::SelectPoolKey);
+    let peer_plan = PingoraPeerPlan::from_pool_key(&pool_key);
+    phase_recorder.record(EgressProxyRequestPhase::BuildUpstreamPeer);
+
+    match parsed.mode.clone() {
+        ProxyRequestMode::ForwardHttp { origin_form } => {
+            handle_forward_http(
+                client,
+                buffer,
+                parsed,
+                origin_form.clone(),
+                peer_plan,
+                matched_rule,
+                active_policy.policy_generation,
+                authorization.matched_rule(),
+                authorization.reason(),
+                &active_policy.policy,
+                &context,
+                phase_recorder,
+                shutdown,
+            )
+            .await
+        }
+        ProxyRequestMode::ConnectTunnel => match classify_connect(matched_rule_ref) {
+            ConnectInterceptAction::Splice => {
+                let allowed_decision_log = EgressDecisionLog::allowed(
+                    &parsed,
+                    None,
+                    authorization.reason().to_owned(),
+                    matched_rule.clone(),
+                )
+                .with_policy_generation(active_policy.policy_generation);
+                phase_recorder.record(EgressProxyRequestPhase::Forward);
+                let upstream = match connect_upstream(upstream_addr, context.connect_timeout).await
+                {
+                    Ok(upstream) => upstream,
+                    Err(_) => {
+                        let mut client = client;
+                        return upstream_error_terminal(
+                            &mut client,
+                            &phase_recorder,
+                            &context.decision_logger,
+                            &parsed,
+                            matched_rule,
+                            active_policy.policy_generation,
+                        )
+                        .await;
+                    }
+                };
+                let result = splice_connect(
+                    client,
+                    upstream,
+                    &buffer[parsed.body_offset..],
+                    context.io_timeout,
+                )
+                .await;
+                phase_recorder.record(EgressProxyRequestPhase::ResponseFilters);
+                emit_terminal_log(
+                    &phase_recorder,
+                    &context.decision_logger,
+                    allowed_decision_log,
+                );
+                result
+            }
+            ConnectInterceptAction::Intercept(_) => {
+                let Some(tls_authority) = context.tls_authority.as_ref() else {
+                    return deny_terminal(
+                        &mut client,
+                        &phase_recorder,
+                        &context.decision_logger,
+                        &parsed,
+                        matched_rule,
+                        Some(active_policy.policy_generation),
+                        HttpProxyResponse::forbidden(
+                            "HTTPS interception failed closed: TLS authority is unavailable",
+                        ),
+                    )
+                    .await;
+                };
+                // `Forward` is recorded inside the intercept path immediately
+                // before upstream contact: the decrypted inner request still
+                // has credential mutation and bounded DLP ahead of it, and the
+                // phase trace must keep those before `Forward`.
+                let intercept_result = intercept_connect_h1(
+                    client,
+                    &buffer[parsed.body_offset..],
+                    HttpsInterceptContext {
+                        parsed_connect: &parsed,
+                        upstream_addr,
+                        policy: &active_policy.policy,
+                        outer_matched_rule: matched_rule.clone(),
+                        credential_provider: context.credential_provider.as_ref(),
+                        tls_authority,
+                        phase_recorder: &phase_recorder,
+                        decision_logger: &context.decision_logger,
+                        policy_generation: active_policy.policy_generation,
+                        connect_timeout: context.connect_timeout,
+                        io_timeout: context.io_timeout,
+                    },
+                )
+                .await;
+                phase_recorder.record(EgressProxyRequestPhase::ResponseFilters);
+                let decision_log = match intercept_result {
+                    Ok(decision_log) => {
+                        decision_log.with_policy_generation(active_policy.policy_generation)
+                    }
+                    Err(error) => EgressDecisionLog::denied(
+                        &parsed,
+                        format!("HTTPS interception failed closed: {error}"),
+                        matched_rule,
+                    )
+                    .with_policy_generation(active_policy.policy_generation),
+                };
+                // Client-visible denies inside the intercept path emit their
+                // terminal log BEFORE writing the response (log-before-respond,
+                // matching `deny_terminal`); skip re-emission for those.
+                if !phase_recorder.terminal_recorded() {
+                    emit_terminal_log(&phase_recorder, &context.decision_logger, decision_log);
+                }
+                Ok(())
+            }
+        },
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_forward_http(
+    client: TcpStream,
+    mut buffer: Vec<u8>,
+    parsed: ParsedProxyRequest,
+    origin_form: String,
+    peer_plan: PingoraPeerPlan,
+    matched_rule: Option<String>,
+    policy_generation: PolicyGeneration,
+    matched_rule_name: Option<&str>,
+    authorization_reason: &str,
+    policy: &CompiledEgressPolicy,
+    context: &ClientHandlerContext,
+    phase_recorder: RequestPhaseRecorder,
+    shutdown: watch::Receiver<bool>,
+) -> io::Result<()> {
+    let mut client = client;
+    let enforcement = match prepare_proxy_request_enforcement(
+        &parsed,
+        ProxyRequestEnforcementContext {
+            policy,
+            matched_rule: matched_rule_name,
+            reason: authorization_reason,
+            credential_provider: context.credential_provider.as_ref(),
+            phase_recorder: &phase_recorder,
+        },
     ) {
-        Ok(prepared) => prepared,
-        // DLP block or credential deny: audit the terminal deny before
-        // responding so blocked exfiltration attempts are never a blind spot.
+        Ok(enforcement) => enforcement,
         Err(response) => {
             return deny_terminal(
                 &mut client,
+                &phase_recorder,
                 &context.decision_logger,
                 &parsed,
                 matched_rule,
-                Some(active_policy.policy_generation),
+                Some(policy_generation),
                 response,
-            );
+            )
+            .await;
+        }
+    };
+    let inspected_body = if enforcement.requires_dlp() {
+        if let Some(content_length) = parsed.content_length {
+            if enforcement
+                .dlp_max_inspection_bytes()
+                .is_some_and(|max| content_length <= max)
+            {
+                match read_exact_body_into_buffer(
+                    &mut client,
+                    &mut buffer,
+                    parsed.body_offset,
+                    content_length,
+                    context.io_timeout,
+                )
+                .await
+                {
+                    Ok(body) => Some(body),
+                    Err(response) => {
+                        return deny_terminal(
+                            &mut client,
+                            &phase_recorder,
+                            &context.decision_logger,
+                            &parsed,
+                            matched_rule,
+                            Some(policy_generation),
+                            response,
+                        )
+                        .await;
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let prepared = match enforcement.finish(inspected_body) {
+        Ok(prepared) => prepared,
+        Err(response) => {
+            return deny_terminal(
+                &mut client,
+                &phase_recorder,
+                &context.decision_logger,
+                &parsed,
+                matched_rule,
+                Some(policy_generation),
+                response,
+            )
+            .await;
         }
     };
 
-    if matches!(parsed.mode, ProxyRequestMode::ForwardHttp { .. })
-        && prepared.inspected_body.is_none()
+    if prepared.inspected_body.is_none()
         && parsed.content_length.is_none()
         && buffer.len() > parsed.body_offset
     {
         return deny_terminal(
             &mut client,
+            &phase_recorder,
             &context.decision_logger,
             &parsed,
             matched_rule,
-            Some(active_policy.policy_generation),
+            Some(policy_generation),
             HttpProxyResponse::bad_request(
                 "egress proxy HTTP request bodies require Content-Length",
             ),
-        );
+        )
+        .await;
     }
 
-    // The policy decision is final and allowed; record it exactly once before
-    // dialing so every request emits a single terminal decision log.
-    (context.decision_logger)(
-        prepared
-            .decision_log
-            .clone()
-            .with_policy_generation(active_policy.policy_generation),
-    );
+    let allowed_decision_log = prepared
+        .decision_log
+        .clone()
+        .with_policy_generation(policy_generation);
+    let pingora_buffer =
+        render_pingora_downstream_request(&parsed, &prepared.header_lines, &buffer);
+    let plan = ForwardRequestPlan {
+        parsed: parsed.clone(),
+        downstream_target: downstream_target(&parsed),
+        peer_plan,
+        prepared_header_lines: prepared.header_lines,
+        origin_form,
+        allowed_decision_log,
+        matched_rule,
+        policy_generation,
+        connect_timeout: context.connect_timeout,
+        io_timeout: context.io_timeout,
+        phase_recorder,
+        decision_logger: Arc::clone(&context.decision_logger),
+    };
+    let stream = PrereadStream::new(client, pingora_buffer);
+    let session = HttpSession::new_http1(Box::new(stream));
+    let app = Arc::new(http_proxy(
+        &context.server_conf,
+        NimbusForwardApp::new(plan),
+    ));
+    let _ = app.process_new_http(session, &shutdown).await;
+    Ok(())
+}
 
-    let mut upstream = match TcpStream::connect_timeout(&upstream_addr, context.connect_timeout) {
-        Ok(upstream) => upstream,
-        // A dial failure is an operational fault, not a policy deny: surface a
-        // 502 to the client instead of dropping the connection silently.
+enum ReadHeaderError {
+    Response(HttpProxyResponse),
+    Io(io::Error),
+}
+
+async fn read_http_headers(
+    client: &mut TcpStream,
+    buffer: &mut Vec<u8>,
+    io_timeout: Duration,
+) -> std::result::Result<(), ReadHeaderError> {
+    let mut chunk = [0_u8; 1024];
+    loop {
+        let read = match tokio::time::timeout(io_timeout, client.read(&mut chunk)).await {
+            Ok(Ok(read)) => read,
+            Ok(Err(error)) => return Err(ReadHeaderError::Io(error)),
+            Err(_) => {
+                return Err(ReadHeaderError::Io(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "client timed out before sending HTTP headers",
+                )));
+            }
+        };
+        if read == 0 {
+            return Err(ReadHeaderError::Io(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "client closed before sending HTTP headers",
+            )));
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+        if find_header_end(buffer).is_some() {
+            return Ok(());
+        }
+        if buffer.len() > MAX_HTTP_HEADER_BYTES {
+            return Err(ReadHeaderError::Response(
+                HttpProxyResponse::request_header_fields_too_large(
+                    "egress proxy request headers are too large",
+                ),
+            ));
+        }
+    }
+}
+
+/// Resolves DNS on the blocking pool under the substrate's node-wide budget.
+/// The permit travels INTO the blocking closure so the budget counts
+/// actually-running resolver threads: a resolution that outlives its request
+/// (blocking work is uncancellable) keeps holding its permit instead of
+/// silently eating shared blocking-pool capacity, and both the permit wait and
+/// the result wait are bounded so a wedged resolver fails this request closed
+/// instead of stalling it.
+async fn resolve_dns_async(
+    dns_limiter: Arc<Semaphore>,
+    resolver: Resolver,
+    dns_cache: DnsCacheConfig,
+    host: String,
+    port: u16,
+    wait_timeout: Duration,
+) -> io::Result<crate::dns::DnsResolution> {
+    let permit = match tokio::time::timeout(wait_timeout, dns_limiter.acquire_owned()).await {
+        Ok(Ok(permit)) => permit,
+        Ok(Err(_)) => {
+            return Err(io::Error::other("egress proxy DNS resolver budget closed"));
+        }
         Err(_) => {
-            return write_http_response(
-                &mut client,
-                HttpProxyResponse::bad_gateway("egress proxy failed to dial the upstream"),
-            );
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "egress proxy DNS resolver capacity exhausted",
+            ));
         }
     };
-    upstream.set_nonblocking(false)?;
-    upstream.set_read_timeout(Some(context.io_timeout))?;
-    upstream.set_write_timeout(Some(context.io_timeout))?;
-    match &parsed.mode {
-        ProxyRequestMode::ForwardHttp { .. } => {
-            let request = render_upstream_request(&parsed, &prepared.header_lines);
-            upstream.write_all(request.as_bytes())?;
-            if let Some(body) = prepared.inspected_body {
-                upstream.write_all(&body)?;
-                let _ = upstream.shutdown(Shutdown::Write);
-                io::copy(&mut upstream, &mut client)?;
-                return Ok(());
-            }
-            if let Some(content_length) = parsed.content_length {
-                write_known_request_body(
-                    &mut client,
-                    &mut upstream,
-                    &buffer[parsed.body_offset..],
-                    content_length,
-                )?;
-            }
-            let _ = upstream.shutdown(Shutdown::Write);
-            io::copy(&mut upstream, &mut client)?;
-            Ok(())
-        }
-        ProxyRequestMode::ConnectTunnel => {
-            tunnel_connect(client, upstream, &buffer[parsed.body_offset..])
+    let resolution = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        resolve_dns(&resolver, &dns_cache, &host, port)
+    });
+    match tokio::time::timeout(wait_timeout, resolution).await {
+        Ok(joined) => joined
+            .map_err(|error| io::Error::other(format!("DNS resolver task failed: {error}")))?,
+        Err(_) => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "egress proxy DNS resolution timed out",
+        )),
+    }
+}
+
+/// Emits the terminal event for a request the strict parser rejected before an
+/// authority existed, then writes the fail-closed response.
+async fn malformed_terminal(
+    client: &mut TcpStream,
+    phase_recorder: &RequestPhaseRecorder,
+    decision_logger: &DecisionLogger,
+    response: HttpProxyResponse,
+) -> io::Result<()> {
+    let decision_log = EgressDecisionLog::malformed(response.body().to_owned());
+    emit_terminal_log(phase_recorder, decision_logger, decision_log);
+    write_http_response_async(client, response).await
+}
+
+/// Fires only if a connection task is dropped (PEP shutdown aborts its
+/// `JoinSet`) or exits abnormally after parse but before any terminal event —
+/// the exactly-one audit invariant must survive cancellation.
+struct AbortTerminalGuard {
+    phase_recorder: RequestPhaseRecorder,
+    decision_logger: DecisionLogger,
+    decision_log: EgressDecisionLog,
+}
+
+impl Drop for AbortTerminalGuard {
+    fn drop(&mut self) {
+        if !self.phase_recorder.terminal_recorded() {
+            emit_terminal_log(
+                &self.phase_recorder,
+                &self.decision_logger,
+                self.decision_log.clone(),
+            );
         }
     }
+}
+
+async fn deny_terminal(
+    client: &mut TcpStream,
+    phase_recorder: &RequestPhaseRecorder,
+    decision_logger: &DecisionLogger,
+    parsed: &ParsedProxyRequest,
+    matched_rule: Option<String>,
+    policy_generation: Option<PolicyGeneration>,
+    response: HttpProxyResponse,
+) -> io::Result<()> {
+    let mut decision_log =
+        EgressDecisionLog::denied(parsed, response.body().to_owned(), matched_rule);
+    if let Some(policy_generation) = policy_generation {
+        decision_log = decision_log.with_policy_generation(policy_generation);
+    }
+    emit_terminal_log(phase_recorder, decision_logger, decision_log);
+    write_http_response_async(client, response).await
+}
+
+fn emit_terminal_log(
+    phase_recorder: &RequestPhaseRecorder,
+    decision_logger: &DecisionLogger,
+    decision_log: EgressDecisionLog,
+) {
+    phase_recorder.record(EgressProxyRequestPhase::TerminalLog);
+    decision_logger(decision_log);
+}
+
+async fn upstream_error_terminal(
+    client: &mut TcpStream,
+    phase_recorder: &RequestPhaseRecorder,
+    decision_logger: &DecisionLogger,
+    parsed: &ParsedProxyRequest,
+    matched_rule: Option<String>,
+    policy_generation: PolicyGeneration,
+) -> io::Result<()> {
+    let response = HttpProxyResponse::bad_gateway("egress proxy failed to dial the upstream");
+    let decision_log = EgressDecisionLog::denied(parsed, response.body().to_owned(), matched_rule)
+        .with_policy_generation(policy_generation);
+    emit_terminal_log(phase_recorder, decision_logger, decision_log);
+    write_http_response_async(client, response).await
 }
 
 fn authorize_hostname_before_dns(
@@ -545,86 +1015,79 @@ fn authorize_hostname_before_dns(
     policy.authorize_hostname_without_resolved_ip(&parsed.egress_request)
 }
 
-fn read_http_headers(client: &mut TcpStream, buffer: &mut Vec<u8>) -> io::Result<()> {
-    let mut chunk = [0_u8; 1024];
-    loop {
-        let read = client.read(&mut chunk)?;
-        if read == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "client closed before sending HTTP headers",
-            ));
-        }
-        buffer.extend_from_slice(&chunk[..read]);
-        if find_header_end(buffer).is_some() {
-            return Ok(());
-        }
-        if buffer.len() > MAX_HTTP_HEADER_BYTES {
-            let _ = write_http_response(
-                client,
-                HttpProxyResponse::request_header_fields_too_large(
-                    "egress proxy request headers are too large",
-                ),
-            );
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "HTTP headers exceed maximum size",
-            ));
-        }
+fn find_matched_rule<'a>(
+    policy: &'a CompiledEgressPolicy,
+    matched_rule: Option<&str>,
+) -> Option<&'a EgressRule> {
+    let matched_rule = matched_rule?;
+    policy
+        .policy()
+        .rules()
+        .iter()
+        .find(|rule| rule.name == matched_rule)
+}
+
+fn build_pool_key(
+    identity: &EgressProxyPoolIdentity,
+    policy_generation: PolicyGeneration,
+    parsed: &ParsedProxyRequest,
+    resolved_peer: SocketAddr,
+    matched_rule: Option<&EgressRule>,
+) -> EgressProxyPoolKey {
+    let credential_identity = matched_rule
+        .and_then(|rule| rule.credential.as_ref())
+        .map(|credential| credential.credential_ref.clone());
+    let has_dlp = matched_rule.is_some_and(|rule| !rule.dlp.is_empty());
+    let sni = matches!(parsed.egress_request.protocol, EgressProtocol::Https)
+        .then(|| parsed.upstream_host.clone());
+    EgressProxyPoolKey {
+        tenant_id: identity.tenant_id.clone(),
+        workload_id: identity.workload_id.clone(),
+        substrate: identity.substrate,
+        policy_generation,
+        credential_dlp_mode: EgressProxyCredentialDlpMode::from_rule_requirements(
+            credential_identity.is_some(),
+            has_dlp,
+        ),
+        credential_identity,
+        destination: format!(
+            "{}://{}:{}",
+            egress_protocol_scheme(parsed.egress_request.protocol),
+            parsed.upstream_host,
+            parsed.upstream_port
+        ),
+        resolved_peer,
+        sni,
+        tls_verification: TlsVerificationMode::WebPki,
+        client_cert_identity: None,
+        alpn: vec!["http/1.1".to_owned()],
+        proxy_settings: None,
     }
 }
 
-fn tunnel_connect(
-    mut client: TcpStream,
-    mut upstream: TcpStream,
-    buffered_client_bytes: &[u8],
-) -> io::Result<()> {
-    client.write_all(b"HTTP/1.1 200 Connection Established\r\nConnection: close\r\n\r\n")?;
-    if !buffered_client_bytes.is_empty() {
-        upstream.write_all(buffered_client_bytes)?;
+fn egress_protocol_scheme(protocol: EgressProtocol) -> &'static str {
+    match protocol {
+        EgressProtocol::Tcp => "tcp",
+        EgressProtocol::Http => "http",
+        EgressProtocol::Https => "https",
     }
-    relay_bidirectional(client, upstream)
 }
 
-fn write_known_request_body(
-    client: &mut TcpStream,
-    upstream: &mut TcpStream,
-    buffered_client_bytes: &[u8],
-    content_length: usize,
-) -> io::Result<()> {
-    let buffered_len = buffered_client_bytes.len().min(content_length);
-    upstream.write_all(&buffered_client_bytes[..buffered_len])?;
-
-    let mut remaining = content_length - buffered_len;
-    let mut chunk = [0_u8; 8192];
-    while remaining > 0 {
-        let read_len = remaining.min(chunk.len());
-        let read = client.read(&mut chunk[..read_len])?;
-        if read == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "client closed before sending declared request body",
-            ));
-        }
-        upstream.write_all(&chunk[..read])?;
-        remaining -= read;
+fn render_pingora_downstream_request(
+    parsed: &ParsedProxyRequest,
+    header_lines: &[String],
+    buffer: &[u8],
+) -> Vec<u8> {
+    let ProxyRequestMode::ForwardHttp { origin_form } = &parsed.mode else {
+        return buffer.to_vec();
+    };
+    let mut rendered = format!("{} {} {}\r\n", parsed.method, origin_form, parsed.version);
+    for line in header_lines {
+        rendered.push_str(line);
+        rendered.push_str("\r\n");
     }
-    Ok(())
-}
-
-/// Relays bytes in both directions between an already-prepared client and
-/// upstream socket until each side closes its write half. Both the CONNECT
-/// tunnel and other full-duplex transports use this so payload bytes are not
-/// truncated when both sides may continue writing after the initial headers.
-fn relay_bidirectional(mut client: TcpStream, mut upstream: TcpStream) -> io::Result<()> {
-    let mut upstream_reader = upstream.try_clone()?;
-    let mut client_writer = client.try_clone()?;
-    let upstream_to_client = thread::spawn(move || {
-        let _ = io::copy(&mut upstream_reader, &mut client_writer);
-        let _ = client_writer.shutdown(Shutdown::Write);
-    });
-    let _ = io::copy(&mut client, &mut upstream);
-    let _ = upstream.shutdown(Shutdown::Write);
-    let _ = upstream_to_client.join();
-    Ok(())
+    rendered.push_str("\r\n");
+    let mut bytes = rendered.into_bytes();
+    bytes.extend_from_slice(&buffer[parsed.body_offset..]);
+    bytes
 }

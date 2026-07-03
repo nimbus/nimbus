@@ -30,6 +30,7 @@ use crate::backends::oci::conmon::{
 };
 use crate::backends::oci::egress::{
     EgressProxyAssignment, EgressProxyRegistry, egress_decision_log_root,
+    egress_trust_anchor_mount, egress_trust_anchor_root,
 };
 use crate::backends::oci::materializer::{
     MaterializedImageRootfs, OciImageMaterializer, PreparedMaterializedImageLaunch,
@@ -189,9 +190,10 @@ impl KrunSandboxBackend {
         ) {
             let _ = reconcile_network_segment_orphans(&config.state_root, &allocator);
         }
-        let egress_proxies = EgressProxyRegistry::with_decision_log_root(egress_decision_log_root(
-            &config.state_root,
-        ));
+        let egress_proxies = EgressProxyRegistry::with_roots(
+            egress_decision_log_root(&config.state_root),
+            egress_trust_anchor_root(&config.state_root),
+        );
         Self {
             config,
             egress_proxies,

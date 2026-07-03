@@ -72,6 +72,25 @@ impl EgressDecisionLog {
         }
     }
 
+    /// Terminal deny for a request the strict parser rejected before any
+    /// canonical authority existed (bare CR/LF smuggling, Transfer-Encoding,
+    /// parser-differential authorities, oversized headers). Blocked smuggling
+    /// attempts are exactly what an auditor wants to see, so they must not be
+    /// an audit blind spot just because no destination could be parsed.
+    pub(crate) fn malformed(reason: String) -> Self {
+        Self {
+            destination: "<unparsed>".to_owned(),
+            protocol: EgressProtocol::Tcp,
+            canonical_host: String::new(),
+            port: 0,
+            credential_identity: None,
+            allowed: false,
+            reason,
+            matched_rule: None,
+            policy_generation: None,
+        }
+    }
+
     pub(crate) fn with_policy_generation(mut self, generation: PolicyGeneration) -> Self {
         self.policy_generation = Some(generation);
         self
@@ -114,6 +133,9 @@ impl EgressDecisionLog {
     pub fn reason_class(&self) -> &'static str {
         if self.allowed {
             return "allowed";
+        }
+        if self.canonical_host.is_empty() {
+            return "malformed";
         }
         let reason = self.reason.to_ascii_lowercase();
         if reason.contains("dlp") {

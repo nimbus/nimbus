@@ -1,5 +1,6 @@
-use std::io::{self, Write};
-use std::net::TcpStream;
+use std::io;
+
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 pub(crate) struct HttpProxyResponse {
     status: &'static str,
@@ -56,8 +57,8 @@ impl HttpProxyResponse {
     }
 }
 
-pub(crate) fn write_http_response(
-    client: &mut TcpStream,
+pub(crate) async fn write_http_response_async(
+    client: &mut (impl AsyncWrite + Unpin),
     response: HttpProxyResponse,
 ) -> io::Result<()> {
     let rendered = format!(
@@ -66,5 +67,5 @@ pub(crate) fn write_http_response(
         response.body.len(),
         response.body
     );
-    client.write_all(rendered.as_bytes())
+    client.write_all(rendered.as_bytes()).await
 }
