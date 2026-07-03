@@ -10,6 +10,7 @@ use nimbus_runtime::{
 };
 
 mod blocking;
+mod fs_grants;
 mod provenance;
 mod worker;
 
@@ -122,8 +123,8 @@ fn runtime_for_host(
     host_bridge: Arc<dyn HostBridge>,
     runtime_policy: Arc<RuntimePolicy>,
 ) -> std::result::Result<NimbusRuntime, NimbusRuntimeError> {
-    let runtime_policy =
-        Arc::new(runtime_policy.clone_with_file_system(nimbus_fs::default_file_system()?));
+    let file_system = fs_grants::resolved_file_system(fs_grants::resolve_fs_grants())?;
+    let runtime_policy = Arc::new(runtime_policy.clone_with_file_system(file_system));
     Ok(NimbusRuntime::with_policy(host_bridge, runtime_policy))
 }
 

@@ -10,6 +10,7 @@ use crate::{MemFsBackend, MountTable, NimbusFs};
 mod caps;
 mod cas_ro;
 mod delegation;
+mod grants;
 mod mount;
 mod object;
 mod passthrough;
