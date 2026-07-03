@@ -12,11 +12,17 @@ has no released version carrying a required fix.
 
 - `brotli-3.5.0` is copied verbatim from its crates.io release with a single
   change: `ffi-api` is removed from the crate's `default` features (it stays
-  defined as an opt-in). `pingora-core 0.8.1` hard-depends on `brotli 3` with
-  default features, whose `ffi-api` C exports (`BrotliDecoder*` /
-  `BrotliEncoder*`) collide at link time with the pinned Deno runtime's own
-  brotli C exports, producing `rust-lld: duplicate symbol` errors when
-  `nimbus-server` links both. Pingora uses only brotli's Rust API, so dropping
-  the C exports is behaviorally inert. Remove once Pingora no longer pulls a
-  brotli whose default features export the C FFI (e.g. it gates brotli behind a
-  feature, or moves to a version that unifies with the Deno runtime's brotli).
+  defined as an opt-in), so pingora's brotli copy exports no `BrotliEncoder*` C
+  symbols and never references `brotli-decompressor`'s (gated) ffi module.
+- `brotli-decompressor-2.5.1` is copied verbatim from its crates.io release
+  with upstream's own 4.x fix backported: `pub mod ffi;` is gated behind a new
+  `ffi-api` feature (in 2.5.1 the module — and its `#[no_mangle]
+  BrotliDecoder*` C exports — was unconditional). This is the actual fix for
+  the `rust-lld: duplicate symbol: BrotliDecoder*` link failures: pingora-core
+  0.8.1 → `brotli 3` → `brotli-decompressor 2.5.1` exported the same C symbols
+  the Deno runtime's `brotli-decompressor 4.0.3` (gated ffi, legitimately
+  enabled) exports, and lld rejects the duplicate definitions in any binary
+  linking both (GNU ld tolerates them, which is why the failure was CI-only).
+  Both brotli patches apply only to pingora's `^3`/`^2` nodes; the Deno
+  runtime's brotli 6/8 and brotli-decompressor 4/5 stay on crates.io. Remove
+  both once Pingora moves off the brotli 3.x line.

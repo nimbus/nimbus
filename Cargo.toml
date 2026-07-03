@@ -208,6 +208,13 @@ s3s = { path = "third_party/s3s-0.14.0" }
 # Pingora 0.8.1 depends on brotli 3 with default features, whose `ffi-api`
 # exports C Brotli symbols that collide with the pinned Deno runtime.
 brotli = { path = "third_party/brotli-3.5.0" }
+# brotli-decompressor 2.5.1 (pingora's, via brotli 3) exports the BrotliDecoder*
+# C symbols UNCONDITIONALLY — upstream only gated them behind `ffi-api` in 4.x.
+# They collide at link (lld rejects; GNU ld tolerates) with the Deno runtime's
+# brotli-decompressor 4.0.3, which enables its gated ffi legitimately. The
+# vendored copy backports upstream's own 4.x gate so pingora's copy exports no
+# C symbols. Applies only to the ^2 node; Deno's 4.x/5.x stay on crates.io.
+brotli-decompressor = { path = "third_party/brotli-decompressor-2.5.1" }
 deno_core = { git = "https://github.com/nimbus/deno", tag = "v2.9.0-nimbus.3" }
 deno_crypto = { git = "https://github.com/nimbus/deno", tag = "v2.9.0-nimbus.3" }
 deno_crypto_provider = { git = "https://github.com/nimbus/deno", tag = "v2.9.0-nimbus.3" }
