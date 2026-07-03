@@ -10,9 +10,11 @@ use crate::{MemFsBackend, MountTable, NimbusFs};
 mod caps;
 mod cas_ro;
 mod delegation;
+mod grants;
 mod mount;
 mod object;
 mod passthrough;
+mod resolver_properties;
 
 fn checked(path: &Path) -> CheckedPath<'_> {
     CheckedPath::unsafe_new(Cow::Borrowed(path))

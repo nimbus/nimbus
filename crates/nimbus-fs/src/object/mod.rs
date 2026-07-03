@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
-use std::future::Future;
 use std::io;
+use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::rc::Rc;
@@ -18,6 +18,7 @@ use nimbus_blob::{BlobHash, BlobStore};
 use nimbus_storage::{ObjectBlobLayout, ObjectManifest, ObjectManifestAttributes, ObjectMetaStore};
 
 use crate::ObjectUnsupportedOperation;
+use crate::bridge::block_on_byte_plane;
 
 const OBJECT_FS_LIST_LIMIT: usize = 10_000;
 
@@ -190,7 +191,7 @@ impl ObjectRwBackend {
 
     fn put_blob(&self, bytes: Bytes) -> FsResult<BlobHash> {
         let blobs = self.blobs.clone();
-        block_on_object(async move {
+        block_on_byte_plane(async move {
             let hash = blobs.put(bytes).await.map_err(core_error)?;
             Ok(hash)
         })
@@ -199,10 +200,72 @@ impl ObjectRwBackend {
     fn get_blob(&self, hash: &BlobHash) -> FsResult<Bytes> {
         let blobs = self.blobs.clone();
         let hash = *hash;
-        block_on_object(async move {
+        block_on_byte_plane(async move {
             let bytes = blobs.get(&hash).await.map_err(core_error)?;
             Ok(bytes)
         })
+    }
+
+    /// Reads a bounded byte `range` of the blob addressed by `hash` through
+    /// `BlobStore::get_range`, instead of materializing the whole blob and
+    /// slicing in memory.
+    fn get_blob_range(&self, hash: &BlobHash, range: Range<u64>) -> FsResult<Bytes> {
+        let blobs = self.blobs.clone();
+        let hash = *hash;
+        block_on_byte_plane(async move {
+            blobs
+                .get_range(&hash, range)
+                .await
+                .map_err(|error| core_error(error).into())
+        })
+    }
+
+    /// Reads a bounded byte `range` of the object at `path` (used by the
+    /// external FUSE face, which previously materialized the entire object
+    /// and sliced the requested window in memory — replaced under FCW2 with
+    /// `BlobStore::get_range`, which transfers only the requested bytes).
+    pub fn read_range(&self, path: impl AsRef<Path>, range: Range<u64>) -> FsResult<Bytes> {
+        let path = normalize_path(path.as_ref())?;
+        let key = key_for_path(&path)?;
+        let manifest = self
+            .manifests
+            .get_object_manifest(&self.bucket, &key)
+            .map_err(core_error)?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("object {key}")))?;
+        self.read_manifest_range(&manifest, range)
+    }
+
+    fn read_manifest_range(&self, manifest: &ObjectManifest, range: Range<u64>) -> FsResult<Bytes> {
+        let start = range.start.min(manifest.size);
+        let end = range.end.min(manifest.size);
+        if start >= end {
+            return Ok(Bytes::new());
+        }
+        match &manifest.blob_layout {
+            ObjectBlobLayout::Whole { blob_hash } => {
+                let hash = BlobHash::from_hex(blob_hash).map_err(core_error)?;
+                self.get_blob_range(&hash, start..end)
+            }
+            ObjectBlobLayout::Chunked { chunks } => {
+                let mut bytes = Vec::with_capacity((end - start) as usize);
+                let mut chunk_start = 0u64;
+                for chunk in chunks {
+                    let chunk_end = chunk_start + chunk.len;
+                    if start < chunk_end && end > chunk_start {
+                        let local_start = start.saturating_sub(chunk_start);
+                        let local_end = end.min(chunk_end) - chunk_start;
+                        let hash = BlobHash::from_hex(&chunk.blob_hash).map_err(core_error)?;
+                        let window = self.get_blob_range(&hash, local_start..local_end)?;
+                        bytes.extend_from_slice(&window);
+                    }
+                    chunk_start = chunk_end;
+                    if chunk_start >= end {
+                        break;
+                    }
+                }
+                Ok(Bytes::from(bytes))
+            }
+        }
     }
 
     fn manifest_for_path(&self, path: &Path) -> FsResult<Option<ObjectManifest>> {
@@ -436,14 +499,9 @@ impl ExternalFuseObjectMount {
     }
 
     pub fn read(&self, path: impl AsRef<Path>, offset: u64, size: u32) -> FsResult<Vec<u8>> {
-        let bytes = self.backend.read_path(path)?;
-        let start = usize::try_from(offset)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "offset overflows usize"))?;
-        if start >= bytes.len() {
-            return Ok(Vec::new());
-        }
-        let end = bytes.len().min(start.saturating_add(size as usize));
-        Ok(bytes.slice(start..end).to_vec())
+        let end = offset.saturating_add(size as u64);
+        let bytes = self.backend.read_range(path, offset..end)?;
+        Ok(bytes.to_vec())
     }
 
     pub fn begin_write(&self, path: impl AsRef<Path>) -> FsResult<ExternalFuseWrite> {
@@ -1403,25 +1461,4 @@ fn core_error(error: nimbus_core::Error) -> io::Error {
 fn reject_unsupported_value<T>(operation: ObjectUnsupportedOperation) -> FsResult<T> {
     ObjectRwBackend::reject_unsupported(operation)?;
     unreachable!("reject_unsupported always returns an error")
-}
-
-fn block_on_object<T, F>(future: F) -> FsResult<T>
-where
-    T: Send + 'static,
-    F: Future<Output = FsResult<T>> + Send + 'static,
-{
-    let runner = move || {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| io::Error::other(format!("build object filesystem runtime: {error}")))?
-            .block_on(future)
-    };
-    if tokio::runtime::Handle::try_current().is_ok() {
-        std::thread::spawn(runner)
-            .join()
-            .map_err(|_| io::Error::other("object filesystem runtime thread panicked"))?
-    } else {
-        runner()
-    }
 }

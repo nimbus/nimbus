@@ -358,8 +358,11 @@ async fn run_embedded_codegen_for_app_dir(
     let mut limits = RuntimeLimits::tooling_node22();
     limits.execution_model = RuntimeExecutionModel::RunToCompletion;
     limits.runtime_pool_kind = RuntimePoolKind::StartupSnapshotCache;
-    let runtime_policy =
-        RuntimePolicy::new(limits).clone_with_file_system(nimbus_fs::default_file_system()?);
+    // Codegen is a developer tool, not an isolate substrate: it intentionally
+    // gets the full host filesystem to read/write the app's own source tree.
+    let codegen_grants = nimbus_fs::FsCaps::new().grant("/", nimbus_fs::FsMountCaps::read_write());
+    let runtime_policy = RuntimePolicy::new(limits)
+        .clone_with_file_system(nimbus_fs::file_system_for_grants(&codegen_grants)?);
     let runtime =
         NimbusRuntime::with_policy(Arc::new(EmbeddedCodegenHost), Arc::new(runtime_policy));
     let invocation_context =

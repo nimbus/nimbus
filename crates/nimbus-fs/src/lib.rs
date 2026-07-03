@@ -21,6 +21,7 @@ use std::rc::Rc;
 use std::sync::Mutex;
 
 pub mod backend;
+mod bridge;
 pub mod cache;
 pub mod caps;
 pub mod cas_ro;
@@ -37,6 +38,7 @@ pub use backend::{
 pub use cache::{CacheLookup, ChunkCache};
 pub use caps::{FsCaps, FsMountCaps};
 pub use cas_ro::{CasBlobChunk, CasManifestEntry, CasReadOnlyBackend, CasReadOnlyManifest};
+pub use deno_fs::FileSystemRc;
 pub use memfs::MemFsBackend;
 pub use mount::MountTable;
 pub use object::{ExternalFuseObjectMount, ExternalFuseWrite, ObjectRwBackend, ObjectWriteSession};
@@ -142,8 +144,27 @@ impl NimbusFs {
     }
 }
 
-pub fn default_file_system() -> io::Result<deno_fs::FileSystemRc> {
-    Ok(MaybeArc::new(NimbusFs::new(PassthroughBackend::new()?)))
+/// Build the gated `FileSystemRc` for an explicit grant set.
+///
+/// The base mount table is the same single passthrough mount rooted at `/`
+/// that the old ungated default used; `grants` is then applied via
+/// `FsCaps::apply_to_mount_table`, which masks every mount prefix that has no
+/// matching grant. There is no path here that yields an ungated filesystem:
+/// an empty `FsCaps` masks the root mount entirely.
+pub fn file_system_for_grants(grants: &FsCaps) -> io::Result<deno_fs::FileSystemRc> {
+    let table = MountTable::new(MaybeArc::new(PassthroughBackend::new()?));
+    let gated = grants.apply_to_mount_table(&table);
+    Ok(MaybeArc::new(NimbusFs::with_mount_table(gated, "/")))
+}
+
+/// The fail-closed filesystem for a substrate with no resolved grant.
+///
+/// Delegates to `nimbus-runtime`'s `DenyFileSystem`, which rejects every
+/// operation. Callers must use this instead of falling back to any
+/// passthrough or empty-grant construction when grant resolution yields
+/// nothing.
+pub fn deny_file_system() -> deno_fs::FileSystemRc {
+    MaybeArc::new(nimbus_runtime::fs::DenyFileSystem)
 }
 
 fn open_options_require_write(options: OpenOptions) -> bool {

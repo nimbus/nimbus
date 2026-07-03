@@ -179,6 +179,86 @@ fn rooted_passthrough_rejects_absolute_symlink_targets() {
 
 #[cfg(unix)]
 #[test]
+fn symlink_parent_swap_toctou_never_leaks_outside_content() {
+    // In-process analog of runc CVE-2026-41579 / crun CVE-2026-47766: a
+    // parent directory that was legitimate at the time a caller checked it
+    // is atomically replaced with a symlink pointing outside the sandboxed
+    // root before the caller actually uses the path. cap-std's directory
+    // handles are opened once (by fd) and every subsequent lookup is
+    // resolved relative to that fd, so a later swap of a path *component*
+    // must never let a lookup land outside the root the fd was opened
+    // against.
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+
+    // Legitimate nested structure inside the root: R/a/b/leaf.txt.
+    std::fs::create_dir_all(root.path().join("a/b")).unwrap();
+    std::fs::write(root.path().join("a/b/leaf.txt"), b"inside-content").unwrap();
+
+    // A different nested structure living entirely outside the root, with
+    // different content at the same relative path.
+    std::fs::create_dir_all(outside.path().join("b")).unwrap();
+    std::fs::write(outside.path().join("b/leaf.txt"), b"outside-content").unwrap();
+    let outside_leaf = outside.path().join("b/leaf.txt");
+    let outside_leaf_before = std::fs::read(&outside_leaf).unwrap();
+    let outside_mtime_before = std::fs::metadata(&outside_leaf)
+        .unwrap()
+        .modified()
+        .unwrap();
+
+    let backend = rooted_passthrough_backend(root.path());
+
+    // The swap: replace R/a with a symlink to the outside tempdir, between
+    // whatever earlier check admitted "/a" and this access.
+    std::fs::remove_dir_all(root.path().join("a")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), root.path().join("a")).unwrap();
+
+    // Reading through the swapped parent must never return the outside
+    // file's content. cap-std is expected to refuse the traversal outright;
+    // at an absolute minimum the outside bytes must never come back.
+    match backend.read_file_sync(&checked(Path::new("/a/b/leaf.txt")), OpenOptions::read()) {
+        Err(_) => {}
+        Ok(bytes) => assert_ne!(
+            bytes.as_ref(),
+            b"outside-content",
+            "read through a swapped parent must never leak the outside file's content"
+        ),
+    }
+
+    // Creating/writing through the swapped parent must not land outside R
+    // either.
+    let write_result = backend.write_file_sync(
+        &checked(Path::new("/a/newfile.txt")),
+        OpenOptions::write(true, false, false, None),
+        b"escaped",
+    );
+    assert!(
+        write_result.is_err(),
+        "write through a swapped parent must not be admitted"
+    );
+    assert!(
+        !outside.path().join("newfile.txt").exists(),
+        "write through a swapped parent must not create a file outside the root"
+    );
+
+    // The pre-existing outside file must be untouched by any of the above.
+    assert_eq!(
+        std::fs::read(&outside_leaf).unwrap(),
+        outside_leaf_before,
+        "outside file content must be unchanged by access through the swapped parent"
+    );
+    assert_eq!(
+        std::fs::metadata(&outside_leaf)
+            .unwrap()
+            .modified()
+            .unwrap(),
+        outside_mtime_before,
+        "outside file mtime must be unchanged by access through the swapped parent"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn rooted_passthrough_cp_rejects_absolute_symlink_targets() {
     let root = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
@@ -199,4 +279,61 @@ fn rooted_passthrough_cp_rejects_absolute_symlink_targets() {
         !root.path().join("destination/link").exists(),
         "copy must fail before creating an escaped symlink in the destination tree"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn ambient_root_passthrough_follows_absolute_symlinks() {
+    // The live launch-default grant (RW "/") has no boundary to protect: the
+    // cap-std sandbox is vacuous at root "/", so this backend must behave
+    // exactly like RealFs, including following a pre-existing absolute-target
+    // symlink on read and stat. Before the ambient-root carve-out, this
+    // failed with "a path led outside of the filesystem" even though the
+    // link and its target were both real, ordinary files.
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("real-target.txt");
+    std::fs::write(&target, b"through-link").unwrap();
+    let link = dir.path().join("abs-link.txt");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    let grants = crate::FsCaps::new().grant("/", crate::FsMountCaps::read_write());
+    let fs = crate::file_system_for_grants(&grants).unwrap();
+
+    let bytes = fs
+        .read_file_sync(&checked(&link), deno_fs::OpenOptions::read())
+        .expect("ambient root must follow a pre-existing absolute symlink on read");
+    assert_eq!(bytes.as_ref(), b"through-link");
+
+    let stat = fs
+        .stat_sync(&checked(&link))
+        .expect("ambient root must follow a pre-existing absolute symlink on stat");
+    assert!(stat.is_file);
+}
+
+#[cfg(unix)]
+#[test]
+fn ambient_root_passthrough_creates_absolute_symlink_targets() {
+    // RealFs parity for symlink creation, matching the pattern used by the
+    // 11 gated Node-compat fixtures that create absolute-target symlinks
+    // (e.g. test/parallel/test-fs-symlink.js via fixtures.path(...)).
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("real-target.txt");
+    std::fs::write(&target, b"absolute-target").unwrap();
+    let link = dir.path().join("abs-link.txt");
+
+    let grants = crate::FsCaps::new().grant("/", crate::FsMountCaps::read_write());
+    let fs = crate::file_system_for_grants(&grants).unwrap();
+
+    fs.symlink_sync(&checked(&target), &checked(&link), None)
+        .expect("ambient root must create an absolute-target symlink like RealFs");
+
+    let resolved = fs
+        .read_link_sync(&checked(&link))
+        .expect("ambient root must read back the absolute symlink target");
+    assert_eq!(resolved, target);
+
+    let bytes = fs
+        .read_file_sync(&checked(&link), deno_fs::OpenOptions::read())
+        .expect("the newly created absolute symlink must be traversable");
+    assert_eq!(bytes.as_ref(), b"absolute-target");
 }

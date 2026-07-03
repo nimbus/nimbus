@@ -153,12 +153,11 @@ check_nfs3() {
   if has_file "crates/nimbus-fs/src/cas_ro.rs" \
     && grep_file "CasReadOnlyBackend" "crates/nimbus-fs/src/cas_ro.rs" \
     && grep_file "BlobStore" "crates/nimbus-fs/src/cas_ro.rs" \
-    && grep_file "get_stream" "crates/nimbus-fs/src/cas_ro.rs" \
-    && grep_file "skip_stream_bytes|read_exact_window" "crates/nimbus-fs/src/cas_ro.rs" \
+    && grep_file "\.get_range\(" "crates/nimbus-fs/src/cas_ro.rs" \
     && ! grep_file "read_to_end" "crates/nimbus-fs/src/cas_ro.rs" \
     && grep_file "EROFS|ReadOnly" "crates/nimbus-fs/src/cas_ro.rs" \
     && has_file "$PROOF_DIR/nfs3-cas-ro.md"; then
-    pass "NFS3 CAS read-only backend consumes BlobStore::get_stream and records proof"
+    pass "NFS3 CAS read-only backend consumes the Seam A bounded read side and records proof"
   else
     fail "NFS3 CAS read-only backend/proof condition is incomplete"
   fi
