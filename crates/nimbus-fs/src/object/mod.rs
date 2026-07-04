@@ -63,7 +63,12 @@ struct ObjectFile {
 
 #[derive(Debug)]
 enum ObjectFileState {
-    Reader(Bytes),
+    /// Holds only the manifest — chunk hashes and lengths, no blob bytes.
+    /// Each read serves its window through `ObjectRwBackend::read_manifest_range`,
+    /// which issues one `BlobStore::get_range` per overlapping chunk. Opening
+    /// a file never transfers a body byte; only reads do, and only the bytes
+    /// a read actually spans.
+    Reader(Box<ObjectManifest>),
     Writer(Vec<u8>),
 }
 
@@ -606,13 +611,15 @@ impl FileSystem for ObjectRwBackend {
             }));
         }
 
-        let bytes = self.read_key(&key)?;
+        let manifest = self
+            .manifest_for_path(&path)?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("object {key}")))?;
         Ok(Rc::new(ObjectFile {
             backend: self.clone(),
             path,
             key,
             cursor: Mutex::new(0),
-            state: Mutex::new(ObjectFileState::Reader(bytes)),
+            state: Mutex::new(ObjectFileState::Reader(Box::new(manifest))),
             readable: true,
             writable: false,
         }))
@@ -986,6 +993,28 @@ impl FsReadDir for ObjectReadDir {
     }
 }
 
+impl ObjectFile {
+    /// Serves `buf.len()` bytes starting at `start` out of `manifest` through
+    /// bounded `get_range` windows (shared with the external FUSE face via
+    /// `ObjectRwBackend::read_manifest_range` — no duplicated window math).
+    /// Never transfers more than the manifest's remaining size.
+    fn read_window(
+        &self,
+        manifest: &ObjectManifest,
+        start: u64,
+        buf: &mut [u8],
+    ) -> FsResult<usize> {
+        if start >= manifest.size || buf.is_empty() {
+            return Ok(0);
+        }
+        let end = start.saturating_add(buf.len() as u64).min(manifest.size);
+        let window = self.backend.read_manifest_range(manifest, start..end)?;
+        let nread = window.len();
+        buf[..nread].copy_from_slice(&window);
+        Ok(nread)
+    }
+}
+
 #[async_trait::async_trait(?Send)]
 impl File for ObjectFile {
     fn maybe_path(&self) -> Option<&Path> {
@@ -998,17 +1027,22 @@ impl File for ObjectFile {
         }
         let mut cursor = self.cursor.lock().unwrap();
         let state = self.state.lock().unwrap();
-        let bytes = match &*state {
-            ObjectFileState::Reader(bytes) => bytes.as_ref(),
-            ObjectFileState::Writer(bytes) => bytes.as_slice(),
+        let nread = match &*state {
+            ObjectFileState::Reader(manifest) => self.read_window(manifest, *cursor, buf)?,
+            ObjectFileState::Writer(bytes) => {
+                let start = usize::try_from(*cursor).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "cursor overflows usize")
+                })?;
+                if start >= bytes.len() {
+                    0
+                } else {
+                    let nread = (bytes.len() - start).min(buf.len());
+                    buf[..nread].copy_from_slice(&bytes[start..start + nread]);
+                    nread
+                }
+            }
         };
-        let start = usize::try_from(*cursor)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "cursor overflows usize"))?;
-        if start >= bytes.len() {
-            return Ok(0);
-        }
-        let nread = (bytes.len() - start).min(buf.len());
-        buf[..nread].copy_from_slice(&bytes[start..start + nread]);
+        drop(state);
         *cursor += nread as u64;
         Ok(nread)
     }
@@ -1059,16 +1093,26 @@ impl File for ObjectFile {
         }
         let cursor = *self.cursor.lock().unwrap();
         let state = self.state.lock().unwrap();
-        let bytes = match &*state {
-            ObjectFileState::Reader(bytes) => bytes.as_ref(),
-            ObjectFileState::Writer(bytes) => bytes.as_slice(),
-        };
-        let start = usize::try_from(cursor)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "cursor overflows usize"))?;
-        if start >= bytes.len() {
-            return Ok(Cow::Owned(Vec::new()));
+        match &*state {
+            ObjectFileState::Reader(manifest) => {
+                if cursor >= manifest.size {
+                    return Ok(Cow::Owned(Vec::new()));
+                }
+                let bytes = self
+                    .backend
+                    .read_manifest_range(manifest, cursor..manifest.size)?;
+                Ok(Cow::Owned(bytes.to_vec()))
+            }
+            ObjectFileState::Writer(bytes) => {
+                let start = usize::try_from(cursor).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "cursor overflows usize")
+                })?;
+                if start >= bytes.len() {
+                    return Ok(Cow::Owned(Vec::new()));
+                }
+                Ok(Cow::Owned(bytes[start..].to_vec()))
+            }
         }
-        Ok(Cow::Owned(bytes[start..].to_vec()))
     }
 
     async fn read_all_async(self: Rc<Self>) -> FsResult<Cow<'static, [u8]>> {
@@ -1095,7 +1139,7 @@ impl File for ObjectFile {
         let len = {
             let state = self.state.lock().unwrap();
             match &*state {
-                ObjectFileState::Reader(bytes) => bytes.len() as u64,
+                ObjectFileState::Reader(manifest) => manifest.size,
                 ObjectFileState::Writer(bytes) => bytes.len() as u64,
             }
         };
@@ -1146,7 +1190,7 @@ impl File for ObjectFile {
         let len = {
             let state = self.state.lock().unwrap();
             match &*state {
-                ObjectFileState::Reader(bytes) => bytes.len() as u64,
+                ObjectFileState::Reader(manifest) => manifest.size,
                 ObjectFileState::Writer(bytes) => bytes.len() as u64,
             }
         };
@@ -1227,19 +1271,21 @@ impl File for ObjectFile {
 
     fn read_at_sync(self: Rc<Self>, buf: &mut [u8], position: u64) -> FsResult<usize> {
         let state = self.state.lock().unwrap();
-        let bytes = match &*state {
-            ObjectFileState::Reader(bytes) => bytes.as_ref(),
-            ObjectFileState::Writer(bytes) if self.readable => bytes.as_slice(),
-            ObjectFileState::Writer(_) => return Err(io::ErrorKind::PermissionDenied.into()),
-        };
-        let start = usize::try_from(position)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "position overflows usize"))?;
-        if start >= bytes.len() {
-            return Ok(0);
+        match &*state {
+            ObjectFileState::Reader(manifest) => self.read_window(manifest, position, buf),
+            ObjectFileState::Writer(bytes) if self.readable => {
+                let start = usize::try_from(position).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "position overflows usize")
+                })?;
+                if start >= bytes.len() {
+                    return Ok(0);
+                }
+                let nread = (bytes.len() - start).min(buf.len());
+                buf[..nread].copy_from_slice(&bytes[start..start + nread]);
+                Ok(nread)
+            }
+            ObjectFileState::Writer(_) => Err(io::ErrorKind::PermissionDenied.into()),
         }
-        let nread = (bytes.len() - start).min(buf.len());
-        buf[..nread].copy_from_slice(&bytes[start..start + nread]);
-        Ok(nread)
     }
 
     async fn read_at_async(
@@ -1270,7 +1316,7 @@ impl File for ObjectFile {
     fn try_clone_inner(self: Rc<Self>) -> FsResult<Rc<dyn File>> {
         let state = self.state.lock().unwrap();
         let cloned_state = match &*state {
-            ObjectFileState::Reader(bytes) => ObjectFileState::Reader(bytes.clone()),
+            ObjectFileState::Reader(manifest) => ObjectFileState::Reader(manifest.clone()),
             ObjectFileState::Writer(bytes) => ObjectFileState::Writer(bytes.clone()),
         };
         Ok(Rc::new(ObjectFile {

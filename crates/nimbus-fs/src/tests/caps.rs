@@ -400,6 +400,42 @@ fn object_rw_backend_slot_rejects_unsupported_posix_operations() {
 }
 
 #[test]
+#[should_panic(expected = "empty prefix")]
+fn empty_grant_prefix_is_rejected() {
+    // `grant("")` previously normalized to "/" and silently granted root.
+    // `FsCaps::grant` is a builder (returns `Self`, no `Result`), so this is
+    // a programmer-error panic, not a recoverable error.
+    let _ = FsCaps::new().grant("", FsMountCaps::read_write());
+}
+
+#[test]
+fn duplicate_separator_prefixes_normalize_and_match() {
+    let backend = MemFsBackend::new();
+    backend
+        .write_file_sync(
+            &checked(Path::new("/file.txt")),
+            OpenOptions::write(true, false, false, None),
+            b"payload",
+        )
+        .unwrap();
+    let mut table = MountTable::new(memfs_rc());
+    table.mount("/tmp/x", MaybeArc::new(backend)).unwrap();
+
+    let gated = FsCaps::new()
+        .grant("//tmp//x", FsMountCaps::read_write())
+        .apply_to_mount_table(&table);
+    let fs = fs_with_mounts(gated);
+
+    assert_eq!(
+        fs.read_file_sync(&checked(Path::new("/tmp/x/file.txt")), OpenOptions::read())
+            .unwrap()
+            .as_ref(),
+        b"payload",
+        "a '//'-style grant prefix must normalize and match the canonical mount path"
+    );
+}
+
+#[test]
 fn cache_hit_avoids_refetch_and_eviction_respects_capacity() {
     let mut cache = ChunkCache::new(2);
     let mut fetches = 0;

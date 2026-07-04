@@ -9,8 +9,9 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use nimbus_core::{Error, Result};
 use nimbus_crypto::{
-    FramedBlobKey, FramedBlobSeed, open_framed_blob, open_framed_blob_range, random_framed_salt,
-    seal_framed_blob,
+    FRAMED_HEADER_LEN, FramedBlobHeader, FramedBlobKey, FramedBlobSeed,
+    framed_span_for_plaintext_range, open_framed_blob, open_framed_blob_range, open_framed_span,
+    random_framed_salt, seal_framed_blob,
 };
 use tokio::io::AsyncReadExt;
 
@@ -94,8 +95,41 @@ impl<S: BlobStore> BlobStore for EncryptedBlobStore<S> {
     }
 
     async fn get_range(&self, hash: &BlobHash, range: Range<u64>) -> Result<Bytes> {
-        let framed = self.inner.get(hash).await?;
-        self.open_range(&framed, range)
+        if range.start > range.end {
+            return Err(Error::InvalidInput(format!(
+                "range {}..{} out of bounds: start after end",
+                range.start, range.end
+            )));
+        }
+        // Bounded probe: the header is a small fixed size, so learn the
+        // plaintext length (and frame layout) without ever fetching the
+        // whole ciphertext.
+        let header_bytes = self
+            .inner
+            .get_range(hash, 0..FRAMED_HEADER_LEN as u64)
+            .await?;
+        let (header, _) = FramedBlobHeader::parse(&header_bytes)?;
+        let len = header.plaintext_len as u64;
+        if range.end > len {
+            return Err(Error::InvalidInput(format!(
+                "range {}..{} out of bounds for blob of {len} bytes",
+                range.start, range.end
+            )));
+        }
+        if range.start == range.end {
+            return Ok(Bytes::new());
+        }
+        if range.start == 0 && range.end == len {
+            // Full-blob range: keep the whole-fetch path so the trailing
+            // ciphertext-body-length check in `open_framed_blob_range`
+            // still runs (it only runs for the exact `0..len` request).
+            let framed = self.inner.get(hash).await?;
+            return self.open_range(&framed, range);
+        }
+        let span = framed_span_for_plaintext_range(&header, range.clone())?;
+        let framed_span = self.inner.get_range(hash, span).await?;
+        let plaintext = open_framed_span(&self.key, &header, &framed_span, range)?;
+        Ok(Bytes::from(plaintext))
     }
 
     async fn has(&self, hash: &BlobHash) -> Result<bool> {
@@ -109,16 +143,74 @@ impl<S: BlobStore> BlobStore for EncryptedBlobStore<S> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use nimbus_crypto::{DataEncryptionKey, FRAME_PLAINTEXT_LEN, FramedSeedKind, KEY_SEED_LEN};
 
+    use super::*;
     use crate::memory::MemoryBlobStore;
 
     fn key(seed: &str) -> FramedBlobKey {
         FramedBlobKey::new(DataEncryptionKey::new(
             *blake3::hash(seed.as_bytes()).as_bytes(),
         ))
+    }
+
+    /// Test-only [`BlobStore`] wrapper that counts bytes served by `get` and
+    /// `get_range`, so a `get_range` test on [`EncryptedBlobStore`] can prove
+    /// the *inner* (ciphertext) transfer stayed bounded to a handful of
+    /// frames instead of the whole framed blob.
+    #[derive(Clone)]
+    struct CountingBlobStore {
+        inner: Arc<MemoryBlobStore>,
+        bytes_served: Arc<AtomicU64>,
+    }
+
+    impl CountingBlobStore {
+        fn new(inner: MemoryBlobStore) -> Self {
+            Self {
+                inner: Arc::new(inner),
+                bytes_served: Arc::new(AtomicU64::new(0)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl BlobStore for CountingBlobStore {
+        async fn put(&self, bytes: Bytes) -> Result<BlobHash> {
+            self.inner.put(bytes).await
+        }
+
+        async fn put_stream(&self, src: ByteStream) -> Result<BlobHash> {
+            self.inner.put_stream(src).await
+        }
+
+        async fn get(&self, hash: &BlobHash) -> Result<Bytes> {
+            let bytes = self.inner.get(hash).await?;
+            self.bytes_served
+                .fetch_add(bytes.len() as u64, Ordering::SeqCst);
+            Ok(bytes)
+        }
+
+        async fn get_stream(&self, hash: &BlobHash) -> Result<ByteStream> {
+            self.inner.get_stream(hash).await
+        }
+
+        async fn get_range(&self, hash: &BlobHash, range: Range<u64>) -> Result<Bytes> {
+            let bytes = self.inner.get_range(hash, range).await?;
+            self.bytes_served
+                .fetch_add(bytes.len() as u64, Ordering::SeqCst);
+            Ok(bytes)
+        }
+
+        async fn has(&self, hash: &BlobHash) -> Result<bool> {
+            self.inner.has(hash).await
+        }
+
+        async fn release(&self, hash: &BlobHash) -> Result<()> {
+            self.inner.release(hash).await
+        }
     }
 
     #[tokio::test]
@@ -216,6 +308,92 @@ mod tests {
             slice,
             Bytes::copy_from_slice(&plaintext[start as usize..end as usize])
         );
+    }
+
+    #[tokio::test]
+    async fn encrypted_range_read_transfers_only_inner_bytes_served() {
+        let counting = CountingBlobStore::new(MemoryBlobStore::new());
+        let bytes_served = counting.bytes_served.clone();
+        let store = EncryptedBlobStore::new(counting, key("acme"));
+
+        let big: Vec<u8> = (0..1_048_576usize).map(|i| (i % 251) as u8).collect();
+        let hash = store.put(Bytes::from(big.clone())).await.unwrap();
+        bytes_served.store(0, Ordering::SeqCst);
+
+        let slice = store.get_range(&hash, 4096..8192).await.unwrap();
+
+        assert_eq!(slice, Bytes::copy_from_slice(&big[4096..8192]));
+        let served = bytes_served.load(Ordering::SeqCst);
+        assert!(
+            served < (FRAME_PLAINTEXT_LEN * 3) as u64,
+            "range read should transfer only the overlapping frames (< 3 frames' worth), \
+             not the whole 1MiB blob: served {served} bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_range_straddles_two_frames() {
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
+        let plaintext: Vec<u8> = (0..(FRAME_PLAINTEXT_LEN * 2))
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let hash = store.put(Bytes::from(plaintext.clone())).await.unwrap();
+        let start = FRAME_PLAINTEXT_LEN as u64 - 10;
+        let end = FRAME_PLAINTEXT_LEN as u64 + 10;
+        let slice = store.get_range(&hash, start..end).await.unwrap();
+        assert_eq!(
+            slice,
+            Bytes::copy_from_slice(&plaintext[start as usize..end as usize])
+        );
+    }
+
+    #[tokio::test]
+    async fn get_range_at_exact_frame_edge() {
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
+        let plaintext: Vec<u8> = (0..(FRAME_PLAINTEXT_LEN * 2))
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let hash = store.put(Bytes::from(plaintext.clone())).await.unwrap();
+        let start = 0u64;
+        let end = FRAME_PLAINTEXT_LEN as u64;
+        let slice = store.get_range(&hash, start..end).await.unwrap();
+        assert_eq!(
+            slice,
+            Bytes::copy_from_slice(&plaintext[start as usize..end as usize])
+        );
+    }
+
+    #[tokio::test]
+    async fn get_range_covers_final_partial_frame() {
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
+        let plaintext: Vec<u8> = (0..(FRAME_PLAINTEXT_LEN * 2 + 123))
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let hash = store.put(Bytes::from(plaintext.clone())).await.unwrap();
+        let start = FRAME_PLAINTEXT_LEN as u64 * 2;
+        let end = plaintext.len() as u64;
+        let slice = store.get_range(&hash, start..end).await.unwrap();
+        assert_eq!(
+            slice,
+            Bytes::copy_from_slice(&plaintext[start as usize..end as usize])
+        );
+    }
+
+    #[tokio::test]
+    async fn get_range_rejects_end_past_blob_length() {
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
+        let hash = store.put(Bytes::from_static(b"abcdefghij")).await.unwrap();
+        let err = store.get_range(&hash, 3..100).await.unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::reversed_empty_ranges)]
+    async fn get_range_rejects_start_after_end() {
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
+        let hash = store.put(Bytes::from_static(b"abcdefghij")).await.unwrap();
+        let err = store.get_range(&hash, 8..4).await.unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
     }
 
     #[tokio::test]

@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::rc::Rc;
 
@@ -860,12 +860,27 @@ impl File for CappedFile {
     }
 }
 
+/// Normalizes a grant prefix into a canonical, matchable absolute path.
+///
+/// Panics on an empty prefix: `FsCaps::grant` is a builder (it returns
+/// `Self`, not a `Result`), this is a programmer error caught at the call
+/// site, and pre-launch there is no compatibility reason to let `grant("")`
+/// silently normalize to `"/"` and grant root.
 fn normalize_prefix(path: PathBuf) -> PathBuf {
-    if path.is_absolute() {
-        path
-    } else {
-        PathBuf::from("/").join(path)
+    if path.as_os_str().is_empty() {
+        panic!("FsCaps::grant called with an empty prefix");
     }
+    let mut normalized = PathBuf::from("/");
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            Component::ParentDir => {
+                panic!("FsCaps::grant prefix must not contain '..' components")
+            }
+            Component::RootDir | Component::CurDir | Component::Prefix(_) => {}
+        }
+    }
+    normalized
 }
 
 fn readonly() -> deno_io::fs::FsError {

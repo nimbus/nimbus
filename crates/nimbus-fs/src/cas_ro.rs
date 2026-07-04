@@ -109,6 +109,16 @@ impl CasReadOnlyBackend {
                 let end = (request_end.min(chunk_end) - chunk_start) as usize;
                 let len = end - start;
                 let bytes = self.read_blob_range(&chunk.hash, start as u64..end as u64)?;
+                if bytes.len() != len {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "CAS blob range returned {} bytes, expected {len}",
+                            bytes.len()
+                        ),
+                    )
+                    .into());
+                }
                 buf[written..written + len].copy_from_slice(&bytes);
                 written += len;
                 if written == max_read {

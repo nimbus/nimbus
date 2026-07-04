@@ -62,6 +62,11 @@ struct LocalPackState {
     active_pack_id: u64,
     active_pack_bytes: u64,
     index: HashMap<BlobHash, PackEntry>,
+    /// Body bytes actually read off disk by `get_range`, tracked only in test
+    /// builds to prove a range read stays bounded instead of pulling the
+    /// whole pack record.
+    #[cfg(test)]
+    body_bytes_read: u64,
 }
 
 /// Durable local byte-plane store backed by append-only pack files.
@@ -117,6 +122,8 @@ impl LocalPackStore {
                     active_pack_id: next_pack_id,
                     active_pack_bytes,
                     index,
+                    #[cfg(test)]
+                    body_bytes_read: 0,
                 })),
             });
         }
@@ -129,6 +136,8 @@ impl LocalPackStore {
                 active_pack_id,
                 active_pack_bytes,
                 index,
+                #[cfg(test)]
+                body_bytes_read: 0,
             })),
         })
     }
@@ -178,6 +187,20 @@ impl LocalPackStore {
         .await
         .map_err(|err| Error::storage(StorageErrorKind::Other, format!("local pack task: {err}")))?
     }
+
+    /// Returns and resets the body bytes read by `get_range` so far.
+    ///
+    /// Test-only instrumentation: proves a range read stayed bounded to the
+    /// requested window instead of materializing the whole pack record.
+    #[cfg(test)]
+    async fn take_body_bytes_read(&self) -> Result<u64> {
+        self.blocking(|mut state| {
+            let value = state.body_bytes_read;
+            state.body_bytes_read = 0;
+            Ok(value)
+        })
+        .await
+    }
 }
 
 #[async_trait]
@@ -202,20 +225,19 @@ impl BlobStore for LocalPackStore {
     }
 
     async fn get_stream(&self, hash: &BlobHash) -> Result<ByteStream> {
-        let bytes = self.get(hash).await?;
-        Ok(Box::new(std::io::Cursor::new(bytes)))
+        Ok(Box::new(std::io::Cursor::new(self.get(hash).await?)))
     }
 
     async fn get_range(&self, hash: &BlobHash, range: Range<u64>) -> Result<Bytes> {
-        let bytes = self.get(hash).await?;
-        let len = bytes.len() as u64;
-        if range.start > range.end || range.end > len {
+        if range.start > range.end {
             return Err(Error::InvalidInput(format!(
-                "range {}..{} out of bounds for blob of {len} bytes",
+                "range {}..{} out of bounds: start after end",
                 range.start, range.end
             )));
         }
-        Ok(bytes.slice(range.start as usize..range.end as usize))
+        let hash = *hash;
+        self.blocking(move |mut state| read_blob_range_locked(&mut state, &hash, range))
+            .await
     }
 
     async fn has(&self, hash: &BlobHash) -> Result<bool> {
@@ -489,6 +511,44 @@ fn read_blob_locked(state: &LocalPackState, hash: &BlobHash) -> Result<Bytes> {
     read_pack_entry(&state.packs_dir, hash, entry)
 }
 
+/// Reads a bounded byte window of `hash` directly from its pack file.
+///
+/// Trust-model decision: a range read verifies the record framing (magic +
+/// stored record hash + stored record len) but does **not** re-verify the
+/// whole-blob BLAKE3 content address the way [`read_pack_entry`] (used by
+/// `get`) does — recomputing BLAKE3 requires every byte of the blob, which
+/// would defeat the point of a bounded read. Corruption of bytes strictly
+/// outside a requested window is caught only by a subsequent whole-blob
+/// `get()`/compaction pass, not by the range read itself. Pack bytes are
+/// trusted based on having been verified once, at write time (the caller
+/// already computed `hash` from the exact bytes being appended in
+/// `put_locked`). This mirrors the same non-guarantee any bounded-I/O byte
+/// plane offers (e.g. S3/GCS ranged GETs are not checksummed against a
+/// whole-object digest either).
+fn read_blob_range_locked(
+    state: &mut LocalPackState,
+    hash: &BlobHash,
+    range: Range<u64>,
+) -> Result<Bytes> {
+    let entry = state
+        .index
+        .get(hash)
+        .copied()
+        .ok_or_else(|| Error::NotFound(format!("blob {hash}")))?;
+    if range.end > entry.len {
+        return Err(Error::InvalidInput(format!(
+            "range {}..{} out of bounds for blob of {} bytes",
+            range.start, range.end, entry.len
+        )));
+    }
+    let bytes = read_pack_entry_range(&state.packs_dir, hash, entry, range)?;
+    #[cfg(test)]
+    {
+        state.body_bytes_read += bytes.len() as u64;
+    }
+    Ok(bytes)
+}
+
 fn read_pack_entry(packs_dir: &Path, expected_hash: &BlobHash, entry: PackEntry) -> Result<Bytes> {
     let path = pack_path(packs_dir, entry.pack_id);
     let mut file =
@@ -540,6 +600,70 @@ fn read_pack_entry(packs_dir: &Path, expected_hash: &BlobHash, entry: PackEntry)
             "blob {expected_hash} content address mismatch (stored bytes hash to {actual})"
         )));
     }
+    Ok(Bytes::from(bytes))
+}
+
+/// Reads exactly `range` of a pack record's body, without materializing the
+/// rest of the record. See [`read_blob_range_locked`] for the trust-model
+/// decision this implies (framing/record-hash checked, whole-blob BLAKE3 not
+/// recomputed).
+fn read_pack_entry_range(
+    packs_dir: &Path,
+    expected_hash: &BlobHash,
+    entry: PackEntry,
+    range: Range<u64>,
+) -> Result<Bytes> {
+    let path = pack_path(packs_dir, entry.pack_id);
+    let mut file =
+        File::open(&path).map_err(|err| io_error(err, format!("open pack {}", path.display())))?;
+    file.seek(SeekFrom::Start(entry.offset))
+        .map_err(|err| io_error(err, format!("seek pack {}", path.display())))?;
+
+    let mut magic = [0u8; 4];
+    file.read_exact(&mut magic)
+        .map_err(|err| io_error(err, format!("read record magic {}", path.display())))?;
+    if magic != RECORD_MAGIC {
+        return Err(corruption(format!(
+            "pack {} offset {} has invalid record magic",
+            path.display(),
+            entry.offset
+        )));
+    }
+
+    let mut stored_hash = [0u8; crate::BLAKE3_HASH_LEN];
+    file.read_exact(&mut stored_hash)
+        .map_err(|err| io_error(err, format!("read record hash {}", path.display())))?;
+    let stored_hash = BlobHash::from_bytes(stored_hash);
+    if &stored_hash != expected_hash {
+        return Err(corruption(format!(
+            "pack {} offset {} stores hash {stored_hash} for requested {expected_hash}",
+            path.display(),
+            entry.offset
+        )));
+    }
+
+    let mut len = [0u8; 8];
+    file.read_exact(&mut len)
+        .map_err(|err| io_error(err, format!("read record len {}", path.display())))?;
+    let len = u64::from_le_bytes(len);
+    if len != entry.len {
+        return Err(corruption(format!(
+            "pack {} offset {} len {len} does not match index len {}",
+            path.display(),
+            entry.offset,
+            entry.len
+        )));
+    }
+
+    if range.start == range.end {
+        return Ok(Bytes::new());
+    }
+    file.seek(SeekFrom::Current(range.start as i64))
+        .map_err(|err| io_error(err, format!("seek pack body {}", path.display())))?;
+    let range_len = (range.end - range.start) as usize;
+    let mut bytes = vec![0u8; range_len];
+    file.read_exact(&mut bytes)
+        .map_err(|err| io_error(err, format!("read record range {}", path.display())))?;
     Ok(Bytes::from(bytes))
 }
 
@@ -673,6 +797,42 @@ mod tests {
             store.get_range(&hash, 4..8).await.unwrap(),
             Bytes::from_static(b"4567")
         );
+    }
+
+    #[tokio::test]
+    async fn local_pack_store_range_read_transfers_only_inner_bytes_served() {
+        let (_dir, store) = open_temp(64 * 1024 * 1024);
+        let big: Vec<u8> = (0..1_048_576usize).map(|i| (i % 251) as u8).collect();
+        let hash = store.put(Bytes::from(big.clone())).await.unwrap();
+        // `put` only writes; drain any bytes the write path itself may have
+        // touched so the counter below reflects only the `get_range` call.
+        store.take_body_bytes_read().await.unwrap();
+
+        let slice = store.get_range(&hash, 4096..8192).await.unwrap();
+
+        assert_eq!(slice, Bytes::copy_from_slice(&big[4096..8192]));
+        let body_bytes = store.take_body_bytes_read().await.unwrap();
+        assert_eq!(
+            body_bytes, 4096,
+            "range read should transfer exactly the requested body window, not the whole 1MiB blob"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_range_rejects_end_past_blob_length() {
+        let (_dir, store) = open_temp(256);
+        let hash = store.put(Bytes::from_static(b"0123456789")).await.unwrap();
+        let err = store.get_range(&hash, 4..100).await.unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::reversed_empty_ranges)]
+    async fn get_range_rejects_start_after_end() {
+        let (_dir, store) = open_temp(256);
+        let hash = store.put(Bytes::from_static(b"0123456789")).await.unwrap();
+        let err = store.get_range(&hash, 8..4).await.unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
     }
 
     #[tokio::test]
