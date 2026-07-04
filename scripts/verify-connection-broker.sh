@@ -215,7 +215,10 @@ else
 fi
 
 # 10. CB5: WebSocket-out on the same egress decision path as fetch.
-if grep_any 'websocket.*authorize|ws_out.*egress|connect_ws.*policy' crates/nimbus-services/src crates/nimbus-runtime/src; then
+# Anchor on the real implementation: the ws-out authorizer that delegates to
+# the shared per-op PDP call (OutboundOp::WebSocket through authorize_outbound).
+if grep_any 'fn authorize_ws_out' crates/nimbus-services/src \
+  && grep_any 'OutboundOp::WebSocket' crates/nimbus-services/src; then
   cond_pass 10 "WebSocket-out bound to the fetch egress decision path (CB5)"
 else
   cond_fail 10 "CB5 pending: WebSocket-out not bound to the egress decision path"

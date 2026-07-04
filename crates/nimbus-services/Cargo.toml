@@ -24,6 +24,9 @@ tokio.workspace = true
 ulid.workspace = true
 url.workspace = true
 
-[dev-dependencies]
 nimbus-egress = { path = "../nimbus-egress" }
+nimbus-proxy = { path = "../nimbus-proxy" }
+nimbus-storage = { path = "../nimbus-storage" }
+
+[dev-dependencies]
 tempfile.workspace = true
