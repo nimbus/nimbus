@@ -1,5 +1,6 @@
 //! Service registry and service manager primitives.
 
+pub mod broker;
 mod catalog;
 mod manager;
 mod registry;
