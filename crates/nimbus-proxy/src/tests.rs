@@ -502,6 +502,63 @@ fn egress_proxy_denies_default_policy_without_contacting_upstream() {
     );
 }
 
+/// EE2 wired end-to-end: the node-global allow-ceiling narrows the sandbox
+/// policy in the REAL request path. The sandbox allows two hosts; the ceiling
+/// lists only one. The intersection host flows; the sandbox-only host is
+/// denied by the ceiling (403 naming the allow-ceiling) without contacting
+/// the upstream — a union/vec-merge would have allowed it.
+#[test]
+fn egress_proxy_global_ceiling_narrows_sandbox_policy_end_to_end() {
+    let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    let port = upstream.addr.port();
+    let sandbox = allow_policy([
+        EgressRule::new("api", EgressProtocol::Http, "allowed.test", port).allow_internal_ips(true),
+        EgressRule::new("internal", EgressProtocol::Http, "internal.test", port)
+            .allow_internal_ips(true),
+    ]);
+    let ceiling =
+        allow_policy([
+            EgressRule::new("ceiling-api", EgressProtocol::Http, "allowed.test", port)
+                .allow_internal_ips(true),
+        ]);
+    let proxy = WorkloadPep::start(
+        WorkloadPepConfig::new(sandbox)
+            .with_global_ceiling(ceiling)
+            .with_timeouts(Duration::from_secs(5), Duration::from_secs(5))
+            .with_resolver(loopback_test_resolver()),
+    )
+    .expect("proxy with ceiling should start");
+
+    let denied = proxy_request(
+        proxy.local_addr(),
+        format!("GET http://internal.test:{port}/x HTTP/1.1\r\nHost: internal.test\r\n\r\n"),
+    );
+    assert!(
+        denied.starts_with("HTTP/1.1 403 Forbidden"),
+        "ceiling must deny the sandbox-only host (intersection, not union), got: {denied}"
+    );
+    assert!(
+        denied.contains("allow-ceiling"),
+        "denial must name the ceiling layer, got: {denied}"
+    );
+    assert!(
+        upstream
+            .request
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "ceiling-denied requests must not contact upstream"
+    );
+
+    let allowed = proxy_request(
+        proxy.local_addr(),
+        format!("GET http://allowed.test:{port}/ok HTTP/1.1\r\nHost: allowed.test\r\n\r\n"),
+    );
+    assert!(
+        allowed.starts_with("HTTP/1.1 200 OK"),
+        "intersection host must flow through both layers, got: {allowed}"
+    );
+}
+
 #[test]
 fn egress_proxy_without_active_policy_denies_before_dns() {
     let resolver_calls = Arc::new(AtomicUsize::new(0));
@@ -1650,7 +1707,7 @@ fn start_test_proxy_with_store_logger_tls_and_phase_observer(
     policy: CompiledEgressPolicy,
     credential_store: CredentialSecretStore,
     decision_logger: DecisionLogger,
-    tls_authority: EgressProxyTlsAuthority,
+    tls_authority: WorkloadPepTlsAuthority,
     phase_observer: crate::phase::PhaseObserver,
 ) -> WorkloadPep {
     start_test_proxy_with_provider_logger_tls_and_phase_observer(
@@ -1666,7 +1723,7 @@ fn start_test_proxy_with_provider_logger_tls_and_phase_observer(
     policy: CompiledEgressPolicy,
     credential_provider: CredentialSecretProviderRef,
     decision_logger: DecisionLogger,
-    tls_authority: EgressProxyTlsAuthority,
+    tls_authority: WorkloadPepTlsAuthority,
     phase_observer: crate::phase::PhaseObserver,
 ) -> WorkloadPep {
     WorkloadPep::start(
@@ -2544,14 +2601,14 @@ fn egress_proxy_intercept_required_connect_fails_closed_without_tls_authority() 
 #[test]
 fn egress_proxy_intercepts_https_and_injects_credentials_after_tls_decryption() {
     let upstream_authority =
-        EgressProxyTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
     let upstream = TestHttpsServer::start(
         &upstream_authority,
         "allowed.test",
         "HTTP/1.1 200 OK\r\nAlt-Svc: h3=\":443\"\r\nContent-Length: 2\r\n\r\nok",
     );
     let proxy_authority =
-        EgressProxyTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
             upstream_authority.trust_anchor_der(),
         ])
         .expect("proxy authority should trust upstream test CA");
@@ -2625,14 +2682,14 @@ fn egress_proxy_intercepts_https_and_injects_credentials_after_tls_decryption() 
 #[test]
 fn egress_proxy_intercepted_https_uses_provider_and_fails_closed_for_missing_secret() {
     let upstream_authority =
-        EgressProxyTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
     let upstream = TestHttpsServer::start(
         &upstream_authority,
         "allowed.test",
         "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
     );
     let proxy_authority =
-        EgressProxyTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
             upstream_authority.trust_anchor_der(),
         ])
         .expect("proxy authority should trust upstream test CA");
@@ -2688,14 +2745,14 @@ fn egress_proxy_intercepted_https_uses_provider_and_fails_closed_for_missing_sec
 #[test]
 fn egress_proxy_intercepted_https_does_not_inject_when_policy_only_requires_dlp() {
     let upstream_authority =
-        EgressProxyTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
     let upstream = TestHttpsServer::start(
         &upstream_authority,
         "allowed.test",
         "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
     );
     let proxy_authority =
-        EgressProxyTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
             upstream_authority.trust_anchor_der(),
         ])
         .expect("proxy authority should trust upstream test CA");
@@ -2753,14 +2810,14 @@ fn egress_proxy_intercepted_https_does_not_inject_when_policy_only_requires_dlp(
 #[test]
 fn egress_proxy_intercepted_https_denies_caller_credentials_before_upstream() {
     let upstream_authority =
-        EgressProxyTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
     let upstream = TestHttpsServer::start(
         &upstream_authority,
         "allowed.test",
         "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
     );
     let proxy_authority =
-        EgressProxyTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
             upstream_authority.trust_anchor_der(),
         ])
         .expect("proxy authority should trust upstream test CA");
@@ -2838,14 +2895,14 @@ fn egress_proxy_intercepted_https_denies_cookie_configured_header_and_userinfo()
 
     for (name, request_template, expected_status, expected_body) in cases {
         let upstream_authority =
-            EgressProxyTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+            WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
         let upstream = TestHttpsServer::start(
             &upstream_authority,
             "allowed.test",
             "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
         );
         let proxy_authority =
-            EgressProxyTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+            WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
                 upstream_authority.trust_anchor_der(),
             ])
             .expect("proxy authority should trust upstream test CA");
@@ -2896,14 +2953,14 @@ fn egress_proxy_intercepted_https_denies_cookie_configured_header_and_userinfo()
 #[test]
 fn egress_proxy_intercepted_https_allows_configured_header_when_policy_permits_caller_supply() {
     let upstream_authority =
-        EgressProxyTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
     let upstream = TestHttpsServer::start(
         &upstream_authority,
         "allowed.test",
         "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
     );
     let proxy_authority =
-        EgressProxyTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
             upstream_authority.trust_anchor_der(),
         ])
         .expect("proxy authority should trust upstream test CA");
@@ -2961,7 +3018,7 @@ fn egress_proxy_intercepted_https_allows_configured_header_when_policy_permits_c
 #[test]
 fn egress_proxy_intercepted_https_redirect_follow_does_not_leak_injected_credentials() {
     let upstream_authority =
-        EgressProxyTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
     let redirect_upstream = TestHttpsServer::start(
         &upstream_authority,
         "redirect.test",
@@ -2977,7 +3034,7 @@ fn egress_proxy_intercepted_https_redirect_follow_does_not_leak_injected_credent
         format!("HTTP/1.1 302 Found\r\nLocation: {redirect_location}\r\nContent-Length: 0\r\n\r\n"),
     );
     let proxy_authority =
-        EgressProxyTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
             upstream_authority.trust_anchor_der(),
         ])
         .expect("proxy authority should trust upstream test CA");
@@ -3083,14 +3140,14 @@ fn egress_proxy_intercepted_https_redirect_follow_does_not_leak_injected_credent
 #[test]
 fn egress_proxy_intercepted_https_logs_redact_query_and_caller_secret_material() {
     let upstream_authority =
-        EgressProxyTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
     let upstream = TestHttpsServer::start(
         &upstream_authority,
         "allowed.test",
         "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
     );
     let proxy_authority =
-        EgressProxyTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
             upstream_authority.trust_anchor_der(),
         ])
         .expect("proxy authority should trust upstream test CA");
@@ -3172,14 +3229,14 @@ fn egress_proxy_intercepted_https_logs_redact_query_and_caller_secret_material()
 #[test]
 fn egress_proxy_intercepted_https_dlp_blocks_before_upstream() {
     let upstream_authority =
-        EgressProxyTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
     let upstream = TestHttpsServer::start(
         &upstream_authority,
         "allowed.test",
         "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
     );
     let proxy_authority =
-        EgressProxyTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
             upstream_authority.trust_anchor_der(),
         ])
         .expect("proxy authority should trust upstream test CA");
@@ -3236,7 +3293,7 @@ fn egress_proxy_intercepted_https_dlp_blocks_before_upstream() {
 #[test]
 fn egress_proxy_intercepted_https_dlp_fails_closed_for_oversized_and_client_aborted_bodies() {
     let upstream_authority =
-        EgressProxyTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
     let oversized_upstream = TestHttpsServer::start(
         &upstream_authority,
         "allowed.test",
@@ -3248,7 +3305,7 @@ fn egress_proxy_intercepted_https_dlp_fails_closed_for_oversized_and_client_abor
         "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
     );
     let proxy_authority =
-        EgressProxyTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
             upstream_authority.trust_anchor_der(),
         ])
         .expect("proxy authority should trust upstream test CA");
@@ -3351,7 +3408,7 @@ fn egress_proxy_intercepted_https_maps_upstream_dial_failure_to_tls_502_and_deny
     let dead_port = dead.local_addr().expect("dead addr should read").port();
     drop(dead);
     let proxy_authority =
-        EgressProxyTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([])
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([])
             .expect("proxy authority should build");
     let (log_tx, log_rx) = mpsc::channel();
     let proxy = start_test_proxy_with_store_logger_tls_and_phase_observer(
@@ -3404,10 +3461,10 @@ fn egress_proxy_intercepted_https_maps_upstream_dial_failure_to_tls_502_and_deny
 #[test]
 fn egress_proxy_intercepted_https_maps_upstream_response_head_failure_to_tls_502_and_deny_log() {
     let upstream_authority =
-        EgressProxyTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
     let upstream = TestHttpsCloseServer::start_after_request(&upstream_authority, "allowed.test");
     let proxy_authority =
-        EgressProxyTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
             upstream_authority.trust_anchor_der(),
         ])
         .expect("proxy authority should trust upstream test CA");
@@ -3470,10 +3527,10 @@ fn egress_proxy_intercepted_https_maps_upstream_response_head_failure_to_tls_502
 #[test]
 fn egress_proxy_intercepted_https_maps_upstream_write_or_read_failure_to_tls_502_and_deny_log() {
     let upstream_authority =
-        EgressProxyTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
     let upstream = TestHttpsCloseServer::start_after_handshake(&upstream_authority, "allowed.test");
     let proxy_authority =
-        EgressProxyTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
             upstream_authority.trust_anchor_der(),
         ])
         .expect("proxy authority should trust upstream test CA");
@@ -3535,7 +3592,7 @@ fn egress_proxy_intercepted_https_maps_upstream_write_or_read_failure_to_tls_502
 #[test]
 fn egress_proxy_intercepted_https_audits_allow_when_upstream_drops_mid_body() {
     let upstream_authority =
-        EgressProxyTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
     // A valid 200 head that declares 100 body bytes but delivers only 5 before
     // the upstream drops: the request is authorized and executed, and its
     // response head reaches the client, so a mid-body transport failure must
@@ -3546,7 +3603,7 @@ fn egress_proxy_intercepted_https_audits_allow_when_upstream_drops_mid_body() {
         "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort",
     );
     let proxy_authority =
-        EgressProxyTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
             upstream_authority.trust_anchor_der(),
         ])
         .expect("proxy authority should trust upstream test CA");
@@ -3610,14 +3667,14 @@ fn egress_proxy_intercepted_https_audits_allow_when_upstream_drops_mid_body() {
 #[test]
 fn egress_proxy_intercepted_https_strictly_verifies_upstream_tls() {
     let untrusted_upstream_authority =
-        EgressProxyTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
     let upstream = TestHttpsServer::start(
         &untrusted_upstream_authority,
         "allowed.test",
         "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
     );
     let proxy_authority =
-        EgressProxyTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([])
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([])
             .expect("proxy authority should have an empty upstream test root set");
     let proxy = start_test_proxy_with_store_logger_tls_and_phase_observer(
         allow_policy([EgressRule::new(
@@ -3736,7 +3793,7 @@ struct TestHttpsServer {
 
 impl TestHttpsServer {
     fn start(
-        authority: &EgressProxyTlsAuthority,
+        authority: &WorkloadPepTlsAuthority,
         hostname: &'static str,
         response: impl Into<String>,
     ) -> Self {
@@ -3776,16 +3833,16 @@ struct TestHttpsCloseServer {
 }
 
 impl TestHttpsCloseServer {
-    fn start_after_request(authority: &EgressProxyTlsAuthority, hostname: &'static str) -> Self {
+    fn start_after_request(authority: &WorkloadPepTlsAuthority, hostname: &'static str) -> Self {
         Self::start(authority, hostname, true)
     }
 
-    fn start_after_handshake(authority: &EgressProxyTlsAuthority, hostname: &'static str) -> Self {
+    fn start_after_handshake(authority: &WorkloadPepTlsAuthority, hostname: &'static str) -> Self {
         Self::start(authority, hostname, false)
     }
 
     fn start(
-        authority: &EgressProxyTlsAuthority,
+        authority: &WorkloadPepTlsAuthority,
         hostname: &'static str,
         read_request: bool,
     ) -> Self {
@@ -3855,7 +3912,7 @@ fn read_h1_request_from_stream(stream: &mut impl Read) -> io::Result<String> {
 
 fn connect_tls_through_proxy(
     proxy_addr: SocketAddr,
-    authority: &EgressProxyTlsAuthority,
+    authority: &WorkloadPepTlsAuthority,
     host: &str,
     port: u16,
 ) -> rustls::StreamOwned<rustls::ClientConnection, TcpStream> {
@@ -4074,7 +4131,7 @@ fn egress_proxy_audits_malformed_requests_with_terminal_deny_records() {
 fn egress_proxy_intercepted_https_phase_trace_keeps_forward_after_enforcement() {
     let phases = recorded_phases();
     let authority =
-        EgressProxyTlsAuthority::generate_ephemeral().expect("authority should generate");
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("authority should generate");
     let proxy = start_test_proxy_with_store_logger_tls_and_phase_observer(
         allow_policy([
             EgressRule::new("dlp", EgressProtocol::Https, "allowed.test", 443)
@@ -4255,19 +4312,34 @@ fn ee1_reachability_lint_workload_map_unreachable_from_request_path() {
 
     let mut violations = Vec::new();
     let mut scanned = 0usize;
-    for entry in std::fs::read_dir(&src_dir).expect("nimbus-proxy src dir must be readable") {
-        let path = entry.expect("dir entry").path();
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if !name.ends_with(".rs") || allowed.contains(&name) {
-            continue;
-        }
-        scanned += 1;
-        let contents = std::fs::read_to_string(&path).expect("source file must be readable");
-        for needle in needles {
-            if contents.contains(needle) {
-                violations.push(format!("{name} references {needle}"));
+    // Recursive walk: a future src/ subdirectory (e.g. a request/ split) must
+    // not silently escape the scan while the scanned-count floor stays green.
+    let mut pending = vec![src_dir.clone()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).expect("nimbus-proxy src dir must be readable") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let top_level_allowed = dir == src_dir && allowed.contains(&name);
+            if !name.ends_with(".rs") || top_level_allowed {
+                continue;
+            }
+            scanned += 1;
+            let contents = std::fs::read_to_string(&path).expect("source file must be readable");
+            let display = path
+                .strip_prefix(&src_dir)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            for needle in needles {
+                if contents.contains(needle) {
+                    violations.push(format!("{display} references {needle}"));
+                }
             }
         }
     }

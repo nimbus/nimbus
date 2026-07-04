@@ -13,6 +13,15 @@
 //! captured once into the counter sink, never looked up per event.
 //!
 //! OCSF spool content and schema stay TAA's; this module owns only the seam.
+//!
+//! ## Subscriber contract: sinks MUST be non-blocking
+//!
+//! Sinks run synchronously, inline, on the request task (including terminal
+//! deny paths). A slow subscriber adds its latency directly to request
+//! handling AND delays the durability baseline's subsequent events. A
+//! subscriber with untrusted latency (network, disk spool, OCSF collector)
+//! must decouple itself behind a bounded channel + drop counter and hand this
+//! seam only the cheap enqueue.
 
 use std::sync::Arc;
 
@@ -49,7 +58,12 @@ pub fn tenant_decision_counter_sink(fairness: Arc<TenantFairness>) -> DecisionLo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tid(raw: &str) -> TenantId {
+        TenantId::new(raw).expect("test tenant id")
+    }
     use crate::fairness::FairnessRegistry;
+    use nimbus_core::TenantId;
     use std::sync::Mutex;
 
     fn allowed_log() -> EgressDecisionLog {
@@ -97,8 +111,8 @@ mod tests {
     #[test]
     fn tenant_counters_attribute_decisions_per_tenant() {
         let registry = FairnessRegistry::new();
-        let a = registry.tenant("tenant-a");
-        let b = registry.tenant("tenant-b");
+        let a = registry.tenant(&tid("tenant-a"));
+        let b = registry.tenant(&tid("tenant-b"));
 
         let sink_a = tenant_decision_counter_sink(Arc::clone(&a));
         sink_a(allowed_log());

@@ -18,9 +18,9 @@ use nimbus_egress::{
     EGRESS_PROXY_URL_ENV, EGRESS_RESERVED_ENV_KEYS, EgressPolicy,
 };
 use nimbus_proxy::{
-    AppendOnlyDecisionLogSink, DecisionLogSinkContext, EgressEngine, EgressProxyError,
-    EgressProxyReadiness, EgressProxyTlsAuthority, WorkloadPep, WorkloadPepConfig,
-    fan_out_decision_loggers, tenant_decision_counter_sink,
+    AppendOnlyDecisionLogSink, DecisionLogSinkContext, EgressEngine, EgressProxyError, WorkloadPep,
+    WorkloadPepConfig, WorkloadPepReadiness, WorkloadPepTlsAuthority, fan_out_decision_loggers,
+    tenant_decision_counter_sink,
 };
 use serde::{Deserialize, Serialize};
 
@@ -45,9 +45,22 @@ use crate::spec::SandboxPortBinding;
 /// as the PEP it belongs to.
 #[derive(Clone)]
 pub(crate) struct EgressProxyRegistry {
-    engine: Arc<EgressEngine<Option<PathBuf>>>,
+    engine: Arc<EgressEngine<RegisteredArtifacts>>,
     decision_log_root: Arc<PathBuf>,
     trust_anchor_root: Arc<PathBuf>,
+}
+
+/// Sandbox-owned per-registration artifacts riding the engine entry as its
+/// opaque attachment: the published trust-anchor path (unwound at stop) and
+/// the tenant fairness handle (pin released at stop so the node-wide fairness
+/// map cannot grow monotonically).
+struct RegisteredArtifacts {
+    trust_anchor_path: Option<PathBuf>,
+    /// RAII pin on the tenant's fairness entry; dropping it (at stop, or on
+    /// any registration failure unwind) releases the pin — the registry
+    /// evicts at zero leases, and capture+pin are atomic so no fork is
+    /// possible.
+    tenant_lease: nimbus_proxy::TenantLease,
 }
 
 impl EgressProxyRegistry {
@@ -127,9 +140,12 @@ impl EgressProxyRegistry {
         })?
         .logger();
         let tls_authority =
-            EgressProxyTlsAuthority::generate_ephemeral().map_err(egress_proxy_error)?;
-        // EE3/EE4: resolve the tenant's fairness handle once, at registration.
-        let tenant_fairness = self.engine.fairness().tenant(tenant_id.as_str());
+            WorkloadPepTlsAuthority::generate_ephemeral().map_err(egress_proxy_error)?;
+        // EE3/EE4: check out the tenant's fairness lease once, at
+        // registration — capture+pin atomic; any failure below auto-releases
+        // the pin via Drop (no zero-pin zombie entries).
+        let tenant_lease = self.engine.fairness().checkout(tenant_id);
+        let tenant_fairness = Arc::clone(tenant_lease.handle());
         // EE4: fan the decision stream out — the SELH append-only sink stays
         // FIRST (the durability baseline receives every event, unchanged);
         // the per-tenant counter sink subscribes behind it.
@@ -161,13 +177,19 @@ impl EgressProxyRegistry {
                 .with_decision_logger(decision_logger)
                 // EE3: capture the tenant's fairness handle at registration —
                 // the request path never looks tenants up.
-                .with_tenant_fairness(tenant_fairness),
+                .with_tenant_fairness(Arc::clone(&tenant_fairness)),
         )
         .map_err(|error| {
             let _ = remove_trust_anchor_file(&trust_anchor_path);
             egress_proxy_error(error)
         })?;
-        slot.commit(proxy, Some(trust_anchor_path));
+        slot.commit(
+            proxy,
+            RegisteredArtifacts {
+                trust_anchor_path: Some(trust_anchor_path),
+                tenant_lease,
+            },
+        );
         Ok(())
     }
 
@@ -195,14 +217,16 @@ impl EgressProxyRegistry {
             .engine
             .deregister(&workload_id)
             .map_err(egress_proxy_error)?;
-        let Some((proxy, trust_anchor_path)) = removed else {
+        let Some((proxy, artifacts)) = removed else {
             return Ok(());
         };
         // Stop the proxy before deleting its published trust anchor so a
         // still-running PEP is never left serving leaves the workload can no
         // longer verify.
         drop(proxy);
-        if let Some(trust_anchor_path) = trust_anchor_path {
+        // Lease drop releases the tenant's fairness pin (evicts at zero).
+        drop(artifacts.tenant_lease);
+        if let Some(trust_anchor_path) = artifacts.trust_anchor_path {
             remove_trust_anchor_file(&trust_anchor_path)?;
         }
         Ok(())
@@ -213,9 +237,9 @@ impl EgressProxyRegistry {
     /// Returns `Ok(None)` when no proxy is registered (so the caller treats an
     /// absent PEP as deny), and `Ok(Some(readiness))` carrying the proxy's
     /// active-policy state otherwise. A readiness gate must require both that a
-    /// proxy is registered AND that its `EgressProxyReadiness` reports an active
+    /// proxy is registered AND that its `WorkloadPepReadiness` reports an active
     /// policy generation before permitting a workload to launch.
-    pub(crate) fn readiness(&self, id: &SandboxId) -> Result<Option<EgressProxyReadiness>> {
+    pub(crate) fn readiness(&self, id: &SandboxId) -> Result<Option<WorkloadPepReadiness>> {
         let workload_id = Self::workload_id(id)?;
         self.engine
             .with_pep(&workload_id, |pep| pep.readiness())
@@ -277,7 +301,14 @@ impl EgressProxyRegistry {
             .try_reserve(workload_id)
             .map_err(egress_proxy_error)?
             .expect("slot must be free after deregistration");
-        slot.commit(proxy, None);
+        let tenant = TenantId::new("test-tenant").expect("static test tenant id");
+        slot.commit(
+            proxy,
+            RegisteredArtifacts {
+                trust_anchor_path: None,
+                tenant_lease: self.engine.fairness().checkout(&tenant),
+            },
+        );
         Ok(())
     }
 

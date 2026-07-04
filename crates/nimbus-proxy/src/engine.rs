@@ -64,6 +64,14 @@ impl<A> EgressEngine<A> {
         &self.fairness
     }
 
+    /// Replace the fairness registry — the TAA5 knob. The engine owns only
+    /// the seam; budget VALUES ride the tenant-admission plan, which
+    /// constructs a configured registry and hands it in here.
+    pub fn with_fairness(mut self, fairness: Arc<FairnessRegistry>) -> Self {
+        self.fairness = fairness;
+        self
+    }
+
     /// The substrate this engine runs its PEPs on.
     pub fn substrate(&self) -> &ProxySubstrate {
         &self.substrate
@@ -146,6 +154,22 @@ impl<A> Default for EgressEngine<A> {
 /// Exists so the caller's publish step and the map insert are atomic with
 /// respect to every other lifecycle operation — the same single-lock-hold
 /// contract the sandbox registry established for trust-anchor publication.
+///
+/// ## Contract: the publish step must be BOUNDED, and never `.await`
+///
+/// This slot holds the node-global registry lock: every other workload's
+/// register/deregister/reload/readiness blocks while it is alive. Keep the
+/// publish step to bounded, local work (the trust-anchor write + PEP start
+/// today — milliseconds), and never hold a slot across an `.await` (a sync
+/// `MutexGuard` across await is a deadlock-shaped bug; clippy's
+/// `await_holding_lock` flags it). If registration ever needs unbounded
+/// I/O, the escalation path is a per-id claim (insert a Pending marker
+/// under the lock, release, publish, commit-swap) — deliberately NOT done
+/// preemptively because it changes concurrent-registration semantics: a
+/// racing `ensure_running` would fast-return Ok against a Pending claim
+/// whose owner may still fail, where today it blocks and re-checks. That
+/// trade needs the readiness-gate analysis, not a drive-by.
+#[must_use = "an uncommitted slot releases the registration on drop"]
 pub struct RegistrationSlot<'a, A> {
     guard: MutexGuard<'a, HashMap<WorkloadId, EngineEntry<A>>>,
     id: WorkloadId,

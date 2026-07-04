@@ -4,7 +4,9 @@ use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use nimbus_egress::{CompiledEgressPolicy, EgressPolicy, EgressProtocol, EgressRule};
+use nimbus_egress::{
+    CompiledEgressPolicy, EgressPolicy, EgressProtocol, EgressRule, LayeredEgressPolicy,
+};
 use pingora_core::apps::HttpServerApp;
 use pingora_core::protocols::http::ServerSession as HttpSession;
 use pingora_core::server::configuration::ServerConf;
@@ -34,14 +36,14 @@ use crate::phase::{
 use crate::pingora_app::{ForwardRequestPlan, NimbusForwardApp, downstream_target};
 use crate::pingora_identity::PingoraPeerPlan;
 use crate::pingora_io::PrereadStream;
-use crate::policy_state::{EgressProxyPolicyState, EgressProxyReadiness, PolicyGeneration};
+use crate::policy_state::{EgressProxyPolicyState, PolicyGeneration, WorkloadPepReadiness};
 use crate::pool::{
     EgressProxyCredentialDlpMode, EgressProxyPoolIdentity, EgressProxyPoolKey, TlsVerificationMode,
 };
 use crate::request::{ParsedProxyRequest, ProxyRequestMode, find_header_end, parse_proxy_request};
 use crate::response::{HttpProxyResponse, write_http_response_async};
 use crate::substrate::ProxySubstrate;
-use crate::tls_authority::EgressProxyTlsAuthority;
+use crate::tls_authority::WorkloadPepTlsAuthority;
 use crate::{
     DEFAULT_CONNECT_TIMEOUT, DEFAULT_IO_TIMEOUT, DEFAULT_MAX_CONNECTIONS, MAX_HTTP_HEADER_BYTES,
 };
@@ -57,13 +59,14 @@ pub struct WorkloadPepConfig {
     pub dns_cache: DnsCacheConfig,
     pub credential_store: CredentialSecretStore,
     pub pool_identity: EgressProxyPoolIdentity,
-    pub tls_authority: Option<EgressProxyTlsAuthority>,
+    pub tls_authority: Option<WorkloadPepTlsAuthority>,
     pub substrate: ProxySubstrate,
     credential_provider: Option<CredentialSecretProviderRef>,
     decision_logger: DecisionLogger,
     phase_observer: PhaseObserver,
     resolver: Resolver,
     tenant_fairness: Option<Arc<TenantFairness>>,
+    global_ceiling: Option<CompiledEgressPolicy>,
 }
 
 impl WorkloadPepConfig {
@@ -91,6 +94,7 @@ impl WorkloadPepConfig {
             phase_observer: noop_phase_observer(),
             resolver: Arc::new(resolve_socket_addrs),
             tenant_fairness: None,
+            global_ceiling: None,
         }
     }
 
@@ -134,7 +138,7 @@ impl WorkloadPepConfig {
         self
     }
 
-    pub fn with_tls_authority(mut self, tls_authority: EgressProxyTlsAuthority) -> Self {
+    pub fn with_tls_authority(mut self, tls_authority: WorkloadPepTlsAuthority) -> Self {
         self.tls_authority = Some(tls_authority);
         self
     }
@@ -152,6 +156,13 @@ impl WorkloadPepConfig {
     #[cfg(test)]
     pub(crate) fn with_phase_observer(mut self, phase_observer: PhaseObserver) -> Self {
         self.phase_observer = phase_observer;
+        self
+    }
+
+    /// Narrow this PEP under a node-global allow-ceiling (EE2 knob: the
+    /// ceiling CONTENT is policy-hardening's; both allow-lists must permit).
+    pub fn with_global_ceiling(mut self, ceiling: CompiledEgressPolicy) -> Self {
+        self.global_ceiling = Some(ceiling);
         self
     }
 
@@ -204,12 +215,14 @@ impl WorkloadPep {
                 message: format!("failed to configure egress proxy listener: {error}"),
             })?;
 
-        let policy_state = Arc::new(RwLock::new(
-            config
+        let policy_state = Arc::new(RwLock::new({
+            let mut state = config
                 .policy
                 .map(EgressProxyPolicyState::with_policy)
-                .unwrap_or_default(),
-        ));
+                .unwrap_or_default();
+            state.set_global_ceiling(config.global_ceiling);
+            state
+        }));
         let (shutdown, shutdown_rx) = watch::channel(false);
         let (ack_tx, ack_rx) = mpsc::channel();
         let substrate = config.substrate;
@@ -247,7 +260,7 @@ impl WorkloadPep {
         self.local_addr
     }
 
-    pub fn readiness(&self) -> Result<EgressProxyReadiness> {
+    pub fn readiness(&self) -> Result<WorkloadPepReadiness> {
         let guard = self
             .policy_state
             .read()
@@ -293,7 +306,7 @@ struct ProxyWorker {
     dns_cache: DnsCacheConfig,
     credential_provider: CredentialSecretProviderRef,
     pool_identity: EgressProxyPoolIdentity,
-    tls_authority: Option<EgressProxyTlsAuthority>,
+    tls_authority: Option<WorkloadPepTlsAuthority>,
     decision_logger: DecisionLogger,
     phase_observer: PhaseObserver,
     connect_timeout: Duration,
@@ -398,7 +411,7 @@ struct ClientHandlerContext {
     dns_cache: DnsCacheConfig,
     credential_provider: CredentialSecretProviderRef,
     pool_identity: EgressProxyPoolIdentity,
-    tls_authority: Option<EgressProxyTlsAuthority>,
+    tls_authority: Option<WorkloadPepTlsAuthority>,
     decision_logger: DecisionLogger,
     phase_observer: PhaseObserver,
     connect_timeout: Duration,
@@ -414,12 +427,12 @@ async fn handle_client(
     shutdown: watch::Receiver<bool>,
 ) -> io::Result<()> {
     let phase_recorder = RequestPhaseRecorder::new(Arc::clone(&context.phase_observer));
-    // EE3: cooperative task-time accounting for the whole request task
-    // (records on drop, including error paths). Accounting, not isolation.
-    let _cpu_span = context
+    // EE3: wall-clock task-occupancy accounting for the whole request task
+    // (records on drop, including error paths). Occupancy, not CPU-seconds.
+    let _task_time_span = context
         .tenant_fairness
         .as_ref()
-        .map(|fairness| fairness.cpu_span());
+        .map(|fairness| fairness.task_time_span());
     let mut buffer = Vec::new();
     match read_http_headers(&mut client, &mut buffer, context.io_timeout).await {
         Ok(()) => {}
@@ -504,7 +517,7 @@ async fn handle_client(
     }
 
     if let Err(response) = reject_unapproved_caller_credentials_for_rule(
-        &active_policy.policy,
+        active_policy.policy.sandbox(),
         pre_dns_authorization.matched_rule(),
         &parsed.header_lines,
     ) {
@@ -593,7 +606,8 @@ async fn handle_client(
         )
         .await;
     }
-    let matched_rule_ref = find_matched_rule(&active_policy.policy, authorization.matched_rule());
+    let matched_rule_ref =
+        find_matched_rule(active_policy.policy.sandbox(), authorization.matched_rule());
     let matched_rule = authorization.matched_rule().map(ToOwned::to_owned);
     let pool_key = build_pool_key(
         &context.pool_identity,
@@ -618,7 +632,7 @@ async fn handle_client(
                 active_policy.policy_generation,
                 authorization.matched_rule(),
                 authorization.reason(),
-                &active_policy.policy,
+                active_policy.policy.sandbox(),
                 &context,
                 phase_recorder,
                 shutdown,
@@ -1051,7 +1065,7 @@ async fn upstream_error_terminal(
 }
 
 fn authorize_hostname_before_dns(
-    policy: &CompiledEgressPolicy,
+    policy: &LayeredEgressPolicy,
     parsed: &ParsedProxyRequest,
 ) -> nimbus_egress::EgressAuthorization {
     policy.authorize_hostname_without_resolved_ip(&parsed.egress_request)

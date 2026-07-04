@@ -21,7 +21,7 @@ const LEAF_REFRESH_BUFFER: Duration = Duration::from_secs(60 * 60);
 pub(crate) const LEAF_CACHE_CAP: usize = 64;
 
 #[derive(Clone)]
-pub struct EgressProxyTlsAuthority {
+pub struct WorkloadPepTlsAuthority {
     inner: Arc<TlsAuthorityInner>,
 }
 
@@ -41,7 +41,7 @@ struct CachedLeaf {
     expires_at: SystemTime,
 }
 
-impl EgressProxyTlsAuthority {
+impl WorkloadPepTlsAuthority {
     pub fn generate_ephemeral() -> Result<Self> {
         Self::generate_with_upstream_roots(default_upstream_roots())
     }
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn leaf_cache_never_exceeds_cap_and_keeps_newest_leaf() {
         let authority =
-            EgressProxyTlsAuthority::generate_ephemeral().expect("authority should generate");
+            WorkloadPepTlsAuthority::generate_ephemeral().expect("authority should generate");
 
         for index in 0..(LEAF_CACHE_CAP + 8) {
             authority
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn leaf_cache_evicts_expired_entries_before_live_entries() {
         let authority =
-            EgressProxyTlsAuthority::generate_ephemeral().expect("authority should generate");
+            WorkloadPepTlsAuthority::generate_ephemeral().expect("authority should generate");
         for index in 0..LEAF_CACHE_CAP {
             authority
                 .server_config_for_host(&format!("host-{index}.test"))
@@ -331,8 +331,8 @@ mod tests {
         // Isolation invariant: each sandbox mints its OWN ephemeral CA. Two
         // independent authorities must never share a trust anchor — if they did,
         // one sandbox's workload could be MITM'd by another sandbox's proxy.
-        let first = EgressProxyTlsAuthority::generate_ephemeral().expect("first CA");
-        let second = EgressProxyTlsAuthority::generate_ephemeral().expect("second CA");
+        let first = WorkloadPepTlsAuthority::generate_ephemeral().expect("first CA");
+        let second = WorkloadPepTlsAuthority::generate_ephemeral().expect("second CA");
         assert_ne!(
             first.trust_anchor_der(),
             second.trust_anchor_der(),
@@ -357,7 +357,7 @@ mod tests {
     #[test]
     fn server_config_for_host_reuses_cached_config_inside_ttl() {
         let authority =
-            EgressProxyTlsAuthority::generate_ephemeral().expect("authority should generate");
+            WorkloadPepTlsAuthority::generate_ephemeral().expect("authority should generate");
         let first = authority
             .server_config_for_host("allowed.test")
             .expect("first leaf should build");

@@ -11,11 +11,13 @@
 //! - **Bandwidth**: per-connection byte metering recorded from the relay copy
 //!   loops (splice tunnel and intercept relay), attributed to the owning
 //!   tenant.
-//! - **CPU**: [`TenantCpuAccounting`] — a named accounting primitive that
-//!   records cooperative task time per tenant. There is no cgroup/CPU quota on
-//!   the shared runtime today, so this is deliberately accounting, NOT
-//!   preemptive CPU isolation; hard CPU fairness is scoped to this primitive
-//!   and not claimed beyond it.
+//! - **Task time (the EE3 "CPU" axis)**: [`TenantTaskTimeAccounting`] —
+//!   records per-tenant request-task WALL-CLOCK occupancy (the span covers
+//!   I/O waits, so it is NOT a CPU-seconds measure; the name says what it
+//!   measures). There is no cgroup/CPU quota on the shared runtime today, so
+//!   this is deliberately accounting, not preemptive isolation; real
+//!   CPU-seconds measurement is the upgrade path when quota policy (TAA)
+//!   needs it.
 //!
 //! Identity follows the capture-at-registration principle: the sandbox layer
 //! resolves its tenant's [`TenantFairness`] handle once, at PEP registration,
@@ -24,6 +26,8 @@
 
 use std::collections::HashMap;
 use std::io;
+
+use nimbus_core::TenantId;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -40,7 +44,16 @@ pub struct FairnessRegistry {
     /// DNS acquire budget per tenant. `None` = no per-tenant budget configured
     /// (the mechanism is present, the value is TAA's to set).
     dns_permits_per_tenant: Option<usize>,
-    tenants: Mutex<HashMap<String, Arc<TenantFairness>>>,
+    tenants: Mutex<HashMap<TenantId, TenantEntry>>,
+}
+
+struct TenantEntry {
+    fairness: Arc<TenantFairness>,
+    /// Number of registered PEPs pinning this tenant's state. `retain` on PEP
+    /// registration, `release` on deregistration; the entry is evicted at
+    /// zero so a long-lived node with churning tenants does not grow the map
+    /// monotonically (review finding: unbounded per-tenant growth).
+    pins: usize,
 }
 
 impl FairnessRegistry {
@@ -62,28 +75,95 @@ impl FairnessRegistry {
         }
     }
 
-    /// Get or create the fairness handle for `tenant`.
+    /// Get or create the fairness handle for `tenant` WITHOUT pinning it —
+    /// a read/observability accessor. Registration paths must use
+    /// [`FairnessRegistry::checkout`]; only a lease keeps an entry alive.
     ///
     /// Lifecycle-time only (PEP registration); a poisoned map falls back to a
     /// detached handle rather than poisoning registration — budgets are
     /// fairness aids, not correctness gates, and a detached handle still
     /// meters and accounts (it just is not shared with other PEPs).
-    pub fn tenant(&self, tenant: &str) -> Arc<TenantFairness> {
+    pub fn tenant(&self, tenant: &TenantId) -> Arc<TenantFairness> {
         let mut map = match self.tenants.lock() {
             Ok(map) => map,
+            // Fail-OPEN by design (deliberately the opposite polarity of the
+            // engine's fail-closed registry lock): budgets and meters are
+            // fairness aids, not authorization gates, so a poisoned map
+            // degrades to an unshared handle instead of failing registration.
             Err(_) => {
                 return Arc::new(TenantFairness::new(
-                    tenant.to_owned(),
+                    tenant.clone(),
                     self.dns_permits_per_tenant,
                 ));
             }
         };
-        Arc::clone(map.entry(tenant.to_owned()).or_insert_with(|| {
-            Arc::new(TenantFairness::new(
-                tenant.to_owned(),
+        Arc::clone(
+            &map.entry(tenant.clone())
+                .or_insert_with(|| TenantEntry {
+                    fairness: Arc::new(TenantFairness::new(
+                        tenant.clone(),
+                        self.dns_permits_per_tenant,
+                    )),
+                    pins: 0,
+                })
+                .fairness,
+        )
+    }
+
+    /// Atomically get-or-create AND pin the tenant's entry, returning an
+    /// RAII lease that releases the pin on drop (evicting at zero pins).
+    ///
+    /// Capture and pin happen under ONE lock hold, so a caller can never
+    /// hold an unpinned live handle: the fork where an entry is evicted and
+    /// recreated between capture and pin — leaving one PEP metering into a
+    /// detached handle while the registry serves a fresh one — is
+    /// structurally impossible. Early-return failure paths auto-release via
+    /// Drop, so failed registrations cannot strand zero-pin zombie entries.
+    pub fn checkout(self: &Arc<Self>, tenant: &TenantId) -> TenantLease {
+        let handle = match self.tenants.lock() {
+            Ok(mut map) => {
+                let entry = map.entry(tenant.clone()).or_insert_with(|| TenantEntry {
+                    fairness: Arc::new(TenantFairness::new(
+                        tenant.clone(),
+                        self.dns_permits_per_tenant,
+                    )),
+                    pins: 0,
+                });
+                entry.pins += 1;
+                Arc::clone(&entry.fairness)
+            }
+            // Fail-open, matching `tenant()`: a detached lease still meters
+            // and accounts; its drop is a no-op (ptr_eq guard below).
+            Err(_) => Arc::new(TenantFairness::new(
+                tenant.clone(),
                 self.dns_permits_per_tenant,
-            ))
-        }))
+            )),
+        };
+        TenantLease {
+            registry: Arc::clone(self),
+            handle,
+        }
+    }
+
+    /// Release one pin for `handle`'s tenant; evicts the entry at zero pins.
+    ///
+    /// The `ptr_eq` guard is defensive: a live lease implies pins > 0, which
+    /// implies no eviction, so a lease's handle should always BE the entry's
+    /// handle — but if they ever diverge, decrementing a stranger's pins
+    /// (evicting live state) would be the worse failure, so mismatches no-op.
+    fn release_lease(&self, handle: &Arc<TenantFairness>) {
+        let Ok(mut map) = self.tenants.lock() else {
+            return;
+        };
+        if let Some(entry) = map.get_mut(handle.tenant_id()) {
+            if !Arc::ptr_eq(&entry.fairness, handle) {
+                return;
+            }
+            entry.pins = entry.pins.saturating_sub(1);
+            if entry.pins == 0 {
+                map.remove(handle.tenant_id());
+            }
+        }
     }
 
     /// Number of tenants with fairness state (lifecycle observability).
@@ -103,21 +183,43 @@ impl Default for FairnessRegistry {
     }
 }
 
+/// RAII pin on a tenant's fairness entry (see [`FairnessRegistry::checkout`]).
+/// The registration path stores this in its engine attachment; dropping it —
+/// on failure unwind or at PEP stop — releases the pin, evicting the tenant's
+/// entry when the last lease goes.
+pub struct TenantLease {
+    registry: Arc<FairnessRegistry>,
+    handle: Arc<TenantFairness>,
+}
+
+impl TenantLease {
+    /// The pinned tenant handle (clone freely into PEP config and sinks).
+    pub fn handle(&self) -> &Arc<TenantFairness> {
+        &self.handle
+    }
+}
+
+impl Drop for TenantLease {
+    fn drop(&mut self) {
+        self.registry.release_lease(&self.handle);
+    }
+}
+
 /// Per-tenant fairness state: one instance per tenant per node, shared by all
 /// of that tenant's PEPs via `Arc`. Captured into the PEP context at
 /// registration.
 pub struct TenantFairness {
-    tenant: String,
+    tenant: TenantId,
     dns: Option<Arc<Semaphore>>,
     bytes_to_upstream: AtomicU64,
     bytes_to_workload: AtomicU64,
     decisions_allowed: AtomicU64,
     decisions_denied: AtomicU64,
-    cpu: TenantCpuAccounting,
+    task_time: TenantTaskTimeAccounting,
 }
 
 impl TenantFairness {
-    fn new(tenant: String, dns_permits: Option<usize>) -> Self {
+    fn new(tenant: TenantId, dns_permits: Option<usize>) -> Self {
         Self {
             tenant,
             dns: dns_permits.map(|permits| Arc::new(Semaphore::new(permits))),
@@ -125,12 +227,17 @@ impl TenantFairness {
             bytes_to_workload: AtomicU64::new(0),
             decisions_allowed: AtomicU64::new(0),
             decisions_denied: AtomicU64::new(0),
-            cpu: TenantCpuAccounting::new(),
+            task_time: TenantTaskTimeAccounting::new(),
         }
     }
 
     /// The owning tenant.
     pub fn tenant(&self) -> &str {
+        self.tenant.as_str()
+    }
+
+    /// The owning tenant's typed id (registry keying).
+    pub(crate) fn tenant_id(&self) -> &TenantId {
         &self.tenant
     }
 
@@ -201,33 +308,34 @@ impl TenantFairness {
         self.decisions_denied.load(Ordering::Relaxed)
     }
 
-    /// The tenant's CPU accounting primitive.
-    pub fn cpu(&self) -> &TenantCpuAccounting {
-        &self.cpu
+    /// The tenant's task-time accounting primitive.
+    pub fn task_time(&self) -> &TenantTaskTimeAccounting {
+        &self.task_time
     }
 
     /// Open a cooperative task-time span attributed to this tenant; elapsed
     /// time is recorded when the span drops (including on error paths).
-    pub fn cpu_span(self: &Arc<Self>) -> CpuAccountingSpan {
-        CpuAccountingSpan {
+    pub fn task_time_span(self: &Arc<Self>) -> TaskTimeSpan {
+        TaskTimeSpan {
             fairness: Arc::clone(self),
             started: Instant::now(),
         }
     }
 }
 
-/// Named per-tenant CPU accounting primitive (EE3).
+/// Named per-tenant task-time accounting primitive (the EE3 "CPU" axis).
 ///
-/// Records cooperative task time. This is ACCOUNTING, not isolation: the
-/// shared tokio runtime has no cgroup/CPU quota, so a hostile tenant is not
-/// preempted by this primitive — it is measured by it. Hard CPU fairness, if
-/// ever claimed, must be built ON this primitive plus a real scheduler/quota
-/// mechanism (TAA owns the policy).
-pub struct TenantCpuAccounting {
+/// Records request-task wall-clock occupancy — the span covers I/O waits, so
+/// this is NOT CPU-seconds (a tenant parked on a slow upstream accrues
+/// occupancy at near-zero CPU). It is ACCOUNTING, not isolation: the shared
+/// tokio runtime has no cgroup/CPU quota, so a hostile tenant is not
+/// preempted by this primitive — it is measured by it. Real CPU-seconds and
+/// hard fairness ride a scheduler/quota mechanism (TAA owns the policy).
+pub struct TenantTaskTimeAccounting {
     task_nanos: AtomicU64,
 }
 
-impl TenantCpuAccounting {
+impl TenantTaskTimeAccounting {
     fn new() -> Self {
         Self {
             task_nanos: AtomicU64::new(0),
@@ -247,14 +355,14 @@ impl TenantCpuAccounting {
 }
 
 /// Drop guard recording a span of cooperative task time to its tenant.
-pub struct CpuAccountingSpan {
+pub struct TaskTimeSpan {
     fairness: Arc<TenantFairness>,
     started: Instant,
 }
 
-impl Drop for CpuAccountingSpan {
+impl Drop for TaskTimeSpan {
     fn drop(&mut self) {
-        self.fairness.cpu.record(self.started.elapsed());
+        self.fairness.task_time.record(self.started.elapsed());
     }
 }
 
@@ -262,12 +370,16 @@ impl Drop for CpuAccountingSpan {
 mod tests {
     use super::*;
 
+    fn tid(raw: &str) -> TenantId {
+        TenantId::new(raw).expect("test tenant id")
+    }
+
     #[test]
     fn registry_get_or_create_shares_one_handle_per_tenant() {
         let registry = FairnessRegistry::new();
-        let a1 = registry.tenant("tenant-a");
-        let a2 = registry.tenant("tenant-a");
-        let b = registry.tenant("tenant-b");
+        let a1 = registry.tenant(&tid("tenant-a"));
+        let a2 = registry.tenant(&tid("tenant-a"));
+        let b = registry.tenant(&tid("tenant-b"));
         assert!(Arc::ptr_eq(&a1, &a2), "same tenant shares one handle");
         assert!(!Arc::ptr_eq(&a1, &b), "tenants get distinct handles");
         assert_eq!(registry.len(), 2);
@@ -279,8 +391,8 @@ mod tests {
         // ITS request closed) while tenant B acquires immediately — the
         // budgets are independent, so exhaustion cannot cross tenants.
         let registry = FairnessRegistry::with_dns_permits_per_tenant(1);
-        let a = registry.tenant("tenant-a");
-        let b = registry.tenant("tenant-b");
+        let a = registry.tenant(&tid("tenant-a"));
+        let b = registry.tenant(&tid("tenant-b"));
 
         let held = a
             .acquire_dns(Duration::from_millis(200))
@@ -312,7 +424,7 @@ mod tests {
     #[tokio::test]
     async fn unbudgeted_registry_returns_no_dns_permit() {
         let registry = FairnessRegistry::new();
-        let handle = registry.tenant("tenant-a");
+        let handle = registry.tenant(&tid("tenant-a"));
         let permit = handle
             .acquire_dns(Duration::from_millis(50))
             .await
@@ -323,8 +435,8 @@ mod tests {
     #[test]
     fn byte_meters_attribute_per_tenant_independently() {
         let registry = FairnessRegistry::new();
-        let a = registry.tenant("tenant-a");
-        let b = registry.tenant("tenant-b");
+        let a = registry.tenant(&tid("tenant-a"));
+        let b = registry.tenant(&tid("tenant-b"));
 
         a.record_bytes_to_upstream(100);
         a.record_bytes_to_workload(50);
@@ -341,21 +453,90 @@ mod tests {
     }
 
     #[test]
-    fn cpu_span_records_on_drop_per_tenant() {
+    fn eviction_prunes_tenant_at_zero_leases_and_shares_until_then() {
+        let registry = Arc::new(FairnessRegistry::new());
+
+        // Two PEPs for one tenant: entry survives the first lease drop.
+        let lease1 = registry.checkout(&tid("tenant-a"));
+        let lease2 = registry.checkout(&tid("tenant-a"));
+        assert!(
+            Arc::ptr_eq(lease1.handle(), lease2.handle()),
+            "concurrent leases share one live handle"
+        );
+        assert_eq!(registry.len(), 1);
+        let survivor = Arc::clone(lease2.handle());
+        drop(lease1);
+        assert_eq!(registry.len(), 1, "one live lease still pins the tenant");
+        assert!(
+            Arc::ptr_eq(&registry.tenant(&tid("tenant-a")), &survivor),
+            "while pinned, reads see the pinned handle"
+        );
+
+        // Last lease drop evicts.
+        drop(lease2);
+        assert_eq!(registry.len(), 0, "zero leases must evict the tenant entry");
+
+        // A later registration gets a FRESH entry (no stale meters).
+        let lease3 = registry.checkout(&tid("tenant-a"));
+        assert!(
+            !Arc::ptr_eq(lease3.handle(), &survivor),
+            "post-eviction lease is fresh"
+        );
+    }
+
+    #[test]
+    fn checkout_makes_capture_and_pin_atomic_no_fork_across_evict_recreate() {
+        // Regression for the review-caught fork: with a separate
+        // capture-then-pin API, an entry could be evicted and recreated
+        // between the two steps, pinning a DIFFERENT entry than the handle a
+        // PEP captured (that PEP would meter into a detached handle). With
+        // checkout, capture+pin are one lock hold: interleave register/stop
+        // cycles however you like — every live lease's handle IS the
+        // registry's current handle for that tenant.
+        let registry = Arc::new(FairnessRegistry::new());
+
+        let lease1 = registry.checkout(&tid("tenant-a"));
+        let h1 = Arc::clone(lease1.handle());
+        drop(lease1); // evict
+        let lease2 = registry.checkout(&tid("tenant-a")); // recreate
+        assert!(
+            !Arc::ptr_eq(lease2.handle(), &h1),
+            "recreated entry is fresh"
+        );
+        assert!(
+            Arc::ptr_eq(&registry.tenant(&tid("tenant-a")), lease2.handle()),
+            "reads and the live lease agree on ONE handle — no fork"
+        );
+
+        // A second lease taken mid-life stays coherent through the first's
+        // drop (release is by-identity, never by-key alone).
+        let lease3 = registry.checkout(&tid("tenant-a"));
+        drop(lease2);
+        assert_eq!(registry.len(), 1);
+        assert!(
+            Arc::ptr_eq(&registry.tenant(&tid("tenant-a")), lease3.handle()),
+            "surviving lease still owns the registry entry"
+        );
+        drop(lease3);
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn task_time_span_records_on_drop_per_tenant() {
         let registry = FairnessRegistry::new();
-        let a = registry.tenant("tenant-a");
-        let b = registry.tenant("tenant-b");
+        let a = registry.tenant(&tid("tenant-a"));
+        let b = registry.tenant(&tid("tenant-b"));
 
         {
-            let _span = a.cpu_span();
+            let _span = a.task_time_span();
             std::thread::sleep(Duration::from_millis(2));
         }
         assert!(
-            a.cpu().task_nanos() > 0,
+            a.task_time().task_nanos() > 0,
             "span must record elapsed task time on drop"
         );
         assert_eq!(
-            b.cpu().task_nanos(),
+            b.task_time().task_nanos(),
             0,
             "accounting must not leak across tenants"
         );
