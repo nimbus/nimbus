@@ -203,10 +203,17 @@ the server; sibling modules implement the rest of the command surface (`dev`,
 
 ### SDK & packages
 
-`packages/nimbus` is the canonical first-party JS/TS SDK; `packages/convex`
-is a compatibility wrapper over it for existing Convex apps. The Firebase,
-MongoDB, and DynamoDB packages are thin helpers because Nimbus speaks those
-wire protocols natively.
+`packages/nimbus` is the canonical first-party JS/TS SDK (zero runtime
+dependencies). Compat packages come in two deliberate shapes:
+**compat-over-canonical-SDK** — `packages/convex` re-exports/adapts
+`@nimbus/nimbus` and must stay thin (the capability-boundary lint blocks it
+from reaching past the adapter surface into raw transports) — and
+**independent-wire-protocol** — `packages/firebase` is a standalone
+Firestore gRPC/protobuf client (mostly generated code, no `@nimbus/nimbus`
+dependency) because Firestore's wire contract is not the Nimbus sync
+protocol; its size is protocol surface, not wrapper drift. MongoDB and
+DynamoDB packages are trivially thin connection helpers over the official
+drivers, since Nimbus speaks those wire protocols natively.
 → <https://nimbusdocs.com/concepts/architecture/sdk-packages/>
 
 ### Observability
