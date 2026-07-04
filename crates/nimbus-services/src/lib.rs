@@ -5,6 +5,7 @@ mod catalog;
 pub mod frame;
 pub mod ingress;
 mod manager;
+pub mod meter;
 mod registry;
 mod sandbox_templates;
 

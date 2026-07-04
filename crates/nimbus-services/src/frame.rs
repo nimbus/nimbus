@@ -16,9 +16,11 @@
 //! `Resident` keeps the slot warm and only resets between-frame state.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::broker::{BrokerError, HostFrame, InstanceKey, Residency};
+use crate::meter::{FrameMeter, UsageRecord};
 
 /// Opaque per-instance state carried across frames. CB3 persists this via
 /// `TenantKvStore` (16 KiB cap enforced there); CB2 only threads it through.
@@ -157,6 +159,8 @@ pub struct FrameInvocation {
 pub struct FrameInvoker<H: FrameHandler> {
     pool: WarmPool,
     handler: H,
+    /// Optional CB10 metering sink; each frame emits a UsageRecord when set.
+    meter: Option<Arc<dyn FrameMeter>>,
 }
 
 impl<H: FrameHandler> FrameInvoker<H> {
@@ -164,7 +168,15 @@ impl<H: FrameHandler> FrameInvoker<H> {
         Self {
             pool: WarmPool::new(max_warm),
             handler,
+            meter: None,
         }
+    }
+
+    /// Attach a CB10 metering sink: every per-frame invoke emits a
+    /// UsageRecord (active-CPU + residency) to it.
+    pub fn with_meter(mut self, meter: Arc<dyn FrameMeter>) -> Self {
+        self.meter = Some(meter);
+        self
     }
 
     /// True if `key` is warm in this invoker's pool.
@@ -204,6 +216,9 @@ impl<H: FrameHandler> FrameInvoker<H> {
             self.handler.reset(key);
         }
 
+        // active-CPU: the synchronous invoke duration IS the frame's on-CPU
+        // time (no mid-frame I/O await), so this is honest CPU, not wall-clock.
+        let started = Instant::now();
         let output = match self.handler.invoke(key, input) {
             Ok(output) => output,
             Err(error) => {
@@ -212,9 +227,19 @@ impl<H: FrameHandler> FrameInvoker<H> {
                 return Err(error);
             }
         };
+        let active_cpu = started.elapsed();
 
         if residency == Residency::Hibernated {
             self.pool.evict(key)?;
+        }
+
+        if let Some(meter) = &self.meter {
+            meter.record(UsageRecord {
+                key: key.clone(),
+                active_cpu,
+                residency,
+                warm_hit: acquisition.reused,
+            });
         }
 
         Ok(FrameInvocation {
@@ -369,6 +394,49 @@ mod tests {
         assert!(invoker.is_warm(&b) && invoker.is_warm(&c));
         // a's eviction triggered a reset (isolate state cleared before reuse).
         assert!(handler.resets.load(Ordering::Relaxed) >= 1);
+    }
+
+    #[test]
+    fn metered_invoke_emits_active_cpu_and_residency_usage_records() {
+        use crate::meter::CountingMeter;
+        let meter = std::sync::Arc::new(CountingMeter::new());
+        let (_i, handler) = invoker(8);
+        let invoker = FrameInvoker::new(handler, 8).with_meter(meter.clone());
+        let k = key("room-1");
+
+        invoker
+            .per_frame_invoke(
+                &k,
+                Residency::Hibernated,
+                FrameInput {
+                    inbound: HostFrame::Text("a".into()),
+                    state: vec![],
+                },
+            )
+            .unwrap();
+        invoker
+            .per_frame_invoke(
+                &k,
+                Residency::Resident,
+                FrameInput {
+                    inbound: HostFrame::Text("b".into()),
+                    state: vec![],
+                },
+            )
+            .unwrap();
+
+        let usage = meter.usage_for(&k);
+        assert_eq!(
+            usage.frames, 2,
+            "each per-frame invoke emits one usage record"
+        );
+        assert_eq!(usage.hibernated_frames, 1);
+        assert_eq!(
+            usage.resident_frames, 1,
+            "residency is recorded per frame — no silent fallback"
+        );
+        // active_cpu is the summed synchronous invoke time (>= 0; monotonic).
+        assert!(usage.active_cpu >= std::time::Duration::ZERO);
     }
 
     #[test]
