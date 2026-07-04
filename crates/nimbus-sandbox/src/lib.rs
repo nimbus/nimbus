@@ -15,6 +15,7 @@ mod error;
 mod instance;
 mod process;
 mod spec;
+pub mod volume;
 
 pub use backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 pub use endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
