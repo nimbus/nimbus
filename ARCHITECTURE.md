@@ -138,10 +138,11 @@ store uses a MessagePack document codec — behind the same provider traits.
 with watchdogs, limits, metrics, and Node-compatibility layers. The default
 backend is V8; a feature-gated Bun/JSC backend exists under
 `crates/nimbus-runtime/src/backends/bun_jsc/` (non-default, fail-closed).
-Wasmtime runs WASM component bundles under the same `RuntimePolicy` and
-`HostBridge` authority model; filesystem and egress bindings remain owned by
-the NFS and NEG plans, respectively
-(`docs/private/operating/wasmtime-backend.md`).
+Wasmtime runs WASM component bundles (opt-in; V8 remains the default
+production backend) under the same `RuntimePolicy` and `HostBridge`
+authority model, with cooperative fuel scheduling, a retained Store pool,
+and bundle integrity enforcement; its plan verifier
+(`scripts/verify-wasmtime-backend.sh`) gates the lane.
 Host calls cross the `HostBridge` trait into `nimbus-bridge`, which routes
 them to the engine.
 → <https://nimbusdocs.com/concepts/architecture/runtime-isolates/>
@@ -152,6 +153,22 @@ them to the engine.
 contracts; `nimbus-machine` owns the machine record model and provider
 contracts shared by the CLI and the server control plane.
 → <https://nimbusdocs.com/concepts/architecture/sandbox-machines/>
+
+### Egress & network trust
+
+Workload egress is decided and enforced by two crates with a strict
+PDP/PEP split: `nimbus-egress` is the pure decision core (compiled
+allow-list policy, credential/DLP metadata, the node-global
+`LayeredEgressPolicy` allow-ceiling — no transport dependencies), and
+`nimbus-proxy` is the enforcement plane (the Pingora-based per-workload
+`WorkloadPep` with per-sandbox listeners, ephemeral per-sandbox CA for
+selective HTTPS interception, and an append-only decision log written
+before any client-visible response). A node-scoped `EgressEngine` owns the
+PEP lifecycle registry — keyed by `nimbus_core::WorkloadId`, never consulted
+on the request path (enforced by a reachability lint) — and hosts the
+node-wide seams: per-tenant fairness budgets and the decision-event fan-out.
+Denies fail closed everywhere, including when policy requires proxy
+enforcement but no PEP path exists.
 
 ### Auth & trust
 
