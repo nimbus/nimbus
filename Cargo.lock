@@ -7159,10 +7159,13 @@ dependencies = [
 name = "nimbus-sandbox"
 version = "0.1.44"
 dependencies = [
+ "async-trait",
+ "bytes",
  "flate2",
  "fs2",
  "futures",
  "libc",
+ "nimbus-blob",
  "nimbus-core",
  "nimbus-egress",
  "nimbus-proxy",
