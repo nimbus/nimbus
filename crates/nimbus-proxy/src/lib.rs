@@ -39,7 +39,7 @@ pub use pool::{
 pub use redaction::redact_egress_decision_log_value;
 pub use substrate::ProxySubstrate;
 pub use tls_authority::EgressProxyTlsAuthority;
-pub use worker::{EgressProxy, EgressProxyConfig};
+pub use worker::{WorkloadPep, WorkloadPepConfig};
 
 pub(crate) const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 pub(crate) const DEFAULT_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);

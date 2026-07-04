@@ -16,7 +16,7 @@ pub(super) use tempfile::TempDir;
 
 pub(super) use nimbus_core::TenantId;
 pub(super) use nimbus_egress::EgressPolicy;
-pub(super) use nimbus_proxy::{EgressProxy, EgressProxyConfig};
+pub(super) use nimbus_proxy::{WorkloadPep, WorkloadPepConfig};
 
 pub(super) use super::super::{
     GUEST_USER_GID_ENV, GUEST_USER_HELPER_GUEST_PATH, GUEST_USER_UID_ENV, GuestUserIds,

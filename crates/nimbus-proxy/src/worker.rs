@@ -47,7 +47,7 @@ use crate::{
 
 const SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 
-pub struct EgressProxyConfig {
+pub struct WorkloadPepConfig {
     pub bind_addr: SocketAddr,
     pub policy: Option<CompiledEgressPolicy>,
     pub connect_timeout: Duration,
@@ -64,7 +64,7 @@ pub struct EgressProxyConfig {
     resolver: Resolver,
 }
 
-impl EgressProxyConfig {
+impl WorkloadPepConfig {
     pub fn new(policy: CompiledEgressPolicy) -> Self {
         Self {
             policy: Some(policy),
@@ -159,7 +159,7 @@ impl EgressProxyConfig {
     }
 }
 
-pub struct EgressProxy {
+pub struct WorkloadPep {
     local_addr: SocketAddr,
     shutdown: watch::Sender<bool>,
     shutdown_ack: Option<mpsc::Receiver<()>>,
@@ -167,8 +167,8 @@ pub struct EgressProxy {
     policy_state: Arc<RwLock<EgressProxyPolicyState>>,
 }
 
-impl EgressProxy {
-    pub fn start(config: EgressProxyConfig) -> Result<Self> {
+impl WorkloadPep {
+    pub fn start(config: WorkloadPepConfig) -> Result<Self> {
         if config.max_connections == 0 {
             return Err(EgressProxyError::OperationFailed {
                 message: "egress proxy max_connections must be greater than 0".to_owned(),
@@ -266,7 +266,7 @@ impl EgressProxy {
     }
 }
 
-impl Drop for EgressProxy {
+impl Drop for WorkloadPep {
     fn drop(&mut self) {
         let _ = self.shutdown.send(true);
         if let Some(shutdown_ack) = self.shutdown_ack.take() {

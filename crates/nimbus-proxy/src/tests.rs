@@ -512,8 +512,8 @@ fn egress_proxy_without_active_policy_denies_before_dns() {
             "resolver must not be called without policy",
         ))
     });
-    let proxy = EgressProxy::start(
-        EgressProxyConfig::without_active_policy()
+    let proxy = WorkloadPep::start(
+        WorkloadPepConfig::without_active_policy()
             .with_timeouts(Duration::from_secs(5), Duration::from_secs(5))
             .with_resolver(resolver),
     )
@@ -548,8 +548,8 @@ fn egress_proxy_policy_denied_hostname_does_not_resolve() {
         resolver_call_counter.fetch_add(1, Ordering::SeqCst);
         Ok(vec![SocketAddr::from(([127, 0, 0, 1], 80))])
     });
-    let proxy = EgressProxy::start(
-        EgressProxyConfig::new(allow_policy([EgressRule::new(
+    let proxy = WorkloadPep::start(
+        WorkloadPepConfig::new(allow_policy([EgressRule::new(
             "allowed",
             EgressProtocol::Http,
             "allowed.test",
@@ -584,8 +584,8 @@ fn egress_proxy_malformed_authority_denies_before_dns() {
         resolver_call_counter.fetch_add(1, Ordering::SeqCst);
         Ok(vec![SocketAddr::from(([127, 0, 0, 1], 443))])
     });
-    let proxy = EgressProxy::start(
-        EgressProxyConfig::new(allow_policy([EgressRule::new(
+    let proxy = WorkloadPep::start(
+        WorkloadPepConfig::new(allow_policy([EgressRule::new(
             "allowed",
             EgressProtocol::Https,
             "allowed.test",
@@ -625,8 +625,8 @@ fn egress_proxy_allowed_hostname_invokes_resolver_just_in_time() {
         resolver_call_counter.fetch_add(1, Ordering::SeqCst);
         Ok(vec![SocketAddr::from(([127, 0, 0, 1], port))])
     });
-    let proxy = EgressProxy::start(
-        EgressProxyConfig::new(allow_policy([EgressRule::new(
+    let proxy = WorkloadPep::start(
+        WorkloadPepConfig::new(allow_policy([EgressRule::new(
             "allowed",
             EgressProtocol::Http,
             "allowed.test",
@@ -856,8 +856,8 @@ fn egress_proxy_dns_overflow_defaults_to_deny_before_dial() {
             SocketAddr::from(([127, 0, 0, 2], port)),
         ])
     });
-    let proxy = EgressProxy::start(
-        EgressProxyConfig::new(allow_policy([EgressRule::new(
+    let proxy = WorkloadPep::start(
+        WorkloadPepConfig::new(allow_policy([EgressRule::new(
             "allowed",
             EgressProtocol::Http,
             "allowed.test",
@@ -900,8 +900,8 @@ fn egress_proxy_rejects_ambiguous_canonical_authorities() {
         resolver_call_counter.fetch_add(1, Ordering::SeqCst);
         Ok(vec![SocketAddr::from(([127, 0, 0, 1], 80))])
     });
-    let proxy = EgressProxy::start(
-        EgressProxyConfig::new(allow_policy([EgressRule::new(
+    let proxy = WorkloadPep::start(
+        WorkloadPepConfig::new(allow_policy([EgressRule::new(
             "allowed",
             EgressProtocol::Http,
             "allowed.test",
@@ -1133,8 +1133,8 @@ fn egress_proxy_phase_trace_denies_caller_credentials_before_dns() {
         Ok(vec![upstream_addr])
     });
     let phases = recorded_phases();
-    let proxy = EgressProxy::start(
-        EgressProxyConfig::new(allow_policy([EgressRule::new(
+    let proxy = WorkloadPep::start(
+        WorkloadPepConfig::new(allow_policy([EgressRule::new(
             "allowed",
             EgressProtocol::Http,
             "allowed.test",
@@ -1471,8 +1471,8 @@ fn egress_proxy_maps_upstream_dial_failure_to_bad_gateway() {
     let resolver = Arc::new(move |_host: &str, _port: u16| {
         Ok(vec![SocketAddr::from(([127, 0, 0, 1], dead_port))])
     });
-    let proxy = EgressProxy::start(
-        EgressProxyConfig::new(allow_policy([EgressRule::new(
+    let proxy = WorkloadPep::start(
+        WorkloadPepConfig::new(allow_policy([EgressRule::new(
             "allowed",
             EgressProtocol::Http,
             "allowed.test",
@@ -1512,10 +1512,10 @@ fn egress_proxy_pins_authorization_and_dial_to_first_resolved_address() {
             SocketAddr::from(([127, 0, 0, 1], port)),
         ])
     });
-    let proxy = EgressProxy::start(
+    let proxy = WorkloadPep::start(
         // allow_internal_ips defaults to false: only the global addresses[0] is
         // authorizable.
-        EgressProxyConfig::new(allow_policy([EgressRule::new(
+        WorkloadPepConfig::new(allow_policy([EgressRule::new(
             "allowed",
             EgressProtocol::Http,
             "allowed.test",
@@ -1559,8 +1559,8 @@ fn egress_proxy_denies_when_first_resolved_address_is_internal() {
     let upstream_port = upstream.addr.port();
     let resolver =
         Arc::new(move |_host: &str, port: u16| Ok(vec![SocketAddr::from(([127, 0, 0, 1], port))]));
-    let proxy = EgressProxy::start(
-        EgressProxyConfig::new(allow_policy([EgressRule::new(
+    let proxy = WorkloadPep::start(
+        WorkloadPepConfig::new(allow_policy([EgressRule::new(
             "allowed",
             EgressProtocol::Http,
             "allowed.test",
@@ -1592,16 +1592,16 @@ fn egress_proxy_denies_when_first_resolved_address_is_internal() {
     );
 }
 
-fn start_test_proxy(policy: CompiledEgressPolicy) -> EgressProxy {
+fn start_test_proxy(policy: CompiledEgressPolicy) -> WorkloadPep {
     start_test_proxy_with_store(policy, CredentialSecretStore::empty())
 }
 
 fn start_test_proxy_on_substrate(
     policy: CompiledEgressPolicy,
     substrate: ProxySubstrate,
-) -> EgressProxy {
-    EgressProxy::start(
-        EgressProxyConfig::new(policy)
+) -> WorkloadPep {
+    WorkloadPep::start(
+        WorkloadPepConfig::new(policy)
             .with_timeouts(Duration::from_secs(5), Duration::from_secs(5))
             .with_substrate(substrate)
             .with_resolver(loopback_test_resolver()),
@@ -1612,7 +1612,7 @@ fn start_test_proxy_on_substrate(
 fn start_test_proxy_with_store(
     policy: CompiledEgressPolicy,
     credential_store: CredentialSecretStore,
-) -> EgressProxy {
+) -> WorkloadPep {
     start_test_proxy_with_store_and_logger(policy, credential_store, Arc::new(|_| {}))
 }
 
@@ -1620,7 +1620,7 @@ fn start_test_proxy_with_store_and_logger(
     policy: CompiledEgressPolicy,
     credential_store: CredentialSecretStore,
     decision_logger: DecisionLogger,
-) -> EgressProxy {
+) -> WorkloadPep {
     start_test_proxy_with_store_logger_and_phase_observer(
         policy,
         credential_store,
@@ -1634,9 +1634,9 @@ fn start_test_proxy_with_store_logger_and_phase_observer(
     credential_store: CredentialSecretStore,
     decision_logger: DecisionLogger,
     phase_observer: crate::phase::PhaseObserver,
-) -> EgressProxy {
-    EgressProxy::start(
-        EgressProxyConfig::new(policy)
+) -> WorkloadPep {
+    WorkloadPep::start(
+        WorkloadPepConfig::new(policy)
             .with_timeouts(Duration::from_secs(5), Duration::from_secs(5))
             .with_credential_store(credential_store)
             .with_decision_logger(decision_logger)
@@ -1652,7 +1652,7 @@ fn start_test_proxy_with_store_logger_tls_and_phase_observer(
     decision_logger: DecisionLogger,
     tls_authority: EgressProxyTlsAuthority,
     phase_observer: crate::phase::PhaseObserver,
-) -> EgressProxy {
+) -> WorkloadPep {
     start_test_proxy_with_provider_logger_tls_and_phase_observer(
         policy,
         credential_store.into_provider(),
@@ -1668,9 +1668,9 @@ fn start_test_proxy_with_provider_logger_tls_and_phase_observer(
     decision_logger: DecisionLogger,
     tls_authority: EgressProxyTlsAuthority,
     phase_observer: crate::phase::PhaseObserver,
-) -> EgressProxy {
-    EgressProxy::start(
-        EgressProxyConfig::new(policy)
+) -> WorkloadPep {
+    WorkloadPep::start(
+        WorkloadPepConfig::new(policy)
             .with_timeouts(Duration::from_secs(5), Duration::from_secs(5))
             .with_credential_provider(credential_provider)
             .with_decision_logger(decision_logger)
@@ -1868,7 +1868,7 @@ impl TestStallingHttpServer {
 
 #[test]
 fn egress_proxy_config_defaults_to_loopback_ephemeral_bind() {
-    let config = EgressProxyConfig::new(CompiledEgressPolicy::deny_all());
+    let config = WorkloadPepConfig::new(CompiledEgressPolicy::deny_all());
 
     assert_eq!(config.bind_addr, SocketAddr::from(([127, 0, 0, 1], 0)));
     assert_eq!(config.max_connections, DEFAULT_MAX_CONNECTIONS);
@@ -1876,8 +1876,8 @@ fn egress_proxy_config_defaults_to_loopback_ephemeral_bind() {
 
 #[test]
 fn egress_proxy_rejects_zero_connection_limit() {
-    let error = match EgressProxy::start(
-        EgressProxyConfig::new(CompiledEgressPolicy::deny_all()).with_max_connections(0),
+    let error = match WorkloadPep::start(
+        WorkloadPepConfig::new(CompiledEgressPolicy::deny_all()).with_max_connections(0),
     ) {
         Ok(_) => panic!("zero connection limit should be rejected"),
         Err(error) => error,
@@ -1906,8 +1906,8 @@ fn egress_proxy_returns_503_when_connection_limit_is_exhausted() {
         thread::sleep(Duration::from_secs(2));
         let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
     });
-    let proxy = EgressProxy::start(
-        EgressProxyConfig::new(allow_policy([EgressRule::new(
+    let proxy = WorkloadPep::start(
+        WorkloadPepConfig::new(allow_policy([EgressRule::new(
             "allowed",
             EgressProtocol::Http,
             "allowed.test",
@@ -4177,8 +4177,8 @@ fn egress_proxy_drop_emits_terminal_record_for_aborted_in_flight_request() {
 
 #[test]
 fn egress_proxy_dns_budget_times_out_closed_without_disturbing_sibling() {
-    let blocked_proxy = EgressProxy::start(
-        EgressProxyConfig::new(allow_policy([EgressRule::new(
+    let blocked_proxy = WorkloadPep::start(
+        WorkloadPepConfig::new(allow_policy([EgressRule::new(
             "allowed",
             EgressProtocol::Http,
             "allowed.test",

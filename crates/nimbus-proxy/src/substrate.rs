@@ -7,7 +7,7 @@ use tokio::runtime::{Builder, Handle, Runtime};
 ///
 /// A substrate owns only runtime capacity and Pingora server configuration. It
 /// must never carry policy, credential, CA, tenant, or other PEP identity state;
-/// those isolation boundaries stay on each `EgressProxy`.
+/// those isolation boundaries stay on each `WorkloadPep`.
 #[derive(Clone)]
 pub struct ProxySubstrate {
     inner: Arc<ProxySubstrateInner>,

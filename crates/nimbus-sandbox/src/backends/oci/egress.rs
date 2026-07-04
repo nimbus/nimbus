@@ -1,7 +1,7 @@
 //! Shared per-sandbox egress PEP (Policy Enforcement Point) lifecycle.
 //!
 //! Every sandbox backend places its workload inside a deny-by-default network
-//! namespace whose only outbound path is a host-side `nimbus_proxy::EgressProxy`
+//! namespace whose only outbound path is a host-side `nimbus_proxy::WorkloadPep`
 //! bound on the bridge gateway. The "compile policy -> start the PEP -> register
 //! / reload / stop" glue is security-critical and identical across backends
 //! (the container backend today, the krun microVM backend next), so it lives
@@ -19,8 +19,8 @@ use nimbus_egress::{
     EGRESS_PROXY_URL_ENV, EGRESS_RESERVED_ENV_KEYS, EgressPolicy,
 };
 use nimbus_proxy::{
-    AppendOnlyDecisionLogSink, DecisionLogSinkContext, EgressProxy, EgressProxyConfig,
-    EgressProxyError, EgressProxyReadiness, EgressProxyTlsAuthority,
+    AppendOnlyDecisionLogSink, DecisionLogSinkContext, EgressProxyError, EgressProxyReadiness,
+    EgressProxyTlsAuthority, WorkloadPep, WorkloadPepConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -44,7 +44,7 @@ pub(crate) struct EgressProxyRegistry {
 /// The two live in a single registry entry (under one lock) so the published
 /// CA file can never belong to a different proxy than the one registered.
 struct RegisteredPep {
-    proxy: EgressProxy,
+    proxy: WorkloadPep,
     trust_anchor_path: Option<PathBuf>,
 }
 
@@ -124,8 +124,8 @@ impl EgressProxyRegistry {
             &trust_anchor_path,
             &tls_authority.trust_anchor_pem(),
         )?;
-        let proxy = EgressProxy::start(
-            EgressProxyConfig::new(compiled)
+        let proxy = WorkloadPep::start(
+            WorkloadPepConfig::new(compiled)
                 .with_bind_addr(bind_addr)
                 .with_tls_authority(tls_authority)
                 .with_decision_logger(decision_logger),
@@ -162,7 +162,7 @@ impl EgressProxyRegistry {
         Ok(())
     }
 
-    /// Stop and deregister the PEP for `id`. Dropping the `EgressProxy` stops it.
+    /// Stop and deregister the PEP for `id`. Dropping the `WorkloadPep` stops it.
     /// No-op if none is registered.
     pub(crate) fn stop(&self, id: &SandboxId) -> Result<()> {
         let removed = self.lock()?.remove(id);
@@ -231,7 +231,7 @@ impl EgressProxyRegistry {
     /// live VMM. Production code only ever registers a PEP through
     /// [`EgressProxyRegistry::ensure_running`], which always loads a policy.
     #[cfg(test)]
-    pub(crate) fn insert_running_for_test(&self, id: &SandboxId, proxy: EgressProxy) -> Result<()> {
+    pub(crate) fn insert_running_for_test(&self, id: &SandboxId, proxy: WorkloadPep) -> Result<()> {
         self.lock()?.insert(
             id.clone(),
             RegisteredPep {
@@ -766,7 +766,7 @@ mod tests {
     fn readiness_reports_not_ready_for_a_policyless_proxy() {
         let registry = EgressProxyRegistry::new();
         let id = SandboxId::new("egress-seam-readiness-policyless");
-        let proxy = EgressProxy::start(EgressProxyConfig::without_active_policy())
+        let proxy = WorkloadPep::start(WorkloadPepConfig::without_active_policy())
             .expect("a policy-less PEP should still bind and start");
         registry.insert_running_for_test(&id, proxy).unwrap();
 
