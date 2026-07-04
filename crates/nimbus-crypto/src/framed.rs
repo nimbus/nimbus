@@ -436,6 +436,146 @@ pub fn open_framed_blob_range(
     FramedOpenSession::new(key).open_range(framed, range)
 }
 
+/// Fixed byte length of a framed blob header (magic + seed_kind + key_seed +
+/// plaintext_len).
+///
+/// A byte-plane store that wants to avoid a whole-blob fetch reads exactly
+/// this many bytes first (a bounded probe) to get enough bytes for
+/// [`FramedBlobHeader::parse`], then uses [`framed_span_for_plaintext_range`]
+/// to size its second, targeted fetch.
+pub const FRAMED_HEADER_LEN: usize = HEADER_LEN;
+
+/// Computes the framed-blob byte span (relative to byte 0 of the framed blob,
+/// i.e. including the header) that covers every frame overlapping
+/// `plaintext_range`.
+///
+/// Pairs with [`open_framed_span`]: a byte-plane store fetches exactly this
+/// span from the underlying substrate (in addition to the `FRAMED_HEADER_LEN`
+/// header probe used to obtain `header`), then passes the fetched bytes to
+/// `open_framed_span` to recover the exact plaintext slice. This is what lets
+/// `EncryptedBlobStore::get_range` transfer only the overlapping frames
+/// instead of the whole ciphertext.
+pub fn framed_span_for_plaintext_range(
+    header: &FramedBlobHeader,
+    plaintext_range: Range<u64>,
+) -> Result<Range<u64>> {
+    let len = header.plaintext_len as u64;
+    if plaintext_range.start > plaintext_range.end || plaintext_range.end > len {
+        return Err(Error::InvalidInput(format!(
+            "range {}..{} out of bounds for framed plaintext of {len} bytes",
+            plaintext_range.start, plaintext_range.end
+        )));
+    }
+    let header_len = HEADER_LEN as u64;
+    if plaintext_range.start == plaintext_range.end {
+        return Ok(header_len..header_len);
+    }
+    let aead = Aes256GcmSivFramedAead;
+    let first_frame = plaintext_range.start as usize / FRAME_PLAINTEXT_LEN;
+    let last_frame = (plaintext_range.end as usize - 1) / FRAME_PLAINTEXT_LEN;
+    let start_offset = sealed_offset_for_frame(&aead, first_frame as u64)?;
+    let last_frame_plaintext_len = frame_plaintext_len(header.plaintext_len, last_frame as u64);
+    let last_frame_sealed_len = aead.sealed_frame_len(last_frame_plaintext_len);
+    let end_offset = sealed_offset_for_frame(&aead, last_frame as u64)?
+        .checked_add(last_frame_sealed_len)
+        .ok_or_else(|| {
+            Error::storage(
+                StorageErrorKind::Corruption,
+                "framed ciphertext offset overflow",
+            )
+        })?;
+    Ok(header_len + start_offset as u64..header_len + end_offset as u64)
+}
+
+/// Decrypts exactly `plaintext_range` from a pre-fetched framed span.
+///
+/// `framed_span` must be exactly the bytes at the range returned by
+/// [`framed_span_for_plaintext_range`] for the same `header` and
+/// `plaintext_range`: sealed frame bytes only (the header prefix already
+/// stripped), aligned to full frame boundaries, containing every frame that
+/// overlaps `plaintext_range` and nothing else. AEAD semantics are identical
+/// to a full [`open_framed_blob`]: the true absolute frame index is used for
+/// both the nonce and the AAD, so a frame decrypted out of its positional
+/// context still authenticates exactly as it would in a whole-blob open.
+///
+/// This does not perform the whole-blob body-length or content-seed checks
+/// that a full-range [`open_framed_blob_range`] call performs (those require
+/// having fetched the entire ciphertext); callers that need those checks for
+/// a full-range request should keep using the whole-fetch path instead.
+pub fn open_framed_span(
+    key: &FramedBlobKey,
+    header: &FramedBlobHeader,
+    framed_span: &[u8],
+    plaintext_range: Range<u64>,
+) -> Result<Vec<u8>> {
+    let len = header.plaintext_len as u64;
+    if plaintext_range.start > plaintext_range.end || plaintext_range.end > len {
+        return Err(Error::InvalidInput(format!(
+            "range {}..{} out of bounds for framed plaintext of {len} bytes",
+            plaintext_range.start, plaintext_range.end
+        )));
+    }
+    if plaintext_range.start == plaintext_range.end {
+        return Ok(Vec::new());
+    }
+    let aead = Aes256GcmSivFramedAead;
+    let subkey = key.subkey(&header.key_seed);
+    let first_frame = plaintext_range.start as usize / FRAME_PLAINTEXT_LEN;
+    let last_frame = (plaintext_range.end as usize - 1) / FRAME_PLAINTEXT_LEN;
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    for frame_index in first_frame..=last_frame {
+        let plaintext_len = frame_plaintext_len(header.plaintext_len, frame_index as u64);
+        let sealed_len = aead.sealed_frame_len(plaintext_len);
+        let end = cursor.checked_add(sealed_len).ok_or_else(|| {
+            Error::storage(
+                StorageErrorKind::Corruption,
+                "sealed frame range overflows framed span",
+            )
+        })?;
+        if end > framed_span.len() {
+            return Err(Error::storage(
+                StorageErrorKind::Corruption,
+                "truncated framed span",
+            ));
+        }
+        let aad = frame_aad(
+            header.seed_kind,
+            &header.key_seed,
+            header.plaintext_len as u64,
+            frame_index as u64,
+            header.frame_count,
+        );
+        let frame =
+            aead.open_frame(&subkey, frame_index as u64, &aad, &framed_span[cursor..end])?;
+        if frame.len() != plaintext_len {
+            return Err(Error::storage(
+                StorageErrorKind::Corruption,
+                "framed AEAD returned unexpected plaintext length",
+            ));
+        }
+        let frame_start = (frame_index as u64)
+            .checked_mul(FRAME_PLAINTEXT_LEN as u64)
+            .ok_or_else(|| {
+                Error::storage(
+                    StorageErrorKind::Corruption,
+                    "frame plaintext range overflows blob length",
+                )
+            })?;
+        let frame_end = frame_start.checked_add(frame.len() as u64).ok_or_else(|| {
+            Error::storage(
+                StorageErrorKind::Corruption,
+                "frame plaintext range overflows blob length",
+            )
+        })?;
+        let copy_start = plaintext_range.start.saturating_sub(frame_start) as usize;
+        let copy_end = (plaintext_range.end.min(frame_end) - frame_start) as usize;
+        out.extend_from_slice(&frame[copy_start..copy_end]);
+        cursor = end;
+    }
+    Ok(out)
+}
+
 pub fn random_framed_salt() -> [u8; KEY_SEED_LEN] {
     let mut salt = [0u8; KEY_SEED_LEN];
     OsRng.fill_bytes(&mut salt);
@@ -839,6 +979,99 @@ mod tests {
             2,
             "only overlapping frames should decrypt"
         );
+    }
+
+    #[test]
+    fn span_and_open_span_round_trip_across_frame_boundaries() {
+        let key = key("tenant");
+        let plaintext: Vec<u8> = (0..(FRAME_PLAINTEXT_LEN * 3 + 17))
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let framed = seal_framed_blob(&key, FramedBlobSeed::Content, &plaintext).unwrap();
+        let (header, _) = FramedBlobHeader::parse(&framed).unwrap();
+
+        let start = FRAME_PLAINTEXT_LEN as u64 + 10;
+        let end = FRAME_PLAINTEXT_LEN as u64 * 2 + 20;
+        let span = framed_span_for_plaintext_range(&header, start..end).unwrap();
+        let span_bytes = &framed[span.start as usize..span.end as usize];
+
+        let opened = open_framed_span(&key, &header, span_bytes, start..end).unwrap();
+
+        assert_eq!(opened, plaintext[start as usize..end as usize]);
+        assert!(
+            span.end - span.start < (FRAME_PLAINTEXT_LEN as u64) * 3,
+            "span should cover only the overlapping frames, not the whole ciphertext"
+        );
+    }
+
+    #[test]
+    fn span_covers_single_frame_in_final_partial_frame() {
+        let key = key("tenant");
+        let plaintext: Vec<u8> = (0..(FRAME_PLAINTEXT_LEN * 2 + 100))
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let framed = seal_framed_blob(&key, FramedBlobSeed::Content, &plaintext).unwrap();
+        let (header, _) = FramedBlobHeader::parse(&framed).unwrap();
+
+        let start = FRAME_PLAINTEXT_LEN as u64 * 2 + 5;
+        let end = FRAME_PLAINTEXT_LEN as u64 * 2 + 50;
+        let span = framed_span_for_plaintext_range(&header, start..end).unwrap();
+        let span_bytes = &framed[span.start as usize..span.end as usize];
+
+        let opened = open_framed_span(&key, &header, span_bytes, start..end).unwrap();
+
+        assert_eq!(opened, plaintext[start as usize..end as usize]);
+    }
+
+    #[test]
+    fn span_at_exact_frame_edge_returns_single_frame() {
+        let key = key("tenant");
+        let plaintext: Vec<u8> = (0..(FRAME_PLAINTEXT_LEN * 2))
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let framed = seal_framed_blob(&key, FramedBlobSeed::Content, &plaintext).unwrap();
+        let (header, _) = FramedBlobHeader::parse(&framed).unwrap();
+
+        let start = 0u64;
+        let end = FRAME_PLAINTEXT_LEN as u64;
+        let span = framed_span_for_plaintext_range(&header, start..end).unwrap();
+        let span_bytes = &framed[span.start as usize..span.end as usize];
+
+        let opened = open_framed_span(&key, &header, span_bytes, start..end).unwrap();
+
+        assert_eq!(opened, plaintext[start as usize..end as usize]);
+        assert_eq!(
+            span.end - span.start,
+            Aes256GcmSivFramedAead.sealed_frame_len(FRAME_PLAINTEXT_LEN) as u64,
+            "a request landing exactly on a frame boundary should fetch exactly one frame"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::reversed_empty_ranges)]
+    fn span_out_of_bounds_is_invalid_input() {
+        let key = key("tenant");
+        let framed = seal_framed_blob(&key, FramedBlobSeed::Content, b"short").unwrap();
+        let (header, _) = FramedBlobHeader::parse(&framed).unwrap();
+
+        let error = framed_span_for_plaintext_range(&header, 0..1000).unwrap_err();
+        assert!(matches!(error, Error::InvalidInput(_)));
+
+        let error = open_framed_span(&key, &header, &[], 3..1).unwrap_err();
+        assert!(matches!(error, Error::InvalidInput(_)));
+    }
+
+    #[test]
+    fn empty_span_request_returns_empty_without_frames() {
+        let key = key("tenant");
+        let framed = seal_framed_blob(&key, FramedBlobSeed::Content, b"payload").unwrap();
+        let (header, _) = FramedBlobHeader::parse(&framed).unwrap();
+
+        let span = framed_span_for_plaintext_range(&header, 2..2).unwrap();
+        assert_eq!(span.start, span.end);
+
+        let opened = open_framed_span(&key, &header, &[], 2..2).unwrap();
+        assert!(opened.is_empty());
     }
 
     #[derive(Debug)]

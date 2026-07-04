@@ -27,10 +27,11 @@ mod subject;
 #[cfg(feature = "aws-kms")]
 pub use aws_kms::AwsKmsKeyProvider;
 pub use framed::{
-    Aes256GcmSivFramedAead, FRAME_PLAINTEXT_LEN, FramedAead, FramedAeadSecurity,
+    Aes256GcmSivFramedAead, FRAME_PLAINTEXT_LEN, FRAMED_HEADER_LEN, FramedAead, FramedAeadSecurity,
     FramedAlgorithmSuite, FramedBlobHeader, FramedBlobKey, FramedBlobSeed, FramedOpenSession,
     FramedSealSession, FramedSeedKind, KEY_SEED_LEN, MAX_PLAINTEXT_BYTES, MAX_WRAPPED_DATA_KEYS,
-    NONCE_LEN, open_framed_blob, open_framed_blob_range, random_framed_salt, seal_framed_blob,
+    NONCE_LEN, framed_span_for_plaintext_range, open_framed_blob, open_framed_blob_range,
+    open_framed_span, random_framed_salt, seal_framed_blob,
 };
 pub use key::{DataEncryptionKey, GeneratedDataKey, WrappedDataKey, WrappingCipher};
 pub use key_directory::KeyDirectoryProvider;

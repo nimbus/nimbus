@@ -96,20 +96,73 @@ impl BlobStore for ObjectStoreBlobStore {
     }
 
     async fn get_stream(&self, hash: &BlobHash) -> Result<ByteStream> {
-        let bytes = self.get(hash).await?;
-        Ok(Box::new(std::io::Cursor::new(bytes)))
+        Ok(Box::new(std::io::Cursor::new(self.get(hash).await?)))
     }
 
     async fn get_range(&self, hash: &BlobHash, range: Range<u64>) -> Result<Bytes> {
-        let bytes = self.get(hash).await?;
-        let len = bytes.len() as u64;
-        if range.start > range.end || range.end > len {
+        if range.start > range.end {
             return Err(Error::InvalidInput(format!(
-                "range {}..{} out of bounds for blob of {len} bytes",
+                "range {}..{} out of bounds: start after end",
                 range.start, range.end
             )));
         }
-        Ok(bytes.slice(range.start as usize..range.end as usize))
+        let path = self.object_path(hash);
+        if range.start == range.end {
+            // `object_store`'s own `GetRange::Bounded` treats a zero-length
+            // range as invalid input rather than a trivially satisfiable
+            // request, so short-circuit here. Still confirm the blob exists
+            // (a metadata-only HEAD, no body bytes) so a missing blob keeps
+            // failing NotFound instead of silently returning empty bytes.
+            self.store
+                .head(&path)
+                .await
+                .map_err(|err| map_object_error(err, "head", &path))?;
+            return Ok(Bytes::new());
+        }
+        let requested_len = range.end - range.start;
+        match self.store.get_range(&path, range.clone()).await {
+            Ok(bytes) => {
+                if bytes.len() as u64 != requested_len {
+                    // `object_store`'s own `GetRange::Bounded` semantics clamp
+                    // `range.end` to the object's actual length instead of
+                    // erroring when only the end overflows (HTTP Range
+                    // semantics: "if the range ends after the end of the
+                    // object, the entire remainder... will be returned").
+                    // Normalize that into the same out-of-bounds
+                    // `InvalidInput` shape the other two `BlobStore` legs use.
+                    let actual_len = self
+                        .store
+                        .head(&path)
+                        .await
+                        .map(|meta| meta.size)
+                        .unwrap_or(range.start + bytes.len() as u64);
+                    return Err(Error::InvalidInput(format!(
+                        "range {}..{} out of bounds for blob of {actual_len} bytes",
+                        range.start, range.end
+                    )));
+                }
+                Ok(bytes)
+            }
+            Err(err) => {
+                // `object_store` backends collapse their internal range-validation
+                // errors (`InvalidGetRange`) into an opaque `Error::Generic`
+                // regardless of backend (confirmed for both `memory` and `local`),
+                // so `err` alone can't distinguish "genuinely out of bounds" from
+                // any other backend failure. Ask the backend for the object's true
+                // size (a metadata-only HEAD, no body bytes) to disambiguate and
+                // produce the same `InvalidInput` shape the other two `BlobStore`
+                // legs use for out-of-bounds ranges.
+                if let Ok(meta) = self.store.head(&path).await {
+                    if range.end > meta.size {
+                        return Err(Error::InvalidInput(format!(
+                            "range {}..{} out of bounds for blob of {} bytes",
+                            range.start, range.end, meta.size
+                        )));
+                    }
+                }
+                Err(map_object_error(err, "get_range", &path))
+            }
+        }
     }
 
     async fn has(&self, hash: &BlobHash) -> Result<bool> {
@@ -167,8 +220,112 @@ fn map_object_error(err: ::object_store::Error, operation: &str, path: &ObjectPa
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::fmt;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use ::object_store::memory::InMemory;
+    use ::object_store::path::Path;
+    use ::object_store::{
+        CopyOptions, GetOptions, GetResult, GetResultPayload, ListResult, MultipartUpload,
+        ObjectMeta, PutMultipartOptions, PutOptions, PutPayload, PutResult,
+    };
+    use futures::stream::BoxStream;
+
+    use super::*;
+
+    /// Test-only [`ObjectStore`] wrapper that counts the body bytes actually
+    /// served by `get_opts`, so a `get_range` test can prove the underlying
+    /// transfer stayed bounded to the requested window instead of the whole
+    /// object.
+    struct CountingObjectStore {
+        inner: Arc<dyn ObjectStore>,
+        bytes_served: Arc<AtomicU64>,
+    }
+
+    impl fmt::Debug for CountingObjectStore {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("CountingObjectStore").finish()
+        }
+    }
+
+    impl fmt::Display for CountingObjectStore {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "CountingObjectStore({})", self.inner)
+        }
+    }
+
+    #[async_trait]
+    impl ObjectStore for CountingObjectStore {
+        async fn put_opts(
+            &self,
+            location: &Path,
+            payload: PutPayload,
+            opts: PutOptions,
+        ) -> ::object_store::Result<PutResult> {
+            self.inner.put_opts(location, payload, opts).await
+        }
+
+        async fn put_multipart_opts(
+            &self,
+            location: &Path,
+            opts: PutMultipartOptions,
+        ) -> ::object_store::Result<Box<dyn MultipartUpload>> {
+            self.inner.put_multipart_opts(location, opts).await
+        }
+
+        async fn get_opts(
+            &self,
+            location: &Path,
+            options: GetOptions,
+        ) -> ::object_store::Result<GetResult> {
+            let result = self.inner.get_opts(location, options).await?;
+            let meta = result.meta.clone();
+            let range = result.range.clone();
+            let attributes = result.attributes.clone();
+            let bytes = result.bytes().await?;
+            self.bytes_served
+                .fetch_add(bytes.len() as u64, Ordering::SeqCst);
+            Ok(GetResult {
+                payload: GetResultPayload::Stream(Box::pin(futures::stream::once(async move {
+                    Ok(bytes)
+                }))),
+                meta,
+                range,
+                attributes,
+                extensions: Default::default(),
+            })
+        }
+
+        fn delete_stream(
+            &self,
+            locations: BoxStream<'static, ::object_store::Result<Path>>,
+        ) -> BoxStream<'static, ::object_store::Result<Path>> {
+            self.inner.delete_stream(locations)
+        }
+
+        fn list(
+            &self,
+            prefix: Option<&Path>,
+        ) -> BoxStream<'static, ::object_store::Result<ObjectMeta>> {
+            self.inner.list(prefix)
+        }
+
+        async fn list_with_delimiter(
+            &self,
+            prefix: Option<&Path>,
+        ) -> ::object_store::Result<ListResult> {
+            self.inner.list_with_delimiter(prefix).await
+        }
+
+        async fn copy_opts(
+            &self,
+            from: &Path,
+            to: &Path,
+            options: CopyOptions,
+        ) -> ::object_store::Result<()> {
+            self.inner.copy_opts(from, to, options).await
+        }
+    }
 
     #[tokio::test]
     async fn object_store_blob_store_round_trips_through_memory_cloud() {
@@ -204,5 +361,71 @@ mod tests {
 
         let err = store.get(&hash).await.unwrap_err();
         assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    }
+
+    #[tokio::test]
+    async fn object_store_range_read_transfers_only_underlying_bytes_served() {
+        let bytes_served = Arc::new(AtomicU64::new(0));
+        let cloud: Arc<dyn ObjectStore> = Arc::new(CountingObjectStore {
+            inner: Arc::new(InMemory::new()),
+            bytes_served: bytes_served.clone(),
+        });
+        let store = ObjectStoreBlobStore::new(cloud, "tenant-a");
+
+        let big: Vec<u8> = (0..1_048_576usize).map(|i| (i % 251) as u8).collect();
+        let hash = store.put(Bytes::from(big.clone())).await.unwrap();
+        // `put`/`has` go through the counting wrapper too; only the `get_range`
+        // transfer below matters for this assertion.
+        bytes_served.store(0, Ordering::SeqCst);
+
+        let slice = store.get_range(&hash, 4096..8192).await.unwrap();
+
+        assert_eq!(slice, Bytes::copy_from_slice(&big[4096..8192]));
+        assert_eq!(
+            bytes_served.load(Ordering::SeqCst),
+            4096,
+            "range read should transfer exactly the requested window, not the whole 1MiB blob"
+        );
+    }
+
+    #[tokio::test]
+    async fn object_store_get_range_rejects_end_past_blob_length() {
+        let cloud: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let store = ObjectStoreBlobStore::new(cloud, "tenant-a");
+        let hash = store.put(Bytes::from_static(b"cloud bytes")).await.unwrap();
+
+        let err = store.get_range(&hash, 6..100).await.unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn object_store_get_range_empty_range_returns_empty_bytes() {
+        let cloud: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let store = ObjectStoreBlobStore::new(cloud, "tenant-a");
+        let hash = store.put(Bytes::from_static(b"cloud bytes")).await.unwrap();
+
+        let slice = store.get_range(&hash, 4..4).await.unwrap();
+        assert_eq!(slice, Bytes::new());
+    }
+
+    #[tokio::test]
+    #[allow(clippy::reversed_empty_ranges)]
+    async fn object_store_get_range_rejects_start_after_end() {
+        let cloud: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let store = ObjectStoreBlobStore::new(cloud, "tenant-a");
+        let hash = store.put(Bytes::from_static(b"cloud bytes")).await.unwrap();
+
+        let err = store.get_range(&hash, 8..4).await.unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn object_store_get_range_missing_blob_stays_not_found() {
+        let cloud: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let store = ObjectStoreBlobStore::new(cloud, "tenant-a");
+        let hash = BlobHash::of(b"never stored");
+
+        let err = store.get_range(&hash, 0..4).await.unwrap_err();
+        assert!(matches!(err, Error::NotFound(_)));
     }
 }
