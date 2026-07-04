@@ -414,12 +414,12 @@ async fn handle_client(
     shutdown: watch::Receiver<bool>,
 ) -> io::Result<()> {
     let phase_recorder = RequestPhaseRecorder::new(Arc::clone(&context.phase_observer));
-    // EE3: cooperative task-time accounting for the whole request task
-    // (records on drop, including error paths). Accounting, not isolation.
-    let _cpu_span = context
+    // EE3: wall-clock task-occupancy accounting for the whole request task
+    // (records on drop, including error paths). Occupancy, not CPU-seconds.
+    let _task_time_span = context
         .tenant_fairness
         .as_ref()
-        .map(|fairness| fairness.cpu_span());
+        .map(|fairness| fairness.task_time_span());
     let mut buffer = Vec::new();
     match read_http_headers(&mut client, &mut buffer, context.io_timeout).await {
         Ok(()) => {}

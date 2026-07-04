@@ -129,7 +129,7 @@ impl EgressProxyRegistry {
         let tls_authority =
             EgressProxyTlsAuthority::generate_ephemeral().map_err(egress_proxy_error)?;
         // EE3/EE4: resolve the tenant's fairness handle once, at registration.
-        let tenant_fairness = self.engine.fairness().tenant(tenant_id.as_str());
+        let tenant_fairness = self.engine.fairness().tenant(tenant_id);
         // EE4: fan the decision stream out — the SELH append-only sink stays
         // FIRST (the durability baseline receives every event, unchanged);
         // the per-tenant counter sink subscribes behind it.

@@ -4255,19 +4255,34 @@ fn ee1_reachability_lint_workload_map_unreachable_from_request_path() {
 
     let mut violations = Vec::new();
     let mut scanned = 0usize;
-    for entry in std::fs::read_dir(&src_dir).expect("nimbus-proxy src dir must be readable") {
-        let path = entry.expect("dir entry").path();
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if !name.ends_with(".rs") || allowed.contains(&name) {
-            continue;
-        }
-        scanned += 1;
-        let contents = std::fs::read_to_string(&path).expect("source file must be readable");
-        for needle in needles {
-            if contents.contains(needle) {
-                violations.push(format!("{name} references {needle}"));
+    // Recursive walk: a future src/ subdirectory (e.g. a request/ split) must
+    // not silently escape the scan while the scanned-count floor stays green.
+    let mut pending = vec![src_dir.clone()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).expect("nimbus-proxy src dir must be readable") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let top_level_allowed = dir == src_dir && allowed.contains(&name);
+            if !name.ends_with(".rs") || top_level_allowed {
+                continue;
+            }
+            scanned += 1;
+            let contents = std::fs::read_to_string(&path).expect("source file must be readable");
+            let display = path
+                .strip_prefix(&src_dir)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            for needle in needles {
+                if contents.contains(needle) {
+                    violations.push(format!("{display} references {needle}"));
+                }
             }
         }
     }

@@ -268,8 +268,8 @@ check_ee3_fairness() {
     "node-wide fairness registry defined"
   require_grep EE3 'acquire_dns' "crates/nimbus-proxy/src/fairness.rs" \
     "per-tenant DNS acquire budget present (distinct from the node guard)"
-  require_grep EE3 'TenantCpuAccounting' "crates/nimbus-proxy/src/fairness.rs" \
-    "named CPU accounting primitive present"
+  require_grep EE3 'TenantTaskTimeAccounting' "crates/nimbus-proxy/src/fairness.rs" \
+    "named task-time accounting primitive present (the EE3 CPU axis, honestly named)"
   require_grep EE3 'NOT' "crates/nimbus-proxy/src/fairness.rs" \
     "CPU primitive scoped as accounting, not claimed isolation"
   require_grep EE3 'record_bytes_to_upstream' "crates/nimbus-proxy/src/worker.rs" \

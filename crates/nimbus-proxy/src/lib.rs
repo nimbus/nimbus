@@ -34,7 +34,7 @@ pub use decision_log::{
 pub use dns::{DnsCacheConfig, DnsResolution};
 pub use engine::{EgressEngine, RegistrationSlot};
 pub use error::{EgressProxyError, Result};
-pub use fairness::{CpuAccountingSpan, FairnessRegistry, TenantCpuAccounting, TenantFairness};
+pub use fairness::{FairnessRegistry, TaskTimeSpan, TenantFairness, TenantTaskTimeAccounting};
 pub use fanout::{fan_out_decision_loggers, tenant_decision_counter_sink};
 pub use phase::{EgressProxyRequestPhase, REQUEST_PHASE_ORDER};
 pub use policy_state::{EgressProxyReadiness, PolicyGeneration};
