@@ -337,3 +337,71 @@ fn ambient_root_passthrough_creates_absolute_symlink_targets() {
         .expect("the newly created absolute symlink must be traversable");
     assert_eq!(bytes.as_ref(), b"absolute-target");
 }
+
+#[cfg(unix)]
+#[test]
+fn ambient_root_metadata_ops_delegate_to_realfs() {
+    // BRH2: the metadata-family ops (utime/chown/lchmod/lchown/statfs/
+    // lutime) previously routed through a separate host_path-join fallback
+    // instead of the `ambient_root_delegate!` macro the other ops already
+    // use. That fallback rejected absolute-symlink traversal that a real
+    // ambient root must admit. Now every one of those ops is gated by the
+    // same macro as everything else, so they must be RealFs-identical at
+    // the ambient root ("/"). `chdir` gets the same absolute-symlink
+    // admission but *without* the macro (see `chdir`'s own doc comment): it
+    // validates via `RealFs::stat_sync`, never mutates process cwd.
+    // Exercised directly on the raw backend (not through `NimbusFs`, whose
+    // own `chdir` never calls through to the backend's `chdir` at all).
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("file.txt");
+    std::fs::write(&file, b"payload").unwrap();
+
+    let backend = passthrough_backend();
+
+    let before = std::fs::metadata(&file).unwrap().modified().unwrap();
+    let older = before - std::time::Duration::from_secs(120);
+    let epoch_secs = older
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    backend
+        .utime_sync(&checked(&file), epoch_secs, 0, epoch_secs, 0)
+        .expect("ambient root utime must delegate to RealFs and succeed");
+    let after = std::fs::metadata(&file).unwrap().modified().unwrap();
+    assert_ne!(
+        after, before,
+        "utime through the ambient root must change mtime"
+    );
+    assert_eq!(
+        after
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64,
+        epoch_secs,
+        "ambient root utime must set the exact requested mtime"
+    );
+
+    // chdir validation into a directory reachable only through an
+    // absolute-target symlink: the strict cap-std path refuses this
+    // (absolute symlink traversal is rejected), the ambient `RealFs::stat`
+    // validation must not. This is the one observable behavior change from
+    // unifying the gating: ambient root chdir *validation* now follows
+    // absolute symlinks, matching what a real chdir would resolve — but
+    // `chdir` remains validate-only at every root, so the process's real
+    // cwd must be unaffected either way.
+    let original_cwd = std::env::current_dir().unwrap();
+
+    let real_dir = dir.path().join("real-dir");
+    std::fs::create_dir(&real_dir).unwrap();
+    let link = dir.path().join("dir-link");
+    std::os::unix::fs::symlink(&real_dir, &link).unwrap();
+
+    backend
+        .chdir(&checked(&link))
+        .expect("ambient root chdir validation must follow an absolute-target symlink");
+    assert_eq!(
+        std::env::current_dir().unwrap(),
+        original_cwd,
+        "chdir must never mutate the process's real working directory"
+    );
+}

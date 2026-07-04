@@ -32,6 +32,11 @@ struct AccountingBlobStore {
     get_calls: AtomicUsize,
     range_calls: AtomicUsize,
     bytes_read: Arc<AtomicUsize>,
+    /// When set, `get_range` deliberately returns one byte fewer than the
+    /// caller requested (while still reporting success), simulating a
+    /// misbehaving `BlobStore` implementation that violates the "returns
+    /// exactly the requested window" contract without erroring.
+    short_return: bool,
 }
 
 struct AccountingStream {
@@ -72,6 +77,14 @@ impl AccountingBlobStore {
             get_calls: AtomicUsize::new(0),
             range_calls: AtomicUsize::new(0),
             bytes_read: Arc::new(AtomicUsize::new(0)),
+            short_return: false,
+        }
+    }
+
+    fn short_returning(bytes: Bytes) -> Self {
+        Self {
+            short_return: true,
+            ..Self::new(bytes)
         }
     }
 
@@ -183,7 +196,17 @@ impl BlobStore for AccountingBlobStore {
     async fn get_range(&self, hash: &BlobHash, range: Range<u64>) -> NimbusResult<Bytes> {
         self.range_calls.fetch_add(1, Ordering::SeqCst);
         assert_eq!(*hash, self.hash);
-        let slice = self.bytes.slice(range.start as usize..range.end as usize);
+        let len = self.bytes.len() as u64;
+        if range.start > range.end || range.end > len {
+            return Err(Error::InvalidInput(format!(
+                "range {}..{} out of bounds for blob of {len} bytes",
+                range.start, range.end
+            )));
+        }
+        let mut slice = self.bytes.slice(range.start as usize..range.end as usize);
+        if self.short_return && !slice.is_empty() {
+            slice = slice.slice(0..slice.len() - 1);
+        }
         self.bytes_read.fetch_add(slice.len(), Ordering::SeqCst);
         Ok(slice)
     }
@@ -494,4 +517,67 @@ fn dropping_file_mid_sequence_does_not_poison_shared_bridge_runtime() {
         .unwrap();
     let data = file.read_all_sync().unwrap();
     assert_eq!(data.as_ref(), b"hello world");
+}
+
+#[test]
+fn lying_manifest_chunk_len_yields_clean_error() {
+    // The manifest claims this chunk is 16 bytes long, but the blob store
+    // backing it only actually holds 4. The read window computed from the
+    // (wrong) manifest length is out of bounds against the real blob;
+    // `BlobStore::get_range`'s own bounds check must surface that as a clean
+    // io error through CAS-RO, not panic the reader.
+    let real_bytes = Bytes::from_static(b"abcd");
+    let store = Arc::new(AccountingBlobStore::new(real_bytes));
+    let manifest = CasReadOnlyManifest::new()
+        .add_file(
+            "/lying.bin",
+            vec![CasBlobChunk::new(store.hash(), 16)],
+            0o444,
+        )
+        .unwrap();
+    let backend = CasReadOnlyBackend::new(store.clone(), manifest);
+    let file = backend
+        .open_sync(&checked(Path::new("/lying.bin")), OpenOptions::read())
+        .unwrap();
+    let mut buf = [0_u8; 16];
+
+    let error = file
+        .read_at_sync(&mut buf, 0)
+        .expect_err("an overclaiming manifest chunk must not panic the reader");
+    assert!(
+        error.to_string().contains("out of bounds"),
+        "unexpected error for an overclaiming manifest chunk: {error}"
+    );
+}
+
+#[test]
+fn short_return_from_get_range_yields_clean_error() {
+    // The manifest's claimed chunk length matches the blob's real length,
+    // so no bounds violation exists — but the store itself misbehaves and
+    // returns fewer bytes than the requested window while still reporting
+    // success. CAS-RO must detect the short return and fail cleanly instead
+    // of panicking in `copy_from_slice`.
+    let bytes = Bytes::from_static(b"abcdefgh");
+    let store = Arc::new(AccountingBlobStore::short_returning(bytes.clone()));
+    let manifest = CasReadOnlyManifest::new()
+        .add_file(
+            "/short.bin",
+            vec![CasBlobChunk::new(store.hash(), bytes.len() as u64)],
+            0o444,
+        )
+        .unwrap();
+    let backend = CasReadOnlyBackend::new(store.clone(), manifest);
+    let file = backend
+        .open_sync(&checked(Path::new("/short.bin")), OpenOptions::read())
+        .unwrap();
+    let mut buf = [0_u8; 8];
+
+    let error = file
+        .read_at_sync(&mut buf, 0)
+        .expect_err("a store that returns fewer bytes than requested must not panic the reader");
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(
+        error.to_string().contains("expected"),
+        "unexpected error for a short-returning store: {error}"
+    );
 }

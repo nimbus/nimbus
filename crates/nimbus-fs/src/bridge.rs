@@ -28,6 +28,24 @@
 //! caller is a plain thread or a foreign runtime's worker thread. That is
 //! why one code path suffices where the two per-call implementations each
 //! needed an "already inside a runtime" branch.
+//!
+//! # Hazards
+//!
+//! - **Never call `block_on_byte_plane` from within a future already running
+//!   on this bridge.** The shared runtime has a small, fixed worker pool
+//!   (see [`shared_runtime`]); a bridged future that re-enters
+//!   `block_on_byte_plane` competes with the very pool it is running on for
+//!   a free worker. With enough concurrent re-entrant callers this exhausts
+//!   the pool and deadlocks every caller, bridged or not.
+//! - **A runtime-build failure is permanent for the process.** The runtime
+//!   is built once behind a [`OnceLock`]; if `Builder::build()` fails on
+//!   first use, every subsequent call reuses that same cached error rather
+//!   than retrying the build.
+//! - **There is deliberately no receive timeout.** If a spawned future never
+//!   completes (a wedged byte-plane call), `rx.recv()` blocks the calling
+//!   isolate thread forever — exactly as any other synchronous FS call
+//!   would wedge that thread. Callers get no special leniency here; treat a
+//!   hang the same way you would a hung syscall.
 
 use std::future::Future;
 use std::io;
@@ -43,14 +61,24 @@ use tokio::runtime::Runtime;
 /// `block_on` *on that same runtime*, which nothing here ever does — we only
 /// `spawn` onto it and block the caller on a channel instead. A `spawn`-only
 /// `current_thread` runtime would queue the task and never run it, deadlocking
-/// every caller. `new_multi_thread` dedicates a real worker thread that drives
-/// spawned tasks on its own, independent of any `block_on` call.
+/// every caller. `new_multi_thread` dedicates real worker threads that drive
+/// spawned tasks on their own, independent of any `block_on` call.
+///
+/// The pool has more than one worker (`available_parallelism`, capped at 4)
+/// so concurrent byte-plane calls from different isolates make progress in
+/// parallel instead of serializing behind a single worker thread. The cap is
+/// deliberately small: every task this runtime ever drives is I/O-wait bound
+/// (a `BlobStore` call), not CPU-bound, so a handful of workers is enough to
+/// keep them all in flight without growing the pool unbounded per process.
 fn shared_runtime() -> Result<&'static Runtime, io::Error> {
     static RUNTIME: OnceLock<io::Result<Runtime>> = OnceLock::new();
     RUNTIME
         .get_or_init(|| {
+            let worker_threads = std::thread::available_parallelism()
+                .map(|n| n.get().min(4))
+                .unwrap_or(1);
             tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
+                .worker_threads(worker_threads)
                 .enable_all()
                 .build()
         })
@@ -106,5 +134,43 @@ mod tests {
             let result = block_on_byte_plane(async move { Ok(i) });
             assert_eq!(result.unwrap(), i);
         }
+    }
+
+    #[test]
+    fn concurrent_byte_plane_calls_make_progress() {
+        // Eight OS threads each drive a byte-plane call that sleeps ~50ms
+        // before returning its id. A single-worker bridge runtime would
+        // serialize these behind one worker (~400ms total); a small pool
+        // lets them overlap. The bound is generous to stay CI-safe while
+        // still proving parallelism, not just eventual completion.
+        const CALLERS: usize = 8;
+        const SLEEP: std::time::Duration = std::time::Duration::from_millis(50);
+
+        let start = std::time::Instant::now();
+        let handles: Vec<_> = (0..CALLERS)
+            .map(|id| {
+                std::thread::spawn(move || {
+                    block_on_byte_plane(async move {
+                        tokio::time::sleep(SLEEP).await;
+                        Ok(id)
+                    })
+                    .unwrap()
+                })
+            })
+            .collect();
+
+        let mut ids: Vec<usize> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("caller thread must not panic"))
+            .collect();
+        ids.sort_unstable();
+
+        assert_eq!(ids, (0..CALLERS).collect::<Vec<_>>());
+        assert!(
+            start.elapsed() < std::time::Duration::from_millis(350),
+            "concurrent byte-plane calls took {:?}, expected well under {CALLERS} x {SLEEP:?} \
+             serialized",
+            start.elapsed()
+        );
     }
 }

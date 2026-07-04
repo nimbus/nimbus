@@ -32,6 +32,12 @@ use deno_permissions::{CheckedPath, CheckedPathBuf};
 /// exists and must hold. `FsCaps`/`CappedBackend` rights gating sits above
 /// this backend either way and is unaffected by which path a given root
 /// takes.
+///
+/// `chdir` is the one op that deliberately does **not** use this macro, at
+/// any root: `RealFs::chdir` calls `std::env::set_current_dir`, a
+/// process-global mutation, and delegating to it would leak one isolate's
+/// chdir into every other isolate sharing the process. See `chdir`'s own doc
+/// comment for the validate-only replacement used at the ambient root.
 macro_rules! ambient_root_delegate {
     ($self:expr, $call:expr) => {
         if $self.root.is_ambient_root() {
@@ -189,18 +195,19 @@ impl RootCapability {
         }
     }
 
+    /// Serves strict (non-ambient) roots only. Every caller of `host_path`
+    /// (via `checked_path`/`checked_buf`) is now itself guarded by
+    /// `ambient_root_delegate!` first, so this is only ever reached when
+    /// `ambient_fallback_allowed` is false — there is no longer a live path
+    /// that reaches `host_path` at the ambient root. It unconditionally
+    /// rejects: a strict cap-std root has no host-path-join escape hatch.
     fn host_path(&self, path: &Path) -> FsResult<PathBuf> {
-        if !self.ambient_fallback_allowed {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "operation does not have a capability-rooted passthrough implementation",
-            )
-            .into());
-        }
-        let relative = self.relative_path(path)?;
-        let host_path = self.root.join(&relative);
-        self.ensure_existing_ancestor_inside_root(&host_path)?;
-        Ok(host_path)
+        let _ = path;
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "operation does not have a capability-rooted passthrough implementation",
+        )
+        .into())
     }
 
     fn open_file(&self, path: &Path, options: OpenOptions) -> io::Result<cap_std::fs::File> {
@@ -244,28 +251,6 @@ impl RootCapability {
         self.dir
             .symlink_metadata(self.cap_path(relative.as_path()).as_ref())
             .map_err(Into::into)
-    }
-
-    fn ensure_existing_ancestor_inside_root(&self, path: &Path) -> io::Result<()> {
-        let root = self.root.canonicalize()?;
-        let mut ancestor = path;
-        while !ancestor.exists() {
-            ancestor = ancestor.parent().ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "passthrough path has no ancestor inside backend root",
-                )
-            })?;
-        }
-        let ancestor = ancestor.canonicalize()?;
-        if ancestor.starts_with(&root) {
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "passthrough path resolves outside backend root",
-            ))
-        }
     }
 
     /// Whether this root has no boundary to protect: rooted at `/`, where
@@ -431,9 +416,26 @@ impl FileSystem for PassthroughBackend {
         Ok(PathBuf::from("/tmp"))
     }
 
+    /// `chdir` is validate-only at every root shape — it is the one op the
+    /// `ambient_root_delegate!` macro deliberately does not touch. The
+    /// `NimbusFs` shell owns per-instance cwd precisely so isolates never
+    /// observe each other's chdir; a backend that delegated to
+    /// `RealFs::chdir` would call `std::env::set_current_dir`, a
+    /// process-global mutation that leaks across every isolate sharing the
+    /// process. At the ambient root, validation uses `RealFs::stat_sync`
+    /// (follows absolute symlinks, matching what a real chdir would resolve)
+    /// instead of the strict cap-std metadata check, so an ambient-rooted
+    /// backend admits a directory reachable only through an absolute
+    /// symlink — but it still only *validates*, and never mutates cwd. A
+    /// strict (non-ambient) root keeps the pre-existing cap-std metadata
+    /// check, byte-for-byte unchanged.
     fn chdir(&self, path: &CheckedPath<'_>) -> FsResult<()> {
-        let stat = self.root.metadata(path)?;
-        if stat.is_dir() {
+        let stat = if self.root.is_ambient_root() {
+            self.inner.stat_sync(path)?
+        } else {
+            cap_metadata_to_fs_stat(self.root.metadata(path)?)
+        };
+        if stat.is_directory {
             Ok(())
         } else {
             Err(io::Error::new(
@@ -513,6 +515,7 @@ impl FileSystem for PassthroughBackend {
 
     #[cfg(not(unix))]
     fn chmod_sync(&self, path: &CheckedPath<'_>, mode: i32) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.chmod_sync(path, mode));
         let path = self.checked_path(path)?;
         self.inner.chmod_sync(&path.as_checked_path(), mode)
     }
@@ -524,6 +527,7 @@ impl FileSystem for PassthroughBackend {
 
     #[cfg(not(unix))]
     async fn chmod_async(&self, path: CheckedPathBuf, mode: i32) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.chmod_async(path, mode).await);
         let path = self.checked_buf(path)?;
         self.inner.chmod_async(path, mode).await
     }
@@ -534,6 +538,7 @@ impl FileSystem for PassthroughBackend {
         uid: Option<u32>,
         gid: Option<u32>,
     ) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.chown_sync(path, uid, gid));
         let path = self.checked_path(path)?;
         self.inner.chown_sync(&path.as_checked_path(), uid, gid)
     }
@@ -544,16 +549,19 @@ impl FileSystem for PassthroughBackend {
         uid: Option<u32>,
         gid: Option<u32>,
     ) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.chown_async(path, uid, gid).await);
         let path = self.checked_buf(path)?;
         self.inner.chown_async(path, uid, gid).await
     }
 
     fn lchmod_sync(&self, path: &CheckedPath<'_>, mode: u32) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.lchmod_sync(path, mode));
         let path = self.checked_path(path)?;
         self.inner.lchmod_sync(&path.as_checked_path(), mode)
     }
 
     async fn lchmod_async(&self, path: CheckedPathBuf, mode: u32) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.lchmod_async(path, mode).await);
         let path = self.checked_buf(path)?;
         self.inner.lchmod_async(path, mode).await
     }
@@ -564,6 +572,7 @@ impl FileSystem for PassthroughBackend {
         uid: Option<u32>,
         gid: Option<u32>,
     ) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.lchown_sync(path, uid, gid));
         let path = self.checked_path(path)?;
         self.inner.lchown_sync(&path.as_checked_path(), uid, gid)
     }
@@ -574,6 +583,7 @@ impl FileSystem for PassthroughBackend {
         uid: Option<u32>,
         gid: Option<u32>,
     ) -> FsResult<()> {
+        ambient_root_delegate!(self, self.inner.lchown_async(path, uid, gid).await);
         let path = self.checked_buf(path)?;
         self.inner.lchown_async(path, uid, gid).await
     }
@@ -663,11 +673,13 @@ impl FileSystem for PassthroughBackend {
     }
 
     fn statfs_sync(&self, path: &CheckedPath<'_>, bigint: bool) -> FsResult<FsStatFs> {
+        ambient_root_delegate!(self, self.inner.statfs_sync(path, bigint));
         let path = self.checked_path(path)?;
         self.inner.statfs_sync(&path.as_checked_path(), bigint)
     }
 
     async fn statfs_async(&self, path: CheckedPathBuf, bigint: bool) -> FsResult<FsStatFs> {
+        ambient_root_delegate!(self, self.inner.statfs_async(path, bigint).await);
         let path = self.checked_buf(path)?;
         self.inner.statfs_async(path, bigint).await
     }
@@ -838,6 +850,11 @@ impl FileSystem for PassthroughBackend {
         mtime_secs: i64,
         mtime_nanos: u32,
     ) -> FsResult<()> {
+        ambient_root_delegate!(
+            self,
+            self.inner
+                .utime_sync(path, atime_secs, atime_nanos, mtime_secs, mtime_nanos)
+        );
         let path = self.checked_path(path)?;
         self.inner.utime_sync(
             &path.as_checked_path(),
@@ -856,6 +873,12 @@ impl FileSystem for PassthroughBackend {
         mtime_secs: i64,
         mtime_nanos: u32,
     ) -> FsResult<()> {
+        ambient_root_delegate!(
+            self,
+            self.inner
+                .utime_async(path, atime_secs, atime_nanos, mtime_secs, mtime_nanos)
+                .await
+        );
         let path = self.checked_buf(path)?;
         self.inner
             .utime_async(path, atime_secs, atime_nanos, mtime_secs, mtime_nanos)
@@ -870,6 +893,11 @@ impl FileSystem for PassthroughBackend {
         mtime_secs: i64,
         mtime_nanos: u32,
     ) -> FsResult<()> {
+        ambient_root_delegate!(
+            self,
+            self.inner
+                .lutime_sync(path, atime_secs, atime_nanos, mtime_secs, mtime_nanos)
+        );
         let path = self.checked_path(path)?;
         self.inner.lutime_sync(
             &path.as_checked_path(),
@@ -888,6 +916,12 @@ impl FileSystem for PassthroughBackend {
         mtime_secs: i64,
         mtime_nanos: u32,
     ) -> FsResult<()> {
+        ambient_root_delegate!(
+            self,
+            self.inner
+                .lutime_async(path, atime_secs, atime_nanos, mtime_secs, mtime_nanos)
+                .await
+        );
         let path = self.checked_buf(path)?;
         self.inner
             .lutime_async(path, atime_secs, atime_nanos, mtime_secs, mtime_nanos)
