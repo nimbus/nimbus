@@ -219,14 +219,14 @@ check_ee1_engine() {
     "nimbus-proxy has no nimbus-sandbox dependency (no crate cycle)"
 
   # Reachability lint, mirrored from outside the crate: within nimbus-proxy,
-  # only engine.rs (definition), lib.rs (export), and tests.rs (the in-crate
-  # lint itself) may name EgressEngine or WorkloadId. A plain
+  # only engine.rs (definition), lib.rs (export), and the cfg(test)-only
+  # src/tests/ subtree may name EgressEngine or WorkloadId. A plain
   # "no Map<SandboxId,...>" grep is vacuous (nimbus-proxy has no SandboxId);
   # scanning for the engine's own key/type names is the non-vacuous form.
   local reach_violations
   reach_violations="$(grep -rlE 'EgressEngine|WorkloadId' crates/nimbus-proxy/src \
     --include='*.rs' 2>/dev/null \
-    | grep -vE '/(engine|lib|tests)\.rs$' || true)"
+    | grep -vE '^crates/nimbus-proxy/src/(engine|lib)\.rs$|^crates/nimbus-proxy/src/tests/' || true)"
   if [ -z "${reach_violations}" ]; then
     pass EE1 "workload map unreachable from request-path modules (reachability lint)"
   else
@@ -235,7 +235,7 @@ check_ee1_engine() {
 
   # The in-crate Rust lint must exist (it runs in plain cargo test).
   require_grep EE1 'ee1_reachability_lint_workload_map_unreachable_from_request_path' \
-    "crates/nimbus-proxy/src/tests.rs" "in-crate EE1 reachability lint test exists"
+    "crates/nimbus-proxy/src/tests/reachability_lint.rs" "in-crate EE1 reachability lint test exists"
 }
 
 # 8. EE2: node-global allow-ceiling combinator (pure PDP intersection).
@@ -264,7 +264,7 @@ check_ee2_ceiling() {
   require_grep EE2 'with_global_ceiling' "crates/nimbus-proxy/src/worker.rs" \
     "PEP config exposes the ceiling knob"
   require_grep EE2 'ceiling_narrows_sandbox_policy_end_to_end' \
-    "crates/nimbus-proxy/src/tests.rs" "end-to-end ceiling narrowing test present"
+    "crates/nimbus-proxy/src/tests/policy_lifecycle.rs" "end-to-end ceiling narrowing test present"
 }
 
 # 9. EE3: per-tenant fairness mechanism (DNS budget, byte metering, CPU

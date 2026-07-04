@@ -182,8 +182,17 @@ check_naming_exceptions() {
 check_core_no_io() {
   printf '\n[3/4] nimbus-core zero-I/O invariant\n'
 
-  local forbidden='(\bstd::fs\b|\bstd::net\b|\bstd::process\b|\btokio::|\breqwest\b|\bhyper\b|\baxum\b|\brusqlite\b|\bsqlx\b|\bmysql\b|\bpostgres\b|\bredb\b)'
-  if rg -n "${forbidden}" "${REPO_ROOT}/crates/nimbus-core/src" "${REPO_ROOT}/crates/nimbus-core/Cargo.toml"; then
+  # Scan IMPORTS and DEPENDENCY declarations only. A bare word-boundary scan
+  # false-positives on string literals (e.g. a provider-name label like
+  # "redb" in pure data types) — the invariant is about what nimbus-core can
+  # DO (imports/deps), not which provider names it can mention.
+  # std::net note: address TYPES (IpAddr/Ipv4Addr/SocketAddr/Cidr math) are
+  # pure data and legitimately used by nimbus-core policy types; the invariant
+  # forbids I/O, so only the socket I/O types are banned from std::net.
+  local forbidden_use='^[[:space:]]*(pub[[:space:]]+)?use[[:space:]]+.*(std::fs|std::process|std::net::(TcpListener|TcpStream|UdpSocket|tcp|udp)|tokio|reqwest|hyper|axum|rusqlite|sqlx|redb)'
+  local forbidden_dep='^[[:space:]]*(tokio|reqwest|hyper|axum|rusqlite|sqlx|mysql[a-z_-]*|postgres[a-z_-]*|redb)[[:space:]]*[=.]'
+  if rg -n "${forbidden_use}" "${REPO_ROOT}/crates/nimbus-core/src" \
+    || rg -n "${forbidden_dep}" "${REPO_ROOT}/crates/nimbus-core/Cargo.toml"; then
     record_issue "nimbus-core contains forbidden I/O import or dependency"
   else
     printf 'nimbus-core zero-I/O import scan: pass\n'
