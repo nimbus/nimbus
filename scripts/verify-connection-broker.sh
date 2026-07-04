@@ -189,8 +189,11 @@ else
 fi
 
 # 7. CB3: hibernation persistence via TenantKvStore.
-if grep_any 'TenantKvStore' crates/nimbus-services/src \
-  && grep_any 'attachment|rehydrate' crates/nimbus-services/src; then
+# Anchor on a CB3 implementation symbol (a fn/type), not doc mentions of
+# TenantKvStore — a downstream band's doc reference must not flip this.
+if grep_any 'HibernationStore|HibernationAttachment|persist_hibernation|rehydrate_from_kv' \
+  crates/nimbus-services/src \
+  && grep_any 'TenantKvStore' crates/nimbus-services/src; then
   cond_pass 7 "hibernation persistence via TenantKvStore (CB3)"
 else
   cond_fail 7 "CB3 pending: hibernation persistence not landed"
