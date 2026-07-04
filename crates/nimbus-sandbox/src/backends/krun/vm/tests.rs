@@ -34,7 +34,7 @@ fn execute_launch_denies_when_egress_pep_is_not_ready() {
 
     // A PEP is running, but it was started without a policy, so it reports
     // not-ready (no active policy generation).
-    let policyless = EgressProxy::start(EgressProxyConfig::without_active_policy())
+    let policyless = WorkloadPep::start(WorkloadPepConfig::without_active_policy())
         .expect("a policy-less PEP should still bind and start");
     backend
         .egress_proxies

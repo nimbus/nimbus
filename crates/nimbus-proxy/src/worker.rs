@@ -24,6 +24,7 @@ use crate::enforcement::{
     reject_unapproved_caller_credentials_for_rule,
 };
 use crate::error::{EgressProxyError, Result};
+use crate::fairness::TenantFairness;
 use crate::https_intercept::{
     ConnectInterceptAction, HttpsInterceptContext, classify_connect, intercept_connect_h1,
 };
@@ -47,7 +48,7 @@ use crate::{
 
 const SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 
-pub struct EgressProxyConfig {
+pub struct WorkloadPepConfig {
     pub bind_addr: SocketAddr,
     pub policy: Option<CompiledEgressPolicy>,
     pub connect_timeout: Duration,
@@ -62,9 +63,10 @@ pub struct EgressProxyConfig {
     decision_logger: DecisionLogger,
     phase_observer: PhaseObserver,
     resolver: Resolver,
+    tenant_fairness: Option<Arc<TenantFairness>>,
 }
 
-impl EgressProxyConfig {
+impl WorkloadPepConfig {
     pub fn new(policy: CompiledEgressPolicy) -> Self {
         Self {
             policy: Some(policy),
@@ -88,6 +90,7 @@ impl EgressProxyConfig {
             decision_logger: noop_decision_logger(),
             phase_observer: noop_phase_observer(),
             resolver: Arc::new(resolve_socket_addrs),
+            tenant_fairness: None,
         }
     }
 
@@ -152,6 +155,13 @@ impl EgressProxyConfig {
         self
     }
 
+    /// Attach the tenant's fairness handle (EE3). Captured at registration —
+    /// the request path never performs a per-request tenant lookup.
+    pub fn with_tenant_fairness(mut self, tenant_fairness: Arc<TenantFairness>) -> Self {
+        self.tenant_fairness = Some(tenant_fairness);
+        self
+    }
+
     #[cfg(test)]
     pub(crate) fn with_resolver(mut self, resolver: Resolver) -> Self {
         self.resolver = resolver;
@@ -159,7 +169,7 @@ impl EgressProxyConfig {
     }
 }
 
-pub struct EgressProxy {
+pub struct WorkloadPep {
     local_addr: SocketAddr,
     shutdown: watch::Sender<bool>,
     shutdown_ack: Option<mpsc::Receiver<()>>,
@@ -167,8 +177,8 @@ pub struct EgressProxy {
     policy_state: Arc<RwLock<EgressProxyPolicyState>>,
 }
 
-impl EgressProxy {
-    pub fn start(config: EgressProxyConfig) -> Result<Self> {
+impl WorkloadPep {
+    pub fn start(config: WorkloadPepConfig) -> Result<Self> {
         if config.max_connections == 0 {
             return Err(EgressProxyError::OperationFailed {
                 message: "egress proxy max_connections must be greater than 0".to_owned(),
@@ -220,6 +230,7 @@ impl EgressProxy {
             max_connections: config.max_connections,
             server_conf: substrate.server_conf(),
             dns_limiter: substrate.dns_limiter(),
+            tenant_fairness: config.tenant_fairness,
         };
         substrate.handle().spawn(worker.run(shutdown_rx, ack_tx));
 
@@ -266,7 +277,7 @@ impl EgressProxy {
     }
 }
 
-impl Drop for EgressProxy {
+impl Drop for WorkloadPep {
     fn drop(&mut self) {
         let _ = self.shutdown.send(true);
         if let Some(shutdown_ack) = self.shutdown_ack.take() {
@@ -290,6 +301,7 @@ struct ProxyWorker {
     max_connections: usize,
     server_conf: Arc<ServerConf>,
     dns_limiter: Arc<Semaphore>,
+    tenant_fairness: Option<Arc<TenantFairness>>,
 }
 
 impl ProxyWorker {
@@ -315,6 +327,7 @@ impl ProxyWorker {
             io_timeout: self.io_timeout,
             server_conf: self.server_conf,
             dns_limiter: self.dns_limiter,
+            tenant_fairness: self.tenant_fairness,
         });
         accept_loop(listener, context, limiter, shutdown).await;
         let _ = shutdown_ack.send(());
@@ -392,6 +405,7 @@ struct ClientHandlerContext {
     io_timeout: Duration,
     server_conf: Arc<ServerConf>,
     dns_limiter: Arc<Semaphore>,
+    tenant_fairness: Option<Arc<TenantFairness>>,
 }
 
 async fn handle_client(
@@ -400,6 +414,12 @@ async fn handle_client(
     shutdown: watch::Receiver<bool>,
 ) -> io::Result<()> {
     let phase_recorder = RequestPhaseRecorder::new(Arc::clone(&context.phase_observer));
+    // EE3: cooperative task-time accounting for the whole request task
+    // (records on drop, including error paths). Accounting, not isolation.
+    let _cpu_span = context
+        .tenant_fairness
+        .as_ref()
+        .map(|fairness| fairness.cpu_span());
     let mut buffer = Vec::new();
     match read_http_headers(&mut client, &mut buffer, context.io_timeout).await {
         Ok(()) => {}
@@ -503,6 +523,7 @@ async fn handle_client(
     phase_recorder.record(EgressProxyRequestPhase::ResolveDns);
     let dns_resolution = match resolve_dns_async(
         Arc::clone(&context.dns_limiter),
+        context.tenant_fairness.clone(),
         Arc::clone(&context.resolver),
         context.dns_cache.clone(),
         parsed.upstream_host.clone(),
@@ -630,13 +651,24 @@ async fn handle_client(
                         .await;
                     }
                 };
-                let result = splice_connect(
+                let result = match splice_connect(
                     client,
                     upstream,
                     &buffer[parsed.body_offset..],
                     context.io_timeout,
                 )
-                .await;
+                .await
+                {
+                    Ok((to_upstream, to_workload)) => {
+                        // EE3: relay copy-loop byte metering, per tenant.
+                        if let Some(fairness) = &context.tenant_fairness {
+                            fairness.record_bytes_to_upstream(to_upstream);
+                            fairness.record_bytes_to_workload(to_workload);
+                        }
+                        Ok(())
+                    }
+                    Err(error) => Err(error),
+                };
                 phase_recorder.record(EgressProxyRequestPhase::ResponseFilters);
                 emit_terminal_log(
                     &phase_recorder,
@@ -677,6 +709,7 @@ async fn handle_client(
                         phase_recorder: &phase_recorder,
                         decision_logger: &context.decision_logger,
                         policy_generation: active_policy.policy_generation,
+                        tenant_fairness: context.tenant_fairness.clone(),
                         connect_timeout: context.connect_timeout,
                         io_timeout: context.io_timeout,
                     },
@@ -900,12 +933,20 @@ async fn read_http_headers(
 /// instead of stalling it.
 async fn resolve_dns_async(
     dns_limiter: Arc<Semaphore>,
+    tenant_fairness: Option<Arc<TenantFairness>>,
     resolver: Resolver,
     dns_cache: DnsCacheConfig,
     host: String,
     port: u16,
     wait_timeout: Duration,
 ) -> io::Result<crate::dns::DnsResolution> {
+    // EE3: the per-tenant budget is acquired BEFORE the node-wide guard, so a
+    // tenant over its budget fails ITS request closed without consuming
+    // shared resolver capacity (it cannot starve other tenants).
+    let tenant_permit = match &tenant_fairness {
+        Some(fairness) => fairness.acquire_dns(wait_timeout).await?,
+        None => None,
+    };
     let permit = match tokio::time::timeout(wait_timeout, dns_limiter.acquire_owned()).await {
         Ok(Ok(permit)) => permit,
         Ok(Err(_)) => {
@@ -919,6 +960,7 @@ async fn resolve_dns_async(
         }
     };
     let resolution = tokio::task::spawn_blocking(move || {
+        let _tenant_permit = tenant_permit;
         let _permit = permit;
         resolve_dns(&resolver, &dns_cache, &host, port)
     });

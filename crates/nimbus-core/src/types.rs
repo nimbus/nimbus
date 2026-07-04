@@ -51,6 +51,67 @@ impl From<TenantId> for String {
     }
 }
 
+/// Opaque identifier for a workload that owns an egress enforcement point (PEP).
+///
+/// The node-scoped `EgressEngine` (in `nimbus-proxy`) keys its per-workload PEP
+/// registry on this id. It lives in `nimbus-core` on purpose: the engine must
+/// reference only `nimbus-core`/`nimbus-proxy` types — never
+/// `nimbus-sandbox::SandboxId` — so `nimbus-proxy` never gains a dependency on
+/// `nimbus-sandbox` (the cycle the egress-engine plan forbids). The sandbox
+/// layer builds a `WorkloadId` from its `SandboxId`.
+///
+/// Deliberately permissive — any non-empty string — because `SandboxId` imposes
+/// no character or length constraints, so a stricter rule (like
+/// `validate_logical_name`) could reject a valid id.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct WorkloadId(String);
+
+impl WorkloadId {
+    /// Creates a new workload id wrapper. Rejects only the empty string.
+    pub fn new(value: impl Into<String>) -> Result<Self> {
+        value.into().try_into()
+    }
+
+    /// Returns the workload id as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Display for WorkloadId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl FromStr for WorkloadId {
+    type Err = Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
+impl TryFrom<String> for WorkloadId {
+    type Error = Error;
+
+    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+        if value.is_empty() {
+            return Err(Error::InvalidInput(
+                "workload id cannot be empty".to_string(),
+            ));
+        }
+        Ok(Self(value))
+    }
+}
+
+impl From<WorkloadId> for String {
+    fn from(value: WorkloadId) -> Self {
+        value.0
+    }
+}
+
 /// Unique identifier for a logical table.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -478,5 +539,45 @@ mod tests {
             Timestamp::from_system_time(UNIX_EPOCH + Duration::from_millis(1_234)),
             Timestamp(1_234)
         );
+    }
+
+    #[test]
+    fn workload_id_accepts_arbitrary_sandbox_id_shapes() {
+        // SandboxId imposes no character/length constraints, so WorkloadId must
+        // accept values a logical-name rule would reject (dots, slashes, colons,
+        // long strings). This is the whole point of the permissive newtype.
+        let long = "a".repeat(200);
+        for raw in ["sbx-01", "pod.default/abc:123", long.as_str()] {
+            let id = WorkloadId::new(raw).expect("permissive workload id should accept it");
+            assert_eq!(id.as_str(), raw);
+            assert_eq!(id.to_string(), raw);
+        }
+    }
+
+    #[test]
+    fn workload_id_rejects_empty() {
+        use std::str::FromStr;
+        assert!(WorkloadId::new("").is_err());
+        assert!(WorkloadId::from_str("").is_err());
+    }
+
+    #[test]
+    fn workload_id_round_trips_through_string_and_serde() {
+        let id = WorkloadId::new("workload-xyz").unwrap();
+        let owned: String = id.clone().into();
+        assert_eq!(owned, "workload-xyz");
+        let json = serde_json::to_string(&id).unwrap();
+        assert_eq!(json, "\"workload-xyz\"");
+        assert_eq!(serde_json::from_str::<WorkloadId>(&json).unwrap(), id);
+    }
+
+    #[test]
+    fn workload_id_usable_as_hashmap_key() {
+        use std::collections::HashMap;
+        let mut map: HashMap<WorkloadId, u32> = HashMap::new();
+        map.insert(WorkloadId::new("a").unwrap(), 1);
+        map.insert(WorkloadId::new("b").unwrap(), 2);
+        assert_eq!(map.get(&WorkloadId::new("a").unwrap()), Some(&1));
+        assert_eq!(map.get(&WorkloadId::new("missing").unwrap()), None);
     }
 }

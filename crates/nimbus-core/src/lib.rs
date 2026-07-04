@@ -85,7 +85,7 @@ pub use trigger::{
 pub use typed_scalar::{NumericValue, SpecialDouble, StoredValue, TypedFieldMap, TypedScalarValue};
 pub use types::{
     DocumentId, IndexId, ResolvedDocumentId, SequenceNumber, TableId, TableName, TableState,
-    TenantId, Timestamp,
+    TenantId, Timestamp, WorkloadId,
 };
 pub use versioned_registry::{HistoricalReadShape, VersionedRegistry};
 pub use visibility::{PinnedServingSnapshot, ReadVisibility, RequiredSequence};

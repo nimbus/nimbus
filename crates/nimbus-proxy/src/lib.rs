@@ -4,7 +4,10 @@ mod credentials;
 mod decision_log;
 mod dns;
 mod enforcement;
+mod engine;
 mod error;
+mod fairness;
+mod fanout;
 mod https_intercept;
 mod phase;
 mod pingora_app;
@@ -29,7 +32,10 @@ pub use decision_log::{
     AppendOnlyDecisionLogSink, DecisionLogSinkContext, DecisionLogger, EgressDecisionLog,
 };
 pub use dns::{DnsCacheConfig, DnsResolution};
+pub use engine::{EgressEngine, RegistrationSlot};
 pub use error::{EgressProxyError, Result};
+pub use fairness::{CpuAccountingSpan, FairnessRegistry, TenantCpuAccounting, TenantFairness};
+pub use fanout::{fan_out_decision_loggers, tenant_decision_counter_sink};
 pub use phase::{EgressProxyRequestPhase, REQUEST_PHASE_ORDER};
 pub use policy_state::{EgressProxyReadiness, PolicyGeneration};
 pub use pool::{
@@ -39,7 +45,7 @@ pub use pool::{
 pub use redaction::redact_egress_decision_log_value;
 pub use substrate::ProxySubstrate;
 pub use tls_authority::EgressProxyTlsAuthority;
-pub use worker::{EgressProxy, EgressProxyConfig};
+pub use worker::{WorkloadPep, WorkloadPepConfig};
 
 pub(crate) const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 pub(crate) const DEFAULT_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);

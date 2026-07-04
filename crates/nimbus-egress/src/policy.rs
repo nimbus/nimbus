@@ -581,7 +581,7 @@ impl EgressAuthorization {
         }
     }
 
-    fn deny(reason: String) -> Self {
+    pub(crate) fn deny(reason: String) -> Self {
         Self {
             allowed: false,
             matched_rule: None,

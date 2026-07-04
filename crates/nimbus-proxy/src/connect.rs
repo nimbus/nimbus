@@ -13,7 +13,7 @@ pub(crate) async fn splice_connect(
     mut upstream: TcpStream,
     buffered_client_bytes: &[u8],
     io_timeout: Duration,
-) -> io::Result<()> {
+) -> io::Result<(u64, u64)> {
     timeout_io(
         io_timeout,
         client.write_all(b"HTTP/1.1 200 Connection Established\r\nConnection: close\r\n\r\n"),
@@ -37,8 +37,9 @@ pub(crate) async fn splice_connect(
         io_timeout,
         "upstream-to-client tunnel timed out",
     );
-    let _ = tokio::try_join!(client_to_upstream, upstream_to_client)?;
-    Ok(())
+    let (to_upstream, to_client) = tokio::try_join!(client_to_upstream, upstream_to_client)?;
+    // The buffered preamble already went to the upstream above; attribute it.
+    Ok((to_upstream + buffered_client_bytes.len() as u64, to_client))
 }
 
 pub(crate) async fn connect_upstream(

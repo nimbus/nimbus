@@ -54,6 +54,27 @@ impl EgressDecisionLog {
         }
     }
 
+    /// Test-only synthetic event (fan-out and counter tests need only the
+    /// allowed/denied disposition, not a parsed request).
+    #[cfg(test)]
+    pub(crate) fn synthetic_for_test(allowed: bool) -> Self {
+        Self {
+            destination: "https://example.test:443".to_owned(),
+            protocol: nimbus_egress::EgressProtocol::Https,
+            canonical_host: "example.test".to_owned(),
+            port: 443,
+            credential_identity: None,
+            allowed,
+            reason: if allowed {
+                "allowed by rule `test`".to_owned()
+            } else {
+                "no rule matched".to_owned()
+            },
+            matched_rule: allowed.then(|| "test".to_owned()),
+            policy_generation: None,
+        }
+    }
+
     pub(crate) fn denied(
         parsed: &ParsedProxyRequest,
         reason: String,
