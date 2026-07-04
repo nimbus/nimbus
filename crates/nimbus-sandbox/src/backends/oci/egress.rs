@@ -7,20 +7,19 @@
 //! (the container backend today, the krun microVM backend next), so it lives
 //! here once instead of being forked per backend.
 
-use std::collections::HashMap;
 use std::fs;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 
-use nimbus_core::TenantId;
+use nimbus_core::{TenantId, WorkloadId};
 use nimbus_egress::{
     CompiledEgressPolicy, EGRESS_CA_BUNDLE_ENV, EGRESS_NODE_EXTRA_CA_CERTS_ENV,
     EGRESS_PROXY_URL_ENV, EGRESS_RESERVED_ENV_KEYS, EgressPolicy,
 };
 use nimbus_proxy::{
-    AppendOnlyDecisionLogSink, DecisionLogSinkContext, EgressProxyError, EgressProxyReadiness,
-    EgressProxyTlsAuthority, WorkloadPep, WorkloadPepConfig,
+    AppendOnlyDecisionLogSink, DecisionLogSinkContext, EgressEngine, EgressProxyError,
+    EgressProxyReadiness, EgressProxyTlsAuthority, WorkloadPep, WorkloadPepConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -33,19 +32,21 @@ use crate::spec::SandboxPortBinding;
 /// Registry of running per-sandbox egress proxies, shared by every sandbox
 /// backend. Cloning shares the underlying registry (it is `Arc`-backed), so a
 /// backend can hold one and hand clones to its async tasks.
+///
+/// The transport-clean lifecycle map lives in the node-scoped
+/// [`nimbus_proxy::EgressEngine`], keyed by the opaque `nimbus-core`
+/// [`WorkloadId`] (never `SandboxId`, so `nimbus-proxy` never depends on
+/// `nimbus-sandbox`). This registry remains the sandbox-facing surface and
+/// keeps the sandbox-layer publishing machinery — the trust-anchor writer, the
+/// decision-log / trust-anchor roots, and path derivation — injecting its
+/// published trust-anchor path as the engine entry's opaque attachment, so the
+/// published CA file still lives in the same registry entry (under one lock)
+/// as the PEP it belongs to.
 #[derive(Clone)]
 pub(crate) struct EgressProxyRegistry {
-    proxies: Arc<Mutex<HashMap<SandboxId, RegisteredPep>>>,
+    engine: Arc<EgressEngine<Option<PathBuf>>>,
     decision_log_root: Arc<PathBuf>,
     trust_anchor_root: Arc<PathBuf>,
-}
-
-/// One registered PEP plus the workload-facing trust-anchor file it published.
-/// The two live in a single registry entry (under one lock) so the published
-/// CA file can never belong to a different proxy than the one registered.
-struct RegisteredPep {
-    proxy: WorkloadPep,
-    trust_anchor_path: Option<PathBuf>,
 }
 
 impl EgressProxyRegistry {
@@ -69,10 +70,20 @@ impl EgressProxyRegistry {
         trust_anchor_root: impl Into<PathBuf>,
     ) -> Self {
         Self {
-            proxies: Arc::new(Mutex::new(HashMap::new())),
+            engine: Arc::new(EgressEngine::new()),
             decision_log_root: Arc::new(decision_log_root.into()),
             trust_anchor_root: Arc::new(trust_anchor_root.into()),
         }
+    }
+
+    /// Derive the engine's opaque workload id from a sandbox id.
+    ///
+    /// Fail-closed: `WorkloadId` rejects only the empty string, and an empty
+    /// sandbox id is a spec bug — surfaced as `InvalidSpec`, never registered.
+    fn workload_id(id: &SandboxId) -> Result<WorkloadId> {
+        WorkloadId::new(id.as_str()).map_err(|_| SandboxError::InvalidSpec {
+            message: "sandbox id cannot be empty (required for egress PEP registration)".to_owned(),
+        })
     }
 
     /// Ensure a PEP is running for `id`, bound on `bind_addr`.
@@ -89,7 +100,12 @@ impl EgressProxyRegistry {
     ) -> Result<()> {
         let decision_log_path = self.decision_log_path(tenant_id, id);
         let trust_anchor_path = self.trust_anchor_path(tenant_id, id);
-        if self.lock()?.contains_key(id) {
+        let workload_id = Self::workload_id(id)?;
+        if self
+            .engine
+            .contains(&workload_id)
+            .map_err(egress_proxy_error)?
+        {
             return Ok(());
         }
         // Expensive preparation (policy compile, decision-log open, CA keypair
@@ -111,14 +127,18 @@ impl EgressProxyRegistry {
         .logger();
         let tls_authority =
             EgressProxyTlsAuthority::generate_ephemeral().map_err(egress_proxy_error)?;
-        // Publish + register under one lock hold: a concurrent winner is
-        // re-checked first, and the trust-anchor file on disk is written by the
-        // same call that registers its proxy, so the file can never carry a
-        // different CA than the PEP the workload is routed through.
-        let mut proxies = self.lock()?;
-        if proxies.contains_key(id) {
+        // Publish + register under one lock hold: the engine's registration
+        // slot re-checks a concurrent winner first and holds the registry lock
+        // until commit, so the trust-anchor file on disk is written by the same
+        // call that registers its proxy — the file can never carry a different
+        // CA than the PEP the workload is routed through.
+        let Some(slot) = self
+            .engine
+            .try_reserve(workload_id)
+            .map_err(egress_proxy_error)?
+        else {
             return Ok(());
-        }
+        };
         write_trust_anchor_file(
             &self.trust_anchor_root,
             &trust_anchor_path,
@@ -134,13 +154,7 @@ impl EgressProxyRegistry {
             let _ = remove_trust_anchor_file(&trust_anchor_path);
             egress_proxy_error(error)
         })?;
-        proxies.insert(
-            id.clone(),
-            RegisteredPep {
-                proxy,
-                trust_anchor_path: Some(trust_anchor_path),
-            },
-        );
+        slot.commit(proxy, Some(trust_anchor_path));
         Ok(())
     }
 
@@ -149,15 +163,13 @@ impl EgressProxyRegistry {
     /// Errors if no proxy is registered for `id` (the caller ensures it is
     /// running first). Fail-closed: a reload error is surfaced, not swallowed.
     pub(crate) fn reload(&self, id: &SandboxId, compiled: CompiledEgressPolicy) -> Result<()> {
-        let proxies = self.lock()?;
-        let registered = proxies
-            .get(id)
+        let workload_id = Self::workload_id(id)?;
+        self.engine
+            .with_pep(&workload_id, |pep| pep.reload_policy(compiled))
+            .map_err(egress_proxy_error)?
             .ok_or_else(|| SandboxError::OperationFailed {
                 message: format!("egress proxy for sandbox {id} is not running"),
-            })?;
-        registered
-            .proxy
-            .reload_policy(compiled)
+            })?
             .map_err(egress_proxy_error)?;
         Ok(())
     }
@@ -165,15 +177,19 @@ impl EgressProxyRegistry {
     /// Stop and deregister the PEP for `id`. Dropping the `WorkloadPep` stops it.
     /// No-op if none is registered.
     pub(crate) fn stop(&self, id: &SandboxId) -> Result<()> {
-        let removed = self.lock()?.remove(id);
-        let Some(removed) = removed else {
+        let workload_id = Self::workload_id(id)?;
+        let removed = self
+            .engine
+            .deregister(&workload_id)
+            .map_err(egress_proxy_error)?;
+        let Some((proxy, trust_anchor_path)) = removed else {
             return Ok(());
         };
         // Stop the proxy before deleting its published trust anchor so a
         // still-running PEP is never left serving leaves the workload can no
         // longer verify.
-        drop(removed.proxy);
-        if let Some(trust_anchor_path) = removed.trust_anchor_path {
+        drop(proxy);
+        if let Some(trust_anchor_path) = trust_anchor_path {
             remove_trust_anchor_file(&trust_anchor_path)?;
         }
         Ok(())
@@ -187,25 +203,29 @@ impl EgressProxyRegistry {
     /// proxy is registered AND that its `EgressProxyReadiness` reports an active
     /// policy generation before permitting a workload to launch.
     pub(crate) fn readiness(&self, id: &SandboxId) -> Result<Option<EgressProxyReadiness>> {
-        let proxies = self.lock()?;
-        proxies
-            .get(id)
-            .map(|registered| registered.proxy.readiness().map_err(egress_proxy_error))
+        let workload_id = Self::workload_id(id)?;
+        self.engine
+            .with_pep(&workload_id, |pep| pep.readiness())
+            .map_err(egress_proxy_error)?
+            .map(|readiness| readiness.map_err(egress_proxy_error))
             .transpose()
     }
 
     /// True if a PEP is currently registered for `id`.
     #[cfg(test)]
     pub(crate) fn contains(&self, id: &SandboxId) -> Result<bool> {
-        Ok(self.lock()?.contains_key(id))
+        let workload_id = Self::workload_id(id)?;
+        self.engine
+            .contains(&workload_id)
+            .map_err(egress_proxy_error)
     }
 
     #[cfg(test)]
     pub(crate) fn local_addr(&self, id: &SandboxId) -> Result<Option<SocketAddr>> {
-        Ok(self
-            .lock()?
-            .get(id)
-            .map(|registered| registered.proxy.local_addr()))
+        let workload_id = Self::workload_id(id)?;
+        self.engine
+            .with_pep(&workload_id, |pep| pep.local_addr())
+            .map_err(egress_proxy_error)
     }
 
     #[cfg(test)]
@@ -232,22 +252,20 @@ impl EgressProxyRegistry {
     /// [`EgressProxyRegistry::ensure_running`], which always loads a policy.
     #[cfg(test)]
     pub(crate) fn insert_running_for_test(&self, id: &SandboxId, proxy: WorkloadPep) -> Result<()> {
-        self.lock()?.insert(
-            id.clone(),
-            RegisteredPep {
-                proxy,
-                trust_anchor_path: None,
-            },
-        );
+        let workload_id = Self::workload_id(id)?;
+        // Preserve the old `insert` replace semantics: drop any prior entry
+        // before reserving the slot for the replacement.
+        let _ = self
+            .engine
+            .deregister(&workload_id)
+            .map_err(egress_proxy_error)?;
+        let slot = self
+            .engine
+            .try_reserve(workload_id)
+            .map_err(egress_proxy_error)?
+            .expect("slot must be free after deregistration");
+        slot.commit(proxy, None);
         Ok(())
-    }
-
-    fn lock(&self) -> Result<MutexGuard<'_, HashMap<SandboxId, RegisteredPep>>> {
-        self.proxies
-            .lock()
-            .map_err(|_| SandboxError::OperationFailed {
-                message: "egress proxy registry lock is poisoned".to_owned(),
-            })
     }
 
     fn decision_log_path(&self, tenant_id: &TenantId, id: &SandboxId) -> PathBuf {

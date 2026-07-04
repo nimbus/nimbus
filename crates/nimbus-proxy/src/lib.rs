@@ -4,6 +4,7 @@ mod credentials;
 mod decision_log;
 mod dns;
 mod enforcement;
+mod engine;
 mod error;
 mod https_intercept;
 mod phase;
@@ -29,6 +30,7 @@ pub use decision_log::{
     AppendOnlyDecisionLogSink, DecisionLogSinkContext, DecisionLogger, EgressDecisionLog,
 };
 pub use dns::{DnsCacheConfig, DnsResolution};
+pub use engine::{EgressEngine, RegistrationSlot};
 pub use error::{EgressProxyError, Result};
 pub use phase::{EgressProxyRequestPhase, REQUEST_PHASE_ORDER};
 pub use policy_state::{EgressProxyReadiness, PolicyGeneration};
