@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# Focused verifier for the Connection Broker / WebSocket egress regression
-# scaffold. This gate stays green: it verifies the current PR's canaries and
-# policy test, not future connection-broker plan bands.
+# Connection Broker (CB) plan verifier — the 14-condition progression gate
+# from the plan's completion contract (docs/private/plans/
+# connection-broker-plan.md §9). Conditions 1-3 are the CB0 scaffold (plan,
+# routing, landed regression coverage); conditions 4-14 are the CB1-CB10
+# bands and stay RED until their owning band lands — the expected reading at
+# CB0-complete is exactly `3 passed, 11 failed`. Green (exit 0) only at
+# 14/14. Conditions 1-2 need the local docs/private plan; on a checkout
+# without it they fail (this is a local control-plane gate, not a CI lane).
 
 set -u
 
@@ -21,6 +26,30 @@ HOST_HEAVY_LOCK="tests/runtime/node/host-heavy-canaries/package-lock.json"
 PASS=0
 FAIL=0
 FAILURES=()
+
+PLAN_FILE="docs/private/plans/connection-broker-plan.md"
+PLANS_README="docs/private/plans/README.md"
+PROOF_DIR="docs/private/plans/proof/connection-broker"
+
+COND_PASS=0
+COND_FAIL=0
+cond_pass() {
+  COND_PASS=$((COND_PASS + 1))
+  printf 'COND PASS %2d: %s\n' "$1" "$2"
+}
+cond_fail() {
+  COND_FAIL=$((COND_FAIL + 1))
+  printf 'COND FAIL %2d: %s\n' "$1" "$2"
+}
+grep_any() {
+  # grep_any <pattern> <path...> — true if any existing path matches.
+  local pattern="$1"; shift
+  local path
+  for path in "$@"; do
+    [ -e "${path}" ] && grep -rqE "${pattern}" "${path}" 2>/dev/null && return 0
+  done
+  return 1
+}
 
 pass() {
   PASS=$((PASS + 1))
@@ -111,11 +140,119 @@ else
   fail "host-heavy canary package metadata missing pinned ws dependency" "${HOST_HEAVY_PACKAGE} / ${HOST_HEAVY_LOCK}"
 fi
 
-printf '\n%d passed, %d failed\n' "${PASS}" "${FAIL}"
-if [ "${FAIL}" -gt 0 ]; then
-  printf '\nFailures:\n'
-  for failure in "${FAILURES[@]}"; do
-    printf '  - %s\n' "${failure}"
-  done
+# ---------------------------------------------------------------------------
+# The 14 plan conditions (plan §9). 1-3 = CB0 scaffold; 4-14 = CB1-CB10.
+# ---------------------------------------------------------------------------
+printf '\nConnection-broker plan conditions:\n'
+
+# 1. Plan checked in (local docs/private control plane).
+if [ -f "${PLAN_FILE}" ]; then
+  cond_pass 1 "plan present (${PLAN_FILE})"
+else
+  cond_fail 1 "plan missing: ${PLAN_FILE} (local-only doc; run from a checkout with docs/private)"
+fi
+
+# 2. Routing pointer present.
+if [ -f "${PLANS_README}" ] && grep -q "connection-broker" "${PLANS_README}"; then
+  cond_pass 2 "plans README routes to the connection-broker plan"
+else
+  cond_fail 2 "plans README routing pointer missing"
+fi
+
+# 3. Landed regression coverage (the canary/regression checks above).
+if [ "${FAIL}" -eq 0 ] && [ "${PASS}" -ge 7 ]; then
+  cond_pass 3 "landed regression coverage green (${PASS} canary/regression checks)"
+else
+  cond_fail 3 "regression coverage incomplete (${PASS} pass / ${FAIL} fail above)"
+fi
+
+# 4. CB1: Residency states in nimbus-services.
+if grep_any 'enum Residency' crates/nimbus-services/src; then
+  cond_pass 4 "Residency::{Hibernated,Resident} exists (CB1)"
+else
+  cond_fail 4 "CB1 pending: no Residency enum in nimbus-services"
+fi
+
+# 5. CB2: per-frame invoke verb + warm pool.
+if grep_any 'per_frame_invoke|invoke_frame' crates/nimbus-services/src crates/nimbus-runtime/src \
+  && grep_any 'ThreadLocalPool|WarmPool|warm_pool' crates/nimbus-services/src crates/nimbus-runtime/src; then
+  cond_pass 5 "per-frame invoke verb + warm pool exist (CB2)"
+else
+  cond_fail 5 "CB2 pending: per-frame invoke verb / warm pool not landed"
+fi
+
+# 6. CB1: host-owned connection registry (socket map outside the isolate).
+if grep_any 'ConnectionRegistry|ws_commands' crates/nimbus-services/src; then
+  cond_pass 6 "host-owned connection registry exists (CB1)"
+else
+  cond_fail 6 "CB1 pending: host-owned connection registry not landed"
+fi
+
+# 7. CB3: hibernation persistence via TenantKvStore.
+if grep_any 'TenantKvStore' crates/nimbus-services/src \
+  && grep_any 'attachment|rehydrate' crates/nimbus-services/src; then
+  cond_pass 7 "hibernation persistence via TenantKvStore (CB3)"
+else
+  cond_fail 7 "CB3 pending: hibernation persistence not landed"
+fi
+
+# 8. CB4: inbound ingress WS-upgrade router (default-ALLOW layer).
+if grep_any 'broker.*upgrade|ingress.*websocket|WsIngress' crates/nimbus-server/src crates/nimbus-services/src; then
+  cond_pass 8 "inbound ingress WS-upgrade router exists (CB4)"
+else
+  cond_fail 8 "CB4 pending: ingress WS-upgrade router not landed"
+fi
+
+# 9. CB5: outbound unified through PEP/PDP.
+if grep_any 'nimbus_proxy' crates/nimbus-services/Cargo.toml crates/nimbus-services/src \
+  && grep_any 'broker.*egress|EgressDecision' crates/nimbus-services/src; then
+  cond_pass 9 "broker outbound unified through nimbus-proxy PEP / nimbus-egress PDP (CB5)"
+else
+  cond_fail 9 "CB5 pending: outbound egress unification not landed"
+fi
+
+# 10. CB5: WebSocket-out on the same egress decision path as fetch.
+if grep_any 'websocket.*authorize|ws_out.*egress|connect_ws.*policy' crates/nimbus-services/src crates/nimbus-runtime/src; then
+  cond_pass 10 "WebSocket-out bound to the fetch egress decision path (CB5)"
+else
+  cond_fail 10 "CB5 pending: WebSocket-out not bound to the egress decision path"
+fi
+
+# 11. CB7: cross-substrate egress parity test.
+if grep_any 'evil.example' crates/nimbus-services/src crates/nimbus-sandbox/src \
+  && grep_any 'parity' crates/nimbus-services/src crates/nimbus-sandbox/src; then
+  cond_pass 11 "cross-substrate egress parity test exists (CB7)"
+else
+  cond_fail 11 "CB7 pending: cross-substrate parity test not landed"
+fi
+
+# 12. CB1/CB8: cluster placement seam (resolve-to-self ClusterTransport shape).
+if grep_any 'ClusterTransport|PlacementLookup|resolve_to_self' crates/nimbus-services/src; then
+  cond_pass 12 "cluster placement seam exists (CB1 day-one seam)"
+else
+  cond_fail 12 "CB1/CB8 pending: placement seam not landed"
+fi
+
+# 13. CB9: Resident app-WS + standard-ws/socket.io zero-config acceptance.
+# Anchor on the CB9 implementation artifacts, not today's canary bundles
+# (which legitimately use the ws package and would false-positive).
+if grep_any 'ResidentAppWs|resident_app_ws|ws_server_compat|SocketIoCompat' crates/nimbus-services/src; then
+  cond_pass 13 "Resident app-WS + ws/socket.io compat acceptance (CB9)"
+else
+  cond_fail 13 "CB9 pending: standard-ws/socket.io zero-config surface not landed"
+fi
+
+# 14. CB10: connection metering usage records.
+if grep_any 'active_cpu|ActiveCpu' crates/nimbus-services/src \
+  && grep_any 'residency.*usage|usage.*residency' crates/nimbus-services/src; then
+  cond_pass 14 "connection metering emits Active-CPU + residency usage records (CB10)"
+else
+  cond_fail 14 "CB10 pending: connection metering not landed"
+fi
+
+printf '\nSummary: %d passed, %d failed (of 14 plan conditions)\n' "${COND_PASS}" "${COND_FAIL}"
+if [ "${COND_FAIL}" -gt 0 ]; then
+  printf 'Progression gate: CB0-complete reads exactly 3 passed, 11 failed.\n'
   exit 1
 fi
+exit 0
