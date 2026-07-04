@@ -44,7 +44,16 @@ pub struct FairnessRegistry {
     /// DNS acquire budget per tenant. `None` = no per-tenant budget configured
     /// (the mechanism is present, the value is TAA's to set).
     dns_permits_per_tenant: Option<usize>,
-    tenants: Mutex<HashMap<TenantId, Arc<TenantFairness>>>,
+    tenants: Mutex<HashMap<TenantId, TenantEntry>>,
+}
+
+struct TenantEntry {
+    fairness: Arc<TenantFairness>,
+    /// Number of registered PEPs pinning this tenant's state. `retain` on PEP
+    /// registration, `release` on deregistration; the entry is evicted at
+    /// zero so a long-lived node with churning tenants does not grow the map
+    /// monotonically (review finding: unbounded per-tenant growth).
+    pins: usize,
 }
 
 impl FairnessRegistry {
@@ -86,12 +95,48 @@ impl FairnessRegistry {
                 ));
             }
         };
-        Arc::clone(map.entry(tenant.clone()).or_insert_with(|| {
-            Arc::new(TenantFairness::new(
-                tenant.clone(),
-                self.dns_permits_per_tenant,
-            ))
-        }))
+        Arc::clone(
+            &map.entry(tenant.clone())
+                .or_insert_with(|| TenantEntry {
+                    fairness: Arc::new(TenantFairness::new(
+                        tenant.clone(),
+                        self.dns_permits_per_tenant,
+                    )),
+                    pins: 0,
+                })
+                .fairness,
+        )
+    }
+
+    /// Pin `handle`'s tenant entry (call on successful PEP registration).
+    ///
+    /// Re-inserts the SAME handle if the entry was evicted between `tenant()`
+    /// and `retain()`, so concurrent register/stop cycles can never leave two
+    /// live handles for one tenant.
+    pub fn retain(&self, handle: &Arc<TenantFairness>) {
+        let Ok(mut map) = self.tenants.lock() else {
+            return; // fail-open, matching `tenant()`
+        };
+        let entry = map
+            .entry(handle.tenant_id().clone())
+            .or_insert_with(|| TenantEntry {
+                fairness: Arc::clone(handle),
+                pins: 0,
+            });
+        entry.pins += 1;
+    }
+
+    /// Release one pin for `handle`'s tenant; evicts the entry at zero pins.
+    pub fn release(&self, handle: &Arc<TenantFairness>) {
+        let Ok(mut map) = self.tenants.lock() else {
+            return;
+        };
+        if let Some(entry) = map.get_mut(handle.tenant_id()) {
+            entry.pins = entry.pins.saturating_sub(1);
+            if entry.pins == 0 {
+                map.remove(handle.tenant_id());
+            }
+        }
     }
 
     /// Number of tenants with fairness state (lifecycle observability).
@@ -140,6 +185,11 @@ impl TenantFairness {
     /// The owning tenant.
     pub fn tenant(&self) -> &str {
         self.tenant.as_str()
+    }
+
+    /// The owning tenant's typed id (registry keying).
+    pub(crate) fn tenant_id(&self) -> &TenantId {
+        &self.tenant
     }
 
     /// Acquire this tenant's DNS budget (bounded), BEFORE the node-wide guard.
@@ -351,6 +401,48 @@ mod tests {
             0,
             "one tenant's traffic must never appear on another's meter"
         );
+    }
+
+    #[test]
+    fn eviction_prunes_tenant_at_zero_pins_and_shares_until_then() {
+        let registry = FairnessRegistry::new();
+        let a = registry.tenant(&tid("tenant-a"));
+
+        // Two PEPs for one tenant: entry survives the first release.
+        registry.retain(&a);
+        registry.retain(&a);
+        assert_eq!(registry.len(), 1);
+        registry.release(&a);
+        assert_eq!(registry.len(), 1, "one live PEP still pins the tenant");
+        assert!(
+            Arc::ptr_eq(&registry.tenant(&tid("tenant-a")), &a),
+            "while pinned, the same handle is shared"
+        );
+
+        // Last release evicts.
+        registry.release(&a);
+        assert_eq!(registry.len(), 0, "zero pins must evict the tenant entry");
+
+        // A later registration gets a FRESH entry (no stale meters).
+        let a2 = registry.tenant(&tid("tenant-a"));
+        assert!(!Arc::ptr_eq(&a2, &a), "post-eviction handle is fresh");
+    }
+
+    #[test]
+    fn retain_reinserts_same_handle_after_racy_eviction() {
+        let registry = FairnessRegistry::new();
+        let a = registry.tenant(&tid("tenant-a"));
+        // Simulate: entry evicted between tenant() and retain() (concurrent
+        // stop of the tenant's last other PEP).
+        registry.retain(&a);
+        registry.release(&a);
+        assert_eq!(registry.len(), 0);
+        registry.retain(&a);
+        assert!(
+            Arc::ptr_eq(&registry.tenant(&tid("tenant-a")), &a),
+            "retain must re-insert the SAME handle, never fork a second one"
+        );
+        registry.release(&a);
     }
 
     #[test]

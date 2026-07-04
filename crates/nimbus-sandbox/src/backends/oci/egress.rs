@@ -45,9 +45,18 @@ use crate::spec::SandboxPortBinding;
 /// as the PEP it belongs to.
 #[derive(Clone)]
 pub(crate) struct EgressProxyRegistry {
-    engine: Arc<EgressEngine<Option<PathBuf>>>,
+    engine: Arc<EgressEngine<RegisteredArtifacts>>,
     decision_log_root: Arc<PathBuf>,
     trust_anchor_root: Arc<PathBuf>,
+}
+
+/// Sandbox-owned per-registration artifacts riding the engine entry as its
+/// opaque attachment: the published trust-anchor path (unwound at stop) and
+/// the tenant fairness handle (pin released at stop so the node-wide fairness
+/// map cannot grow monotonically).
+struct RegisteredArtifacts {
+    trust_anchor_path: Option<PathBuf>,
+    tenant_fairness: Arc<nimbus_proxy::TenantFairness>,
 }
 
 impl EgressProxyRegistry {
@@ -161,13 +170,22 @@ impl EgressProxyRegistry {
                 .with_decision_logger(decision_logger)
                 // EE3: capture the tenant's fairness handle at registration —
                 // the request path never looks tenants up.
-                .with_tenant_fairness(tenant_fairness),
+                .with_tenant_fairness(Arc::clone(&tenant_fairness)),
         )
         .map_err(|error| {
             let _ = remove_trust_anchor_file(&trust_anchor_path);
             egress_proxy_error(error)
         })?;
-        slot.commit(proxy, Some(trust_anchor_path));
+        // Pin the tenant's fairness entry for the lifetime of this PEP; the
+        // matching release happens in stop() via the returned attachment.
+        self.engine.fairness().retain(&tenant_fairness);
+        slot.commit(
+            proxy,
+            RegisteredArtifacts {
+                trust_anchor_path: Some(trust_anchor_path),
+                tenant_fairness,
+            },
+        );
         Ok(())
     }
 
@@ -195,14 +213,15 @@ impl EgressProxyRegistry {
             .engine
             .deregister(&workload_id)
             .map_err(egress_proxy_error)?;
-        let Some((proxy, trust_anchor_path)) = removed else {
+        let Some((proxy, artifacts)) = removed else {
             return Ok(());
         };
         // Stop the proxy before deleting its published trust anchor so a
         // still-running PEP is never left serving leaves the workload can no
         // longer verify.
         drop(proxy);
-        if let Some(trust_anchor_path) = trust_anchor_path {
+        self.engine.fairness().release(&artifacts.tenant_fairness);
+        if let Some(trust_anchor_path) = artifacts.trust_anchor_path {
             remove_trust_anchor_file(&trust_anchor_path)?;
         }
         Ok(())
@@ -277,7 +296,14 @@ impl EgressProxyRegistry {
             .try_reserve(workload_id)
             .map_err(egress_proxy_error)?
             .expect("slot must be free after deregistration");
-        slot.commit(proxy, None);
+        let tenant = TenantId::new("test-tenant").expect("static test tenant id");
+        slot.commit(
+            proxy,
+            RegisteredArtifacts {
+                trust_anchor_path: None,
+                tenant_fairness: self.engine.fairness().tenant(&tenant),
+            },
+        );
         Ok(())
     }
 
