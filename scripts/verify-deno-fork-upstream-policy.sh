@@ -9,8 +9,8 @@ cd "${REPO_ROOT}"
 OPERATING_DOC="docs/private/operating/deno-fork-workflow.md"
 LEDGER_DOC="docs/private/architecture/runtime/deno-fork-bump-ledger.md"
 
-EXPECTED_DENO_TAG="v2.9.0-nimbus.2"
-EXPECTED_DENO_SHA="5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
+EXPECTED_DENO_TAG="v2.9.1-nimbus.1"
+EXPECTED_DENO_SHA="8c55c871bd1fcc59a5406034ecfa50e0eeff7cd4"
 EXPECTED_V8_TAG="v149.4.0-nimbus.10"
 EXPECTED_V8_SHA="f9457373150679d9db9eb577dcd3a687a3ec25ef"
 

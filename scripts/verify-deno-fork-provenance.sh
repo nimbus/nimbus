@@ -12,8 +12,8 @@ LOCK_TABLE="/tmp/nimbus-deno-fork-lock-table.tsv"
 RUNTIME_CRATES="/tmp/nimbus-deno-fork-runtime-crates.txt"
 
 EXPECTED_DENO_REPO="https://github.com/nimbus/deno"
-EXPECTED_DENO_TAG="v2.9.0-nimbus.2"
-EXPECTED_DENO_SHA="5e7d92e8ec3d7f0cb1eb27b42c37fc4479a5ee52"
+EXPECTED_DENO_TAG="v2.9.1-nimbus.1"
+EXPECTED_DENO_SHA="8c55c871bd1fcc59a5406034ecfa50e0eeff7cd4"
 EXPECTED_DENO_SOURCE="git+${EXPECTED_DENO_REPO}?tag=${EXPECTED_DENO_TAG}#${EXPECTED_DENO_SHA}"
 
 EXPECTED_V8_REPO="https://github.com/nimbus/rusty_v8"
