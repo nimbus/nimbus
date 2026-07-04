@@ -2,6 +2,7 @@
 
 pub mod broker;
 mod catalog;
+pub mod frame;
 mod manager;
 mod registry;
 mod sandbox_templates;
