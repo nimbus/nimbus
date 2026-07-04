@@ -1,5 +1,6 @@
 //! Service registry and service manager primitives.
 
+pub mod appws;
 pub mod broker;
 mod catalog;
 pub mod frame;
