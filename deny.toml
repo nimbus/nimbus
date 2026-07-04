@@ -92,6 +92,12 @@ skip = [
     { crate = "io-lifetimes@2.0.4", reason = "cap-std 4.0.2 pulls fs-set-times on io-lifetimes 2 while cap-std/io-extras use io-lifetimes 3; keep the duplicate visible until cap-std aligns upstream." },
     { crate = "keccak@0.2.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "memoffset@0.6.5", reason = "Pingora-core 0.8.1 carries nix 0.24/memoffset 0.6 alongside newer workspace Unix support lanes." },
+    { crate = "bindgen@0.71.1", reason = "The pinned Deno v2.9.1 FFI stack carries bindgen 0.71 while newer build-support lanes use bindgen 0.72." },
+    { crate = "itertools@0.12.1", reason = "The Deno v2.9.1 bump spread transitive itertools across 0.12-0.15 lanes; collapse as upstreams converge." },
+    { crate = "itertools@0.13.0", reason = "The Deno v2.9.1 bump spread transitive itertools across 0.12-0.15 lanes; collapse as upstreams converge." },
+    { crate = "itertools@0.14.0", reason = "The Deno v2.9.1 bump spread transitive itertools across 0.12-0.15 lanes; collapse as upstreams converge." },
+    { crate = "libloading@0.7.4", reason = "The pinned Deno/rusty_v8 build stack carries libloading 0.7 alongside the current 0.8 lane." },
+    { crate = "nom@7.1.3", reason = "The vendored s3s 0.14 lane moved to nom 8 while pinned Deno support crates still carry nom 7." },
     { crate = "nix@0.24.3", reason = "Pingora-core 0.8.1 carries nix 0.24 alongside the existing Deno and workspace nix lanes." },
     { crate = "nix@0.30.1", reason = "The pinned Deno filesystem and permission stack still carries nix 0.30 while newer workspace stacks use nix 0.31." },
     { crate = "object@0.36.7", reason = "The pinned Deno N-API stack carries object 0.36 while the SWC/stacker support lane carries object 0.37." },
@@ -118,7 +124,7 @@ skip-tree = [
     { crate = "bson@3.1.0", reason = "The MongoDB adapter stack currently carries its own BSON/rand support lane." },
     { crate = "bollard@0.20.2", reason = "The container/buildkit stack carries tonic 0.14 and related transport crates independently from server gRPC." },
     { crate = "testcontainers@0.27.2", reason = "The dev-only external-provider harness carries additional legacy utility crates." },
-    { crate = "deno_core@0.405.0", reason = "The embedded V8 runtime stack carries its own support-ecosystem crates." },
+    { crate = "deno_core@0.406.0", reason = "The embedded V8 runtime stack carries its own support-ecosystem crates." },
 ]
 
 [sources]
