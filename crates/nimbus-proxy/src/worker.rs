@@ -4,7 +4,9 @@ use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use nimbus_egress::{CompiledEgressPolicy, EgressPolicy, EgressProtocol, EgressRule};
+use nimbus_egress::{
+    CompiledEgressPolicy, EgressPolicy, EgressProtocol, EgressRule, LayeredEgressPolicy,
+};
 use pingora_core::apps::HttpServerApp;
 use pingora_core::protocols::http::ServerSession as HttpSession;
 use pingora_core::server::configuration::ServerConf;
@@ -64,6 +66,7 @@ pub struct WorkloadPepConfig {
     phase_observer: PhaseObserver,
     resolver: Resolver,
     tenant_fairness: Option<Arc<TenantFairness>>,
+    global_ceiling: Option<CompiledEgressPolicy>,
 }
 
 impl WorkloadPepConfig {
@@ -91,6 +94,7 @@ impl WorkloadPepConfig {
             phase_observer: noop_phase_observer(),
             resolver: Arc::new(resolve_socket_addrs),
             tenant_fairness: None,
+            global_ceiling: None,
         }
     }
 
@@ -155,6 +159,13 @@ impl WorkloadPepConfig {
         self
     }
 
+    /// Narrow this PEP under a node-global allow-ceiling (EE2 knob: the
+    /// ceiling CONTENT is policy-hardening's; both allow-lists must permit).
+    pub fn with_global_ceiling(mut self, ceiling: CompiledEgressPolicy) -> Self {
+        self.global_ceiling = Some(ceiling);
+        self
+    }
+
     /// Attach the tenant's fairness handle (EE3). Captured at registration —
     /// the request path never performs a per-request tenant lookup.
     pub fn with_tenant_fairness(mut self, tenant_fairness: Arc<TenantFairness>) -> Self {
@@ -204,12 +215,14 @@ impl WorkloadPep {
                 message: format!("failed to configure egress proxy listener: {error}"),
             })?;
 
-        let policy_state = Arc::new(RwLock::new(
-            config
+        let policy_state = Arc::new(RwLock::new({
+            let mut state = config
                 .policy
                 .map(EgressProxyPolicyState::with_policy)
-                .unwrap_or_default(),
-        ));
+                .unwrap_or_default();
+            state.set_global_ceiling(config.global_ceiling);
+            state
+        }));
         let (shutdown, shutdown_rx) = watch::channel(false);
         let (ack_tx, ack_rx) = mpsc::channel();
         let substrate = config.substrate;
@@ -504,7 +517,7 @@ async fn handle_client(
     }
 
     if let Err(response) = reject_unapproved_caller_credentials_for_rule(
-        &active_policy.policy,
+        active_policy.policy.sandbox(),
         pre_dns_authorization.matched_rule(),
         &parsed.header_lines,
     ) {
@@ -593,7 +606,8 @@ async fn handle_client(
         )
         .await;
     }
-    let matched_rule_ref = find_matched_rule(&active_policy.policy, authorization.matched_rule());
+    let matched_rule_ref =
+        find_matched_rule(active_policy.policy.sandbox(), authorization.matched_rule());
     let matched_rule = authorization.matched_rule().map(ToOwned::to_owned);
     let pool_key = build_pool_key(
         &context.pool_identity,
@@ -618,7 +632,7 @@ async fn handle_client(
                 active_policy.policy_generation,
                 authorization.matched_rule(),
                 authorization.reason(),
-                &active_policy.policy,
+                active_policy.policy.sandbox(),
                 &context,
                 phase_recorder,
                 shutdown,
@@ -1051,7 +1065,7 @@ async fn upstream_error_terminal(
 }
 
 fn authorize_hostname_before_dns(
-    policy: &CompiledEgressPolicy,
+    policy: &LayeredEgressPolicy,
     parsed: &ParsedProxyRequest,
 ) -> nimbus_egress::EgressAuthorization {
     policy.authorize_hostname_without_resolved_ip(&parsed.egress_request)

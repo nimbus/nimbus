@@ -257,6 +257,14 @@ check_ee2_ceiling() {
   # PDP purity: the combinator imports no I/O or transport.
   require_reject EE2 'tokio|pingora|std::net|std::fs|std::io' \
     "crates/nimbus-egress/src/layered.rs" "combinator stays pure (no I/O/transport imports)"
+  # Review follow-up: the ceiling is WIRED into the real request path (the
+  # PEP's policy state composes it; empty-ceiling parity runs live).
+  require_grep EE2 'LayeredEgressPolicy' "crates/nimbus-proxy/src/policy_state.rs" \
+    "ceiling wired into the PEP policy state (real request path)"
+  require_grep EE2 'with_global_ceiling' "crates/nimbus-proxy/src/worker.rs" \
+    "PEP config exposes the ceiling knob"
+  require_grep EE2 'ceiling_narrows_sandbox_policy_end_to_end' \
+    "crates/nimbus-proxy/src/tests.rs" "end-to-end ceiling narrowing test present"
 }
 
 # 9. EE3: per-tenant fairness mechanism (DNS budget, byte metering, CPU
@@ -282,6 +290,11 @@ check_ee3_fairness() {
     "sandbox captures the tenant handle at registration (no per-request lookup)"
   require_grep EE3 'cannot_starve_another_tenant' "crates/nimbus-proxy/src/fairness.rs" \
     "cross-tenant starvation-independence test present"
+  # Review follow-ups: TAA5 budget knob + bounded fairness map.
+  require_grep EE3 'pub fn with_fairness' "crates/nimbus-proxy/src/engine.rs" \
+    "engine exposes the fairness-registry knob (TAA5 sets values without editing the engine)"
+  require_grep EE3 'fn release' "crates/nimbus-proxy/src/fairness.rs" \
+    "fairness map evicts at zero pins (no unbounded per-tenant growth)"
 }
 
 # 10. EE4: decision-event fan-out seam + per-tenant counters.

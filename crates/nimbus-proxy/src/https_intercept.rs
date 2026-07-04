@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use nimbus_egress::{CompiledEgressPolicy, EgressProtocol, EgressRequest, EgressRule};
+use nimbus_egress::{EgressProtocol, EgressRequest, EgressRule, LayeredEgressPolicy};
 use rustls::pki_types::ServerName;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -56,7 +56,7 @@ pub(crate) fn classify_connect(matched_rule: Option<&EgressRule>) -> ConnectInte
 pub(crate) struct HttpsInterceptContext<'a> {
     pub(crate) parsed_connect: &'a ParsedProxyRequest,
     pub(crate) upstream_addr: SocketAddr,
-    pub(crate) policy: &'a CompiledEgressPolicy,
+    pub(crate) policy: &'a LayeredEgressPolicy,
     pub(crate) outer_matched_rule: Option<String>,
     pub(crate) credential_provider: &'a dyn CredentialSecretProvider,
     pub(crate) tls_authority: &'a WorkloadPepTlsAuthority,
@@ -169,7 +169,7 @@ pub(crate) async fn intercept_connect_h1(
     }
 
     if let Err(response) = reject_unapproved_caller_credentials_for_rule(
-        context.policy,
+        context.policy.sandbox(),
         authorization.matched_rule(),
         &inner.header_lines,
     ) {
@@ -187,7 +187,7 @@ pub(crate) async fn intercept_connect_h1(
     let enforcement = match prepare_proxy_request_enforcement(
         &inner,
         ProxyRequestEnforcementContext {
-            policy: context.policy,
+            policy: context.policy.sandbox(),
             matched_rule: authorization.matched_rule(),
             reason: authorization.reason(),
             credential_provider: context.credential_provider,
@@ -374,6 +374,18 @@ pub(crate) async fn intercept_connect_h1(
             authorization.matched_rule().map(ToOwned::to_owned),
         )
         .await;
+    }
+
+    // Review follow-up (#7): meter the request direction on intercepted
+    // connections too — the splice path already meters both directions.
+    if let Some(fairness) = &context.tenant_fairness {
+        let body_bytes = prepared
+            .inspected_body
+            .as_ref()
+            .map(|body| body.len() as u64)
+            .or_else(|| inner.content_length.map(|length| length as u64))
+            .unwrap_or(0);
+        fairness.record_bytes_to_upstream(request.len() as u64 + body_bytes);
     }
 
     let upstream_head =

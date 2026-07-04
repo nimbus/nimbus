@@ -502,6 +502,63 @@ fn egress_proxy_denies_default_policy_without_contacting_upstream() {
     );
 }
 
+/// EE2 wired end-to-end: the node-global allow-ceiling narrows the sandbox
+/// policy in the REAL request path. The sandbox allows two hosts; the ceiling
+/// lists only one. The intersection host flows; the sandbox-only host is
+/// denied by the ceiling (403 naming the allow-ceiling) without contacting
+/// the upstream — a union/vec-merge would have allowed it.
+#[test]
+fn egress_proxy_global_ceiling_narrows_sandbox_policy_end_to_end() {
+    let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    let port = upstream.addr.port();
+    let sandbox = allow_policy([
+        EgressRule::new("api", EgressProtocol::Http, "allowed.test", port).allow_internal_ips(true),
+        EgressRule::new("internal", EgressProtocol::Http, "internal.test", port)
+            .allow_internal_ips(true),
+    ]);
+    let ceiling =
+        allow_policy([
+            EgressRule::new("ceiling-api", EgressProtocol::Http, "allowed.test", port)
+                .allow_internal_ips(true),
+        ]);
+    let proxy = WorkloadPep::start(
+        WorkloadPepConfig::new(sandbox)
+            .with_global_ceiling(ceiling)
+            .with_timeouts(Duration::from_secs(5), Duration::from_secs(5))
+            .with_resolver(loopback_test_resolver()),
+    )
+    .expect("proxy with ceiling should start");
+
+    let denied = proxy_request(
+        proxy.local_addr(),
+        format!("GET http://internal.test:{port}/x HTTP/1.1\r\nHost: internal.test\r\n\r\n"),
+    );
+    assert!(
+        denied.starts_with("HTTP/1.1 403 Forbidden"),
+        "ceiling must deny the sandbox-only host (intersection, not union), got: {denied}"
+    );
+    assert!(
+        denied.contains("allow-ceiling"),
+        "denial must name the ceiling layer, got: {denied}"
+    );
+    assert!(
+        upstream
+            .request
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "ceiling-denied requests must not contact upstream"
+    );
+
+    let allowed = proxy_request(
+        proxy.local_addr(),
+        format!("GET http://allowed.test:{port}/ok HTTP/1.1\r\nHost: allowed.test\r\n\r\n"),
+    );
+    assert!(
+        allowed.starts_with("HTTP/1.1 200 OK"),
+        "intersection host must flow through both layers, got: {allowed}"
+    );
+}
+
 #[test]
 fn egress_proxy_without_active_policy_denies_before_dns() {
     let resolver_calls = Arc::new(AtomicUsize::new(0));
