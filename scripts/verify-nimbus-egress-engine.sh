@@ -9,6 +9,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
 
 PLAN="docs/private/plans/nimbus-egress-engine-plan.md"
+if [ ! -f "${PLAN}" ]; then
+  PLAN="docs/private/plans/archive/nimbus-egress-engine-plan.md"
+fi
 PROOF_DIR="docs/private/plans/proof/nimbus-egress-engine"
 PLANS_README="docs/private/plans/README.md"
 K11P_VERIFIER="scripts/verify-nimbus-proxy-pingora.sh"

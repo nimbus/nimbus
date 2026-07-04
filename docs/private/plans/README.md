@@ -46,16 +46,6 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   lifecycle, observability, selective HTTPS interception, credential injection,
   DLP parity, and QUIC/UDP bypass denial. This must land before Nimbus claims
   HTTPS credential injection for agents.
-- `nimbus-egress-engine-plan.md` - `proposed`, owner-directed sequencing next
-  after K11P. Promotes the per-sandbox proxy lifecycle into a node-scoped
-  `EgressEngine` (per-sandbox `WorkloadPep`s retained, workload map kept off the
-  request path) as the home for node-wide egress features: a global allow-ceiling
-  policy layer, per-tenant fairness budgets, and a metrics fan-out seam. A
-  refactor-seam, not a launch blocker — feature value lands in Phase 4/6. Keeps
-  `nimbus-egress` a pure PDP and the trust-anchor publishing in `nimbus-sandbox`;
-  cedes the shared-listener/source-IP path to density, pooling to
-  K11P/connection-broker, OCSF/quota values to tenant-admission-audit, and
-  multi-node to horizontal-scaling.
 - `distribution-plan.md` - `in_progress`. Owns binary release, Homebrew/cask,
   Linux package mirror, release-owned OCI images, and channel cutover. It should
   consume launch safety decisions rather than define them.
@@ -127,7 +117,10 @@ extension-registry seam before the second concern edits `extensions.rs`.
   Nimbus-native transport evolution without replacing the established WebSocket
   protocol by default.
 - `nimbus-tenant-admission-audit-plan.md` - `draft`. Owns aggregate admission,
-  OCSF spool, H-gate ratification, and admitted quota enforcement.
+  OCSF spool, H-gate ratification, and admitted quota enforcement. Consumes the
+  node-scoped `EgressEngine` seams landed by the completed
+  `archive/nimbus-egress-engine-plan.md` (decision-event fan-out sink, per-tenant
+  fairness budget values).
 - `nimbus-proxy-policy-hardening-plan.md` - `draft`. Owns proxy policy
   hardening adjacent to K11P without moving transport dependencies into runtime,
   sandbox, or policy crates.
