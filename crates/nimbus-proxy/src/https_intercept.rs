@@ -27,7 +27,7 @@ use crate::pingora_io::PrereadStream;
 use crate::policy_state::PolicyGeneration;
 use crate::request::{ParsedProxyRequest, ProxyRequestMode};
 use crate::response::{HttpProxyResponse, write_http_response_async};
-use crate::tls_authority::EgressProxyTlsAuthority;
+use crate::tls_authority::WorkloadPepTlsAuthority;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConnectInterceptAction {
@@ -59,7 +59,7 @@ pub(crate) struct HttpsInterceptContext<'a> {
     pub(crate) policy: &'a CompiledEgressPolicy,
     pub(crate) outer_matched_rule: Option<String>,
     pub(crate) credential_provider: &'a dyn CredentialSecretProvider,
-    pub(crate) tls_authority: &'a EgressProxyTlsAuthority,
+    pub(crate) tls_authority: &'a WorkloadPepTlsAuthority,
     pub(crate) phase_recorder: &'a RequestPhaseRecorder,
     pub(crate) decision_logger: &'a DecisionLogger,
     pub(crate) policy_generation: PolicyGeneration,

@@ -18,9 +18,9 @@ use nimbus_egress::{
     EGRESS_PROXY_URL_ENV, EGRESS_RESERVED_ENV_KEYS, EgressPolicy,
 };
 use nimbus_proxy::{
-    AppendOnlyDecisionLogSink, DecisionLogSinkContext, EgressEngine, EgressProxyError,
-    EgressProxyReadiness, EgressProxyTlsAuthority, WorkloadPep, WorkloadPepConfig,
-    fan_out_decision_loggers, tenant_decision_counter_sink,
+    AppendOnlyDecisionLogSink, DecisionLogSinkContext, EgressEngine, EgressProxyError, WorkloadPep,
+    WorkloadPepConfig, WorkloadPepReadiness, WorkloadPepTlsAuthority, fan_out_decision_loggers,
+    tenant_decision_counter_sink,
 };
 use serde::{Deserialize, Serialize};
 
@@ -136,7 +136,7 @@ impl EgressProxyRegistry {
         })?
         .logger();
         let tls_authority =
-            EgressProxyTlsAuthority::generate_ephemeral().map_err(egress_proxy_error)?;
+            WorkloadPepTlsAuthority::generate_ephemeral().map_err(egress_proxy_error)?;
         // EE3/EE4: resolve the tenant's fairness handle once, at registration.
         let tenant_fairness = self.engine.fairness().tenant(tenant_id);
         // EE4: fan the decision stream out — the SELH append-only sink stays
@@ -232,9 +232,9 @@ impl EgressProxyRegistry {
     /// Returns `Ok(None)` when no proxy is registered (so the caller treats an
     /// absent PEP as deny), and `Ok(Some(readiness))` carrying the proxy's
     /// active-policy state otherwise. A readiness gate must require both that a
-    /// proxy is registered AND that its `EgressProxyReadiness` reports an active
+    /// proxy is registered AND that its `WorkloadPepReadiness` reports an active
     /// policy generation before permitting a workload to launch.
-    pub(crate) fn readiness(&self, id: &SandboxId) -> Result<Option<EgressProxyReadiness>> {
+    pub(crate) fn readiness(&self, id: &SandboxId) -> Result<Option<WorkloadPepReadiness>> {
         let workload_id = Self::workload_id(id)?;
         self.engine
             .with_pep(&workload_id, |pep| pep.readiness())

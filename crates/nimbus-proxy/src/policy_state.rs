@@ -18,7 +18,7 @@ impl PolicyGeneration {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EgressProxyReadiness {
+pub struct WorkloadPepReadiness {
     pub ready: bool,
     pub policy_generation: Option<PolicyGeneration>,
 }
@@ -61,8 +61,8 @@ impl EgressProxyPolicyState {
         next_generation
     }
 
-    pub(crate) fn readiness(&self) -> EgressProxyReadiness {
-        EgressProxyReadiness {
+    pub(crate) fn readiness(&self) -> WorkloadPepReadiness {
+        WorkloadPepReadiness {
             ready: self.last_known_good.is_some(),
             policy_generation: self
                 .last_known_good

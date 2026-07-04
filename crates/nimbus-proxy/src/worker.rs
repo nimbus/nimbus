@@ -34,14 +34,14 @@ use crate::phase::{
 use crate::pingora_app::{ForwardRequestPlan, NimbusForwardApp, downstream_target};
 use crate::pingora_identity::PingoraPeerPlan;
 use crate::pingora_io::PrereadStream;
-use crate::policy_state::{EgressProxyPolicyState, EgressProxyReadiness, PolicyGeneration};
+use crate::policy_state::{EgressProxyPolicyState, PolicyGeneration, WorkloadPepReadiness};
 use crate::pool::{
     EgressProxyCredentialDlpMode, EgressProxyPoolIdentity, EgressProxyPoolKey, TlsVerificationMode,
 };
 use crate::request::{ParsedProxyRequest, ProxyRequestMode, find_header_end, parse_proxy_request};
 use crate::response::{HttpProxyResponse, write_http_response_async};
 use crate::substrate::ProxySubstrate;
-use crate::tls_authority::EgressProxyTlsAuthority;
+use crate::tls_authority::WorkloadPepTlsAuthority;
 use crate::{
     DEFAULT_CONNECT_TIMEOUT, DEFAULT_IO_TIMEOUT, DEFAULT_MAX_CONNECTIONS, MAX_HTTP_HEADER_BYTES,
 };
@@ -57,7 +57,7 @@ pub struct WorkloadPepConfig {
     pub dns_cache: DnsCacheConfig,
     pub credential_store: CredentialSecretStore,
     pub pool_identity: EgressProxyPoolIdentity,
-    pub tls_authority: Option<EgressProxyTlsAuthority>,
+    pub tls_authority: Option<WorkloadPepTlsAuthority>,
     pub substrate: ProxySubstrate,
     credential_provider: Option<CredentialSecretProviderRef>,
     decision_logger: DecisionLogger,
@@ -134,7 +134,7 @@ impl WorkloadPepConfig {
         self
     }
 
-    pub fn with_tls_authority(mut self, tls_authority: EgressProxyTlsAuthority) -> Self {
+    pub fn with_tls_authority(mut self, tls_authority: WorkloadPepTlsAuthority) -> Self {
         self.tls_authority = Some(tls_authority);
         self
     }
@@ -247,7 +247,7 @@ impl WorkloadPep {
         self.local_addr
     }
 
-    pub fn readiness(&self) -> Result<EgressProxyReadiness> {
+    pub fn readiness(&self) -> Result<WorkloadPepReadiness> {
         let guard = self
             .policy_state
             .read()
@@ -293,7 +293,7 @@ struct ProxyWorker {
     dns_cache: DnsCacheConfig,
     credential_provider: CredentialSecretProviderRef,
     pool_identity: EgressProxyPoolIdentity,
-    tls_authority: Option<EgressProxyTlsAuthority>,
+    tls_authority: Option<WorkloadPepTlsAuthority>,
     decision_logger: DecisionLogger,
     phase_observer: PhaseObserver,
     connect_timeout: Duration,
@@ -398,7 +398,7 @@ struct ClientHandlerContext {
     dns_cache: DnsCacheConfig,
     credential_provider: CredentialSecretProviderRef,
     pool_identity: EgressProxyPoolIdentity,
-    tls_authority: Option<EgressProxyTlsAuthority>,
+    tls_authority: Option<WorkloadPepTlsAuthority>,
     decision_logger: DecisionLogger,
     phase_observer: PhaseObserver,
     connect_timeout: Duration,

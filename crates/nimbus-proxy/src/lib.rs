@@ -37,14 +37,14 @@ pub use error::{EgressProxyError, Result};
 pub use fairness::{FairnessRegistry, TaskTimeSpan, TenantFairness, TenantTaskTimeAccounting};
 pub use fanout::{fan_out_decision_loggers, tenant_decision_counter_sink};
 pub use phase::{EgressProxyRequestPhase, REQUEST_PHASE_ORDER};
-pub use policy_state::{EgressProxyReadiness, PolicyGeneration};
+pub use policy_state::{PolicyGeneration, WorkloadPepReadiness};
 pub use pool::{
     EgressProxyCredentialDlpMode, EgressProxyPoolIdentity, EgressProxyPoolKey,
     EgressProxySubstrate, TlsVerificationMode,
 };
 pub use redaction::redact_egress_decision_log_value;
 pub use substrate::ProxySubstrate;
-pub use tls_authority::EgressProxyTlsAuthority;
+pub use tls_authority::WorkloadPepTlsAuthority;
 pub use worker::{WorkloadPep, WorkloadPepConfig};
 
 pub(crate) const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
