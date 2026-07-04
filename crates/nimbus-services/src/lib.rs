@@ -4,9 +4,11 @@ pub mod appws;
 pub mod broker;
 mod catalog;
 pub mod frame;
+pub mod hibernation;
 pub mod ingress;
 mod manager;
 pub mod meter;
+pub mod outbound;
 mod registry;
 mod sandbox_templates;
 
