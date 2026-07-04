@@ -148,7 +148,10 @@ impl EgressProxyRegistry {
             WorkloadPepConfig::new(compiled)
                 .with_bind_addr(bind_addr)
                 .with_tls_authority(tls_authority)
-                .with_decision_logger(decision_logger),
+                .with_decision_logger(decision_logger)
+                // EE3: capture the tenant's fairness handle at registration —
+                // the request path never looks tenants up.
+                .with_tenant_fairness(self.engine.fairness().tenant(tenant_id.as_str())),
         )
         .map_err(|error| {
             let _ = remove_trust_anchor_file(&trust_anchor_path);

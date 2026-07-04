@@ -1,5 +1,6 @@
 use std::io;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use nimbus_egress::{CompiledEgressPolicy, EgressProtocol, EgressRequest, EgressRule};
@@ -20,6 +21,7 @@ use crate::enforcement::{
     ProxyRequestEnforcementContext, prepare_proxy_request_enforcement,
     reject_unapproved_caller_credentials_for_rule,
 };
+use crate::fairness::TenantFairness;
 use crate::phase::{EgressProxyRequestPhase, RequestPhaseRecorder};
 use crate::pingora_io::PrereadStream;
 use crate::policy_state::PolicyGeneration;
@@ -61,6 +63,7 @@ pub(crate) struct HttpsInterceptContext<'a> {
     pub(crate) phase_recorder: &'a RequestPhaseRecorder,
     pub(crate) decision_logger: &'a DecisionLogger,
     pub(crate) policy_generation: PolicyGeneration,
+    pub(crate) tenant_fairness: Option<Arc<TenantFairness>>,
     pub(crate) connect_timeout: Duration,
     pub(crate) io_timeout: Duration,
 }
@@ -399,18 +402,22 @@ pub(crate) async fn intercept_connect_h1(
     // logging it as a deny would corrupt the audit trail into showing the PEP
     // blocked egress it actually permitted.
     let _ = timeout_io(context.io_timeout, client_tls.write_all(&filtered_head)).await;
-    let _ = match response_content_length {
-        Some(length) => {
-            stream_response_content_length(
-                &mut upstream_tls,
-                &mut client_tls,
-                length,
-                context.io_timeout,
-            )
-            .await
-        }
+    let relayed_to_workload = match response_content_length {
+        Some(length) => stream_response_content_length(
+            &mut upstream_tls,
+            &mut client_tls,
+            length,
+            context.io_timeout,
+        )
+        .await
+        .map(|()| length as u64),
         None => copy_until_eof(&mut upstream_tls, &mut client_tls, context.io_timeout).await,
     };
+    // EE3: relay copy-loop byte metering, per tenant (best-effort like the
+    // relay itself — a relay error already surfaced to the workload).
+    if let (Ok(bytes), Some(fairness)) = (&relayed_to_workload, &context.tenant_fairness) {
+        fairness.record_bytes_to_workload(*bytes);
+    }
     Ok(prepared.decision_log)
 }
 

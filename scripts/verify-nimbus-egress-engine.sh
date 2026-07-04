@@ -256,11 +256,29 @@ check_ee2_ceiling() {
     "crates/nimbus-egress/src/layered.rs" "combinator stays pure (no I/O/transport imports)"
 }
 
-# TODO: Replace this proposed-status assertion with the EE3 fairness-mechanism
-# gate once per-tenant DNS, CPU, and bandwidth budgets land.
-# 9. EE3 not yet started
-check_ee3_pending() {
-  require_proposed EE3 || true
+# 9. EE3: per-tenant fairness mechanism (DNS budget, byte metering, CPU
+#    accounting). Mechanism/seam only — budget VALUES ride TAA.
+check_ee3_fairness() {
+  require_done EE3 || true
+  require_file EE3 "crates/nimbus-proxy/src/fairness.rs" "fairness module exists"
+  require_grep EE3 'pub struct FairnessRegistry' "crates/nimbus-proxy/src/fairness.rs" \
+    "node-wide fairness registry defined"
+  require_grep EE3 'acquire_dns' "crates/nimbus-proxy/src/fairness.rs" \
+    "per-tenant DNS acquire budget present (distinct from the node guard)"
+  require_grep EE3 'TenantCpuAccounting' "crates/nimbus-proxy/src/fairness.rs" \
+    "named CPU accounting primitive present"
+  require_grep EE3 'NOT' "crates/nimbus-proxy/src/fairness.rs" \
+    "CPU primitive scoped as accounting, not claimed isolation"
+  require_grep EE3 'record_bytes_to_upstream' "crates/nimbus-proxy/src/worker.rs" \
+    "relay copy-loop byte metering wired (splice tunnel)"
+  require_grep EE3 'record_bytes_to_workload' "crates/nimbus-proxy/src/https_intercept.rs" \
+    "relay copy-loop byte metering wired (intercept relay)"
+  require_grep EE3 'tenant_fairness' "crates/nimbus-proxy/src/worker.rs" \
+    "fairness handle captured into the PEP context"
+  require_grep EE3 'with_tenant_fairness' "crates/nimbus-sandbox/src/backends/oci/egress.rs" \
+    "sandbox captures the tenant handle at registration (no per-request lookup)"
+  require_grep EE3 'cannot_starve_another_tenant' "crates/nimbus-proxy/src/fairness.rs" \
+    "cross-tenant starvation-independence test present"
 }
 
 # TODO: Replace this proposed-status assertion with the EE4 fan-out-seam gate
@@ -281,7 +299,7 @@ check_architecture_decision
 check_plan_non_goals
 check_ee1_engine
 check_ee2_ceiling
-check_ee3_pending
+check_ee3_fairness
 check_ee4_pending
 
 printf '\nSummary: %d passed, %d failed\n' "${passed}" "${failed}"

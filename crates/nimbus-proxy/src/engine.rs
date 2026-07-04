@@ -19,11 +19,12 @@
 //! PEP than the one registered).
 
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use nimbus_core::WorkloadId;
 
 use crate::error::{EgressProxyError, Result};
+use crate::fairness::FairnessRegistry;
 use crate::substrate::ProxySubstrate;
 use crate::worker::WorkloadPep;
 
@@ -38,6 +39,7 @@ struct EngineEntry<A> {
 /// never inspects it.
 pub struct EgressEngine<A = ()> {
     substrate: ProxySubstrate,
+    fairness: Arc<FairnessRegistry>,
     peps: Mutex<HashMap<WorkloadId, EngineEntry<A>>>,
 }
 
@@ -51,8 +53,15 @@ impl<A> EgressEngine<A> {
     pub fn with_substrate(substrate: ProxySubstrate) -> Self {
         Self {
             substrate,
+            fairness: Arc::new(FairnessRegistry::new()),
             peps: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Node-wide per-tenant fairness registry (the EE3 seam). Resolved at PEP
+    /// registration time; request paths hold captured handles, never this map.
+    pub fn fairness(&self) -> &Arc<FairnessRegistry> {
+        &self.fairness
     }
 
     /// The substrate this engine runs its PEPs on.

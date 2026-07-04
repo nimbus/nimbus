@@ -80,11 +80,12 @@ pub(crate) async fn copy_until_eof<R, W>(
     reader: &mut R,
     writer: &mut W,
     io_timeout: Duration,
-) -> io::Result<()>
+) -> io::Result<u64>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
+    let mut copied = 0_u64;
     let mut chunk = [0_u8; BODY_STREAM_CHUNK_BYTES];
     loop {
         let read = match timeout_io(io_timeout, reader.read(&mut chunk)).await {
@@ -100,9 +101,10 @@ where
             Err(error) => return Err(error),
         };
         if read == 0 {
-            return Ok(());
+            return Ok(copied);
         }
         timeout_io(io_timeout, writer.write_all(&chunk[..read])).await?;
+        copied += read as u64;
     }
 }
 
