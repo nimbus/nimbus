@@ -281,11 +281,24 @@ check_ee3_fairness() {
     "cross-tenant starvation-independence test present"
 }
 
-# TODO: Replace this proposed-status assertion with the EE4 fan-out-seam gate
-# once the decision-event multi-sink and counters land.
-# 10. EE4 not yet started
-check_ee4_pending() {
-  require_proposed EE4 || true
+# 10. EE4: decision-event fan-out seam + per-tenant counters.
+check_ee4_fanout() {
+  require_done EE4 || true
+  require_file EE4 "crates/nimbus-proxy/src/fanout.rs" "fan-out module exists"
+  require_grep EE4 'pub fn fan_out_decision_loggers' "crates/nimbus-proxy/src/fanout.rs" \
+    "composable multi-sink fan-out defined"
+  require_grep EE4 'tenant_decision_counter_sink' "crates/nimbus-proxy/src/fanout.rs" \
+    "per-tenant decision counter sink defined"
+  require_grep EE4 'decisions_allowed' "crates/nimbus-proxy/src/fairness.rs" \
+    "per-tenant counters live on TenantFairness (registration-keyed)"
+  # SELH baseline preserved: the sandbox composes the append-only sink FIRST.
+  require_grep EE4 'fan_out_decision_loggers' \
+    "crates/nimbus-sandbox/src/backends/oci/egress.rs" \
+    "sandbox composes the fan-out (append-only baseline first)"
+  require_grep EE4 'append-only sink stays' "crates/nimbus-proxy/src/fanout.rs" \
+    "append-only baseline ordering documented in the seam"
+  require_grep EE4 'every_event_to_every_sink' "crates/nimbus-proxy/src/fanout.rs" \
+    "fan-out delivery test present"
 }
 
 printf 'Nimbus egress engine verifier\n'
@@ -300,7 +313,7 @@ check_plan_non_goals
 check_ee1_engine
 check_ee2_ceiling
 check_ee3_fairness
-check_ee4_pending
+check_ee4_fanout
 
 printf '\nSummary: %d passed, %d failed\n' "${passed}" "${failed}"
 

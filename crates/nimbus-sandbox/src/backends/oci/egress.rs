@@ -20,6 +20,7 @@ use nimbus_egress::{
 use nimbus_proxy::{
     AppendOnlyDecisionLogSink, DecisionLogSinkContext, EgressEngine, EgressProxyError,
     EgressProxyReadiness, EgressProxyTlsAuthority, WorkloadPep, WorkloadPepConfig,
+    fan_out_decision_loggers, tenant_decision_counter_sink,
 };
 use serde::{Deserialize, Serialize};
 
@@ -127,6 +128,15 @@ impl EgressProxyRegistry {
         .logger();
         let tls_authority =
             EgressProxyTlsAuthority::generate_ephemeral().map_err(egress_proxy_error)?;
+        // EE3/EE4: resolve the tenant's fairness handle once, at registration.
+        let tenant_fairness = self.engine.fairness().tenant(tenant_id.as_str());
+        // EE4: fan the decision stream out — the SELH append-only sink stays
+        // FIRST (the durability baseline receives every event, unchanged);
+        // the per-tenant counter sink subscribes behind it.
+        let decision_logger = fan_out_decision_loggers(vec![
+            decision_logger,
+            tenant_decision_counter_sink(Arc::clone(&tenant_fairness)),
+        ]);
         // Publish + register under one lock hold: the engine's registration
         // slot re-checks a concurrent winner first and holds the registry lock
         // until commit, so the trust-anchor file on disk is written by the same
@@ -151,7 +161,7 @@ impl EgressProxyRegistry {
                 .with_decision_logger(decision_logger)
                 // EE3: capture the tenant's fairness handle at registration —
                 // the request path never looks tenants up.
-                .with_tenant_fairness(self.engine.fairness().tenant(tenant_id.as_str())),
+                .with_tenant_fairness(tenant_fairness),
         )
         .map_err(|error| {
             let _ = remove_trust_anchor_file(&trust_anchor_path);

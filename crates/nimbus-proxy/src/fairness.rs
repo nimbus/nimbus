@@ -111,6 +111,8 @@ pub struct TenantFairness {
     dns: Option<Arc<Semaphore>>,
     bytes_to_upstream: AtomicU64,
     bytes_to_workload: AtomicU64,
+    decisions_allowed: AtomicU64,
+    decisions_denied: AtomicU64,
     cpu: TenantCpuAccounting,
 }
 
@@ -121,6 +123,8 @@ impl TenantFairness {
             dns: dns_permits.map(|permits| Arc::new(Semaphore::new(permits))),
             bytes_to_upstream: AtomicU64::new(0),
             bytes_to_workload: AtomicU64::new(0),
+            decisions_allowed: AtomicU64::new(0),
+            decisions_denied: AtomicU64::new(0),
             cpu: TenantCpuAccounting::new(),
         }
     }
@@ -175,6 +179,26 @@ impl TenantFairness {
     /// Total bytes metered upstream→workload.
     pub fn bytes_to_workload(&self) -> u64 {
         self.bytes_to_workload.load(Ordering::Relaxed)
+    }
+
+    /// Count an allowed egress decision (EE4 counter seam).
+    pub fn record_decision_allowed(&self) {
+        self.decisions_allowed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Count a denied egress decision.
+    pub fn record_decision_denied(&self) {
+        self.decisions_denied.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Total allowed decisions counted for this tenant.
+    pub fn decisions_allowed(&self) -> u64 {
+        self.decisions_allowed.load(Ordering::Relaxed)
+    }
+
+    /// Total denied decisions counted for this tenant.
+    pub fn decisions_denied(&self) -> u64 {
+        self.decisions_denied.load(Ordering::Relaxed)
     }
 
     /// The tenant's CPU accounting primitive.
