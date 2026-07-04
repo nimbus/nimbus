@@ -190,11 +190,49 @@ check_plan_non_goals() {
   require_grep EE0 'horizontal-scaling' "${PLAN}" "EE plan non-goals cross-ref horizontal scaling"
 }
 
-# TODO: Replace this proposed-status assertion with the EE1 reachability-lint
-# gate once the EgressEngine / WorkloadPep row lands.
-# 7. EE1 not yet started
-check_ee1_pending() {
-  require_proposed EE1 || true
+# 7. EE1: engine promotion, WorkloadPep rename, WorkloadId re-key,
+#    no-cycle, and the reachability lint (the isolation compensating control).
+check_ee1_engine() {
+  local status
+  status="$(row_status EE1)"
+  if [ "${status}" = "done" ]; then
+    pass EE1 "EE1 ledger row is done"
+  else
+    fail EE1 "EE1 ledger row is ${status:-missing}, expected done"
+  fi
+
+  require_file EE1 "crates/nimbus-proxy/src/engine.rs" "EgressEngine module exists"
+  require_grep EE1 'pub struct EgressEngine' "crates/nimbus-proxy/src/engine.rs" \
+    "EgressEngine defined in engine.rs"
+  require_grep EE1 'WorkloadId' "crates/nimbus-proxy/src/engine.rs" \
+    "engine map keyed by nimbus-core WorkloadId"
+  require_grep EE1 'pub struct WorkloadId' "crates/nimbus-core/src/types.rs" \
+    "opaque WorkloadId lives in nimbus-core"
+  require_grep EE1 '\bWorkloadPep\b' "crates/nimbus-proxy/src/worker.rs" \
+    "per-sandbox PEP renamed to WorkloadPep"
+
+  # No-cycle gate: nimbus-proxy must never depend on nimbus-sandbox.
+  require_reject EE1 'nimbus-sandbox' "crates/nimbus-proxy/Cargo.toml" \
+    "nimbus-proxy has no nimbus-sandbox dependency (no crate cycle)"
+
+  # Reachability lint, mirrored from outside the crate: within nimbus-proxy,
+  # only engine.rs (definition), lib.rs (export), and tests.rs (the in-crate
+  # lint itself) may name EgressEngine or WorkloadId. A plain
+  # "no Map<SandboxId,...>" grep is vacuous (nimbus-proxy has no SandboxId);
+  # scanning for the engine's own key/type names is the non-vacuous form.
+  local reach_violations
+  reach_violations="$(grep -rlE 'EgressEngine|WorkloadId' crates/nimbus-proxy/src \
+    --include='*.rs' 2>/dev/null \
+    | grep -vE '/(engine|lib|tests)\.rs$' || true)"
+  if [ -z "${reach_violations}" ]; then
+    pass EE1 "workload map unreachable from request-path modules (reachability lint)"
+  else
+    fail EE1 "request-path modules reference the workload map: ${reach_violations}"
+  fi
+
+  # The in-crate Rust lint must exist (it runs in plain cargo test).
+  require_grep EE1 'ee1_reachability_lint_workload_map_unreachable_from_request_path' \
+    "crates/nimbus-proxy/src/tests.rs" "in-crate EE1 reachability lint test exists"
 }
 
 # TODO: Replace this proposed-status assertion with the EE2 composition-test
@@ -227,7 +265,7 @@ check_activation_gate
 check_proof_cross_refs
 check_architecture_decision
 check_plan_non_goals
-check_ee1_pending
+check_ee1_engine
 check_ee2_pending
 check_ee3_pending
 check_ee4_pending

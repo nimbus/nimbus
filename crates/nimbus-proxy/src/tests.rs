@@ -4226,3 +4226,71 @@ fn egress_proxy_dns_budget_times_out_closed_without_disturbing_sibling() {
     // sleeping on the blocking pool.
     drop(blocked_proxy);
 }
+
+/// EE1 reachability lint: the workload map is not referenceable from the
+/// request path.
+///
+/// Today's tenant isolation is a type/ownership property — each accept task
+/// closes over its own per-PEP context, so a request handler cannot name
+/// another workload's state. The node-scoped `EgressEngine` keeps its
+/// `Map<WorkloadId, WorkloadPep>` off the request path by module discipline:
+/// within `nimbus-proxy`, only `engine.rs` (the definition) and `lib.rs` (the
+/// export) may name `EgressEngine` or `WorkloadId`. Every other module — the
+/// worker accept/handler path, the intercept path, the pingora adapter, and
+/// all request-processing modules — must be unable to reach the map even by
+/// name. A plain "hot path holds no `Map<SandboxId, …>`" grep would be vacuous
+/// (`nimbus-proxy` has no `SandboxId` at all); scanning for the engine's own
+/// key/type names is the non-vacuous form.
+///
+/// This is the compensating control the egress-engine plan's isolation
+/// argument rests on; the plan verifier (`verify-nimbus-egress-engine.sh`)
+/// enforces the same rule from outside the crate.
+#[test]
+fn ee1_reachability_lint_workload_map_unreachable_from_request_path() {
+    let src_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    // engine.rs defines the engine; lib.rs exports it; tests.rs is this lint
+    // (test-only, never part of the request path).
+    let allowed = ["engine.rs", "lib.rs", "tests.rs"];
+    let needles = ["EgressEngine", "WorkloadId"];
+
+    let mut violations = Vec::new();
+    let mut scanned = 0usize;
+    for entry in std::fs::read_dir(&src_dir).expect("nimbus-proxy src dir must be readable") {
+        let path = entry.expect("dir entry").path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.ends_with(".rs") || allowed.contains(&name) {
+            continue;
+        }
+        scanned += 1;
+        let contents = std::fs::read_to_string(&path).expect("source file must be readable");
+        for needle in needles {
+            if contents.contains(needle) {
+                violations.push(format!("{name} references {needle}"));
+            }
+        }
+    }
+
+    // Guard the lint itself against vacuousness: the scan set must cover the
+    // real request-path modules, and the needles must actually exist in the
+    // crate (in engine.rs) so a rename can't silently blind the lint.
+    assert!(
+        scanned >= 15,
+        "reachability lint scanned only {scanned} files; scan set is broken"
+    );
+    let engine_src =
+        std::fs::read_to_string(src_dir.join("engine.rs")).expect("engine.rs must exist (EE1c)");
+    for needle in needles {
+        assert!(
+            engine_src.contains(needle),
+            "lint needle {needle} no longer exists in engine.rs; update the lint"
+        );
+    }
+
+    assert!(
+        violations.is_empty(),
+        "EE1 reachability violation — the workload map (or its key type) is nameable from \
+         request-path modules: {violations:?}"
+    );
+}
