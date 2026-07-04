@@ -56,7 +56,11 @@ pub(crate) struct EgressProxyRegistry {
 /// map cannot grow monotonically).
 struct RegisteredArtifacts {
     trust_anchor_path: Option<PathBuf>,
-    tenant_fairness: Arc<nimbus_proxy::TenantFairness>,
+    /// RAII pin on the tenant's fairness entry; dropping it (at stop, or on
+    /// any registration failure unwind) releases the pin — the registry
+    /// evicts at zero leases, and capture+pin are atomic so no fork is
+    /// possible.
+    tenant_lease: nimbus_proxy::TenantLease,
 }
 
 impl EgressProxyRegistry {
@@ -137,8 +141,11 @@ impl EgressProxyRegistry {
         .logger();
         let tls_authority =
             WorkloadPepTlsAuthority::generate_ephemeral().map_err(egress_proxy_error)?;
-        // EE3/EE4: resolve the tenant's fairness handle once, at registration.
-        let tenant_fairness = self.engine.fairness().tenant(tenant_id);
+        // EE3/EE4: check out the tenant's fairness lease once, at
+        // registration — capture+pin atomic; any failure below auto-releases
+        // the pin via Drop (no zero-pin zombie entries).
+        let tenant_lease = self.engine.fairness().checkout(tenant_id);
+        let tenant_fairness = Arc::clone(tenant_lease.handle());
         // EE4: fan the decision stream out — the SELH append-only sink stays
         // FIRST (the durability baseline receives every event, unchanged);
         // the per-tenant counter sink subscribes behind it.
@@ -176,14 +183,11 @@ impl EgressProxyRegistry {
             let _ = remove_trust_anchor_file(&trust_anchor_path);
             egress_proxy_error(error)
         })?;
-        // Pin the tenant's fairness entry for the lifetime of this PEP; the
-        // matching release happens in stop() via the returned attachment.
-        self.engine.fairness().retain(&tenant_fairness);
         slot.commit(
             proxy,
             RegisteredArtifacts {
                 trust_anchor_path: Some(trust_anchor_path),
-                tenant_fairness,
+                tenant_lease,
             },
         );
         Ok(())
@@ -220,7 +224,8 @@ impl EgressProxyRegistry {
         // still-running PEP is never left serving leaves the workload can no
         // longer verify.
         drop(proxy);
-        self.engine.fairness().release(&artifacts.tenant_fairness);
+        // Lease drop releases the tenant's fairness pin (evicts at zero).
+        drop(artifacts.tenant_lease);
         if let Some(trust_anchor_path) = artifacts.trust_anchor_path {
             remove_trust_anchor_file(&trust_anchor_path)?;
         }
@@ -301,7 +306,7 @@ impl EgressProxyRegistry {
             proxy,
             RegisteredArtifacts {
                 trust_anchor_path: None,
-                tenant_fairness: self.engine.fairness().tenant(&tenant),
+                tenant_lease: self.engine.fairness().checkout(&tenant),
             },
         );
         Ok(())

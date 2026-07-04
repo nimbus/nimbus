@@ -293,8 +293,8 @@ check_ee3_fairness() {
   # Review follow-ups: TAA5 budget knob + bounded fairness map.
   require_grep EE3 'pub fn with_fairness' "crates/nimbus-proxy/src/engine.rs" \
     "engine exposes the fairness-registry knob (TAA5 sets values without editing the engine)"
-  require_grep EE3 'fn release' "crates/nimbus-proxy/src/fairness.rs" \
-    "fairness map evicts at zero pins (no unbounded per-tenant growth)"
+  require_grep EE3 'fn checkout' "crates/nimbus-proxy/src/fairness.rs" \
+    "fairness map evicts at zero leases; capture+pin atomic (no fork, no unbounded growth)"
 }
 
 # 10. EE4: decision-event fan-out seam + per-tenant counters.

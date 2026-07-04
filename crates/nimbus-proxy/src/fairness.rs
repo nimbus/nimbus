@@ -75,7 +75,9 @@ impl FairnessRegistry {
         }
     }
 
-    /// Get or create the fairness handle for `tenant`.
+    /// Get or create the fairness handle for `tenant` WITHOUT pinning it —
+    /// a read/observability accessor. Registration paths must use
+    /// [`FairnessRegistry::checkout`]; only a lease keeps an entry alive.
     ///
     /// Lifecycle-time only (PEP registration); a poisoned map falls back to a
     /// detached handle rather than poisoning registration — budgets are
@@ -108,30 +110,55 @@ impl FairnessRegistry {
         )
     }
 
-    /// Pin `handle`'s tenant entry (call on successful PEP registration).
+    /// Atomically get-or-create AND pin the tenant's entry, returning an
+    /// RAII lease that releases the pin on drop (evicting at zero pins).
     ///
-    /// Re-inserts the SAME handle if the entry was evicted between `tenant()`
-    /// and `retain()`, so concurrent register/stop cycles can never leave two
-    /// live handles for one tenant.
-    pub fn retain(&self, handle: &Arc<TenantFairness>) {
-        let Ok(mut map) = self.tenants.lock() else {
-            return; // fail-open, matching `tenant()`
+    /// Capture and pin happen under ONE lock hold, so a caller can never
+    /// hold an unpinned live handle: the fork where an entry is evicted and
+    /// recreated between capture and pin — leaving one PEP metering into a
+    /// detached handle while the registry serves a fresh one — is
+    /// structurally impossible. Early-return failure paths auto-release via
+    /// Drop, so failed registrations cannot strand zero-pin zombie entries.
+    pub fn checkout(self: &Arc<Self>, tenant: &TenantId) -> TenantLease {
+        let handle = match self.tenants.lock() {
+            Ok(mut map) => {
+                let entry = map.entry(tenant.clone()).or_insert_with(|| TenantEntry {
+                    fairness: Arc::new(TenantFairness::new(
+                        tenant.clone(),
+                        self.dns_permits_per_tenant,
+                    )),
+                    pins: 0,
+                });
+                entry.pins += 1;
+                Arc::clone(&entry.fairness)
+            }
+            // Fail-open, matching `tenant()`: a detached lease still meters
+            // and accounts; its drop is a no-op (ptr_eq guard below).
+            Err(_) => Arc::new(TenantFairness::new(
+                tenant.clone(),
+                self.dns_permits_per_tenant,
+            )),
         };
-        let entry = map
-            .entry(handle.tenant_id().clone())
-            .or_insert_with(|| TenantEntry {
-                fairness: Arc::clone(handle),
-                pins: 0,
-            });
-        entry.pins += 1;
+        TenantLease {
+            registry: Arc::clone(self),
+            handle,
+        }
     }
 
     /// Release one pin for `handle`'s tenant; evicts the entry at zero pins.
-    pub fn release(&self, handle: &Arc<TenantFairness>) {
+    ///
+    /// The `ptr_eq` guard is defensive: a live lease implies pins > 0, which
+    /// implies no eviction, so a lease's handle should always BE the entry's
+    /// handle — but if they ever diverge, decrementing a stranger's pins
+    /// (evicting live state) would be the worse failure, so mismatches no-op.
+    fn release_lease(&self, handle: &Arc<TenantFairness>) {
         let Ok(mut map) = self.tenants.lock() else {
             return;
         };
         if let Some(entry) = map.get_mut(handle.tenant_id()) {
+            if !Arc::ptr_eq(&entry.fairness, handle) {
+                return;
+            }
             entry.pins = entry.pins.saturating_sub(1);
             if entry.pins == 0 {
                 map.remove(handle.tenant_id());
@@ -153,6 +180,28 @@ impl FairnessRegistry {
 impl Default for FairnessRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// RAII pin on a tenant's fairness entry (see [`FairnessRegistry::checkout`]).
+/// The registration path stores this in its engine attachment; dropping it —
+/// on failure unwind or at PEP stop — releases the pin, evicting the tenant's
+/// entry when the last lease goes.
+pub struct TenantLease {
+    registry: Arc<FairnessRegistry>,
+    handle: Arc<TenantFairness>,
+}
+
+impl TenantLease {
+    /// The pinned tenant handle (clone freely into PEP config and sinks).
+    pub fn handle(&self) -> &Arc<TenantFairness> {
+        &self.handle
+    }
+}
+
+impl Drop for TenantLease {
+    fn drop(&mut self) {
+        self.registry.release_lease(&self.handle);
     }
 }
 
@@ -404,45 +453,72 @@ mod tests {
     }
 
     #[test]
-    fn eviction_prunes_tenant_at_zero_pins_and_shares_until_then() {
-        let registry = FairnessRegistry::new();
-        let a = registry.tenant(&tid("tenant-a"));
+    fn eviction_prunes_tenant_at_zero_leases_and_shares_until_then() {
+        let registry = Arc::new(FairnessRegistry::new());
 
-        // Two PEPs for one tenant: entry survives the first release.
-        registry.retain(&a);
-        registry.retain(&a);
-        assert_eq!(registry.len(), 1);
-        registry.release(&a);
-        assert_eq!(registry.len(), 1, "one live PEP still pins the tenant");
+        // Two PEPs for one tenant: entry survives the first lease drop.
+        let lease1 = registry.checkout(&tid("tenant-a"));
+        let lease2 = registry.checkout(&tid("tenant-a"));
         assert!(
-            Arc::ptr_eq(&registry.tenant(&tid("tenant-a")), &a),
-            "while pinned, the same handle is shared"
+            Arc::ptr_eq(lease1.handle(), lease2.handle()),
+            "concurrent leases share one live handle"
+        );
+        assert_eq!(registry.len(), 1);
+        let survivor = Arc::clone(lease2.handle());
+        drop(lease1);
+        assert_eq!(registry.len(), 1, "one live lease still pins the tenant");
+        assert!(
+            Arc::ptr_eq(&registry.tenant(&tid("tenant-a")), &survivor),
+            "while pinned, reads see the pinned handle"
         );
 
-        // Last release evicts.
-        registry.release(&a);
-        assert_eq!(registry.len(), 0, "zero pins must evict the tenant entry");
+        // Last lease drop evicts.
+        drop(lease2);
+        assert_eq!(registry.len(), 0, "zero leases must evict the tenant entry");
 
         // A later registration gets a FRESH entry (no stale meters).
-        let a2 = registry.tenant(&tid("tenant-a"));
-        assert!(!Arc::ptr_eq(&a2, &a), "post-eviction handle is fresh");
+        let lease3 = registry.checkout(&tid("tenant-a"));
+        assert!(
+            !Arc::ptr_eq(lease3.handle(), &survivor),
+            "post-eviction lease is fresh"
+        );
     }
 
     #[test]
-    fn retain_reinserts_same_handle_after_racy_eviction() {
-        let registry = FairnessRegistry::new();
-        let a = registry.tenant(&tid("tenant-a"));
-        // Simulate: entry evicted between tenant() and retain() (concurrent
-        // stop of the tenant's last other PEP).
-        registry.retain(&a);
-        registry.release(&a);
-        assert_eq!(registry.len(), 0);
-        registry.retain(&a);
+    fn checkout_makes_capture_and_pin_atomic_no_fork_across_evict_recreate() {
+        // Regression for the review-caught fork: with a separate
+        // capture-then-pin API, an entry could be evicted and recreated
+        // between the two steps, pinning a DIFFERENT entry than the handle a
+        // PEP captured (that PEP would meter into a detached handle). With
+        // checkout, capture+pin are one lock hold: interleave register/stop
+        // cycles however you like — every live lease's handle IS the
+        // registry's current handle for that tenant.
+        let registry = Arc::new(FairnessRegistry::new());
+
+        let lease1 = registry.checkout(&tid("tenant-a"));
+        let h1 = Arc::clone(lease1.handle());
+        drop(lease1); // evict
+        let lease2 = registry.checkout(&tid("tenant-a")); // recreate
         assert!(
-            Arc::ptr_eq(&registry.tenant(&tid("tenant-a")), &a),
-            "retain must re-insert the SAME handle, never fork a second one"
+            !Arc::ptr_eq(lease2.handle(), &h1),
+            "recreated entry is fresh"
         );
-        registry.release(&a);
+        assert!(
+            Arc::ptr_eq(&registry.tenant(&tid("tenant-a")), lease2.handle()),
+            "reads and the live lease agree on ONE handle — no fork"
+        );
+
+        // A second lease taken mid-life stays coherent through the first's
+        // drop (release is by-identity, never by-key alone).
+        let lease3 = registry.checkout(&tid("tenant-a"));
+        drop(lease2);
+        assert_eq!(registry.len(), 1);
+        assert!(
+            Arc::ptr_eq(&registry.tenant(&tid("tenant-a")), lease3.handle()),
+            "surviving lease still owns the registry entry"
+        );
+        drop(lease3);
+        assert_eq!(registry.len(), 0);
     }
 
     #[test]
