@@ -235,11 +235,25 @@ check_ee1_engine() {
     "crates/nimbus-proxy/src/tests.rs" "in-crate EE1 reachability lint test exists"
 }
 
-# TODO: Replace this proposed-status assertion with the EE2 composition-test
-# gate once the allow-ceiling layer lands.
-# 8. EE2 not yet started
-check_ee2_pending() {
-  require_proposed EE2 || true
+# 8. EE2: node-global allow-ceiling combinator (pure PDP intersection).
+check_ee2_ceiling() {
+  require_done EE2 || true
+  require_file EE2 "crates/nimbus-egress/src/layered.rs" "LayeredEgressPolicy module exists"
+  require_grep EE2 'pub struct LayeredEgressPolicy' "crates/nimbus-egress/src/layered.rs" \
+    "allow-ceiling combinator defined"
+  require_grep EE2 'with_global_ceiling' "crates/nimbus-egress/src/layered.rs" \
+    "ceiling constructor present (combinator, not a vec merge)"
+  require_grep EE2 'LayeredEgressPolicy' "crates/nimbus-egress/src/lib.rs" \
+    "combinator exported from nimbus-egress"
+  # The load-bearing negative test: intersection, not union.
+  require_grep EE2 'anti_union' "crates/nimbus-egress/src/layered.rs" \
+    "anti-union composition test present"
+  # Empty-global parity: absence of a ceiling is byte-identical passthrough.
+  require_grep EE2 'byte_identical' "crates/nimbus-egress/src/layered.rs" \
+    "sandbox-only byte-identical parity test present"
+  # PDP purity: the combinator imports no I/O or transport.
+  require_reject EE2 'tokio|pingora|std::net|std::fs|std::io' \
+    "crates/nimbus-egress/src/layered.rs" "combinator stays pure (no I/O/transport imports)"
 }
 
 # TODO: Replace this proposed-status assertion with the EE3 fairness-mechanism
@@ -266,7 +280,7 @@ check_proof_cross_refs
 check_architecture_decision
 check_plan_non_goals
 check_ee1_engine
-check_ee2_pending
+check_ee2_ceiling
 check_ee3_pending
 check_ee4_pending
 
