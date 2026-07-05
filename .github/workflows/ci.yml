@@ -61,10 +61,13 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up Rust with cache
+        id: setup-rust
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-clippy-no-bin-v2
           toolchain-components: clippy
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       # `make clippy` triggers the UI dependency graph (codegen + SPA build)
@@ -297,10 +300,22 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up Rust with cache
+        id: setup-rust
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-runtime-no-bin-v2
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Cache Node22 anchor snapshot
+        uses: actions/cache@v5
+        with:
+          path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
+          key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
+
+      - name: Verify prebuilt V8 consumption pairing (release)
+        run: bash scripts/ci/verify-prebuilt-v8-consumption.sh release
 
       - name: Run isolated runtime test lane
         # V8-sensitive runtime tests live in a dedicated serial runtime lane:
@@ -319,16 +334,24 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name != 'schedule'
+    env:
+      CARGO_TARGET_DIR: target/ptrcomp-ci
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
       - name: Set up Rust with cache
+        id: setup-rust
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-runtime-ptrcomp-no-bin-v1
+          consume-prebuilt-v8: ptrcomp
+          github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Verify prebuilt V8 consumption pairing (ptrcomp)
+        run: bash scripts/ci/verify-prebuilt-v8-consumption.sh ptrcomp
 
       - name: Check supported pointer-compression runtime path
         run: |
@@ -336,6 +359,12 @@ jobs:
           cargo tree -p nimbus-runtime --features v8-pointer-compression -e features -i v8 > /tmp/runtime-ptrcomp-tree.txt
           grep -F 'v8 feature "v8_enable_pointer_compression"' /tmp/runtime-ptrcomp-tree.txt
           grep -F 'v8 feature "simdutf"' /tmp/runtime-ptrcomp-tree.txt
+
+      - name: Cache Node22 anchor snapshot (pointer-compression)
+        uses: actions/cache@v5
+        with:
+          path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.pc.bin
+          key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-on-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
 
       - name: Generate + verify embedded anchor snapshot (pointer-compression)
         # A V8 startup snapshot is platform-specific, so the feature-on (.pc.bin) anchor snapshot the
@@ -385,6 +414,8 @@ jobs:
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-profile-aware-runtime-crossover-no-bin-v1
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Run PIR0/PIR2 crossover smoke benches
@@ -405,11 +436,14 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up Rust with cache
+        id: setup-rust
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-bun-runtime-contract-no-bin-v2
           linux-linker: lld
           linux-openssl-provider: system
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       # This lane touches nimbus-server runtime diagnostics and the operator UI
@@ -459,11 +493,14 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up Rust with cache
+        id: setup-rust
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-workspace-no-bin-v2
           linux-linker: lld
           linux-openssl-provider: system
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-nextest
@@ -484,6 +521,12 @@ jobs:
 
       - name: Install JS dependencies
         run: npm ci
+
+      - name: Cache Node22 anchor snapshot
+        uses: actions/cache@v5
+        with:
+          path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
+          key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
 
       - name: Run workspace test lane (shard ${{ matrix.partition }})
         # Verification-harness corpus tests are ignored by default and run in
@@ -538,11 +581,14 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up Rust with cache
+        id: setup-rust
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-external-providers-no-bin-v2
           linux-linker: lld
           linux-openssl-provider: system
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Start postgres provider fixture
@@ -673,9 +719,12 @@ jobs:
           df -h /
 
       - name: Set up Rust with cache
+        id: setup-rust
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-node-faas-compat-no-bin-v2
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Set up Node.js 24 for package canaries
@@ -769,11 +818,14 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up Rust with cache
+        id: setup-rust
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-node-dbus-no-bin-v2
           linux-linker: lld
           linux-openssl-provider: system
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Bootstrap user-mode systemd
@@ -1011,9 +1063,12 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up Rust with cache
+        id: setup-rust
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-warm-sccache-no-bin-v2
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Download nimbus-ui artifacts
@@ -1095,12 +1150,15 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up Rust with cache
+        id: setup-rust
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-harness-${{ matrix.surface }}-no-bin-v2
           toolchain-components: llvm-tools-preview
           linux-linker: lld
           linux-openssl-provider: system
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       # CC4: nimbus-ui artifacts (convex codegen + SPA dist) are produced by
@@ -1116,6 +1174,12 @@ jobs:
 
       - name: Refresh nimbus-ui artifact mtimes
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Cache Node22 anchor snapshot
+        uses: actions/cache@v5
+        with:
+          path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
+          key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
 
       - name: Generate embedded anchor snapshot
         # The harness exercises the production Convex serving path, where the NodeFull
@@ -1153,9 +1217,12 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up Rust with cache
+        id: setup-rust
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-harness-nightly-${{ matrix.surface }}-no-bin-v2
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       # `make build-ui` runs codegen + SPA build via the Makefile dependency
@@ -1171,6 +1238,12 @@ jobs:
 
       - name: Build nimbus-ui artifacts
         run: make build-ui
+
+      - name: Cache Node22 anchor snapshot
+        uses: actions/cache@v5
+        with:
+          path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
+          key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
 
       - name: Generate embedded anchor snapshot
         # Match the production Convex serving path: without the embedded blob the
@@ -1255,6 +1328,7 @@ jobs:
           bash -n scripts/verify-bootc-default-promotion-gate-helper.sh
           bash -n scripts/verify-machine-os-release-ref-contract.sh
           bash -n scripts/verify-machine-os-release-ref-contract-helper.sh
+          bash -n scripts/ci/verify-prebuilt-v8-consumption.sh
           bash -n scripts/install.sh
           bash -n scripts/verify-install.sh
           bash -n scripts/verify-install-helper.sh

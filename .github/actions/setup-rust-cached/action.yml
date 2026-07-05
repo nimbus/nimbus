@@ -64,6 +64,34 @@ inputs:
       CI test lanes that only need a deterministic runner-local OpenSSL link.
     required: false
     default: "vendored"
+  consume-prebuilt-v8:
+    description: >-
+      Opt in to fail-closed rusty_v8 prebuilt consumption. Valid values:
+      "false", "release", or "ptrcomp". Disabled by default because this
+      composite is shared by staged-rollout workflows that still build V8
+      from their current path.
+    required: false
+    default: "false"
+  github-token:
+    description: >-
+      GitHub token used to download protected rusty_v8 prebuild release
+      manifests and assets when consume-prebuilt-v8 is enabled.
+    required: false
+    default: ""
+
+outputs:
+  rusty-v8-release-tag:
+    description: "Derived GitHub release tag for the pinned rusty_v8 prebuild."
+    value: ${{ steps.resolve-prebuilt-v8.outputs.release-tag }}
+  rusty-v8-tag:
+    description: "Derived rusty_v8 fork tag from Cargo.toml."
+    value: ${{ steps.resolve-prebuilt-v8.outputs.rusty-v8-tag }}
+  deno-tag:
+    description: "Derived shared nimbus/deno patch tag from Cargo.toml."
+    value: ${{ steps.resolve-prebuilt-v8.outputs.deno-tag }}
+  rust-target:
+    description: "Rust host target used for prebuilt V8 consumption."
+    value: ${{ steps.resolve-prebuilt-v8.outputs.target }}
 
 runs:
   using: composite
@@ -157,11 +185,365 @@ runs:
       shell: bash
       run: sccache --version
 
+    - name: Resolve prebuilt V8 pins
+      id: resolve-prebuilt-v8
+      if: inputs.consume-prebuilt-v8 != 'false'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        NIMBUS_PREBUILT_V8_VARIANT: ${{ inputs.consume-prebuilt-v8 }}
+      run: |
+        set -euo pipefail
+        runbook="pin-bump runbook: a maintainer must dispatch .github/workflows/rusty-v8-prebuild.yml for the pinned rusty_v8 release before consuming it."
+
+        case "${NIMBUS_PREBUILT_V8_VARIANT}" in
+          release|ptrcomp)
+            ;;
+          *)
+            echo "::error::unsupported consume-prebuilt-v8 value '${NIMBUS_PREBUILT_V8_VARIANT}' (expected false|release|ptrcomp)."
+            exit 64
+            ;;
+        esac
+
+        target="$(rustc -vV | sed -n 's/^host: //p')"
+        if [[ "${target}" != "x86_64-unknown-linux-gnu" ]]; then
+          echo "::error::prebuilt rusty_v8 consumption is only published for x86_64-unknown-linux-gnu in this batch (got ${target}). ${runbook}"
+          exit 64
+        fi
+
+        if [[ -z "${GH_TOKEN:-}" ]]; then
+          echo "::error::github-token input is required when consume-prebuilt-v8=${NIMBUS_PREBUILT_V8_VARIANT}. ${runbook}"
+          exit 64
+        fi
+        if [[ "${V8_FROM_SOURCE+x}" == "x" ]]; then
+          echo "::error::V8_FROM_SOURCE must be unset for fail-closed prebuilt rusty_v8 consumption."
+          exit 64
+        fi
+
+        python3 - <<'PY' > "${RUNNER_TEMP}/prebuilt-v8-pins.env"
+        import re
+        import sys
+        import tomllib
+        from pathlib import Path
+
+        config = tomllib.loads(Path(".cargo/config.toml").read_text())
+        cargo = tomllib.loads(Path("Cargo.toml").read_text())
+
+        try:
+            config_version = config["env"]["RUSTY_V8_VERSION"]
+        except KeyError:
+            raise SystemExit(".cargo/config.toml is missing [env].RUSTY_V8_VERSION")
+
+        if not re.fullmatch(r"[0-9][0-9A-Za-z.+-]*", config_version):
+            raise SystemExit(f"RUSTY_V8_VERSION is not a version-like pin: {config_version!r}")
+
+        patches = cargo.get("patch", {}).get("crates-io", {})
+        v8_patch = patches.get("v8")
+        if not isinstance(v8_patch, dict):
+            raise SystemExit("Cargo.toml [patch.crates-io].v8 must be a table")
+        v8_tag = v8_patch.get("tag")
+        v8_git = v8_patch.get("git")
+        expected_v8_tag = f"v{config_version}"
+        if v8_git != "https://github.com/nimbus/rusty_v8":
+            raise SystemExit(f"Cargo.toml v8 patch points at {v8_git!r}, expected nimbus/rusty_v8")
+        if v8_tag != expected_v8_tag:
+            raise SystemExit(
+                "rusty_v8 pin disagreement: .cargo/config.toml "
+                f"RUSTY_V8_VERSION={config_version!r} implies tag {expected_v8_tag!r}, "
+                f"but Cargo.toml patches v8 to {v8_tag!r}"
+            )
+
+        deno_tags = {
+            table["tag"]
+            for table in patches.values()
+            if isinstance(table, dict)
+            and table.get("git") == "https://github.com/nimbus/deno"
+            and "tag" in table
+        }
+        if len(deno_tags) != 1:
+            raise SystemExit(f"expected exactly one nimbus/deno patch tag, got {sorted(deno_tags)!r}")
+        deno_tag = next(iter(deno_tags))
+        # Shell-safety shape gate: this value is `source`d by the calling shell,
+        # so enforce a strict tag shape before it can reach an env file.
+        if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z.+-]*", deno_tag):
+            raise SystemExit(f"nimbus/deno tag has unsafe shape: {deno_tag!r}")
+
+        release_tag = f"rusty-v8-{expected_v8_tag}"
+        print(f"RUSTY_V8_VERSION_PIN={config_version}")
+        print(f"RUSTY_V8_TAG={expected_v8_tag}")
+        print(f"RUSTY_V8_RELEASE_TAG={release_tag}")
+        print(f"DENO_TAG={deno_tag}")
+        PY
+        # shellcheck disable=SC1090
+        source "${RUNNER_TEMP}/prebuilt-v8-pins.env"
+
+        {
+          echo "version=${RUSTY_V8_VERSION_PIN}"
+          echo "rusty-v8-tag=${RUSTY_V8_TAG}"
+          echo "release-tag=${RUSTY_V8_RELEASE_TAG}"
+          echo "deno-tag=${DENO_TAG}"
+          echo "target=${target}"
+        } >> "${GITHUB_OUTPUT}"
+
+    - name: Download prebuilt V8 manifest
+      id: download-prebuilt-v8-manifest
+      if: inputs.consume-prebuilt-v8 != 'false'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        NIMBUS_PREBUILT_V8_RELEASE_TAG: ${{ steps.resolve-prebuilt-v8.outputs.release-tag }}
+        NIMBUS_PREBUILT_V8_RUSTY_TAG: ${{ steps.resolve-prebuilt-v8.outputs.rusty-v8-tag }}
+        NIMBUS_PREBUILT_V8_DENO_TAG: ${{ steps.resolve-prebuilt-v8.outputs.deno-tag }}
+        NIMBUS_PREBUILT_V8_TARGET: ${{ steps.resolve-prebuilt-v8.outputs.target }}
+      run: |
+        set -euo pipefail
+        runbook="pin-bump runbook: a maintainer must dispatch .github/workflows/rusty-v8-prebuild.yml for ${NIMBUS_PREBUILT_V8_RUSTY_TAG} before consuming it."
+        fail() {
+          echo "::error::$1 ${runbook}"
+          exit 1
+        }
+        trap 'fail "failed to download or verify fresh rusty_v8 manifest for release ${NIMBUS_PREBUILT_V8_RELEASE_TAG}."' ERR
+
+        manifest_dir="${RUNNER_TEMP}/rusty-v8-prebuild-manifest"
+        rm -rf "${manifest_dir}"
+        mkdir -p "${manifest_dir}"
+        gh release download "${NIMBUS_PREBUILT_V8_RELEASE_TAG}" \
+          --repo "${GITHUB_REPOSITORY}" \
+          --dir "${manifest_dir}" \
+          --pattern manifest.json \
+          --pattern manifest.json.sha256
+
+        python3 - "${manifest_dir}" "${NIMBUS_PREBUILT_V8_RUSTY_TAG}" "${NIMBUS_PREBUILT_V8_DENO_TAG}" "${NIMBUS_PREBUILT_V8_TARGET}" <<'PY'
+        import hashlib
+        import json
+        import sys
+        from pathlib import Path
+
+        manifest_dir = Path(sys.argv[1])
+        expected_rusty_tag = sys.argv[2]
+        expected_deno_tag = sys.argv[3]
+        expected_target = sys.argv[4]
+
+        manifest_path = manifest_dir / "manifest.json"
+        sidecar_path = manifest_dir / "manifest.json.sha256"
+        if not manifest_path.is_file():
+            raise SystemExit("missing manifest.json")
+        if not sidecar_path.is_file():
+            raise SystemExit("missing manifest.json.sha256")
+
+        fields = sidecar_path.read_text().split()
+        if len(fields) < 2 or fields[1].lstrip("*") != "manifest.json":
+            raise SystemExit(f"manifest sidecar does not name manifest.json: {fields!r}")
+        actual_manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        if fields[0] != actual_manifest_sha:
+            raise SystemExit(
+                f"manifest digest mismatch: sidecar {fields[0]}, actual {actual_manifest_sha}"
+            )
+
+        manifest = json.loads(manifest_path.read_text())
+        if manifest.get("rusty_v8_ref") != expected_rusty_tag:
+            raise SystemExit(
+                f"manifest rusty_v8_ref {manifest.get('rusty_v8_ref')!r} != {expected_rusty_tag!r}"
+            )
+        if manifest.get("deno_ref") != expected_deno_tag:
+            raise SystemExit(f"manifest deno_ref {manifest.get('deno_ref')!r} != {expected_deno_tag!r}")
+        if manifest.get("target") != expected_target:
+            raise SystemExit(f"manifest target {manifest.get('target')!r} != {expected_target!r}")
+        variants = manifest.get("variants")
+        if not isinstance(variants, list) or not variants:
+            raise SystemExit("manifest variants must be a non-empty list")
+        print(f"verified manifest {actual_manifest_sha} for {expected_rusty_tag}/{expected_target}")
+        PY
+
+        {
+          echo "manifest-dir=${manifest_dir}"
+          echo "manifest-path=${manifest_dir}/manifest.json"
+        } >> "${GITHUB_OUTPUT}"
+
+    - name: Restore prebuilt V8 payload cache
+      id: restore-prebuilt-v8-cache
+      if: inputs.consume-prebuilt-v8 != 'false'
+      uses: actions/cache/restore@v5
+      with:
+        path: ~/.cache/rusty_v8
+        key: prebuilt-v8-${{ steps.resolve-prebuilt-v8.outputs.release-tag }}-${{ inputs.consume-prebuilt-v8 }}-${{ steps.resolve-prebuilt-v8.outputs.target }}
+
+    - name: Download and verify prebuilt V8 payloads
+      id: consume-prebuilt-v8
+      if: inputs.consume-prebuilt-v8 != 'false'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        NIMBUS_PREBUILT_V8_VARIANT: ${{ inputs.consume-prebuilt-v8 }}
+        NIMBUS_PREBUILT_V8_RELEASE_TAG: ${{ steps.resolve-prebuilt-v8.outputs.release-tag }}
+        NIMBUS_PREBUILT_V8_RUSTY_TAG: ${{ steps.resolve-prebuilt-v8.outputs.rusty-v8-tag }}
+        NIMBUS_PREBUILT_V8_TARGET: ${{ steps.resolve-prebuilt-v8.outputs.target }}
+        NIMBUS_PREBUILT_V8_MANIFEST: ${{ steps.download-prebuilt-v8-manifest.outputs.manifest-path }}
+        NIMBUS_PREBUILT_V8_CACHE_HIT: ${{ steps.restore-prebuilt-v8-cache.outputs.cache-hit }}
+      run: |
+        set -euo pipefail
+        runbook="pin-bump runbook: a maintainer must dispatch .github/workflows/rusty-v8-prebuild.yml for ${NIMBUS_PREBUILT_V8_RUSTY_TAG} before consuming it."
+        fail() {
+          echo "::error::$1 ${runbook}"
+          exit 1
+        }
+        trap 'fail "failed to download or verify rusty_v8 ${NIMBUS_PREBUILT_V8_VARIANT} payloads from ${NIMBUS_PREBUILT_V8_RELEASE_TAG}."' ERR
+
+        mirror_dir="${HOME}/.cache/rusty_v8/${NIMBUS_PREBUILT_V8_RELEASE_TAG}/${NIMBUS_PREBUILT_V8_VARIANT}/${NIMBUS_PREBUILT_V8_TARGET}"
+        mkdir -p "${mirror_dir}"
+
+        python3 - "${NIMBUS_PREBUILT_V8_MANIFEST}" "${NIMBUS_PREBUILT_V8_VARIANT}" "${NIMBUS_PREBUILT_V8_TARGET}" "${mirror_dir}" <<'PY' > "${RUNNER_TEMP}/prebuilt-v8-payload.env"
+        import json
+        import re
+        import sys
+        from pathlib import Path
+
+        manifest_path = Path(sys.argv[1])
+        variant_name = sys.argv[2]
+        target = sys.argv[3]
+        mirror_dir = Path(sys.argv[4])
+
+        manifest = json.loads(manifest_path.read_text())
+        variants = {
+            variant["name"]: variant
+            for variant in manifest["variants"]
+            if isinstance(variant, dict) and "name" in variant
+        }
+        if variant_name not in variants:
+            raise SystemExit(f"manifest missing requested variant {variant_name!r}")
+        variant = variants[variant_name]
+        if variant.get("profile") != "release":
+            raise SystemExit(f"{variant_name}: expected release profile, got {variant.get('profile')!r}")
+
+        expected_names = {
+            "release": (
+                f"librusty_v8_release_{target}.a",
+                f"src_binding_simdutf_release_{target}.rs",
+            ),
+            "ptrcomp": (
+                f"librusty_v8_release_ptrcomp_{target}.a",
+                f"src_binding_ptrcomp_simdutf_release_{target}.rs",
+            ),
+        }
+        archive_name, binding_name = expected_names[variant_name]
+        if variant["archive"]["filename"] != archive_name:
+            raise SystemExit(
+                f"{variant_name}: archive filename {variant['archive']['filename']!r} "
+                f"!= expected {archive_name!r}"
+            )
+        if variant["src_binding"]["filename"] != binding_name:
+            raise SystemExit(
+                f"{variant_name}: src_binding filename {variant['src_binding']['filename']!r} "
+                f"!= expected {binding_name!r}"
+            )
+        for value in (
+            archive_name,
+            binding_name,
+            variant["archive"]["sha256"],
+            variant["src_binding"]["sha256"],
+        ):
+            if "\n" in value or "\r" in value:
+                raise SystemExit("manifest contains a newline in a shell-exported field")
+        digest_re = re.compile(r"[0-9a-f]{64}")
+        if not digest_re.fullmatch(variant["archive"]["sha256"]):
+            raise SystemExit(f"{variant_name}: archive digest is not sha256 hex")
+        if not digest_re.fullmatch(variant["src_binding"]["sha256"]):
+            raise SystemExit(f"{variant_name}: src_binding digest is not sha256 hex")
+
+        print(f"ARCHIVE_NAME={archive_name}")
+        print(f"BINDING_NAME={binding_name}")
+        print(f"ARCHIVE_SHA={variant['archive']['sha256']}")
+        print(f"BINDING_SHA={variant['src_binding']['sha256']}")
+        print(f"ARCHIVE_PATH={mirror_dir / archive_name}")
+        print(f"BINDING_PATH={mirror_dir / binding_name}")
+        PY
+        # shellcheck disable=SC1090
+        source "${RUNNER_TEMP}/prebuilt-v8-payload.env"
+
+        verify_payloads() {
+          python3 - "${ARCHIVE_PATH}" "${ARCHIVE_SHA}" "${BINDING_PATH}" "${BINDING_SHA}" <<'PY'
+        import hashlib
+        import sys
+        from pathlib import Path
+
+        archive_path = Path(sys.argv[1])
+        archive_sha = sys.argv[2]
+        binding_path = Path(sys.argv[3])
+        binding_sha = sys.argv[4]
+
+        def digest(path: Path) -> str:
+            h = hashlib.sha256()
+            with open(path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            return h.hexdigest()
+
+        for path, expected in ((archive_path, archive_sha), (binding_path, binding_sha)):
+            if not path.is_file():
+                raise SystemExit(f"missing payload {path}")
+            if path.stat().st_size == 0:
+                raise SystemExit(f"empty payload {path}")
+            actual = digest(path)
+            if actual != expected:
+                raise SystemExit(f"manifest digest mismatch for {path.name}: {actual} != {expected}")
+            sidecar = Path(f"{path}.sha256")
+            if not sidecar.is_file():
+                raise SystemExit(f"missing sidecar {sidecar}")
+            fields = sidecar.read_text().split()
+            if len(fields) < 2 or fields[1].lstrip("*") != path.name:
+                raise SystemExit(f"sidecar {sidecar.name} does not name {path.name}: {fields!r}")
+            if fields[0] != actual:
+                raise SystemExit(
+                    f"sidecar digest for {path.name} ({fields[0]}) != recomputed/manifest {actual}"
+                )
+        PY
+        }
+
+        if ! verify_payloads; then
+          if [[ "${NIMBUS_PREBUILT_V8_CACHE_HIT}" == "true" ]]; then
+            fail "restored rusty_v8 payload cache does not match the fresh release manifest for ${NIMBUS_PREBUILT_V8_RELEASE_TAG}/${NIMBUS_PREBUILT_V8_VARIANT}."
+          fi
+          rm -f \
+            "${mirror_dir}/${ARCHIVE_NAME}" \
+            "${mirror_dir}/${ARCHIVE_NAME}.sha256" \
+            "${mirror_dir}/${BINDING_NAME}" \
+            "${mirror_dir}/${BINDING_NAME}.sha256"
+          gh release download "${NIMBUS_PREBUILT_V8_RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --dir "${mirror_dir}" \
+            --clobber \
+            --pattern "${ARCHIVE_NAME}" \
+            --pattern "${ARCHIVE_NAME}.sha256" \
+            --pattern "${BINDING_NAME}" \
+            --pattern "${BINDING_NAME}.sha256"
+          verify_payloads
+        fi
+
+        {
+          echo "RUSTY_V8_ARCHIVE=${ARCHIVE_PATH}"
+          echo "RUSTY_V8_MIRROR=${mirror_dir}"
+          echo "RUSTY_V8_SRC_BINDING_PATH=${BINDING_PATH}"
+        } >> "${GITHUB_ENV}"
+        {
+          echo "archive-path=${ARCHIVE_PATH}"
+          echo "binding-path=${BINDING_PATH}"
+          echo "mirror-dir=${mirror_dir}"
+        } >> "${GITHUB_OUTPUT}"
+
+    - name: Save prebuilt V8 payload cache
+      if: inputs.consume-prebuilt-v8 != 'false' && github.ref == 'refs/heads/main' && steps.restore-prebuilt-v8-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: ~/.cache/rusty_v8
+        key: ${{ steps.restore-prebuilt-v8-cache.outputs.cache-primary-key }}
+
     - name: Cache cargo artifacts
       uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       with:
         shared-key: ${{ inputs.shared-key }}
-        cache-directories: ~/.cargo/.rusty_v8
+        cache-directories: |
+          ~/.cargo/.rusty_v8
+          ~/.cargo/git/checkouts
         cache-on-failure: "true"
         cache-bin: ${{ inputs.cache-bin }}
         save-if: ${{ inputs.save-cache == 'always' || (inputs.save-cache == 'auto' && github.ref == 'refs/heads/main') }}
