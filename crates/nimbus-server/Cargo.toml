@@ -90,6 +90,7 @@ hyper = "1"
 hyper-util = { version = "0.1", features = ["server-auto", "tokio", "service"] }
 tower-http.workspace = true
 tracing.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }

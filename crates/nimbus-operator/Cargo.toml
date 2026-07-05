@@ -21,6 +21,7 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 time = { workspace = true, features = ["formatting", "parsing"] }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 tempfile.workspace = true

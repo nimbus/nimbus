@@ -27,6 +27,7 @@ url.workspace = true
 nimbus-egress = { path = "../nimbus-egress" }
 nimbus-proxy = { path = "../nimbus-proxy" }
 nimbus-storage = { path = "../nimbus-storage" }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 tempfile.workspace = true

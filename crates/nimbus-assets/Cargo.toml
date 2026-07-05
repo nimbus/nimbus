@@ -21,6 +21,7 @@ rust-embed = { version = "=8.11.0", features = ["interpolate-folder-path"], opti
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 tempfile.workspace = true

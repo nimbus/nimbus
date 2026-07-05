@@ -17,3 +17,4 @@ futures.workspace = true
 nimbus-core = { path = "../nimbus-core" }
 serde.workspace = true
 serde_json.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }

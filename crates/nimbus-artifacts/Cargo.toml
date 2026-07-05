@@ -16,3 +16,4 @@ workspace = true
 nimbus-core = { path = "../nimbus-core" }
 oci-client = "0.16"
 serde.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
