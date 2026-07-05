@@ -353,9 +353,10 @@ jobs:
           PY
           )"
           manifest_ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rusty_v8_ref"])' "${asset_dir}/manifest.json")"
+          manifest_deno_ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["deno_ref"])' "${asset_dir}/manifest.json")"
           manifest_target="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["target"])' "${asset_dir}/manifest.json")"
-          if [[ "${manifest_ref}" != "${RUSTY_V8_REF}" || "${manifest_target}" != "${TARGET}" ]]; then
-            echo "::error::manifest pins (${manifest_ref}, ${manifest_target}) do not match dispatch inputs (${RUSTY_V8_REF}, ${TARGET})"
+          if [[ "${manifest_ref}" != "${RUSTY_V8_REF}" || "${manifest_deno_ref}" != "${DENO_REF}" || "${manifest_target}" != "${TARGET}" ]]; then
+            echo "::error::manifest pins (${manifest_ref}, ${manifest_deno_ref}, ${manifest_target}) do not match dispatch inputs (${RUSTY_V8_REF}, ${DENO_REF}, ${TARGET})"
             exit 1
           fi
           echo "ASSET_DIR=${asset_dir}" >> "${GITHUB_ENV}"
