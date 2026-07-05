@@ -165,7 +165,7 @@ else
 fi
 
 step 10 "Generated/metamorphic storage conformance covers mixed histories"
-if grep -R "storage_conformance_required_seed_corpus_matches_model\|generated_storage_history_includes_schema_index_lifecycle_scheduler_retention" crates/nimbus-storage/src crates/nimbus-engine/src >/dev/null 2>&1 \
+if grep -R "storage_conformance_required_seed_corpus_matches_model\|schema_index_lifecycle_transition_and_retention_pin_set_the_diagnostic_retention_floor" crates/nimbus-storage/src crates/nimbus-engine/src >/dev/null 2>&1 \
    && grep -R "NIMBUS_STORAGE_CONFORMANCE_SEED\|NIMBUS_VERIFY_CASE" crates/nimbus-storage/src crates/nimbus-engine/src >/dev/null 2>&1 \
    && grep -R "crash.*replay.*diagnostic\|retention.*snapshot.*diagnostic" crates/nimbus-storage/src/tests crates/nimbus-storage/src/simulation >/dev/null 2>&1 \
    && proof_done "${PROOF_DIR}/sath9-generated-conformance.md"; then

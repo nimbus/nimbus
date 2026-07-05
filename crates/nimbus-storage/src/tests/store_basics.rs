@@ -45,7 +45,7 @@ fn delete_removes_document_from_point_read_and_scan_and_appends_commit_log_entry
     );
     assert!(
         scanned.is_empty(),
-        "table scan should not surface the deleted document through any index path"
+        "table scan of the primary documents table should not surface the deleted document"
     );
     assert_eq!(commit.writes.len(), 1);
     assert_eq!(commit.writes[0].doc_id, document.id);

@@ -1074,7 +1074,7 @@ async fn installing_executor_bootstraps_pending_invocations_after_restart() {
             "firebase:restartWritten".to_string(),
             "firebase:restartWrittenTwo".to_string(),
         ],
-        "restart bootstrap must replay every pending invocation exactly once, not reorder or drop one"
+        "restart bootstrap must replay every pending invocation exactly once and drop none (call order not asserted)"
     );
 }
 
@@ -1346,6 +1346,6 @@ async fn installing_executor_replays_running_invocations_after_restart() {
             "firebase:runningRestartWritten".to_string(),
             "firebase:runningRestartWrittenTwo".to_string(),
         ],
-        "restart replay must resume every running invocation exactly once, not reorder or drop one"
+        "restart replay must resume every running invocation exactly once and drop none (call order not asserted)"
     );
 }
