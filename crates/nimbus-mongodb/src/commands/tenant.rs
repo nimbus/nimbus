@@ -247,7 +247,19 @@ mod tests {
         let error = resolve_tenant_context("admin", "mongodb test", &principal)
             .expect_err("a bound connection must not reach the default tenant via admin");
         match error {
-            MongoError::Command { code, .. } => assert_eq!(code, UNAUTHORIZED.code),
+            MongoError::Command { code, message, .. } => {
+                assert_eq!(code, UNAUTHORIZED.code);
+                assert!(
+                    message.contains("authorized tenant tenant-a"),
+                    "error should name the authorized tenant: {message}"
+                );
+                assert!(
+                    message.contains("referenced tenant default"),
+                    "error should name the internal-db-mapped default tenant, proving the \
+                     `admin` -> `default` mapping actually ran rather than failing for an \
+                     unrelated reason: {message}"
+                );
+            }
             other => panic!("expected command error, got {other:?}"),
         }
     }
