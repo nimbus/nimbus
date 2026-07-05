@@ -785,6 +785,61 @@ mod tests {
     }
 
     #[test]
+    fn encrypted_memory_backend_set_len_grow_zeroes_stale_partial_page_tail() {
+        let dek = [0x42u8; 32];
+        let backend = EncryptedMemoryBackend::new(&dek).expect("backend should create");
+
+        // Materialize a full page of nonzero bytes, then shrink to a
+        // non-page-aligned length. Shrinking only truncates whole physical
+        // pages, so page 0's ciphertext still physically carries 0xAB in bytes
+        // [100..LOGICAL_PAGE_SIZE): a stale tail above the new logical length.
+        backend
+            .set_len(LOGICAL_PAGE_SIZE as u64)
+            .expect("set_len should work");
+        backend
+            .write(0, &[0xAB; LOGICAL_PAGE_SIZE])
+            .expect("full-page write should work");
+        backend.set_len(100).expect("shrink set_len should work");
+
+        // Grow from the non-page-aligned length past the old page boundary. The
+        // extend path must re-encrypt page 0 with its stale tail zero-filled
+        // before that tail becomes readable again.
+        backend
+            .set_len(LOGICAL_PAGE_SIZE as u64 + 200)
+            .expect("grow set_len should work");
+
+        // Bytes that were live before the shrink must survive the regrow.
+        let head = backend.read(0, 100).expect("head read should work");
+        assert_eq!(
+            head,
+            vec![0xAB; 100],
+            "bytes below the shrink point must remain intact after grow"
+        );
+
+        // The newly re-exposed tail of the old partial page must decrypt cleanly
+        // (no integrity error) and read back as zeros. If the grow path skips
+        // zero-filling the partial-page tail, this surfaces the leaked 0xAB bytes.
+        let exposed_tail = backend
+            .read(100, LOGICAL_PAGE_SIZE - 100)
+            .expect("re-exposed tail must decrypt cleanly");
+        assert_eq!(
+            exposed_tail,
+            vec![0u8; LOGICAL_PAGE_SIZE - 100],
+            "grow must zero-fill the stale tail of the partial last page, not leak old 0xAB bytes"
+        );
+
+        // The freshly created page beyond the old boundary is zero-filled too.
+        let new_page = backend
+            .read(LOGICAL_PAGE_SIZE as u64, 200)
+            .expect("new page read should work");
+        assert_eq!(
+            new_page,
+            vec![0u8; 200],
+            "newly grown page must be zero-filled and decryptable"
+        );
+    }
+
+    #[test]
     fn encrypted_memory_backend_wrong_key_fails() {
         let dek1 = [0x42u8; 32];
         let dek2 = [0x43u8; 32];
@@ -834,6 +889,48 @@ mod tests {
             let read = backend.read(0, 15).expect("read should work");
             assert_eq!(&read, b"persistent data");
         }
+    }
+
+    #[test]
+    fn encrypted_file_backend_multi_page_read_with_partial_tail() {
+        let dir = tempdir().expect("tempdir should create");
+        let path = dir.path().join("multi-page-partial-tail.redb.enc");
+        let dek = [0x42u8; 32];
+
+        let backend = EncryptedFileBackend::create(&path, &dek).expect("backend should create");
+        // Three logical pages of capacity so a read can cross into a nonzero
+        // page and still end before that page's boundary.
+        backend
+            .set_len(LOGICAL_PAGE_SIZE as u64 * 3)
+            .expect("set_len should work");
+
+        // Deterministic pattern where each logical byte encodes its position, so
+        // a mis-sliced final page is detectable byte-for-byte.
+        let total = LOGICAL_PAGE_SIZE * 3;
+        let pattern: Vec<u8> = (0..total).map(|i| (i % 251) as u8).collect();
+        backend.write(0, &pattern).expect("full write should work");
+
+        // Read a range that starts inside page 0 and ends 22 bytes into page 2 —
+        // a partial tail on a NONZERO page (page_start = 2 * LOGICAL_PAGE_SIZE).
+        // The final-page end is computed as `offset + len - page_start`; flipping
+        // that subtraction to addition overshoots and clamps to a full page,
+        // returning too many bytes.
+        let offset = 5usize;
+        let len = LOGICAL_PAGE_SIZE * 2 + 17; // ends at logical byte 2*LP + 22
+        let read = backend
+            .read(offset as u64, len)
+            .expect("range read should work");
+
+        assert_eq!(
+            read.len(),
+            len,
+            "partial-tail read must return exactly len bytes, not a full final page"
+        );
+        assert_eq!(
+            read.as_slice(),
+            &pattern[offset..offset + len],
+            "partial-tail read must return the exact plaintext slice"
+        );
     }
 
     #[test]

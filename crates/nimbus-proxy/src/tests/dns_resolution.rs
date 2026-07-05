@@ -230,6 +230,53 @@ fn egress_proxy_dns_overflow_defaults_to_deny_before_dial() {
     );
 }
 
+// Boundary companion to `egress_proxy_dns_overflow_defaults_to_deny_before_dial`:
+// at exactly `max_addresses_per_host` the resolved address set is within budget
+// and must forward. The cap comparison is strictly `len > cap` (over budget); a
+// `>=` regression would treat an exactly-at-cap set as overflow and deny it. With
+// cap 1 and one resolved address, correct code forwards (200) while the mutant
+// denies (403 "DNS cache overflow default deny").
+#[test]
+fn egress_proxy_allows_dns_addresses_exactly_at_cap() {
+    let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    let upstream_port = upstream.addr.port();
+    let resolver =
+        Arc::new(move |_host: &str, port: u16| Ok(vec![SocketAddr::from(([127, 0, 0, 1], port))]));
+    let proxy = WorkloadPep::start(
+        WorkloadPepConfig::new(allow_policy([EgressRule::new(
+            "allowed",
+            EgressProtocol::Http,
+            "allowed.test",
+            upstream_port,
+        )
+        .allow_internal_ips(true)]))
+        .with_timeouts(Duration::from_secs(5), Duration::from_secs(5))
+        .with_dns_cache_config(DnsCacheConfig::default().with_max_addresses_per_host(1))
+        .with_resolver(resolver),
+    )
+    .expect("proxy should start");
+
+    let response = proxy_request(
+        proxy.local_addr(),
+        format!(
+            "GET http://allowed.test:{upstream_port}/ok HTTP/1.1\r\nHost: allowed.test\r\n\r\n"
+        ),
+    );
+
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK"),
+        "exactly max_addresses_per_host resolved addresses is within budget and must forward; a `>=` cap regression would deny it as overflow, got: {response}"
+    );
+    let upstream_request = upstream
+        .request
+        .recv_timeout(Duration::from_secs(1))
+        .expect("an exactly-at-cap DNS set must forward to upstream, not be denied as overflow");
+    assert!(
+        upstream_request.starts_with("GET /ok HTTP/1.1"),
+        "proxy should forward the origin-form request after an at-cap DNS resolution, got: {upstream_request}"
+    );
+}
+
 #[test]
 fn egress_proxy_rejects_ambiguous_canonical_authorities() {
     let resolver_calls = Arc::new(AtomicUsize::new(0));

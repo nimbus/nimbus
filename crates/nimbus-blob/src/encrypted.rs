@@ -485,4 +485,113 @@ mod tests {
             Some(nimbus_core::StorageErrorKind::Corruption)
         );
     }
+
+    // Recipe 1: exercise the exact full-blob range (`0..len`) path, where
+    // `get_range` fetches the whole framed blob and calls `open_range`. No
+    // other counted test hits this branch, so a mutant that makes
+    // `open_range` return empty bytes survives without this assertion.
+    #[tokio::test]
+    async fn get_range_full_span_equals_get() {
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
+        let plaintext = Bytes::from_static(b"full range must equal a whole get");
+        let hash = store.put(plaintext.clone()).await.unwrap();
+        let len = plaintext.len() as u64;
+
+        let full = store.get_range(&hash, 0..len).await.unwrap();
+
+        assert_eq!(
+            full,
+            store.get(&hash).await.unwrap(),
+            "get_range(0..len) must return exactly what get() returns"
+        );
+        assert_eq!(
+            full, plaintext,
+            "get_range(0..len) must decode to the true plaintext, not empty bytes"
+        );
+    }
+
+    // Recipe 2: an in-bounds empty range (`n..n`) inside a non-empty blob is a
+    // valid empty slice, not an error. A mutant that narrows the `start > end`
+    // guard to reject `start == end` would turn this into an error.
+    #[tokio::test]
+    async fn get_range_empty_point_in_bounds_returns_empty_slice() {
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
+        let hash = store.put(Bytes::from_static(b"abcdefghij")).await.unwrap();
+
+        let point = store.get_range(&hash, 5..5).await.unwrap();
+
+        assert_eq!(
+            point,
+            Bytes::new(),
+            "an in-bounds empty range n..n yields an empty slice, not an error and not the whole blob"
+        );
+    }
+
+    // Recipe 3: prove the exact `0..len` request takes the whole-blob fast
+    // path (`self.inner.get` + `open_framed_blob_range`) whose trailing
+    // ciphertext-body-length check runs, rather than the partial-span path
+    // (`open_framed_span`) which sizes an exact per-frame span and never sees
+    // trailing bytes. Appending garbage past the true framed body makes only
+    // the whole-blob path reject it, so a mutant that flips the fast-path
+    // predicate (routing `0..len` through the partial-span path) would wrongly
+    // succeed and is caught here.
+    #[tokio::test]
+    async fn get_range_full_span_runs_whole_blob_body_length_check() {
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
+        let plaintext = Bytes::from_static(b"abcdefghij");
+        let len = plaintext.len() as u64;
+        let hash = store.put(plaintext.clone()).await.unwrap();
+
+        // Sanity: an untouched full-blob read succeeds and equals the plaintext.
+        assert_eq!(store.get_range(&hash, 0..len).await.unwrap(), plaintext);
+
+        // Append trailing bytes past the true framed body. The partial-span
+        // path computes a span of exactly [header .. header + one sealed
+        // frame] and never fetches these bytes; only the whole-blob fast path
+        // fetches the whole ciphertext and runs the body-length check.
+        let mut framed = store.inner().get(&hash).await.unwrap().to_vec();
+        framed.extend_from_slice(b"trailing garbage past the framed body");
+        let tampered_hash = store.inner().put(Bytes::from(framed)).await.unwrap();
+
+        let err = store.get_range(&tampered_hash, 0..len).await.unwrap_err();
+
+        assert_eq!(
+            err.storage_kind(),
+            Some(nimbus_core::StorageErrorKind::Corruption),
+            "the 0..len request must take the whole-blob path whose body-length check rejects \
+             trailing bytes; the partial-span path would ignore them and wrongly succeed"
+        );
+    }
+
+    // Recipe 4: `release` must delegate deletion to the inner
+    // content-addressed store. Inspect the inner store directly (not just the
+    // wrapper) so a mutant that makes `release` a no-op is caught.
+    #[tokio::test]
+    async fn release_delegates_deletion_to_inner_store() {
+        let store = EncryptedBlobStore::new(MemoryBlobStore::new(), key("acme"));
+        let hash = store
+            .put(Bytes::from_static(b"ephemeral secret"))
+            .await
+            .unwrap();
+        assert!(
+            store.inner().has(&hash).await.unwrap(),
+            "inner store holds the ciphertext before release"
+        );
+
+        store.release(&hash).await.unwrap();
+
+        assert!(
+            !store.inner().has(&hash).await.unwrap(),
+            "release must remove the ciphertext from the inner content-addressed store"
+        );
+        let err = store.inner().get(&hash).await.unwrap_err();
+        assert!(
+            matches!(err, Error::NotFound(_)),
+            "inner get after release is NotFound, matching the inner store's deletion semantics"
+        );
+        assert!(
+            !store.has(&hash).await.unwrap(),
+            "the encrypted wrapper also reports the blob gone after release"
+        );
+    }
 }

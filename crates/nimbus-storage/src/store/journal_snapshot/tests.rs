@@ -482,3 +482,92 @@ fn materialized_snapshot_records_durable_boundary_and_rejects_incomplete_tail() 
         .expect("rebuilt scan should succeed");
     assert_eq!(documents.len(), 1);
 }
+
+#[test]
+fn journal_replay_base_validator_accepts_empty_and_rejects_each_populated_field() {
+    // The all-empty sequence-0 base is the valid journal-replay import target.
+    // Inverting the documents clause rejects this empty base, so this assertion
+    // directly pins that mutation.
+    let empty = MaterializedJournalSnapshot::empty_for_point_in_time_base();
+    super::validate_materialized_journal_replay_base_is_empty(&empty)
+        .expect("an all-empty sequence-0 base must be accepted for journal-replay import");
+
+    let table = TableName::new("tasks").expect("table name should be valid");
+    let table_id = TableId::new();
+
+    // Each field, populated in isolation from the empty base, must be rejected.
+    // This pins every clause of the validator individually.
+    let mut nonzero_applied = empty.clone();
+    nonzero_applied.applied_sequence = SequenceNumber(1);
+    assert!(
+        matches!(
+            super::validate_materialized_journal_replay_base_is_empty(&nonzero_applied),
+            Err(Error::InvalidInput(_))
+        ),
+        "a nonzero applied_sequence must be rejected"
+    );
+
+    let mut nonzero_durable = empty.clone();
+    nonzero_durable.durable_head = SequenceNumber(1);
+    assert!(
+        matches!(
+            super::validate_materialized_journal_replay_base_is_empty(&nonzero_durable),
+            Err(Error::InvalidInput(_))
+        ),
+        "a nonzero durable_head must be rejected"
+    );
+
+    let mut with_identity = empty.clone();
+    with_identity.table_identities = vec![TableIdentitySnapshotEntry {
+        namespace: crate::table_identity::hidden_table_namespace(&table_id),
+        table: table.clone(),
+        table_id: table_id.clone(),
+        state: TableState::Active,
+    }];
+    assert!(
+        matches!(
+            super::validate_materialized_journal_replay_base_is_empty(&with_identity),
+            Err(Error::InvalidInput(_))
+        ),
+        "a non-empty table_identities set must be rejected"
+    );
+
+    let mut with_schema = empty.clone();
+    with_schema
+        .schema
+        .tables
+        .insert(table.clone(), tasks_schema());
+    assert!(
+        matches!(
+            super::validate_materialized_journal_replay_base_is_empty(&with_schema),
+            Err(Error::InvalidInput(_))
+        ),
+        "a non-empty schema must be rejected"
+    );
+
+    // Documents-only base: all other fields empty. If the documents clause is
+    // inverted, this base slips through as valid, so requiring rejection here
+    // pins the mutation from the other direction.
+    let mut with_documents = empty.clone();
+    with_documents.documents = vec![nimbus_core::Document::new(
+        table.clone(),
+        serde_json::Map::from_iter([("rank".to_string(), json!(1))]),
+    )];
+    assert!(
+        matches!(
+            super::validate_materialized_journal_replay_base_is_empty(&with_documents),
+            Err(Error::InvalidInput(_))
+        ),
+        "a non-empty documents set must be rejected (a documents-only base must not pass)"
+    );
+
+    let mut with_scheduled = empty.clone();
+    with_scheduled.scheduled_execution_ids = vec!["exec-1".to_string()];
+    assert!(
+        matches!(
+            super::validate_materialized_journal_replay_base_is_empty(&with_scheduled),
+            Err(Error::InvalidInput(_))
+        ),
+        "a non-empty scheduled_execution_ids set must be rejected"
+    );
+}
