@@ -197,6 +197,13 @@ lto = true
 codegen-units = 1
 strip = true
 
+[profile.ci-archive]
+inherits = "dev"
+debug = "line-tables-only"
+split-debuginfo = "packed"
+strip = "debuginfo"
+incremental = false
+
 # ── Nimbus fork overrides ────────────────────────────────────────────
 # Keep the public dependency surface aligned with upstream crate versions while
 # selecting the fork implementation immutably at the workspace root.
