@@ -472,7 +472,7 @@ jobs:
     env:
       NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES: "1"
       NODE_DEPENDENT_FILTER: >-
-        (package(nimbus-cli) and (test(/dev::tests::adoption::/) or test(/dev::redetect::tests::mid_session_(convex|firebase)_adoption_/) or test(/deploy::typecheck_tests::run_tsc_passes_clean_code_and_fails_on_type_error/) or test(/typeinfo::tests::/))) or (package(nimbus-server) and (test(/firebase_sdk_crud_selftest_smoke/) or test(/adapters::cloud_functions::(http|execution)::tests::cloud_functions_.*generated_.*bundle/)))
+        (package(nimbus-cli) and (test(/dev::tests::adoption::/) or test(/dev::redetect::tests::mid_session_(convex|firebase)_adoption_/) or test(/deploy::typecheck_tests::run_tsc_passes_clean_code_and_fails_on_type_error/) or test(/typeinfo::tests::/) or test(/codegen::tests::external_node_codegen_uses_embedded_tooling_without_app_codegen_package/))) or (package(nimbus-server) and (test(/firebase_sdk_crud_selftest_smoke/) or test(/adapters::cloud_functions::(http|execution)::tests::cloud_functions_.*generated_.*bundle/)))
     strategy:
       fail-fast: false
       matrix:
@@ -530,7 +530,7 @@ jobs:
     env:
       NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES: "1"
       NODE_DEPENDENT_FILTER: >-
-        (package(nimbus-cli) and (test(/dev::tests::adoption::/) or test(/dev::redetect::tests::mid_session_(convex|firebase)_adoption_/) or test(/deploy::typecheck_tests::run_tsc_passes_clean_code_and_fails_on_type_error/) or test(/typeinfo::tests::/))) or (package(nimbus-server) and (test(/firebase_sdk_crud_selftest_smoke/) or test(/adapters::cloud_functions::(http|execution)::tests::cloud_functions_.*generated_.*bundle/)))
+        (package(nimbus-cli) and (test(/dev::tests::adoption::/) or test(/dev::redetect::tests::mid_session_(convex|firebase)_adoption_/) or test(/deploy::typecheck_tests::run_tsc_passes_clean_code_and_fails_on_type_error/) or test(/typeinfo::tests::/) or test(/codegen::tests::external_node_codegen_uses_embedded_tooling_without_app_codegen_package/))) or (package(nimbus-server) and (test(/firebase_sdk_crud_selftest_smoke/) or test(/adapters::cloud_functions::(http|execution)::tests::cloud_functions_.*generated_.*bundle/)))
 
     steps:
       - name: Check out repository

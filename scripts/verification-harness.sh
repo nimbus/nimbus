@@ -119,7 +119,10 @@ run_surface_filter() {
   local filter_expr
   local key_suffix=""
   package="$(surface_package "$surface")"
-  filter_expr="package(${package}) and test(/(^|::)${test_name}$/)"
+  # Substring-parity with the legacy cargo/libtest path (review finding): the
+# old runner matched wrapper names by SUBSTRING, so suffix wrappers (e.g.
+# ..._matches_model_on_convex_demo_surface) were included. No end anchor.
+filter_expr="package(${package}) and test(/(^|::)${test_name}/)"
   if [[ -n "${NIMBUS_HARNESS_SHARD:-}" ]]; then
     key_suffix="-shard-${NIMBUS_HARNESS_SHARD//\//-of-}"
   fi
