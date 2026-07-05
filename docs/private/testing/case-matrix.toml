@@ -1,0 +1,155 @@
+[[surfaces]]
+surface = "storage_atomicity"
+mission_critical = true
+cases = [
+  { class = "smoke", tests = ["tests::store_basics::delete_removes_document_and_appends_commit"] },
+  { class = "main", tests = ["store::write::batch::tests::failed_batch_rolls_back_document_indexes_bindings_and_commit_log", "tests::sqlite_foundation::scheduler::sqlite_execution_unit_batch_commits_documents_and_schedule_ops_together"] },
+  { class = "edge", tests = ["tests::crud_and_journal::commit_log_sequences_increment", "store::journal::tests::tenant_event_journal_advances_next_sequence_once_per_commit"] },
+  { class = "error", tests = ["tests::sqlite_foundation::cancellation::sqlite_async_write_precommit_cancellation_leaves_no_state"] },
+  { class = "recovery", tests = ["tests::crud_and_journal::redb_index_versions_are_materialized_during_durable_recovery", "tests::sqlite_foundation::journal::sqlite_index_versions_are_materialized_during_durable_recovery"] },
+  { class = "real_world", tests = ["tests::generated_history::generated_storage_history_includes_schema_index_lifecycle_scheduler_retention"] },
+]
+
+[[surfaces]]
+surface = "mutation_path"
+mission_critical = true
+cases = [
+  { class = "smoke", tests = ["engine::execution_units::tests::mutation_execution_unit::mutation_execution_unit_insert_then_update_commits_as_single_insert"] },
+  { class = "main", tests = ["engine::execution_units::tests::mutation_execution_unit::mutation_execution_unit_commits_when_concurrent_write_is_disjoint", "tests::mutation_journal::applied_visibility::mutation_journal_returns_only_after_apply_visibility"] },
+  { class = "edge", tests = ["engine::execution_units::tests::mutation_execution_unit::mutation_execution_unit_conflict_scan_and_append_are_sequence_atomic"] },
+  { class = "error", tests = ["engine::execution_units::tests::mutation_execution_unit::mutation_execution_unit_aborts_on_overlapping_document_conflict", "tests::mutation_journal::cancellation::mutation_async_cancellable_before_commit_rolls_back_document_index_and_durable_journal"] },
+  { class = "recovery", tests = ["tests::mutation_journal::triggers::installing_executor_bootstraps_pending_invocations_after_restart", "tests::mutation_journal::triggers::installing_executor_replays_running_invocations_after_restart"] },
+  { class = "real_world", tests = ["tests::core_http::documents_and_commits::generated_history::generated_task_history_matches_model_on_native_http_surface"] },
+]
+
+[[surfaces]]
+surface = "tenant_isolation"
+mission_critical = true
+cases = [
+  { class = "smoke", tests = ["tests::engine_tenant_data_is_isolated_across_tenants"] },
+  { class = "main", tests = ["tests::tenant_isolation_decision_issues_narrow_service_and_storage_access", "tests::access_keys_isolate_tenants"] },
+  { class = "edge", tests = ["runtime::realm_lease::tests::cross_tenant_checkout_is_rejected_before_contract_installation"] },
+  { class = "error", tests = ["tests::tenant_isolation_decision_rejects_mismatched_application_claims", "commands::tenant::tests::bound_principal_refuses_cross_tenant_db"] },
+  { class = "recovery", tests = ["manager::tests::tenant_teardown::teardown_tenant_stops_tracked_sandboxes_and_clears_tenant_resources"] },
+  { class = "real_world", tests = ["tests::tenant_isolation_harness::tenant_isolation_conformance_suite_covers_runtime_services_storage_and_system_control"] },
+]
+
+[[surfaces]]
+surface = "blob_crypto"
+mission_critical = true
+cases = [
+  { class = "smoke", tests = ["encrypted::tests::put_then_get_round_trips_through_crypto"] },
+  { class = "main", tests = ["encrypted::tests::streamed_put_uses_crypto_salt_and_round_trips", "encrypted::tests::multi_frame_plaintext_round_trips"] },
+  { class = "edge", tests = ["encrypted::tests::get_range_straddles_two_frames", "encrypted::tests::empty_plaintext_round_trips"] },
+  { class = "error", tests = ["encrypted::tests::tampered_ciphertext_fails_to_open", "encrypted::tests::tampered_header_len_fails_to_open"] },
+  { class = "recovery", tests = ["encrypted::tests::crypto_shred_by_losing_tenant_dek_makes_blob_unreadable", "encrypted_redb::tests::page_swap_attack_is_detected"] },
+  { class = "real_world", tests = ["tests::encrypted_blob_stores_are_tenant_scoped", "tests::resolver_tier_policy_rehydrates_encrypted_local_cache"] },
+]
+
+[[surfaces]]
+surface = "egress_pep"
+mission_critical = true
+cases = [
+  { class = "smoke", tests = ["tests::forward_http::egress_proxy_allows_matching_http_request"] },
+  { class = "main", tests = ["tests::policy_lifecycle::egress_proxy_global_ceiling_narrows_sandbox_policy_end_to_end", "backends::oci::egress::tests::ensure_egress_proxy_running_starts_pep_for_assignment"] },
+  { class = "edge", tests = ["tests::dns_resolution::egress_proxy_dns_budget_times_out_closed_without_disturbing_sibling", "tests::connect_tunnel::egress_proxy_canonicalizes_connect_authority_case_and_trailing_dot"] },
+  { class = "error", tests = ["tests::policy_lifecycle::egress_proxy_denies_default_policy_without_contacting_upstream", "backends::oci::egress::tests::ensure_egress_proxy_running_denies_when_assignment_absent"] },
+  { class = "recovery", tests = ["tests::policy_lifecycle::egress_proxy_invalid_reload_preserves_last_known_good_generation", "tests::substrate_shutdown::dropping_proxy_terminates_in_flight_work_without_disturbing_sibling"] },
+  { class = "real_world", tests = ["tests::https_intercept::egress_proxy_intercepts_https_and_injects_credentials_after_tls_decryption", "outbound::tests::cross_substrate_egress_parity_one_deny_blocks_all"] },
+]
+
+[[surfaces]]
+surface = "runtime_bridge"
+mission_critical = true
+cases = [
+  { class = "smoke", tests = ["runtime::tests::basic_invocation::web_standard::runtime_loads_bundle_and_invokes_host_bridge"] },
+  { class = "main", tests = ["runtime::tests::host_bridge::runtime_async_ops_use_async_host_bridge_path", "runtime::tests::host_bridge::runtime_async_write_and_scheduler_ops_use_async_host_bridge_path"] },
+  { class = "edge", tests = ["runtime::tests::host_bridge::runtime_same_isolate_nested_entry_uses_sync_host_bridge_path", "runtime::tests::host_bridge::runtime_query_paginate_treats_full_page_with_cursor_as_not_done"] },
+  { class = "error", tests = ["adapters::convex::tests::contracts::dispatch_host_call_rejects_operation_payload_mismatches_before_handler_dispatch", "runtime::tests::host_bridge::runtime_query_context_is_reader_only_when_request_kind_is_present"] },
+  { class = "recovery", tests = ["runtime::tests::pool_reuse::warm_pooled_runtime_rebinds_host_bridge_per_invocation", "runtime::tests::pool_reuse::fresh_realm_installs_bootstrap_and_uses_bound_host_bridge"] },
+  { class = "real_world", tests = ["adapters::convex::tests::authorization::runtime_host_bridge_query_and_insert_respect_engine_authorization", "backends::wasmtime::host_linker::tests::wasmtime_linker_routes_database_imports_through_host_bridge"] },
+]
+
+[[surfaces]]
+surface = "convex_adapter"
+mission_critical = false
+cases = [
+  { class = "smoke", tests = ["tests::convex_functions::basic::query::convex_query_returns_documents_as_plain_json"] },
+  { class = "main", tests = ["tests::convex_functions::basic::mutation::convex_mutation_dispatches_existing_document_operations"] },
+  { class = "edge", tests = ["tests::convex_functions::query_shapes::pagination::convex_named_paginated_query_and_action_resolve_from_manifest"] },
+  { class = "error", tests = ["tests::convex_runtime::http_routes::status_codes::convex_http_routes_return_404_and_405_when_appropriate"] },
+  { class = "recovery", tests = ["tests::auth::websocket_auth::convex_websocket_disconnect_releases_runtime_subscription_children"] },
+  { class = "real_world", tests = ["tests::convex_runtime::http_routes::demo_flow::scenarios::convex_http_demo_flow_matches_generated_app_behavior"] },
+]
+
+[[surfaces]]
+surface = "firebase_firestore_adapter"
+mission_critical = false
+cases = [
+  { class = "smoke", tests = ["tests::firebase_auth_and_availability::firebase_rest_routes_are_registered_when_adapter_is_enabled"] },
+  { class = "main", tests = ["tests::firebase_rest_crud::firebase_commit_executes_atomic_batch_and_returns_firestore_commit_response", "tests::firebase_grpc_unary::firebase_grpc_point_crud_handles_explicit_and_generated_ids_masks_and_preconditions"] },
+  { class = "edge", tests = ["tests::firebase_rest_query::firebase_run_query_supports_composite_unary_filters_and_name_tiebreaks"] },
+  { class = "error", tests = ["tests::firebase_rest_query::firebase_run_query_reports_missing_index_for_compound_query_without_matching_schema_index"] },
+  { class = "recovery", tests = ["tests::firebase_listen::firebase_listen_resume_token_reconnects_with_delta_only", "tests::firebase_write_stream::firebase_write_stream_replays_unacknowledged_responses_on_resume"] },
+  { class = "real_world", tests = ["tests::firebase_rest_crud::firebase_sdk_crud_selftest_smoke"] },
+]
+
+[[surfaces]]
+surface = "cloud_functions_adapter"
+mission_critical = false
+cases = [
+  { class = "smoke", tests = ["adapters::cloud_functions::http::tests::cloud_functions_http_handler_runs_generated_framework_bundle_end_to_end"] },
+  { class = "main", tests = ["adapters::cloud_functions::execution::tests::cloud_functions_trigger_lifecycle_runs_generated_firebase_bundle_after_committed_write"] },
+  { class = "edge", tests = ["adapters::cloud_functions::execution::tests::cloud_functions_trigger_lifecycle_enforces_chain_depth_limit"] },
+  { class = "error", tests = ["adapters::cloud_functions::http::tests::cloud_functions_callable_handler_fails_closed_when_bearer_auth_cannot_be_verified"] },
+  { class = "recovery", tests = ["adapters::cloud_functions::execution::tests::cloud_functions_trigger_lifecycle_suppresses_noop_updates_before_real_updated_events"] },
+  { class = "real_world", tests = ["adapters::cloud_functions::execution::tests::cloud_functions_trigger_executor_runs_generated_firebase_bundle_with_admin_firestore_operations"] },
+]
+
+[[surfaces]]
+surface = "mongodb_adapter"
+mission_critical = false
+cases = [
+  { class = "smoke", tests = ["adapters::mongodb::listener::tests::listener_handles_ping"] },
+  { class = "main", tests = ["tests::mongodb_wire::mongodb_wire_crud_roundtrip"] },
+  { class = "edge", tests = ["commands::tenant::tests::maps_mongodb_internal_databases_to_default_tenant_context"] },
+  { class = "error", tests = ["adapters::mongodb::listener::tests::listener_rejects_unauthenticated_data_command"] },
+  { class = "recovery", gap = "B8 wave adapters" },
+  { class = "real_world", tests = ["dev::tests::adoption::mid_session_mongodb_adoption_round_trips_with_subscriptions_intact"] },
+]
+
+[[surfaces]]
+surface = "dynamodb_adapter"
+mission_critical = false
+cases = [
+  { class = "smoke", tests = ["adapters::dynamodb::listener::tests::known_target_dispatches_through_to_handler"] },
+  { class = "main", tests = ["tests::dynamodb_wire::dynamodb_wire_item_crud_roundtrip", "tests::dynamodb_wire::dynamodb_wire_query_scan_with_pagination"] },
+  { class = "edge", tests = ["tests::dynamodb_wire::dynamodb_wire_transact_write_commit_abort"] },
+  { class = "error", tests = ["adapters::dynamodb::listener::tests::unauthenticated_request_is_rejected", "adapters::dynamodb::listener::tests::oversize_body_is_rejected_before_auth"] },
+  { class = "recovery", gap = "B8 wave adapters" },
+  { class = "real_world", tests = ["dev::tests::adoption::detected_wire_app_round_trips_mongodb_and_dynamodb_drivers"] },
+]
+
+[[surfaces]]
+surface = "s3_adapter"
+mission_critical = false
+cases = [
+  { class = "smoke", tests = ["tests::put_get_range_and_list_are_s3_shaped"] },
+  { class = "main", tests = ["adapters::s3::listener::tests::s3_route_accepts_v4_presigned_get_urls"] },
+  { class = "edge", tests = ["tests::conditional_requests_enforce_s3_etag_preconditions"] },
+  { class = "error", tests = ["adapters::s3::listener::tests::unsigned_request_is_rejected_by_s3_service", "tests::put_object_rejects_unsupported_checksum_headers"] },
+  { class = "recovery", tests = ["tests::put_object_releases_new_blob_when_manifest_commit_fails"] },
+  { class = "real_world", tests = ["tests::convex_hmac_download_serves_bytes_and_fails_closed_after_blob_loss"] },
+]
+
+[[surfaces]]
+surface = "cloudflare_adapter"
+mission_critical = false
+cases = [
+  { class = "smoke", tests = ["adapters::cloudflare::host_bridge::tests::cloudflare_worker_env_ns_e2e_round_trips_kv"] },
+  { class = "main", tests = ["adapters::cloudflare::durable_objects::tests::durable_object_storage_transaction_round_trips_per_instance"] },
+  { class = "edge", tests = ["adapters::cloudflare::durable_objects::tests::durable_object_per_instance_lanes_make_independent_progress"] },
+  { class = "error", tests = ["adapters::cloudflare::durable_objects::tests::durable_object_expired_activation_lease_fences_reads_and_writes"] },
+  { class = "recovery", tests = ["adapters::cloudflare::durable_objects::tests::durable_object_alarm_and_websocket_hibernation_round_trip"] },
+  { class = "real_world", gap = "B8 wave adapters" },
+]
