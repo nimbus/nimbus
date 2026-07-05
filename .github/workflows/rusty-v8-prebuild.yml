@@ -19,18 +19,23 @@ on:
         options:
           - x86_64-unknown-linux-gnu
 
-permissions:
-  contents: write
+# Permissions are per-job: the build job (which executes the fork's untrusted
+# build scripts) gets read-only; only the publish job — a FRESH runner that
+# never ran untrusted code — gets contents:write. A single job would let a
+# compromised build capture the token when a later step receives it.
+permissions: {}
 
 concurrency:
   group: rusty-v8-prebuild-${{ github.event.inputs.rusty_v8_ref }}
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Publish rusty_v8 prebuild
+  build:
+    name: Build rusty_v8 prebuild (unprivileged)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    permissions:
+      contents: read
 
     env:
       DENO_REF: ${{ inputs.deno_ref }}
@@ -60,11 +65,11 @@ jobs:
           path: rusty_v8
           fetch-depth: 1
           submodules: false
-          # SECURITY: this job holds contents:write and then executes the fork's
-          # build scripts (build.rs, GN/ninja, chromium tooling). Never persist
-          # the workflow token into the fork checkout — build steps run
-          # credential-free; only the explicit gh publish/verify steps receive
-          # GH_TOKEN via env. (Both repos are public; fetches need no token.)
+          # SECURITY: this job executes the fork's build scripts (build.rs,
+          # GN/ninja, chromium tooling), so it is read-only AND runs
+          # credential-free — never persist any token into the fork checkout.
+          # Publishing happens in the separate fresh-runner job below.
+          # (Both repos are public; fetches need no token.)
           persist-credentials: false
 
       - name: Configure googlesource credentials
@@ -296,6 +301,43 @@ jobs:
             sha256sum manifest.json > manifest.json.sha256
             ls -lh
           )
+
+      - name: Upload prebuild assets for the publish job
+        uses: actions/upload-artifact@v7
+        with:
+          name: rusty-v8-prebuild-assets
+          path: ${{ runner.temp }}/rusty-v8-prebuild-assets
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish rusty_v8 prebuild (fresh runner)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: [build]
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: rusty-v8-${{ inputs.rusty_v8_ref }}
+      RUSTY_V8_REF: ${{ inputs.rusty_v8_ref }}
+      DENO_REF: ${{ inputs.deno_ref }}
+      TARGET: ${{ inputs.target }}
+
+    steps:
+      - name: Download prebuild assets
+        uses: actions/download-artifact@v8
+        with:
+          name: rusty-v8-prebuild-assets
+          path: ${{ runner.temp }}/rusty-v8-prebuild-assets
+
+      - name: Resolve publish context
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset_dir="${RUNNER_TEMP}/rusty-v8-prebuild-assets"
+          echo "ASSET_DIR=${asset_dir}" >> "${GITHUB_ENV}"
+          echo "RUSTY_V8_SHA=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rusty_v8_sha"])' "${asset_dir}/manifest.json")" >> "${GITHUB_ENV}"
+          (cd "${asset_dir}" && sha256sum -c manifest.json.sha256)
 
       - name: Publish release assets
         shell: bash
