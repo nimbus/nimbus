@@ -17,3 +17,4 @@ nimbus-core = { path = "../nimbus-core" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 serde.workspace = true
 sha2.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }

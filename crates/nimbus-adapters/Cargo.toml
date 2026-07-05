@@ -22,6 +22,7 @@ nimbus-dynamodb = { path = "../nimbus-dynamodb", optional = true }
 nimbus-firebase = { path = "../nimbus-firebase", optional = true }
 nimbus-mongodb = { path = "../nimbus-mongodb", optional = true }
 nimbus-s3 = { path = "../nimbus-s3", optional = true }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [lints]
 workspace = true

@@ -28,6 +28,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "ti
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 url.workspace = true
 webpki-roots = "1.0.8"
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 tempfile.workspace = true

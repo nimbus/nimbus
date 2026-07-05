@@ -29,6 +29,7 @@ thiserror.workspace = true
 time = { workspace = true, features = ["formatting", "parsing"] }
 tokio.workspace = true
 tonic = "0.13.0"
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [build-dependencies]
 protoc-bin-vendored = "3"

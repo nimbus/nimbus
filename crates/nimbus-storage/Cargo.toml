@@ -39,6 +39,7 @@ tokio-native-tls.workspace = true
 tokio-postgres.workspace = true
 tower-service.workspace = true
 tracing.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 base64.workspace = true

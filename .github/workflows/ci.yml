@@ -760,6 +760,12 @@ jobs:
           tool: nextest@0.9.138
           fallback: none
 
+      - name: Install cargo-hakari
+        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        with:
+          tool: cargo-hakari@0.9.38
+          fallback: cargo-install
+
       - name: Download nimbus-ui artifacts
         uses: actions/download-artifact@v8
         with:
@@ -796,6 +802,9 @@ jobs:
 
       - name: Run taxonomy check before archive
         run: python3 scripts/test-taxonomy.py check
+
+      - name: Check workspace-hack drift
+        run: cargo hakari generate --diff
 
       # CALIBRATED 2026-07-05 (run 28739808188): the pre-B10 archive job consumed
       # 30 GiB from its post-reclaim baseline (108G -> 78G free). B10 moves the

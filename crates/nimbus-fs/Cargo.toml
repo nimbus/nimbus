@@ -27,6 +27,7 @@ deno_permissions.workspace = true
 fuser = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 proptest = "1"

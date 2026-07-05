@@ -63,6 +63,7 @@ zeroize.workspace = true
 flate2 = "1"
 oci-client = "0.16"
 zstd = "0.13"
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [build-dependencies]
 serde_json.workspace = true

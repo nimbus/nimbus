@@ -6615,6 +6615,7 @@ dependencies = [
  "nimbus-firebase",
  "nimbus-mongodb",
  "nimbus-s3",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6624,6 +6625,7 @@ dependencies = [
  "nimbus-core",
  "oci-client",
  "serde",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6635,6 +6637,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6645,6 +6648,7 @@ dependencies = [
  "nimbus-core",
  "serde",
  "serde_json",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6654,6 +6658,7 @@ dependencies = [
  "nimbus-cli",
  "tokio",
  "tracing-subscriber",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6669,6 +6674,7 @@ dependencies = [
  "object_store",
  "tempfile",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6686,6 +6692,7 @@ dependencies = [
  "serde_json",
  "time",
  "tracing",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6734,6 +6741,7 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
+ "workspace-hack",
  "zeroize",
  "zstd",
 ]
@@ -6758,6 +6766,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tracing",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6767,6 +6776,7 @@ dependencies = [
  "oxc",
  "serde",
  "serde_json",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6789,6 +6799,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6824,6 +6835,7 @@ dependencies = [
  "tokio",
  "tracing",
  "windows-sys 0.61.2",
+ "workspace-hack",
  "zeroize",
 ]
 
@@ -6845,6 +6857,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "uuid",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6853,6 +6866,7 @@ version = "0.1.44"
 dependencies = [
  "nimbus-core",
  "serde",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6883,6 +6897,7 @@ dependencies = [
  "tokio-postgres",
  "tokio-util",
  "tracing",
+ "workspace-hack",
  "zeroize",
 ]
 
@@ -6910,6 +6925,7 @@ dependencies = [
  "tokio",
  "tonic 0.13.1",
  "tonic-build",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6919,6 +6935,7 @@ dependencies = [
  "base64 0.22.1",
  "nimbus-core",
  "ring",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6941,6 +6958,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6957,6 +6975,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6967,6 +6986,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6977,6 +6997,7 @@ dependencies = [
  "nimbus-sandbox",
  "serde",
  "serde_json",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -6997,6 +7018,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7014,6 +7036,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tokio",
+ "workspace-hack",
  "zbus",
  "zbus_systemd",
 ]
@@ -7033,6 +7056,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7047,6 +7071,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "time",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7054,6 +7079,7 @@ name = "nimbus-provenance"
 version = "0.1.44"
 dependencies = [
  "nimbus-artifacts",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7079,6 +7105,7 @@ dependencies = [
  "tokio-rustls",
  "url",
  "webpki-roots 1.0.8",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7152,6 +7179,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "ulid",
+ "workspace-hack",
  "zip",
 ]
 
@@ -7182,6 +7210,7 @@ dependencies = [
  "ulid",
  "url",
  "windows-sys 0.61.2",
+ "workspace-hack",
  "zstd",
 ]
 
@@ -7263,6 +7292,7 @@ dependencies = [
  "tracing",
  "windows-sys 0.59.0",
  "wiremock",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7283,6 +7313,7 @@ dependencies = [
  "tokio",
  "ulid",
  "url",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7320,6 +7351,7 @@ dependencies = [
  "tower-service",
  "tracing",
  "windows-sys 0.61.2",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7339,6 +7371,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7355,6 +7388,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2 0.10.9",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7372,6 +7406,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7382,6 +7417,7 @@ dependencies = [
  "nimbus-tenant",
  "serde",
  "sha2 0.10.9",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -13783,6 +13819,123 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser 0.251.0",
+]
+
+[[package]]
+name = "workspace-hack"
+version = "0.1.0"
+dependencies = [
+ "allocator-api2",
+ "arrayvec",
+ "aws-credential-types",
+ "aws-lc-rs",
+ "aws-smithy-async",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "axum",
+ "axum-core",
+ "bitflags 2.11.0",
+ "bytes",
+ "cc",
+ "chrono",
+ "crossbeam-utils",
+ "crypto-common 0.1.7",
+ "deadpool",
+ "deranged",
+ "digest 0.10.7",
+ "digest 0.11.2",
+ "either",
+ "errno",
+ "fastrand",
+ "flate2",
+ "form_urlencoded",
+ "futures-channel",
+ "futures-core",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+ "getrandom 0.2.17",
+ "getrandom 0.4.2",
+ "hashbrown 0.17.1",
+ "hyper 0.14.32",
+ "hyper 1.10.1",
+ "hyper-rustls",
+ "hyper-util",
+ "icu_locale_core",
+ "icu_provider",
+ "indexmap 2.14.0",
+ "libc",
+ "linux-raw-sys 0.12.1",
+ "litemap",
+ "lock_api",
+ "log",
+ "md-5 0.11.0",
+ "memchr",
+ "miniz_oxide",
+ "nix 0.30.1",
+ "nom 7.1.3",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "once_cell",
+ "parking_lot",
+ "percent-encoding",
+ "phf 0.13.1",
+ "phf_shared 0.11.3",
+ "phf_shared 0.13.1",
+ "potential_utf",
+ "prettyplease",
+ "proc-macro2",
+ "prost 0.13.5",
+ "quote",
+ "rand 0.10.1",
+ "rand 0.8.5",
+ "rand_core 0.6.4",
+ "regex",
+ "regex-automata",
+ "regex-syntax",
+ "reqwest 0.13.2",
+ "rustix 1.1.4",
+ "rustls",
+ "rustls-pki-types",
+ "rustls-webpki",
+ "security-framework-sys",
+ "serde",
+ "serde_core",
+ "serde_json",
+ "simdutf8",
+ "slab",
+ "smallvec",
+ "stable_deref_trait",
+ "strum 0.27.2",
+ "subtle",
+ "syn 2.0.117",
+ "time",
+ "time-macros",
+ "tinystr",
+ "tokio",
+ "tokio-rustls",
+ "tokio-stream",
+ "tokio-util",
+ "toml_parser",
+ "tower 0.5.3",
+ "tower-http",
+ "tracing",
+ "tracing-core",
+ "typenum",
+ "uncased",
+ "url",
+ "uuid",
+ "winnow 1.0.1",
+ "writeable",
+ "yoke 0.8.2",
+ "zerocopy",
+ "zerofrom",
+ "zeroize",
+ "zerotrie",
+ "zerovec",
 ]
 
 [[package]]
