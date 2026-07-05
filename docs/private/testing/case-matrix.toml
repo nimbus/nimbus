@@ -2,12 +2,12 @@
 surface = "storage_atomicity"
 mission_critical = true
 cases = [
-  { class = "smoke", tests = ["tests::store_basics::delete_removes_document_and_appends_commit"] },
+  { class = "smoke", tests = ["tests::store_basics::delete_removes_document_from_point_read_and_scan_and_appends_commit_log_entry"] },
   { class = "main", tests = ["store::write::batch::tests::failed_batch_rolls_back_document_indexes_bindings_and_commit_log", "tests::sqlite_foundation::scheduler::sqlite_execution_unit_batch_commits_documents_and_schedule_ops_together"] },
   { class = "edge", tests = ["tests::crud_and_journal::commit_log_sequences_increment", "store::journal::tests::tenant_event_journal_advances_next_sequence_once_per_commit"] },
   { class = "error", tests = ["tests::sqlite_foundation::cancellation::sqlite_async_write_precommit_cancellation_leaves_no_state"] },
   { class = "recovery", tests = ["tests::crud_and_journal::redb_index_versions_are_materialized_during_durable_recovery", "tests::sqlite_foundation::journal::sqlite_index_versions_are_materialized_during_durable_recovery"] },
-  { class = "real_world", tests = ["tests::generated_history::generated_storage_history_includes_schema_index_lifecycle_scheduler_retention"] },
+  { class = "real_world", tests = ["tests::generated_history::schema_index_lifecycle_transition_and_retention_pin_set_the_diagnostic_retention_floor"] },
 ]
 
 [[surfaces]]

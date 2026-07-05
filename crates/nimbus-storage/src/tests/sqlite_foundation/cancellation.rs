@@ -80,6 +80,8 @@ async fn sqlite_async_write_precommit_cancellation_leaves_no_state() {
     let gate_for_task = gate.clone();
     let cancel = Arc::new(Notify::new());
     let cancel_for_wait = cancel.clone();
+    let cancel_observed = Arc::new(Notify::new());
+    let cancel_observed_for_wait = cancel_observed.clone();
     let handle = tokio::spawn({
         let storage = storage.clone();
         async move {
@@ -87,6 +89,13 @@ async fn sqlite_async_write_precommit_cancellation_leaves_no_state() {
                 .execute_write_cancellable(
                     async move {
                         cancel_for_wait.notified().await;
+                        // Signal the instant the cancellation future itself resolves, before
+                        // the write executor's own `select!` arm records the cancellation flag.
+                        // Both happen in the same cooperative poll on this current-thread
+                        // runtime with no intervening await, so observing this notification is
+                        // sufficient to know the flag write has already happened by the time the
+                        // test resumes.
+                        cancel_observed_for_wait.notify_one();
                     },
                     || Ok(()),
                     move |transaction| {
@@ -103,7 +112,9 @@ async fn sqlite_async_write_precommit_cancellation_leaves_no_state() {
         .await
         .expect("sqlite write should reach the pre-commit gate");
     cancel.notify_one();
-    tokio::time::sleep(Duration::from_millis(25)).await;
+    timeout(Duration::from_secs(1), cancel_observed.notified())
+        .await
+        .expect("cancellation flag should be recorded before the pre-commit gate releases");
     gate.release();
 
     let outcome = timeout(Duration::from_secs(1), handle)
