@@ -14,11 +14,17 @@ sys.modules[SPEC.name] = taxonomy
 SPEC.loader.exec_module(taxonomy)
 
 
-def row(pattern="test(/ignored/)", reason="heavy-resource", expiry=None, scope="filter"):
+def row(
+    pattern="test(/ignored/)",
+    reason="heavy-resource",
+    expiry=None,
+    scope="filter",
+    evidence="measured with nextest list",
+):
     return taxonomy.Exclusion(
         pattern=pattern,
         reason=reason,
-        evidence="measured with nextest list",
+        evidence=evidence,
         measured_at="2026-07-05",
         owner="test-infra",
         issue="PLAN.md#b1",
@@ -155,7 +161,19 @@ class InventoryAndCoverageTests(unittest.TestCase):
 
 
 class ScopeGateTests(unittest.TestCase):
-    def test_check_fails_closed_on_filter_scope_rows_until_b2(self):
+    def nextest_case(self, name="demo::slow_case", ignored=False):
+        return taxonomy.NextestTest(
+            path="target/debug/deps/demo",
+            line=0,
+            name=name,
+            crate="demo",
+            ignored=ignored,
+            canonical_id=name,
+            binary_name="demo",
+            kind="lib",
+        )
+
+    def test_check_fails_closed_on_filter_scope_rows_without_authoritative_json(self):
         filter_row = row("test(/slow_case/)", scope="filter")
         errors = taxonomy.check_taxonomy(
             exclusions=[filter_row],
@@ -165,6 +183,50 @@ class ScopeGateTests(unittest.TestCase):
             today=dt.date(2026, 7, 5),
         )
         self.assertTrue(any("gated until the B2" in error for error in errors))
+
+    def test_check_accepts_filter_scope_when_authoritative_json_matches_non_ignored_test(self):
+        filter_row = row(
+            "test(/slow_case/)",
+            scope="filter",
+            evidence="duration 62s in ci-pr lane",
+        )
+        errors = taxonomy.check_taxonomy(
+            exclusions=[filter_row],
+            nextest_config_text=taxonomy.generate_nextest_section([filter_row]),
+            tests=[],
+            nextest_tests=[self.nextest_case()],
+            env_violations=[],
+            today=dt.date(2026, 7, 5),
+        )
+        self.assertEqual(errors, [])
+
+    def test_check_rejects_filter_scope_matching_only_ignored_nextest_tests(self):
+        filter_row = row(
+            "test(/slow_case/)",
+            scope="filter",
+            evidence="duration 62s in ci-pr lane",
+        )
+        errors = taxonomy.check_taxonomy(
+            exclusions=[filter_row],
+            nextest_config_text=taxonomy.generate_nextest_section([filter_row]),
+            tests=[],
+            nextest_tests=[self.nextest_case(ignored=True)],
+            env_violations=[],
+            today=dt.date(2026, 7, 5),
+        )
+        self.assertTrue(any("matches zero real non-ignored" in error for error in errors))
+
+    def test_check_rejects_filter_scope_without_duration_or_lane_evidence(self):
+        filter_row = row("test(/slow_case/)", scope="filter", evidence="measured manually")
+        errors = taxonomy.check_taxonomy(
+            exclusions=[filter_row],
+            nextest_config_text=taxonomy.generate_nextest_section([filter_row]),
+            tests=[],
+            nextest_tests=[self.nextest_case()],
+            env_violations=[],
+            today=dt.date(2026, 7, 5),
+        )
+        self.assertTrue(any("evidence must cite a measured duration" in error for error in errors))
 
     def test_profile_scope_passes_when_pattern_in_config(self):
         profile_row = row("test(/pool_reuse::isol_/)", scope="profile")
@@ -194,6 +256,48 @@ class ScopeGateTests(unittest.TestCase):
 
 
 class ScannerTests(unittest.TestCase):
+    def test_scanner_includes_inline_test_module_in_canonical_id(self):
+        import tempfile
+        source = (
+            "pub fn real() {}\n"
+            "#[cfg(test)]\n"
+            "mod tests {\n"
+            "    #[test]\n"
+            "    fn inline_case() {}\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            file = Path(tmp) / "crates" / "demo" / "src" / "lib.rs"
+            file.parent.mkdir(parents=True)
+            file.write_text(source)
+            tests = taxonomy.scan_rust_tests(Path(tmp))
+            self.assertEqual([test.canonical_id for test in tests], ["tests::inline_case"])
+
+    def test_scanner_ignores_raw_string_braces_when_tracking_inline_modules(self):
+        import tempfile
+        source = (
+            "#[cfg(test)]\n"
+            "mod tests {\n"
+            "    #[test]\n"
+            "    fn first_case() {\n"
+            "        let _json = r#\"{\n"
+            "  \"x\": 1\n"
+            "}\"#;\n"
+            "    }\n"
+            "    #[test]\n"
+            "    fn second_case() {}\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            file = Path(tmp) / "crates" / "demo" / "src" / "lib.rs"
+            file.parent.mkdir(parents=True)
+            file.write_text(source)
+            tests = taxonomy.scan_rust_tests(Path(tmp))
+            self.assertEqual(
+                [test.canonical_id for test in tests],
+                ["tests::first_case", "tests::second_case"],
+            )
+
     def test_scanner_sees_test_behind_multiline_ignore_string(self):
         import tempfile
         source = (
@@ -306,3 +410,110 @@ class CaseMatrixTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LexStateTrackerTests(unittest.TestCase):
+    def test_brace_in_char_literal_does_not_change_depth(self):
+        delta, state = taxonomy._brace_delta_with_raw_state("let a = '{';", taxonomy._LexState())
+        self.assertEqual(delta, 0)
+        self.assertEqual(state.comment_depth, 0)
+        delta, _ = taxonomy._brace_delta_with_raw_state("let b = '}';", taxonomy._LexState())
+        self.assertEqual(delta, 0)
+
+    def test_brace_in_block_comment_ignored_and_state_crosses_lines(self):
+        state = taxonomy._LexState()
+        delta, state = taxonomy._brace_delta_with_raw_state("/* opening { brace", state)
+        self.assertEqual(delta, 0)
+        self.assertEqual(state.comment_depth, 1)
+        delta, state = taxonomy._brace_delta_with_raw_state("still { inside } */ fn x() {", state)
+        self.assertEqual(state.comment_depth, 0)
+        self.assertEqual(delta, 1)
+
+    def test_nested_block_comments_track_depth(self):
+        state = taxonomy._LexState()
+        delta, state = taxonomy._brace_delta_with_raw_state("/* outer /* inner { */ still } */", state)
+        self.assertEqual(delta, 0)
+        self.assertEqual(state.comment_depth, 0)
+
+    def test_unbalanced_raw_string_brace_crosses_lines(self):
+        state = taxonomy._LexState()
+        delta, state = taxonomy._brace_delta_with_raw_state('let s = r#"open { brace', state)
+        self.assertEqual(delta, 0)
+        self.assertIsNotNone(state.raw_terminator)
+        delta, state = taxonomy._brace_delta_with_raw_state('still { unbalanced "# ; }', state)
+        self.assertIsNone(state.raw_terminator)
+        self.assertEqual(delta, -1)
+
+    def test_lifetime_quote_does_not_swallow_braces(self):
+        delta, _ = taxonomy._brace_delta_with_raw_state("fn f<'a>(x: &'a str) {", taxonomy._LexState())
+        self.assertEqual(delta, 1)
+
+
+class InventoryGateTests(unittest.TestCase):
+    def test_loader_parses_real_nextest_json_shape(self):
+        payload = {
+            "rust-suites": {
+                "nimbus-demo::bin/demo": {
+                    "package-name": "nimbus-demo",
+                    "binary-name": "demo",
+                    "kind": "test",
+                    "binary-path": "/t/demo",
+                    "testcases": {
+                        "mod_a::fast_case": {"ignored": False, "filter-match": {"status": "matches"}},
+                        "mod_a::slow_ignored_case": {"ignored": True, "filter-match": {"status": "matches"}},
+                    },
+                }
+            }
+        }
+        import json as _json
+        tests = taxonomy.load_nextest_tests_from_json(_json.dumps(payload))
+        self.assertEqual(len(tests), 2)
+        by_name = {t.canonical_id: t for t in tests}
+        self.assertFalse(by_name["mod_a::fast_case"].ignored)
+        self.assertTrue(by_name["mod_a::slow_ignored_case"].ignored)
+        self.assertEqual(by_name["mod_a::fast_case"].crate, "nimbus-demo")
+        self.assertEqual(by_name["mod_a::fast_case"].binary_name, "demo")
+        filter_row = row("test(/mod_a::fast_case/)", scope="filter")
+        errors = taxonomy.check_taxonomy(
+            exclusions=[filter_row],
+            nextest_config_text=taxonomy.generate_nextest_section([filter_row]),
+            tests=[],
+            nextest_tests=tests,
+            env_violations=[],
+            today=dt.date(2026, 7, 5),
+        )
+        self.assertTrue(any("must cite a measured duration" in e for e in errors))
+        self.assertFalse(any("matches zero" in e for e in errors))
+
+    def test_filter_evidence_rejects_bare_words_accepts_measured(self):
+        self.assertFalse(taxonomy.evidence_cites_duration_or_lane("duration TBD"))
+        self.assertFalse(taxonomy.evidence_cites_duration_or_lane("lane"))
+        self.assertTrue(taxonomy.evidence_cites_duration_or_lane("measured 20.2s in shard 2"))
+        self.assertTrue(taxonomy.evidence_cites_duration_or_lane("runs in the ci-nightly lane"))
+
+    def test_gating_requires_meta_platform_and_version(self):
+        import tempfile, json as _json
+        with tempfile.TemporaryDirectory() as tmp:
+            inv = Path(tmp) / "nextest-list.json"
+            meta = Path(tmp) / "nextest-list.meta.json"
+            inv.write_text('{"rust-suites": {}}')
+            orig_inv, orig_meta = taxonomy.NEXTEST_INVENTORY_PATH, taxonomy.INVENTORY_META_PATH
+            try:
+                taxonomy.NEXTEST_INVENTORY_PATH, taxonomy.INVENTORY_META_PATH = inv, meta
+                tests, reason = taxonomy.load_inventory_for_gating()
+                self.assertIsNone(tests)
+                self.assertIn("meta absent", reason)
+                meta.write_text(_json.dumps({"platform": "aarch64-apple-darwin", "nextest_version": "0.9.138"}))
+                tests, reason = taxonomy.load_inventory_for_gating()
+                self.assertIsNone(tests)
+                self.assertIn("not canonical", reason)
+                meta.write_text(_json.dumps({"platform": "x86_64-unknown-linux-gnu", "nextest_version": "0.9.135"}))
+                tests, reason = taxonomy.load_inventory_for_gating()
+                self.assertIsNone(tests)
+                self.assertIn("not the required", reason)
+                meta.write_text(_json.dumps({"platform": "x86_64-unknown-linux-gnu", "nextest_version": "0.9.138"}))
+                tests, reason = taxonomy.load_inventory_for_gating()
+                self.assertEqual(tests, [])
+                self.assertEqual(reason, "canonical")
+            finally:
+                taxonomy.NEXTEST_INVENTORY_PATH, taxonomy.INVENTORY_META_PATH = orig_inv, orig_meta
