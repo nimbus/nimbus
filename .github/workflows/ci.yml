@@ -532,6 +532,7 @@ jobs:
 
       - name: Record rerun visibility
         if: github.run_attempt > 1
+        continue-on-error: true
         run: bash scripts/ci/append-rerun-visibility.sh "rust-workspace-tests shard ${{ matrix.partition }}"
 
       - name: Run workspace test lane (shard ${{ matrix.partition }})
@@ -611,6 +612,7 @@ jobs:
 
       - name: Record rerun visibility
         if: github.run_attempt > 1
+        continue-on-error: true
         run: bash scripts/ci/append-rerun-visibility.sh "workspace-run-node"
 
       - name: Assert workspace filter partition
@@ -1198,7 +1200,7 @@ jobs:
       # enforces expiry on flaky-quarantine rows.
       - name: Detect nextest flaky retries
         if: always() && steps.run-nightly.outcome != 'skipped'
-        run: python3 scripts/ci/detect-nextest-flakes.py "$RUNNER_TEMP/nextest-nightly-${{ matrix.shard-id }}.log"
+        run: python3 scripts/ci/detect-nextest-flakes.py "target/nextest/ci-nightly/junit.xml" "**/nextest/ci-nightly/junit.xml"
 
   doctests:
     name: Rust Doctests

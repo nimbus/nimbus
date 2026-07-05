@@ -34,16 +34,29 @@ def partition_summary(timing: dict[str, Any]) -> str:
     )
 
 
+def is_green(item: dict[str, Any]) -> bool:
+    """A K arm counts only if every partition in it succeeded (review finding:
+    a red/short-circuited K must never become the movement-rule candidate)."""
+    partitions = item.get("partitions", [])
+    if not partitions:
+        return False
+    return all(int(part.get("status", 1)) == 0 for part in partitions)
+
+
 def movement_rule(timings: list[dict[str, Any]]) -> str:
     by_k = {int(item["k"]): item for item in timings}
     current = by_k.get(3)
     if current is None:
         return "MOVEMENT-RULE current=K=3 verdict=PENDING(missing K=3 timing)"
+    if not is_green(current):
+        return "MOVEMENT-RULE current=K=3 verdict=PENDING(non-green K=3 baseline)"
 
     baseline = float(current["max_partition_seconds"])
-    alternatives = [item for item in timings if int(item["k"]) != 3]
+    alternatives = [
+        item for item in timings if int(item["k"]) != 3 and is_green(item)
+    ]
     if not alternatives:
-        return "MOVEMENT-RULE current=K=3 verdict=PENDING(no alternative timings)"
+        return "MOVEMENT-RULE current=K=3 verdict=PENDING(no green alternative timings)"
 
     best = max(
         alternatives,

@@ -1,107 +1,89 @@
 #!/usr/bin/env python3
-"""Emit CI annotations for nextest retry-pass flaky detections."""
+"""Detect retry-pass flaky tests from nextest JUnit output (A9/F13).
+
+Parses ONLY the documented JUnit flaky markers (<flakyFailure>/<flakyError>):
+a test that failed and then passed on retry. Genuine failures (<failure>) and
+rerun-still-failing tests (<rerunFailure>/<rerunError>) are NOT classified as
+flaky — they are real reds and stay the run's responsibility.
+
+Emits ::error:: per flaky test plus machine-readable summary lines:
+    FLAKY-DETECTED <test-id> <attempts>
+Disposition: a flaky-quarantine ledger row (owner/issue/expiry mandatory;
+scripts/test-taxonomy.py check enforces expiry).
+"""
 
 from __future__ import annotations
 
 import argparse
-import json
+import glob
 import os
-import re
 import sys
-from pathlib import Path
-from typing import Iterable
+import xml.etree.ElementTree as ET
 
 
-ATTEMPT_SUFFIX_RE = re.compile(r"^(?P<test_id>.+)#(?P<attempts>[0-9]+)$")
-HUMAN_FLAKY_RE = re.compile(
-    r"^\s*FLKY-\S+\s+(?P<attempts>[0-9]+)/[0-9]+\s+\[[^\]]+\]\s+\([^)]+\)\s+"
-    r"(?P<package>\S+)\s+(?P<name>.+?)\s*$"
-)
-
-
-def iter_lines(paths: Iterable[Path]) -> Iterable[str]:
-    for path in paths:
-        with path.open(encoding="utf-8", errors="replace") as handle:
-            yield from handle
-
-
-def structured_flakes(lines: Iterable[str]) -> dict[str, int]:
+def flaky_tests(junit_path: str) -> dict[str, int]:
     flakes: dict[str, int] = {}
-    for line in lines:
-        stripped = line.strip()
-        if not stripped.startswith("{"):
+    tree = ET.parse(junit_path)
+    for case in tree.iter("testcase"):
+        flaky_elems = case.findall("flakyFailure") + case.findall("flakyError")
+        if not flaky_elems:
             continue
-        try:
-            event = json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
-        if event.get("type") != "test" or event.get("event") != "failed":
-            continue
-        reason = str(event.get("reason") or "")
-        if "flaky" not in reason.lower():
-            continue
-        raw_name = str(event.get("name") or "")
-        match = ATTEMPT_SUFFIX_RE.match(raw_name)
-        test_id = match.group("test_id") if match else raw_name
-        attempts = int(match.group("attempts")) if match else 2
-        flakes[test_id] = max(flakes.get(test_id, 0), attempts)
+        classname = case.get("classname", "")
+        name = case.get("name", "")
+        test_id = f"{classname}::{name}" if classname else name
+        # attempts = flaky retries observed + the final (passing) attempt
+        flakes[test_id] = len(flaky_elems) + 1
     return flakes
 
 
-def human_flakes(lines: Iterable[str]) -> dict[str, int]:
-    flakes: dict[str, int] = {}
-    for line in lines:
-        match = HUMAN_FLAKY_RE.match(line)
-        if not match:
-            continue
-        test_id = f"{match.group('package')}::{match.group('name')}"
-        attempts = int(match.group("attempts"))
-        flakes[test_id] = max(flakes.get(test_id, 0), attempts)
-    return flakes
-
-
-def parse_args(argv: list[str]) -> argparse.Namespace:
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("logs", nargs="+", type=Path, help="nextest output logs to parse")
     parser.add_argument(
-        "--summary",
-        type=Path,
-        default=Path(os.environ["GITHUB_STEP_SUMMARY"])
-        if os.environ.get("GITHUB_STEP_SUMMARY")
-        else None,
-        help="GitHub step summary path",
+        "junit_globs",
+        nargs="+",
+        help="JUnit XML paths or globs (nextest ci-nightly junit output)",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args()
 
-
-def main(argv: list[str]) -> int:
-    args = parse_args(argv)
-    for path in args.logs:
-        if not path.is_file():
-            print(f"::error::nextest log not found: {path}", file=sys.stderr)
-            return 1
-
-    text_lines = list(iter_lines(args.logs))
-    flakes = structured_flakes(text_lines)
-    if not flakes:
-        flakes = human_flakes(text_lines)
-
-    if not flakes:
-        print("no nextest flaky retry detections found")
+    paths: list[str] = []
+    for pattern in args.junit_globs:
+        paths.extend(sorted(glob.glob(pattern, recursive=True)))
+    if not paths:
+        print(
+            f"::warning::no JUnit files matched {args.junit_globs} — "
+            "flake detection had nothing to scan"
+        )
         return 0
 
-    details = ", ".join(f"{test_id} attempts={attempts}" for test_id, attempts in sorted(flakes.items()))
-    print(f"::error::nextest flaky retry detections: {details}")
-    for test_id, attempts in sorted(flakes.items()):
-        print(f"::error::FLAKY {test_id} attempts={attempts}")
+    all_flakes: dict[str, int] = {}
+    for path in paths:
+        try:
+            all_flakes.update(flaky_tests(path))
+        except ET.ParseError as error:
+            print(f"::warning::unparseable JUnit file {path}: {error}")
 
-    if args.summary is not None:
-        with args.summary.open("a", encoding="utf-8") as summary:
-            for test_id, attempts in sorted(flakes.items()):
-                summary.write(f"FLAKY-DETECTED {test_id} {attempts}\n")
+    if not all_flakes:
+        print("no flaky detections")
+        return 0
 
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    summary_lines = []
+    for test_id, attempts in sorted(all_flakes.items()):
+        print(
+            f"::error::FLAKY test detected: {test_id} needed {attempts} attempts — "
+            "file a flaky-quarantine ledger row (owner/issue/expiry) and fix or delete"
+        )
+        summary_lines.append(f"FLAKY-DETECTED {test_id} {attempts}")
+    if summary_path:
+        try:
+            with open(summary_path, "a", encoding="utf-8") as handle:
+                handle.write("\n".join(summary_lines) + "\n")
+        except OSError as error:  # visibility must never mask the detection itself
+            print(f"::warning::could not append step summary: {error}")
+    # Under flaky-result=fail the run already failed; this exit code makes the
+    # detection step itself red so the annotation is impossible to miss.
     return 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    sys.exit(main())
