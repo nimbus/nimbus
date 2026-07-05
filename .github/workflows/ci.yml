@@ -464,10 +464,8 @@ jobs:
     # CW2: Rust Workspace Tests is sharded across N partitions via
     # cargo-nextest's `--partition hash:N/M`. nextest hashes the test path to
     # produce a deterministic assignment that stays stable across runs (so
-    # cache reuse and rerun-on-failure both behave). Shard 1 also runs the
-    # workspace doctests because nextest does not support doc tests; the
-    # doctest pass is small (~30s) so its placement on a single shard does
-    # not move the wall.
+    # cache reuse and rerun-on-failure both behave). B4 keeps these shards as
+    # compile lanes; archive-consuming shards land in B5.
     name: Rust Workspace Tests (shard ${{ matrix.partition }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -480,13 +478,10 @@ jobs:
         include:
           - partition: "1/3"
             shard-id: "1"
-            run-doctests: "true"
           - partition: "2/3"
             shard-id: "2"
-            run-doctests: "false"
           - partition: "3/3"
             shard-id: "3"
-            run-doctests: "false"
 
     steps:
       - name: Check out repository
@@ -509,10 +504,10 @@ jobs:
           tool: nextest@0.9.138
           fallback: none
 
-      # `make test-rust-workspace` and `make test-rust-docs` both depend on the
-      # nimbus-ui dist target, so Make's graph runs codegen + SPA build before
-      # invoking cargo. Node is therefore a build prerequisite for any Rust
-      # lane that touches nimbus-server.
+      # `make test-rust-workspace` depends on the nimbus-ui dist target, so
+      # Make's graph runs codegen + SPA build before invoking cargo. Node is
+      # therefore a build prerequisite for any Rust lane that touches
+      # nimbus-server.
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
@@ -536,12 +531,283 @@ jobs:
           NIMBUS_NEXTEST_PARTITION: ${{ matrix.partition }}
         run: make test-rust-workspace
 
+  archive:
+    name: Rust Test Archive
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    if: github.event_name != 'schedule'
+    needs: [ui-artifacts]
+    env:
+      NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Free runner disk for archive build
+        run: |
+          df -h /
+          sudo rm -rf \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /usr/share/dotnet
+          df -h /
+
+      - name: Set up Rust with cache
+        id: setup-rust
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: ci-ubuntu-stable-archive-no-bin-v1
+          linux-linker: lld
+          linux-openssl-provider: system
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        with:
+          tool: nextest@0.9.138
+          fallback: none
+
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ui-artifacts
+          path: packages/nimbus-ui
+
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Download embedded package payload
+        uses: actions/download-artifact@v8
+        with:
+          name: embedded-packages
+          path: crates/nimbus-assets/embedded/packages
+
+      - name: Refresh embedded package payload mtimes
+        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
+
+      - name: Cache Node22 anchor snapshot
+        uses: actions/cache@v5
+        with:
+          path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
+          key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
+
+      - name: Generate + verify embedded anchor snapshot
+        run: env -u V8_FROM_SOURCE make build-node22-anchor-snapshot-off
+
+      - name: Run taxonomy check before archive
+        run: python3 scripts/test-taxonomy.py check
+
+      # CALIBRATED 2026-07-05 (run 28739808188): the archive job consumed 30 GiB
+      # from its post-reclaim baseline (108G -> 78G free; archive build 10.2m,
+      # archive 1.49 GiB, nimbus-bin 2.3m). F12 budget = measured 30G x 1.25 =
+      # 38G requirement, enforced as free-space floors with legible exit 28:
+      # >=45G before the compile, >=20G after each build stage.
+      - name: Enforce disk budget before archive compile
+        run: bash scripts/ci/disk-guard.sh enforce --label before-archive-compile --min-free-gib 45
+
+      - name: Build nextest archive
+        run: cargo nextest archive --workspace --exclude nimbus-runtime --locked --cargo-profile ci-archive --archive-file "$RUNNER_TEMP/nimbus-tests.tar.zst"
+
+      - name: Enforce disk budget after archive
+        if: always()
+        run: bash scripts/ci/disk-guard.sh enforce --label after-archive --min-free-gib 20
+
+      - name: Check archive size cap
+        run: |
+          archive="$RUNNER_TEMP/nimbus-tests.tar.zst"
+          size_bytes="$(stat -c%s "$archive")"
+          warn_bytes=$((6 * 1024 * 1024 * 1024))
+          fail_bytes=$((9 * 1024 * 1024 * 1024))
+          size_gib="$(awk -v bytes="$size_bytes" 'BEGIN { printf "%.2f", bytes / 1024 / 1024 / 1024 }')"
+          echo "archive-size=${size_gib} GiB (${size_bytes} bytes)"
+          if [ "$size_bytes" -gt "$fail_bytes" ]; then
+            echo "::error::nimbus-tests archive is ${size_gib} GiB, above the 9 GiB hard cap"
+            exit 1
+          fi
+          if [ "$size_bytes" -gt "$warn_bytes" ]; then
+            echo "::warning::nimbus-tests archive is ${size_gib} GiB, above the 6 GiB warning cap"
+          fi
+
+      - name: Build nimbus-bin with archive profile
+        run: cargo build -p nimbus-bin --profile ci-archive --locked
+
+      - name: Enforce disk budget after nimbus-bin
+        if: always()
+        run: bash scripts/ci/disk-guard.sh enforce --label after-nimbus-bin --min-free-gib 20
+
+      - name: Prepare nextest config artifact
+        run: sha256sum .config/nextest.toml > .config/nextest.toml.sha256
+
+      - name: Generate canonical nextest inventory
+        run: |
+          mkdir -p target/test-inventory
+          cargo nextest list --workspace --exclude nimbus-runtime --run-ignored all --locked --cargo-profile ci-archive --message-format json > target/test-inventory/nextest-list.json
+          python3 - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          meta = {
+              "platform": "x86_64-unknown-linux-gnu",
+              "nextest_version": "0.9.138",
+              "command": "cargo nextest list --workspace --exclude nimbus-runtime --run-ignored all --locked --cargo-profile ci-archive --message-format json",
+              "git_rev": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+          }
+          Path("target/test-inventory/nextest-list.meta.json").write_text(
+              json.dumps(meta, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Run taxonomy check with canonical inventory
+        run: python3 scripts/test-taxonomy.py check
+
+      - name: Check archive test universe
+        run: |
+          cargo nextest list --archive-file "$RUNNER_TEMP/nimbus-tests.tar.zst" --workspace-remap "$GITHUB_WORKSPACE" --run-ignored all --message-format json > target/test-inventory/nextest-archive-list.json
+          python3 - <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          def load_json(path: str) -> dict:
+              text = Path(path).read_text(encoding="utf-8")
+              match = re.search(r"^\{", text, re.MULTILINE)
+              if not match:
+                  raise SystemExit(f"{path} does not contain a JSON object")
+              return json.loads(text[match.start():])
+
+          def test_ids(data: dict) -> set[str]:
+              ids: set[str] = set()
+              for suite in data.get("rust-suites", {}).values():
+                  package = str(suite.get("package-name") or suite.get("package_name") or "")
+                  if package == "nimbus-runtime":
+                      continue
+                  binary = str(suite.get("binary-name") or suite.get("binary_name") or "")
+                  # Ignored tests are INCLUDED in the universe identity: an
+                  # ignored-only suite (e.g. nimbus-kv spawn_harness) vanishing
+                  # from the archive must trip this gate too (review finding).
+                  for name, case in suite.get("testcases", {}).items():
+                      ids.add(f"{package}::{binary}::{name}")
+              return ids
+
+          inventory = test_ids(load_json("target/test-inventory/nextest-list.json"))
+          archive = test_ids(load_json("target/test-inventory/nextest-archive-list.json"))
+          missing = sorted(inventory - archive)
+          if missing:
+              print(f"::error::archive universe shrinkage: {len(missing)} inventory tests (incl. ignored) are missing from the archive")
+              for test_id in missing[:200]:
+                  print(f"missing: {test_id}")
+              if len(missing) > 200:
+                  print(f"... and {len(missing) - 200} more")
+              sys.exit(1)
+          print(f"archive universe ok: {len(inventory)} non-runtime tests present (ignored included)")
+          PY
+
+      - name: Upload nimbus tests archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: nimbus-tests-archive
+          path: ${{ runner.temp }}/nimbus-tests.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload nimbus-bin binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: nimbus-bin
+          path: target/ci-archive/nimbus
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload nextest config
+        uses: actions/upload-artifact@v7
+        with:
+          name: nextest-config
+          path: |
+            .config/nextest.toml
+            .config/nextest.toml.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload nextest inventory
+        uses: actions/upload-artifact@v7
+        with:
+          name: nextest-inventory
+          path: |
+            target/test-inventory/nextest-list.json
+            target/test-inventory/nextest-list.meta.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload disk report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: disk-report
+          path: target/disk-report.json
+          if-no-files-found: error
+          retention-days: 1
+
+  doctests:
+    name: Rust Doctests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    if: github.event_name != 'schedule'
+    needs: [ui-artifacts]
+    env:
+      # Parity with the former shard-1 doctest leg (review finding): the shard
+      # matrix carried this; doctests keep it so no fixture behavior shifts.
+      # --locked on the doctest command is an intentional strengthening.
+      NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust with cache
+        id: setup-rust
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: ci-ubuntu-stable-doctests-no-bin-v1
+          linux-linker: lld
+          linux-openssl-provider: system
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ui-artifacts
+          path: packages/nimbus-ui
+
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Download embedded package payload
+        uses: actions/download-artifact@v8
+        with:
+          name: embedded-packages
+          path: crates/nimbus-assets/embedded/packages
+
+      - name: Refresh embedded package payload mtimes
+        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
+
+      - name: Cache Node22 anchor snapshot
+        uses: actions/cache@v5
+        with:
+          path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
+          key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
+
       - name: Run workspace doctests
-        if: matrix.run-doctests == 'true'
-        # nextest intentionally does not run doctests, so keep this explicit
-        # libtest pass to preserve the coverage of the previous cargo test lane.
-        # Pinned to shard 1 so it runs exactly once across the matrix.
-        run: make test-rust-docs
+        run: cargo test --doc --workspace --exclude nimbus-runtime --locked
 
   external-provider-tests:
     name: External Provider Integration Tests (${{ matrix.provider }})
@@ -918,6 +1184,8 @@ jobs:
       - rust-runtime-ptrcomp-check
       - bun-runtime-contract
       - rust-workspace-tests
+      - archive
+      - doctests
       - external-provider-tests
       - node-faas-compatibility
       - node-dbus-integration
@@ -932,6 +1200,8 @@ jobs:
           RUNTIME_PTRCOMP_RESULT: ${{ needs['rust-runtime-ptrcomp-check'].result }}
           BUN_RUNTIME_CONTRACT_RESULT: ${{ needs['bun-runtime-contract'].result }}
           WORKSPACE_TEST_RESULT: ${{ needs['rust-workspace-tests'].result }}
+          ARCHIVE_RESULT: ${{ needs['archive'].result }}
+          DOCTEST_RESULT: ${{ needs['doctests'].result }}
           EXTERNAL_PROVIDER_TEST_RESULT: ${{ needs['external-provider-tests'].result }}
           NODE_FAAS_COMPATIBILITY_RESULT: ${{ needs['node-faas-compatibility'].result }}
           NODE_DBUS_RESULT: ${{ needs['node-dbus-integration'].result }}
@@ -943,6 +1213,8 @@ jobs:
           printf 'runtime-ptrcomp=%s\n' "${RUNTIME_PTRCOMP_RESULT}"
           printf 'bun-runtime-contract=%s\n' "${BUN_RUNTIME_CONTRACT_RESULT}"
           printf 'workspace-test=%s\n' "${WORKSPACE_TEST_RESULT}"
+          printf 'archive=%s\n' "${ARCHIVE_RESULT}"
+          printf 'doctests=%s\n' "${DOCTEST_RESULT}"
           printf 'external-provider-test=%s\n' "${EXTERNAL_PROVIDER_TEST_RESULT}"
           printf 'node-faas-compatibility=%s\n' "${NODE_FAAS_COMPATIBILITY_RESULT}"
           printf 'node-dbus-integration=%s\n' "${NODE_DBUS_RESULT}"
@@ -967,6 +1239,8 @@ jobs:
             echo "| rust-runtime-ptrcomp-check | $(icon "${RUNTIME_PTRCOMP_RESULT}") ${RUNTIME_PTRCOMP_RESULT} |"
             echo "| bun-runtime-contract | $(icon "${BUN_RUNTIME_CONTRACT_RESULT}") ${BUN_RUNTIME_CONTRACT_RESULT} |"
             echo "| rust-workspace-tests | $(icon "${WORKSPACE_TEST_RESULT}") ${WORKSPACE_TEST_RESULT} |"
+            echo "| archive | $(icon "${ARCHIVE_RESULT}") ${ARCHIVE_RESULT} |"
+            echo "| doctests | $(icon "${DOCTEST_RESULT}") ${DOCTEST_RESULT} |"
             echo "| external-provider-tests | $(icon "${EXTERNAL_PROVIDER_TEST_RESULT}") ${EXTERNAL_PROVIDER_TEST_RESULT} |"
             echo "| node-faas-compatibility | $(icon "${NODE_FAAS_COMPATIBILITY_RESULT}") ${NODE_FAAS_COMPATIBILITY_RESULT} |"
             echo "| node-dbus-integration | $(icon "${NODE_DBUS_RESULT}") ${NODE_DBUS_RESULT} |"
@@ -978,6 +1252,8 @@ jobs:
           test "${RUNTIME_PTRCOMP_RESULT}" = success
           test "${BUN_RUNTIME_CONTRACT_RESULT}" = success
           test "${WORKSPACE_TEST_RESULT}" = success
+          test "${ARCHIVE_RESULT}" = success
+          test "${DOCTEST_RESULT}" = success
           test "${EXTERNAL_PROVIDER_TEST_RESULT}" = success
           test "${NODE_FAAS_COMPATIBILITY_RESULT}" = success
           test "${NODE_DBUS_RESULT}" = success
@@ -1329,6 +1605,7 @@ jobs:
           bash -n scripts/verify-machine-os-release-ref-contract.sh
           bash -n scripts/verify-machine-os-release-ref-contract-helper.sh
           bash -n scripts/ci/verify-prebuilt-v8-consumption.sh
+          bash -n scripts/ci/disk-guard.sh
           bash -n scripts/install.sh
           bash -n scripts/verify-install.sh
           bash -n scripts/verify-install-helper.sh
