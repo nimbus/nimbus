@@ -41,7 +41,7 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
 
 ### Phase 1 - Launch Safety And Egress Trust
 
-- `nimbus-proxy-pingora-plan.md` - `active`. Owns the production proxy substrate
+- `nimbus-proxy-pingora-plan.md` - `complete` (K11P0-K11P13 merged, PR #94; verifier 113/0). Owns the production proxy substrate
   inside `nimbus-proxy`: Pingora phases, async forwarding, peer/pool identity,
   lifecycle, observability, selective HTTPS interception, credential injection,
   DLP parity, and QUIC/UDP bypass denial. This must land before Nimbus claims
@@ -52,7 +52,7 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
 
 ### Phase 2 - Runtime, Filesystem, And WASM Substrates
 
-- `wasmtime-backend-plan.md` - `active`. Owns the Wasmtime backend alongside the
+- `wasmtime-backend-plan.md` - `complete` (W0-W7 reconciled 2026-07-04; verifier 10/0). Owns the Wasmtime backend alongside the
   V8 backend: runtime-engine seam hardening, component model support, WIT
   interfaces, cooperative scheduling, module cache, and bundle-format extension.
 - `wasi-agent-capabilities-plan.md` - `deferred`. Starts only after the Wasmtime
@@ -80,7 +80,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 4 - Connection Residency, Secrets, And Service Identity
 
-- `connection-broker-plan.md` - `proposed local-only`. Owns host-held
+- `connection-broker-plan.md` - `complete local-only` (CB0-CB10 merged 2026-07-04; verifier 14/14; CB8 real cluster handoff deferred to HS5). Owns host-held
   long-lived sockets, hibernatable versus pinned session classes, per-frame
   isolate invocation, and the shared connection-residency seam used by inbound
   WebSockets and outbound proxy sessions.
