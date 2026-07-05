@@ -60,6 +60,12 @@ jobs:
           path: rusty_v8
           fetch-depth: 1
           submodules: false
+          # SECURITY: this job holds contents:write and then executes the fork's
+          # build scripts (build.rs, GN/ninja, chromium tooling). Never persist
+          # the workflow token into the fork checkout — build steps run
+          # credential-free; only the explicit gh publish/verify steps receive
+          # GH_TOKEN via env. (Both repos are public; fetches need no token.)
+          persist-credentials: false
 
       - name: Configure googlesource credentials
         shell: bash
