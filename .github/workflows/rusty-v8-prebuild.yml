@@ -7,8 +7,16 @@ on:
         description: "rusty_v8 tag to publish, for example v149.4.0-nimbus.10"
         required: true
         type: string
+      rusty_v8_sha:
+        description: "Expected 40-hex commit for rusty_v8_ref (moved-tag guard)"
+        required: true
+        type: string
       deno_ref:
         description: "Deno ref recorded in manifest provenance"
+        required: true
+        type: string
+      deno_sha:
+        description: "Expected 40-hex commit for deno_ref (provenance record)"
         required: true
         type: string
       target:
@@ -39,6 +47,8 @@ jobs:
 
     env:
       DENO_REF: ${{ inputs.deno_ref }}
+      EXPECTED_DENO_SHA: ${{ inputs.deno_sha }}
+      EXPECTED_RUSTY_V8_SHA: ${{ inputs.rusty_v8_sha }}
       RELEASE_TAG: rusty-v8-${{ inputs.rusty_v8_ref }}
       RUSTY_V8_REF: ${{ inputs.rusty_v8_ref }}
       TARGET: ${{ inputs.target }}
@@ -143,6 +153,20 @@ jobs:
             exit 64
           fi
 
+          # Moved-tag guard (§4 provenance): the checked-out HEAD must equal the
+          # dispatcher-supplied expected commit.
+          for sha_var in EXPECTED_RUSTY_V8_SHA EXPECTED_DENO_SHA; do
+            if ! [[ "${!sha_var}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::${sha_var} must be a 40-hex commit, got: ${!sha_var}"
+              exit 64
+            fi
+          done
+          head_sha="$(git rev-parse HEAD)"
+          if [[ "${head_sha}" != "${EXPECTED_RUSTY_V8_SHA}" ]]; then
+            echo "::error::rusty_v8_ref resolved to ${head_sha}, expected ${EXPECTED_RUSTY_V8_SHA} (moved tag?)"
+            exit 1
+          fi
+
           asset_dir="${RUNNER_TEMP}/rusty-v8-prebuild-assets"
           mkdir -p "${asset_dir}"
           {
@@ -207,7 +231,16 @@ jobs:
             sha256sum "${RELEASE_ARCHIVE}" > "${RELEASE_ARCHIVE}.sha256"
             sha256sum "${RELEASE_BINDING}" > "${RELEASE_BINDING}.sha256"
           )
+          # One runner cannot hold two full V8 gn_out trees (review finding):
+          # release assets are captured, so reclaim the whole release tree
+          # before the ptrcomp build, and ENFORCE headroom instead of printing.
+          rm -rf "${RELEASE_TARGET_DIR}"
           df -h /
+          free_gb="$(df --output=avail -BG / | tail -1 | tr -dc 0-9)"
+          if [[ "${free_gb}" -lt 25 ]]; then
+            echo "::error::only ${free_gb}G free before ptrcomp build (need >= 25G)"
+            exit 28
+          fi
 
       - name: Build release pointer-compression artifact
         shell: bash
@@ -260,6 +293,7 @@ jobs:
               "rusty_v8_ref": os.environ["RUSTY_V8_REF"],
               "rusty_v8_sha": os.environ["RUSTY_V8_SHA"],
               "deno_ref": os.environ["DENO_REF"],
+              "deno_sha": os.environ["EXPECTED_DENO_SHA"],
               "target": os.environ["TARGET"],
               "built_at": os.environ["BUILT_AT"],
               "runner_image": os.environ["RUNNER_IMAGE"],
@@ -317,10 +351,14 @@ jobs:
     needs: [build]
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     env:
       RELEASE_TAG: rusty-v8-${{ inputs.rusty_v8_ref }}
       RUSTY_V8_REF: ${{ inputs.rusty_v8_ref }}
+      EXPECTED_RUSTY_V8_SHA: ${{ inputs.rusty_v8_sha }}
       DENO_REF: ${{ inputs.deno_ref }}
+      EXPECTED_DENO_SHA: ${{ inputs.deno_sha }}
       TARGET: ${{ inputs.target }}
 
     steps:
@@ -354,9 +392,14 @@ jobs:
           )"
           manifest_ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rusty_v8_ref"])' "${asset_dir}/manifest.json")"
           manifest_deno_ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["deno_ref"])' "${asset_dir}/manifest.json")"
+          manifest_deno_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["deno_sha"])' "${asset_dir}/manifest.json")"
           manifest_target="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["target"])' "${asset_dir}/manifest.json")"
-          if [[ "${manifest_ref}" != "${RUSTY_V8_REF}" || "${manifest_deno_ref}" != "${DENO_REF}" || "${manifest_target}" != "${TARGET}" ]]; then
-            echo "::error::manifest pins (${manifest_ref}, ${manifest_deno_ref}, ${manifest_target}) do not match dispatch inputs (${RUSTY_V8_REF}, ${DENO_REF}, ${TARGET})"
+          if [[ "${manifest_ref}" != "${RUSTY_V8_REF}" || "${manifest_deno_ref}" != "${DENO_REF}" || "${manifest_deno_sha}" != "${EXPECTED_DENO_SHA}" || "${manifest_target}" != "${TARGET}" ]]; then
+            echo "::error::manifest pins do not match dispatch inputs"
+            exit 1
+          fi
+          if [[ "${RUSTY_V8_SHA}" != "${EXPECTED_RUSTY_V8_SHA}" ]]; then
+            echo "::error::manifest rusty_v8_sha ${RUSTY_V8_SHA} does not match dispatched expected sha ${EXPECTED_RUSTY_V8_SHA}"
             exit 1
           fi
           echo "ASSET_DIR=${asset_dir}" >> "${GITHUB_ENV}"
@@ -394,6 +437,14 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --clobber \
             "${ASSET_DIR}"/*
+
+      - name: Attest build provenance for published assets
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: |
+            ${{ runner.temp }}/rusty-v8-prebuild-assets/librusty_v8_*.a
+            ${{ runner.temp }}/rusty-v8-prebuild-assets/src_binding_*.rs
+            ${{ runner.temp }}/rusty-v8-prebuild-assets/manifest.json
 
       - name: Verify published assets
         shell: bash
