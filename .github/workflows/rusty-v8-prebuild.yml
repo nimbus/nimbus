@@ -480,7 +480,10 @@ jobs:
             --pattern '*'
 
           cd "${verify_dir}"
-          # Expected set derives from TRUSTED inputs only.
+          # Expected set derives from TRUSTED inputs only. Each payload AND its
+          # checksum sidecar must be present — sha256sum -c only verifies the
+          # sidecars that exist, so a missing sidecar would otherwise let its
+          # payload go unverified after a partial upload.
           for name in \
             "librusty_v8_release_${TARGET}.a" \
             "librusty_v8_release_ptrcomp_${TARGET}.a" \
@@ -488,5 +491,6 @@ jobs:
             "src_binding_ptrcomp_simdutf_release_${TARGET}.rs" \
             manifest.json; do
             test -f "${name}" || { echo "::error::missing published asset ${name}"; exit 1; }
+            test -f "${name}.sha256" || { echo "::error::missing checksum sidecar ${name}.sha256"; exit 1; }
           done
           sha256sum -c ./*.sha256
