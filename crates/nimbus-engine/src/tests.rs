@@ -692,14 +692,14 @@ async fn engine_tenant_data_is_isolated_across_tenants() {
     let alpha_tenant = fixture.create_tenant("alpha", Engine::create_tenant);
     let beta_tenant = fixture.create_tenant("beta", Engine::create_tenant);
 
-    engine
+    let alpha_id = engine
         .insert_document(
             &alpha_tenant,
             tasks_table(),
             serde_json::Map::from_iter([("title".to_string(), json!("Alpha"))]),
         )
         .expect("insert should succeed");
-    engine
+    let beta_id = engine
         .insert_document(
             &beta_tenant,
             tasks_table(),
@@ -718,6 +718,26 @@ async fn engine_tenant_data_is_isolated_across_tenants() {
     assert_eq!(beta_docs.len(), 1);
     assert_eq!(alpha_docs[0].fields.get("title"), Some(&json!("Alpha")));
     assert_eq!(beta_docs[0].fields.get("title"), Some(&json!("Beta")));
+
+    // A positive per-tenant listing alone would not catch a bug that resolved
+    // documents by ID without checking which tenant's store the ID belongs to.
+    // Fetch each tenant's known document ID through the *other* tenant's
+    // context and require the same not-found refusal used for a document that
+    // never existed at all.
+    let cross_fetch_beta_id_as_alpha = engine
+        .get_document(&alpha_tenant, &tasks_table(), beta_id.clone())
+        .expect_err("alpha tenant must not resolve beta's document id");
+    assert!(matches!(
+        cross_fetch_beta_id_as_alpha,
+        Error::DocumentNotFound(_)
+    ));
+    let cross_fetch_alpha_id_as_beta = engine
+        .get_document(&beta_tenant, &tasks_table(), alpha_id.clone())
+        .expect_err("beta tenant must not resolve alpha's document id");
+    assert!(matches!(
+        cross_fetch_alpha_id_as_beta,
+        Error::DocumentNotFound(_)
+    ));
 }
 
 #[tokio::test]

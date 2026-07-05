@@ -344,7 +344,8 @@ async fn put_get_range_and_list_are_s3_shaped() {
 }
 
 #[tokio::test]
-async fn access_keys_isolate_tenants() {
+async fn access_keys_scope_objects_to_their_own_tenant_and_reject_cross_tenant_fetch_of_the_same_key_path()
+ {
     let service = service();
     put(&service, ACCESS_KEY_A, "same/key.txt", b"tenant-a").await;
     put(&service, ACCESS_KEY_B, "same/key.txt", b"tenant-b").await;
@@ -366,6 +367,27 @@ async fn access_keys_isolate_tenants() {
             .expect("tenant get should succeed");
         assert_eq!(collect(response.output.body.unwrap()).await, expected);
     }
+
+    // The round trip above proves each access key's own store resolves the shared
+    // key path correctly, but it never attempts a cross-tenant read: a bug that
+    // resolved objects by key alone, ignoring which tenant's store owns the
+    // access key, would not be caught by same-key round trips alone. Put an
+    // object that exists ONLY under access key A, then fetch that exact key
+    // using access key B's credentials and require the same not-found refusal
+    // as a key that was never written at all.
+    put(&service, ACCESS_KEY_A, "alpha-only/key.txt", b"alpha-only").await;
+    let cross_tenant_fetch = service
+        .get_object(req(
+            GetObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "alpha-only/key.txt".to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_B,
+        ))
+        .await
+        .expect_err("access key B must not resolve an object owned by access key A's tenant");
+    assert_eq!(cross_tenant_fetch.code(), &S3ErrorCode::NoSuchKey);
 }
 
 #[tokio::test]

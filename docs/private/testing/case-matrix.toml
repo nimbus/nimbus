@@ -27,7 +27,7 @@ surface = "tenant_isolation"
 mission_critical = true
 cases = [
   { class = "smoke", tests = ["tests::engine_tenant_data_is_isolated_across_tenants"] },
-  { class = "main", tests = ["tests::tenant_isolation_decision_issues_narrow_service_and_storage_access", "tests::access_keys_isolate_tenants"] },
+  { class = "main", tests = ["tests::tenant_isolation_decision_issues_narrow_service_and_storage_access", "tests::access_keys_scope_objects_to_their_own_tenant_and_reject_cross_tenant_fetch_of_the_same_key_path"] },
   { class = "edge", tests = ["runtime::realm_lease::tests::cross_tenant_checkout_is_rejected_before_contract_installation"] },
   { class = "error", tests = ["tests::tenant_isolation_decision_rejects_mismatched_application_claims", "commands::tenant::tests::bound_principal_refuses_cross_tenant_db"] },
   { class = "recovery", tests = ["manager::tests::tenant_teardown::teardown_tenant_stops_tracked_sandboxes_and_clears_tenant_resources"] },

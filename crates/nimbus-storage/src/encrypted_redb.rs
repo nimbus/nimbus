@@ -955,9 +955,15 @@ mod tests {
             state.data[PHYSICAL_PAGE_SIZE..PHYSICAL_PAGE_SIZE * 2].copy_from_slice(&page0);
         }
 
-        // Reading should fail because AAD includes page index
+        // Reading should fail because AAD includes page index: the swap
+        // must be caught by AEAD authentication, not by an unrelated
+        // bounds/IO error path.
         let result = backend.read(0, 14);
-        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().kind(),
+            io::ErrorKind::InvalidData,
+            "swapped pages must fail AEAD authentication (AAD includes page index)"
+        );
     }
 
     #[test]
