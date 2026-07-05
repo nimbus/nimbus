@@ -482,15 +482,21 @@ impl NodeCompatBatchEntry {
 }
 
 fn node_compat_fixture_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runtime/tests/node_compat_fixtures")
+    runtime_crate_root().join("src/runtime/tests/node_compat_fixtures")
 }
 
 fn node_compat_repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    runtime_crate_root()
         .parent()
         .and_then(Path::parent)
         .expect("nimbus-runtime should live under crates/")
         .to_path_buf()
+}
+
+fn runtime_crate_root() -> PathBuf {
+    std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-runtime tests")
 }
 
 fn duration_millis_u64(duration: Duration) -> u64 {

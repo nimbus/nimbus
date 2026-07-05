@@ -109,7 +109,10 @@ fn tempdir_in_repo_target() -> tempfile::TempDir {
 }
 
 fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    let manifest_dir = env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-cli tests");
+    manifest_dir
         .parent()
         .and_then(Path::parent)
         .expect("crate manifest dir should have repo root")

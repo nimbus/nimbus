@@ -1,5 +1,16 @@
 use super::*;
 
+fn repo_root() -> PathBuf {
+    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-cli tests");
+    manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .expect("crate manifest dir should have repo root")
+        .to_path_buf()
+}
+
 #[tokio::test]
 async fn dev_serves_firestore_routes_without_firebase_markers() {
     // DX contract: dev mounts the Firestore-compatible route family
@@ -184,11 +195,8 @@ async fn detected_wire_app_round_trips_mongodb_and_dynamodb_drivers() {
     // exactly the credentials dev advertises in `.env.local` — and the
     // selftests' wrong-credential probes prove the listeners reject
     // anything else.
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root should exist");
-    if !workspace_wire_selftest_dependencies_available(repo_root) {
+    let repo_root = repo_root();
+    if !workspace_wire_selftest_dependencies_available(&repo_root) {
         eprintln!(
             "skipping wire round-trip selftests because JS workspace dependencies are unavailable"
         );
@@ -252,7 +260,7 @@ async fn detected_wire_app_round_trips_mongodb_and_dynamodb_drivers() {
         .mongodb_port
         .expect("dev plan pins the mongodb port");
     let output = tokio::process::Command::new("node")
-        .current_dir(repo_root)
+        .current_dir(&repo_root)
         .arg("./packages/mongodb/src/selftest.mjs")
         .arg("--smoke-only")
         .arg("--smoke-port")
@@ -278,7 +286,7 @@ async fn detected_wire_app_round_trips_mongodb_and_dynamodb_drivers() {
         .dynamodb_port
         .expect("dev plan pins the dynamodb port");
     let output = tokio::process::Command::new("node")
-        .current_dir(repo_root)
+        .current_dir(&repo_root)
         .arg("./packages/dynamodb/src/selftest.mjs")
         .arg("--smoke-only")
         .arg("--smoke-port")
@@ -310,11 +318,8 @@ async fn mid_session_mongodb_adoption_round_trips_with_subscriptions_intact() {
     // the boot-time wire plan; the official driver then round-trips via
     // that unchanged listener; and a main-listener subscription opened
     // before the adoption keeps receiving pushes — nothing restarts.
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root should exist");
-    if !workspace_wire_selftest_dependencies_available(repo_root) {
+    let repo_root = repo_root();
+    if !workspace_wire_selftest_dependencies_available(&repo_root) {
         eprintln!(
             "skipping mid-session adoption selftest because JS workspace dependencies are unavailable"
         );
@@ -447,7 +452,7 @@ async fn mid_session_mongodb_adoption_round_trips_with_subscriptions_intact() {
 
     // The driver round-trips through the already-serving listener.
     let output = tokio::process::Command::new("node")
-        .current_dir(repo_root)
+        .current_dir(&repo_root)
         .arg("./packages/mongodb/src/selftest.mjs")
         .arg("--smoke-only")
         .arg("--smoke-port")
@@ -525,11 +530,8 @@ async fn covered_app_round_trips_firestore_via_emulator_connection() {
     // connectFirestoreEmulator, addressing the project id dev discovered
     // — proving the auto-created tenant IS the tenant the app's requests
     // resolve to.
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root should exist");
-    if !workspace_firebase_selftest_dependencies_available(repo_root) {
+    let repo_root = repo_root();
+    if !workspace_firebase_selftest_dependencies_available(&repo_root) {
         eprintln!(
             "skipping firestore round-trip selftest because JS workspace dependencies are unavailable"
         );
@@ -597,7 +599,7 @@ async fn covered_app_round_trips_firestore_via_emulator_connection() {
     .await;
 
     let output = tokio::process::Command::new("node")
-        .current_dir(repo_root)
+        .current_dir(&repo_root)
         .arg("./packages/firebase/src/selftest.mjs")
         .arg("--round-trip-base-url")
         .arg(format!("http://{addr}/"))

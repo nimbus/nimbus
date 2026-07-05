@@ -18,7 +18,10 @@
 /// enforces the same rule from outside the crate.
 #[test]
 fn ee1_reachability_lint_workload_map_unreachable_from_request_path() {
-    let src_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let src_dir = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-proxy tests")
+        .join("src");
     // engine.rs defines the engine; lib.rs exports it; src/tests is test-only
     // code, never part of the request path.
     let allowed = ["engine.rs", "lib.rs"];

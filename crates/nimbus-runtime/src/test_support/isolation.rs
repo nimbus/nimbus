@@ -105,10 +105,11 @@ pub(crate) fn run_v8_sensitive_runtime_test_in_subprocess(case: IsolatedRuntimeT
     let _guard = acquire_runtime_suite_lock_blocking();
     let _subprocess_guard = acquire_runtime_suite_subprocess_lock();
     let tmp_dir = create_runtime_subprocess_tmp_dir(case);
+    let crate_root = runtime_crate_root();
     let output = std::process::Command::new(
         std::env::current_exe().expect("current test binary path should resolve"),
     )
-    .current_dir(env!("CARGO_MANIFEST_DIR"))
+    .current_dir(crate_root)
     .env("RUST_TEST_THREADS", "1")
     .env("TERM", "xterm-256color")
     .env("TMPDIR", &tmp_dir)
@@ -149,12 +150,13 @@ pub(crate) fn run_v8_crash_control_in_subprocess(case: IsolatedRuntimeTestCase, 
         let _guard = acquire_runtime_suite_lock_blocking();
         let _subprocess_guard = acquire_runtime_suite_subprocess_lock();
         let mut last_observation = String::new();
+        let crate_root = runtime_crate_root();
         for attempt in 1..=max_attempts.max(1) {
             let tmp_dir = create_runtime_subprocess_tmp_dir(case);
             let output = std::process::Command::new(
                 std::env::current_exe().expect("current test binary path should resolve"),
             )
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .current_dir(&crate_root)
             .env("RUST_TEST_THREADS", "1")
             .env("TMPDIR", &tmp_dir)
             .env("TEMP", &tmp_dir)
@@ -239,6 +241,12 @@ pub(crate) fn run_v8_crash_control_in_subprocess(case: IsolatedRuntimeTestCase, 
     {
         let _ = (case, max_attempts);
     }
+}
+
+fn runtime_crate_root() -> std::path::PathBuf {
+    std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-runtime tests")
 }
 
 fn create_runtime_subprocess_tmp_dir(case: IsolatedRuntimeTestCase) -> PathBuf {

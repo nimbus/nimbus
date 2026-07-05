@@ -6,7 +6,10 @@ use super::*;
 use crate::TlsConfig;
 
 fn fixture(path: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)
+    std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-server tests")
+        .join(path)
 }
 
 #[tokio::test]

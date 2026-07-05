@@ -498,7 +498,10 @@ mod tests {
 
     #[test]
     fn source_uses_direct_constant_time_compare_for_token_checks() {
-        let source = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/token.rs"))
+        let crate_root = std::env::var_os("CARGO_MANIFEST_DIR")
+            .map(PathBuf::from)
+            .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-operator tests");
+        let source = fs::read_to_string(crate_root.join("src/token.rs"))
             .expect("token source should be readable");
 
         assert!(source.contains("fn constant_time_eq("));

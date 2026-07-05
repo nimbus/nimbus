@@ -112,11 +112,66 @@ run_surface_filter() {
   local surface="$2"
   local test_name="$3"
   local package
+  local profile
   local selected
   local list_output
   local cargo_args
+  local filter_expr
   local key_suffix=""
   package="$(surface_package "$surface")"
+  filter_expr="package(${package}) and test(/(^|::)${test_name}$/)"
+  if [[ -n "${NIMBUS_HARNESS_SHARD:-}" ]]; then
+    key_suffix="-shard-${NIMBUS_HARNESS_SHARD//\//-of-}"
+  fi
+  if [[ -n "${NIMBUS_HARNESS_ARCHIVE_FILE:-}" ]]; then
+    case "$mode" in
+      required) profile="ci-harness-required" ;;
+      nightly) profile="ci-harness-nightly" ;;
+      *)
+        echo "unknown verification mode for archive harness: $mode" >&2
+        exit 1
+        ;;
+    esac
+    list_output="$(
+      cargo-nextest nextest list \
+        --archive-file "${NIMBUS_HARNESS_ARCHIVE_FILE}" \
+        --workspace-remap "${GITHUB_WORKSPACE:-${PWD}}" \
+        --profile "${profile}" \
+        --run-ignored only \
+        -E "${filter_expr}" \
+        --message-format json
+    )"
+    selected="$(python3 -c '
+import json
+import re
+import sys
+text = sys.stdin.read()
+match = re.search(r"^\{", text, re.MULTILINE)
+if not match:
+    raise SystemExit("nextest list did not emit JSON")
+data = json.loads(text[match.start():])
+count = 0
+for suite in data.get("rust-suites", {}).values():
+    for case in suite.get("testcases", {}).values():
+        status = case.get("filter-match", {}).get("status")
+        if status in (None, "matches"):
+            count += 1
+print(count)
+' <<<"${list_output}")"
+    if [[ "$selected" -eq 0 ]]; then
+      echo "verification harness ${mode}/${surface} matched zero archive tests for filter ${filter_expr}" >&2
+      exit 1
+    fi
+    bash "${SCRIPT_DIR}/single-flight.sh" \
+      --key "verify-harness-${mode}-${surface}${key_suffix}" \
+      -- cargo-nextest nextest run \
+        --archive-file "${NIMBUS_HARNESS_ARCHIVE_FILE}" \
+        --workspace-remap "${GITHUB_WORKSPACE:-${PWD}}" \
+        --profile "${profile}" \
+        --run-ignored only \
+        -E "${filter_expr}"
+    return
+  fi
   if ! list_output="$(cargo test -p "$package" "$test_name" -- --ignored --list 2>&1)"; then
     echo "verification harness ${mode}/${surface} failed while listing tests for filter ${test_name}" >&2
     printf '%s\n' "$list_output" >&2
@@ -133,9 +188,6 @@ run_surface_filter() {
     # the dedicated ignored corpus lane single-threaded so socket-binding
     # failures cannot hide the actual deterministic campaign result.
     cargo_args+=(--test-threads=1)
-  fi
-  if [[ -n "${NIMBUS_HARNESS_SHARD:-}" ]]; then
-    key_suffix="-shard-${NIMBUS_HARNESS_SHARD//\//-of-}"
   fi
   bash "${SCRIPT_DIR}/single-flight.sh" \
     --key "verify-harness-${mode}-${surface}${key_suffix}" \

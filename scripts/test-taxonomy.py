@@ -41,7 +41,7 @@ TEST_ATTR_RE = re.compile(r"#\[(?:[\w:]+::)?test(?:\(|\])")
 IGNORE_ATTR_RE = re.compile(r"#\[\s*ignore(?:\s*=|\s*\])")
 FN_RE = re.compile(r"(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b")
 MOD_RE = re.compile(r"(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{")
-ENV_RE = re.compile(r'env!\("CARGO_MANIFEST_DIR"\)|env!\("CARGO_BIN_EXE_[^"]*"\)')
+ENV_RE = re.compile(r'(?<!option_)env!\("CARGO_MANIFEST_DIR"\)|(?<!option_)env!\("CARGO_BIN_EXE_[^"]*"\)')
 FILTER_TEST_RE = re.compile(r"test\(/((?:\\/|[^/])*)/\)")
 # F5: evidence for scope=filter rows must cite a MEASURED duration (number+unit)
 # or a NAMED lane — bare words like "duration"/"lane" do not pass.
@@ -72,33 +72,7 @@ MODULE_ALIASES = (
 # per-file EXPECTED COUNTS (not line numbers) so unrelated edits that shift lines
 # cannot false-positive the gate, while any NEW use in a listed file still trips it
 # (count exceeds baseline). B5 shrinks this to empty as it converts each file.
-F2_ENV_BASELINE = {
-    "crates/nimbus-bin/tests/launcher.rs": 1,
-    "crates/nimbus-cli/src/dev/tests/adoption.rs": 3,
-    "crates/nimbus-cli/src/start/tests.rs": 1,
-    "crates/nimbus-kv/tests/spawn_harness.rs": 1,
-    "crates/nimbus-proxy/src/tests/reachability_lint.rs": 1,
-    "crates/nimbus-runtime/src/runtime/tests/basic_invocation/support.rs": 1,
-    "crates/nimbus-runtime/src/runtime/tests/node/canary_registry.rs": 1,
-    "crates/nimbus-runtime/src/runtime/tests/node/manifest_catalog.rs": 1,
-    "crates/nimbus-runtime/src/runtime/tests/node/mod.rs": 2,
-    "crates/nimbus-runtime/src/test_support/isolation.rs": 2,
-    "crates/nimbus-server/src/tests/firebase/rest_crud.rs": 1,
-    "crates/nimbus-server/src/tests/rest_route_parity.rs": 1,
-    "crates/nimbus-server/src/tests/tls_serve.rs": 1,
-    # Inline #[cfg(test)] modules outside tests/ trees (F4 review finding):
-    "crates/nimbus-assets/src/js_packages.rs": 1,
-    "crates/nimbus-cli/src/codegen.rs": 1,
-    "crates/nimbus-cli/src/deploy.rs": 1,
-    "crates/nimbus-cli/src/dev/redetect.rs": 1,
-    "crates/nimbus-cli/src/typeinfo.rs": 1,
-    "crates/nimbus-operator/src/token.rs": 1,
-    "crates/nimbus-server/src/adapters/cloud_functions/execution.rs": 1,
-    "crates/nimbus-server/src/adapters/cloud_functions/http.rs": 1,
-    "crates/nimbus-server/src/router.rs": 1,
-    "crates/nimbus-server/src/tests.rs": 1,
-    "crates/nimbus-server/src/tls.rs": 1,
-}
+F2_ENV_BASELINE = {}
 
 
 VALID_SCOPES = {

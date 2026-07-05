@@ -461,17 +461,18 @@ jobs:
         run: make verify-bun-jsc-runtime-contract
 
   rust-workspace-tests:
-    # CW2: Rust Workspace Tests is sharded across N partitions via
-    # cargo-nextest's `--partition hash:N/M`. nextest hashes the test path to
-    # produce a deterministic assignment that stays stable across runs (so
-    # cache reuse and rerun-on-failure both behave). B4 keeps these shards as
-    # compile lanes; archive-consuming shards land in B5.
+    # B5: Rust Workspace Tests consume the B4 nextest archive instead of
+    # compiling. Node-dependent tests run in workspace-run-node below; this
+    # matrix is PATH-poisoned for cargo/rustc/rustup/node/npm/npx.
     name: Rust Workspace Tests (shard ${{ matrix.partition }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name != 'schedule'
+    needs: [archive]
     env:
       NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES: "1"
+      NODE_DEPENDENT_FILTER: >-
+        (package(nimbus-cli) and (test(/dev::tests::adoption::/) or test(/dev::redetect::tests::mid_session_(convex|firebase)_adoption_/) or test(/deploy::typecheck_tests::run_tsc_passes_clean_code_and_fails_on_type_error/) or test(/typeinfo::tests::/))) or (package(nimbus-server) and (test(/firebase_sdk_crud_selftest_smoke/) or test(/adapters::cloud_functions::(http|execution)::tests::cloud_functions_.*generated_.*bundle/)))
     strategy:
       fail-fast: false
       matrix:
@@ -487,16 +488,20 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Rust with cache
-        id: setup-rust
-        uses: ./.github/actions/setup-rust-cached
+      - name: Download nimbus tests archive
+        uses: actions/download-artifact@v8
         with:
-          shared-key: ci-ubuntu-stable-workspace-no-bin-v2
-          linux-linker: lld
-          linux-openssl-provider: system
-          consume-prebuilt-v8: release
-          github-token: ${{ github.token }}
-          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+          name: nimbus-tests-archive
+          path: ${{ runner.temp }}/nimbus-tests-archive
+
+      - name: Download nextest config
+        uses: actions/download-artifact@v8
+        with:
+          name: nextest-config
+          path: ${{ runner.temp }}/nextest-config
+
+      - name: Verify and install nextest config
+        run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
@@ -504,10 +509,54 @@ jobs:
           tool: nextest@0.9.138
           fallback: none
 
-      # `make test-rust-workspace` depends on the nimbus-ui dist target, so
-      # Make's graph runs codegen + SPA build before invoking cargo. Node is
-      # therefore a build prerequisite for any Rust lane that touches
-      # nimbus-server.
+      - name: Install PATH poison guard
+        run: bash scripts/ci/install-path-poison.sh cargo rustc rustup node npm npx
+
+      - name: Run workspace test lane (shard ${{ matrix.partition }})
+        run: |
+          cargo-nextest nextest run \
+            --archive-file "${NIMBUS_TESTS_ARCHIVE}" \
+            --workspace-remap "${GITHUB_WORKSPACE}" \
+            --profile ci-pr \
+            --partition hash:${{ matrix.partition }} \
+            -E "not (${NODE_DEPENDENT_FILTER})"
+
+  workspace-run-node:
+    name: Rust Workspace Node-Dependent Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    if: github.event_name != 'schedule'
+    needs: [archive]
+    env:
+      NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES: "1"
+      NODE_DEPENDENT_FILTER: >-
+        (package(nimbus-cli) and (test(/dev::tests::adoption::/) or test(/dev::redetect::tests::mid_session_(convex|firebase)_adoption_/) or test(/deploy::typecheck_tests::run_tsc_passes_clean_code_and_fails_on_type_error/) or test(/typeinfo::tests::/))) or (package(nimbus-server) and (test(/firebase_sdk_crud_selftest_smoke/) or test(/adapters::cloud_functions::(http|execution)::tests::cloud_functions_.*generated_.*bundle/)))
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Download nimbus tests archive
+        uses: actions/download-artifact@v8
+        with:
+          name: nimbus-tests-archive
+          path: ${{ runner.temp }}/nimbus-tests-archive
+
+      - name: Download nextest config
+        uses: actions/download-artifact@v8
+        with:
+          name: nextest-config
+          path: ${{ runner.temp }}/nextest-config
+
+      - name: Verify and install nextest config
+        run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        with:
+          tool: nextest@0.9.138
+          fallback: none
+
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
@@ -517,19 +566,84 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
-      - name: Cache Node22 anchor snapshot
-        uses: actions/cache@v5
-        with:
-          path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
-          key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
+      - name: Install PATH poison guard
+        run: bash scripts/ci/install-path-poison.sh cargo rustc rustup
 
-      - name: Run workspace test lane (shard ${{ matrix.partition }})
-        # Verification-harness corpus tests are ignored by default and run in
-        # the dedicated harness matrix below, so this lane stays focused on the
-        # main workspace suite outside the runtime crate.
-        env:
-          NIMBUS_NEXTEST_PARTITION: ${{ matrix.partition }}
-        run: make test-rust-workspace
+      - name: Assert workspace filter partition
+        run: |
+          set -euo pipefail
+          all_json="${RUNNER_TEMP}/nextest-ci-pr.json"
+          node_json="${RUNNER_TEMP}/nextest-node-dependent.json"
+          non_node_json="${RUNNER_TEMP}/nextest-non-node-dependent.json"
+          cargo-nextest nextest list \
+            --archive-file "${NIMBUS_TESTS_ARCHIVE}" \
+            --workspace-remap "${GITHUB_WORKSPACE}" \
+            --profile ci-pr \
+            --message-format json > "${all_json}"
+          cargo-nextest nextest list \
+            --archive-file "${NIMBUS_TESTS_ARCHIVE}" \
+            --workspace-remap "${GITHUB_WORKSPACE}" \
+            --profile ci-pr \
+            -E "${NODE_DEPENDENT_FILTER}" \
+            --message-format json > "${node_json}"
+          cargo-nextest nextest list \
+            --archive-file "${NIMBUS_TESTS_ARCHIVE}" \
+            --workspace-remap "${GITHUB_WORKSPACE}" \
+            --profile ci-pr \
+            -E "not (${NODE_DEPENDENT_FILTER})" \
+            --message-format json > "${non_node_json}"
+          python3 - "${all_json}" "${node_json}" "${non_node_json}" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          def load_ids(path: str) -> set[str]:
+              text = Path(path).read_text(encoding="utf-8")
+              match = re.search(r"^\{", text, re.MULTILINE)
+              if not match:
+                  raise SystemExit(f"::error::{path} did not contain nextest JSON")
+              data = json.loads(text[match.start():])
+              ids = set()
+              for suite in data.get("rust-suites", {}).values():
+                  package = str(suite.get("package-name") or suite.get("package_name") or "")
+                  binary = str(suite.get("binary-name") or suite.get("binary_name") or "")
+                  for name, case in suite.get("testcases", {}).items():
+                      status = case.get("filter-match", {}).get("status")
+                      if not case.get("ignored", False) and status in (None, "matches"):
+                          ids.add(f"{package}::{binary}::{name}")
+              return ids
+
+          all_ids = load_ids(sys.argv[1])
+          node_ids = load_ids(sys.argv[2])
+          non_node_ids = load_ids(sys.argv[3])
+          overlap = sorted(node_ids & non_node_ids)
+          missing = sorted(all_ids - (node_ids | non_node_ids))
+          extra = sorted((node_ids | non_node_ids) - all_ids)
+          if not node_ids:
+              print("::error::node-dependent filter selected zero ci-pr tests")
+              sys.exit(1)
+          if overlap or missing or extra:
+              print("::error::workspace node/non-node filters do not partition the ci-pr archive universe")
+              print(f"all={len(all_ids)} node={len(node_ids)} non_node={len(non_node_ids)}")
+              for label, rows in (("overlap", overlap), ("missing", missing), ("extra", extra)):
+                  if rows:
+                      print(f"{label} ({len(rows)}):")
+                      for row in rows[:200]:
+                          print(row)
+                      if len(rows) > 200:
+                          print(f"... and {len(rows) - 200} more")
+              sys.exit(1)
+          print(f"workspace filter partition ok: all={len(all_ids)} node={len(node_ids)} non_node={len(non_node_ids)}")
+          PY
+
+      - name: Run node-dependent workspace tests
+        run: |
+          cargo-nextest nextest run \
+            --archive-file "${NIMBUS_TESTS_ARCHIVE}" \
+            --workspace-remap "${GITHUB_WORKSPACE}" \
+            --profile ci-pr \
+            -E "${NODE_DEPENDENT_FILTER}"
 
   archive:
     name: Rust Test Archive
@@ -814,6 +928,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name != 'schedule'
+    needs: [archive]
     strategy:
       # CW3: split by provider so postgres / mysql / libsql run in parallel
       # instead of serialized in one ~14.6m job. Within-provider tests stay
@@ -821,7 +936,7 @@ jobs:
       # always safe (different services, no shared state). Each matrix
       # shard starts only its own provider's fixture via the per-step
       # `if: matrix.provider == ...` gate, and NIMBUS_PROVIDER_FILTER tells
-      # scripts/test-external-providers.sh which cargo invocations to run.
+      # scripts/test-external-providers.sh which archive filter to run.
       fail-fast: false
       matrix:
         include:
@@ -846,16 +961,29 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Rust with cache
-        id: setup-rust
-        uses: ./.github/actions/setup-rust-cached
+      - name: Download nimbus tests archive
+        uses: actions/download-artifact@v8
         with:
-          shared-key: ci-ubuntu-stable-external-providers-no-bin-v2
-          linux-linker: lld
-          linux-openssl-provider: system
-          consume-prebuilt-v8: release
-          github-token: ${{ github.token }}
-          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+          name: nimbus-tests-archive
+          path: ${{ runner.temp }}/nimbus-tests-archive
+
+      - name: Download nextest config
+        uses: actions/download-artifact@v8
+        with:
+          name: nextest-config
+          path: ${{ runner.temp }}/nextest-config
+
+      - name: Verify and install nextest config
+        run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        with:
+          tool: nextest@0.9.138
+          fallback: none
+
+      - name: Install PATH poison guard
+        run: bash scripts/ci/install-path-poison.sh cargo rustc rustup node npm npx
 
       - name: Start postgres provider fixture
         if: matrix.provider == 'postgres'
@@ -960,7 +1088,7 @@ jobs:
           exit 1
 
       - name: Run external provider integration tests
-        run: make test-external-providers
+        run: NIMBUS_EXTERNAL_PROVIDER_ARCHIVE_FILE="${NIMBUS_TESTS_ARCHIVE}" bash scripts/test-external-providers.sh
 
   node-faas-compatibility:
     name: Node FaaS Compatibility
@@ -1184,6 +1312,7 @@ jobs:
       - rust-runtime-ptrcomp-check
       - bun-runtime-contract
       - rust-workspace-tests
+      - workspace-run-node
       - archive
       - doctests
       - external-provider-tests
@@ -1200,6 +1329,7 @@ jobs:
           RUNTIME_PTRCOMP_RESULT: ${{ needs['rust-runtime-ptrcomp-check'].result }}
           BUN_RUNTIME_CONTRACT_RESULT: ${{ needs['bun-runtime-contract'].result }}
           WORKSPACE_TEST_RESULT: ${{ needs['rust-workspace-tests'].result }}
+          WORKSPACE_NODE_RESULT: ${{ needs['workspace-run-node'].result }}
           ARCHIVE_RESULT: ${{ needs['archive'].result }}
           DOCTEST_RESULT: ${{ needs['doctests'].result }}
           EXTERNAL_PROVIDER_TEST_RESULT: ${{ needs['external-provider-tests'].result }}
@@ -1213,6 +1343,7 @@ jobs:
           printf 'runtime-ptrcomp=%s\n' "${RUNTIME_PTRCOMP_RESULT}"
           printf 'bun-runtime-contract=%s\n' "${BUN_RUNTIME_CONTRACT_RESULT}"
           printf 'workspace-test=%s\n' "${WORKSPACE_TEST_RESULT}"
+          printf 'workspace-node=%s\n' "${WORKSPACE_NODE_RESULT}"
           printf 'archive=%s\n' "${ARCHIVE_RESULT}"
           printf 'doctests=%s\n' "${DOCTEST_RESULT}"
           printf 'external-provider-test=%s\n' "${EXTERNAL_PROVIDER_TEST_RESULT}"
@@ -1239,6 +1370,7 @@ jobs:
             echo "| rust-runtime-ptrcomp-check | $(icon "${RUNTIME_PTRCOMP_RESULT}") ${RUNTIME_PTRCOMP_RESULT} |"
             echo "| bun-runtime-contract | $(icon "${BUN_RUNTIME_CONTRACT_RESULT}") ${BUN_RUNTIME_CONTRACT_RESULT} |"
             echo "| rust-workspace-tests | $(icon "${WORKSPACE_TEST_RESULT}") ${WORKSPACE_TEST_RESULT} |"
+            echo "| workspace-run-node | $(icon "${WORKSPACE_NODE_RESULT}") ${WORKSPACE_NODE_RESULT} |"
             echo "| archive | $(icon "${ARCHIVE_RESULT}") ${ARCHIVE_RESULT} |"
             echo "| doctests | $(icon "${DOCTEST_RESULT}") ${DOCTEST_RESULT} |"
             echo "| external-provider-tests | $(icon "${EXTERNAL_PROVIDER_TEST_RESULT}") ${EXTERNAL_PROVIDER_TEST_RESULT} |"
@@ -1252,6 +1384,7 @@ jobs:
           test "${RUNTIME_PTRCOMP_RESULT}" = success
           test "${BUN_RUNTIME_CONTRACT_RESULT}" = success
           test "${WORKSPACE_TEST_RESULT}" = success
+          test "${WORKSPACE_NODE_RESULT}" = success
           test "${ARCHIVE_RESULT}" = success
           test "${DOCTEST_RESULT}" = success
           test "${EXTERNAL_PROVIDER_TEST_RESULT}" = success
@@ -1377,7 +1510,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name != 'schedule'
-    needs: [ui-artifacts, warm-sccache]
+    needs: [archive]
     strategy:
       fail-fast: false
       # CW1: server + engine surfaces are sharded across the harness corpus
@@ -1385,7 +1518,7 @@ jobs:
       # so sharding into 4 lanes drops the post-CW0 pole; engine + storage
       # generated-history corpora have 2 cases so we cap at 2 shards there
       # (storage stays unsharded because its 8.3m duration is already well
-      # below the wall pole). Runtime is fast enough to stay single-shard.
+      # below the wall pole). Runtime remains on the compile lane until B6.
       matrix:
         include:
           - surface: storage
@@ -1416,10 +1549,44 @@ jobs:
             surface-label: Server
             shard: "4/4"
             shard-label: " (shard 4/4)"
-          - surface: runtime
-            surface-label: Runtime
-            shard: ""
-            shard-label: ""
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Download nimbus tests archive
+        uses: actions/download-artifact@v8
+        with:
+          name: nimbus-tests-archive
+          path: ${{ runner.temp }}/nimbus-tests-archive
+
+      - name: Download nextest config
+        uses: actions/download-artifact@v8
+        with:
+          name: nextest-config
+          path: ${{ runner.temp }}/nextest-config
+
+      - name: Verify and install nextest config
+        run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        with:
+          tool: nextest@0.9.138
+          fallback: none
+
+      - name: Install PATH poison guard
+        run: bash scripts/ci/install-path-poison.sh cargo rustc rustup node npm npx
+
+      - name: Run required verification harness corpus
+        run: NIMBUS_HARNESS_ARCHIVE_FILE="${NIMBUS_TESTS_ARCHIVE}" bash scripts/verification-harness.sh required ${{ matrix.surface }} ${{ matrix.shard }}
+
+  harness-runtime:
+    name: Runtime Verification Harness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    if: github.event_name != 'schedule'
+    needs: [ui-artifacts, warm-sccache]
 
     steps:
       - name: Check out repository
@@ -1429,7 +1596,7 @@ jobs:
         id: setup-rust
         uses: ./.github/actions/setup-rust-cached
         with:
-          shared-key: ci-ubuntu-stable-harness-${{ matrix.surface }}-no-bin-v2
+          shared-key: ci-ubuntu-stable-harness-runtime-no-bin-v2
           toolchain-components: llvm-tools-preview
           linux-linker: lld
           linux-openssl-provider: system
@@ -1468,7 +1635,7 @@ jobs:
         run: env -u V8_FROM_SOURCE make build-node22-anchor-snapshot-off
 
       - name: Run required verification harness corpus
-        run: bash scripts/verification-harness.sh required ${{ matrix.surface }} ${{ matrix.shard }}
+        run: bash scripts/verification-harness.sh required runtime
 
   harness-nightly:
     name: Nightly ${{ matrix.surface-label }} Verification Harness

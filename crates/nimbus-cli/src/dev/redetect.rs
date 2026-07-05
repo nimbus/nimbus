@@ -658,7 +658,10 @@ mod tests {
         // Codegen runs real Node tooling; keep the fixture on the repo's
         // filesystem like the codegen tests do, behind a `.git` boundary so
         // the app-dir walk-up stops inside the tempdir.
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
+            .map(PathBuf::from)
+            .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-cli tests");
+        let repo_root = manifest_dir
             .parent()
             .and_then(Path::parent)
             .expect("crate manifest dir should have repo root");
