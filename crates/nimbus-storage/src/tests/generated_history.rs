@@ -724,7 +724,7 @@ fn storage_conformance_required_seed_corpus_matches_model() {
 }
 
 #[test]
-fn generated_storage_history_includes_schema_index_lifecycle_scheduler_retention() {
+fn schema_index_lifecycle_transition_and_retention_pin_set_the_diagnostic_retention_floor() {
     let store = TenantStore::create_in_memory().expect("store should open");
     let table = TableName::new("tasks_conformance").expect("table should parse");
     let schema = TableSchema {

@@ -961,7 +961,21 @@ async fn trigger_execution_promotes_exhausted_retries_to_terminal_failure() {
 async fn installing_executor_bootstraps_pending_invocations_after_restart() {
     let data_dir = tempdir().expect("engine tempdir should build");
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    let document_id = DocumentId::from_key("restart").expect("document id should build");
+    let first_document_id = DocumentId::from_key("restart").expect("document id should build");
+    let second_document_id =
+        DocumentId::from_key("restart-two").expect("second document id should build");
+    let registrations = vec![
+        trigger_registration(
+            "firebase:restartWritten",
+            FirestoreCloudEventType::Written,
+            ["tasks", "restart"],
+        ),
+        trigger_registration(
+            "firebase:restartWrittenTwo",
+            FirestoreCloudEventType::Written,
+            ["tasks", "restart-two"],
+        ),
+    ];
 
     {
         let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
@@ -969,28 +983,38 @@ async fn installing_executor_bootstraps_pending_invocations_after_restart() {
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
         engine
-            .replace_trigger_registrations_for_testing(
-                &tenant_id,
-                vec![trigger_registration(
-                    "firebase:restartWritten",
-                    FirestoreCloudEventType::Written,
-                    ["tasks", "{taskId}"],
-                )],
-            )
+            .replace_trigger_registrations_for_testing(&tenant_id, registrations.clone())
             .expect("trigger registrations should persist in runtime");
         engine
-            .upsert_resource_path_binding_for_testing(&tenant_id, trigger_binding(&document_id))
-            .expect("resource path binding should persist");
+            .upsert_resource_path_binding_for_testing(
+                &tenant_id,
+                trigger_binding(&first_document_id),
+            )
+            .expect("first resource path binding should persist");
+        engine
+            .upsert_resource_path_binding_for_testing(
+                &tenant_id,
+                trigger_binding(&second_document_id),
+            )
+            .expect("second resource path binding should persist");
         engine
             .insert_document_with_id(
                 &tenant_id,
                 tasks_table(),
-                document_id.clone(),
+                first_document_id.clone(),
                 serde_json::Map::from_iter([("title".to_string(), json!("restart"))]),
             )
-            .expect("insert should succeed");
+            .expect("first insert should succeed");
+        engine
+            .insert_document_with_id(
+                &tenant_id,
+                tasks_table(),
+                second_document_id.clone(),
+                serde_json::Map::from_iter([("title".to_string(), json!("restart-two"))]),
+            )
+            .expect("second insert should succeed");
         wait_for_value(
-            "trigger materialization should persist pending invocation before restart",
+            "trigger materialization should persist both pending invocations before restart",
             mutation_journal_progress_timeout(),
             mutation_journal_poll_interval(),
             || async {
@@ -999,7 +1023,10 @@ async fn installing_executor_bootstraps_pending_invocations_after_restart() {
                     .expect("trigger invocations should load")
             },
             |records| {
-                records.len() == 1 && matches!(records[0].state, TriggerInvocationState::Pending)
+                records.len() == 2
+                    && records
+                        .iter()
+                        .all(|record| matches!(record.state, TriggerInvocationState::Pending))
             },
         )
         .await;
@@ -1011,14 +1038,7 @@ async fn installing_executor_bootstraps_pending_invocations_after_restart() {
         .ensure_tenant_exists(&tenant_id)
         .expect("tenant should load");
     engine
-        .replace_trigger_registrations_for_testing(
-            &tenant_id,
-            vec![trigger_registration(
-                "firebase:restartWritten",
-                FirestoreCloudEventType::Written,
-                ["tasks", "{taskId}"],
-            )],
-        )
+        .replace_trigger_registrations_for_testing(&tenant_id, registrations)
         .expect("trigger registrations should persist in runtime");
     let executor = Arc::new(RecordingTriggerExecutor::default());
     engine
@@ -1026,7 +1046,7 @@ async fn installing_executor_bootstraps_pending_invocations_after_restart() {
         .expect("trigger executor should install");
 
     wait_for_value(
-        "installing the executor should replay pending durable trigger invocations",
+        "installing the executor should replay every pending durable trigger invocation, not just the first",
         mutation_journal_progress_timeout(),
         mutation_journal_poll_interval(),
         || async {
@@ -1035,18 +1055,26 @@ async fn installing_executor_bootstraps_pending_invocations_after_restart() {
                 .expect("trigger invocations should load")
         },
         |records| {
-            records.len() == 1
-                && matches!(
-                    records[0].state,
-                    TriggerInvocationState::Completed { attempt: 1, .. }
-                )
+            records.len() == 2
+                && records.iter().all(|record| {
+                    matches!(
+                        record.state,
+                        TriggerInvocationState::Completed { attempt: 1, .. }
+                    )
+                })
         },
     )
     .await;
 
+    let mut calls = executor.calls();
+    calls.sort();
     assert_eq!(
-        executor.calls(),
-        vec!["firebase:restartWritten".to_string()]
+        calls,
+        vec![
+            "firebase:restartWritten".to_string(),
+            "firebase:restartWrittenTwo".to_string(),
+        ],
+        "restart bootstrap must replay every pending invocation exactly once, not reorder or drop one"
     );
 }
 

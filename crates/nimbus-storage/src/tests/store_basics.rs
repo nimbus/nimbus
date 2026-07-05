@@ -23,7 +23,7 @@ fn update_applies_patch_and_appends_commit() {
 }
 
 #[test]
-fn delete_removes_document_and_appends_commit() {
+fn delete_removes_document_from_point_read_and_scan_and_appends_commit_log_entry() {
     let store = TenantStore::create_in_memory().expect("store should open");
     let document = sample_document("tasks", "Disposable");
 
@@ -34,9 +34,25 @@ fn delete_removes_document_and_appends_commit() {
     let fetched = store
         .get(&document.table, &document.id)
         .expect("get should succeed");
+    let scanned = store
+        .scan_table(&document.table)
+        .expect("scan should succeed");
 
     assert_eq!(commit.sequence, SequenceNumber(2));
-    assert!(fetched.is_none());
+    assert!(
+        fetched.is_none(),
+        "point read should not find the deleted document"
+    );
+    assert!(
+        scanned.is_empty(),
+        "table scan should not surface the deleted document through any index path"
+    );
+    assert_eq!(commit.writes.len(), 1);
+    assert_eq!(commit.writes[0].doc_id, document.id);
+    assert!(
+        commit.writes[0].current.is_none(),
+        "commit log entry should record the delete as a removal, not a residual write"
+    );
 }
 
 #[test]
