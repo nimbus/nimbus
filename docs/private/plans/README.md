@@ -49,6 +49,13 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
 - `distribution-plan.md` - `in_progress`. Owns binary release, Homebrew/cask,
   Linux package mirror, release-owned OCI images, and channel cutover. It should
   consume launch safety decisions rather than define them.
+- `test-infra-rearchitecture/PLAN.md` - `in_progress`. Owns the full
+  test-infrastructure rearchitecture: declarative nextest taxonomy, build-once
+  archive CI with non-linking shards, the CI disk budget, once-per-pin prebuilt
+  V8/Chromium/snapshot caching, and the existing-test quality uplift to the
+  binding standard in `test-infra-rearchitecture/TEST_STANDARD.md` (contract:
+  `test-infra-rearchitecture/BRIEF.md`). CI lane and test-organization changes
+  should route through this plan while it is in progress.
 
 ### Phase 2 - Runtime, Filesystem, And WASM Substrates
 
