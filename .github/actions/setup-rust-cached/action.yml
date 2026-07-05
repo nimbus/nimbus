@@ -541,7 +541,9 @@ runs:
       uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       with:
         shared-key: ${{ inputs.shared-key }}
-        cache-directories: ~/.cargo/.rusty_v8
+        cache-directories: |
+          ~/.cargo/.rusty_v8
+          ~/.cargo/git/checkouts
         cache-on-failure: "true"
         cache-bin: ${{ inputs.cache-bin }}
         save-if: ${{ inputs.save-cache == 'always' || (inputs.save-cache == 'auto' && github.ref == 'refs/heads/main') }}
