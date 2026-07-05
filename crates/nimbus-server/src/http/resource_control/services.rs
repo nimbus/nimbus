@@ -280,7 +280,7 @@ fn authorize_operator_service_route(
     surface: &'static str,
 ) -> Result<Option<ServiceRouteAuthorization>, AppError> {
     let route_tenant = parse_user_tenant_id(tenant_id)?;
-    match extract_operator_route_access(headers, state.local_server_security.as_deref())? {
+    match extract_operator_route_access(headers, state.local_server_security().as_deref())? {
         Ok(OperatorRouteAccess::Authorized { auth_method }) => {
             Ok(Some(ServiceRouteAuthorization {
                 principal_class: PrincipalClass::Operator,

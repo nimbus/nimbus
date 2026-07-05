@@ -62,7 +62,7 @@ pub(in crate::http) async fn authorize_session_resource_lookup(
         SessionAction::Close => "native_http.session.close",
         SessionAction::Open | SessionAction::List => unreachable!("session resource lookup"),
     };
-    match extract_operator_route_access(headers, state.local_server_security.as_deref())? {
+    match extract_operator_route_access(headers, state.local_server_security().as_deref())? {
         Ok(OperatorRouteAccess::Authorized { auth_method }) => {
             let tenant_id = route_tenant_id.ok_or_else(|| {
                 AppError::from(nimbus_core::Error::InvalidInput(format!(
@@ -275,7 +275,7 @@ fn authorize_operator_session_route(
     tenant_id: &TenantId,
     surface: &'static str,
 ) -> Result<Option<SessionAuthorization>, AppError> {
-    match extract_operator_route_access(headers, state.local_server_security.as_deref())? {
+    match extract_operator_route_access(headers, state.local_server_security().as_deref())? {
         Ok(OperatorRouteAccess::Authorized { auth_method }) => {
             let tenant_context = parse_operator_tenant_context(tenant_id.as_str(), surface)?;
             Ok(Some(SessionAuthorization {

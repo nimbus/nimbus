@@ -30,7 +30,7 @@ pub(crate) async fn deploy_app(
     headers: HeaderMap,
     Json(request): Json<DeployRequest>,
 ) -> Result<Json<DeployResponse>, AppError> {
-    authorize_deploy_admin_bearer(state.deploy_admin_token.as_deref(), &headers)?;
+    authorize_deploy_admin_bearer(state.deploy_admin_token(), &headers)?;
     let DeployRequest { dry_run, artifacts } = request;
     // Capture the source package before `artifacts` is moved into staging; it is
     // persisted (content-addressed) and projected only on a real activation.

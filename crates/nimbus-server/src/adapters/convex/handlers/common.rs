@@ -40,23 +40,24 @@ pub(super) async fn registry_and_auth(
         let registry = state
             .system_convex_registry()
             .ok_or_else(|| AppError::not_found(expectation))?;
-        let auth_method =
-            match authorize_standard_server_access(headers, state.local_server_security.as_deref())
-            {
-                Ok(auth_method) => auth_method,
-                Err(error) => {
-                    state.record_local_server_audit(crate::local_server::LocalServerAuditEvent {
-                        route_family,
-                        tenant_id: Some(tenant_id.to_string()),
-                        auth_scope: "server_access",
-                        auth_method: None,
-                        success: false,
-                        origin: crate::local_server::origin_from_headers(headers),
-                        reason: error.to_string(),
-                    });
-                    return Err(error.into());
-                }
-            };
+        let auth_method = match authorize_standard_server_access(
+            headers,
+            state.local_server_security().as_deref(),
+        ) {
+            Ok(auth_method) => auth_method,
+            Err(error) => {
+                state.record_local_server_audit(crate::local_server::LocalServerAuditEvent {
+                    route_family,
+                    tenant_id: Some(tenant_id.to_string()),
+                    auth_scope: "server_access",
+                    auth_method: None,
+                    success: false,
+                    origin: crate::local_server::origin_from_headers(headers),
+                    reason: error.to_string(),
+                });
+                return Err(error.into());
+            }
+        };
         state.record_local_server_audit(crate::local_server::LocalServerAuditEvent {
             route_family,
             tenant_id: Some(tenant_id.to_string()),

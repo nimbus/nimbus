@@ -3,6 +3,7 @@
 mod adapters;
 mod application_auth;
 mod artifact_verifier_effects;
+mod config;
 mod construction;
 mod error_envelope;
 mod execution;

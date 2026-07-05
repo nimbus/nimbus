@@ -132,7 +132,7 @@ fn authorize_operator_sandbox_route(
     surface: &'static str,
 ) -> Result<Option<SandboxAuthorization>, AppError> {
     let route_tenant = parse_user_tenant_id(tenant_id.to_owned())?;
-    match extract_operator_route_access(headers, state.local_server_security.as_deref())? {
+    match extract_operator_route_access(headers, state.local_server_security().as_deref())? {
         Ok(OperatorRouteAccess::Authorized { auth_method }) => Ok(Some(SandboxAuthorization {
             principal_class: PrincipalClass::Operator,
             tenant_context: TenantIsolationContext::operator(route_tenant.clone(), surface),

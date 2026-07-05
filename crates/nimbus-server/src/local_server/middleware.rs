@@ -51,7 +51,7 @@ pub(crate) async fn origin_allowlist_middleware(
     if route_family.requires_origin_allowlist()
         && let Err(error) = validate_origin(
             route_family,
-            state.listen_addr.map(|addr| addr.port()),
+            state.listen_addr().map(|addr| addr.port()),
             request.method(),
             request.headers(),
         )
@@ -87,7 +87,7 @@ pub(crate) async fn server_access_extract_middleware(
     let extracted = match extract_server_access(
         request.headers(),
         policy.credential_mode,
-        policy.app_state.local_server_security.as_deref(),
+        policy.app_state.local_server_security().as_deref(),
     ) {
         Ok(extracted) => extracted,
         Err(error) => {
@@ -114,7 +114,7 @@ pub(crate) async fn route_family_gate_middleware(
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
-    if policy.app_state.local_server_security.is_none() {
+    if policy.app_state.local_server_security().is_none() {
         return next.run(request).await;
     }
     let extracted = request

@@ -102,7 +102,7 @@ pub(crate) async fn mint_ui_launch_ticket(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let local_server_security = state.local_server_security.as_ref().ok_or_else(|| {
+    let local_server_security = state.local_server_security().ok_or_else(|| {
         AppError::unauthorized(
             "ui launch ticket mint is unavailable because server access auth is not configured",
         )
@@ -146,7 +146,7 @@ pub(crate) async fn consume_ui_launch_ticket(
     Query(query): Query<LaunchTicketQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let local_server_security = state.local_server_security.as_ref().ok_or_else(|| {
+    let local_server_security = state.local_server_security().ok_or_else(|| {
         AppError::unauthorized(
             "ui launch ticket consume is unavailable because server access auth is not configured",
         )
@@ -272,7 +272,7 @@ pub(crate) async fn create_ui_session(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, AppError> {
-    let local_server_security = state.local_server_security.as_ref().ok_or_else(|| {
+    let local_server_security = state.local_server_security().ok_or_else(|| {
         AppError::unauthorized(
             "ui session bootstrap is unavailable because server access auth is not configured",
         )
@@ -371,7 +371,7 @@ pub(crate) async fn ui_csp_middleware(
 }
 
 fn serve_spa_shell(state: &Arc<AppState>, headers: &HeaderMap) -> Result<Response, AppError> {
-    let local_server_security = state.local_server_security.as_ref().ok_or_else(|| {
+    let local_server_security = state.local_server_security().ok_or_else(|| {
         AppError::unauthorized(
             "ui session bootstrap is unavailable because server access auth is not configured",
         )
