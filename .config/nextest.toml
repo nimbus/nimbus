@@ -39,6 +39,12 @@ inherits = "default"
 retries = { backoff = "fixed", count = 2, delay = "1s" }
 flaky-result = "fail"
 
+[profile.ci-nightly.junit]
+# Flake detection parses ONLY JUnit <flakyFailure>/<flakyError> elements —
+# the documented stable markers for fail-then-pass-on-retry (libtest JSON's
+# flaky fields are undocumented/experimental).
+path = "junit.xml"
+
 [profile.ci-runtime]
 inherits = "default"
 default-filter = 'package(nimbus-runtime) and not test(/runtime::tests::node_compat::/) and not test(/runtime::tests::pool_reuse::isol_/)'
