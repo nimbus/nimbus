@@ -602,18 +602,20 @@ jobs:
       - name: Run taxonomy check before archive
         run: python3 scripts/test-taxonomy.py check
 
-      # TODO-B4-CALIBRATE: switch this lane to disk-guard enforce mode after
-      # the first archive run records peak usage and the budget is set to
-      # measured peak x 1.25 under the F12 formula.
-      - name: Report disk before archive compile
-        run: bash scripts/ci/disk-guard.sh report --label before-archive-compile
+      # CALIBRATED 2026-07-05 (run 28739808188): the archive job consumed 30 GiB
+      # from its post-reclaim baseline (108G -> 78G free; archive build 10.2m,
+      # archive 1.49 GiB, nimbus-bin 2.3m). F12 budget = measured 30G x 1.25 =
+      # 38G requirement, enforced as free-space floors with legible exit 28:
+      # >=45G before the compile, >=20G after each build stage.
+      - name: Enforce disk budget before archive compile
+        run: bash scripts/ci/disk-guard.sh enforce --label before-archive-compile --min-free-gib 45
 
       - name: Build nextest archive
         run: cargo nextest archive --workspace --exclude nimbus-runtime --locked --cargo-profile ci-archive --archive-file "$RUNNER_TEMP/nimbus-tests.tar.zst"
 
-      - name: Report disk after archive
+      - name: Enforce disk budget after archive
         if: always()
-        run: bash scripts/ci/disk-guard.sh report --label after-archive
+        run: bash scripts/ci/disk-guard.sh enforce --label after-archive --min-free-gib 20
 
       - name: Check archive size cap
         run: |
@@ -634,9 +636,9 @@ jobs:
       - name: Build nimbus-bin with archive profile
         run: cargo build -p nimbus-bin --profile ci-archive --locked
 
-      - name: Report disk after nimbus-bin
+      - name: Enforce disk budget after nimbus-bin
         if: always()
-        run: bash scripts/ci/disk-guard.sh report --label after-nimbus-bin
+        run: bash scripts/ci/disk-guard.sh enforce --label after-nimbus-bin --min-free-gib 20
 
       - name: Prepare nextest config artifact
         run: sha256sum .config/nextest.toml > .config/nextest.toml.sha256
