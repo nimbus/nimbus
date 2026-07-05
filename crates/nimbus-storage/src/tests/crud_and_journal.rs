@@ -37,6 +37,45 @@ fn insert_then_get_roundtrip() {
 }
 
 #[test]
+fn write_transaction_check_cancel_aborts_insert_before_recording_state() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let document = sample_document("cancel_seam_tasks", "should never persist");
+
+    // Drive the redb write-transaction seam directly with a cancel closure that
+    // is already tripped. `insert_document` calls `check_cancel()?` before it
+    // records any document, index, or journal state, so it must surface the
+    // cancellation rather than record the write. If `check_cancel` is made to
+    // always return `Ok(())`, the insert proceeds and returns `Ok(())`.
+    let mut transaction = store
+        .begin_write_transaction_cancellable(|| Err(Error::Cancelled))
+        .expect("begin cancellable write transaction should succeed");
+
+    let result = transaction.insert_document(&document);
+    assert!(
+        matches!(result, Err(Error::Cancelled)),
+        "insert_document must abort at the check_cancel seam, got {result:?}"
+    );
+
+    // Abandon the transaction; nothing may have escaped to durable state.
+    transaction.rollback();
+
+    assert!(
+        store
+            .get(&document.table, &document.id)
+            .expect("get should succeed")
+            .is_none(),
+        "a cancelled insert must not record document state"
+    );
+    assert!(
+        store
+            .read_commit_log_from(SequenceNumber(1))
+            .expect("commit log should read")
+            .is_empty(),
+        "a cancelled insert must not append journal state"
+    );
+}
+
+#[test]
 fn redb_document_versions_track_insert_update_delete_history() {
     let store = TenantStore::create_in_memory().expect("store should open");
     let document = sample_document("versioned_tasks", "v1");

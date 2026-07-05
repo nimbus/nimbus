@@ -500,3 +500,124 @@ fn egress_proxy_redirect_to_non_allowlisted_host_strips_injected_credentials() {
         "redirect target must not receive stale injected credentials"
     );
 }
+
+// Request-line arity: the request line must be exactly `METHOD absolute-uri
+// HTTP-version`. Missing method/target/version and an extra trailing token must
+// all fail closed with `400 Bad Request` before any resolver/upstream contact.
+// A mutation that drops the arity check would forward the extra-token and
+// missing-version cases to upstream, and would reject the empty-method and
+// missing-target cases with a different (`must be an absolute URI`) message;
+// asserting the specific request-line message plus zero upstream contact across
+// all four cases kills every variant. The proxy authorizes `allowed.test` with a
+// live upstream so any wrongly-forwarded request would visibly reach it.
+#[test]
+fn egress_proxy_rejects_malformed_request_line_arity_before_upstream() {
+    let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    let upstream_port = upstream.addr.port();
+    let proxy = start_test_proxy(allow_policy([EgressRule::new(
+        "allowed",
+        EgressProtocol::Http,
+        "allowed.test",
+        upstream_port,
+    )
+    .allow_internal_ips(true)]));
+
+    let cases = [
+        (
+            "extra trailing request-line token",
+            format!(
+                "GET http://allowed.test:{upstream_port}/ok HTTP/1.1 extra\r\nHost: allowed.test\r\n\r\n"
+            ),
+        ),
+        (
+            "missing HTTP version",
+            format!("GET http://allowed.test:{upstream_port}/ok\r\nHost: allowed.test\r\n\r\n"),
+        ),
+        (
+            "missing request target",
+            "GET\r\nHost: allowed.test\r\n\r\n".to_string(),
+        ),
+        (
+            "empty method (blank request line)",
+            "\r\nHost: allowed.test\r\n\r\n".to_string(),
+        ),
+    ];
+
+    for (label, request) in cases {
+        let response = proxy_request(proxy.local_addr(), request);
+        assert!(
+            response.starts_with("HTTP/1.1 400 Bad Request")
+                && response.contains("request line must be METHOD absolute-uri HTTP-version"),
+            "{label} must fail closed as a malformed request line, got: {response}"
+        );
+    }
+
+    assert!(
+        upstream
+            .request
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "malformed request lines must be rejected before any resolver/upstream contact"
+    );
+}
+
+// Bracketed IPv6 in the forward-HTTP absolute-URI path. IPv6 egress goes through
+// CONNECT; the forward path rejects every bracketed IPv6 literal at URL-host
+// canonicalization (which forbids brackets). A *valid* `[::1]:8080` authority
+// must first pass the raw-authority bracket/suffix parser (extract `::1`, accept
+// the numeric `:port`) and only then be rejected with the bracket-canonicalization
+// message. The mutation that rejects a valid `:port` suffix inside the raw parser
+// would instead surface the "parser-differential host" message here — so asserting
+// the bracket message (and the absence of "parser-differential") kills it.
+#[test]
+fn egress_proxy_forward_http_valid_port_bracketed_ipv6_rejected_at_bracket_canonicalization() {
+    let proxy = start_test_proxy(CompiledEgressPolicy::deny_all());
+
+    let response = proxy_request(
+        proxy.local_addr(),
+        "GET http://[::1]:8080/ok HTTP/1.1\r\nHost: allowed.test\r\n\r\n".to_string(),
+    );
+
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request")
+            && response.contains("host authority must not include brackets or ports"),
+        "a valid-port bracketed IPv6 forward-HTTP authority must be rejected at bracket canonicalization, got: {response}"
+    );
+    assert!(
+        !response.contains("parser-differential"),
+        "a valid `:port` suffix must pass the raw bracket/suffix parser; a parser-differential rejection means the suffix validation wrongly rejected a valid port, got: {response}"
+    );
+}
+
+// Malformed bracketed IPv6 suffixes in the forward-HTTP path must be caught by the
+// raw-authority suffix parser as a parser-differential host, before URL parsing.
+// The mutation that accepts a malformed suffix would let `Url::parse` reject it
+// later with a different ("must be an absolute URI") message; the missing-closing-
+// bracket case is caught earlier with the bracket message. Asserting each specific
+// message pins the exact rejection path.
+#[test]
+fn egress_proxy_forward_http_rejects_malformed_bracketed_ipv6_suffix() {
+    let proxy = start_test_proxy(CompiledEgressPolicy::deny_all());
+
+    for authority in ["[::1]:", "[::1]:8080junk", "[::1]:80x"] {
+        let response = proxy_request(
+            proxy.local_addr(),
+            format!("GET http://{authority}/ok HTTP/1.1\r\nHost: allowed.test\r\n\r\n"),
+        );
+        assert!(
+            response.starts_with("HTTP/1.1 400 Bad Request")
+                && response.contains("parser-differential host"),
+            "malformed bracketed IPv6 suffix {authority} must be rejected as a parser-differential host by the raw authority parser, got: {response}"
+        );
+    }
+
+    let missing_bracket = proxy_request(
+        proxy.local_addr(),
+        "GET http://[::1:8080/ok HTTP/1.1\r\nHost: allowed.test\r\n\r\n".to_string(),
+    );
+    assert!(
+        missing_bracket.starts_with("HTTP/1.1 400 Bad Request")
+            && missing_bracket.contains("host authority must not include brackets or ports"),
+        "a bracketed IPv6 authority with no closing bracket must be rejected, got: {missing_bracket}"
+    );
+}

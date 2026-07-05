@@ -1,0 +1,68 @@
+# B9 sampled mutation-validation scope for the test-infra rearchitecture.
+# cargo-mutants 27.1.0 has no config key for thresholds or random seeds:
+# sampling is pinned by deterministic round-robin sharding in the recorded commands,
+# and the B9 report applies the plan threshold of >=85% caught mutants.
+
+test_tool = "nextest"
+timeout_multiplier = 4.0
+build_timeout_multiplier = 4.0
+minimum_test_timeout = 120
+sharding = "round-robin"
+cap_lints = true
+
+examine_globs = [
+    # storage_atomicity: write path, durable journal, trigger delivery cursor,
+    # and encrypted redb recovery/anti-tamper behavior.
+    "crates/nimbus-storage/src/store/write.rs",
+    "crates/nimbus-storage/src/store/write/*.rs",
+    "crates/nimbus-storage/src/store/journal.rs",
+    "crates/nimbus-storage/src/store/journal_stream.rs",
+    "crates/nimbus-storage/src/store/journal_snapshot.rs",
+    "crates/nimbus-storage/src/store/trigger_delivery.rs",
+    "crates/nimbus-storage/src/encrypted_redb.rs",
+
+    # mutation_path: engine-owned mutation path plus trigger delivery.
+    "crates/nimbus-engine/src/engine/mutations.rs",
+    "crates/nimbus-engine/src/engine/mutations/*.rs",
+    "crates/nimbus-engine/src/engine/mutations/**/*.rs",
+    "crates/nimbus-engine/src/triggers.rs",
+    "crates/nimbus-engine/src/triggers/*.rs",
+
+    # tenant_isolation: admission, identity, policy input, and operator policy
+    # decision modules.
+    "crates/nimbus-tenant/src/decision.rs",
+    "crates/nimbus-tenant/src/identity.rs",
+    "crates/nimbus-tenant/src/policy_input.rs",
+    "crates/nimbus-tenant/src/runtime_admission.rs",
+    "crates/nimbus-tenant/src/operator_policy.rs",
+    "crates/nimbus-tenant/src/operator_policy/diff.rs",
+    "crates/nimbus-tenant/src/operator_policy/egress.rs",
+    "crates/nimbus-tenant/src/operator_policy/evaluation.rs",
+    "crates/nimbus-tenant/src/operator_policy/external.rs",
+    "crates/nimbus-tenant/src/operator_policy/reload.rs",
+    "crates/nimbus-tenant/src/operator_policy/runtime_scaling.rs",
+    "crates/nimbus-tenant/src/operator_policy/validation.rs",
+
+    # blob_crypto: encrypted blob store and framed AEAD path.
+    "crates/nimbus-blob/src/encrypted.rs",
+
+    # egress_pep: policy lifecycle, request parsing, forwarding decisions,
+    # DNS bounds, CONNECT forwarding, and terminal decision logging.
+    "crates/nimbus-proxy/src/policy_state.rs",
+    "crates/nimbus-proxy/src/enforcement.rs",
+    "crates/nimbus-proxy/src/request.rs",
+    "crates/nimbus-proxy/src/connect.rs",
+    "crates/nimbus-proxy/src/dns.rs",
+    "crates/nimbus-proxy/src/pingora_app.rs",
+    "crates/nimbus-proxy/src/pingora_identity.rs",
+    "crates/nimbus-proxy/src/decision_log.rs",
+
+    # runtime_bridge: HostBridge dispatch contract.
+    "crates/nimbus-runtime/src/host.rs",
+]
+
+exclude_globs = [
+    "**/tests.rs",
+    "**/tests/*.rs",
+    "**/*_tests.rs",
+]

@@ -227,12 +227,20 @@ mod tests {
         let mut previous = sample_document("San Francisco", 10);
         previous.fields.insert(
             "profile".to_string(),
-            json!({ "nickname": "sf", "rank": 1 }),
+            json!({
+                "nickname": "sf",
+                "rank": 1,
+                "contact": { "email": "hello@sf.example", "verified": true }
+            }),
         );
         let mut current = previous.clone();
         current.fields.insert(
             "profile".to_string(),
-            json!({ "nickname": "bay", "rank": 1 }),
+            json!({
+                "nickname": "bay",
+                "rank": 1,
+                "contact": { "email": "hello@bay.example", "verified": true }
+            }),
         );
         let commit = CommitEntry {
             sequence: SequenceNumber(8),
@@ -259,8 +267,16 @@ mod tests {
         assert_eq!(
             candidates[0].data.update_mask,
             Some(DocumentEventUpdateMask::new(vec![
-                "profile.nickname".to_string()
-            ]))
+                "profile.contact.email".to_string(),
+                "profile.nickname".to_string(),
+            ])),
+            "nested update mask must descend through every object level to the \
+             deepest changed leaf (profile.contact.email) as well as the \
+             changed one-level-nested leaf (profile.nickname), while omitting \
+             unchanged siblings (profile.rank, profile.contact.verified); a \
+             mask of None, a parent-only \"profile\" or \"profile.contact\", or \
+             any other non-leaf path means the recursive nested-object diff arm \
+             in collect_object_diff_paths was skipped",
         );
     }
 

@@ -631,7 +631,10 @@ mod tests {
 
     use super::{
         HOST_CALL_ABI_VERSION, HostCallCancellation, HostCallCancellationCause, HostCallEnvelope,
-        HostCallOperation, HostCallRequest, RuntimeAsyncCfKvGetPayload, RuntimeAsyncDbGetPayload,
+        HostCallOperation, HostCallPayload, HostCallRequest, RuntimeAsyncCfKvGetPayload,
+        RuntimeAsyncDbGetPayload, RuntimeAsyncDbInsertPayload, RuntimeAsyncExtensionPayload,
+        RuntimeAsyncHttpRoutePayload, RuntimeAsyncQueryPayload,
+        RuntimeAsyncSchedulerRunAfterPayload, RuntimeAsyncServiceLookupPayload,
     };
 
     #[test]
@@ -884,6 +887,186 @@ mod tests {
             .expect("cancellation waiter should complete after notification")
             .expect("waiter task should not panic");
         assert_eq!(cause, Some(HostCallCancellationCause::Disconnect));
+    }
+
+    #[test]
+    fn host_call_operations_map_to_exact_operation_strings() {
+        // Exhaustive (variant -> wire string) table. The existing serde
+        // round-trip test only pressures `document_get`, so a mutant that made
+        // `as_str` return a constant for every other variant survived. This
+        // asserts `as_str()` directly for every variant so no single variant
+        // can hide a constant return.
+        for (operation, expected) in [
+            (HostCallOperation::HttpRoute, "http_route"),
+            (HostCallOperation::CtxQuery, "ctx_query"),
+            (HostCallOperation::CtxPaginatedQuery, "ctx_paginated_query"),
+            (HostCallOperation::CtxMutation, "ctx_mutation"),
+            (HostCallOperation::CtxAction, "ctx_action"),
+            (HostCallOperation::CtxRunQuery, "ctx_run_query"),
+            (HostCallOperation::CtxRunMutation, "ctx_run_mutation"),
+            (HostCallOperation::CtxRunAction, "ctx_run_action"),
+            (HostCallOperation::DocumentGet, "document_get"),
+            (HostCallOperation::QueryBuilderStart, "query_builder_start"),
+            (
+                HostCallOperation::QueryBuilderWithIndex,
+                "query_builder_with_index",
+            ),
+            (
+                HostCallOperation::QueryBuilderFilter,
+                "query_builder_filter",
+            ),
+            (HostCallOperation::QueryBuilderOrder, "query_builder_order"),
+            (HostCallOperation::QueryReadCollect, "query_read_collect"),
+            (HostCallOperation::QueryReadTake, "query_read_take"),
+            (HostCallOperation::QueryReadPaginate, "query_read_paginate"),
+            (HostCallOperation::QueryReadFirst, "query_read_first"),
+            (HostCallOperation::QueryReadUnique, "query_read_unique"),
+            (HostCallOperation::DocumentInsert, "document_insert"),
+            (HostCallOperation::DocumentPatch, "document_patch"),
+            (HostCallOperation::DocumentDelete, "document_delete"),
+            (
+                HostCallOperation::CtxSchedulerRunAfter,
+                "ctx_scheduler_run_after",
+            ),
+            (HostCallOperation::CtxSchedulerRunAt, "ctx_scheduler_run_at"),
+            (
+                HostCallOperation::CtxSchedulerCancel,
+                "ctx_scheduler_cancel",
+            ),
+            (HostCallOperation::CtxServiceLookup, "ctx_service_lookup"),
+            (
+                HostCallOperation::CtxRuntimeEnterNestedCall,
+                "ctx_runtime_enter_nested_call",
+            ),
+            (HostCallOperation::CfKvGet, "cf_kv_get"),
+            (HostCallOperation::CfKvPut, "cf_kv_put"),
+            (HostCallOperation::CfKvDelete, "cf_kv_delete"),
+            (HostCallOperation::CfKvList, "cf_kv_list"),
+            (
+                HostCallOperation::RuntimeExtensionCall,
+                "runtime_extension_call",
+            ),
+        ] {
+            // Use the `Debug` name (not `Display`, which delegates to `as_str`)
+            // in the message so the assertion label is independent of the code
+            // under test.
+            assert_eq!(
+                operation.as_str(),
+                expected,
+                "{operation:?} should stringify as {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn host_call_payload_reports_embedded_session_id_per_variant() {
+        // `HttpRoute` and `RuntimeExtensionCall` carry no session id and must
+        // return `None`; every other variant must surface the embedded id. A
+        // representative payload per category (plus both `None` variants)
+        // pressures the Rust accessor directly, which serialized-payload
+        // integration tests never exercised.
+        let cases: Vec<(HostCallPayload, Option<&str>)> = vec![
+            (
+                HostCallPayload::HttpRoute(RuntimeAsyncHttpRoutePayload {
+                    request: json!({ "method": "GET" }),
+                    route: json!({ "path": "/health" }),
+                }),
+                None,
+            ),
+            (
+                HostCallPayload::RuntimeExtensionCall(RuntimeAsyncExtensionPayload {
+                    namespace: "vendor".to_string(),
+                    operation: "ping".to_string(),
+                    payload: json!({}),
+                }),
+                None,
+            ),
+            (
+                HostCallPayload::CtxQuery(RuntimeAsyncQueryPayload {
+                    query: json!({ "table": "messages" }),
+                    host_call_session_id: Some("sess-read".to_string()),
+                }),
+                Some("sess-read"),
+            ),
+            (
+                HostCallPayload::DocumentInsert(RuntimeAsyncDbInsertPayload {
+                    table: "messages".to_string(),
+                    fields: json!({ "body": "hi" }),
+                    host_call_session_id: Some("sess-write".to_string()),
+                }),
+                Some("sess-write"),
+            ),
+            (
+                HostCallPayload::CtxSchedulerRunAfter(RuntimeAsyncSchedulerRunAfterPayload {
+                    delay_ms: 1_000,
+                    name: "reminder".to_string(),
+                    visibility: "internal".to_string(),
+                    args: json!([]),
+                    host_call_session_id: Some("sess-scheduler".to_string()),
+                }),
+                Some("sess-scheduler"),
+            ),
+            (
+                HostCallPayload::CtxServiceLookup(RuntimeAsyncServiceLookupPayload {
+                    service_name: "billing".to_string(),
+                    host_call_session_id: Some("sess-service".to_string()),
+                }),
+                Some("sess-service"),
+            ),
+        ];
+
+        for (payload, expected) in cases {
+            let operation = payload.operation();
+            assert_eq!(
+                payload.host_call_session_id(),
+                expected,
+                "{operation:?} should expose host_call_session_id {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn host_call_cancellation_fires_listeners_only_on_first_cancel() {
+        // First-cancel-wins idempotence. Registering listeners and cancelling
+        // twice leaves the final fire count at N under both the correct code
+        // and an inverted first-cancel check (the inverted version simply
+        // fires listeners on the *second* cancel instead of the first), so a
+        // count check taken only at the end cannot tell them apart. This
+        // asserts the count *between* the two cancels: the listeners must have
+        // already fired after the first cancel, and the second cancel with a
+        // different cause must be a no-op for both listeners and cause.
+        let cancellation = HostCallCancellation::default();
+        let fired = Arc::new(AtomicUsize::new(0));
+        for _ in 0..3 {
+            let fired = fired.clone();
+            cancellation.notify_on_cancel(move || {
+                fired.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+
+        cancellation.cancel();
+        assert_eq!(
+            fired.load(Ordering::SeqCst),
+            3,
+            "all three listeners should fire exactly once on the first cancel"
+        );
+        assert_eq!(
+            cancellation.cause(),
+            Some(HostCallCancellationCause::Explicit),
+            "the first cancel should record the explicit cause"
+        );
+
+        cancellation.cancel_due_to_disconnect();
+        assert_eq!(
+            fired.load(Ordering::SeqCst),
+            3,
+            "a second cancel with a different cause must not re-fire listeners"
+        );
+        assert_eq!(
+            cancellation.cause(),
+            Some(HostCallCancellationCause::Explicit),
+            "the original explicit cause must win over a later disconnect cancel"
+        );
     }
 }
 

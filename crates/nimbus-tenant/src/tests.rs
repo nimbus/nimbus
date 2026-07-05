@@ -587,6 +587,47 @@ fn tenant_isolation_decision_issues_narrow_service_and_storage_access() {
 }
 
 #[test]
+fn tenant_isolation_decision_preserves_runtime_budget_in_quota_evidence() {
+    let context = test_application_context();
+    let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+    let expected_budget = policy.tenant_budget();
+    let decision = context
+        .admit_decision(tenant_decision_input(&context, &policy))
+        .expect("decision should admit");
+
+    // The runtime budget attached via `with_runtime_budget` must survive into the
+    // final decision's quota evidence. Fields are module-private, so assert on the
+    // serialized audit surface (`TenantQuotaPolicyDecision` derives `Serialize`).
+    let quotas_json =
+        serde_json::to_value(decision.quotas()).expect("quota decision should serialize");
+    let expected_budget_json =
+        serde_json::to_value(expected_budget).expect("runtime tenant budget should serialize");
+
+    assert!(
+        expected_budget.max_active_runtime_slots > 0 && expected_budget.max_heap_mb_per_runtime > 0,
+        "web-standard budget fixture must expose real non-default limits so this test proves survival, not a default value"
+    );
+    assert!(
+        !quotas_json["runtime_budget"].is_null(),
+        "runtime budget must be present (not null) in the serialized quota evidence"
+    );
+    assert_eq!(
+        quotas_json["runtime_budget"], expected_budget_json,
+        "serialized quota evidence must carry the exact runtime budget set on the decision, not a default"
+    );
+    assert_eq!(
+        quotas_json["runtime_budget"]["max_active_runtime_slots"],
+        serde_json::json!(expected_budget.max_active_runtime_slots),
+        "runtime budget slot ceiling must survive into the quota evidence"
+    );
+    assert_eq!(
+        quotas_json["runtime_budget"]["max_heap_mb_per_runtime"],
+        serde_json::json!(expected_budget.max_heap_mb_per_runtime),
+        "runtime budget heap ceiling must survive into the quota evidence"
+    );
+}
+
+#[test]
 fn tenant_isolation_decision_rejects_unadmitted_service_grants() {
     let context = test_application_context();
     let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
@@ -939,6 +980,34 @@ fn production_untrusted_runtime_admission_allows_production_node_profile() {
         ),
         RuntimePolicyAdmission::AdmitInProcess,
         "production Node profile should be in-process admissible because it has no broad host grants"
+    );
+}
+
+#[test]
+fn production_untrusted_runtime_admission_admits_concrete_public_network_authority() {
+    // ALLOW-direction proof: a concrete public host and public IP net_connect grant
+    // must NOT be mistaken for a generic loopback/wildcard authority. All other policy
+    // inputs stay web-standard-admissible, isolating the loopback/wildcard predicate.
+    let context = test_application_context();
+    let policy = RuntimePolicy::new(RuntimeLimits {
+        grants: nimbus_runtime::RuntimeGrants {
+            net_connect: vec![
+                "api.example.com:443".to_string(),
+                "93.184.216.34".to_string(),
+            ],
+            ..nimbus_runtime::RuntimeGrants::application_web_standard()
+        },
+        ..RuntimeLimits::application_web_standard()
+    });
+
+    assert_eq!(
+        context.admit_runtime_policy(
+            &policy,
+            RuntimeIsolationTier::InProcessUntrusted,
+            TenantIsolationMode::Production,
+        ),
+        RuntimePolicyAdmission::AdmitInProcess,
+        "a concrete public network authority (non-loopback, non-wildcard) must pass the loopback/wildcard classifier and remain production in-process admissible; a classifier that flags every grant as loopback would incorrectly route this to a microVM"
     );
 }
 
