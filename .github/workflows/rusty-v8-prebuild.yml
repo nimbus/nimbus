@@ -480,17 +480,62 @@ jobs:
             --pattern '*'
 
           cd "${verify_dir}"
-          # Expected set derives from TRUSTED inputs only. Each payload AND its
-          # checksum sidecar must be present — sha256sum -c only verifies the
-          # sidecars that exist, so a missing sidecar would otherwise let its
-          # payload go unverified after a partial upload.
-          for name in \
-            "librusty_v8_release_${TARGET}.a" \
-            "librusty_v8_release_ptrcomp_${TARGET}.a" \
-            "src_binding_simdutf_release_${TARGET}.rs" \
-            "src_binding_ptrcomp_simdutf_release_${TARGET}.rs" \
-            manifest.json; do
-            test -f "${name}" || { echo "::error::missing published asset ${name}"; exit 1; }
-            test -f "${name}.sha256" || { echo "::error::missing checksum sidecar ${name}.sha256"; exit 1; }
-          done
-          sha256sum -c ./*.sha256
+          # Expected set derives from TRUSTED inputs only. Blanket
+          # `sha256sum -c` is NOT sufficient: it verifies whatever filename a
+          # sidecar happens to name, so a corrupt/hostile sidecar could verify
+          # a different file while the required payload goes unchecked. Verify
+          # each required payload EXPLICITLY: recompute its digest, require its
+          # sidecar to name exactly that payload and carry the same digest, and
+          # cross-check the four variant payloads against the trusted-composed
+          # manifest's digest claims.
+          python3 - "${TARGET}" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          target = sys.argv[1]
+
+          def digest(path: Path) -> str:
+              h = hashlib.sha256()
+              with open(path, "rb") as fh:
+                  for chunk in iter(lambda: fh.read(1 << 20), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          required = [
+              f"librusty_v8_release_{target}.a",
+              f"librusty_v8_release_ptrcomp_{target}.a",
+              f"src_binding_simdutf_release_{target}.rs",
+              f"src_binding_ptrcomp_simdutf_release_{target}.rs",
+              "manifest.json",
+          ]
+          computed = {}
+          for name in required:
+              payload = Path(name)
+              sidecar = Path(f"{name}.sha256")
+              if not payload.is_file():
+                  raise SystemExit(f"missing published asset {name}")
+              if not sidecar.is_file():
+                  raise SystemExit(f"missing checksum sidecar {name}.sha256")
+              fields = sidecar.read_text().split()
+              if len(fields) < 2 or fields[1].lstrip("*") != name:
+                  raise SystemExit(f"sidecar {name}.sha256 does not name {name}: {fields!r}")
+              actual = digest(payload)
+              if actual != fields[0]:
+                  raise SystemExit(f"digest mismatch for {name}: sidecar {fields[0]}, actual {actual}")
+              computed[name] = actual
+
+          manifest = json.loads(Path("manifest.json").read_text())
+          for variant in manifest["variants"]:
+              for key in ("archive", "src_binding"):
+                  fname = variant[key]["filename"]
+                  claimed = variant[key]["sha256"]
+                  if fname not in computed:
+                      raise SystemExit(f"manifest references unexpected asset {fname}")
+                  if computed[fname] != claimed:
+                      raise SystemExit(
+                          f"manifest digest for {fname} ({claimed}) != recomputed ({computed[fname]})"
+                      )
+          print("verified: all payloads digest-checked against sidecars and manifest")
+          PY
