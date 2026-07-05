@@ -13,20 +13,26 @@ if [[ "${#archives[@]}" -ne 1 ]]; then
 fi
 archive_file="${archives[0]}"
 
+# upload-artifact strips the common ancestor (.config/), so the downloaded
+# artifact usually carries nextest.toml at its ROOT; accept both layouts.
 config_file="${config_dir}/.config/nextest.toml"
 sha_file="${config_dir}/.config/nextest.toml.sha256"
+if [[ ! -f "${config_file}" && -f "${config_dir}/nextest.toml" ]]; then
+  config_file="${config_dir}/nextest.toml"
+  sha_file="${config_dir}/nextest.toml.sha256"
+fi
 if [[ ! -f "${config_file}" || ! -f "${sha_file}" ]]; then
   printf 'downloaded nextest-config artifact must contain .config/nextest.toml and .config/nextest.toml.sha256 under %s\n' "${config_dir}" >&2
   exit 1
 fi
 
-(
-  cd "${config_dir}"
-  sha256sum -c .config/nextest.toml.sha256
-)
-
+# Install first, then verify at the repo root: the sidecar's embedded name is
+# ".config/nextest.toml" (B4 generates it from the repo root), which only
+# resolves after installation regardless of the artifact's internal layout.
 mkdir -p .config
 cp "${config_file}" .config/nextest.toml
+cp "${sha_file}" .config/nextest.toml.sha256
+sha256sum -c .config/nextest.toml.sha256
 
 if [[ -n "${GITHUB_ENV:-}" ]]; then
   printf 'NIMBUS_TESTS_ARCHIVE=%s\n' "${archive_file}" >> "${GITHUB_ENV}"
