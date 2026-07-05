@@ -27,8 +27,8 @@ on:
         options:
           - x86_64-unknown-linux-gnu
 
-# Permissions are per-job: the build job (which executes the fork's untrusted
-# build scripts) gets read-only; only the publish job — a FRESH runner that
+# Permissions are per-job: the build jobs (which execute the fork's untrusted
+# build scripts) get read-only; only the publish job — a FRESH runner that
 # never ran untrusted code — gets contents:write. A single job would let a
 # compromised build capture the token when a later step receives it.
 permissions: {}
@@ -39,19 +39,37 @@ concurrency:
 
 jobs:
   build:
-    name: Build rusty_v8 prebuild (unprivileged)
+    # One variant per job: a single V8 source build measures ~80 minutes on a
+    # standard runner (run 28732025183), so two sequential variants cannot fit
+    # any sane job budget — and one runner cannot comfortably hold two full
+    # gn_out trees (C9). The matrix gives each variant its own runner, its own
+    # 110-minute budget, and its own disk envelope.
+    name: Build rusty_v8 prebuild (${{ matrix.variant }}, unprivileged)
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 110
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: release
+            cargo_features: simdutf
+            binding_features: _simdutf
+            archive_suffix: release
+          - variant: ptrcomp
+            cargo_features: v8_enable_pointer_compression,simdutf
+            binding_features: _ptrcomp_simdutf
+            archive_suffix: release_ptrcomp
 
     env:
       DENO_REF: ${{ inputs.deno_ref }}
       EXPECTED_DENO_SHA: ${{ inputs.deno_sha }}
       EXPECTED_RUSTY_V8_SHA: ${{ inputs.rusty_v8_sha }}
-      RELEASE_TAG: rusty-v8-${{ inputs.rusty_v8_ref }}
       RUSTY_V8_REF: ${{ inputs.rusty_v8_ref }}
       TARGET: ${{ inputs.target }}
+      VARIANT: ${{ matrix.variant }}
+      CARGO_FEATURES: ${{ matrix.cargo_features }}
 
     steps:
       - name: Free runner disk
@@ -167,24 +185,27 @@ jobs:
             exit 1
           fi
 
+          # Enforced disk headroom before the build (C9: legible, not a SIGBUS).
+          free_gb="$(df --output=avail -BG / | tail -1 | tr -dc 0-9)"
+          if [[ "${free_gb}" -lt 25 ]]; then
+            echo "::error::only ${free_gb}G free before the ${VARIANT} build (need >= 25G)"
+            exit 28
+          fi
+
           asset_dir="${RUNNER_TEMP}/rusty-v8-prebuild-assets"
           mkdir -p "${asset_dir}"
           {
             echo "ASSET_DIR=${asset_dir}"
-            echo "RUSTY_V8_SHA=$(git rev-parse HEAD)"
-            echo "RELEASE_TARGET_DIR=${RUNNER_TEMP}/rusty-v8-target-release"
-            echo "PTRCOMP_TARGET_DIR=${RUNNER_TEMP}/rusty-v8-target-release-ptrcomp"
-            echo "RELEASE_ARCHIVE=librusty_v8_release_${TARGET}.a"
-            echo "PTRCOMP_ARCHIVE=librusty_v8_release_ptrcomp_${TARGET}.a"
-            echo "RELEASE_BINDING=src_binding_simdutf_release_${TARGET}.rs"
-            echo "PTRCOMP_BINDING=src_binding_ptrcomp_simdutf_release_${TARGET}.rs"
+            echo "BUILD_TARGET_DIR=${RUNNER_TEMP}/rusty-v8-target-${VARIANT}"
+            echo "ARCHIVE_NAME=librusty_v8_${{ matrix.archive_suffix }}_${TARGET}.a"
+            echo "BINDING_NAME=src_binding${{ matrix.binding_features }}_release_${TARGET}.rs"
             echo "RUNNER_IMAGE=${ImageOS:-ubuntu24}-${ImageVersion:-unknown}"
           } >> "${GITHUB_ENV}"
 
       # FEATURE ALIGNMENT (orchestrator review): the nimbus workspace resolves the
       # v8 crate with features {default(use_custom_libcxx), simdutf} — verified via
       # `cargo tree -p nimbus-runtime -e features -i v8` — and the ptrcomp lane adds
-      # v8_enable_pointer_compression. Both variants below therefore build with
+      # v8_enable_pointer_compression. Both matrix variants therefore build with
       # simdutf enabled, and the published binding filenames carry the composed
       # features string (_simdutf / _ptrcomp_simdutf per build.rs:556-567) so the
       # consumer's derived name matches. sandbox is NOT enabled anywhere (verified 0
@@ -207,68 +228,33 @@ jobs:
       # - Prebuilt profile selection is release unless V8_FORCE_DEBUG=true on a
       #   non-Windows target (build.rs:545-553). Source GN debug/release follows
       #   Cargo PROFILE (build.rs:267-273 and 1070-1080).
-      - name: Build release artifact
+      - name: Build variant artifact
         shell: bash
         working-directory: rusty_v8
         env:
           CARGO_INCREMENTAL: "0"
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-          CARGO_TARGET_DIR: ${{ runner.temp }}/rusty-v8-target-release
           V8_FROM_SOURCE: "1"
         run: |
           set -euo pipefail
-          cargo build --release --locked --features simdutf
+          export CARGO_TARGET_DIR="${BUILD_TARGET_DIR}"
+          cargo build --release --locked --features "${CARGO_FEATURES}"
 
-          archive_path="${RELEASE_TARGET_DIR}/release/gn_out/obj/librusty_v8.a"
-          binding_path="${RELEASE_TARGET_DIR}/release/gn_out/src_binding.rs"
+          archive_path="${BUILD_TARGET_DIR}/release/gn_out/obj/librusty_v8.a"
+          binding_path="${BUILD_TARGET_DIR}/release/gn_out/src_binding.rs"
           test -s "${archive_path}"
           test -s "${binding_path}"
 
-          cp "${archive_path}" "${ASSET_DIR}/${RELEASE_ARCHIVE}"
-          cp "${binding_path}" "${ASSET_DIR}/${RELEASE_BINDING}"
+          cp "${archive_path}" "${ASSET_DIR}/${ARCHIVE_NAME}"
+          cp "${binding_path}" "${ASSET_DIR}/${BINDING_NAME}"
           (
             cd "${ASSET_DIR}"
-            sha256sum "${RELEASE_ARCHIVE}" > "${RELEASE_ARCHIVE}.sha256"
-            sha256sum "${RELEASE_BINDING}" > "${RELEASE_BINDING}.sha256"
-          )
-          # One runner cannot hold two full V8 gn_out trees (review finding):
-          # release assets are captured, so reclaim the whole release tree
-          # before the ptrcomp build, and ENFORCE headroom instead of printing.
-          rm -rf "${RELEASE_TARGET_DIR}"
-          df -h /
-          free_gb="$(df --output=avail -BG / | tail -1 | tr -dc 0-9)"
-          if [[ "${free_gb}" -lt 25 ]]; then
-            echo "::error::only ${free_gb}G free before ptrcomp build (need >= 25G)"
-            exit 28
-          fi
-
-      - name: Build release pointer-compression artifact
-        shell: bash
-        working-directory: rusty_v8
-        env:
-          CARGO_INCREMENTAL: "0"
-          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-          CARGO_TARGET_DIR: ${{ runner.temp }}/rusty-v8-target-release-ptrcomp
-          V8_FROM_SOURCE: "1"
-        run: |
-          set -euo pipefail
-          cargo build --release --locked --features v8_enable_pointer_compression,simdutf
-
-          archive_path="${PTRCOMP_TARGET_DIR}/release/gn_out/obj/librusty_v8.a"
-          binding_path="${PTRCOMP_TARGET_DIR}/release/gn_out/src_binding.rs"
-          test -s "${archive_path}"
-          test -s "${binding_path}"
-
-          cp "${archive_path}" "${ASSET_DIR}/${PTRCOMP_ARCHIVE}"
-          cp "${binding_path}" "${ASSET_DIR}/${PTRCOMP_BINDING}"
-          (
-            cd "${ASSET_DIR}"
-            sha256sum "${PTRCOMP_ARCHIVE}" > "${PTRCOMP_ARCHIVE}.sha256"
-            sha256sum "${PTRCOMP_BINDING}" > "${PTRCOMP_BINDING}.sha256"
+            sha256sum "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
+            sha256sum "${BINDING_NAME}" > "${BINDING_NAME}.sha256"
           )
           df -h /
 
-      - name: Write manifest
+      - name: Write variant fragment
         shell: bash
         run: |
           set -euo pipefail
@@ -284,62 +270,26 @@ jobs:
           def digest(filename: str) -> str:
               return (asset_dir / f"{filename}.sha256").read_text().split()[0]
 
-          release_archive = os.environ["RELEASE_ARCHIVE"]
-          release_binding = os.environ["RELEASE_BINDING"]
-          ptrcomp_archive = os.environ["PTRCOMP_ARCHIVE"]
-          ptrcomp_binding = os.environ["PTRCOMP_BINDING"]
-
-          manifest = {
-              "rusty_v8_ref": os.environ["RUSTY_V8_REF"],
-              "rusty_v8_sha": os.environ["RUSTY_V8_SHA"],
-              "deno_ref": os.environ["DENO_REF"],
-              "deno_sha": os.environ["EXPECTED_DENO_SHA"],
-              "target": os.environ["TARGET"],
+          archive = os.environ["ARCHIVE_NAME"]
+          binding = os.environ["BINDING_NAME"]
+          fragment = {
+              "variant": os.environ["VARIANT"],
+              "rusty_v8_sha": os.environ["EXPECTED_RUSTY_V8_SHA"],
               "built_at": os.environ["BUILT_AT"],
               "runner_image": os.environ["RUNNER_IMAGE"],
-              "variants": [
-                  {
-                      "name": "release",
-                      "profile": "release",
-                      "features": "_simdutf",
-                      "archive": {
-                          "filename": release_archive,
-                          "sha256": digest(release_archive),
-                      },
-                      "src_binding": {
-                          "filename": release_binding,
-                          "sha256": digest(release_binding),
-                      },
-                  },
-                  {
-                      "name": "release-ptrcomp",
-                      "profile": "release",
-                      "features": "_ptrcomp_simdutf",
-                      "archive": {
-                          "filename": ptrcomp_archive,
-                          "sha256": digest(ptrcomp_archive),
-                      },
-                      "src_binding": {
-                          "filename": ptrcomp_binding,
-                          "sha256": digest(ptrcomp_binding),
-                      },
-                  },
-              ],
+              "archive": {"filename": archive, "sha256": digest(archive)},
+              "src_binding": {"filename": binding, "sha256": digest(binding)},
           }
-          (asset_dir / "manifest.json").write_text(
-              json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+          (asset_dir / f"fragment-{os.environ['VARIANT']}.json").write_text(
+              json.dumps(fragment, indent=2, sort_keys=True) + "\n"
           )
           PY
-          (
-            cd "${ASSET_DIR}"
-            sha256sum manifest.json > manifest.json.sha256
-            ls -lh
-          )
+          ls -lh "${ASSET_DIR}"
 
-      - name: Upload prebuild assets for the publish job
+      - name: Upload variant assets for the publish job
         uses: actions/upload-artifact@v7
         with:
-          name: rusty-v8-prebuild-assets
+          name: rusty-v8-prebuild-${{ matrix.variant }}
           path: ${{ runner.temp }}/rusty-v8-prebuild-assets
           if-no-files-found: error
           retention-days: 1
@@ -362,48 +312,115 @@ jobs:
       TARGET: ${{ inputs.target }}
 
     steps:
-      - name: Download prebuild assets
+      - name: Download release variant assets
         uses: actions/download-artifact@v8
         with:
-          name: rusty-v8-prebuild-assets
+          name: rusty-v8-prebuild-release
           path: ${{ runner.temp }}/rusty-v8-prebuild-assets
 
-      - name: Resolve and validate publish context
+      - name: Download ptrcomp variant assets
+        uses: actions/download-artifact@v8
+        with:
+          name: rusty-v8-prebuild-ptrcomp
+          path: ${{ runner.temp }}/rusty-v8-prebuild-assets
+
+      - name: Validate fragments and compose manifest
         shell: bash
         run: |
           set -euo pipefail
           asset_dir="${RUNNER_TEMP}/rusty-v8-prebuild-assets"
-          (cd "${asset_dir}" && sha256sum -c manifest.json.sha256)
 
-          # SECURITY: manifest.json is UNTRUSTED (produced by the build job,
-          # which ran third-party build scripts). Nothing from it may reach
-          # GITHUB_ENV or shell interpolation unvalidated — a newline-bearing
-          # value written to GITHUB_ENV would inject env vars into the steps
-          # that hold GH_TOKEN. Validate every consumed field against a strict
-          # shape and cross-check pins against the TRUSTED dispatch inputs.
-          RUSTY_V8_SHA="$(python3 /dev/stdin "${asset_dir}/manifest.json" <<'PY'
-          import json, re, sys
-          m = json.load(open(sys.argv[1]))
-          sha = m.get("rusty_v8_sha", "")
-          if not re.fullmatch(r"[0-9a-f]{40}", sha):
-              raise SystemExit("manifest rusty_v8_sha has invalid shape: %r" % sha)
-          print(sha)
+          # SECURITY: everything under asset_dir is UNTRUSTED (produced by jobs
+          # that ran third-party build scripts). The manifest is therefore
+          # composed HERE, on the trusted runner, exclusively from trusted
+          # dispatch inputs plus fragment fields that pass strict validation:
+          # 40-hex shape, equality with the expected SHA, exact filename
+          # equality with trusted-derived names, and recomputed file digests.
+          # Nothing untrusted reaches GITHUB_ENV or shell interpolation.
+          BUILT_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          export BUILT_AT ASSET_DIR="${asset_dir}"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          asset_dir = Path(os.environ["ASSET_DIR"])
+          target = os.environ["TARGET"]
+          expected_sha = os.environ["EXPECTED_RUSTY_V8_SHA"]
+          if not re.fullmatch(r"[0-9a-f]{40}", expected_sha):
+              raise SystemExit("expected rusty_v8 sha is not 40-hex")
+
+          expected_names = {
+              "release": (
+                  f"librusty_v8_release_{target}.a",
+                  f"src_binding_simdutf_release_{target}.rs",
+              ),
+              "ptrcomp": (
+                  f"librusty_v8_release_ptrcomp_{target}.a",
+                  f"src_binding_ptrcomp_simdutf_release_{target}.rs",
+              ),
+          }
+
+          def recomputed(path: Path) -> str:
+              h = hashlib.sha256()
+              with open(path, "rb") as fh:
+                  for chunk in iter(lambda: fh.read(1 << 20), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          variants = []
+          for variant, (want_archive, want_binding) in sorted(expected_names.items()):
+              fragment = json.loads((asset_dir / f"fragment-{variant}.json").read_text())
+              if fragment.get("rusty_v8_sha") != expected_sha:
+                  raise SystemExit(f"{variant}: fragment sha mismatch")
+              archive = fragment["archive"]["filename"]
+              binding = fragment["src_binding"]["filename"]
+              if archive != want_archive or binding != want_binding:
+                  raise SystemExit(
+                      f"{variant}: fragment filenames {archive!r}/{binding!r} do not "
+                      f"match trusted-derived names {want_archive!r}/{want_binding!r}"
+                  )
+              for filename, claimed in (
+                  (archive, fragment["archive"]["sha256"]),
+                  (binding, fragment["src_binding"]["sha256"]),
+              ):
+                  actual = recomputed(asset_dir / filename)
+                  if actual != claimed:
+                      raise SystemExit(f"{variant}: digest mismatch for {filename}")
+              variants.append(
+                  {
+                      "name": variant,
+                      "profile": "release",
+                      "features": "_simdutf" if variant == "release" else "_ptrcomp_simdutf",
+                      "archive": fragment["archive"],
+                      "src_binding": fragment["src_binding"],
+                      "built_at": str(fragment.get("built_at", "")),
+                      "runner_image": str(fragment.get("runner_image", "")),
+                  }
+              )
+
+          manifest = {
+              "rusty_v8_ref": os.environ["RUSTY_V8_REF"],
+              "rusty_v8_sha": expected_sha,
+              "deno_ref": os.environ["DENO_REF"],
+              "deno_sha": os.environ["EXPECTED_DENO_SHA"],
+              "target": target,
+              "built_at": os.environ["BUILT_AT"],
+              "variants": variants,
+          }
+          (asset_dir / "manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+          )
           PY
-          )"
-          manifest_ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rusty_v8_ref"])' "${asset_dir}/manifest.json")"
-          manifest_deno_ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["deno_ref"])' "${asset_dir}/manifest.json")"
-          manifest_deno_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["deno_sha"])' "${asset_dir}/manifest.json")"
-          manifest_target="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["target"])' "${asset_dir}/manifest.json")"
-          if [[ "${manifest_ref}" != "${RUSTY_V8_REF}" || "${manifest_deno_ref}" != "${DENO_REF}" || "${manifest_deno_sha}" != "${EXPECTED_DENO_SHA}" || "${manifest_target}" != "${TARGET}" ]]; then
-            echo "::error::manifest pins do not match dispatch inputs"
-            exit 1
-          fi
-          if [[ "${RUSTY_V8_SHA}" != "${EXPECTED_RUSTY_V8_SHA}" ]]; then
-            echo "::error::manifest rusty_v8_sha ${RUSTY_V8_SHA} does not match dispatched expected sha ${EXPECTED_RUSTY_V8_SHA}"
-            exit 1
-          fi
+          (
+            cd "${asset_dir}"
+            rm -f fragment-release.json fragment-ptrcomp.json
+            sha256sum manifest.json > manifest.json.sha256
+            ls -lh
+          )
           echo "ASSET_DIR=${asset_dir}" >> "${GITHUB_ENV}"
-          echo "RUSTY_V8_SHA=${RUSTY_V8_SHA}" >> "${GITHUB_ENV}"
 
       - name: Publish release assets
         shell: bash
@@ -415,8 +432,9 @@ jobs:
           cat > "${notes}" <<EOF
           Nimbus rusty_v8 prebuild for ${RUSTY_V8_REF}
 
-          rusty_v8_sha: ${RUSTY_V8_SHA}
+          rusty_v8_sha: ${EXPECTED_RUSTY_V8_SHA}
           deno_ref: ${DENO_REF}
+          deno_sha: ${EXPECTED_DENO_SHA}
           target: ${TARGET}
           EOF
 
@@ -462,24 +480,62 @@ jobs:
             --pattern '*'
 
           cd "${verify_dir}"
-          python3 - <<'PY'
+          # Expected set derives from TRUSTED inputs only. Blanket
+          # `sha256sum -c` is NOT sufficient: it verifies whatever filename a
+          # sidecar happens to name, so a corrupt/hostile sidecar could verify
+          # a different file while the required payload goes unchecked. Verify
+          # each required payload EXPLICITLY: recompute its digest, require its
+          # sidecar to name exactly that payload and carry the same digest, and
+          # cross-check the four variant payloads against the trusted-composed
+          # manifest's digest claims.
+          python3 - "${TARGET}" <<'PY'
+          import hashlib
           import json
+          import sys
           from pathlib import Path
 
+          target = sys.argv[1]
+
+          def digest(path: Path) -> str:
+              h = hashlib.sha256()
+              with open(path, "rb") as fh:
+                  for chunk in iter(lambda: fh.read(1 << 20), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          required = [
+              f"librusty_v8_release_{target}.a",
+              f"librusty_v8_release_ptrcomp_{target}.a",
+              f"src_binding_simdutf_release_{target}.rs",
+              f"src_binding_ptrcomp_simdutf_release_{target}.rs",
+              "manifest.json",
+          ]
+          computed = {}
+          for name in required:
+              payload = Path(name)
+              sidecar = Path(f"{name}.sha256")
+              if not payload.is_file():
+                  raise SystemExit(f"missing published asset {name}")
+              if not sidecar.is_file():
+                  raise SystemExit(f"missing checksum sidecar {name}.sha256")
+              fields = sidecar.read_text().split()
+              if len(fields) < 2 or fields[1].lstrip("*") != name:
+                  raise SystemExit(f"sidecar {name}.sha256 does not name {name}: {fields!r}")
+              actual = digest(payload)
+              if actual != fields[0]:
+                  raise SystemExit(f"digest mismatch for {name}: sidecar {fields[0]}, actual {actual}")
+              computed[name] = actual
+
           manifest = json.loads(Path("manifest.json").read_text())
-          expected = ["manifest.json", "manifest.json.sha256"]
           for variant in manifest["variants"]:
               for key in ("archive", "src_binding"):
-                  filename = variant[key]["filename"]
-                  expected.append(filename)
-                  expected.append(f"{filename}.sha256")
-
-          for name in expected:
-              # Untrusted manifest: refuse path separators in asset names.
-              if "/" in name or "\\" in name or name.startswith(".."):
-                  raise SystemExit(f"unsafe asset name in manifest: {name!r}")
-          missing = [name for name in expected if not Path(name).is_file()]
-          if missing:
-              raise SystemExit(f"missing published assets: {', '.join(missing)}")
+                  fname = variant[key]["filename"]
+                  claimed = variant[key]["sha256"]
+                  if fname not in computed:
+                      raise SystemExit(f"manifest references unexpected asset {fname}")
+                  if computed[fname] != claimed:
+                      raise SystemExit(
+                          f"manifest digest for {fname} ({claimed}) != recomputed ({computed[fname]})"
+                      )
+          print("verified: all payloads digest-checked against sidecars and manifest")
           PY
-          sha256sum -c ./*.sha256
