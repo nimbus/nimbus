@@ -58,7 +58,7 @@ pub(crate) async fn http_handler(
             execute_http_target(ServerCloudFunctionsHttpInvocation {
                 engine: state.engine.clone(),
                 runtime_service_registry: state.runtime_service_registry(),
-                tenant_isolation_mode: state.tenant_isolation_mode,
+                tenant_isolation_mode: state.tenant_isolation_mode(),
                 registry,
                 deployment_generation: deployment.generation,
                 tenant_id,

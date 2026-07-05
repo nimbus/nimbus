@@ -1,4 +1,3 @@
-use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
 use axum::response::{IntoResponse, Response};
@@ -8,13 +7,17 @@ use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, HostCallCancellation, RuntimeAdaptiveControllerSettings,
     RuntimeHostResourceBudget, RuntimeScalingPlanSet,
 };
-use tokio::sync::watch;
 use tracing::warn;
 
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
 use crate::adapters::cloudflare::CloudflareConfig;
 use crate::adapters::convex::{ConvexRegistry, ConvexTenancyConfig};
 use crate::adapters::firebase::FirebaseConfig;
+use crate::config::control_plane::ControlPlaneConfig;
+use crate::config::deployment::DeploymentConfig;
+use crate::config::node_services::NodeServicesConfig;
+use crate::config::runtime::RuntimeGovernorConfig;
+use crate::config::transport::TransportConfig;
 use crate::error_envelope::StructuredHttpError;
 use crate::license::LicenseState;
 use crate::local_server::{
@@ -29,26 +32,11 @@ use nimbus_services::ServiceManager;
 
 pub(crate) struct AppStateConfig {
     pub(crate) engine: Arc<Engine>,
-    pub(crate) convex_registry: Option<ConvexRegistry>,
-    pub(crate) system_convex_registry: Option<ConvexRegistry>,
-    pub(crate) application_auth_verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
-    pub(crate) cloud_functions_registry: Option<CloudFunctionsRegistry>,
-    pub(crate) cloudflare_config: Option<CloudflareConfig>,
-    pub(crate) firebase_config: Option<FirebaseConfig>,
-    pub(crate) convex_tenancy: Option<ConvexTenancyConfig>,
-    pub(crate) license_state: LicenseState,
-    pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
-    pub(crate) service_manager: Option<Arc<ServiceManager>>,
-    pub(crate) machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
-    pub(crate) deploy_admin_token: Option<String>,
-    pub(crate) local_server_security: Option<Arc<LocalServerSecurityState>>,
-    pub(crate) tenant_isolation_mode: TenantIsolationMode,
-    pub(crate) listen_addr: Option<SocketAddr>,
-    pub(crate) server_shutdown: Option<watch::Sender<bool>>,
-    pub(crate) version_check: Arc<VersionCheck>,
-    pub(crate) runtime_host_resource_budget: RuntimeHostResourceBudget,
-    pub(crate) runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
-    pub(crate) effective_runtime_scaling_plans: RuntimeScalingPlanSet,
+    pub(crate) deployment: DeploymentConfig,
+    pub(crate) control_plane: ControlPlaneConfig,
+    pub(crate) node_services: NodeServicesConfig,
+    pub(crate) transport: TransportConfig,
+    pub(crate) runtime: RuntimeGovernorConfig,
 }
 
 /// Shared application state.
@@ -56,25 +44,24 @@ pub(crate) struct AppState {
     pub(crate) engine: Arc<Engine>,
     pub(crate) active_deployment: Arc<ActiveDeployment>,
     system_convex_registry: Option<Arc<ConvexRegistry>>,
-    pub(crate) license_state: Arc<LicenseState>,
-    pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
-    service_manager: Option<Arc<ServiceManager>>,
-    machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
-    pub(crate) deploy_admin_token: Option<String>,
-    pub(crate) local_server_security: Option<Arc<LocalServerSecurityState>>,
-    pub(crate) tenant_isolation_mode: TenantIsolationMode,
-    pub(crate) listen_addr: Option<SocketAddr>,
-    server_shutdown: Option<watch::Sender<bool>>,
-    pub(crate) version_check: Arc<VersionCheck>,
-    runtime_host_resource_budget: RuntimeHostResourceBudget,
-    runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
-    effective_runtime_scaling_plans: RuntimeScalingPlanSet,
+    control_plane: ControlPlaneConfig,
+    node_services: NodeServicesConfig,
+    transport: TransportConfig,
+    runtime: RuntimeGovernorConfig,
 }
 
 impl AppState {
     pub(crate) fn from_config(config: AppStateConfig) -> Self {
         let AppStateConfig {
             engine,
+            deployment,
+            control_plane,
+            node_services,
+            transport,
+            runtime,
+        } = config;
+        let node_services = node_services.resolve(engine.clone());
+        let DeploymentConfig {
             convex_registry,
             system_convex_registry,
             application_auth_verifier,
@@ -82,20 +69,7 @@ impl AppState {
             cloudflare_config,
             firebase_config,
             convex_tenancy,
-            license_state,
-            runtime_service_registry,
-            service_manager,
-            machine_lifecycle_manager,
-            deploy_admin_token,
-            local_server_security,
-            tenant_isolation_mode,
-            listen_addr,
-            server_shutdown,
-            version_check,
-            runtime_host_resource_budget,
-            runtime_adaptive_controller_settings,
-            effective_runtime_scaling_plans,
-        } = config;
+        } = deployment;
         let convex_registry = convex_registry.map(Arc::new);
         let system_convex_registry = system_convex_registry.map(Arc::new);
         let initial_generation =
@@ -113,19 +87,10 @@ impl AppState {
             engine,
             active_deployment: Arc::new(ActiveDeployment::new(active_deployment)),
             system_convex_registry,
-            license_state: Arc::new(license_state),
-            runtime_service_registry,
-            service_manager,
-            machine_lifecycle_manager,
-            deploy_admin_token,
-            local_server_security,
-            tenant_isolation_mode,
-            listen_addr,
-            server_shutdown,
-            version_check,
-            runtime_host_resource_budget,
-            runtime_adaptive_controller_settings,
-            effective_runtime_scaling_plans,
+            control_plane,
+            node_services,
+            transport,
+            runtime,
         }
     }
 
@@ -134,39 +99,63 @@ impl AppState {
     }
 
     pub(crate) fn runtime_service_registry(&self) -> Arc<dyn RuntimeServiceRegistry> {
-        self.runtime_service_registry.clone()
+        self.node_services.runtime_service_registry()
     }
 
     pub(crate) fn runtime_host_resource_budget(&self) -> RuntimeHostResourceBudget {
-        self.runtime_host_resource_budget
+        self.runtime.runtime_host_resource_budget()
     }
 
     pub(crate) fn runtime_adaptive_controller_settings(&self) -> RuntimeAdaptiveControllerSettings {
-        self.runtime_adaptive_controller_settings
+        self.runtime.runtime_adaptive_controller_settings()
     }
 
     pub(crate) fn effective_runtime_scaling_plan(&self) -> &EffectiveRuntimeScalingPlan {
-        self.effective_runtime_scaling_plans.default_plan()
+        self.runtime.effective_runtime_scaling_plan()
     }
 
     pub(crate) fn effective_runtime_scaling_plans(&self) -> &RuntimeScalingPlanSet {
-        &self.effective_runtime_scaling_plans
+        self.runtime.effective_runtime_scaling_plans()
     }
 
     pub(crate) fn service_manager(&self) -> Option<Arc<ServiceManager>> {
-        self.service_manager.clone()
+        self.node_services.service_manager()
     }
 
     pub(crate) fn machine_lifecycle_manager(&self) -> Option<Arc<dyn MachineLifecycleManager>> {
-        self.machine_lifecycle_manager.clone()
+        self.node_services.machine_lifecycle_manager()
+    }
+
+    pub(crate) fn tenant_isolation_mode(&self) -> TenantIsolationMode {
+        self.node_services.tenant_isolation_mode()
     }
 
     pub(crate) fn system_convex_registry(&self) -> Option<Arc<ConvexRegistry>> {
         self.system_convex_registry.clone()
     }
 
+    pub(crate) fn license_state(&self) -> &LicenseState {
+        self.control_plane.license_state()
+    }
+
+    pub(crate) fn deploy_admin_token(&self) -> Option<&str> {
+        self.control_plane.deploy_admin_token()
+    }
+
+    pub(crate) fn local_server_security(&self) -> Option<Arc<LocalServerSecurityState>> {
+        self.control_plane.local_server_security()
+    }
+
+    pub(crate) fn listen_addr(&self) -> Option<std::net::SocketAddr> {
+        self.transport.listen_addr()
+    }
+
+    pub(crate) fn version_check(&self) -> Arc<VersionCheck> {
+        self.transport.version_check()
+    }
+
     pub(crate) fn request_server_shutdown(&self) -> std::result::Result<(), AppError> {
-        let sender = self.server_shutdown.as_ref().ok_or_else(|| {
+        let sender = self.transport.server_shutdown().ok_or_else(|| {
             AppError::from(Error::Internal(
                 "server shutdown is unavailable for this router".to_owned(),
             ))
@@ -188,7 +177,7 @@ impl AppState {
                 registry,
                 deployment_generation,
                 self.runtime_service_registry(),
-                self.tenant_isolation_mode,
+                self.tenant_isolation_mode(),
                 Arc::new(crate::adapters::cloud_functions::ServerCloudFunctionsRuntimeInvoker),
             ),
         ))?;
@@ -196,7 +185,7 @@ impl AppState {
     }
 
     pub(crate) fn record_local_server_audit(&self, event: LocalServerAuditEvent) {
-        let Some(local_server_security) = self.local_server_security.as_ref() else {
+        let Some(local_server_security) = self.local_server_security() else {
             return;
         };
         if let Err(error) = local_server_security.record_audit_event(event) {
@@ -388,34 +377,20 @@ mod tests {
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
         let state = AppState::from_config(AppStateConfig {
             engine,
-            convex_registry: Some(ConvexRegistry::empty()),
-            system_convex_registry: None,
-            application_auth_verifier: None,
-            cloud_functions_registry: None,
-            cloudflare_config: None,
-            firebase_config: None,
-            convex_tenancy: None,
-            license_state: LicenseState::community(),
-            runtime_service_registry: Arc::new(
-                nimbus_services::ServiceInstanceBindingRegistry::new(Arc::new(
-                    nimbus_services::EmptyServiceInstanceCatalog,
+            deployment: DeploymentConfig::default().with_convex(ConvexRegistry::empty()),
+            control_plane: ControlPlaneConfig::router_options_default(),
+            node_services: empty_node_services()
+                .with_tenant_isolation_mode(TenantIsolationMode::LocalDevelopment),
+            transport: TransportConfig::default().with_version_check(test_version_check()),
+            runtime: RuntimeGovernorConfig::default()
+                .with_runtime_host_resource_budget(
+                    RuntimeHostResourceBudget::conservative_for_logical_cpus(
+                        std::num::NonZeroUsize::new(4).expect("fixture CPU count is nonzero"),
+                    ),
+                )
+                .with_effective_runtime_scaling_plans(RuntimeScalingPlanSet::single(
+                    EffectiveRuntimeScalingPlan::baked_standard("__default__", 4),
                 )),
-            ),
-            service_manager: None,
-            machine_lifecycle_manager: None,
-            deploy_admin_token: None,
-            local_server_security: None,
-            tenant_isolation_mode: TenantIsolationMode::LocalDevelopment,
-            listen_addr: None,
-            server_shutdown: None,
-            version_check: test_version_check(),
-            runtime_host_resource_budget: RuntimeHostResourceBudget::conservative_for_logical_cpus(
-                std::num::NonZeroUsize::new(4).expect("fixture CPU count is nonzero"),
-            ),
-            runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings::default(),
-            effective_runtime_scaling_plans: RuntimeScalingPlanSet::single(
-                EffectiveRuntimeScalingPlan::baked_standard("__default__", 4),
-            ),
         });
 
         assert!(
@@ -425,6 +400,14 @@ mod tests {
                 .is_none()
         );
         assert_eq!(state.runtime_host_resource_budget().host_millicpus, 4000);
+    }
+
+    fn empty_node_services() -> NodeServicesConfig {
+        NodeServicesConfig::from_runtime_service_registry(Arc::new(
+            nimbus_services::ServiceInstanceBindingRegistry::new(Arc::new(
+                nimbus_services::EmptyServiceInstanceCatalog,
+            )),
+        ))
     }
 
     fn test_version_check() -> Arc<crate::system::VersionCheck> {
@@ -450,34 +433,21 @@ mod tests {
         );
         let state = AppState::from_config(AppStateConfig {
             engine,
-            convex_registry: None,
-            system_convex_registry: None,
-            application_auth_verifier: None,
-            cloud_functions_registry: None,
-            cloudflare_config: None,
-            firebase_config: None,
-            convex_tenancy: None,
-            license_state: LicenseState::community(),
-            runtime_service_registry: Arc::new(
-                nimbus_services::ServiceInstanceBindingRegistry::new(Arc::new(
-                    nimbus_services::EmptyServiceInstanceCatalog,
+            deployment: DeploymentConfig::default(),
+            control_plane: ControlPlaneConfig::router_options_default(),
+            node_services: empty_node_services()
+                .with_tenant_isolation_mode(TenantIsolationMode::Production),
+            transport: TransportConfig::default().with_version_check(test_version_check()),
+            runtime: RuntimeGovernorConfig::default()
+                .with_runtime_host_resource_budget(runtime_host_resource_budget)
+                .with_runtime_adaptive_controller_settings(
+                    RuntimeAdaptiveControllerSettings::shadow(
+                        nimbus_runtime::RuntimeControllerReplayConfig::default(),
+                    ),
+                )
+                .with_effective_runtime_scaling_plans(RuntimeScalingPlanSet::single(
+                    EffectiveRuntimeScalingPlan::baked_standard("messages:send", 6),
                 )),
-            ),
-            service_manager: None,
-            machine_lifecycle_manager: None,
-            deploy_admin_token: None,
-            local_server_security: None,
-            tenant_isolation_mode: TenantIsolationMode::Production,
-            listen_addr: None,
-            server_shutdown: None,
-            version_check: test_version_check(),
-            runtime_host_resource_budget,
-            runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings::shadow(
-                nimbus_runtime::RuntimeControllerReplayConfig::default(),
-            ),
-            effective_runtime_scaling_plans: RuntimeScalingPlanSet::single(
-                EffectiveRuntimeScalingPlan::baked_standard("messages:send", 6),
-            ),
         });
 
         assert_eq!(

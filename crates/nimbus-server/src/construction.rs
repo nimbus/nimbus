@@ -43,43 +43,40 @@ impl ServeOptions {
         }
     }
 
-    pub fn with_convex_registry(mut self, convex_registry: ConvexRegistry) -> Self {
-        self.router_options = self.router_options.with_convex_registry(convex_registry);
+    fn with_router_options(mut self, update: impl FnOnce(RouterOptions) -> RouterOptions) -> Self {
+        self.router_options = update(self.router_options);
         self
     }
 
-    pub fn with_convex_tenancy(mut self, convex_tenancy: ConvexTenancyConfig) -> Self {
-        self.router_options = self.router_options.with_convex_tenancy(convex_tenancy);
-        self
+    pub fn with_convex_registry(self, convex_registry: ConvexRegistry) -> Self {
+        self.with_router_options(|options| options.with_convex_registry(convex_registry))
     }
 
-    pub fn with_system_convex_registry(mut self, system_convex_registry: ConvexRegistry) -> Self {
-        self.router_options = self
-            .router_options
-            .with_system_convex_registry(system_convex_registry);
-        self
+    pub fn with_convex_tenancy(self, convex_tenancy: ConvexTenancyConfig) -> Self {
+        self.with_router_options(|options| options.with_convex_tenancy(convex_tenancy))
+    }
+
+    pub fn with_system_convex_registry(self, system_convex_registry: ConvexRegistry) -> Self {
+        self.with_router_options(|options| {
+            options.with_system_convex_registry(system_convex_registry)
+        })
     }
 
     pub fn with_cloud_functions_registry(
-        mut self,
+        self,
         cloud_functions_registry: CloudFunctionsRegistry,
     ) -> Self {
-        self.router_options = self
-            .router_options
-            .with_cloud_functions_registry(cloud_functions_registry);
-        self
+        self.with_router_options(|options| {
+            options.with_cloud_functions_registry(cloud_functions_registry)
+        })
     }
 
-    pub fn with_firebase_config(mut self, firebase_config: FirebaseConfig) -> Self {
-        self.router_options = self.router_options.with_firebase_config(firebase_config);
-        self
+    pub fn with_firebase_config(self, firebase_config: FirebaseConfig) -> Self {
+        self.with_router_options(|options| options.with_firebase_config(firebase_config))
     }
 
-    pub fn with_cloudflare(mut self, cloudflare_config: CloudflareConfig) -> Self {
-        self.router_options = self
-            .router_options
-            .with_cloudflare_config(cloudflare_config);
-        self
+    pub fn with_cloudflare(self, cloudflare_config: CloudflareConfig) -> Self {
+        self.with_router_options(|options| options.with_cloudflare_config(cloudflare_config))
     }
 
     /// Register a sibling MongoDB wire-protocol listener. Each call adds a
@@ -103,99 +100,76 @@ impl ServeOptions {
         self
     }
 
-    pub fn with_license(mut self, license_state: LicenseState) -> Self {
-        self.router_options = self.router_options.with_license(license_state);
-        self
+    pub fn with_license(self, license_state: LicenseState) -> Self {
+        self.with_router_options(|options| options.with_license(license_state))
     }
 
     pub fn with_service_instance_catalog(
-        mut self,
+        self,
         service_instances: Arc<dyn ServiceInstanceCatalog>,
     ) -> Self {
-        self.router_options = self
-            .router_options
-            .with_service_instance_catalog(service_instances);
-        self
+        self.with_router_options(|options| options.with_service_instance_catalog(service_instances))
     }
 
-    pub fn with_service_manager(mut self, service_manager: Arc<ServiceManager>) -> Self {
-        self.router_options = self.router_options.with_service_manager(service_manager);
-        self
+    pub fn with_service_manager(self, service_manager: Arc<ServiceManager>) -> Self {
+        self.with_router_options(|options| options.with_service_manager(service_manager))
     }
 
     pub fn with_machine_lifecycle_manager(
-        mut self,
+        self,
         machine_lifecycle_manager: Arc<dyn MachineLifecycleManager>,
     ) -> Self {
-        self.router_options = self
-            .router_options
-            .with_machine_lifecycle_manager(machine_lifecycle_manager);
-        self
+        self.with_router_options(|options| {
+            options.with_machine_lifecycle_manager(machine_lifecycle_manager)
+        })
     }
 
-    pub fn with_deploy_admin_token(mut self, token: impl Into<String>) -> Self {
-        self.router_options = self.router_options.with_deploy_admin_token(token);
-        self
+    pub fn with_deploy_admin_token(self, token: impl Into<String>) -> Self {
+        self.with_router_options(|options| options.with_deploy_admin_token(token))
     }
 
     pub fn with_local_server_security(
-        mut self,
+        self,
         local_server_security: Arc<LocalServerSecurityState>,
     ) -> Self {
-        self.router_options = self
-            .router_options
-            .with_local_server_security(local_server_security);
-        self
+        self.with_router_options(|options| {
+            options.with_local_server_security(local_server_security)
+        })
     }
 
-    pub fn with_tenant_isolation_mode(mut self, mode: TenantIsolationMode) -> Self {
-        self.router_options = self.router_options.with_tenant_isolation_mode(mode);
-        self
+    pub fn with_tenant_isolation_mode(self, mode: TenantIsolationMode) -> Self {
+        self.with_router_options(|options| options.with_tenant_isolation_mode(mode))
     }
 
     /// Allow additional exact browser origins through the CORS layer
     /// (loopback origins are always allowed). See
     /// [`crate::normalize_cors_origin`] for the accepted form.
-    pub fn with_cors_allowed_origins(mut self, origins: Vec<String>) -> Self {
-        self.router_options = self.router_options.with_cors_allowed_origins(origins);
-        self
+    pub fn with_cors_allowed_origins(self, origins: Vec<String>) -> Self {
+        self.with_router_options(|options| options.with_cors_allowed_origins(origins))
     }
 
     /// Set the aggregate host CPU budget available to in-process runtime work.
     /// Tenant quotas remain separate; this is the node-allocatable-style host
     /// guard that later runtime admission consumes.
-    pub fn with_runtime_host_resource_budget(mut self, budget: RuntimeHostResourceBudget) -> Self {
-        self.router_options = self
-            .router_options
-            .with_runtime_host_resource_budget(budget);
-        self
+    pub fn with_runtime_host_resource_budget(self, budget: RuntimeHostResourceBudget) -> Self {
+        self.with_router_options(|options| options.with_runtime_host_resource_budget(budget))
     }
 
     pub fn with_runtime_adaptive_controller_settings(
-        mut self,
+        self,
         settings: RuntimeAdaptiveControllerSettings,
     ) -> Self {
-        self.router_options = self
-            .router_options
-            .with_runtime_adaptive_controller_settings(settings);
-        self
+        self.with_router_options(|options| {
+            options.with_runtime_adaptive_controller_settings(settings)
+        })
     }
 
-    pub fn with_effective_runtime_scaling_plan(
-        mut self,
-        plan: EffectiveRuntimeScalingPlan,
-    ) -> Self {
-        self.router_options = self
-            .router_options
-            .with_effective_runtime_scaling_plan(plan);
-        self
+    pub fn with_effective_runtime_scaling_plan(self, plan: EffectiveRuntimeScalingPlan) -> Self {
+        self.with_router_options(|options| options.with_effective_runtime_scaling_plan(plan))
     }
 
-    pub fn with_effective_runtime_scaling_plans(mut self, plans: RuntimeScalingPlanSet) -> Self {
-        self.router_options = self
-            .router_options
-            .with_effective_runtime_scaling_plans(plans);
-        self
+    pub fn with_effective_runtime_scaling_plans(self, plans: RuntimeScalingPlanSet) -> Self {
+        self.with_router_options(|options| options.with_effective_runtime_scaling_plans(plans))
     }
 
     /// Terminate TLS on the main HTTP listener with this PEM pair. The

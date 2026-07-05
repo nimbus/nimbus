@@ -11,7 +11,7 @@ pub(crate) async fn license_status(
 ) -> Result<Json<crate::license::LicenseSnapshot>, AppError> {
     let service = state.engine.clone();
     let usage = service.current_monthly_active_users_async().await?;
-    Ok(Json(state.license_state.snapshot_with_usage(Some(
+    Ok(Json(state.license_state().snapshot_with_usage(Some(
         crate::license::LicenseUsageInput {
             month: usage.month,
             month_start_unix_ms: usage.month_start_unix_ms,

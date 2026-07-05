@@ -1,4 +1,3 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::middleware;
@@ -6,11 +5,9 @@ use axum::routing::{any, delete, get, post};
 use axum::{Extension, Router};
 use nimbus_engine::Engine;
 use nimbus_runtime::{
-    EffectiveRuntimeScalingPlan, NominalRuntimeHostPressureSource,
-    RuntimeAdaptiveControllerSettings, RuntimeHostPressureSource, RuntimeHostResourceBudget,
-    RuntimeScalingPlanSet,
+    EffectiveRuntimeScalingPlan, RuntimeAdaptiveControllerSettings, RuntimeHostPressureSource,
+    RuntimeHostResourceBudget, RuntimeScalingPlanSet,
 };
-use tokio::sync::watch;
 use tower::ServiceBuilder;
 use tower_http::services::ServeDir;
 
@@ -19,6 +16,11 @@ use crate::adapters::cloud_functions::CloudFunctionsRegistry;
 use crate::adapters::cloudflare::{self, CloudflareConfig};
 use crate::adapters::convex::{self, ConvexRegistry, ConvexTenancyConfig};
 use crate::adapters::firebase::{self, FirebaseConfig};
+use crate::config::control_plane::ControlPlaneConfig;
+use crate::config::deployment::DeploymentConfig;
+use crate::config::node_services::NodeServicesConfig;
+use crate::config::runtime::RuntimeGovernorConfig;
+use crate::config::transport::TransportConfig;
 use crate::license::LicenseState;
 use crate::local_server::{
     LocalServerAccessPolicy, LocalServerSecurityState, origin_allowlist_middleware,
@@ -26,13 +28,10 @@ use crate::local_server::{
 };
 use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::state::{AppState, AppStateConfig};
-use crate::system::VersionCheck;
-use crate::system::version_check::VersionCheckConfig;
 use crate::tenant::TenantIsolationMode;
 use crate::{http, ws};
 use nimbus_auth::ApplicationAuthVerifier;
-use nimbus_services::{EmptyServiceInstanceCatalog, ServiceInstanceCatalog, ServiceManager};
-use nimbus_services::{RuntimeServiceRegistry, ServiceInstanceBindingRegistry};
+use nimbus_services::{ServiceInstanceCatalog, ServiceManager};
 
 mod cors;
 
@@ -44,93 +43,37 @@ pub(crate) use cors::{is_allowed_local_cors_origin, is_configured_cors_origin};
 
 const DEMOS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../demos");
 
-enum RuntimeServiceSource {
-    ServiceInstanceCatalog(Arc<dyn ServiceInstanceCatalog>),
-    ServiceManager(Arc<ServiceManager>),
-}
-
-impl RuntimeServiceSource {
-    fn service_manager(&self) -> Option<Arc<ServiceManager>> {
-        match self {
-            Self::ServiceManager(service_manager) => Some(service_manager.clone()),
-            Self::ServiceInstanceCatalog(_) => None,
-        }
-    }
-
-    fn into_runtime_service_registry(
-        self,
-        system_state_engine: Arc<Engine>,
-    ) -> Arc<dyn RuntimeServiceRegistry> {
-        match self {
-            Self::ServiceInstanceCatalog(service_instances) => {
-                Arc::new(ServiceInstanceBindingRegistry::new(service_instances))
-            }
-            Self::ServiceManager(service_manager) => {
-                crate::service_manager::attach_system_state_engine(
-                    &service_manager,
-                    system_state_engine,
-                );
-                service_manager
-            }
-        }
-    }
-}
-
 /// Canonical public option bundle for building a Nimbus HTTP/WebSocket router.
 pub struct RouterOptions {
     engine: Arc<Engine>,
-    convex_registry: Option<ConvexRegistry>,
-    system_convex_registry: Option<ConvexRegistry>,
-    cloud_functions_registry: Option<CloudFunctionsRegistry>,
-    cloudflare_config: Option<CloudflareConfig>,
-    firebase_config: Option<FirebaseConfig>,
-    convex_tenancy: Option<ConvexTenancyConfig>,
-    license_state: LicenseState,
-    service_instances: Option<Arc<dyn ServiceInstanceCatalog>>,
-    service_manager: Option<Arc<ServiceManager>>,
-    machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
-    deploy_admin_token: Option<String>,
-    local_server_security: Option<Arc<LocalServerSecurityState>>,
-    tenant_isolation_mode: TenantIsolationMode,
-    cors_allowed_origins: Vec<String>,
-    runtime_host_resource_budget: RuntimeHostResourceBudget,
-    runtime_host_pressure_source: Arc<dyn RuntimeHostPressureSource>,
-    runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
-    effective_runtime_scaling_plans: RuntimeScalingPlanSet,
+    deployment: DeploymentConfig,
+    control_plane: ControlPlaneConfig,
+    node_services: NodeServicesConfig,
+    transport: TransportConfig,
+    runtime: RuntimeGovernorConfig,
 }
 
 impl RouterOptions {
     pub fn new(engine: Arc<Engine>) -> Self {
         Self {
             engine,
-            convex_registry: None,
-            system_convex_registry: None,
-            cloud_functions_registry: None,
-            cloudflare_config: None,
-            firebase_config: None,
-            convex_tenancy: None,
-            license_state: LicenseState::community(),
-            service_instances: None,
-            service_manager: None,
-            machine_lifecycle_manager: None,
-            deploy_admin_token: None,
-            local_server_security: None,
-            tenant_isolation_mode: TenantIsolationMode::default(),
-            cors_allowed_origins: Vec::new(),
-            runtime_host_resource_budget: default_runtime_host_resource_budget(),
-            runtime_host_pressure_source: default_runtime_host_pressure_source(),
-            runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings::default(),
-            effective_runtime_scaling_plans: RuntimeScalingPlanSet::default(),
+            deployment: DeploymentConfig::default(),
+            control_plane: ControlPlaneConfig::router_options_default(),
+            node_services: NodeServicesConfig::default(),
+            transport: TransportConfig::default(),
+            runtime: RuntimeGovernorConfig::default(),
         }
     }
 
     pub fn with_convex_registry(mut self, convex_registry: ConvexRegistry) -> Self {
-        self.convex_registry = Some(convex_registry);
+        self.deployment = self.deployment.with_convex(convex_registry);
         self
     }
 
     pub fn with_system_convex_registry(mut self, system_convex_registry: ConvexRegistry) -> Self {
-        self.system_convex_registry = Some(system_convex_registry);
+        self.deployment = self
+            .deployment
+            .with_system_convex_registry(system_convex_registry);
         self
     }
 
@@ -138,27 +81,29 @@ impl RouterOptions {
         mut self,
         cloud_functions_registry: CloudFunctionsRegistry,
     ) -> Self {
-        self.cloud_functions_registry = Some(cloud_functions_registry);
+        self.deployment = self
+            .deployment
+            .with_cloud_functions(cloud_functions_registry);
         self
     }
 
     pub fn with_firebase_config(mut self, firebase_config: FirebaseConfig) -> Self {
-        self.firebase_config = Some(firebase_config);
+        self.deployment = self.deployment.with_firebase(firebase_config);
         self
     }
 
     pub fn with_cloudflare_config(mut self, cloudflare_config: CloudflareConfig) -> Self {
-        self.cloudflare_config = Some(cloudflare_config);
+        self.deployment = self.deployment.with_cloudflare(cloudflare_config);
         self
     }
 
     pub fn with_convex_tenancy(mut self, convex_tenancy: ConvexTenancyConfig) -> Self {
-        self.convex_tenancy = Some(convex_tenancy);
+        self.deployment = self.deployment.with_convex_tenancy(convex_tenancy);
         self
     }
 
     pub fn with_license(mut self, license_state: LicenseState) -> Self {
-        self.license_state = license_state;
+        self.control_plane = self.control_plane.with_license(license_state);
         self
     }
 
@@ -166,14 +111,14 @@ impl RouterOptions {
         mut self,
         service_instances: Arc<dyn ServiceInstanceCatalog>,
     ) -> Self {
-        self.service_instances = Some(service_instances);
-        self.service_manager = None;
+        self.node_services = self
+            .node_services
+            .with_service_instance_catalog(service_instances);
         self
     }
 
     pub fn with_service_manager(mut self, service_manager: Arc<ServiceManager>) -> Self {
-        self.service_manager = Some(service_manager);
-        self.service_instances = None;
+        self.node_services = self.node_services.with_service_manager(service_manager);
         self
     }
 
@@ -181,12 +126,14 @@ impl RouterOptions {
         mut self,
         machine_lifecycle_manager: Arc<dyn MachineLifecycleManager>,
     ) -> Self {
-        self.machine_lifecycle_manager = Some(machine_lifecycle_manager);
+        self.node_services = self
+            .node_services
+            .with_machine_lifecycle_manager(machine_lifecycle_manager);
         self
     }
 
     pub fn with_deploy_admin_token(mut self, token: impl Into<String>) -> Self {
-        self.deploy_admin_token = Some(token.into());
+        self.control_plane = self.control_plane.with_deploy_admin_token(token);
         self
     }
 
@@ -194,12 +141,14 @@ impl RouterOptions {
         mut self,
         local_server_security: Arc<LocalServerSecurityState>,
     ) -> Self {
-        self.local_server_security = Some(local_server_security);
+        self.control_plane = self
+            .control_plane
+            .with_local_server_security(local_server_security);
         self
     }
 
     pub fn with_tenant_isolation_mode(mut self, mode: TenantIsolationMode) -> Self {
-        self.tenant_isolation_mode = mode;
+        self.node_services = self.node_services.with_tenant_isolation_mode(mode);
         self
     }
 
@@ -208,12 +157,12 @@ impl RouterOptions {
     /// [`normalize_cors_origin`]; entries that fail normalization are
     /// ignored with a warning (fail closed).
     pub fn with_cors_allowed_origins(mut self, origins: Vec<String>) -> Self {
-        self.cors_allowed_origins = origins;
+        self.transport = self.transport.with_cors_allowed_origins(origins);
         self
     }
 
     pub fn with_runtime_host_resource_budget(mut self, budget: RuntimeHostResourceBudget) -> Self {
-        self.runtime_host_resource_budget = budget;
+        self.runtime = self.runtime.with_runtime_host_resource_budget(budget);
         self
     }
 
@@ -221,7 +170,9 @@ impl RouterOptions {
         mut self,
         pressure_source: Arc<dyn RuntimeHostPressureSource>,
     ) -> Self {
-        self.runtime_host_pressure_source = pressure_source;
+        self.runtime = self
+            .runtime
+            .with_runtime_host_pressure_source(pressure_source);
         self
     }
 
@@ -229,16 +180,20 @@ impl RouterOptions {
         mut self,
         settings: RuntimeAdaptiveControllerSettings,
     ) -> Self {
-        self.runtime_adaptive_controller_settings = settings;
+        self.runtime = self
+            .runtime
+            .with_runtime_adaptive_controller_settings(settings);
         self
     }
 
     pub fn with_effective_runtime_scaling_plan(self, plan: EffectiveRuntimeScalingPlan) -> Self {
-        self.with_effective_runtime_scaling_plans(RuntimeScalingPlanSet::single(plan))
+        let mut this = self;
+        this.runtime = this.runtime.with_effective_runtime_scaling_plan(plan);
+        this
     }
 
     pub fn with_effective_runtime_scaling_plans(mut self, plans: RuntimeScalingPlanSet) -> Self {
-        self.effective_runtime_scaling_plans = plans;
+        self.runtime = self.runtime.with_effective_runtime_scaling_plans(plans);
         self
     }
 
@@ -247,263 +202,193 @@ impl RouterOptions {
     }
 
     pub(crate) fn has_system_convex_registry(&self) -> bool {
-        self.system_convex_registry.is_some()
+        self.deployment.has_system_convex_registry()
     }
 
     pub(crate) fn into_build_config(self) -> RouterBuildConfig {
-        let mut config = RouterBuildConfig::core(self.engine).with_license(self.license_state);
-        if let Some(system_convex_registry) = self.system_convex_registry {
-            config = config.with_system_convex_registry(system_convex_registry);
+        let mut config = RouterBuildConfig::core(self.engine);
+        let mut deployment = self.deployment;
+        if let Some(convex_registry) = deployment.convex_registry.as_ref() {
+            deployment.application_auth_verifier =
+                Some(convex_application_auth_verifier(convex_registry));
         }
-        if let Some(convex_registry) = self.convex_registry {
-            config = config
-                .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
-                .with_convex(convex_registry);
-        }
-        if let Some(cloud_functions_registry) = self.cloud_functions_registry {
-            config = config.with_cloud_functions(cloud_functions_registry);
-        }
-        if let Some(cloudflare_config) = self.cloudflare_config {
-            config = config.with_cloudflare(cloudflare_config);
-        }
-        if let Some(firebase_config) = self.firebase_config {
-            config = config.with_firebase(firebase_config);
-        }
-        if let Some(convex_tenancy) = self.convex_tenancy {
-            config = config.with_convex_tenancy(convex_tenancy);
-        }
-        if let Some(deploy_admin_token) = self.deploy_admin_token {
-            config = config.with_deploy_admin_token(deploy_admin_token);
-        }
-        if let Some(local_server_security) = self.local_server_security {
-            config = config.with_local_server_security(local_server_security);
-        }
-        config = config.with_tenant_isolation_mode(self.tenant_isolation_mode);
-        if let Some(service_manager) = self.service_manager {
-            config = config.with_service_manager(service_manager);
-        } else if let Some(service_instances) = self.service_instances {
-            config = config.with_service_instance_catalog(service_instances);
-        }
-        if let Some(machine_lifecycle_manager) = self.machine_lifecycle_manager {
-            config = config.with_machine_lifecycle_manager(machine_lifecycle_manager);
-        }
-        config = config.with_cors_allowed_origins(self.cors_allowed_origins);
-        config = config.with_runtime_host_resource_budget(self.runtime_host_resource_budget);
-        config = config.with_runtime_host_pressure_source(self.runtime_host_pressure_source);
-        config = config
-            .with_runtime_adaptive_controller_settings(self.runtime_adaptive_controller_settings);
-        config = config.with_effective_runtime_scaling_plans(self.effective_runtime_scaling_plans);
+        config.deployment = deployment;
+        config
+            .control_plane
+            .overlay_router_options(self.control_plane);
+        config.node_services = self.node_services;
+        config.transport = self.transport;
+        config.runtime = self.runtime;
         config
     }
 }
 
 pub(crate) struct RouterBuildConfig {
     engine: Arc<Engine>,
-    convex_registry: Option<ConvexRegistry>,
-    system_convex_registry: Option<ConvexRegistry>,
-    application_auth_verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
-    cloud_functions_registry: Option<CloudFunctionsRegistry>,
-    cloudflare_config: Option<CloudflareConfig>,
-    firebase_config: Option<FirebaseConfig>,
-    convex_tenancy: Option<ConvexTenancyConfig>,
-    license_state: LicenseState,
-    runtime_service_source: RuntimeServiceSource,
-    machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
-    deploy_admin_token: Option<String>,
-    local_server_security: Option<Arc<LocalServerSecurityState>>,
-    tenant_isolation_mode: TenantIsolationMode,
-    listen_addr: Option<SocketAddr>,
-    server_shutdown: Option<watch::Sender<bool>>,
-    cors_allowed_origins: Vec<String>,
-    runtime_host_resource_budget: RuntimeHostResourceBudget,
-    runtime_host_pressure_source: Arc<dyn RuntimeHostPressureSource>,
-    runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
-    effective_runtime_scaling_plans: RuntimeScalingPlanSet,
+    deployment: DeploymentConfig,
+    control_plane: ControlPlaneConfig,
+    node_services: NodeServicesConfig,
+    transport: TransportConfig,
+    runtime: RuntimeGovernorConfig,
 }
 
 impl RouterBuildConfig {
     pub(crate) fn core(engine: Arc<Engine>) -> Self {
         Self {
             engine,
-            convex_registry: None,
-            system_convex_registry: None,
-            application_auth_verifier: None,
-            cloud_functions_registry: None,
-            cloudflare_config: None,
-            firebase_config: None,
-            convex_tenancy: None,
-            license_state: LicenseState::community(),
-            runtime_service_source: RuntimeServiceSource::ServiceInstanceCatalog(Arc::new(
-                EmptyServiceInstanceCatalog,
-            )),
-            machine_lifecycle_manager: None,
-            deploy_admin_token: std::env::var("NIMBUS_DEPLOY_TOKEN").ok(),
-            local_server_security: None,
-            tenant_isolation_mode: TenantIsolationMode::default(),
-            listen_addr: None,
-            server_shutdown: None,
-            cors_allowed_origins: Vec::new(),
-            runtime_host_resource_budget: default_runtime_host_resource_budget(),
-            runtime_host_pressure_source: default_runtime_host_pressure_source(),
-            runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings::default(),
-            effective_runtime_scaling_plans: RuntimeScalingPlanSet::default(),
+            deployment: DeploymentConfig::default(),
+            control_plane: ControlPlaneConfig::build_default(),
+            node_services: NodeServicesConfig::default(),
+            transport: TransportConfig::default(),
+            runtime: RuntimeGovernorConfig::default(),
         }
     }
 
-    pub(crate) fn with_cors_allowed_origins(mut self, origins: Vec<String>) -> Self {
-        self.cors_allowed_origins = origins;
-        self
-    }
-
+    #[cfg(test)]
     pub(crate) fn with_runtime_host_resource_budget(
         mut self,
         budget: RuntimeHostResourceBudget,
     ) -> Self {
-        self.runtime_host_resource_budget = budget;
+        self.runtime = self.runtime.with_runtime_host_resource_budget(budget);
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_runtime_host_pressure_source(
         mut self,
         pressure_source: Arc<dyn RuntimeHostPressureSource>,
     ) -> Self {
-        self.runtime_host_pressure_source = pressure_source;
+        self.runtime = self
+            .runtime
+            .with_runtime_host_pressure_source(pressure_source);
         self
     }
 
-    pub(crate) fn with_runtime_adaptive_controller_settings(
-        mut self,
-        settings: RuntimeAdaptiveControllerSettings,
-    ) -> Self {
-        self.runtime_adaptive_controller_settings = settings;
-        self
-    }
-
-    pub(crate) fn with_effective_runtime_scaling_plans(
-        mut self,
-        plans: RuntimeScalingPlanSet,
-    ) -> Self {
-        self.effective_runtime_scaling_plans = plans;
-        self
-    }
-
+    #[cfg(test)]
     pub(crate) fn with_convex(mut self, convex_registry: ConvexRegistry) -> Self {
-        self.convex_registry = Some(convex_registry);
+        self.deployment = self.deployment.with_convex(convex_registry);
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_system_convex_registry(
         mut self,
         system_convex_registry: ConvexRegistry,
     ) -> Self {
-        self.system_convex_registry = Some(system_convex_registry);
+        self.deployment = self
+            .deployment
+            .with_system_convex_registry(system_convex_registry);
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_application_auth_verifier(
         mut self,
         application_auth_verifier: Arc<dyn ApplicationAuthVerifier>,
     ) -> Self {
-        self.application_auth_verifier = Some(application_auth_verifier);
+        self.deployment = self
+            .deployment
+            .with_application_auth_verifier(application_auth_verifier);
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_cloud_functions(
         mut self,
         cloud_functions_registry: CloudFunctionsRegistry,
     ) -> Self {
-        self.cloud_functions_registry = Some(cloud_functions_registry);
+        self.deployment = self
+            .deployment
+            .with_cloud_functions(cloud_functions_registry);
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_firebase(mut self, firebase_config: FirebaseConfig) -> Self {
-        self.firebase_config = Some(firebase_config);
+        self.deployment = self.deployment.with_firebase(firebase_config);
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_cloudflare(mut self, cloudflare_config: CloudflareConfig) -> Self {
-        self.cloudflare_config = Some(cloudflare_config);
+        self.deployment = self.deployment.with_cloudflare(cloudflare_config);
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_convex_tenancy(mut self, convex_tenancy: ConvexTenancyConfig) -> Self {
-        self.convex_tenancy = Some(convex_tenancy);
+        self.deployment = self.deployment.with_convex_tenancy(convex_tenancy);
         self
     }
 
-    pub(crate) fn with_license(mut self, license_state: LicenseState) -> Self {
-        self.license_state = license_state;
-        self
-    }
-
-    pub(crate) fn with_service_instance_catalog(
-        mut self,
-        service_instances: Arc<dyn ServiceInstanceCatalog>,
-    ) -> Self {
-        self.runtime_service_source =
-            RuntimeServiceSource::ServiceInstanceCatalog(service_instances);
-        self
-    }
-
+    #[cfg(test)]
     pub(crate) fn with_deploy_admin_token(mut self, token: impl Into<String>) -> Self {
-        self.deploy_admin_token = Some(token.into());
+        self.control_plane = self.control_plane.with_deploy_admin_token(token);
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_local_server_security(
         mut self,
         local_server_security: Arc<LocalServerSecurityState>,
     ) -> Self {
-        self.local_server_security = Some(local_server_security);
+        self.control_plane = self
+            .control_plane
+            .with_local_server_security(local_server_security);
         self
     }
 
-    pub(crate) fn with_tenant_isolation_mode(mut self, mode: TenantIsolationMode) -> Self {
-        self.tenant_isolation_mode = mode;
+    pub(crate) fn with_listen_addr(mut self, listen_addr: std::net::SocketAddr) -> Self {
+        self.transport = self.transport.with_listen_addr(listen_addr);
         self
     }
 
-    pub(crate) fn with_listen_addr(mut self, listen_addr: SocketAddr) -> Self {
-        self.listen_addr = Some(listen_addr);
-        self
-    }
-
-    pub(crate) fn with_server_shutdown(mut self, server_shutdown: watch::Sender<bool>) -> Self {
-        self.server_shutdown = Some(server_shutdown);
+    pub(crate) fn with_server_shutdown(
+        mut self,
+        server_shutdown: tokio::sync::watch::Sender<bool>,
+    ) -> Self {
+        self.transport = self.transport.with_server_shutdown(server_shutdown);
         self
     }
 
     #[cfg(test)]
     pub(crate) fn without_deploy_admin_token(mut self) -> Self {
-        self.deploy_admin_token = None;
+        self.control_plane = self.control_plane.without_deploy_admin_token();
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_service_manager(mut self, service_manager: Arc<ServiceManager>) -> Self {
-        self.runtime_service_source = RuntimeServiceSource::ServiceManager(service_manager);
+        self.node_services = self.node_services.with_service_manager(service_manager);
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_machine_lifecycle_manager(
         mut self,
         machine_lifecycle_manager: Arc<dyn MachineLifecycleManager>,
     ) -> Self {
-        self.machine_lifecycle_manager = Some(machine_lifecycle_manager);
+        self.node_services = self
+            .node_services
+            .with_machine_lifecycle_manager(machine_lifecycle_manager);
         self
     }
 
     pub(crate) async fn prepare_system_tenant(&self) -> nimbus_core::Result<()> {
-        nimbus_system::prepare_system_tenant_async(&self.engine, self.listen_addr).await?;
-        if let Some(registry) = self.convex_registry.as_ref() {
+        nimbus_system::prepare_system_tenant_async(&self.engine, self.transport.listen_addr())
+            .await?;
+        if let Some(registry) = self.deployment.convex_registry.as_ref() {
             let summary = registry.deploy_summary();
             let input = convex::convex_system_deployment_record_input(&summary, "startup");
             nimbus_system::record_deployment_state_async(&self.engine, &input).await?;
         }
-        let Some(listen_addr) = self.listen_addr else {
+        let Some(listen_addr) = self.transport.listen_addr() else {
             return Ok(());
         };
         let version = env!("CARGO_PKG_VERSION");
-        if self.convex_registry.is_some() || self.system_convex_registry.is_some() {
+        if self.deployment.convex_registry.is_some()
+            || self.deployment.system_convex_registry.is_some()
+        {
             nimbus_system::record_listener_state_async(
                 &self.engine,
                 "convex",
@@ -515,7 +400,7 @@ impl RouterBuildConfig {
             )
             .await?;
         }
-        if self.firebase_config.is_some() {
+        if self.deployment.firebase_config.is_some() {
             nimbus_system::record_listener_state_async(
                 &self.engine,
                 "firebase",
@@ -527,7 +412,7 @@ impl RouterBuildConfig {
             )
             .await?;
         }
-        if self.cloud_functions_registry.is_some() {
+        if self.deployment.cloud_functions_registry.is_some() {
             nimbus_system::record_listener_state_async(
                 &self.engine,
                 "cloud-functions",
@@ -539,7 +424,7 @@ impl RouterBuildConfig {
             )
             .await?;
         }
-        if self.cloudflare_config.is_some() {
+        if self.deployment.cloudflare_config.is_some() {
             nimbus_system::record_listener_state_async(
                 &self.engine,
                 "cloudflare",
@@ -555,65 +440,48 @@ impl RouterBuildConfig {
     }
 
     pub(crate) fn build(self) -> Router {
-        let engine = self.engine.clone();
+        let RouterBuildConfig {
+            engine,
+            deployment,
+            control_plane,
+            node_services,
+            transport,
+            runtime,
+        } = self;
+        let system_state_engine = engine.clone();
         nimbus_system::install_table_projection_observer(&engine);
-        let service_manager = self.runtime_service_source.service_manager();
-        let version_check = build_version_check();
-        let runtime_host_resource_budget = self.runtime_host_resource_budget;
-        let runtime_host_pressure_source = self.runtime_host_pressure_source;
-        let runtime_adaptive_controller_settings = self.runtime_adaptive_controller_settings;
-        let effective_runtime_scaling_plans = self.effective_runtime_scaling_plans;
-        let convex_registry = self.convex_registry.map(|registry| {
-            registry
-                .with_runtime_host_governor(
-                    runtime_host_resource_budget,
-                    runtime_host_pressure_source.clone(),
-                    runtime_adaptive_controller_settings,
-                )
-                .with_effective_runtime_scaling_plans(effective_runtime_scaling_plans.clone())
-        });
-        let system_convex_registry = self.system_convex_registry.map(|registry| {
-            registry
-                .with_runtime_host_governor(
-                    runtime_host_resource_budget,
-                    runtime_host_pressure_source.clone(),
-                    runtime_adaptive_controller_settings,
-                )
-                .with_effective_runtime_scaling_plans(effective_runtime_scaling_plans.clone())
-        });
-        let cloud_functions_registry = self.cloud_functions_registry.map(|registry| {
-            registry
-                .with_runtime_host_governor(
-                    runtime_host_resource_budget,
-                    runtime_host_pressure_source.clone(),
-                    runtime_adaptive_controller_settings,
-                )
-                .with_effective_runtime_scaling_plans(effective_runtime_scaling_plans.clone())
-        });
-        let state = Arc::new(AppState::from_config(AppStateConfig {
-            engine: self.engine,
+        let node_services = node_services.resolve(system_state_engine);
+        let DeploymentConfig {
             convex_registry,
             system_convex_registry,
-            application_auth_verifier: self.application_auth_verifier,
+            application_auth_verifier,
             cloud_functions_registry,
-            cloudflare_config: self.cloudflare_config,
-            firebase_config: self.firebase_config,
-            convex_tenancy: self.convex_tenancy,
-            license_state: self.license_state,
-            runtime_service_registry: self
-                .runtime_service_source
-                .into_runtime_service_registry(engine),
-            service_manager,
-            machine_lifecycle_manager: self.machine_lifecycle_manager,
-            deploy_admin_token: self.deploy_admin_token,
-            local_server_security: self.local_server_security,
-            tenant_isolation_mode: self.tenant_isolation_mode,
-            listen_addr: self.listen_addr,
-            server_shutdown: self.server_shutdown,
-            version_check,
-            runtime_host_resource_budget: self.runtime_host_resource_budget,
-            runtime_adaptive_controller_settings,
-            effective_runtime_scaling_plans,
+            cloudflare_config,
+            firebase_config,
+            convex_tenancy,
+        } = deployment;
+        let convex_registry =
+            convex_registry.map(|registry| runtime.configure_convex_registry(registry));
+        let system_convex_registry =
+            system_convex_registry.map(|registry| runtime.configure_convex_registry(registry));
+        let cloud_functions_registry = cloud_functions_registry
+            .map(|registry| runtime.configure_cloud_functions_registry(registry));
+        let cors_allowed_origins = transport.cors_allowed_origins().to_owned();
+        let state = Arc::new(AppState::from_config(AppStateConfig {
+            engine,
+            deployment: DeploymentConfig {
+                convex_registry,
+                system_convex_registry,
+                application_auth_verifier,
+                cloud_functions_registry,
+                cloudflare_config,
+                firebase_config,
+                convex_tenancy,
+            },
+            control_plane,
+            node_services,
+            transport: transport.ensure_version_check(),
+            runtime,
         }));
         let runtime_host_resource_budget = state.runtime_host_resource_budget();
         tracing::info!(
@@ -704,7 +572,7 @@ impl RouterBuildConfig {
             router = router.fallback(any(cloud_functions::http_handler));
         }
         router
-            .layer(build_cors_layer(&self.cors_allowed_origins))
+            .layer(build_cors_layer(&cors_allowed_origins))
             .layer(middleware::from_fn_with_state(
                 state.clone(),
                 origin_allowlist_middleware,
@@ -719,38 +587,9 @@ pub(crate) fn convex_application_auth_verifier(
     Arc::new(convex_registry.clone())
 }
 
-fn build_version_check() -> Arc<VersionCheck> {
-    let current = semver::Version::parse(env!("CARGO_PKG_VERSION"))
-        .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
-    let config = VersionCheckConfig::from_env(&current);
-    VersionCheck::new(current, config)
-}
-
 /// Builds the Nimbus HTTP/WebSocket router from the canonical option bundle.
 pub fn build_router(options: RouterOptions) -> Router {
     options.into_build_config().build()
-}
-
-fn default_runtime_host_resource_budget() -> RuntimeHostResourceBudget {
-    let fallback_cpus = std::num::NonZeroUsize::new(1).expect("one logical CPU is nonzero");
-    let host_logical_cpus = std::thread::available_parallelism().unwrap_or(fallback_cpus);
-    RuntimeHostResourceBudget::conservative_for_logical_cpus(host_logical_cpus)
-}
-
-fn default_runtime_host_pressure_source() -> Arc<dyn RuntimeHostPressureSource> {
-    #[cfg(target_os = "linux")]
-    {
-        match nimbus_node::CgroupV2HostPressureSource::for_current_process() {
-            Ok(source) => return Arc::new(source),
-            Err(error) => {
-                tracing::debug!(
-                    error = %error,
-                    "cgroup v2 host pressure source unavailable; using nominal runtime host pressure source"
-                );
-            }
-        }
-    }
-    Arc::new(NominalRuntimeHostPressureSource)
 }
 
 fn build_public_router() -> Router<Arc<AppState>> {

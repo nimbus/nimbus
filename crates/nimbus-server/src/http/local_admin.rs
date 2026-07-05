@@ -25,7 +25,7 @@ pub(crate) async fn rotate_local_admin_token(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<RotateLocalAdminTokenResponse>, AppError> {
-    let local_server_security = state.local_server_security.as_ref().ok_or_else(|| {
+    let local_server_security = state.local_server_security().ok_or_else(|| {
         AppError::unauthorized(
             "local admin token rotation is unavailable because server access auth is not configured",
         )
@@ -71,7 +71,7 @@ pub(crate) async fn shutdown_system(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<ShutdownSystemResponse>, AppError> {
-    let local_server_security = state.local_server_security.as_ref().ok_or_else(|| {
+    let local_server_security = state.local_server_security().ok_or_else(|| {
         AppError::unauthorized(
             "system shutdown is unavailable because server access auth is not configured",
         )
@@ -85,7 +85,7 @@ pub(crate) async fn shutdown_system(
         "lifecycle",
         "server shutdown requested",
         serde_json::json!({
-            "listenAddress": state.listen_addr.map(|address| address.to_string()),
+            "listenAddress": state.listen_addr().map(|address| address.to_string()),
         }),
         None,
     )

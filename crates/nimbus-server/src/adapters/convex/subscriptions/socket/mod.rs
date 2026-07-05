@@ -136,7 +136,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
         tenant_context.clone(),
         subscription_statuses.clone(),
         runtime_cancellation.clone(),
-        state.tenant_isolation_mode,
+        state.tenant_isolation_mode(),
     ));
     tasks.spawn(forwarding::run_socket_sender(
         socket_tx,

@@ -38,7 +38,7 @@ pub(crate) async fn query(
                 &registry,
                 &runtime_service_registry,
                 tenant_context.clone(),
-                state.tenant_isolation_mode,
+                state.tenant_isolation_mode(),
             );
             let result = invoke_named_convex_function_async_cancellable(
                 &context,
@@ -131,7 +131,7 @@ pub(crate) async fn paginated_query(
                 &registry,
                 &runtime_service_registry,
                 tenant_context.clone(),
-                state.tenant_isolation_mode,
+                state.tenant_isolation_mode(),
             );
             let value = invoke_named_convex_function_async_cancellable(
                 &context,
