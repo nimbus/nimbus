@@ -34,6 +34,24 @@ cp "${config_file}" .config/nextest.toml
 cp "${sha_file}" .config/nextest.toml.sha256
 sha256sum -c .config/nextest.toml.sha256
 
+# Deno extension sources: archived binaries read lazy-loaded JS from ABSOLUTE
+# builder paths under ~/.cargo/git/checkouts/deno-*/. The archive artifact
+# ships those sources (deno-src-checkout.tgz, filtered to ext/+libs JS/TS);
+# restore them at the exact baked location. FAIL CLOSED: without them every
+# JsRuntime construction panics ENOENT.
+deno_tgz="${archive_dir}/deno-src-checkout.tgz"
+if [[ ! -f "${deno_tgz}" || ! -f "${deno_tgz}.sha256" ]]; then
+  printf 'archive artifact is missing deno-src-checkout.tgz(+.sha256) — V8 tests cannot run\n' >&2
+  exit 1
+fi
+(
+  cd "${archive_dir}"
+  sha256sum -c deno-src-checkout.tgz.sha256
+)
+mkdir -p "${HOME}/.cargo/git/checkouts"
+tar -xzf "${deno_tgz}" -C "${HOME}/.cargo/git/checkouts"
+printf 'restored deno extension sources under %s\n' "${HOME}/.cargo/git/checkouts"
+
 if [[ -n "${GITHUB_ENV:-}" ]]; then
   printf 'NIMBUS_TESTS_ARCHIVE=%s\n' "${archive_file}" >> "${GITHUB_ENV}"
 fi

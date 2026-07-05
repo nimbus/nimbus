@@ -754,6 +754,32 @@ jobs:
         if: always()
         run: bash scripts/ci/disk-guard.sh enforce --label after-nimbus-bin --min-free-gib 20
 
+      - name: Package deno source checkout for consumers
+        # Deno's extension macros bake ABSOLUTE builder paths for lazy-loaded
+        # JS (env!(CARGO_MANIFEST_DIR) inside ~/.cargo/git/checkouts/deno-*),
+        # so archived binaries read those sources at JsRuntime construction.
+        # Ship the checkout INSIDE the tests archive artifact so toolchain-free
+        # consumers restore it at the exact baked path (same-run provenance;
+        # no cross-run cache surface). Fork-plane follow-up tracked in the
+        # owning plan: embed lazy JS in the deno fork and drop this.
+        run: |
+          set -euo pipefail
+          ext_dir="$(find "$HOME/.cargo/git/checkouts" -maxdepth 3 -type d -path '*deno-*/*/ext' | head -1)"
+          checkout_dir="$(dirname "${ext_dir}")"
+          parent="$(dirname "${checkout_dir}")"
+          rel="$(basename "${parent}")/$(basename "${checkout_dir}")"
+          test -f "${checkout_dir}/ext/telemetry/telemetry.ts"
+          # Only JS/TS/JSON sources under ext/ and libs/ are read at runtime
+          # (~7 MiB) — never ship the full multi-GB checkout.
+          (
+            cd "$HOME/.cargo/git/checkouts"
+            find "${rel}/ext" "${rel}/libs" -type f \
+              \( -name '*.ts' -o -name '*.js' -o -name '*.mjs' -o -name '*.json' \) \
+              | tar -czf "$RUNNER_TEMP/deno-src-checkout.tgz" -T -
+          )
+          sha256sum "$RUNNER_TEMP/deno-src-checkout.tgz" | awk '{print $1"  deno-src-checkout.tgz"}' > "$RUNNER_TEMP/deno-src-checkout.tgz.sha256"
+          ls -lh "$RUNNER_TEMP/deno-src-checkout.tgz"
+
       - name: Prepare nextest config artifact
         run: sha256sum .config/nextest.toml > .config/nextest.toml.sha256
 
@@ -828,7 +854,10 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: nimbus-tests-archive
-          path: ${{ runner.temp }}/nimbus-tests.tar.zst
+          path: |
+            ${{ runner.temp }}/nimbus-tests.tar.zst
+            ${{ runner.temp }}/deno-src-checkout.tgz
+            ${{ runner.temp }}/deno-src-checkout.tgz.sha256
           if-no-files-found: error
           retention-days: 1
 
