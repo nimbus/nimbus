@@ -1,0 +1,359 @@
+name: Rusty V8 Prebuild
+
+on:
+  workflow_dispatch:
+    inputs:
+      rusty_v8_ref:
+        description: "rusty_v8 tag to publish, for example v149.4.0-nimbus.10"
+        required: true
+        type: string
+      deno_ref:
+        description: "Deno ref recorded in manifest provenance"
+        required: true
+        type: string
+      target:
+        description: "Rust target triple to build"
+        required: true
+        type: choice
+        default: x86_64-unknown-linux-gnu
+        options:
+          - x86_64-unknown-linux-gnu
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rusty-v8-prebuild-${{ github.event.inputs.rusty_v8_ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish rusty_v8 prebuild
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      DENO_REF: ${{ inputs.deno_ref }}
+      RELEASE_TAG: rusty-v8-${{ inputs.rusty_v8_ref }}
+      RUSTY_V8_REF: ${{ inputs.rusty_v8_ref }}
+      TARGET: ${{ inputs.target }}
+
+    steps:
+      - name: Free runner disk
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /usr/share/dotnet
+          df -h /
+
+      - name: Check out rusty_v8 fork
+        uses: actions/checkout@v6
+        with:
+          repository: nimbus/rusty_v8
+          ref: ${{ inputs.rusty_v8_ref }}
+          path: rusty_v8
+          fetch-depth: 1
+          submodules: false
+
+      - name: Configure googlesource credentials
+        shell: bash
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GOOGLESOURCE_COOKIE}" ]]; then
+            echo "GOOGLESOURCE_COOKIE is empty; continuing with public googlesource URLs."
+            exit 0
+          fi
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          printf '.googlesource.com\tTRUE\t/\tTRUE\t2147483647\to\t%s\n' "${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
+
+      - name: Initialize fork submodules
+        shell: bash
+        working-directory: rusty_v8
+        run: |
+          set -euo pipefail
+          # Intentionally non-recursive: initialize only the fork's declared
+          # top-level Chromium dependency layout, not nested Chromium submodules.
+          git submodule sync
+          git submodule update --init --depth 1 --jobs 4
+          git submodule status
+
+      - name: Install build dependencies
+        shell: bash
+        working-directory: rusty_v8
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl \
+            libclang-19-dev \
+            libglib2.0-dev \
+            pkg-config \
+            python3
+          rustup toolchain install 1.91.0 --profile minimal --target "${TARGET}"
+          echo "LIBCLANG_PATH=/usr/lib/llvm-19/lib" >> "${GITHUB_ENV}"
+          rustc --version
+          cargo --version
+
+      - name: Resolve build context
+        shell: bash
+        working-directory: rusty_v8
+        run: |
+          set -euo pipefail
+          case "${RUSTY_V8_REF}" in
+            v[0-9]*)
+              ;;
+            *)
+              echo "::error::rusty_v8_ref must be a tag like v149.4.0-nimbus.10"
+              exit 64
+              ;;
+          esac
+          case "${TARGET}" in
+            x86_64-unknown-linux-gnu)
+              ;;
+            *)
+              echo "::error::unsupported target: ${TARGET}"
+              exit 64
+              ;;
+          esac
+
+          host="$(rustc -vV | sed -n 's/^host: //p')"
+          if [[ "${host}" != "${TARGET}" ]]; then
+            echo "::error::this workflow currently publishes host-target builds only; host=${host}, target=${TARGET}"
+            exit 64
+          fi
+
+          asset_dir="${RUNNER_TEMP}/rusty-v8-prebuild-assets"
+          mkdir -p "${asset_dir}"
+          {
+            echo "ASSET_DIR=${asset_dir}"
+            echo "RUSTY_V8_SHA=$(git rev-parse HEAD)"
+            echo "RELEASE_TARGET_DIR=${RUNNER_TEMP}/rusty-v8-target-release"
+            echo "PTRCOMP_TARGET_DIR=${RUNNER_TEMP}/rusty-v8-target-release-ptrcomp"
+            echo "RELEASE_ARCHIVE=librusty_v8_release_${TARGET}.a"
+            echo "PTRCOMP_ARCHIVE=librusty_v8_release_ptrcomp_${TARGET}.a"
+            echo "RELEASE_BINDING=src_binding_simdutf_release_${TARGET}.rs"
+            echo "PTRCOMP_BINDING=src_binding_ptrcomp_simdutf_release_${TARGET}.rs"
+            echo "RUNNER_IMAGE=${ImageOS:-ubuntu24}-${ImageVersion:-unknown}"
+          } >> "${GITHUB_ENV}"
+
+      # FEATURE ALIGNMENT (orchestrator review): the nimbus workspace resolves the
+      # v8 crate with features {default(use_custom_libcxx), simdutf} — verified via
+      # `cargo tree -p nimbus-runtime -e features -i v8` — and the ptrcomp lane adds
+      # v8_enable_pointer_compression. Both variants below therefore build with
+      # simdutf enabled, and the published binding filenames carry the composed
+      # features string (_simdutf / _ptrcomp_simdutf per build.rs:556-567) so the
+      # consumer's derived name matches. sandbox is NOT enabled anywhere (verified 0
+      # hits in the feature tree). The fork pins rustc 1.91.0 in its own
+      # rust-toolchain.toml, matching the explicit install above.
+      # rusty_v8 build.rs mechanics, verified from the cached Nimbus fork:
+      # - V8_FROM_SOURCE chooses build_v8()+build_binding(), bypassing downloads
+      #   (build.rs:103-124).
+      # - build_dir() resolves Cargo OUT_DIR back to target/<profile>
+      #   (build.rs:617-635). The source build's GN output is
+      #   <target-dir>/<profile>/gn_out and link search is gn_out/obj
+      #   (build.rs:1152-1173), with the Linux static library named
+      #   librusty_v8.a (build.rs:570-575).
+      # - build_binding() writes the generated binding to
+      #   <target-dir>/<profile>/gn_out/src_binding.rs (build.rs:240-247).
+      # - Prebuilt binding names are src_binding{features}_{profile}_{target}.rs
+      #   (build.rs:887-900). The features string is composed, in order, from
+      #   _ptrcomp, _sandbox, and _simdutf when the matching Cargo feature env is
+      #   present; default features are the empty string (build.rs:556-567).
+      # - Prebuilt profile selection is release unless V8_FORCE_DEBUG=true on a
+      #   non-Windows target (build.rs:545-553). Source GN debug/release follows
+      #   Cargo PROFILE (build.rs:267-273 and 1070-1080).
+      - name: Build release artifact
+        shell: bash
+        working-directory: rusty_v8
+        env:
+          CARGO_INCREMENTAL: "0"
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+          CARGO_TARGET_DIR: ${{ runner.temp }}/rusty-v8-target-release
+          V8_FROM_SOURCE: "1"
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --features simdutf
+
+          archive_path="${RELEASE_TARGET_DIR}/release/gn_out/obj/librusty_v8.a"
+          binding_path="${RELEASE_TARGET_DIR}/release/gn_out/src_binding.rs"
+          test -s "${archive_path}"
+          test -s "${binding_path}"
+
+          cp "${archive_path}" "${ASSET_DIR}/${RELEASE_ARCHIVE}"
+          cp "${binding_path}" "${ASSET_DIR}/${RELEASE_BINDING}"
+          (
+            cd "${ASSET_DIR}"
+            sha256sum "${RELEASE_ARCHIVE}" > "${RELEASE_ARCHIVE}.sha256"
+            sha256sum "${RELEASE_BINDING}" > "${RELEASE_BINDING}.sha256"
+          )
+          df -h /
+
+      - name: Build release pointer-compression artifact
+        shell: bash
+        working-directory: rusty_v8
+        env:
+          CARGO_INCREMENTAL: "0"
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+          CARGO_TARGET_DIR: ${{ runner.temp }}/rusty-v8-target-release-ptrcomp
+          V8_FROM_SOURCE: "1"
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --features v8_enable_pointer_compression,simdutf
+
+          archive_path="${PTRCOMP_TARGET_DIR}/release/gn_out/obj/librusty_v8.a"
+          binding_path="${PTRCOMP_TARGET_DIR}/release/gn_out/src_binding.rs"
+          test -s "${archive_path}"
+          test -s "${binding_path}"
+
+          cp "${archive_path}" "${ASSET_DIR}/${PTRCOMP_ARCHIVE}"
+          cp "${binding_path}" "${ASSET_DIR}/${PTRCOMP_BINDING}"
+          (
+            cd "${ASSET_DIR}"
+            sha256sum "${PTRCOMP_ARCHIVE}" > "${PTRCOMP_ARCHIVE}.sha256"
+            sha256sum "${PTRCOMP_BINDING}" > "${PTRCOMP_BINDING}.sha256"
+          )
+          df -h /
+
+      - name: Write manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILT_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          export BUILT_AT
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          asset_dir = Path(os.environ["ASSET_DIR"])
+
+          def digest(filename: str) -> str:
+              return (asset_dir / f"{filename}.sha256").read_text().split()[0]
+
+          release_archive = os.environ["RELEASE_ARCHIVE"]
+          release_binding = os.environ["RELEASE_BINDING"]
+          ptrcomp_archive = os.environ["PTRCOMP_ARCHIVE"]
+          ptrcomp_binding = os.environ["PTRCOMP_BINDING"]
+
+          manifest = {
+              "rusty_v8_ref": os.environ["RUSTY_V8_REF"],
+              "rusty_v8_sha": os.environ["RUSTY_V8_SHA"],
+              "deno_ref": os.environ["DENO_REF"],
+              "target": os.environ["TARGET"],
+              "built_at": os.environ["BUILT_AT"],
+              "runner_image": os.environ["RUNNER_IMAGE"],
+              "variants": [
+                  {
+                      "name": "release",
+                      "profile": "release",
+                      "features": "_simdutf",
+                      "archive": {
+                          "filename": release_archive,
+                          "sha256": digest(release_archive),
+                      },
+                      "src_binding": {
+                          "filename": release_binding,
+                          "sha256": digest(release_binding),
+                      },
+                  },
+                  {
+                      "name": "release-ptrcomp",
+                      "profile": "release",
+                      "features": "_ptrcomp_simdutf",
+                      "archive": {
+                          "filename": ptrcomp_archive,
+                          "sha256": digest(ptrcomp_archive),
+                      },
+                      "src_binding": {
+                          "filename": ptrcomp_binding,
+                          "sha256": digest(ptrcomp_binding),
+                      },
+                  },
+              ],
+          }
+          (asset_dir / "manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+          )
+          PY
+          (
+            cd "${ASSET_DIR}"
+            sha256sum manifest.json > manifest.json.sha256
+            ls -lh
+          )
+
+      - name: Publish release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes="${RUNNER_TEMP}/rusty-v8-release-notes.md"
+          cat > "${notes}" <<EOF
+          Nimbus rusty_v8 prebuild for ${RUSTY_V8_REF}
+
+          rusty_v8_sha: ${RUSTY_V8_SHA}
+          deno_ref: ${DENO_REF}
+          target: ${TARGET}
+          EOF
+
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release edit "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --notes-file "${notes}" \
+              --title "${RELEASE_TAG}"
+          else
+            gh release create "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --notes-file "${notes}" \
+              --title "${RELEASE_TAG}"
+          fi
+
+          gh release upload "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber \
+            "${ASSET_DIR}"/*
+
+      - name: Verify published assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          verify_dir="${RUNNER_TEMP}/rusty-v8-prebuild-verify"
+          rm -rf "${verify_dir}"
+          mkdir -p "${verify_dir}"
+
+          gh release download "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --dir "${verify_dir}" \
+            --pattern '*'
+
+          cd "${verify_dir}"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          manifest = json.loads(Path("manifest.json").read_text())
+          expected = ["manifest.json", "manifest.json.sha256"]
+          for variant in manifest["variants"]:
+              for key in ("archive", "src_binding"):
+                  filename = variant[key]["filename"]
+                  expected.append(filename)
+                  expected.append(f"{filename}.sha256")
+
+          missing = [name for name in expected if not Path(name).is_file()]
+          if missing:
+              raise SystemExit(f"missing published assets: {', '.join(missing)}")
+          PY
+          sha256sum -c ./*.sha256
