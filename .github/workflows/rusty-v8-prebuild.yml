@@ -330,14 +330,36 @@ jobs:
           name: rusty-v8-prebuild-assets
           path: ${{ runner.temp }}/rusty-v8-prebuild-assets
 
-      - name: Resolve publish context
+      - name: Resolve and validate publish context
         shell: bash
         run: |
           set -euo pipefail
           asset_dir="${RUNNER_TEMP}/rusty-v8-prebuild-assets"
-          echo "ASSET_DIR=${asset_dir}" >> "${GITHUB_ENV}"
-          echo "RUSTY_V8_SHA=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rusty_v8_sha"])' "${asset_dir}/manifest.json")" >> "${GITHUB_ENV}"
           (cd "${asset_dir}" && sha256sum -c manifest.json.sha256)
+
+          # SECURITY: manifest.json is UNTRUSTED (produced by the build job,
+          # which ran third-party build scripts). Nothing from it may reach
+          # GITHUB_ENV or shell interpolation unvalidated — a newline-bearing
+          # value written to GITHUB_ENV would inject env vars into the steps
+          # that hold GH_TOKEN. Validate every consumed field against a strict
+          # shape and cross-check pins against the TRUSTED dispatch inputs.
+          RUSTY_V8_SHA="$(python3 /dev/stdin "${asset_dir}/manifest.json" <<'PY'
+          import json, re, sys
+          m = json.load(open(sys.argv[1]))
+          sha = m.get("rusty_v8_sha", "")
+          if not re.fullmatch(r"[0-9a-f]{40}", sha):
+              raise SystemExit("manifest rusty_v8_sha has invalid shape: %r" % sha)
+          print(sha)
+          PY
+          )"
+          manifest_ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rusty_v8_ref"])' "${asset_dir}/manifest.json")"
+          manifest_target="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["target"])' "${asset_dir}/manifest.json")"
+          if [[ "${manifest_ref}" != "${RUSTY_V8_REF}" || "${manifest_target}" != "${TARGET}" ]]; then
+            echo "::error::manifest pins (${manifest_ref}, ${manifest_target}) do not match dispatch inputs (${RUSTY_V8_REF}, ${TARGET})"
+            exit 1
+          fi
+          echo "ASSET_DIR=${asset_dir}" >> "${GITHUB_ENV}"
+          echo "RUSTY_V8_SHA=${RUSTY_V8_SHA}" >> "${GITHUB_ENV}"
 
       - name: Publish release assets
         shell: bash
@@ -400,6 +422,10 @@ jobs:
                   expected.append(filename)
                   expected.append(f"{filename}.sha256")
 
+          for name in expected:
+              # Untrusted manifest: refuse path separators in asset names.
+              if "/" in name or "\\" in name or name.startswith(".."):
+                  raise SystemExit(f"unsafe asset name in manifest: {name!r}")
           missing = [name for name in expected if not Path(name).is_file()]
           if missing:
               raise SystemExit(f"missing published assets: {', '.join(missing)}")
