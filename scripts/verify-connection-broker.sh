@@ -27,7 +27,9 @@ PASS=0
 FAIL=0
 FAILURES=()
 
-PLAN_FILE="docs/private/plans/connection-broker-plan.md"
+PLAN_ACTIVE="docs/private/plans/connection-broker-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/connection-broker-plan.md"
+if [ -f "${PLAN_ACTIVE}" ]; then PLAN_FILE="${PLAN_ACTIVE}"; else PLAN_FILE="${PLAN_ARCHIVED}"; fi
 PLANS_README="docs/private/plans/README.md"
 PROOF_DIR="docs/private/plans/proof/connection-broker"
 

@@ -7,7 +7,9 @@ set -o pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
 
-PLAN="docs/private/plans/nimbus-proxy-pingora-plan.md"
+PLAN_ACTIVE="docs/private/plans/nimbus-proxy-pingora-plan.md"
+PLAN_ARCHIVED="docs/private/plans/archive/nimbus-proxy-pingora-plan.md"
+if [ -f "${PLAN_ACTIVE}" ]; then PLAN="${PLAN_ACTIVE}"; else PLAN="${PLAN_ARCHIVED}"; fi
 PROMPT="docs/private/plans/prompts/nimbus-proxy-pingora-goal.md"
 PROOF_DIR="docs/private/plans/proof/nimbus-proxy-pingora"
 
