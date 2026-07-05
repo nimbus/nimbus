@@ -40,7 +40,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@6c1f7cf125e42770ff087ea443901b487cc5471a # v2
+        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
         with:
           tool: nextest@0.9.138
           fallback: none
