@@ -5,7 +5,7 @@ usage() {
   cat <<'USAGE'
 Usage:
   scripts/ci/disk-guard.sh report [--target-dir DIR] [--report-file FILE] [--label LABEL]
-  scripts/ci/disk-guard.sh enforce --min-free-gib N --max-used-gib N [--target-dir DIR] [--report-file FILE] [--label LABEL]
+  scripts/ci/disk-guard.sh enforce [--min-free-gib N] [--max-used-gib N] (at least one) [--target-dir DIR] [--report-file FILE] [--label LABEL]
 
 Report mode prints df/du diagnostics and appends a sample to target/disk-report.json.
 Enforce mode records the same report, then exits 28 if free space or target usage
@@ -60,8 +60,9 @@ while (($#)); do
   esac
 done
 
-if [[ "${mode}" == "enforce" && ( -z "${min_free_gib}" || -z "${max_used_gib}" ) ]]; then
-  printf 'enforce mode requires --min-free-gib and --max-used-gib\n' >&2
+# At least one threshold must be set; each is enforced independently when given.
+if [[ "${mode}" == "enforce" && -z "${min_free_gib}" && -z "${max_used_gib}" ]]; then
+  printf 'enforce mode requires --min-free-gib and/or --max-used-gib\n' >&2
   exit 2
 fi
 
@@ -213,13 +214,13 @@ PY
 if [[ "${mode}" == "enforce" ]]; then
   free_kib="$(df -Pk "${target_dir}" | awk 'NR == 2 { print $4 }')"
   used_kib="$(du -sk "${target_dir}" | awk '{ print $1 }')"
-  if ! awk -v free_kib="${free_kib}" -v min_gib="${min_free_gib}" 'BEGIN { exit (free_kib >= min_gib * 1024 * 1024) ? 0 : 1 }'; then
+  if [[ -n "${min_free_gib}" ]] && ! awk -v free_kib="${free_kib}" -v min_gib="${min_free_gib}" 'BEGIN { exit (free_kib >= min_gib * 1024 * 1024) ? 0 : 1 }'; then
     printf '::error::disk guard breach: free space %.2f GiB is below required %.2f GiB\n' \
       "$(awk -v kib="${free_kib}" 'BEGIN { printf "%.2f", kib / 1024 / 1024 }')" \
       "${min_free_gib}" >&2
     exit 28
   fi
-  if ! awk -v used_kib="${used_kib}" -v max_gib="${max_used_gib}" 'BEGIN { exit (used_kib <= max_gib * 1024 * 1024) ? 0 : 1 }'; then
+  if [[ -n "${max_used_gib}" ]] && ! awk -v used_kib="${used_kib}" -v max_gib="${max_used_gib}" 'BEGIN { exit (used_kib <= max_gib * 1024 * 1024) ? 0 : 1 }'; then
     printf '::error::disk guard breach: target usage %.2f GiB exceeds allowed %.2f GiB\n' \
       "$(awk -v kib="${used_kib}" 'BEGIN { printf "%.2f", kib / 1024 / 1024 }')" \
       "${max_used_gib}" >&2
