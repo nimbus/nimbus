@@ -612,6 +612,7 @@ jobs:
         run: cargo nextest archive --workspace --exclude nimbus-runtime --locked --cargo-profile ci-archive --archive-file "$RUNNER_TEMP/nimbus-tests.tar.zst"
 
       - name: Report disk after archive
+        if: always()
         run: bash scripts/ci/disk-guard.sh report --label after-archive
 
       - name: Check archive size cap
@@ -634,6 +635,7 @@ jobs:
         run: cargo build -p nimbus-bin --profile ci-archive --locked
 
       - name: Report disk after nimbus-bin
+        if: always()
         run: bash scripts/ci/disk-guard.sh report --label after-nimbus-bin
 
       - name: Prepare nextest config artifact
@@ -642,7 +644,7 @@ jobs:
       - name: Generate canonical nextest inventory
         run: |
           mkdir -p target/test-inventory
-          cargo nextest list --workspace --exclude nimbus-runtime --run-ignored all --message-format json > target/test-inventory/nextest-list.json
+          cargo nextest list --workspace --exclude nimbus-runtime --run-ignored all --locked --cargo-profile ci-archive --message-format json > target/test-inventory/nextest-list.json
           python3 - <<'PY'
           import json
           import subprocess
@@ -651,7 +653,7 @@ jobs:
           meta = {
               "platform": "x86_64-unknown-linux-gnu",
               "nextest_version": "0.9.138",
-              "command": "cargo nextest list --workspace --exclude nimbus-runtime --run-ignored all --message-format json",
+              "command": "cargo nextest list --workspace --exclude nimbus-runtime --run-ignored all --locked --cargo-profile ci-archive --message-format json",
               "git_rev": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
           }
           Path("target/test-inventory/nextest-list.meta.json").write_text(
@@ -665,7 +667,7 @@ jobs:
 
       - name: Check archive test universe
         run: |
-          cargo nextest list --archive-file "$RUNNER_TEMP/nimbus-tests.tar.zst" --workspace-remap "$GITHUB_WORKSPACE" --message-format json > target/test-inventory/nextest-archive-list.json
+          cargo nextest list --archive-file "$RUNNER_TEMP/nimbus-tests.tar.zst" --workspace-remap "$GITHUB_WORKSPACE" --run-ignored all --message-format json > target/test-inventory/nextest-archive-list.json
           python3 - <<'PY'
           import json
           import re
@@ -686,9 +688,10 @@ jobs:
                   if package == "nimbus-runtime":
                       continue
                   binary = str(suite.get("binary-name") or suite.get("binary_name") or "")
+                  # Ignored tests are INCLUDED in the universe identity: an
+                  # ignored-only suite (e.g. nimbus-kv spawn_harness) vanishing
+                  # from the archive must trip this gate too (review finding).
                   for name, case in suite.get("testcases", {}).items():
-                      if case.get("ignored", False):
-                          continue
                       ids.add(f"{package}::{binary}::{name}")
               return ids
 
@@ -696,13 +699,13 @@ jobs:
           archive = test_ids(load_json("target/test-inventory/nextest-archive-list.json"))
           missing = sorted(inventory - archive)
           if missing:
-              print(f"::error::archive universe shrinkage: {len(missing)} non-ignored inventory tests are missing from the archive")
+              print(f"::error::archive universe shrinkage: {len(missing)} inventory tests (incl. ignored) are missing from the archive")
               for test_id in missing[:200]:
                   print(f"missing: {test_id}")
               if len(missing) > 200:
                   print(f"... and {len(missing) - 200} more")
               sys.exit(1)
-          print(f"archive universe ok: {len(inventory)} non-ignored non-runtime tests present")
+          print(f"archive universe ok: {len(inventory)} non-runtime tests present (ignored included)")
           PY
 
       - name: Upload nimbus tests archive
@@ -742,6 +745,7 @@ jobs:
           retention-days: 1
 
       - name: Upload disk report
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: disk-report
@@ -755,6 +759,11 @@ jobs:
     timeout-minutes: 30
     if: github.event_name != 'schedule'
     needs: [ui-artifacts]
+    env:
+      # Parity with the former shard-1 doctest leg (review finding): the shard
+      # matrix carried this; doctests keep it so no fixture behavior shifts.
+      # --locked on the doctest command is an intentional strengthening.
+      NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES: "1"
 
     steps:
       - name: Check out repository
