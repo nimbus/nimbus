@@ -530,6 +530,10 @@ jobs:
       - name: Install PATH poison guard
         run: bash scripts/ci/install-path-poison.sh cargo rustc rustup node npm npx
 
+      - name: Record rerun visibility
+        if: github.run_attempt > 1
+        run: bash scripts/ci/append-rerun-visibility.sh "rust-workspace-tests shard ${{ matrix.partition }}"
+
       - name: Run workspace test lane (shard ${{ matrix.partition }})
         run: |
           cargo-nextest nextest run \
@@ -604,6 +608,10 @@ jobs:
 
       - name: Install PATH poison guard
         run: bash scripts/ci/install-path-poison.sh cargo rustc rustup
+
+      - name: Record rerun visibility
+        if: github.run_attempt > 1
+        run: bash scripts/ci/append-rerun-visibility.sh "workspace-run-node"
 
       - name: Assert workspace filter partition
         run: |
@@ -685,7 +693,11 @@ jobs:
     name: Rust Test Archive
     runs-on: ubuntu-24.04
     timeout-minutes: 75
-    if: github.event_name != 'schedule'
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
     needs: [ui-artifacts]
     env:
       NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES: "1"
@@ -728,6 +740,13 @@ jobs:
           name: ui-artifacts
           path: packages/nimbus-ui
 
+      - name: Download ui-artifacts timing
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: ci-timings-ui-artifacts
+          path: ${{ runner.temp }}/ci-timings-ui
+
       - name: Refresh nimbus-ui artifact mtimes
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
@@ -761,7 +780,33 @@ jobs:
         run: bash scripts/ci/disk-guard.sh enforce --label before-archive-compile --min-free-gib 45
 
       - name: Build nextest archive
-        run: cargo nextest archive --workspace --exclude nimbus-runtime --locked --cargo-profile ci-archive --archive-file "$RUNNER_TEMP/nimbus-tests.tar.zst"
+        run: |
+          set -euo pipefail
+          mkdir -p target/ci-timings
+          start_ms="$(date +%s%3N)"
+          cargo nextest archive --workspace --exclude nimbus-runtime --locked --cargo-profile ci-archive --archive-file "$RUNNER_TEMP/nimbus-tests.tar.zst"
+          end_ms="$(date +%s%3N)"
+          python3 - "$start_ms" "$end_ms" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          start_ms = int(sys.argv[1])
+          end_ms = int(sys.argv[2])
+          Path("target/ci-timings").mkdir(parents=True, exist_ok=True)
+          Path("target/ci-timings/archive-compile-pack.json").write_text(
+              json.dumps(
+                  {
+                      "name": "archive-compile-pack",
+                      "wall_seconds": round((end_ms - start_ms) / 1000, 3),
+                  },
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
 
       - name: Enforce disk budget after archive
         if: always()
@@ -886,6 +931,9 @@ jobs:
           print(f"archive universe ok: {len(inventory)} non-runtime tests present (ignored included)")
           PY
 
+      - name: Record archive upload start
+        run: date +%s%3N > "$RUNNER_TEMP/archive-upload-start-ms"
+
       - name: Upload nimbus tests archive
         uses: actions/upload-artifact@v7
         with:
@@ -896,6 +944,130 @@ jobs:
             ${{ runner.temp }}/deno-src-checkout.tgz.sha256
           if-no-files-found: error
           retention-days: 1
+
+      - name: Record archive upload timing
+        run: |
+          set -euo pipefail
+          start_ms="$(cat "$RUNNER_TEMP/archive-upload-start-ms")"
+          end_ms="$(date +%s%3N)"
+          mkdir -p target/ci-timings
+          python3 - "$start_ms" "$end_ms" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          start_ms = int(sys.argv[1])
+          end_ms = int(sys.argv[2])
+          Path("target/ci-timings/archive-upload.json").write_text(
+              json.dumps(
+                  {
+                      "name": "archive-upload",
+                      "wall_seconds": round((end_ms - start_ms) / 1000, 3),
+                  },
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Append archive frontier summary
+        if: github.event_name != 'schedule'
+        run: |
+          set -euo pipefail
+          coverage_file="${RUNNER_TEMP}/test-taxonomy-coverage.txt"
+          ci_pr_json="${RUNNER_TEMP}/nextest-ci-pr-list.json"
+          ci_nightly_json="${RUNNER_TEMP}/nextest-ci-nightly-list.json"
+          python3 scripts/test-taxonomy.py coverage-report > "${coverage_file}"
+          cargo nextest list \
+            --archive-file "$RUNNER_TEMP/nimbus-tests.tar.zst" \
+            --workspace-remap "$GITHUB_WORKSPACE" \
+            --profile ci-pr \
+            --message-format json > "${ci_pr_json}"
+          cargo nextest list \
+            --archive-file "$RUNNER_TEMP/nimbus-tests.tar.zst" \
+            --workspace-remap "$GITHUB_WORKSPACE" \
+            --profile ci-nightly \
+            --message-format json > "${ci_nightly_json}"
+          python3 - "${coverage_file}" "${ci_pr_json}" "${ci_nightly_json}" <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          coverage_path = Path(sys.argv[1])
+          ci_pr_path = Path(sys.argv[2])
+          ci_nightly_path = Path(sys.argv[3])
+
+          def load_timing(path: Path) -> float | None:
+              if not path.is_file():
+                  return None
+              return float(json.loads(path.read_text(encoding="utf-8"))["wall_seconds"])
+
+          def find_timing(root: Path, name: str) -> float | None:
+              if not root.exists():
+                  return None
+              for path in root.rglob(name):
+                  value = load_timing(path)
+                  if value is not None:
+                      return value
+              return None
+
+          def load_nextest(path: Path) -> dict:
+              text = path.read_text(encoding="utf-8")
+              match = re.search(r"^\{", text, re.MULTILINE)
+              if not match:
+                  raise SystemExit(f"{path} did not contain nextest JSON")
+              return json.loads(text[match.start():])
+
+          def count_selected(data: dict) -> int:
+              count = 0
+              for suite in data.get("rust-suites", {}).values():
+                  for case in suite.get("testcases", {}).values():
+                      status = case.get("filter-match", {}).get("status")
+                      if not case.get("ignored", False) and status in (None, "matches"):
+                          count += 1
+              return count
+
+          def fmt(value: float | None, pending: str) -> str:
+              return f"{value:.3f}s" if value is not None else f"PENDING({pending})"
+
+          ui = find_timing(Path(os.environ["RUNNER_TEMP"]) / "ci-timings-ui", "ui-artifacts.json")
+          archive = load_timing(Path("target/ci-timings/archive-compile-pack.json"))
+          upload = load_timing(Path("target/ci-timings/archive-upload.json"))
+          archive_wall = ui + archive + upload if ui is not None else None
+          local_archive_wall = archive + upload
+          ci_pr = count_selected(load_nextest(ci_pr_path))
+          ci_nightly = count_selected(load_nextest(ci_nightly_path))
+          ratio = (ci_pr / ci_nightly * 100.0) if ci_nightly else 0.0
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
+              summary.write("## Test frontier\n\n")
+              summary.write(
+                  "CI-TIMING "
+                  f"js_prebuild={fmt(ui, 'ui-artifacts timing artifact')} "
+                  f"archive_compile_pack={archive:.3f}s "
+                  f"archive_upload={upload:.3f}s\n"
+              )
+              summary.write(
+                  "FLOOR "
+                  f"archive_wall={fmt(archive_wall, 'ui-artifacts timing artifact')} "
+                  f"archive_job_local={local_archive_wall:.3f}s "
+                  "shard_download_extract_run=PENDING(shard-scaling-probe) "
+                  "floor=PENDING(shard-scaling-probe) "
+                  "gap=PENDING(shard-scaling-probe)\n"
+              )
+              summary.write(
+                  f"COVERAGE ci-pr={ci_pr} ci-nightly={ci_nightly} "
+                  f"ratio={ratio:.2f}%\n\n"
+              )
+              summary.write("<details><summary>test-taxonomy coverage-report</summary>\n\n")
+              summary.write("```text\n")
+              summary.write(coverage_path.read_text(encoding="utf-8"))
+              summary.write("```\n\n</details>\n")
+          PY
 
       - name: Upload nimbus-bin binary
         uses: actions/upload-artifact@v7
@@ -933,6 +1105,100 @@ jobs:
           path: target/disk-report.json
           if-no-files-found: error
           retention-days: 1
+
+  workspace-run-nightly:
+    name: Nightly Rust Workspace Tests (shard ${{ matrix.partition }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    if: github.event_name == 'schedule'
+    needs: [archive]
+    env:
+      NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - partition: "1/2"
+            shard-id: "1"
+          - partition: "2/2"
+            shard-id: "2"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ui-artifacts
+          path: packages/nimbus-ui
+
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Download embedded package payload
+        uses: actions/download-artifact@v8
+        with:
+          name: embedded-packages
+          path: crates/nimbus-assets/embedded/packages
+
+      - name: Refresh embedded package payload mtimes
+        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
+
+      - name: Download nimbus tests archive
+        uses: actions/download-artifact@v8
+        with:
+          name: nimbus-tests-archive
+          path: ${{ runner.temp }}/nimbus-tests-archive
+
+      - name: Download nextest config
+        uses: actions/download-artifact@v8
+        with:
+          name: nextest-config
+          path: ${{ runner.temp }}/nextest-config
+
+      - name: Verify and install nextest config
+        run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        with:
+          tool: nextest@0.9.138
+          fallback: none
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Install PATH poison guard
+        run: bash scripts/ci/install-path-poison.sh cargo rustc rustup
+
+      - name: Run nightly workspace test lane (shard ${{ matrix.partition }})
+        id: run-nightly
+        env:
+          NEXTEST_EXPERIMENTAL_LIBTEST_JSON: "1"
+        run: |
+          set -o pipefail
+          log_file="${RUNNER_TEMP}/nextest-nightly-${{ matrix.shard-id }}.log"
+          : > "${log_file}"
+          cargo-nextest nextest run \
+            --archive-file "${NIMBUS_TESTS_ARCHIVE}" \
+            --workspace-remap "${GITHUB_WORKSPACE}" \
+            --profile ci-nightly \
+            --partition hash:${{ matrix.partition }} \
+            --message-format libtest-json-plus 2>&1 | tee "${log_file}"
+
+      # A9/F13 disposition for every FLAKY-DETECTED line is a flaky-quarantine
+      # ledger row with owner, issue, and expiry; scripts/test-taxonomy.py check
+      # enforces expiry on flaky-quarantine rows.
+      - name: Detect nextest flaky retries
+        if: always() && steps.run-nightly.outcome != 'skipped'
+        run: python3 scripts/ci/detect-nextest-flakes.py "$RUNNER_TEMP/nextest-nightly-${{ matrix.shard-id }}.log"
 
   doctests:
     name: Rust Doctests
@@ -1482,11 +1748,18 @@ jobs:
     name: UI Artifacts
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    if: github.event_name != 'schedule'
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+
+      - name: Record ui-artifacts start
+        run: date +%s%3N > "$RUNNER_TEMP/ui-artifacts-start-ms"
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -1506,6 +1779,33 @@ jobs:
         # Node toolchain) can consume it as an artifact, mirroring coverage.yml.
         run: make build-packages
 
+      - name: Record ui-artifacts timing
+        run: |
+          set -euo pipefail
+          start_ms="$(cat "$RUNNER_TEMP/ui-artifacts-start-ms")"
+          end_ms="$(date +%s%3N)"
+          mkdir -p target/ci-timings
+          python3 - "$start_ms" "$end_ms" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          start_ms = int(sys.argv[1])
+          end_ms = int(sys.argv[2])
+          Path("target/ci-timings/ui-artifacts.json").write_text(
+              json.dumps(
+                  {
+                      "name": "ui-artifacts",
+                      "wall_seconds": round((end_ms - start_ms) / 1000, 3),
+                  },
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+
       - name: Upload nimbus-ui artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -1521,6 +1821,14 @@ jobs:
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload ui-artifacts timing
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-timings-ui-artifacts
+          path: target/ci-timings/ui-artifacts.json
           if-no-files-found: error
           retention-days: 1
 
@@ -1856,9 +2164,14 @@ jobs:
           bash -n scripts/verify-machine-os-release-ref-contract-helper.sh
           bash -n scripts/ci/verify-prebuilt-v8-consumption.sh
           bash -n scripts/ci/disk-guard.sh
+          bash -n scripts/ci/append-rerun-visibility.sh
+          bash -n scripts/ci/shard-scaling-probe.sh
           bash -n scripts/install.sh
           bash -n scripts/verify-install.sh
           bash -n scripts/verify-install-helper.sh
+          python3 -m py_compile \
+            scripts/ci/detect-nextest-flakes.py \
+            scripts/ci/shard-scaling-probe-summary.py
 
       - name: Verify SQLCipher proof bundle collector helper
         run: bash scripts/verify-collect-sqlcipher-proof-bundles-helper.sh

@@ -1,0 +1,280 @@
+name: Shard Scaling Probe
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly off-peak probe. The archive is built fresh for hermeticity instead
+    # of consuming a previous CI run's artifact.
+    - cron: "23 9 * * 0"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    name: Probe Archive
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Free runner disk for archive build
+        run: |
+          df -h /
+          sudo rm -rf \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /usr/share/dotnet
+          df -h /
+
+      - name: Set up Rust with cache
+        id: setup-rust
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: shard-scaling-probe-archive-no-bin-v1
+          linux-linker: lld
+          linux-openssl-provider: system
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        with:
+          tool: nextest@0.9.138
+          fallback: none
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Build nimbus-ui artifacts
+        run: make build-ui
+
+      - name: Stage embedded JS package payloads
+        run: make build-packages
+
+      - name: Cache Node22 anchor snapshot
+        uses: actions/cache@v5
+        with:
+          path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
+          key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
+
+      - name: Generate + verify embedded anchor snapshot
+        run: env -u V8_FROM_SOURCE make build-node22-anchor-snapshot-off
+
+      - name: Run taxonomy check before archive
+        run: python3 scripts/test-taxonomy.py check
+
+      - name: Enforce disk budget before archive compile
+        run: bash scripts/ci/disk-guard.sh enforce --label before-probe-archive-compile --min-free-gib 45
+
+      - name: Build nextest archive
+        run: cargo nextest archive --workspace --exclude nimbus-runtime --locked --cargo-profile ci-archive --archive-file "$RUNNER_TEMP/nimbus-tests.tar.zst"
+
+      - name: Enforce disk budget after archive
+        if: always()
+        run: bash scripts/ci/disk-guard.sh enforce --label after-probe-archive --min-free-gib 20
+
+      - name: Package deno source checkout for consumers
+        run: |
+          set -euo pipefail
+          ext_dir="$(find "$HOME/.cargo/git/checkouts" -maxdepth 3 -type d -path '*deno-*/*/ext' | head -1)"
+          checkout_dir="$(dirname "${ext_dir}")"
+          parent="$(dirname "${checkout_dir}")"
+          rel="$(basename "${parent}")/$(basename "${checkout_dir}")"
+          test -f "${checkout_dir}/ext/telemetry/telemetry.ts"
+          (
+            cd "$HOME/.cargo/git/checkouts"
+            find "${rel}/ext" "${rel}/libs" -type f \
+              \( -name '*.ts' -o -name '*.js' -o -name '*.mjs' -o -name '*.json' \) \
+              | tar -czf "$RUNNER_TEMP/deno-src-checkout.tgz" -T -
+          )
+          sha256sum "$RUNNER_TEMP/deno-src-checkout.tgz" | awk '{print $1"  deno-src-checkout.tgz"}' > "$RUNNER_TEMP/deno-src-checkout.tgz.sha256"
+
+      - name: Prepare nextest config artifact
+        run: sha256sum .config/nextest.toml > .config/nextest.toml.sha256
+
+      - name: Upload probe nimbus tests archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-nimbus-tests-archive
+          path: |
+            ${{ runner.temp }}/nimbus-tests.tar.zst
+            ${{ runner.temp }}/deno-src-checkout.tgz
+            ${{ runner.temp }}/deno-src-checkout.tgz.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload probe nextest config
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-nextest-config
+          path: |
+            .config/nextest.toml
+            .config/nextest.toml.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload probe nimbus-ui artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-ui-artifacts
+          path: |
+            packages/nimbus-ui/.nimbus/convex
+            packages/nimbus-ui/dist
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload probe embedded packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-embedded-packages
+          path: crates/nimbus-assets/embedded/packages
+          if-no-files-found: error
+          retention-days: 1
+
+  probe:
+    name: Probe K=${{ matrix.k }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    needs: [archive]
+    strategy:
+      fail-fast: false
+      matrix:
+        k: [1, 2, 3, 4]
+    env:
+      NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES: "1"
+      NODE_DEPENDENT_FILTER: >-
+        (package(nimbus-cli) and (test(/dev::tests::adoption::/) or test(/dev::redetect::tests::mid_session_(convex|firebase)_adoption_/) or test(/deploy::typecheck_tests::run_tsc_passes_clean_code_and_fails_on_type_error/) or test(/typeinfo::tests::/) or test(/codegen::tests::external_node_codegen_uses_embedded_tooling_without_app_codegen_package/))) or (package(nimbus-server) and (test(/firebase_sdk_crud_selftest_smoke/) or test(/adapters::cloud_functions::(http|execution)::tests::cloud_functions_.*generated_.*bundle/)))
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        with:
+          tool: nextest@0.9.138
+          fallback: none
+
+      - name: Download probe nimbus-ui artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: probe-ui-artifacts
+          path: packages/nimbus-ui
+
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Download probe embedded package payload
+        uses: actions/download-artifact@v8
+        with:
+          name: probe-embedded-packages
+          path: crates/nimbus-assets/embedded/packages
+
+      - name: Refresh embedded package payload mtimes
+        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
+
+      - name: Record archive restore start
+        run: date +%s%3N > "$RUNNER_TEMP/probe-restore-start-ms"
+
+      - name: Download probe nimbus tests archive
+        uses: actions/download-artifact@v8
+        with:
+          name: probe-nimbus-tests-archive
+          path: ${{ runner.temp }}/probe-nimbus-tests-archive
+
+      - name: Download probe nextest config
+        uses: actions/download-artifact@v8
+        with:
+          name: probe-nextest-config
+          path: ${{ runner.temp }}/probe-nextest-config
+
+      - name: Verify and install nextest archive artifacts
+        run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/probe-nimbus-tests-archive" "$RUNNER_TEMP/probe-nextest-config"
+
+      - name: Record archive restore timing
+        run: |
+          set -euo pipefail
+          start_ms="$(cat "$RUNNER_TEMP/probe-restore-start-ms")"
+          end_ms="$(date +%s%3N)"
+          python3 - "$start_ms" "$end_ms" <<'PY' >> "$GITHUB_ENV"
+          import sys
+          print(f"NIMBUS_PROBE_DOWNLOAD_EXTRACT_SECONDS={(int(sys.argv[2]) - int(sys.argv[1])) / 1000:.3f}")
+          PY
+
+      - name: Install PATH poison guard
+        run: bash scripts/ci/install-path-poison.sh cargo rustc rustup node npm npx
+
+      - name: Run sequential shard-scaling probe
+        run: bash scripts/ci/shard-scaling-probe.sh "${{ matrix.k }}" "$RUNNER_TEMP/shard-scaling-probe-k-${{ matrix.k }}.json"
+
+      - name: Upload K=${{ matrix.k }} timing JSON
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: shard-scaling-probe-k-${{ matrix.k }}
+          path: ${{ runner.temp }}/shard-scaling-probe-k-${{ matrix.k }}.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  summarize:
+    name: Probe Summary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    if: always()
+    needs: [probe]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Prepare timing directory
+        run: mkdir -p "$RUNNER_TEMP/shard-scaling-probe-results"
+
+      - name: Download timing JSON artifacts
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: shard-scaling-probe-k-*
+          path: ${{ runner.temp }}/shard-scaling-probe-results
+          merge-multiple: false
+
+      - name: Append movement-rule summary
+        run: |
+          python3 scripts/ci/shard-scaling-probe-summary.py \
+            "$RUNNER_TEMP/shard-scaling-probe-results" \
+            --combined-json "$RUNNER_TEMP/shard-scaling-probe-summary.json"
+
+      - name: Upload combined probe timing JSON
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: shard-scaling-probe-timings
+          path: ${{ runner.temp }}/shard-scaling-probe-summary.json
+          if-no-files-found: warn
+          retention-days: 30
