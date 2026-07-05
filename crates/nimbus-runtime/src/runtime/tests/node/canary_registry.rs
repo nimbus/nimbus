@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-runtime tests")
         .parent()
         .and_then(|path| path.parent())
         .expect("nimbus-runtime should live under crates/")

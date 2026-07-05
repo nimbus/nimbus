@@ -372,6 +372,15 @@ class EnvBaselineTests(unittest.TestCase):
             self.assertEqual(len(violations), 1)
             self.assertIn("3 compile-time", violations[0])
 
+    def test_env_gate_allows_cargo_bin_option_env_fallback(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            file = Path(tmp) / "crates" / "demo" / "tests" / "bin.rs"
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_text('let p = option_env!("CARGO_BIN_EXE_demo");\n')
+            violations = taxonomy.find_compile_time_env_violations(Path(tmp), baseline={})
+            self.assertEqual(violations, [])
+
 
 class CaseMatrixTests(unittest.TestCase):
     def test_absent_case_matrix_is_warning_not_failure(self):

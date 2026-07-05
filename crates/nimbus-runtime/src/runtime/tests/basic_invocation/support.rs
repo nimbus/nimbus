@@ -56,7 +56,9 @@ pub(super) fn generated_node_modules_package_root(
 }
 
 pub(super) fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-runtime tests")
         .parent()
         .expect("crate parent should resolve")
         .parent()

@@ -26,7 +26,10 @@ fn workspace_firebase_selftest_dependencies_available(repo_root: &Path) -> bool 
 
 #[tokio::test]
 async fn firebase_sdk_crud_selftest_smoke() {
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-server tests");
+    let repo_root = manifest_dir
         .parent()
         .and_then(Path::parent)
         .expect("repo root should exist");

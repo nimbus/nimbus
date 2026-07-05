@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::middleware;
@@ -40,8 +41,6 @@ use self::cors::build_cors_layer;
 pub use cors::normalize_cors_origin;
 #[cfg(test)]
 pub(crate) use cors::{is_allowed_local_cors_origin, is_configured_cors_origin};
-
-const DEMOS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../demos");
 
 /// Canonical public option bundle for building a Nimbus HTTP/WebSocket router.
 pub struct RouterOptions {
@@ -593,12 +592,18 @@ pub fn build_router(options: RouterOptions) -> Router {
 }
 
 fn build_public_router() -> Router<Arc<AppState>> {
-    let demos = ServeDir::new(DEMOS_DIR).append_index_html_on_directories(true);
+    let demos = ServeDir::new(demos_dir()).append_index_html_on_directories(true);
 
     Router::new()
         .route("/health", get(http::health))
         .route("/demos", get(http::demos_redirect))
         .nest_service("/demos/", demos)
+}
+
+fn demos_dir() -> PathBuf {
+    std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(|manifest_dir| PathBuf::from(manifest_dir).join("../../demos"))
+        .unwrap_or_else(|| PathBuf::from("demos"))
 }
 
 fn build_ui_router() -> Router<Arc<AppState>> {

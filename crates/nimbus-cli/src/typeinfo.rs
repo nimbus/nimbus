@@ -53,7 +53,10 @@ mod tests {
     use std::path::PathBuf;
 
     fn repo_root() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+        std::env::var_os("CARGO_MANIFEST_DIR")
+            .map(PathBuf::from)
+            .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-cli tests")
+            .join("../..")
     }
 
     fn node_available() -> bool {

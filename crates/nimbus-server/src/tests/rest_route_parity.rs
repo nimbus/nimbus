@@ -10,7 +10,9 @@ use super::*;
 
 #[tokio::test]
 async fn rest_client_route_parity() {
-    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let manifest_path = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-server tests")
         .join("../../packages/nimbus/src/native_rest_routes.json");
     let manifest: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(&manifest_path).expect("route manifest should read"),

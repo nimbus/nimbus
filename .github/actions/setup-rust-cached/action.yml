@@ -547,3 +547,27 @@ runs:
         cache-on-failure: "true"
         cache-bin: ${{ inputs.cache-bin }}
         save-if: ${{ inputs.save-cache == 'always' || (inputs.save-cache == 'auto' && github.ref == 'refs/heads/main') }}
+
+
+    - name: Seed prebuilt V8 into target link-search paths
+      if: inputs.consume-prebuilt-v8 != 'false'
+      shell: bash
+      env:
+        NIMBUS_PREBUILT_V8_ARCHIVE_PATH: ${{ steps.consume-prebuilt-v8.outputs.archive-path }}
+      run: |
+        set -euo pipefail
+        # A restored cargo cache can carry a FRESH v8 build-script fingerprint
+        # whose recorded -L points at target/<profile>/gn_out/obj while the
+        # restored tree lacks the static lib (cache pruning) — the v8 crate
+        # then fails with 'could not find native static library rusty_v8'
+        # without ever re-running its build script. Seed the verified archive
+        # at the exact locations a build-script (re)run would populate; the
+        # copy is byte-identical to build.rs's own RUSTY_V8_ARCHIVE copy, so
+        # this is idempotent with every other path.
+        target_root="${CARGO_TARGET_DIR:-target}"
+        for profile_dir in debug ci-archive; do
+          obj_dir="${target_root}/${profile_dir}/gn_out/obj"
+          mkdir -p "${obj_dir}"
+          cp -f "${NIMBUS_PREBUILT_V8_ARCHIVE_PATH}" "${obj_dir}/librusty_v8.a"
+        done
+        echo "seeded librusty_v8.a into ${target_root}/{debug,ci-archive}/gn_out/obj"

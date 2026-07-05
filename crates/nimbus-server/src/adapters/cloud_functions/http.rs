@@ -1098,7 +1098,9 @@ export {};
     }
 
     fn repo_root() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
+        std::env::var_os("CARGO_MANIFEST_DIR")
+            .map(std::path::PathBuf::from)
+            .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-server tests")
             .parent()
             .and_then(Path::parent)
             .expect("repo root should exist")

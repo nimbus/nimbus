@@ -220,7 +220,9 @@ pub(super) struct NodeCompatResolvedExecutionPlan<'a> {
 }
 
 pub(super) fn repo_root() -> PathBuf {
-    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let crate_root = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-runtime tests");
     crate_root
         .parent()
         .and_then(Path::parent)

@@ -1507,7 +1507,10 @@ mod typecheck_tests {
     }
 
     fn workspace_tsc() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../node_modules/typescript/bin/tsc")
+        env::var_os("CARGO_MANIFEST_DIR")
+            .map(PathBuf::from)
+            .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-cli tests")
+            .join("../../node_modules/typescript/bin/tsc")
     }
 
     /// Real-compiler proof: tsc passes clean code and fails on a type error.

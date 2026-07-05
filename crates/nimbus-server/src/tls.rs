@@ -168,7 +168,10 @@ mod tests {
     const KEY: &str = "tests/fixtures/tls/localhost-key.pem";
 
     fn fixture(path: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join(path)
+        std::env::var_os("CARGO_MANIFEST_DIR")
+            .map(PathBuf::from)
+            .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-server tests")
+            .join(path)
     }
 
     #[test]

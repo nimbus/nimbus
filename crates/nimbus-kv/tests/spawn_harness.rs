@@ -146,9 +146,12 @@ fn server_bin() -> PathBuf {
         return configured;
     }
 
-    let repo_relative = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(&configured);
+    let repo_relative = PathBuf::from(
+        env::var_os("CARGO_MANIFEST_DIR")
+            .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-kv tests"),
+    )
+    .join("../..")
+    .join(&configured);
     if repo_relative.exists() {
         return repo_relative;
     }

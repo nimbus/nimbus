@@ -1476,7 +1476,9 @@ fn delete_firebase_document(engine: &Arc<Engine>, tenant_id: &TenantId, document
 
 #[test]
 fn async_runtime_integration_removes_hot_path_blocking_adapters() {
-    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-server tests");
     let engine_mod = fs::read_to_string(workspace_root.join("../nimbus-engine/src/engine/mod.rs"))
         .expect("engine module should be readable");
     assert!(

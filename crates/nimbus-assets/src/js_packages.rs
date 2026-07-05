@@ -347,19 +347,21 @@ mod tests {
 
     #[test]
     fn embedded_versions_match_source_package_json() {
+        let crate_root = std::env::var_os("CARGO_MANIFEST_DIR")
+            .map(PathBuf::from)
+            .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-assets tests");
         let manifest = manifest();
         for package in &manifest.packages {
             if package.third_party {
                 continue;
             }
             let source_dir = package.source_dir.as_deref().unwrap_or(&package.dir);
-            let src_path = format!(
-                "{}/../../packages/{}/package.json",
-                env!("CARGO_MANIFEST_DIR"),
-                source_dir
-            );
+            let src_path = crate_root
+                .join("../../packages")
+                .join(source_dir)
+                .join("package.json");
             let src = std::fs::read_to_string(&src_path)
-                .unwrap_or_else(|error| panic!("read {src_path}: {error}"));
+                .unwrap_or_else(|error| panic!("read {}: {error}", src_path.display()));
             let json: serde_json::Value = serde_json::from_str(&src).unwrap();
             assert_eq!(
                 json["version"].as_str().unwrap(),
