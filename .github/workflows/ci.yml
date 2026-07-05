@@ -280,7 +280,7 @@ jobs:
 
       - name: Upload failure diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: container-pep-egress-diagnostics
           path: ${{ runner.temp }}/container-pep-egress-diagnostics
@@ -469,7 +469,7 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@6c1f7cf125e42770ff087ea443901b487cc5471a # v2
         with:
-          tool: nextest
+          tool: nextest@0.9.138
           fallback: none
 
       # `make test-rust-workspace` and `make test-rust-docs` both depend on the

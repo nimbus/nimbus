@@ -1,0 +1,54 @@
+nextest-version = { required = "0.9.138" }
+
+[test-groups]
+serial-fixed-port = { max-threads = 1 }
+external-provider = { max-threads = 1 }
+harness-corpus = { max-threads = 1 }
+runtime-v8-global = { max-threads = 1 }
+
+[profile.default]
+retries = 0
+fail-fast = false
+slow-timeout = { period = "45s", terminate-after = 3 }
+
+[[profile.default.overrides]]
+filter = 'test(/listener_rejects_non_loopback_bind/)'
+test-group = 'serial-fixed-port'
+
+[[profile.default.overrides]]
+filter = 'test(/^(tests::)?(postgres|mysql|libsql)_/) or test(/^(tests::)?(postgres_provider|mysql_provider|libsql_replica_provider)::/)'
+test-group = 'external-provider'
+
+[[profile.default.overrides]]
+filter = 'test(/verification_harness_(required|nightly)_/)'
+test-group = 'harness-corpus'
+slow-timeout = { period = "15m", terminate-after = 2 }
+
+[[profile.default.overrides]]
+filter = 'package(nimbus-runtime) and test(/backends::v8::|runtime::tests::pool_reuse::isol_|runtime::tests::verification_harness::|runtime::tests::snapshot_lifecycle::|runtime::tests::warm_pool::/)'
+test-group = 'runtime-v8-global'
+
+[profile.ci-pr]
+inherits = "default"
+# BEGIN GENERATED: test-taxonomy exclusions
+default-filter = 'all()'
+# END GENERATED: test-taxonomy exclusions
+
+[profile.ci-nightly]
+inherits = "default"
+retries = { backoff = "fixed", count = 2, delay = "1s" }
+flaky-result = "fail"
+
+[profile.ci-runtime]
+inherits = "default"
+default-filter = 'package(nimbus-runtime) and not test(/runtime::tests::node_compat::/) and not test(/runtime::tests::pool_reuse::isol_/)'
+
+[profile.ci-harness-required]
+inherits = "default"
+default-filter = 'test(/verification_harness_required_generated_history_seed_corpus_matches_model/) or test(/verification_harness_required_transport_liveness_campaigns/) or test(/verification_harness_required_runtime_liveness_and_integrity_cases/)'
+slow-timeout = { period = "15m", terminate-after = 2 }
+
+[profile.ci-harness-nightly]
+inherits = "default"
+default-filter = 'test(/verification_harness_nightly_generated_history_seed_corpus_matches_model/) or test(/verification_harness_nightly_transport_liveness_campaigns/) or test(/verification_harness_nightly_runtime_liveness_and_integrity_cases/)'
+slow-timeout = { period = "20m", terminate-after = 2 }

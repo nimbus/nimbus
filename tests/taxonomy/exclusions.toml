@@ -1,0 +1,142 @@
+# Ledger of PR-tier exclusions and #[ignore] family documentation.
+# scope = "filter": row enters the generated ci-pr default-filter (excludes tests
+#   that would otherwise RUN on PR) — requires measured per-test evidence.
+# scope = "ignored": row documents an #[ignore] family for the ignored-without-
+#   ledger gate ONLY; it never enters the generated filter, so PR default-include
+#   stays exact. All B1 rows are scope=ignored; keep family granularity until the
+#   B2 inventory audit refines them.
+
+[[exclusions]]
+pattern = "test(/verification_harness_required_/)"
+scope = "ignored"
+reason = "heavy-resource"
+evidence = "Harness wrappers are #[ignore] corpus drivers; verified with cargo nextest list -p nimbus-storage/-p nimbus-server --run-ignored all -E 'test(/verification_harness_required_/)' on 2026-07-05."
+measured_at = "2026-07-05"
+owner = "test-infra-rearchitecture"
+issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
+
+[[exclusions]]
+pattern = "test(/verification_harness_nightly_/)"
+scope = "ignored"
+reason = "heavy-resource"
+evidence = "Harness wrappers are #[ignore] corpus drivers for nightly lanes; source wrappers live in storage, engine, server, and runtime verification_harness modules."
+measured_at = "2026-07-05"
+owner = "test-infra-rearchitecture"
+issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
+
+[[exclusions]]
+pattern = "test(/runtime::tests::node_compat::/)"
+scope = "ignored"
+reason = "heavy-resource"
+evidence = "cargo nextest list -p nimbus-runtime --lib --run-ignored all showed 151 ignored runtime::tests::node_compat entries on 2026-07-05; node compatibility has a dedicated workflow. Pattern narrowed from (node_compat|node) on orchestrator review: the broad form swept 572 NON-ignored runtime::tests::node:: tests that this row's evidence did not cover."
+measured_at = "2026-07-05"
+owner = "test-infra-rearchitecture"
+issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
+
+[[exclusions]]
+pattern = "test(/runtime::tests::basic_invocation::package_resolution::.*canary_batch/)"
+scope = "ignored"
+reason = "external-service"
+evidence = "The ignored package-resolution canary batches require npm ci in tests/runtime/node/* canary directories before execution; see their #[ignore] messages."
+measured_at = "2026-07-05"
+owner = "test-infra-rearchitecture"
+issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
+
+[[exclusions]]
+pattern = "test(/_subprocess$/)"
+scope = "ignored"
+reason = "serial"
+evidence = "Runtime subprocess children are #[ignore] entries that isolate V8 anchor, locker, snapshot, and side-channel state; cargo nextest list -p nimbus-runtime --lib --run-ignored all showed them as ignored."
+measured_at = "2026-07-05"
+owner = "test-infra-rearchitecture"
+issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
+
+[[exclusions]]
+pattern = "test(/runtime::tests::pool_reuse::isol_/)"
+scope = "profile"
+reason = "privileged"
+evidence = "isol_* are NON-ignored macro-generated subprocess-isolation parents (pool_reuse.rs:40/:76) — scope corrected from ignored on review. Their exclusion from the normal runtime lane is enforced by the hand-written ci-runtime default-filter in .config/nextest.toml (and today's Makefile --skip); the dedicated cage lane runs them with v8-pointer-compression. check verifies the pattern appears in the config."
+measured_at = "2026-07-05"
+owner = "test-infra-rearchitecture"
+issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
+
+[[exclusions]]
+pattern = "test(/runtime::tests::pool_reuse::(anchor_|concurrent_|weblean_|gate_|disposed_|baseline_|reachable_|option_c_|audit|serial_|same_thread|create_realm|cross_thread|coliveness|grouped|direct_path_|pooled_|warm_|fresh_|node_full_|nodefull_|reused_|reuse_|shape_|probe_|manual_|cross_profile_|capture_|web_api)/)"
+scope = "ignored"
+reason = "privileged"
+evidence = "Pool-reuse child/manual tests are #[ignore] cage-sensitive entries run via isol_* parents or manual diagnostics; source comments in pool_reuse.rs describe the crash-control contract. nodefull_ added on orchestrator review: pool_reuse.rs:1513 nodefull_anchor_first_* is a MANUAL-ANCHOR #[ignore] diagnostic whose multi-line ignore string the first scanner version could not see."
+measured_at = "2026-07-05"
+owner = "test-infra-rearchitecture"
+issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
+
+[[exclusions]]
+pattern = "test(/tests::convex_functions::node_canaries::convex_use_node_/)"
+scope = "ignored"
+reason = "external-service"
+evidence = "Server Convex use-node canaries are #[ignore] and explicitly say they are executed by the node-compat canary registry."
+measured_at = "2026-07-05"
+owner = "test-infra-rearchitecture"
+issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
+
+[[exclusions]]
+pattern = "test(/convex_use_node_.*canary/)"
+scope = "ignored"
+reason = "external-service"
+evidence = "Convex registry use-node canaries are #[ignore] and require the node-compat canary execution context."
+measured_at = "2026-07-05"
+owner = "test-infra-rearchitecture"
+issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
+
+[[exclusions]]
+pattern = "test(/spawned_nimbus_kv_binary/)"
+scope = "ignored"
+reason = "heavy-resource"
+evidence = "nimbus-kv spawn_harness is #[ignore] and launches the built nimbus binary; it is not part of the default PR test frontier."
+measured_at = "2026-07-05"
+owner = "test-infra-rearchitecture"
+issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
+
+[[exclusions]]
+pattern = "test(/start::tests::krun::|krun_linux_(egress|smoke)::/)"
+scope = "ignored"
+reason = "privileged"
+evidence = "Krun tests are #[ignore] and require root, /dev/kvm, crun(krun), conmon, buildah, netavark, aardvark-dns, OCI image pull, or a real krun service stack."
+measured_at = "2026-07-05"
+owner = "test-infra-rearchitecture"
+issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
+
+[[exclusions]]
+pattern = "test(/runtime::tests::node::(oracle::node_compat_oracle_entrypoint_emits_fixture_artifact|manifest_report_tests::node_compat_manifest_report_entrypoint_emits_slice_artifacts)$/)"
+scope = "ignored"
+reason = "heavy-resource"
+evidence = "Exactly two #[ignore] manual artifact entrypoints (oracle.rs:557, manifest_report_tests.rs:787). Pattern narrowed from the whole oracle|manifest_report_tests modules on orchestrator review: 14 of 16 module tests are NOT ignored and stay in coverage."
+measured_at = "2026-07-05"
+owner = "test-infra-rearchitecture"
+issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
+
+[[exclusions]]
+pattern = "test(/engine_proofs::bun_jsc::/)"
+scope = "ignored"
+reason = "platform-specific"
+evidence = "crates/nimbus-runtime/tests/engine_proofs/bun_jsc.rs is an ignored Bun/JSC build-gate proof and belongs to the dedicated adapter artifact workflow."
+measured_at = "2026-07-05"
+owner = "test-infra-rearchitecture"
+issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
+
+[[exclusions]]
+pattern = "test(/container_linux_egress/)"
+scope = "ignored"
+reason = "privileged"
+evidence = "container_linux_egress tests are #[ignore] and require Linux container/PEP host prerequisites outside the default PR test frontier."
+measured_at = "2026-07-05"
+owner = "test-infra-rearchitecture"
+issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
+
+[[exclusions]]
+pattern = "test(/runtime::tests::node::cases::/)"
+scope = "ignored"
+reason = "heavy-resource"
+evidence = "runtime::tests::node::cases holds the NDS watchpoint/gap/staging fixture families: 151 #[ignore] fixtures interleaved with 516 non-ignored promoted batches (scanner count 2026-07-05). This row covers the ignored fixtures for the ledger gate; because scope=ignored it never enters any run filter, so the 516 promoted batches keep running in the runtime lane."
+measured_at = "2026-07-05"
+owner = "test-infra-rearchitecture"
+issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
