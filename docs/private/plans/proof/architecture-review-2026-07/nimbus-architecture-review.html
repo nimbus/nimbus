@@ -1,0 +1,979 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review — nimbus</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose", flowchart: { htmlLabels: true } });
+    </script>
+    <style>
+      .seam { border-style: dashed; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); color: #f8fafc; }
+      .modlabel { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; }
+      pre.sig { font-size: 0.72rem; line-height: 1.35; overflow-x: auto; }
+      .card-diagram { min-height: 200px; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-16">
+
+      <!-- ======================= HEADER ======================= -->
+      <header class="space-y-4">
+        <h1 class="font-serif text-4xl">Architecture review — <span class="font-semibold">nimbus</span></h1>
+        <p class="text-sm text-slate-500">2026-07-06 · branch <code class="font-mono">windows-restore</code> · 40 workspace crates · 7 npm packages · mapped by six parallel subsystem readers · findings now owned by <code class="font-mono">docs/private/plans/architecture-review-2026-07-plan.md</code> (§8–§11)</p>
+        <div class="flex flex-wrap gap-4 text-xs text-slate-600 border border-slate-200 rounded-lg bg-white px-4 py-3">
+          <span class="flex items-center gap-2"><span class="inline-block w-4 h-4 border-2 border-slate-500 rounded-sm"></span> module</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-6 border-t-2 border-dashed border-slate-500"></span> seam</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-6 border-t-2 border-red-600"></span> leakage</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-4 h-4 rounded-sm deep"></span> deep module</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-4 h-4 rounded-sm bg-amber-100 border border-amber-400"></span> warning / drift</span>
+        </div>
+      </header>
+
+      <!-- ======================= 1. SYSTEM OVERVIEW ======================= -->
+      <section class="space-y-6">
+        <h2 class="font-serif text-2xl border-b border-slate-200 pb-2">1 · One engine, five front doors</h2>
+        <p class="text-sm text-slate-700 max-w-3xl">Every protocol surface converges on one <code class="font-mono text-xs">Engine</code>, one storage layer, one runtime, one trust model. Protocol semantics live in per-protocol crates; <code class="font-mono text-xs">nimbus-server</code> is the composition root that mounts them and hands each one the same <code class="font-mono text-xs">Arc&lt;Engine&gt;</code>.</p>
+        <div class="rounded-lg border border-slate-200 bg-white p-4">
+          <pre class="mermaid">
+flowchart LR
+  subgraph SDK["client side"]
+    direction TB
+    csdk["convex npm"]
+    fsdk["firebase npm"]
+    msdk["mongodb driver"]
+    dsdk["AWS SDK"]
+    nsdk["@nimbus/nimbus SDK"]
+  end
+  subgraph SRV["nimbus-server · composition root"]
+    direction TB
+    router["router.rs<br/>build_router"]
+    wire["WireProtocolAdapter<br/>sibling-port listeners"]
+    hb["host bridges<br/>Convex · Cloudflare"]
+  end
+  subgraph PROTO["protocol crates"]
+    direction TB
+    pc["nimbus-convex"]
+    pf["nimbus-firebase"]
+    pm["nimbus-mongodb"]
+    pd["nimbus-dynamodb"]
+    ps["nimbus-s3"]
+  end
+  ENG["nimbus-engine<br/>Engine · single mutation path"]
+  STO["nimbus-storage<br/>redb · SQLite · Postgres · MySQL · libSQL"]
+  RT["nimbus-runtime<br/>V8 · Wasmtime · Bun-JSC"]
+  BR["nimbus-bridge"]
+  SBX["nimbus-sandbox<br/>krun microVM · container"]
+  SVC["nimbus-services<br/>ServiceManager · ConnectionBroker"]
+  EG["nimbus-egress PDP"]
+  PX["nimbus-proxy PEP<br/>Pingora WorkloadPep"]
+  BL["nimbus-blob<br/>byte plane · Seam A"]
+
+  csdk --> router
+  fsdk --> router
+  nsdk --> router
+  msdk --> wire
+  dsdk --> wire
+  router --> PROTO
+  wire --> PROTO
+  PROTO --> ENG
+  hb --> ENG
+  ENG --> STO
+  RT -. "HostBridge seam" .-> BR
+  BR --> ENG
+  hb -.-> RT
+  SVC --> SBX
+  SBX --> PX
+  PX --> EG
+  ps --> BL
+  SVC --> ENG
+
+  classDef deepnode fill:#0f172a,color:#f8fafc,stroke:#0f172a;
+  class ENG,STO,RT,SBX deepnode;
+          </pre>
+        </div>
+      </section>
+
+      <!-- ======================= 2. CRATE DEPENDENCY GRAPH ======================= -->
+      <section class="space-y-6">
+        <h2 class="font-serif text-2xl border-b border-slate-200 pb-2">2 · Crate dependency graph</h2>
+        <p class="text-sm text-slate-700 max-w-3xl">Acyclic, layered, verified from every <code class="font-mono text-xs">Cargo.toml</code> (normal deps only; dev-deps excluded). Arrows point at dependencies. Three crates are deliberate leaves: <code class="font-mono text-xs">nimbus-core</code> (zero I/O), <code class="font-mono text-xs">nimbus-runtime</code> (zero workspace deps), <code class="font-mono text-xs">nimbus-operator</code> (standalone).</p>
+        <div class="rounded-lg border border-slate-200 bg-white p-4 overflow-x-auto">
+          <pre class="mermaid">
+flowchart BT
+  subgraph L0["foundation · leaves"]
+    core["nimbus-core"]
+    runtime["nimbus-runtime"]
+    operator["nimbus-operator"]
+  end
+  subgraph L1["policy and keys"]
+    crypto["nimbus-crypto"]
+    egress["nimbus-egress PDP"]
+    artifacts["nimbus-artifacts"]
+    auth["nimbus-auth"]
+  end
+  subgraph L2["data plane"]
+    storage["nimbus-storage"]
+    blob["nimbus-blob"]
+    engine["nimbus-engine"]
+    kv["nimbus-kv"]
+    objsto["nimbus-object-storage"]
+  end
+  subgraph L3["trust and isolation"]
+    proxy["nimbus-proxy PEP"]
+    sandbox["nimbus-sandbox"]
+    tenant["nimbus-tenant"]
+    workloads["nimbus-workloads"]
+  end
+  subgraph L4["orchestration"]
+    bridge["nimbus-bridge"]
+    services["nimbus-services"]
+    node["nimbus-node"]
+    fs["nimbus-fs"]
+    s3["nimbus-s3"]
+  end
+  subgraph L5["protocol crates"]
+    convex["nimbus-convex"]
+    firebase["nimbus-firebase"]
+    firestore["nimbus-firestore"]
+    cfn["nimbus-cloud-functions"]
+    mongo["nimbus-mongodb"]
+    ddb["nimbus-dynamodb"]
+  end
+  subgraph L6["roots"]
+    server["nimbus-server · 29 deps"]
+    cli["nimbus-cli · 15 deps"]
+    facade["nimbus facade"]
+  end
+
+  crypto --> core
+  egress --> core
+  artifacts --> core
+  auth --> core
+  storage --> core
+  storage --> crypto
+  blob --> core
+  blob --> crypto
+  engine --> storage
+  engine --> crypto
+  kv --> storage
+  objsto --> blob
+  objsto --> engine
+  proxy --> egress
+  sandbox --> blob
+  sandbox --> egress
+  sandbox --> proxy
+  tenant --> sandbox
+  tenant --> runtime
+  tenant --> egress
+  tenant --> artifacts
+  workloads --> tenant
+  bridge --> engine
+  bridge --> runtime
+  bridge --> tenant
+  services --> sandbox
+  services --> tenant
+  services --> runtime
+  services --> storage
+  node --> runtime
+  node --> tenant
+  node --> workloads
+  fs --> blob
+  fs --> runtime
+  fs --> storage
+  convex --> bridge
+  convex --> auth
+  firebase --> engine
+  firebase --> firestore
+  cfn --> bridge
+  cfn --> firestore
+  cfn --> services
+  mongo --> engine
+  mongo --> tenant
+  ddb --> engine
+  ddb --> tenant
+  server --> L5
+  server --> services
+  server --> fs
+  server --> s3
+  s3 --> blob
+  s3 --> storage
+  cli --> server
+  facade --> engine
+  facade --> server
+
+  classDef deepnode fill:#0f172a,color:#f8fafc,stroke:#0f172a;
+  class core,runtime,engine,storage,sandbox deepnode;
+          </pre>
+          <p class="text-xs text-slate-500 mt-2">Curated: <code class="font-mono">nimbus-server</code>'s full 29-edge fan-in and small leaf crates (license, assets, code-index, machine, system, provenance) omitted for legibility. <code class="font-mono">nimbus-bin</code> (5 lines) → <code class="font-mono">nimbus-cli</code>. <code class="font-mono">nimbus-adapters</code> (37 lines) is an optional re-export facade nothing on the core path uses.</p>
+        </div>
+
+        <!-- npm side -->
+        <div class="rounded-lg border border-slate-200 bg-white p-4">
+          <h3 class="modlabel text-slate-500 mb-3">npm monorepo — two intra-repo edges total</h3>
+          <pre class="mermaid">
+flowchart LR
+  nim["@nimbus/nimbus<br/>canonical SDK · zero deps"]
+  cvx["convex<br/>compat wrapper"]
+  cg["@nimbus/codegen"]
+  ui["nimbus-ui<br/>operator console"]
+  fb["firebase<br/>native gRPC wire · standalone"]
+  mg["@nimbus/mongodb<br/>URI shim"]
+  db["@nimbus/dynamodb<br/>endpoint shim"]
+  cvx --> nim
+  cvx --> cg
+  ui --> nim
+  ui --> cvx
+  classDef deepnode fill:#0f172a,color:#f8fafc,stroke:#0f172a;
+  classDef lone fill:#f1f5f9,stroke:#94a3b8,stroke-dasharray: 4 4;
+  class nim,cg deepnode;
+  class fb,mg,db lone;
+          </pre>
+          <p class="text-xs text-slate-500 mt-2"><code class="font-mono">firebase</code>, <code class="font-mono">mongodb</code>, <code class="font-mono">dynamodb</code> are deliberately standalone — they speak the vendor's native wire protocol against Nimbus's server-side adapters, not the Nimbus sync protocol.</p>
+        </div>
+      </section>
+
+      <!-- ======================= 3. MASS DIAGRAM ======================= -->
+      <section class="space-y-6">
+        <h2 class="font-serif text-2xl border-b border-slate-200 pb-2">3 · Depth by mass — implementation size vs interface width</h2>
+        <p class="text-sm text-slate-700 max-w-3xl">Bar = source lines. Right label = the interface the world sees. The healthiest ratios in the codebase: <code class="font-mono text-xs">nimbus-runtime</code> is ~96k lines behind a one-required-method trait.</p>
+        <div class="rounded-lg border border-slate-200 bg-white p-6 space-y-3 text-xs font-mono">
+          <!-- bars scaled to runtime = 100% -->
+          <div class="flex items-center gap-3"><span class="w-36 shrink-0 text-right text-slate-600">nimbus-runtime</span><div class="h-5 rounded-sm deep" style="width:100%"></div><span class="w-56 shrink-0 text-slate-500">95.9k · HostBridge: 1 required fn</span></div>
+          <div class="flex items-center gap-3"><span class="w-36 shrink-0 text-right text-slate-600">nimbus-server</span><div class="h-5 rounded-sm bg-slate-400" style="width:73%"></div><span class="w-56 shrink-0 text-slate-500">70.1k · facade exports 4 items</span></div>
+          <div class="flex items-center gap-3"><span class="w-36 shrink-0 text-right text-slate-600">nimbus-storage</span><div class="h-5 rounded-sm deep" style="width:68%"></div><span class="w-56 shrink-0 text-slate-500">65.6k · 6 capability traits</span></div>
+          <div class="flex items-center gap-3"><span class="w-36 shrink-0 text-right text-slate-600">nimbus-cli</span><div class="h-5 rounded-sm bg-slate-400" style="width:65%"></div><span class="w-56 shrink-0 text-slate-500">62.3k · CLI commands</span></div>
+          <div class="flex items-center gap-3"><span class="w-36 shrink-0 text-right text-slate-600">nimbus-engine</span><div class="h-5 rounded-sm deep" style="width:49%"></div><span class="w-56 shrink-0 text-slate-500">47.2k · insert/update/delete/query verbs</span></div>
+          <div class="flex items-center gap-3"><span class="w-36 shrink-0 text-right text-slate-600">nimbus-sandbox</span><div class="h-5 rounded-sm deep" style="width:24%"></div><span class="w-56 shrink-0 text-slate-500">22.8k · SandboxBackend: 6 fns</span></div>
+          <div class="flex items-center gap-3"><span class="w-36 shrink-0 text-right text-slate-600">nimbus-dynamodb</span><div class="h-5 rounded-sm bg-slate-400" style="width:13%"></div><span class="w-56 shrink-0 text-slate-500">12.9k · wire dispatch</span></div>
+          <div class="flex items-center gap-3"><span class="w-36 shrink-0 text-right text-slate-600">nimbus-mongodb</span><div class="h-5 rounded-sm bg-slate-400" style="width:12%"></div><span class="w-56 shrink-0 text-slate-500">11.7k · wire dispatch</span></div>
+          <div class="flex items-center gap-3"><span class="w-36 shrink-0 text-right text-slate-600">nimbus-proxy</span><div class="h-5 rounded-sm bg-slate-400" style="width:11%"></div><span class="w-56 shrink-0 text-slate-500">10.5k · WorkloadPep::start</span></div>
+          <div class="flex items-center gap-3"><span class="w-36 shrink-0 text-right text-slate-600">nimbus-fs</span><div class="h-5 rounded-sm bg-slate-400" style="width:11%"></div><span class="w-56 shrink-0 text-slate-500">10.3k · FileSystem + FsCaps</span></div>
+          <div class="flex items-center gap-3"><span class="w-36 shrink-0 text-right text-slate-600">nimbus-blob</span><div class="h-5 rounded-sm deep" style="width:4%"></div><span class="w-56 shrink-0 text-slate-500">3.6k · BlobStore: 7 fns</span></div>
+          <div class="flex items-center gap-3"><span class="w-36 shrink-0 text-right text-slate-600">nimbus-egress</span><div class="h-5 rounded-sm bg-slate-400" style="width:2%"></div><span class="w-56 shrink-0 text-slate-500">1.9k · authorize(request)</span></div>
+          <div class="flex items-center gap-3"><span class="w-36 shrink-0 text-right text-slate-600">nimbus-firestore</span><div class="h-5 rounded-sm bg-amber-200 border border-amber-400" style="width:0.5%; min-width:4px"></div><span class="w-56 shrink-0 text-amber-700">93 lines · vestigial crate → C8</span></div>
+        </div>
+      </section>
+
+      <!-- ======================= 4. MUTATION PATH ======================= -->
+      <section class="space-y-6">
+        <h2 class="font-serif text-2xl border-b border-slate-200 pb-2">4 · The single mutation path</h2>
+        <p class="text-sm text-slate-700 max-w-3xl">Invariant 3 verified by call-site census across all five adapters: every write — HTTP, WebSocket, scheduler, V8 host call — converges on <code class="font-mono text-xs">apply_mutation_with_mode</code> and exits through <code class="font-mono text-xs">process_commit</code> under one sequence lock. No side channel found.</p>
+        <div class="rounded-lg border border-slate-200 bg-white p-4">
+          <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant A as any adapter / scheduler / V8 host call
+  participant V as Engine verbs<br/>mutations/direct/api.rs
+  participant X as apply_mutation_with_mode<br/>execution.rs:15
+  participant T as TenantStore redb txn<br/>store/write/batch.rs
+  participant C as process_commit
+
+  A->>V: insert_document(tenant, doc, principal)
+  V->>X: Mutation::Insert
+  X->>X: lock_mutation_sequence()
+  X->>T: begin_write()
+  Note over T: document write<br/>+ index effects<br/>+ commit-log append<br/>ONE transaction
+  T-->>X: CommitEntry
+  X->>C: process_commit(runtime, commit)
+  C-->>A: subscriptions wake · triggers fire
+          </pre>
+        </div>
+      </section>
+
+      <!-- ======================= 5. SEAM INVENTORY ======================= -->
+      <section class="space-y-6">
+        <h2 class="font-serif text-2xl border-b border-slate-200 pb-2">5 · Seam inventory — the load-bearing interfaces</h2>
+        <p class="text-sm text-slate-700 max-w-3xl">Signatures verbatim from source. A seam earns its keep with two or more adapters; single-adapter seams are marked.</p>
+
+        <div class="grid md:grid-cols-2 gap-4">
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4 space-y-2">
+            <div class="flex items-baseline justify-between"><h3 class="font-semibold text-sm">HostBridge <span class="text-slate-400 font-normal">· V8 → engine</span></h3><span class="text-xs text-emerald-700">2 adapters</span></div>
+            <p class="modlabel text-slate-400">nimbus-runtime/src/host.rs:1205</p>
+            <pre class="sig font-mono bg-slate-50 rounded p-2">pub trait HostBridge: Send + Sync + 'static {
+  fn call(&amp;self, request: HostCallRequest) -&gt; Result&lt;Value&gt;;
+  fn call_cancellable(&amp;self, request, cancellation: &amp;HostCallCancellation) -&gt; Result&lt;Value&gt;;
+  fn call_async(&amp;self, request, cancellation) -&gt; HostBridgeFuture;
+}</pre>
+            <p class="text-xs text-slate-600">Impls: <code class="font-mono">ConvexHostBridge</code>, <code class="font-mono">CloudflareHostBridge</code> — both in nimbus-server. The trait keeps the 96k-line runtime engine-free.</p>
+          </div>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4 space-y-2">
+            <div class="flex items-baseline justify-between"><h3 class="font-semibold text-sm">SandboxBackend <span class="text-slate-400 font-normal">· isolation lifecycle</span></h3><span class="text-xs text-emerald-700">2 adapters</span></div>
+            <p class="modlabel text-slate-400">nimbus-sandbox/src/backend.rs:22</p>
+            <pre class="sig font-mono bg-slate-50 rounded p-2">pub trait SandboxBackend: Send + Sync + 'static {
+  fn kind(&amp;self) -&gt; SandboxBackendKind;          // Container | Krun
+  fn start(&amp;self, spec: SandboxSpec) -&gt; SandboxFuture&lt;SandboxHandle&gt;;
+  fn inspect(&amp;self, id: &amp;SandboxId) -&gt; SandboxFuture&lt;Option&lt;SandboxHandle&gt;&gt;;
+  fn stop(&amp;self, id: &amp;SandboxId) -&gt; SandboxFuture&lt;()&gt;;
+  fn reload_egress_policy(&amp;self, id, egress: EgressPolicy) -&gt; SandboxFuture&lt;()&gt;;
+  fn remove_tenant_artifacts(&amp;self, tenant_id: TenantId) -&gt; SandboxFuture&lt;()&gt;;
+}</pre>
+            <p class="text-xs text-slate-600">47-line trait fronting ~22.8k lines of krun microVM + container + OCI machinery. Sandbox internals verified invisible to nimbus-services.</p>
+          </div>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4 space-y-2">
+            <div class="flex items-baseline justify-between"><h3 class="font-semibold text-sm">BlobStore <span class="text-slate-400 font-normal">· Seam A, byte plane</span></h3><span class="text-xs text-emerald-700">3 substrates + 2 decorators</span></div>
+            <p class="modlabel text-slate-400">nimbus-blob/src/store.rs:38</p>
+            <pre class="sig font-mono bg-slate-50 rounded p-2">#[async_trait] pub trait BlobStore: Send + Sync {
+  async fn put(&amp;self, bytes: Bytes) -&gt; Result&lt;BlobHash&gt;;
+  async fn put_stream(&amp;self, src: ByteStream) -&gt; Result&lt;BlobHash&gt;;
+  async fn get(&amp;self, hash: &amp;BlobHash) -&gt; Result&lt;Bytes&gt;;
+  async fn get_stream(&amp;self, hash: &amp;BlobHash) -&gt; Result&lt;ByteStream&gt;;
+  async fn get_range(&amp;self, hash, range: Range&lt;u64&gt;) -&gt; Result&lt;Bytes&gt;;
+  async fn has(&amp;self, hash: &amp;BlobHash) -&gt; Result&lt;bool&gt;;
+  async fn release(&amp;self, hash: &amp;BlobHash) -&gt; Result&lt;()&gt;;
+}</pre>
+            <p class="text-xs text-slate-600">Tenancy is structural — one store instance <em>is</em> one tenant, no tenant args. <code class="font-mono">Memory / LocalPack / ObjectStore</code> substrates; <code class="font-mono">Encrypted</code> and <code class="font-mono">Placement</code> compose encrypt-below-placement.</p>
+          </div>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4 space-y-2">
+            <div class="flex items-baseline justify-between"><h3 class="font-semibold text-sm">Storage capability traits <span class="text-slate-400 font-normal">· Seam B home</span></h3><span class="text-xs text-emerald-700">5 providers</span></div>
+            <p class="modlabel text-slate-400">nimbus-storage/src/traits/core.rs:36–170</p>
+            <pre class="sig font-mono bg-slate-50 rounded p-2">// StorageEngine = TenantPointRead + TenantPointWrite
+//   + TenantRangeScan + DurableJournal + SchedulerStore + ObjectMetaStore
+fn insert_document(&amp;self, document: &amp;Document) -&gt; Result&lt;CommitEntry&gt;;
+fn update_document_validated&lt;F&gt;(&amp;self, table, id, patch, validate: F) -&gt; Result&lt;CommitEntry&gt;;
+fn delete_document_validated&lt;F&gt;(&amp;self, table, id, validate: F) -&gt; Result&lt;(CommitEntry, Document)&gt;;</pre>
+            <p class="text-xs text-slate-600">Backed by redb, SQLite/SQLCipher, Postgres, MySQL, libSQL. <code class="font-mono">ObjectMetaStore</code> (object_metadata.rs:551) adds manifest + multipart CRUD across all five.</p>
+          </div>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4 space-y-2">
+            <div class="flex items-baseline justify-between"><h3 class="font-semibold text-sm">Egress PDP <span class="text-slate-400 font-normal">· pure decision</span></h3><span class="text-xs text-emerald-700">layered ceiling</span></div>
+            <p class="modlabel text-slate-400">nimbus-egress/src/policy.rs:108 · layered.rs:30</p>
+            <pre class="sig font-mono bg-slate-50 rounded p-2">pub fn authorize(&amp;self, request: &amp;EgressRequest) -&gt; EgressAuthorization
+pub struct LayeredEgressPolicy { global: Option&lt;CompiledEgressPolicy&gt;,
+                                 sandbox: CompiledEgressPolicy }  // ceiling ∩ sandbox</pre>
+            <p class="text-xs text-slate-600">Deps: nimbus-core + serde only — zero transport, verified. Authorize runs twice on the enforcement path: pre-DNS hostname, then resolved IP (the SSRF gate).</p>
+          </div>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4 space-y-2">
+            <div class="flex items-baseline justify-between"><h3 class="font-semibold text-sm">Egress PEP <span class="text-slate-400 font-normal">· enforcement</span></h3><span class="text-xs text-slate-500">Pingora substrate</span></div>
+            <p class="modlabel text-slate-400">nimbus-proxy/src/worker.rs:192 · engine.rs:40</p>
+            <pre class="sig font-mono bg-slate-50 rounded p-2">pub fn start(config: WorkloadPepConfig) -&gt; Result&lt;WorkloadPep&gt;
+pub struct EgressEngine&lt;A&gt; { substrate, fairness: Arc&lt;FairnessRegistry&gt;,
+                             peps: Mutex&lt;HashMap&lt;WorkloadId, EngineEntry&lt;A&gt;&gt;&gt; }</pre>
+            <p class="text-xs text-slate-600">12 ordered request phases, terminal decision-log written before any client-visible response, cancellation-safe via <code class="font-mono">AbortTerminalGuard</code>. One weakness → C3.</p>
+          </div>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4 space-y-2">
+            <div class="flex items-baseline justify-between"><h3 class="font-semibold text-sm">FileSystem + FsCaps <span class="text-slate-400 font-normal">· Seam C</span></h3><span class="text-xs text-emerald-700">4 backends</span></div>
+            <p class="modlabel text-slate-400">nimbus-fs/src/{lib,caps,mount}.rs</p>
+            <pre class="sig font-mono bg-slate-50 rounded p-2">pub struct FsCaps { grants: BTreeMap&lt;PathBuf, FsMountCaps&gt; }   // caps.rs:17
+pub struct MountTable { entries: Vec&lt;MountEntry&gt; }              // mount.rs:8
+// NimbusFs impl deno_fs::FileSystem: resolve → cap-gate → delegate (lib.rs:175)</pre>
+            <p class="text-xs text-slate-600">Passthrough (cap-std), MemFs, CasReadOnly, ObjectRw. Ungranted mounts masked; no ungated construction path; cap-std types confined to private fns.</p>
+          </div>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4 space-y-2">
+            <div class="flex items-baseline justify-between"><h3 class="font-semibold text-sm">WireProtocolAdapter <span class="text-slate-400 font-normal">· sibling ports</span></h3><span class="text-xs text-emerald-700">3 adapters</span></div>
+            <p class="modlabel text-slate-400">nimbus-server/src/adapters/wire.rs:22</p>
+            <pre class="sig font-mono bg-slate-50 rounded p-2">pub(crate) trait WireProtocolAdapter: Send {
+  fn name(&amp;self) -&gt; &amp;'static str;
+  fn protocol(&amp;self) -&gt; &amp;'static str;
+  fn bind_addr(&amp;self) -&gt; SocketAddr;
+  fn guard(&amp;self, addr: SocketAddr) -&gt; io::Result&lt;()&gt;;
+  fn spawn(self: Box&lt;Self&gt;, listener, engine: Arc&lt;Engine&gt;) -&gt; Vec&lt;JoinHandle&lt;()&gt;&gt;;
+}</pre>
+            <p class="text-xs text-slate-600">MongoDB, DynamoDB, S3. Uniform bind → guard → record → spawn; adding a wire protocol means implementing this trait, not editing the composition root. HTTP adapters lack the equivalent → C7.</p>
+          </div>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4 space-y-2">
+            <div class="flex items-baseline justify-between"><h3 class="font-semibold text-sm">Tenant admission <span class="text-slate-400 font-normal">· capability object</span></h3><span class="text-xs text-slate-500">choke point</span></div>
+            <p class="modlabel text-slate-400">nimbus-tenant/src/context.rs:94 · decision.rs:51</p>
+            <pre class="sig font-mono bg-slate-50 rounded p-2">pub fn admit_decision(&amp;self, input: TenantIsolationPolicyInput)
+    -&gt; Result&lt;TenantIsolationDecision&gt;
+// decision carries .runtime() .services() .network() .storage()
+// .image() .quotas() .volumes() + ensure_sandbox_spec_matches</pre>
+            <p class="text-xs text-slate-600">One authorization artifact threads through services, sandboxes, and runtime admission — ServiceManager methods are named <code class="font-mono">*_for_decision_async</code> after it.</p>
+          </div>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4 space-y-2">
+            <div class="flex items-baseline justify-between"><h3 class="font-semibold text-sm">Auth &amp; keys <span class="text-slate-400 font-normal">· two principal classes</span></h3><span class="text-xs text-emerald-700">2 key providers</span></div>
+            <p class="modlabel text-slate-400">nimbus-auth/src/lib.rs:8 · nimbus-crypto/src/provider.rs:199</p>
+            <pre class="sig font-mono bg-slate-50 rounded p-2">pub trait ApplicationAuthVerifier: Send + Sync {
+  fn verify_bearer_token&lt;'a&gt;(&amp;'a self, token: &amp;'a str)
+      -&gt; BoxFuture&lt;'a, Result&lt;InvocationAuth, ApplicationAuthError&gt;&gt;;
+}
+pub trait LocalKeyProvider {   // local file · AWS KMS
+  fn generate_data_key(...) -&gt; KeyProviderResult&lt;GeneratedDataKey&gt;;
+  fn unwrap_data_key(...)  -&gt; KeyProviderResult&lt;DataEncryptionKey&gt;;
+  fn rewrap_data_key(...)  -&gt; KeyProviderResult&lt;WrappedDataKey&gt;; }</pre>
+            <p class="text-xs text-slate-600">Operators (nimbus-operator, standalone) vs application users (nimbus-auth) stay distinct. FramedAead binds frame index into every AEAD frame; crypto-shred revokes key bytes.</p>
+          </div>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4 space-y-2">
+            <div class="flex items-baseline justify-between"><h3 class="font-semibold text-sm">JS SDK client <span class="text-slate-400 font-normal">· canonical surface</span></h3><span class="text-xs text-emerald-700">convex = thin wrapper ✓</span></div>
+            <p class="modlabel text-slate-400">packages/nimbus/src/browser.ts:96</p>
+            <pre class="sig font-mono bg-slate-50 rounded p-2">class NimbusClient {
+  query(query, args?)      mutation(mutation, args?)   action(action, args?)
+  paginatedQuery(query, args, pageSize, cursor)
+  scheduleAfter(...) scheduleAt(...)
+  onUpdate(query, args, callback, onError?, opts?): Unsubscribe  // WS live query
+}</pre>
+            <p class="text-xs text-slate-600">Wrapper audit: <code class="font-mono">packages/convex</code> ships ~1.2k lines, only ~130 genuinely Convex-specific (anyApi proxy/coercion); the rest is subclass + delegate. Rule compliant.</p>
+          </div>
+
+          <div class="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-2">
+            <div class="flex items-baseline justify-between"><h3 class="font-semibold text-sm">Single-adapter seams <span class="text-slate-400 font-normal">· watch list</span></h3><span class="text-xs text-amber-700">1 impl each</span></div>
+            <ul class="text-xs text-slate-700 space-y-1 list-disc pl-4">
+              <li><code class="font-mono">EgressGateway</code> (runtime egress.rs:237) — only Convex implements it; Cloudflare falls to deny-all → C2</li>
+              <li><code class="font-mono">PlacementLookup</code> (services broker.rs:100) — <code class="font-mono">ResolveToSelf</code> only; multi-node placement not built (HS lane deferred)</li>
+              <li><code class="font-mono">S3ObjectBackend</code> (s3/backend.rs:8) — parallel facade beside Seams A+B → C5</li>
+              <li><code class="font-mono">ReplicatingBlobStore</code> — cluster subtrait, test stubs only (spec-deferred)</li>
+              <li>Seam E <code class="font-mono">VolumeProvider</code> — named in the storage-seams spec, not found in code (spec drift)</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================= 6. INVARIANTS ======================= -->
+      <section class="space-y-6">
+        <h2 class="font-serif text-2xl border-b border-slate-200 pb-2">6 · Invariant scoreboard</h2>
+        <div class="grid md:grid-cols-2 gap-3 text-sm">
+          <div class="rounded-lg border border-emerald-200 bg-white p-4"><span class="text-emerald-600 font-bold">✓</span> <strong>nimbus-core zero I/O</strong> — zero dependencies of any kind on I/O crates; pure types + validation (10.8k lines).</div>
+          <div class="rounded-lg border border-emerald-200 bg-white p-4"><span class="text-emerald-600 font-bold">✓</span> <strong>nimbus-runtime zero workspace deps</strong> — Cargo.toml verified: deno_*, wasmtime, tokio only. Engine coupling isolated in nimbus-bridge, the sole crate depending on both.</div>
+          <div class="rounded-lg border border-emerald-200 bg-white p-4"><span class="text-emerald-600 font-bold">✓</span> <strong>Single mutation path</strong> — direct and queued paths both run under <code class="font-mono text-xs">lock_mutation_sequence()</code> and end at <code class="font-mono text-xs">process_commit</code>; call-site census over all 5 adapters found no side door.</div>
+          <div class="rounded-lg border border-emerald-200 bg-white p-4"><span class="text-emerald-600 font-bold">✓</span> <strong>Storage atomicity</strong> — doc + index effects + commit-log append in one redb txn (<code class="font-mono text-xs">batch.rs:49–133</code>). <span class="text-amber-700">Amber: two independent txn implementations uphold it → C1.</span></div>
+          <div class="rounded-lg border border-emerald-200 bg-white p-4"><span class="text-emerald-600 font-bold">✓</span> <strong>Bundle integrity</strong> — recorded SHA-256 re-hashed before every invocation (<code class="font-mono text-xs">runtime/bundle.rs verify_integrity</code>; engine-side <code class="font-mono text-xs">verification.rs</code>); path-backed bundles without provenance admitted on filesystem trust, as documented.</div>
+          <div class="rounded-lg border border-slate-200 bg-white p-4"><span class="text-slate-400 font-bold">·</span> <strong>Schema optional</strong> — documented contract; not re-verified in this pass.</div>
+          <div class="rounded-lg border border-emerald-200 bg-white p-4 md:col-span-2"><span class="text-emerald-600 font-bold">✓</span> <strong>PDP/PEP split</strong> (ARCHITECTURE.md §Egress) — nimbus-egress carries zero transport deps; nimbus-proxy enforces but never re-decides; decision log written before response on every terminal path and cancellation-safe. <span class="text-amber-700">Amber: append failure is swallowed → C3.</span></div>
+        </div>
+      </section>
+
+      <!-- ======================= CANDIDATES ======================= -->
+      <section id="candidates" class="space-y-10">
+        <h2 class="font-serif text-2xl border-b border-slate-200 pb-2">7 · Review candidates</h2>
+
+        <!-- ============ C1 ============ -->
+        <article id="c1" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="font-serif text-xl grow">C1 · Collapse the two storage write shapes</h3>
+            <span class="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-800">Strong</span>
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">in-process</span>
+          </div>
+          <p class="font-mono text-sm text-slate-500">nimbus-storage/src/store/write/{direct.rs, batch.rs, transaction.rs}</p>
+          <div class="grid md:grid-cols-2 gap-4 card-diagram">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-3">before — two transactional cores</p>
+              <div class="space-y-2">
+                <div class="border-2 border-slate-400 rounded p-2 text-xs"><span class="font-mono">direct.rs</span> point writes<div class="mt-1 flex gap-1 text-[10px]"><span class="bg-slate-100 rounded px-1">begin txn</span><span class="bg-slate-100 rounded px-1">doc</span><span class="bg-slate-100 rounded px-1">indexes</span><span class="bg-slate-100 rounded px-1">commit append</span></div></div>
+                <div class="border-2 border-slate-400 rounded p-2 text-xs"><span class="font-mono">batch.rs</span> execution-unit batches<div class="mt-1 flex gap-1 text-[10px]"><span class="bg-slate-100 rounded px-1">begin txn</span><span class="bg-slate-100 rounded px-1">doc</span><span class="bg-slate-100 rounded px-1">indexes</span><span class="bg-slate-100 rounded px-1">commit append</span></div></div>
+                <p class="text-[11px] text-red-600">the atomicity invariant is re-implemented twice — two places to audit, two places to drift</p>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-3">after — one deep transactional core</p>
+              <div class="space-y-2">
+                <div class="border-2 border-slate-300 seam rounded p-2 text-xs text-slate-500"><span class="font-mono">direct.rs</span> = 1-element batch adapter</div>
+                <div class="deep rounded p-3 text-xs"><span class="font-mono">apply_execution_unit_batch_with_origin</span><div class="mt-1 flex gap-1 text-[10px] opacity-70"><span class="bg-slate-700 rounded px-1">begin txn</span><span class="bg-slate-700 rounded px-1">doc</span><span class="bg-slate-700 rounded px-1">indexes</span><span class="bg-slate-700 rounded px-1">commit append</span></div></div>
+                <p class="text-[11px] text-emerald-700">one implementation guards invariant 4</p>
+              </div>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem.</strong> Point-write helpers and the batch path each open their own redb transaction and re-implement the doc + index + commit-log dance.</p>
+          <p class="text-sm"><strong>Solution.</strong> Point writes build a one-element batch and delegate; one transactional core remains to audit for the atomicity invariant.</p>
+          <ul class="text-sm text-slate-700 list-disc pl-5 space-y-0.5">
+            <li>locality: invariant 4 lives in one module</li>
+            <li>leverage: one core, five backends</li>
+            <li>interface unchanged; implementation absorbs the twin</li>
+          </ul>
+        </article>
+
+        <!-- ============ C2 ============ -->
+        <article id="c2" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="font-serif text-xl grow">C2 · Pair an EgressGateway with every HostBridge</h3>
+            <span class="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-800">Strong</span>
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">ports &amp; adapters</span>
+          </div>
+          <p class="font-mono text-sm text-slate-500">nimbus-server/src/adapters/{convex/host_bridge/egress_gateway.rs:15, cloudflare/host_bridge.rs:177} · nimbus-runtime/src/egress.rs:237</p>
+          <div class="grid md:grid-cols-2 gap-4 card-diagram">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-2">before — asymmetric wiring</p>
+              <pre class="mermaid">
+flowchart TB
+  cv["ConvexHostBridge"] --> hb1["HostBridge ✓"]
+  cv --> eg1["EgressGateway ✓"]
+  cf["CloudflareHostBridge"] --> hb2["HostBridge ✓"]
+  cf -. "fetch falls back" .-> deny["DenyAllEgressGateway"]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  class deny leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-2">after — fused at construction</p>
+              <pre class="mermaid">
+flowchart TB
+  w["isolate wiring"] --> pair["require (HostBridge, EgressGateway) pair"]
+  pair --> ok["missing gateway =<br/>construction-time error"]
+  classDef good stroke:#059669,stroke-width:2px;
+  class ok good
+              </pre>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem.</strong> Cloudflare implements HostBridge but not EgressGateway, so its isolate <code class="font-mono text-xs">fetch</code> silently falls back to deny-all — safe, but an implicit policy gap that reads as a bug when Workers egress "just doesn't work".</p>
+          <p class="text-sm"><strong>Solution.</strong> Make isolate wiring take the pair, so a missing gateway fails at construction instead of denying at runtime.</p>
+          <ul class="text-sm text-slate-700 list-disc pl-5 space-y-0.5">
+            <li>seam becomes explicit: bridge implies gateway</li>
+            <li>silent deny becomes loud error</li>
+            <li>next adapter can't repeat the gap</li>
+          </ul>
+        </article>
+
+        <!-- ============ C3 ============ -->
+        <article id="c3" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="font-serif text-xl grow">C3 · Fail closed when the egress decision log can't append</h3>
+            <span class="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-800">Strong</span>
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">in-process</span>
+          </div>
+          <p class="font-mono text-sm text-slate-500">nimbus-proxy/src/decision_log.rs:13,259 · worker.rs:1043</p>
+          <div class="grid md:grid-cols-2 gap-4 card-diagram">
+            <div class="rounded-lg border border-slate-200 p-4 text-xs space-y-2">
+              <p class="modlabel text-slate-400">before</p>
+              <div class="flex items-center gap-2"><span class="bg-slate-100 rounded px-2 py-1 font-mono">emit_terminal_log</span><span>→</span><span class="bg-slate-100 rounded px-2 py-1 font-mono">DecisionLogger: Fn(log)</span></div>
+              <div class="flex items-center gap-2 text-red-600"><span class="border border-red-400 rounded px-2 py-1 font-mono">append io::Error</span><span>→</span><span class="font-semibold">swallowed</span></div>
+              <div class="flex items-center gap-2"><span class="bg-slate-100 rounded px-2 py-1 font-mono">write_http_response</span><span class="text-red-600">response sent anyway</span></div>
+              <p class="text-red-600">"log before response" degrades to "attempted log before response" under disk failure</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4 text-xs space-y-2">
+              <p class="modlabel text-slate-400">after</p>
+              <div class="flex items-center gap-2"><span class="bg-slate-100 rounded px-2 py-1 font-mono">emit_terminal_log</span><span>→</span><span class="deep rounded px-2 py-1 font-mono">append → Result</span></div>
+              <div class="flex items-center gap-2 text-emerald-700"><span class="border border-emerald-400 rounded px-2 py-1 font-mono">Err</span><span>→</span><span class="font-semibold">deny request / trip readiness</span></div>
+              <p class="text-emerald-700">audit guarantee holds under disk failure</p>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem.</strong> The <code class="font-mono text-xs">DecisionLogger</code> fn-alias returns nothing, so a failed audit append inside the terminal path is silently swallowed while the response still goes out.</p>
+          <p class="text-sm"><strong>Solution.</strong> Thread the sink's <code class="font-mono text-xs">io::Result</code> back to the terminal path — deny the request or surface sink health into <code class="font-mono text-xs">WorkloadPepReadiness</code>.</p>
+          <ul class="text-sm text-slate-700 list-disc pl-5 space-y-0.5">
+            <li>advertised guarantee becomes enforced</li>
+            <li>interface widens by one Result — depth unchanged</li>
+          </ul>
+        </article>
+
+        <!-- ============ C4 ============ -->
+        <article id="c4" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="font-serif text-xl grow">C4 · Seal the concrete-store leak in the async read seam</h3>
+            <span class="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">local-substitutable</span>
+          </div>
+          <p class="font-mono text-sm text-slate-500">nimbus-storage/src/async_storage/traits.rs:27–53 · nimbus-engine/src/engine/queries/</p>
+          <div class="grid md:grid-cols-2 gap-4 card-diagram">
+            <div class="rounded-lg border border-slate-200 p-4 text-xs space-y-2">
+              <p class="modlabel text-slate-400">before — seam crossed by a concrete type</p>
+              <div class="flex items-center gap-2"><span class="bg-slate-100 rounded px-2 py-1 font-mono">engine read closure</span></div>
+              <div class="border-t-2 border-dashed border-slate-400 my-1 relative"><span class="absolute -top-2 right-0 text-[10px] text-slate-400 bg-white px-1">capability seam</span></div>
+              <div class="flex items-center gap-2 text-red-600"><span class="border border-red-400 rounded px-2 py-1 font-mono">Arc&lt;TenantStore&gt; (concrete redb)</span><span>crosses upward</span></div>
+              <p class="text-red-600">capability traits exist but the executor hands back the concrete store — non-redb backends can't satisfy the same closures</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4 text-xs space-y-2">
+              <p class="modlabel text-slate-400">after</p>
+              <div class="flex items-center gap-2"><span class="bg-slate-100 rounded px-2 py-1 font-mono">engine read closure</span></div>
+              <div class="border-t-2 border-dashed border-slate-400 my-1"></div>
+              <div class="flex items-center gap-2 text-emerald-700"><span class="deep rounded px-2 py-1 font-mono">impl PointRead + RangeScan + DurableJournal</span></div>
+              <p class="text-emerald-700">the trait bound is the seam; five backends substitute freely</p>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem.</strong> <code class="font-mono text-xs">TenantReadStorage</code> hands read closures the concrete <code class="font-mono text-xs">Arc&lt;TenantStore&gt;</code>, so the capability traits are only half the story.</p>
+          <p class="text-sm"><strong>Solution.</strong> Parameterize read closures over the capability-trait bound and move planner/journal helpers onto those traits.</p>
+          <ul class="text-sm text-slate-700 list-disc pl-5 space-y-0.5">
+            <li>seam matches the trait it advertises</li>
+            <li>tests substitute an in-memory store</li>
+          </ul>
+        </article>
+
+        <!-- ============ C5 ============ -->
+        <article id="c5" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="font-serif text-xl grow">C5 · Recompose the S3 surface over Seams A + B</h3>
+            <span class="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">ports &amp; adapters</span>
+          </div>
+          <p class="font-mono text-sm text-slate-500">nimbus-s3/src/backend.rs:8 · nimbus-server/src/adapters/s3/listener.rs:50</p>
+          <div class="grid md:grid-cols-2 gap-4 card-diagram">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-2">before — parallel facade</p>
+              <pre class="mermaid">
+flowchart TB
+  s3s["s3s::S3 wire"] --> nim["NimbusS3"]
+  nim --> fac["S3ObjectBackend<br/>tenant arg per call"]
+  fac --> esb["EngineS3Backend<br/>in nimbus-server"]
+  esb --> ab["Seam A + Seam B"]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  class fac leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-2">after — seams composed directly</p>
+              <pre class="mermaid">
+flowchart TB
+  s3s2["s3s::S3 wire"] --> nim2["NimbusS3"]
+  nim2 --> res["resolve tenant once per request"]
+  res --> a["Arc&amp;lt;dyn BlobStore&amp;gt;"]
+  res --> b["ObjectMetaStore"]
+  classDef good stroke:#059669,stroke-width:2px;
+  class a,b good
+              </pre>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem.</strong> <code class="font-mono text-xs">S3ObjectBackend</code> re-flattens the per-tenant store model into per-call tenant args and duplicates Seam B's manifest API in a second shape, so the atomic object+document commit is invisible at the seam and lives one layer away in nimbus-server.</p>
+          <p class="text-sm"><strong>Solution.</strong> Resolve a per-tenant <code class="font-mono text-xs">(BlobStore, ObjectMetaStore)</code> pair once per request and delete the facade — pre-launch, breaking change preferred.</p>
+          <ul class="text-sm text-slate-700 list-disc pl-5 space-y-0.5">
+            <li>Seam D becomes "s3s over A+B" as spec'd</li>
+            <li>parallel manifest API deleted</li>
+            <li>tenancy model consistent across seams</li>
+          </ul>
+          <div class="rounded-md bg-amber-50 border border-amber-300 px-3 py-2 text-xs text-amber-900">ADR: <code class="font-mono">storage-seams-architecture.md</code> §16b also drifted on Seam B's shape (spec says async, code ships sync) — reconcile the spec in the same pass.</div>
+        </article>
+
+        <!-- ============ C6 ============ -->
+        <article id="c6" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="font-serif text-xl grow">C6 · One entry per ServiceManager verb</h3>
+            <span class="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">in-process</span>
+          </div>
+          <p class="font-mono text-sm text-slate-500">nimbus-services/src/manager/{sandboxes.rs:16–41, activation.rs:83–106}</p>
+          <div class="grid md:grid-cols-2 gap-4 card-diagram">
+            <div class="rounded-lg border border-slate-200 p-4 text-xs">
+              <p class="modlabel text-slate-400 mb-2">before — three public bands per verb</p>
+              <div class="space-y-1">
+                <div class="h-9 border-l-4 border-slate-400 bg-slate-50 rounded-r px-2 flex items-center font-mono">start_service_async</div>
+                <div class="h-9 border-l-4 border-slate-400 bg-slate-50 rounded-r px-2 flex items-center font-mono">start_service_for_context_async</div>
+                <div class="h-9 border-l-4 border-slate-400 bg-slate-50 rounded-r px-2 flex items-center font-mono">start_service_for_decision_async</div>
+                <p class="text-red-600 pt-1">interface nearly as wide as the implementation — shallow</p>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4 text-xs">
+              <p class="modlabel text-slate-400 mb-2">after — one authorization-anchored band</p>
+              <div class="h-14 deep rounded px-2 flex items-center font-mono">start_service_for_decision_async(decision, ...)</div>
+              <p class="text-slate-500 pt-1">context/plain variants become private helpers that build the decision first</p>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem.</strong> Triplicated method families per verb widen the interface and blur which entry carries the authorization contract.</p>
+          <p class="text-sm"><strong>Solution.</strong> Make <code class="font-mono text-xs">*_for_decision_async</code> the single seam; demote the other variants to private helpers.</p>
+          <ul class="text-sm text-slate-700 list-disc pl-5 space-y-0.5">
+            <li>interface shrinks 3× per verb</li>
+            <li>every call is decision-anchored</li>
+          </ul>
+        </article>
+
+        <!-- ============ C7 ============ -->
+        <article id="c7" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="font-serif text-xl grow">C7 · Mount HTTP adapters through one seam</h3>
+            <span class="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">ports &amp; adapters</span>
+          </div>
+          <p class="font-mono text-sm text-slate-500">nimbus-server/src/router.rs:563–571 · adapters/wire.rs:22</p>
+          <div class="grid md:grid-cols-2 gap-4 card-diagram">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-2">before — two patterns</p>
+              <pre class="mermaid">
+flowchart TB
+  br["build_router"] --> m1[".merge(build_convex_router)"]
+  br --> m2[".merge(build_firebase_router)"]
+  br --> m3[".fallback(cloud_functions)"]
+  wa["WireProtocolAdapter trait"] --> w1["mongodb"]
+  wa --> w2["dynamodb"]
+  wa --> w3["s3"]
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class m1,m2,m3 leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-2">after — both iterate registries</p>
+              <pre class="mermaid">
+flowchart TB
+  br2["build_router"] --> hpa["HttpProtocolAdapter trait"]
+  hpa --> h1["convex"]
+  hpa --> h2["firebase"]
+  hpa --> h3["cloud functions"]
+  srv["serve"] --> wa2["WireProtocolAdapter trait"]
+  classDef good stroke:#059669,stroke-width:2px;
+  class hpa,wa2 good
+              </pre>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem.</strong> Sibling-port protocols mount through the deep <code class="font-mono text-xs">WireProtocolAdapter</code> seam, but HTTP protocols are hardcoded merges in the composition root — two patterns for one concept.</p>
+          <p class="text-sm"><strong>Solution.</strong> Introduce an HTTP-mount seam mirroring WireProtocolAdapter so <code class="font-mono text-xs">build_router</code> iterates registered adapters.</p>
+          <ul class="text-sm text-slate-700 list-disc pl-5 space-y-0.5">
+            <li>composition root stays thin</li>
+            <li>adding a protocol touches one impl, not router.rs</li>
+          </ul>
+        </article>
+
+        <!-- ============ C8 ============ -->
+        <article id="c8" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="font-serif text-xl grow">C8 · Fold nimbus-firestore into nimbus-firebase</h3>
+            <span class="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">in-process</span>
+          </div>
+          <p class="font-mono text-sm text-slate-500">crates/nimbus-firestore/src/lib.rs (93 lines) · crates/nimbus-firebase (8.8k lines)</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-4 text-xs space-y-2">
+              <p class="modlabel text-slate-400">before — a crate boundary with no mass</p>
+              <div class="flex items-end gap-3 h-32">
+                <div class="flex flex-col items-center gap-1"><div class="w-16 bg-slate-300 rounded-t" style="height:104px"></div><span class="font-mono">firebase 8.8k</span></div>
+                <div class="flex flex-col items-center gap-1"><div class="w-16 bg-amber-300 border border-amber-500 rounded-t" style="height:4px"></div><span class="font-mono text-amber-700">firestore 93</span></div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4 text-xs space-y-2">
+              <p class="modlabel text-slate-400">after</p>
+              <div class="flex items-end gap-3 h-32">
+                <div class="flex flex-col items-center gap-1"><div class="w-16 deep rounded-t" style="height:106px"></div><span class="font-mono">firebase owns the surface</span></div>
+              </div>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem.</strong> A 93-line crate holds provider-family stubs beside the 8.8k-line crate that actually owns Firestore semantics — a module boundary with no owner. (Cloud Functions also imports it; the fold keeps one shared module instead of one crate.)</p>
+          <p class="text-sm"><strong>Solution.</strong> Fold the shared locator/default-database types into nimbus-firebase (or nimbus-core if truly shared) and delete the crate.</p>
+          <ul class="text-sm text-slate-700 list-disc pl-5 space-y-0.5">
+            <li>one crate per protocol family</li>
+            <li>delete a near-empty module</li>
+          </ul>
+        </article>
+
+        <!-- ============ C9 ============ -->
+        <article id="c9" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="font-serif text-xl grow">C9 · JS: shared delegate for the three Convex clients; split the SDK barrel</h3>
+            <span class="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">in-process</span>
+          </div>
+          <p class="font-mono text-sm text-slate-500">packages/convex/src/browser.ts:161,288,427 · packages/nimbus/src/index.ts (1003 lines)</p>
+          <div class="grid md:grid-cols-2 gap-4 card-diagram">
+            <div class="rounded-lg border border-slate-200 p-4 text-xs space-y-1">
+              <p class="modlabel text-slate-400 mb-2">before — call graph copied three times</p>
+              <div class="border-2 border-slate-400 rounded p-2 font-mono">ConvexHttpClient <span class="text-red-600">· 6 delegate methods</span></div>
+              <div class="border-2 border-slate-400 rounded p-2 font-mono">ConvexClient <span class="text-red-600">· same 6, verbatim</span></div>
+              <div class="border-2 border-slate-400 rounded p-2 font-mono">ConvexReactClient <span class="text-red-600">· same 6, verbatim</span></div>
+              <p class="text-red-600">~150 identical lines × 3 — a signature change is made three times</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4 text-xs space-y-1">
+              <p class="modlabel text-slate-400 mb-2">after — collapsed into one box</p>
+              <div class="deep rounded p-3 font-mono">coerce + delegate helper<div class="mt-1 opacity-60 text-[10px]">query · mutation · action · scheduleAfter · scheduleAt · onUpdate</div></div>
+              <div class="flex gap-1 pt-1">
+                <div class="border border-slate-300 seam rounded px-2 py-1 font-mono text-[10px]">Http</div>
+                <div class="border border-slate-300 seam rounded px-2 py-1 font-mono text-[10px]">Client</div>
+                <div class="border border-slate-300 seam rounded px-2 py-1 font-mono text-[10px]">React</div>
+              </div>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem.</strong> The wrapper is rule-compliant, but the six coercion/delegation methods are copy-pasted verbatim across three classes; separately, the SDK barrel mixes the data-plane client with ~50 control-plane types at 1003 lines, drifting toward the split threshold.</p>
+          <p class="text-sm"><strong>Solution.</strong> Extract one coerce-and-delegate helper shared by the three classes; move the control-plane <code class="font-mono text-xs">Nimbus</code> class and its types into a <code class="font-mono text-xs">./control-plane</code> entry.</p>
+          <ul class="text-sm text-slate-700 list-disc pl-5 space-y-0.5">
+            <li>one place to change a signature</li>
+            <li>barrel stays a barrel</li>
+          </ul>
+        </article>
+
+        <!-- ============ C10 ============ -->
+        <article id="c10" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="font-serif text-xl grow">C10 · Erase the five-arm persistence switchboard</h3>
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-200 text-slate-700">Speculative</span>
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">local-substitutable</span>
+          </div>
+          <p class="font-mono text-sm text-slate-500">nimbus-engine/src/persistence.rs:1–58 · persistence/{provider,tenant,executor}.rs</p>
+          <div class="grid md:grid-cols-2 gap-4 card-diagram">
+            <div class="rounded-lg border border-slate-200 p-4 text-xs space-y-1">
+              <p class="modlabel text-slate-400 mb-2">before — three parallel 5-arm enums</p>
+              <div class="grid grid-cols-3 gap-1 font-mono text-[10px]">
+                <div class="border border-slate-300 rounded p-1">PersistenceProvider<br/>Redb·Sqlite·Libsql·Pg·MySql</div>
+                <div class="border border-slate-300 rounded p-1">TenantPersistence<br/>Redb·Sqlite·Libsql·Pg·MySql</div>
+                <div class="border border-slate-300 rounded p-1">TenantPersistenceExecutor<br/>Redb·Sqlite·Libsql·Pg·MySql</div>
+              </div>
+              <p class="text-red-600 pt-1">a new backend edits three enums + three macros in lockstep</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4 text-xs space-y-1">
+              <p class="modlabel text-slate-400 mb-2">after</p>
+              <div class="deep rounded p-3 font-mono">Arc&lt;dyn ProviderObject&gt;<div class="opacity-60 text-[10px] mt-1">backed by the existing capability traits</div></div>
+              <p class="text-slate-500 pt-1">a backend is added in one place</p>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Problem.</strong> Dispatch to the five storage backends runs through three parallel enums and three <code class="font-mono text-xs">match_*!</code> macros — an inline switchboard in a composition root.</p>
+          <p class="text-sm"><strong>Solution.</strong> Promote provider/tenant/executor to trait objects over the capability traits and retire the macros. Depends on C4 landing first.</p>
+          <ul class="text-sm text-slate-700 list-disc pl-5 space-y-0.5">
+            <li>leverage: one seam, five backends</li>
+            <li>switchboard deleted</li>
+          </ul>
+          <div class="rounded-md bg-amber-50 border border-amber-300 px-3 py-2 text-xs text-amber-900">ADR: <code class="font-mono">provider.rs:42–44</code> documents the enum dispatch as a deliberate choice (avoiding an erased provider layer, likely for the generic validated-write closures). Treat as a discussion, not a defect.</div>
+        </article>
+      </section>
+
+      <!-- ======================= 8. THE PLAN ======================= -->
+      <section id="plan" class="space-y-6">
+        <h2 class="font-serif text-2xl border-b border-slate-200 pb-2">8 · From review to control plane</h2>
+        <p class="text-sm text-slate-700 max-w-3xl">Every finding — the ten candidates above, plus a second-pass gap/hygiene sweep that added 40+ items — now lives in <code class="font-mono text-xs">docs/private/plans/architecture-review-2026-07-plan.md</code> as band ledgers with per-item status cells, acceptance lines, and paste-ready <code class="font-mono text-xs">/goal</code> prompts. This section is the map of that plan.</p>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-4 overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-left modlabel text-slate-400 border-b border-slate-200"><th class="py-2 pr-4">Band</th><th class="py-2 pr-4">Owns</th><th class="py-2 pr-4">Items</th><th class="py-2">Anchors</th></tr></thead>
+            <tbody class="align-top">
+              <tr class="border-b border-slate-100"><td class="py-2 pr-4 font-mono font-semibold">GR</td><td class="py-2 pr-4">Guarantee &amp; fail-closed repairs</td><td class="py-2 pr-4">8</td><td class="py-2 text-slate-600">C1 write-shape collapse · C2 EgressGateway pairing · C3 decision-log fail-closed · path-sanitization consolidation (13 divergent impls) · trigger requeue parity</td></tr>
+              <tr class="border-b border-slate-100"><td class="py-2 pr-4 font-mono font-semibold">SR</td><td class="py-2 pr-4">Seam repairs</td><td class="py-2 pr-4">8</td><td class="py-2 text-slate-600">C4 async-read capability bound · C5 S3 over Seams A+B · C6 verb entries · C7 HTTP-mount seam · C10 enum dispatch (ADR discussion)</td></tr>
+              <tr class="border-b border-slate-100"><td class="py-2 pr-4 font-mono font-semibold">CO</td><td class="py-2 pr-4">Consolidations &amp; shared primitives</td><td class="py-2 pr-4">14</td><td class="py-2 text-slate-600">engine BackgroundWorker seam · operator-authz helper · mysql/pg write twins · core Clock (27 sites) · C9 JS dedup</td></tr>
+              <tr class="border-b border-slate-100"><td class="py-2 pr-4 font-mono font-semibold">DE</td><td class="py-2 pr-4">Decomposition, naming, dead code</td><td class="py-2 pr-4">16</td><td class="py-2 text-slate-600">fs object switchboard · system records.rs · machine lib.rs · C8 firestore fold · CLI node rename · hand-rolled HTTP parser · suppression sweep</td></tr>
+              <tr class="border-b border-slate-100"><td class="py-2 pr-4 font-mono font-semibold">TI</td><td class="py-2 pr-4">Test infrastructure</td><td class="py-2 pr-4">5</td><td class="py-2 text-slate-600">EngineFixture adoption · control-plane fixture builders · counted fault injector · delete sync scheduler twins</td></tr>
+              <tr class="border-b border-slate-100"><td class="py-2 pr-4 font-mono font-semibold">UI</td><td class="py-2 pr-4">Console hygiene</td><td class="py-2 pr-4">7</td><td class="py-2 text-slate-600">storage god-file split · typed mutation client · shared Loading/Empty · one data-loading convention</td></tr>
+              <tr class="border-b border-slate-100"><td class="py-2 pr-4 font-mono font-semibold">DS</td><td class="py-2 pr-4">Docs &amp; spec truth</td><td class="py-2 pr-4">4</td><td class="py-2 text-slate-600">ARCHITECTURE.md table (7 missing crates) · identity-ladder doc · storage-seams spec reconcile · feature-flag notes</td></tr>
+              <tr><td class="py-2 pr-4 font-mono font-semibold">CP</td><td class="py-2 pr-4"><code class="font-mono">nimbus-compute</code> extraction (AD1)</td><td class="py-2 pr-4">3</td><td class="py-2 text-slate-600">CP1 move transport-free modules · CP2 ComputeState split · CP3 handler orchestration migration</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-4">
+          <p class="modlabel text-slate-400 mb-2">execution order</p>
+          <pre class="mermaid">
+flowchart LR
+  GR["GR · guarantees<br/>first, highest stakes"] --> SR["SR · seams<br/>SR7/SR8 need owner ADR"]
+  SR --> PAR["CO · DE · TI · UI · DS<br/>parallel-safe"]
+  PAR --> CP["CP · nimbus-compute<br/>CP3 after SR3/SR4 + CO2-CO4"]
+  classDef deepnode fill:#0f172a,color:#f8fafc,stroke:#0f172a;
+  class GR deepnode
+          </pre>
+          <p class="text-xs text-slate-500 mt-2">Sizing SWAG (net-new + moved, excl. tests): GR ~600 · SR ~1,200 · CO ~1,800 · DE ~1,500 · TI ~500 · UI ~1,200 · DS ~200 · CP ~2,500 LoC.</p>
+        </div>
+      </section>
+
+      <!-- ======================= 9. AD1 NIMBUS-COMPUTE ======================= -->
+      <section id="ad1" class="space-y-6">
+        <h2 class="font-serif text-2xl border-b border-slate-200 pb-2">9 · Decision AD1 — extract <code class="font-mono">nimbus-compute</code></h2>
+        <p class="text-sm text-slate-700 max-w-3xl"><strong>Decision: yes, staged.</strong> The inventory showed the extraction is smaller than "everything between server and engine" — the heavy orchestration already lives in <code class="font-mono text-xs">nimbus-services</code>, <code class="font-mono text-xs">nimbus-bridge</code>, and <code class="font-mono text-xs">nimbus-system</code>. What moves is the compute-plane <em>composition root</em> still inside the server, and its core is already transport-free: <code class="font-mono text-xs">execution/</code> (868 lines, zero axum imports) and <code class="font-mono text-xs">artifact_verifier_effects</code> (860) compile outside the server nearly as-is. The coupling wall is <code class="font-mono text-xs">state.rs</code> + the handler bodies in <code class="font-mono text-xs">http/</code>.</p>
+
+        <div class="grid md:grid-cols-2 gap-4">
+          <div class="rounded-lg border border-slate-200 bg-white p-4">
+            <p class="modlabel text-slate-400 mb-2">before — server is transport AND compute root</p>
+            <pre class="mermaid">
+flowchart TB
+  subgraph SRV["nimbus-server · 70k · 29 deps"]
+    T["transport: router · http · ws · adapters"]
+    ST["state.rs AppState<br/>axum types + engine + registries"]
+    EX["execution/ · verifier effects ·<br/>machine_lifecycle · sm shim<br/>(already transport-free)"]
+  end
+  SRV --> E1["engine"]
+  SRV --> R1["runtime / bridge"]
+  SRV --> S1["services / sandbox"]
+  SRV --> Y1["system / node / machine"]
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class ST leak
+            </pre>
+          </div>
+          <div class="rounded-lg border border-slate-200 bg-white p-4">
+            <p class="modlabel text-slate-400 mb-2">after — one seam, zero axum below it</p>
+            <pre class="mermaid">
+flowchart TB
+  SRV2["nimbus-server<br/>transport + adapters + thin AppState"]
+  CLI["nimbus-cli start/dev"]
+  CMP["nimbus-compute<br/>ComputeState · execution · verifier effects ·<br/>handler orchestration · ZERO axum deps"]
+  SRV2 --> CMP
+  CLI -. optional direct .-> CMP
+  CMP --> E2["engine"]
+  CMP --> R2["runtime via bridge"]
+  CMP --> S2["services / sandbox"]
+  CMP --> Y2["system / node / machine"]
+  classDef deepnode fill:#0f172a,color:#f8fafc,stroke:#0f172a;
+  class CMP deepnode
+            </pre>
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-4">
+          <div class="rounded-lg border border-slate-200 bg-white p-4 space-y-2 text-sm">
+            <p class="modlabel text-slate-400">what moves, staged</p>
+            <ul class="list-disc pl-5 space-y-1 text-slate-700">
+              <li><strong>CP1</strong> — move the transport-free modules as-is: <code class="font-mono text-xs">execution/</code>, <code class="font-mono text-xs">artifact_verifier_effects</code>, <code class="font-mono text-xs">machine_lifecycle.rs</code>, the 36-line <code class="font-mono text-xs">service_manager</code> shim.</li>
+              <li><strong>CP2</strong> — split <code class="font-mono text-xs">AppState</code>: axum-free <code class="font-mono text-xs">ComputeState</code> (engine + registries) in the new crate; server wraps it. <code class="font-mono text-xs">construction.rs</code> splits the same way.</li>
+              <li><strong>CP3</strong> — orchestration halves of the deploy/services/sandboxes/scheduling/machines handlers become compute-owned functions; axum handlers reduce to extract → call → respond.</li>
+            </ul>
+            <p class="text-xs text-slate-500">~13 of the server's 29 workspace deps move behind the seam. Hard invariant: nimbus-compute has zero axum/http-transport dependencies. nimbus-services stays the resource manager — compute composes it, never re-owns it.</p>
+          </div>
+          <div class="rounded-lg border border-slate-200 bg-white p-4 space-y-2 text-sm">
+            <p class="modlabel text-slate-400">naming — why nimbus-compute</p>
+            <table class="w-full text-xs">
+              <tbody class="align-top">
+                <tr class="border-b border-slate-100"><td class="py-1.5 pr-3 font-mono text-red-600 line-through">nimbus-workload</td><td class="py-1.5 text-slate-600"><code class="font-mono">nimbus-workloads</code> already exists (desired-state, placement, credential-projection <em>spec</em> types) — hopeless confusion</td></tr>
+                <tr class="border-b border-slate-100"><td class="py-1.5 pr-3 font-mono text-red-600 line-through">nimbus-orchestrator</td><td class="py-1.5 text-slate-600">vague, k8s-loaded</td></tr>
+                <tr class="border-b border-slate-100"><td class="py-1.5 pr-3 font-mono text-red-600 line-through">nimbus-execution</td><td class="py-1.5 text-slate-600">too narrow for future scope</td></tr>
+                <tr><td class="py-1.5 pr-3 font-mono text-emerald-700 font-semibold">nimbus-compute</td><td class="py-1.5 text-slate-600">names the plane — admit → wire → execute workloads across isolates, sandboxes, services — and gives <code class="font-mono">nimbus run jobs</code>/<code class="font-mono">exec</code> and agent workloads a canonical future home</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================= 10. AD2 WORKLOAD IDENTITY ======================= -->
+      <section id="ad2" class="space-y-6">
+        <h2 class="font-serif text-2xl border-b border-slate-200 pb-2">10 · Decision AD2 — workload identity: no new crate yet</h2>
+        <p class="text-sm text-slate-700 max-w-3xl"><strong>Decision: keep the existing ladder; revisit at SI0.</strong> Identity is already a deliberate three-layer design, and the layer a crate would own — credential issuance — is entirely deferred to <code class="font-mono text-xs">service-identity-provider-auth-plan.md</code> (SI0–SI8, all todo, activation-gated on a concrete provider need).</p>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-6">
+          <p class="modlabel text-slate-400 mb-4">the identity ladder, bottom to top</p>
+          <div class="space-y-3 text-sm">
+            <div class="flex gap-4 items-start">
+              <div class="deep rounded px-3 py-2 font-mono text-xs w-52 shrink-0">nimbus_core::WorkloadId<br/><span class="opacity-60">types.rs:68</span></div>
+              <p class="text-slate-700 pt-1">Opaque routing key. Lives in core <em>on purpose</em> so nimbus-proxy's PEP registry can key on it without depending on sandbox crates — a reachability lint keeps it off the request hot path.</p>
+            </div>
+            <div class="flex gap-4 items-start">
+              <div class="deep rounded px-3 py-2 font-mono text-xs w-52 shrink-0">nimbus_tenant::WorkloadIdentity<br/><span class="opacity-60">identity.rs:132</span></div>
+              <p class="text-slate-700 pt-1">Admitted identity, constructible <strong>only</strong> via <code class="font-mono text-xs">from_decision(&amp;TenantIsolationDecision)</code>. Already renders SPIFFE-shaped projections (<code class="font-mono text-xs">subject()</code>, <code class="font-mono text-xs">spiffe_id(trust_domain)</code>). The admission-anchored constructor is a security property — identity cannot be minted without passing admission. Moving it out of nimbus-tenant would break that.</p>
+            </div>
+            <div class="flex gap-4 items-start">
+              <div class="border-2 border-slate-300 rounded px-3 py-2 font-mono text-xs w-52 shrink-0 text-slate-600">nimbus_node::TenantWorkloadId<br/><span class="opacity-60">host_lifecycle.rs:41</span></div>
+              <p class="text-slate-700 pt-1">Node-local sibling: names systemd transient units. Deliberately separate from the routing key.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-md bg-amber-50 border border-amber-300 px-4 py-3 text-sm text-amber-900">
+          The only credential-issuing machinery live today is the egress proxy's ephemeral MITM CA (<code class="font-mono text-xs">nimbus-proxy/src/tls_authority.rs</code>) — a TLS-interception cert factory, not workload identity. A <code class="font-mono text-xs">nimbus-workload-identity</code> crate created now would be an empty shell. When SI0 activates, extract <em>issuance</em> (OIDC/JWT minting, SVIDs, provider adapters) into its own crate; the projection stays admission-anchored in nimbus-tenant. Near-term: DS2 documents this ladder in ARCHITECTURE.md.
+        </div>
+      </section>
+
+      <!-- ======================= 11. SECOND PASS ======================= -->
+      <section id="second-pass" class="space-y-6">
+        <h2 class="font-serif text-2xl border-b border-slate-200 pb-2">11 · Second pass — what the gap sweep added</h2>
+        <p class="text-sm text-slate-700 max-w-3xl">Three follow-up readers covered the crates the first pass skipped (nimbus-cli at 62k lines, the small crates, the console) plus seven repo-wide hygiene lenses. Headline: <strong>zero TODO/FIXME/HACK markers in production code</strong> and disciplined typed errors — the additions are consolidation work, not rot. The full list is in the plan; these are the load-bearing ones.</p>
+
+        <div class="grid md:grid-cols-2 gap-3 text-sm">
+          <div class="rounded-lg border border-slate-200 bg-white p-4"><span class="modlabel text-slate-400">DS1 · docs</span><p class="mt-1"><strong>ARCHITECTURE.md's crate table is missing 7 crates</strong> (<code class="font-mono text-xs">nimbus</code>, <code class="font-mono text-xs">-cli</code>, <code class="font-mono text-xs">-fs</code>, <code class="font-mono text-xs">-kv</code>, <code class="font-mono text-xs">-object-storage</code>, <code class="font-mono text-xs">-s3</code>, <code class="font-mono text-xs">-workloads</code>) and credits nimbus-bin with nimbus-cli's job — while claiming "all workspace members."</p></div>
+          <div class="rounded-lg border border-slate-200 bg-white p-4"><span class="modlabel text-slate-400">GR5 · security</span><p class="mt-1"><strong>13 independent path-sanitization implementations</strong> at capability boundaries (fs, proxy, runtime, egress, cli). Divergent traversal defenses are how traversal bugs slip in — consolidate onto the FsCaps/cap-std choke point.</p></div>
+          <div class="rounded-lg border border-slate-200 bg-white p-4"><span class="modlabel text-slate-400">CO1 · engine</span><p class="mt-1"><strong>The same background-worker scaffold is hand-rolled three times</strong> (subscription delivery, trigger candidates, trigger execution) — identical Mutex+Condvar drain loops and shutdown guards. One generic seam absorbs all three.</p></div>
+          <div class="rounded-lg border border-slate-200 bg-white p-4"><span class="modlabel text-slate-400">GR4 · correctness</span><p class="mt-1"><strong>The two trigger workers disagree on at-least-once:</strong> the candidates worker requeues on store error; the execution worker only warns and drops the invocation.</p></div>
+          <div class="rounded-lg border border-slate-200 bg-white p-4"><span class="modlabel text-slate-400">CO2 · server</span><p class="mt-1"><strong>Operator-route authorization is triplicated</strong> across sessions/services/sandboxes resource-control modules — same authenticate → audit → claim-match flow copy-pasted, plus duplicated scope matchers and four byte-identical audit fns.</p></div>
+          <div class="rounded-lg border border-slate-200 bg-white p-4"><span class="modlabel text-slate-400">CO7 · repo-wide</span><p class="mt-1"><strong>27 files inline the same epoch-millis boilerplate</strong> with divergent error handling, and only one crate has an injectable test clock. A core <code class="font-mono text-xs">Clock</code>/<code class="font-mono text-xs">now_millis()</code> unlocks deterministic time everywhere.</p></div>
+          <div class="rounded-lg border border-slate-200 bg-white p-4"><span class="modlabel text-slate-400">DE6 · cli</span><p class="mt-1"><strong>The machine guest-API client hand-parses HTTP/1.1 over a unix socket</strong> (~250 lines of bespoke framing) while its sibling client uses reqwest.</p></div>
+          <div class="rounded-lg border border-slate-200 bg-white p-4"><span class="modlabel text-slate-400">DE2 · system</span><p class="mt-1"><strong><code class="font-mono text-xs">nimbus-system/records.rs</code> is a ~1,400-line flat monolith</strong> — ~50 record/delete fns spanning six domains in one file at the decomposition threshold.</p></div>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-4 text-sm">
+          <p class="modlabel text-slate-400 mb-2">corrected &amp; no-action ledger — the second pass also killed findings</p>
+          <ul class="list-disc pl-5 space-y-1 text-slate-600 text-xs">
+            <li><code class="font-mono">nimbus-egress/policy.rs</code> split withdrawn — 1,486 raw lines but tests start at :888; production size is under threshold.</li>
+            <li><code class="font-mono">http/</code> vs <code class="font-mono">resource_control/</code> is a legitimate seam (route/response vs authorization), not duplication; <code class="font-mono">ws/</code> is cohesive.</li>
+            <li>cli <code class="font-mono">dev/</code> reusing <code class="font-mono">start</code> is a correct seam; nimbus-code-index / -license / -bin are clean; the 37-line nimbus-adapters facade is deliberate.</li>
+            <li>Suppressions with justifying comments stay (NDB3 signal wiring, MTN7 segment allocator, reversed-empty-range idiom); engine <code class="font-mono">.expect()</code>s are mostly disciplined invariant assertions — only two named non-invariants to fix (GR6).</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ======================= TOP RECOMMENDATION ======================= -->
+      <section id="top-recommendation" class="rounded-xl deep p-8 space-y-3">
+        <p class="modlabel text-slate-400">top recommendation → now GR1 in the plan</p>
+        <h2 class="font-serif text-2xl text-white"><a href="#c1" class="underline decoration-slate-500 underline-offset-4">C1 — Collapse the two storage write shapes</a></h2>
+        <p class="text-sm text-slate-300 max-w-3xl">The atomicity invariant is the most load-bearing rule in the repo, and today two independent transaction implementations both have to keep it true. Merging point writes into the batch core leaves exactly one implementation to audit — the purest depth win available, with no interface change and no protocol surface at risk. C2 and C3 are the fastest follow-ups: both convert a silent degradation into a loud one.</p>
+        <p class="text-sm text-slate-300 max-w-3xl">Execution now runs through <code class="font-mono text-xs">docs/private/plans/architecture-review-2026-07-plan.md</code>: Band GR first (this item is GR1), then seams, then the parallel-safe consolidation bands, with the <a href="#ad1" class="underline decoration-slate-500 underline-offset-4">nimbus-compute extraction</a> last. The plan carries paste-ready <code class="font-mono text-xs">/goal</code> prompts for the whole campaign and for single bands.</p>
+      </section>
+
+      <footer class="text-xs text-slate-400 border-t border-slate-200 pt-4 pb-8">
+        Sources: six parallel subsystem mappings + three second-pass readers (gap sweep, hygiene lenses, extraction/identity inventory) over the working tree (branch <code class="font-mono">windows-restore</code>), Cargo manifests, ARCHITECTURE.md, docs/private/architecture/README.md, storage-seams spec. All file:line citations verified against source by the mappers. Findings are owned by <code class="font-mono">docs/private/plans/architecture-review-2026-07-plan.md</code> (§8); this file is the review record, the plan ledger is the status source.
+      </footer>
+    </main>
+  </body>
+</html>
