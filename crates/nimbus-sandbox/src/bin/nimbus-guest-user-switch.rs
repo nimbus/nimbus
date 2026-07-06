@@ -1,10 +1,23 @@
+//! Unix-only guest helper: drops privileges before exec'ing the workload.
+//! On non-unix targets this binary compiles to a stub that always fails —
+//! the sandbox backends that invoke it are not functional there.
+#![cfg_attr(not(unix), allow(dead_code, unused_imports))]
+
 use std::env;
+#[cfg(unix)]
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::Command;
 
 const UID_ENV: &str = "NIMBUS_GUEST_UID";
 const GID_ENV: &str = "NIMBUS_GUEST_GID";
 
+#[cfg(not(unix))]
+fn main() {
+    eprintln!("nimbus-guest-user-switch is unix-only");
+    std::process::exit(1);
+}
+
+#[cfg(unix)]
 fn main() {
     match run() {
         Ok(code) => std::process::exit(code),
@@ -15,6 +28,7 @@ fn main() {
     }
 }
 
+#[cfg(unix)]
 fn run() -> Result<i32, String> {
     let uid = read_env_u32(UID_ENV)?;
     let gid = read_env_u32(GID_ENV)?;

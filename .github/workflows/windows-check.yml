@@ -1,0 +1,98 @@
+name: windows-check
+
+# Fast Windows compile oracle. Exists because the workspace grew unix-only
+# APIs (K11P proxy, SELH/KME sandbox) with nothing compiling Windows between
+# release tags — main was Windows-broken for days unnoticed and each release
+# iteration costs ~35 min. `cargo check --keep-going` reports the complete
+# error inventory across all crates in one run. Local cross-checks cannot
+# replace this lane: zstd-sys/aws-lc-sys/ring build scripts need a Windows
+# C toolchain.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/windows-check.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  # deno-family crates have very deep types; rustc on Windows dies SILENTLY
+  # (no error text, bare exit) on stack overflow / memory pressure. Bigger
+  # rustc stack + reduced parallelism keep the inventory runs alive.
+  RUST_MIN_STACK: "16777216"
+  CARGO_BUILD_JOBS: "2"
+  # windows-latest ships Visual Studio 2026 (v18); the image cmake does not
+  # know that generator name. Ninja is preinstalled and sidesteps it.
+  CMAKE_GENERATOR: Ninja
+
+jobs:
+  windows-check:
+    name: Windows cargo check
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Configure Windows git long paths
+        shell: pwsh
+        run: git config --global core.longpaths true
+
+      # The proven Windows release lane sets up Strawberry Perl for the
+      # vendored OpenSSL build; the image default perl is not sufficient.
+      - name: Set up Windows Perl
+        uses: shogo82148/actions-setup-perl@a198315ec4e9244f206879ea7b63078003aec8a6 # v1
+        with:
+          distribution: strawberry
+          perl-version: "5.42"
+
+      - name: Export Windows Perl for vendored OpenSSL
+        shell: pwsh
+        run: |
+          $perlExe = (Get-Command perl).Source
+          "PERL=$perlExe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "OPENSSL_SRC_PERL=$perlExe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      # nimbus-assets' build script embeds the operator UI and JS packages;
+      # without them it fails and blocks every downstream crate's check.
+      - name: Stage UI and embedded packages
+        shell: bash
+        run: |
+          npm ci
+          npm run build
+          npm run build:embedded-packages
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-check
+          cache-directories: |
+            ~/.cargo/git/checkouts
+            ~/.cargo/.rusty_v8
+
+      - name: Check workspace (complete error inventory)
+        shell: bash
+        run: |
+          cargo check --workspace --bins --lib --keep-going \
+            --target x86_64-pc-windows-msvc --locked
