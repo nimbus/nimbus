@@ -546,10 +546,12 @@ pub(in super::super) async fn op_nimbus_runtime_chmod(
         )
         .map_err(capability_denied_error)?
         .into_owned_path();
-    let response = match fs
-        .chmod_async(checked_path_buf(path.clone()), payload.mode)
-        .await
-    {
+    // deno's FileSystem trait takes mode: u32 on unix and i32 elsewhere.
+    #[cfg(unix)]
+    let mode = payload.mode;
+    #[cfg(not(unix))]
+    let mode = payload.mode as i32;
+    let response = match fs.chmod_async(checked_path_buf(path.clone()), mode).await {
         Ok(()) => RuntimeHostCallEnvelope::Ok { value: Value::Null },
         Err(error) => RuntimeHostCallEnvelope::Error {
             error: runtime_fs_error_value(&path, "chmod", &error),
@@ -739,7 +741,12 @@ pub(in super::super) fn op_nimbus_runtime_chmod_sync(
         )
         .map_err(capability_denied_error)?
         .into_owned_path();
-    let response = match fs.chmod_sync(&checked_path(&path), payload.mode) {
+    // deno's FileSystem trait takes mode: u32 on unix and i32 elsewhere.
+    #[cfg(unix)]
+    let mode = payload.mode;
+    #[cfg(not(unix))]
+    let mode = payload.mode as i32;
+    let response = match fs.chmod_sync(&checked_path(&path), mode) {
         Ok(()) => RuntimeHostCallEnvelope::Ok { value: Value::Null },
         Err(error) => RuntimeHostCallEnvelope::Error {
             error: runtime_fs_error_value(&path, "chmodSync", &error),
