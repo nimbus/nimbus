@@ -6,6 +6,7 @@ pub struct IdentityAuditEvent {
     decision_id: String,
     workload_subject: String,
     workload_audit_projection: String,
+    identity_grants: Vec<String>,
     audience: String,
     outcome: IdentityAuditOutcome,
     exp_epoch_ms: Option<u64>,
@@ -19,6 +20,7 @@ impl IdentityAuditEvent {
             decision_id: parts.decision_id,
             workload_subject: parts.workload_subject,
             workload_audit_projection: parts.workload_audit_projection,
+            identity_grants: parts.identity_grants,
             audience: parts.audience,
             outcome: parts.outcome,
             exp_epoch_ms: parts.exp_epoch_ms,
@@ -40,6 +42,10 @@ impl IdentityAuditEvent {
 
     pub fn workload_audit_projection(&self) -> &str {
         &self.workload_audit_projection
+    }
+
+    pub fn identity_grants(&self) -> &[String] {
+        &self.identity_grants
     }
 
     pub fn audience(&self) -> &str {
@@ -64,6 +70,7 @@ pub(crate) struct IdentityAuditEventParts {
     pub(crate) decision_id: String,
     pub(crate) workload_subject: String,
     pub(crate) workload_audit_projection: String,
+    pub(crate) identity_grants: Vec<String>,
     pub(crate) audience: String,
     pub(crate) outcome: IdentityAuditOutcome,
     pub(crate) exp_epoch_ms: Option<u64>,

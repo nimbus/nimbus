@@ -17,4 +17,5 @@ thiserror.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+nimbus-runtime = { path = "../nimbus-runtime" }
 serde_json.workspace = true
