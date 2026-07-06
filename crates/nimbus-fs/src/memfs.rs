@@ -511,12 +511,29 @@ impl FileSystem for MemFsBackend {
         self.chown_sync(&path.as_checked_path(), uid, gid)
     }
 
+    // deno's lchmod keeps mode: u32 on every target while chmod is
+    // platform-split to i32 off unix (interface.rs:186-209), so the
+    // forward casts there.
     fn lchmod_sync(&self, path: &CheckedPath<'_>, mode: u32) -> FsResult<()> {
-        self.chmod_sync(path, mode)
+        #[cfg(unix)]
+        {
+            self.chmod_sync(path, mode)
+        }
+        #[cfg(not(unix))]
+        {
+            self.chmod_sync(path, mode as i32)
+        }
     }
 
     async fn lchmod_async(&self, path: CheckedPathBuf, mode: u32) -> FsResult<()> {
-        self.chmod_async(path, mode).await
+        #[cfg(unix)]
+        {
+            self.chmod_async(path, mode).await
+        }
+        #[cfg(not(unix))]
+        {
+            self.chmod_async(path, mode as i32).await
+        }
     }
 
     fn lchown_sync(

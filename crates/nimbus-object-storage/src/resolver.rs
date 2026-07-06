@@ -353,6 +353,10 @@ fn ensure_object_master_key_file(path: &Path) -> Result<()> {
 }
 
 fn set_private_file_permissions(path: &Path) -> Result<()> {
+    // Off unix the key file relies on the platform's default ACLs; Windows
+    // ACL tightening is windows-machine-support-plan territory.
+    #[cfg(not(unix))]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -372,6 +376,10 @@ fn set_private_file_permissions(path: &Path) -> Result<()> {
 }
 
 fn set_private_dir_permissions(path: &Path) -> Result<()> {
+    // Off unix the key directory relies on the platform's default ACLs;
+    // Windows ACL tightening is windows-machine-support-plan territory.
+    #[cfg(not(unix))]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

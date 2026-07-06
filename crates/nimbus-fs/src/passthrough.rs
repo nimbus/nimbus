@@ -6,12 +6,12 @@ use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
 use cap_std::ambient_authority;
-use cap_std::fs::{
-    Dir as CapDir, Metadata as CapMetadata, OpenOptions as CapOpenOptions,
-    Permissions as CapPermissions,
-};
+use cap_std::fs::{Dir as CapDir, Metadata as CapMetadata, OpenOptions as CapOpenOptions};
 #[cfg(unix)]
-use cap_std::fs::{FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
+use cap_std::fs::{
+    FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _, Permissions as CapPermissions,
+    PermissionsExt as _,
+};
 use cap_std::time::SystemTime as CapSystemTime;
 use deno_fs::sync::MaybeArc;
 use deno_fs::{FileSystem, FsDirEntry, FsFileType, FsReadDir, FsReadDirRc, OpenOptions};
