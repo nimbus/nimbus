@@ -105,6 +105,20 @@ activates, extract **issuance** (not the projection) into its own crate;
 the projection stays admission-anchored in `nimbus-tenant`. Near-term doc
 work is DS2.
 
+Refinement (2026-07-06 plan audit): SI0 is provider-independent and
+executable today — its largest component, the stable workload subject
+projection, is already shipped (`nimbus-tenant/src/identity.rs:171
+subject()`, `:203 spiffe_id()` render the SI Identity Contract exactly).
+If the owner chooses to start early, the sanctioned shape is: execute SI0
+(policy-input type, per-credential claim set, mint/deny audit schema,
+fail-closed tests) and land those types in a new `nimbus-workload-identity`
+crate depending only on `nimbus-core` + `nimbus-tenant`, with an
+`IdentityIssuer` trait and no provider SDKs (per the SI plan's dependency
+posture). The projection does not move. Production minting still hard-gates
+on horizontal-scaling HS1 (cluster node identity) per the SI plan; a
+local-dev issuer is the only pre-HS1 issuance path and must stay
+explicitly non-production.
+
 ## Corrected / No-Action Ledger
 
 Recorded so later reviews do not re-flag these:
@@ -189,8 +203,8 @@ moves; one evidence line per completed item (test name/count or commit).
 | DE3 | Split `nimbus-machine/src/lib.rs` (~735 lines, 5 unrelated concepts) into `roots.rs`/`paths.rs`/`image_source.rs`/`provider.rs`/`state.rs`; move `describe_machine_image_source` from nimbus-system onto the type as `Display`/`as_source_string()` (drift-prone inverse of `parse`). | `nimbus-machine/src/lib.rs:50-733`, `nimbus-system/src/records.rs:1362` | medium | todo |
 | DE4 | Fold `nimbus-firestore` (93-line stub) into `nimbus-firebase` (or nimbus-core if genuinely shared with cloud-functions); delete the crate. | `crates/nimbus-firestore` | small | todo |
 | DE5 | Rename the CLI JS-runtime module `node.rs` → `node_runtime.rs` (or `js_runtime.rs`) to stop conflating Node.js tooling with cluster-node modules (`node_service.rs`, `node_workload_executor.rs`). | `nimbus-cli/src/node.rs` | small | todo |
-| DE6 | Replace the hand-rolled HTTP/1.1-over-unix-socket parser in the machine guest-API client (~250 lines: `read_unix_http_request`, `parse_http_json_body`, …) with a unix-socket-capable HTTP client or the shared decoding helper `local_server_client.rs` already uses. | `nimbus-cli/src/machine/client.rs:321-536` | medium | todo |
-| DE7 | Audit `nimbus-cli/src/machine/stub` (heaviest `#[allow]` cluster: 16 allows) — wire it or delete it; pre-launch prefers deletion of dormant stubs. | `nimbus-cli/src/machine{,/stub}` | medium | todo |
+| DE6 | Replace the hand-rolled HTTP/1.1-over-unix-socket parser in the machine guest-API client (~250 lines: `read_unix_http_request`, `parse_http_json_body`, …) with a unix-socket-capable HTTP client or the shared decoding helper `local_server_client.rs` already uses. Sequence BEFORE `windows-machine-support-plan.md` WIN4, which adds a Windows named-pipe transport to this same client. | `nimbus-cli/src/machine/client.rs:321-536` | medium | todo |
+| DE7 | Audit `nimbus-cli/src/machine/stub` (heaviest `#[allow]` cluster: 16 allows) — wire it or delete it; pre-launch prefers deletion of dormant stubs. Coordinate with `windows-machine-support-plan.md` WIN2, which realizes these stubs as `cfg(windows)` modules: wire (don't delete) any stub WIN2 will consume, or record that WIN2 re-creates them fresh. | `nimbus-cli/src/machine{,/stub}` | medium | todo |
 | DE8 | Per-adapter `resolve(env, app_dir) -> AdapterEnablement` units under `start/adapters/`; the composition root iterates them (683-line resolver switchboard today). | `nimbus-cli/src/start/adapters.rs:222-574` | small | todo |
 | DE9 | Concept-owned renames: `cli machine/manager/helpers.rs` (→ `helper_paths.rs` + move env lock), `nimbus-convex/src/templates/helpers.rs` (→ `render.rs`), `nimbus-runtime/src/runtime/helpers.rs`; verify `adapters/convex/handlers/common.rs` is genuinely shared or rename. | four files | small | todo |
 | DE10 | Suppression sweep: strip stale `unused_imports` allows (15 repo-wide), unexplained clusters in `cli/compose` (7) and `runtime/backends/v8` (6); remove file-scope `#![allow(dead_code)]` in `triggers/dispatch.rs:1` + `persistence/tenant/trigger_delivery.rs:1` (masks live code); fix `adapters/mod.rs` pub/pub(crate) inconsistency + mongodb module-level allows; replace `too_many_arguments` suppressions (13) with params structs where natural. | repo-wide | small | todo |
@@ -229,7 +243,7 @@ moves; one evidence line per completed item (test name/count or commit).
 | --- | --- | --- | --- | --- |
 | DS1 | Fix the ARCHITECTURE.md crate table: add the 7 missing crates (`nimbus`, `nimbus-cli`, `nimbus-fs`, `nimbus-kv`, `nimbus-object-storage`, `nimbus-s3`, `nimbus-workloads`), correct the `nimbus-bin` row (5-line entrypoint → `nimbus-cli`), or drop the "All workspace members" claim. | `ARCHITECTURE.md:13-64` | small | todo |
 | DS2 | Document the workload-identity ladder (AD2 table: `WorkloadId` / `WorkloadIdentity` / `TenantWorkloadId`, and why minting is admission-anchored) in ARCHITECTURE.md's tenancy/auth sections. | `ARCHITECTURE.md` | small | todo |
-| DS3 | Reconcile `storage-seams-architecture.md` with shipped code: Seam B is sync capability-trait shape (spec says async RPITIT); Seam E `VolumeProvider` does not exist in code; BlobGc lacks §9b write-intent pins / seal-before-enumerate / seam-generic sweep — implement or amend the spec, one decision per seam. | `docs/private/plans/storage-seams-architecture.md` §9b/§16b, `nimbus-storage/src/traits/object_metadata.rs:551`, `nimbus-blob/src/gc.rs:54` | small | todo |
+| DS3 | Reconcile `storage-seams-architecture.md` with shipped code: Seam B is sync capability-trait shape (spec says async RPITIT); BlobGc lacks §9b write-intent pins / seal-before-enumerate / seam-generic sweep — implement or amend the spec, one decision per seam. Seam E `VolumeProvider` EXISTS (`nimbus-sandbox/src/volume.rs:117`, `LocalDirVolume` :149) matching spec §16b — the first-pass "absent" finding was wrong (searched only fs/s3/blob); remaining Seam E work (parity confirmation, GC/placement wiring, further volume backends) is owned by `nimbus-sandbox-plan.md`. Also truth-up the spec's §16c crate inventory (blob/fs/s3 shipped; object plane crate is `nimbus-object-storage`, not `nimbus-objectfs`; NOS/NFS/NC archived) and §12 topology. | `docs/private/plans/storage-seams-architecture.md` §9b/§12/§16b/§16c, `nimbus-storage/src/traits/object_metadata.rs:551`, `nimbus-blob/src/gc.rs:54`, `nimbus-sandbox/src/volume.rs:117` | small | todo |
 | DS4 | Feature-flag notes: `nimbus-fs fuse` (confirm CI exercises it or gate), `nimbus-blob cluster` (mark deferred so it isn't mistaken for dead), `nimbus-engine test-hooks` (verify it can't leak into release builds). | three Cargo.tomls + docs | small | todo |
 
 ### Band CP — `nimbus-compute` extraction (AD1, staged)

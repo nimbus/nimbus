@@ -424,7 +424,7 @@ pub trait LocalKeyProvider {   // local file · AWS KMS
               <li><code class="font-mono">PlacementLookup</code> (services broker.rs:100) — <code class="font-mono">ResolveToSelf</code> only; multi-node placement not built (HS lane deferred)</li>
               <li><code class="font-mono">S3ObjectBackend</code> (s3/backend.rs:8) — parallel facade beside Seams A+B → C5</li>
               <li><code class="font-mono">ReplicatingBlobStore</code> — cluster subtrait, test stubs only (spec-deferred)</li>
-              <li>Seam E <code class="font-mono">VolumeProvider</code> — named in the storage-seams spec, not found in code (spec drift)</li>
+              <li>Seam E <code class="font-mono">VolumeProvider</code> — exists at <code class="font-mono">nimbus-sandbox/src/volume.rs:117</code> with one impl (<code class="font-mono">LocalDirVolume</code>); further backends owned by nimbus-sandbox-plan (corrected — first pass searched only fs/s3/blob and called it absent)</li>
             </ul>
           </div>
         </div>
