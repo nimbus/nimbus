@@ -425,12 +425,17 @@ fn write_trust_anchor_file(trust_anchor_root: &Path, path: &Path, contents: &str
     ));
     let write_result = (|| -> std::io::Result<()> {
         use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut temp_file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o644)
-            .open(&temp_path)?;
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        // 0o644: guest-readable trust anchor. Unix-only; Windows ACLs
+        // inherit from the parent directory (the OCI backend is not
+        // functional on Windows — this keeps the crate compiling there).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o644);
+        }
+        let mut temp_file = options.open(&temp_path)?;
         temp_file.write_all(contents.as_bytes())?;
         temp_file.sync_all()?;
         fs::rename(&temp_path, path)?;

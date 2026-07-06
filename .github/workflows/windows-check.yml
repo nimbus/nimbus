@@ -48,6 +48,20 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      # nimbus-assets' build script embeds the operator UI and JS packages;
+      # without them it fails and blocks every downstream crate's check.
+      - name: Stage UI and embedded packages
+        shell: bash
+        run: |
+          npm ci
+          npm run build
+
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
