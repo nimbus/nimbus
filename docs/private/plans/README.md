@@ -41,6 +41,13 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
 
 ### Phase 1 - Launch Safety And Egress Trust
 
+- `architecture-review-2026-07-plan.md` - `active`. Control plane for the
+  2026-07 full-workspace architecture review: guarantee/fail-closed repairs
+  (storage write-path unification, EgressGateway pairing, decision-log
+  fail-closed), seam repairs, consolidations, decompositions, test-infra and
+  UI hygiene, doc/spec truth-ups, and the `nimbus-compute` extraction plus
+  workload-identity decision records. Review-driven refactor and cleanup work
+  should route through this plan's band ledgers while it is active.
 - `archive/nimbus-proxy-pingora-plan.md` - `complete, archived` (K11P0-K11P13 merged, PR #94; verifier 113/0). Owned the production proxy substrate
   inside `nimbus-proxy`: Pingora phases, async forwarding, peer/pool identity,
   lifecycle, observability, selective HTTPS interception, credential injection,
