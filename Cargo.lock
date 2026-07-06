@@ -6949,6 +6949,7 @@ dependencies = [
  "deno_fs",
  "deno_io",
  "deno_permissions",
+ "deno_subprocess_windows",
  "fuser",
  "nimbus-blob",
  "nimbus-core",

@@ -20,6 +20,11 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Mutex;
 
+#[cfg(windows)]
+pub(crate) use deno_subprocess_windows::Stdio as PlatformStdio;
+#[cfg(unix)]
+pub(crate) use std::process::Stdio as PlatformStdio;
+
 pub mod backend;
 mod bridge;
 pub mod cache;

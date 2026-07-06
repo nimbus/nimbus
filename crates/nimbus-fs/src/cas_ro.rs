@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use std::io;
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
-use std::process::Stdio;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -14,6 +13,7 @@ use deno_io::fs::{File, FsError, FsResult, FsStat, FsStatFs};
 use deno_permissions::{CheckedPath, CheckedPathBuf};
 use nimbus_blob::{BlobHash, BlobStore};
 
+use crate::PlatformStdio;
 use crate::bridge::block_on_byte_plane;
 
 #[derive(Clone)]
@@ -784,7 +784,7 @@ impl File for CasFile {
         self.backend.readonly()
     }
 
-    fn as_stdio(self: Rc<Self>) -> FsResult<Stdio> {
+    fn as_stdio(self: Rc<Self>) -> FsResult<PlatformStdio> {
         Err(FsError::NotSupported)
     }
 

@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Component, Path, PathBuf};
-use std::process::Stdio;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -11,6 +10,8 @@ use deno_fs::sync::MaybeArc;
 use deno_fs::{FileSystem, FsDirEntry, FsFileType, FsReadDir, FsReadDirRc, OpenOptions};
 use deno_io::fs::{File, FsError, FsResult, FsStat, FsStatFs};
 use deno_permissions::{CheckedPath, CheckedPathBuf};
+
+use crate::PlatformStdio;
 
 #[derive(Debug, Clone)]
 pub struct MemFsBackend {
@@ -510,12 +511,29 @@ impl FileSystem for MemFsBackend {
         self.chown_sync(&path.as_checked_path(), uid, gid)
     }
 
+    // deno's lchmod keeps mode: u32 on every target while chmod is
+    // platform-split to i32 off unix (interface.rs:186-209), so the
+    // forward casts there.
     fn lchmod_sync(&self, path: &CheckedPath<'_>, mode: u32) -> FsResult<()> {
-        self.chmod_sync(path, mode)
+        #[cfg(unix)]
+        {
+            self.chmod_sync(path, mode)
+        }
+        #[cfg(not(unix))]
+        {
+            self.chmod_sync(path, mode as i32)
+        }
     }
 
     async fn lchmod_async(&self, path: CheckedPathBuf, mode: u32) -> FsResult<()> {
-        self.chmod_async(path, mode).await
+        #[cfg(unix)]
+        {
+            self.chmod_async(path, mode).await
+        }
+        #[cfg(not(unix))]
+        {
+            self.chmod_async(path, mode as i32).await
+        }
     }
 
     fn lchown_sync(
@@ -1115,7 +1133,7 @@ impl File for MemFile {
         self.fs.write_at_path(&self.path, position, buf)
     }
 
-    fn as_stdio(self: Rc<Self>) -> FsResult<Stdio> {
+    fn as_stdio(self: Rc<Self>) -> FsResult<PlatformStdio> {
         Err(FsError::NotSupported)
     }
 

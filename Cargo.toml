@@ -99,6 +99,7 @@ deno_permissions = "0.112.0"
 deno_process = "0.68.0"
 deno_resolver = { version = "=0.84.0", features = ["deno_ast", "sync"] }
 deno_semver = "=0.10.0"
+deno_subprocess_windows = "0.48.0"
 deno_telemetry = "0.75.0"
 deno_tls = "0.240.0"
 deno_web = "0.284.0"
