@@ -45,9 +45,9 @@ archive_base="$(basename -- "${RUSTY_V8_ARCHIVE}")"
 binding_base="$(basename -- "${RUSTY_V8_SRC_BINDING_PATH}")"
 if [[ "${variant}" == "release" ]]; then
   case "${archive_base}" in
-    librusty_v8_release_ptrcomp_*.a)
+    librusty_v8_ptrcomp_simdutf_release_*.a)
       fail "variant=release but RUSTY_V8_ARCHIVE is the ptrcomp artifact: ${archive_base}" ;;
-    librusty_v8_release_*.a) ;;
+    librusty_v8_simdutf_release_*.a) ;;
     *) fail "RUSTY_V8_ARCHIVE does not look like a published release artifact: ${archive_base}" ;;
   esac
   case "${binding_base}" in
@@ -56,7 +56,7 @@ if [[ "${variant}" == "release" ]]; then
   esac
 else
   case "${archive_base}" in
-    librusty_v8_release_ptrcomp_*.a) ;;
+    librusty_v8_ptrcomp_simdutf_release_*.a) ;;
     *) fail "variant=ptrcomp but RUSTY_V8_ARCHIVE is not the ptrcomp artifact: ${archive_base}" ;;
   esac
   case "${binding_base}" in
@@ -65,5 +65,14 @@ else
   esac
 fi
 
+
+
+# Target-suffix equality (review LOW): archive and binding must be for the
+# SAME target triple, not merely the same variant.
+archive_target="${archive_base##*release_}"; archive_target="${archive_target%.a}"
+binding_target="${binding_base##*release_}"; binding_target="${binding_target%.rs}"
+if [[ "${archive_target}" != "${binding_target}" ]]; then
+  fail "archive target ${archive_target} != binding target ${binding_target}"
+fi
 
 printf 'prebuilt rusty_v8 env is valid\n'
