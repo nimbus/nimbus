@@ -134,7 +134,8 @@ fn unique_id(stream: &TcpStream) -> UniqueIDType {
 
 #[cfg(windows)]
 fn unique_id(stream: &TcpStream) -> UniqueIDType {
-    stream.as_raw_socket()
+    // Pingora's UniqueIDType is usize on Windows; RawSocket is u64.
+    stream.as_raw_socket() as UniqueIDType
 }
 
 #[cfg(not(any(unix, windows)))]
