@@ -1,0 +1,15 @@
+# Trust anchor for canonical rusty_v8 fork assets. Digests are sha256 of the
+# DOWNLOADED release asset (shasum -a 256 <file>). The tag below must equal
+# v<RUSTY_V8_VERSION> from .cargo/config.toml (the composite verifies this).
+# Pin-bump runbook: dispatch nimbus/rusty_v8's release workflow (or push the
+# fork tag; assets are bot-published), then update tag + digests here in the
+# same pin PR.
+[release]
+repo = "nimbus/rusty_v8"
+tag = "v149.4.0-nimbus.10"
+
+[assets]
+"librusty_v8_simdutf_release_x86_64-unknown-linux-gnu.a.gz" = "657bb10e885a2178a898901fa58f2cb1193dac3dc35c5ff008f077bc18883f80"
+"librusty_v8_ptrcomp_simdutf_release_x86_64-unknown-linux-gnu.a.gz" = "da80a2710f2c3f491fbf48fadc431a377b1a948f712734d0d903e71ad087bf0d"
+"src_binding_simdutf_release_x86_64-unknown-linux-gnu.rs" = "5db3ec0783531d12862a3f38dd5a679273550e67962260b81f07e612a68a0c24"
+"src_binding_ptrcomp_simdutf_release_x86_64-unknown-linux-gnu.rs" = "5db3ec0783531d12862a3f38dd5a679273550e67962260b81f07e612a68a0c24"
