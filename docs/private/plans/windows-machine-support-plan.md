@@ -9,9 +9,9 @@ Reviewed against:
 - `docs/private/architecture/sandbox/macos-machine-flow.md`
 - `docs/private/plans/archive/macos-machine-support-plan.md`
 - `docs/private/plans/distribution-plan.md`
-- `crates/nimbus-bin/src/machine/mod.rs`
-- `crates/nimbus-bin/src/machine/stub/`
-- `crates/nimbus-bin/src/compose/mod.rs`
+- `crates/nimbus-cli/src/machine/mod.rs`
+- `crates/nimbus-cli/src/machine/stub/`
+- `crates/nimbus-cli/src/compose/mod.rs`
 - `crates/nimbus-sandbox/src/backends/`
 - `.github/workflows/release.yml` — confirms `nimbus.exe` already builds on
   `windows-latest` with `x86_64-pc-windows-msvc` and ships in every release
@@ -102,11 +102,17 @@ Reviewed against:
 - macOS support is in progress and owns the hybrid control-plane architecture
   that Windows will reuse: host-resident Nimbus server, guest-resident narrow
   machine API, forwarded socket transport, standard guest containers.
-- Windows support does not exist as a developer platform. However, the repo
-  **already builds and ships `nimbus.exe`** for `x86_64-pc-windows-msvc` in
-  every release (`.github/workflows/release.yml`). V8/deno_core compiles on
-  Windows today via GitHub Actions `windows-latest` runners. The remaining work
-  is machine lifecycle, transport, and developer workflow — not compilation.
+- Windows support does not exist as a developer platform. The Windows compile
+  is not something to take for granted: it **regressed under K11P** (the
+  `pingora_io` `unique_id` type plus OCI egress/netns unix-isms) and Windows was
+  **dropped from the v0.1.45 release matrix** as a result. Compile restoration
+  **merged via PR #125 (`windows-restore`, `93fd10216`)**, and a fast
+  `windows-check` CI compile lane now guards against re-regression. This plan
+  therefore starts from the restored compile-clean baseline plus the
+  `windows-check` lane — it must **not** assume Windows was never broken.
+  Windows remains out of the release matrix until re-added, so `nimbus.exe` is
+  not currently a shipped release artifact. The remaining work is machine
+  lifecycle, transport, developer workflow, and release-matrix re-entry.
 - Shared machine-image policy is now more explicit too: the active macOS
   bootc plan keeps the pinned Podman image as the current default while
   proving `nimbus/machine-os` as the future bootc-native raw-disk provider.
@@ -120,6 +126,13 @@ Reviewed against:
   preparation only, not a supported Windows release output.
 - The machine module stubs all lifecycle operations with explicit errors on
   non-Unix hosts. The sandbox backends gate on Linux at runtime.
+- **Review-plan coordination** (`architecture-review-2026-07-plan.md`): sequence
+  after DE6 (the machine guest-API client parser rewrite in
+  `nimbus-cli/src/machine/client.rs`) — WIN4 adds a Windows named-pipe transport
+  to that same client, so it should build on the rewritten client rather than
+  the hand-rolled parser. Coordinate with DE7 (machine/stub disposition): WIN2
+  realizes those stubs as `cfg(windows)` modules, so DE7 must **wire, not
+  delete**, any stub WIN2 consumes (or record that WIN2 re-creates them fresh).
 - The distribution plan lists Windows as `Future` with `WSL2` as the execution
   model and `TBD` for service isolation strategy.
 - The current `ServiceHostPlatform` enum has an `Other` variant that Windows
@@ -1041,7 +1054,7 @@ Acceptance criteria:
 
 Repo outputs:
 
-- WSL2-specific machine modules in `crates/nimbus-bin/src/machine/wsl/`
+- WSL2-specific machine modules in `crates/nimbus-cli/src/machine/wsl/`
   behind `#[cfg(target_os = "windows")]`, replacing the current stubs
 - `MachineProvider::Wsl2` variant added to the existing enum
 - WSL command wrapper that sets `WSL_UTF8=1` env and `CREATE_NO_WINDOW`
@@ -1321,7 +1334,7 @@ Acceptance criteria:
   Windows-specific WSL2 provider, named-transport, and bootstrap plumbing
   instead of re-solving shared lifecycle seams. Verification inherited from the
   shared hardening closeout: `cargo fmt --all --check`;
-  `cargo check -p nimbus-bin`; `cargo test -p nimbus-bin machine::`.
+  `cargo check -p nimbus-cli`; `cargo test -p nimbus-cli machine::`.
 - 2026-04-16: Updated the Windows companion plan after the macOS machine-image
   decision was locked. Durable rule: the shared machine-os repo may ship
   different artifact families per provider, but WSL2 remains Tar plus shell
