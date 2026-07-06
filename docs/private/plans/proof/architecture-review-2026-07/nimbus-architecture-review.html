@@ -932,7 +932,12 @@ flowchart TB
         </div>
 
         <div class="rounded-md bg-amber-50 border border-amber-300 px-4 py-3 text-sm text-amber-900">
-          The only credential-issuing machinery live today is the egress proxy's ephemeral MITM CA (<code class="font-mono text-xs">nimbus-proxy/src/tls_authority.rs</code>) — a TLS-interception cert factory, not workload identity. A <code class="font-mono text-xs">nimbus-workload-identity</code> crate created now would be an empty shell. When SI0 activates, extract <em>issuance</em> (OIDC/JWT minting, SVIDs, provider adapters) into its own crate; the projection stays admission-anchored in nimbus-tenant. Near-term: DS2 documents this ladder in ARCHITECTURE.md.
+          The only credential-issuing machinery live today is the egress proxy's ephemeral MITM CA (<code class="font-mono text-xs">nimbus-proxy/src/tls_authority.rs</code>) — a TLS-interception cert factory, not workload identity. When SI0 activates, extract <em>issuance</em> (OIDC/JWT minting, SVIDs, provider adapters) into its own crate; the projection stays admission-anchored in nimbus-tenant. Near-term: DS2 documents this ladder in ARCHITECTURE.md.
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-4 text-sm space-y-2">
+          <p class="modlabel text-slate-400">refinement — 2026-07-06 plan-portfolio audit</p>
+          <p class="text-slate-700">SI0 is provider-independent and executable today: its largest piece — the stable workload subject projection — already ships (<code class="font-mono text-xs">nimbus-tenant/src/identity.rs:171 subject()</code>, <code class="font-mono text-xs">:203 spiffe_id()</code> render the SI Identity Contract exactly). The sanctioned early start, recorded in the plan's AD2: execute SI0 (policy-input type, per-credential claim set, mint/deny audit schema, fail-closed tests) and land those types in a new <code class="font-mono text-xs">nimbus-workload-identity</code> crate depending only on nimbus-core + nimbus-tenant, with an <code class="font-mono text-xs">IdentityIssuer</code> trait and no provider SDKs. The projection does not move. Production minting still hard-gates on horizontal-scaling HS1 (cluster node identity); a local-dev issuer is the only pre-HS1 issuance path and stays explicitly non-production.</p>
         </div>
       </section>
 
