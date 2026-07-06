@@ -2,7 +2,9 @@
 //!
 //! This crate consumes the admission-owned workload identity projection from
 //! `nimbus-tenant`. Mint requests are intentionally constructible only from a
-//! `TenantIsolationDecision`:
+//! `TenantIsolationDecision`. Mint authorization also requires the admitted
+//! decision to carry an explicit runtime `identity` grant; provider policies
+//! still own subject, audience, and TTL scoping.
 //!
 //! ```compile_fail
 //! use nimbus_workload_identity::IdentityMintRequest;
@@ -11,6 +13,7 @@
 //!     let _request = IdentityMintRequest {
 //!         identity: todo!(),
 //!         decision_id: todo!(),
+//!         identity_grants: todo!(),
 //!         audience: "provider".to_string(),
 //!         requested_ttl: std::time::Duration::from_secs(60),
 //!     };

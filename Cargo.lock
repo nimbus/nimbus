@@ -7415,6 +7415,7 @@ name = "nimbus-workload-identity"
 version = "0.1.45"
 dependencies = [
  "nimbus-core",
+ "nimbus-runtime",
  "nimbus-tenant",
  "serde",
  "serde_json",

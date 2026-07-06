@@ -2,9 +2,10 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use nimbus_core::TenantId;
+use nimbus_runtime::{RuntimeGrants, RuntimeLimits, RuntimePolicy};
 use nimbus_tenant::{
-    TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput,
-    WorkloadAttributes, WorkloadLocation,
+    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationDecision, TenantIsolationMode,
+    TenantIsolationPolicyInput, WorkloadAttributes, WorkloadLocation,
 };
 use nimbus_workload_identity::{
     CredentialKind, DenyAllIssuer, IdentityAuditOutcome, IdentityIssueError, IdentityIssuer,
@@ -16,13 +17,22 @@ use serde_json::Value;
 const AUDIENCE: &str = "provider://oidc";
 
 fn decision_for_tenant(tenant: &str) -> TenantIsolationDecision {
+    decision_for_tenant_with_identity_grants(tenant, ["service:test"])
+}
+
+fn decision_for_tenant_with_identity_grants(
+    tenant: &str,
+    identity_grants: impl IntoIterator<Item = impl Into<String>>,
+) -> TenantIsolationDecision {
     let context = TenantIsolationContext::operator(
         TenantId::new(tenant).expect("tenant id should parse"),
         "identity.test",
     );
     context
-        .admit_decision(TenantIsolationPolicyInput::new(
+        .admit_decision(policy_input_with_identity_grants(
+            &context,
             WorkloadAttributes::service("worker"),
+            identity_grants,
         ))
         .expect("test decision should admit")
 }
@@ -38,12 +48,34 @@ fn decision_for_tenant_with_location(tenant: &str) -> TenantIsolationDecision {
             .with_machine_id("machine-a"),
     );
     context
-        .admit_decision(TenantIsolationPolicyInput::new(
+        .admit_decision(policy_input_with_identity_grants(
+            &context,
             WorkloadAttributes::service("worker")
                 .with_sandbox_id("sandbox-a")
                 .with_invocation_id("invoke-a"),
+            ["service:test"],
         ))
         .expect("test decision should admit")
+}
+
+fn policy_input_with_identity_grants(
+    context: &TenantIsolationContext,
+    attributes: WorkloadAttributes,
+    identity_grants: impl IntoIterator<Item = impl Into<String>>,
+) -> TenantIsolationPolicyInput {
+    let runtime_policy = RuntimePolicy::new(RuntimeLimits {
+        grants: RuntimeGrants {
+            identity: identity_grants.into_iter().map(Into::into).collect(),
+            ..RuntimeGrants::application_node_production_in_process()
+        },
+        ..RuntimeLimits::application_node22()
+    });
+    TenantIsolationPolicyInput::new(attributes).with_runtime_policy(
+        context,
+        &runtime_policy,
+        RuntimeIsolationTier::InProcessUntrusted,
+        TenantIsolationMode::Production,
+    )
 }
 
 fn rule_for_subject(subject: impl Into<String>) -> ProviderAuthRule {
@@ -71,6 +103,80 @@ fn authorize(
 ) -> nimbus_workload_identity::MintAuthorization {
     let request = IdentityMintRequest::for_decision(decision, AUDIENCE, Duration::from_secs(30));
     authorize_mint(policy, &request, &params("jti-1"))
+}
+
+#[test]
+fn mint_denies_without_identity_grant() {
+    let decision = decision_for_tenant_with_identity_grants("alpha", Vec::<String>::new());
+    let subject = decision.workload_identity().subject();
+    let policy = allow_subject(subject.clone());
+
+    let authorization = authorize(&policy, &decision);
+
+    assert_eq!(
+        authorization.outcome,
+        Err(IdentityMintError::IdentityGrantMissing)
+    );
+    assert!(authorization.audit.identity_grants().is_empty());
+    assert!(matches!(
+        authorization.audit.outcome(),
+        IdentityAuditOutcome::Denied { reason }
+            if reason == "workload has no identity grant; identity minting requires an explicit identity grant"
+                && !reason.contains(&subject)
+                && !reason.contains(AUDIENCE)
+    ));
+}
+
+#[test]
+fn grant_check_precedes_policy_matching() {
+    let decision = decision_for_tenant_with_identity_grants("alpha", Vec::<String>::new());
+    let policy = ProviderAuthPolicy::try_new(vec![ProviderAuthRule::new(
+        SubjectMatch::Exact("nimbus-workload:v1/tenant/beta/workload/service/worker".to_string()),
+        ["provider://other"],
+        Duration::from_secs(60),
+    )])
+    .expect("policy should validate");
+
+    let authorization = authorize(&policy, &decision);
+
+    assert_eq!(
+        authorization.outcome,
+        Err(IdentityMintError::IdentityGrantMissing)
+    );
+}
+
+#[test]
+fn mint_succeeds_with_identity_grant_and_records_grants_in_audit() {
+    let decision =
+        decision_for_tenant_with_identity_grants("alpha", ["service:z", "service:a", "service:z"]);
+    let policy = allow_subject(decision.workload_identity().subject());
+
+    let authorization = authorize(&policy, &decision);
+
+    assert!(authorization.outcome.is_ok());
+    assert_eq!(
+        authorization.audit.identity_grants(),
+        ["service:a".to_string(), "service:z".to_string()].as_slice()
+    );
+    assert!(matches!(
+        authorization.audit.outcome(),
+        IdentityAuditOutcome::Minted
+    ));
+}
+
+#[test]
+fn audit_json_includes_identity_grants_on_mint_and_deny_without_secret_keys() {
+    let mint_decision = decision_for_tenant_with_identity_grants("alpha", ["service:test"]);
+    let mint_policy = allow_subject(mint_decision.workload_identity().subject());
+    let minted = authorize(&mint_policy, &mint_decision);
+    assert!(minted.outcome.is_ok());
+    assert_audit_json_identity_grants(&minted.audit, &["service:test"]);
+
+    let deny_decision = decision_for_tenant_with_identity_grants("beta", Vec::<String>::new());
+    let deny_policy = allow_subject(deny_decision.workload_identity().subject());
+    let denied = authorize(&deny_policy, &deny_decision);
+    assert_eq!(denied.outcome, Err(IdentityMintError::IdentityGrantMissing));
+    assert_audit_json_identity_grants(&denied.audit, &[]);
 }
 
 #[test]
@@ -386,6 +492,33 @@ fn assert_audit_has_no_secret_material(
         !serialized.contains(forbidden_secret),
         "audit event leaked secret material: {serialized}"
     );
+}
+
+fn assert_audit_json_identity_grants(
+    audit: &nimbus_workload_identity::IdentityAuditEvent,
+    expected: &[&str],
+) {
+    let value = serde_json::to_value(audit).expect("audit should serialize");
+    let object = value
+        .as_object()
+        .expect("audit should serialize as an object");
+    assert!(
+        object.contains_key("identity_grants"),
+        "audit JSON must include identity_grants: {value}"
+    );
+    let grants = value["identity_grants"]
+        .as_array()
+        .expect("identity_grants should serialize as an array");
+    let actual = grants
+        .iter()
+        .map(|grant| {
+            grant
+                .as_str()
+                .expect("identity grant should serialize as a string")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(actual.as_slice(), expected);
+    assert_no_secret_keys(&value);
 }
 
 fn assert_no_secret_keys(value: &Value) {

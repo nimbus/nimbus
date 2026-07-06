@@ -12,6 +12,7 @@ use crate::{
 pub struct IdentityMintRequest<'a> {
     identity: WorkloadIdentity,
     decision_id: &'a TenantIsolationDecisionId,
+    identity_grants: Vec<String>,
     audience: String,
     requested_ttl: Duration,
 }
@@ -22,9 +23,13 @@ impl<'a> IdentityMintRequest<'a> {
         audience: impl Into<String>,
         requested_ttl: Duration,
     ) -> Self {
+        let mut identity_grants = decision.runtime().grants().identity.clone();
+        identity_grants.sort();
+        identity_grants.dedup();
         Self {
             identity: decision.workload_identity(),
             decision_id: decision.id(),
+            identity_grants,
             audience: audience.into(),
             requested_ttl,
         }
@@ -53,6 +58,8 @@ pub struct MintAuthorization {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum IdentityMintError {
+    #[error("workload has no identity grant; identity minting requires an explicit identity grant")]
+    IdentityGrantMissing,
     #[error("no provider auth rule matched workload subject `{subject}`")]
     NoMatchingSubjectRule { subject: String },
     #[error(
@@ -70,6 +77,10 @@ fn authorize_claims(
     request: &IdentityMintRequest<'_>,
     params: &MintParams,
 ) -> Result<CredentialClaims, IdentityMintError> {
+    if request.identity_grants.is_empty() {
+        return Err(IdentityMintError::IdentityGrantMissing);
+    }
+
     let subject = request.identity.subject();
     let matching_subject_rules = policy
         .rules()
@@ -145,6 +156,7 @@ fn audit_event(
         decision_id: request.decision_id.as_str().to_string(),
         workload_subject: request.identity.subject(),
         workload_audit_projection: request.identity.audit_projection(),
+        identity_grants: request.identity_grants.clone(),
         audience: request.audience.clone(),
         outcome: audit_outcome,
         exp_epoch_ms,
