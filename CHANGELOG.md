@@ -288,6 +288,203 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.34] - 2026-06-19
 
+### Added
+
+- **website**: Theme-aware favicon with brand sky tile by @jackspirou
+- **cli**: DXW3 — start serves all adapters by default, store-backed (D7) by @jackspirou
+- **dev**: Firebase migration hint on no-adapter; shorter landing tab comments by @jackspirou
+- **provision**: Auto-wire app package.json deps; landing shows migration commands by @jackspirou
+- **firebase**: Drop-in firebase package — stock imports work unchanged by @jackspirou
+- **cli**: LR12 — nimbus node run, the reconciler's production caller by @jackspirou
+- **packaging**: LR10 — ship a hardened systemd unit in deb/rpm by @jackspirou
+- **cli,engine**: LR9 — nimbus backup create/restore on SEQ8 archives by @jackspirou
+- **server,bin**: LR8 — in-server TLS termination for the main listener by @jackspirou
+- **sdk**: LR7 — rest.ts matches the server, with a 3-sided parity guard by @jackspirou
+- **cli**: LR6 — nimbus start enables Firestore, MongoDB, and DynamoDB by @jackspirou
+- **server,bin**: LR5 — configurable CORS origins by @jackspirou
+- **bin**: LR4 — public-bind rotation gate: explicit-once, age advisory by @jackspirou
+- **sdk**: LR3 — remove the dead X-Nimbus-Api-Key credential path by @jackspirou
+- **cli**: LR2 — nimbus deploy passes the AdminHeaderOnly gate by @jackspirou
+- **ndb7**: Default systemd-dbus + linux factory + operator doc by @jackspirou
+- **ndb6**: Node-dbus-integration CI lane on ubuntu-24.04 by @jackspirou
+- **ndb5**: Linux-gated live systemd integration tests by @jackspirou
+- **ndb4**: Zbus error taxonomy + nimbus_core Transport/NotFound by @jackspirou
+- **ndb3**: Signal-correlated completion + property encoder by @jackspirou
+- **ndb2**: ZbusSystemdClient skeleton + capability probe by @jackspirou
+- **ndb1**: Wire zbus_systemd + zbus behind systemd-dbus feature by @jackspirou
+
+### Changed
+
+- **cli**: Render wire surfaces from one presentation list + adapter status in start summary by @jackspirou
+- **cli**: Dev-loop hygiene — adoption outcomes as data, cached covered set by @jackspirou
+- **server**: Add WireProtocolAdapter seam for sibling listeners by @jackspirou
+- **server**: Make Firestore REST auth structural via route-layer middleware by @jackspirou
+- **cli**: Decompose dev.rs — tests to dev/tests/, firebase wiring to dev/firebase.rs by @jackspirou
+- **repo**: Docs/private goes fully untracked; pipeline inputs move by @jackspirou
+- **bin**: LR1 — finish Service->Engine naming in start/ by @jackspirou
+
+### D5.5
+
+- ListStreams + read-triggered retention (T5 Streams complete) by @jackspirou
+
+### D6.1
+
+- UpdateTimeToLive + DescribeTimeToLive (T6 begins) by @jackspirou
+
+### D6.2
+
+- TTL sweeper integration by @jackspirou
+
+### D6.3
+
+- Tagging surface (T6 complete; full T0-T6 op surface) by @jackspirou
+
+### D7.3
+
+- Nimbus-native persisted access-key management (T7 complete) by @jackspirou
+
+### D8.7
+
+- Five DynamoDB verification-harness cases (PR + nightly lanes) by @jackspirou
+
+### D9.1
+
+- Feature-parity coverage table (T0-T7) by @jackspirou
+
+### D9.3
+
+- Failure-injection + fail-closed proof by @jackspirou
+
+### D9.4
+
+- Tenant + auth isolation proof by @jackspirou
+
+### D9.5
+
+- Mixed-workload soak test by @jackspirou
+
+### D9.6
+
+- Performance benchmark baseline (p50/p95/p99 for every op family) by @jackspirou
+
+### D9.7
+
+- Enterprise-readiness closeout; verifier green (23 passed, 0 failed) by @jackspirou
+
+### Documentation
+
+- Correctness + consistency pass across all six groups by @jackspirou
+- **website**: Tighten landing hero to "your cloud, one binary" by @jackspirou
+- Retire dead docs/private links from package READMEs by @jackspirou
+- DXD1 — flip docs to autodetect + default-on adapter reality by @jackspirou
+- **site**: Editorial pass — nimbus dev-led landing, de-self-praised voice, Diátaxis heading fixes by @jackspirou
+- **site**: Agents group, value-ladder landing, deploy tutorial, title hygiene by @jackspirou
+- Favicon follows the page theme; unique page titles; Firebase tab by @jackspirou
+- **site**: Brand glyphs in the landing adapter tabs by @jackspirou
+- **site**: Landing tabs named by surface, all six proof snippets by @jackspirou
+- **agents**: LR13 — launch-readiness baseline archived by @jackspirou
+- **plans**: LR0 — launch-readiness verifier + proof bundle by @jackspirou
+- **plans**: Launch-readiness plan — close the 13-item docs-truth gap list by @jackspirou
+- **private**: DOC13 closeout — nimbus-docs-site plan done + archived by @jackspirou
+- **private**: DOC13 staging retirement sweep + editorial fix by @jackspirou
+- **agents**: DOC12 — .agents/skills migration + docs skill + AGENTS.md routing by @jackspirou
+- **repo**: DOC11 — README front door refactor + repo metadata by @jackspirou
+- **site**: DOC8 — llms-small.txt corpus tuning + scripts/check-docs.sh honesty gate by @jackspirou
+- **site**: DOC7 — public architecture pages + ARCHITECTURE.md rewrite by @jackspirou
+- **site**: DOC6 — Concepts core + CLI/configuration/SDK/capabilities reference by @jackspirou
+- **site**: DOC5 — Operators group, tenancy concepts, server reference by @jackspirou
+- **site**: DOC4 — Developers and adapter Reference corpus by @jackspirou
+- DOC3 — restructure docs/, five-group IA, landing, get-started by @jackspirou
+- DOC9 CI pipeline + DOC10 custom domain — nimbusdocs.com live by @jackspirou
+- Tighten verifier condition 3 against comment false-positive by @jackspirou
+- DOC2 design harmonization — theme tokens + DESIGN.md docs surface by @jackspirou
+- DOC0 verifier + DOC1 Starlight scaffold by @jackspirou
+- Archive completed dynamodb-adapter-plan by @jackspirou
+- Point NDB routing at archived plan path by @jackspirou
+- Close remaining NDB review items (minor + verifier rigor) by @jackspirou
+- Harden NDB plan after pre-execution review by @jackspirou
+
+### Fixed
+
+- **engine**: Close lost-wakeup race in applied-visibility wait by @jackspirou
+- **cli**: Close artifact-order race in convex adoption test by @jackspirou
+- **bin**: Machine API client deadlocked on Connection: close responses by @jackspirou
+- **ci,server**: Ring-backed rustls + make-wrapped LR12 lane by @jackspirou
+- **ci**: Finish the docs/private relocation sweep + D-Bus lane UI deps by @jackspirou
+- **repo**: Restore docs/private/* gitignore pattern + recover orphans by @jackspirou
+- **release**: LR11 — apt channel live + release->distribution dispatch by @jackspirou
+- Pool floor 8, pinned rustls provider, Waker::noop — three CI reds by @jackspirou
+- **storage**: Bounded wait before sqlite read-pool exhaustion by @jackspirou
+- **bin**: Retry one-shot machine-API test requests on accept races by @jackspirou
+- **runtime**: Convert warm-pool partition test to invocation-kind reuse by @jackspirou
+- **nds**: Release-train proof gate paths + regenerated artifacts by @jackspirou
+- **runtime,ci**: Restore node22 grant contracts + finish stale-path sweep by @jackspirou
+- **ci**: Repair the two remaining red-main causes beyond the path hotfix by @jackspirou
+- Repair stale docs/private/staging/architecture paths in crates + NDS scripts by @jackspirou
+- Remediate full code review findings by @jackspirou
+- **ndb3**: Idempotent Manager.Subscribe (AlreadySubscribed) by @jackspirou
+
+### Miscellaneous
+
+- Point dev-autodetect verifier at the archived plan path by @jackspirou
+- Baseline service backend refactor by @jackspirou
+- Baseline workspace before service backend refactor by @jackspirou
+
+### Styling
+
+- Rustfmt the NDB systemd D-Bus binding by @jackspirou
+
+### Design
+
+- Nav lockup spacing, ink-cropped transparent marks, favicon tile by @jackspirou
+- Unify the sky-cycle default theme across console, docs, and brand by @jackspirou
+
+### Dev
+
+- DXL2 — mid-session app-adapter adoption through the boot-time flow by @jackspirou
+- DXL1 — live manifest re-detection with presentation-only adoption by @jackspirou
+- DXW2 — shared persisted wire credentials + Nimbus-owned .env.local keys by @jackspirou
+- D7 — start serves all adapters by default; reshape verifier condition 3 by @jackspirou
+- D6 — always-available wire listeners; reshape verifier condition 10 by @jackspirou
+- DXW1 — wire-surface detection reads runtime dependencies only by @jackspirou
+
+### Dev-autodetect
+
+- DXF5 — client-app loop semantics by @jackspirou
+- DXF4 — projectId→tenant mapping with live round-trip by @jackspirou
+- DXF1-DXF3 — scan-gated FirestoreClient detection + wiring by @jackspirou
+- DXA2 — always-on Firestore routes in dev by @jackspirou
+- DXA1 — app-adapter/wire-surface model split by @jackspirou
+- DXA0 — completion-gate verifier scaffold by @jackspirou
+
+### Hardening
+
+- **H7**: Evidence rigor + doc accuracy; plan complete by @jackspirou
+- **H6**: Query skips non-scalar/absent index keys instead of aborting by @jackspirou
+- **H5**: Reserved-tenant guard + redacted access-key listing by @jackspirou
+- **H4**: DeleteTable reclaims stream/streamseq/ttl/tag sidecars by @jackspirou
+- **H3**: Atomic stream capture for batch/transact + atomic sequencing by @jackspirou
+- **H2**: Atomic single-item + catalog writes, close conditional TOCTOU by @jackspirou
+- **H1**: Bind SigV4 body, harden auth robustness, strict-by-default by @jackspirou
+- Scaffold verifier + promote plan to in_progress by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.33...v0.1.34
+
+## [0.1.33] - 2026-05-26
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.33 by @github-actions[bot]
+- Update CHANGELOG.md for v0.1.32 by @github-actions[bot]
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.32...v0.1.33
+
+## [0.1.32] - 2026-05-26
+
 ### A1+A2
 
 - Codegen types every query result; lift ServiceDoc; drop casts by @jackspirou
@@ -350,28 +547,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **website**: Theme-aware favicon with brand sky tile by @jackspirou
-- **cli**: DXW3 — start serves all adapters by default, store-backed (D7) by @jackspirou
-- **dev**: Firebase migration hint on no-adapter; shorter landing tab comments by @jackspirou
-- **provision**: Auto-wire app package.json deps; landing shows migration commands by @jackspirou
-- **firebase**: Drop-in firebase package — stock imports work unchanged by @jackspirou
-- **cli**: LR12 — nimbus node run, the reconciler's production caller by @jackspirou
-- **packaging**: LR10 — ship a hardened systemd unit in deb/rpm by @jackspirou
-- **cli,engine**: LR9 — nimbus backup create/restore on SEQ8 archives by @jackspirou
-- **server,bin**: LR8 — in-server TLS termination for the main listener by @jackspirou
-- **sdk**: LR7 — rest.ts matches the server, with a 3-sided parity guard by @jackspirou
-- **cli**: LR6 — nimbus start enables Firestore, MongoDB, and DynamoDB by @jackspirou
-- **server,bin**: LR5 — configurable CORS origins by @jackspirou
-- **bin**: LR4 — public-bind rotation gate: explicit-once, age advisory by @jackspirou
-- **sdk**: LR3 — remove the dead X-Nimbus-Api-Key credential path by @jackspirou
-- **cli**: LR2 — nimbus deploy passes the AdminHeaderOnly gate by @jackspirou
-- **ndb7**: Default systemd-dbus + linux factory + operator doc by @jackspirou
-- **ndb6**: Node-dbus-integration CI lane on ubuntu-24.04 by @jackspirou
-- **ndb5**: Linux-gated live systemd integration tests by @jackspirou
-- **ndb4**: Zbus error taxonomy + nimbus_core Transport/NotFound by @jackspirou
-- **ndb3**: Signal-correlated completion + property encoder by @jackspirou
-- **ndb2**: ZbusSystemdClient skeleton + capability probe by @jackspirou
-- **ndb1**: Wire zbus_systemd + zbus behind systemd-dbus feature by @jackspirou
 - Add node workload reconciler by @jackspirou
 - Wire tenant lifecycle evidence by @jackspirou
 - Add compose quadlet export by @jackspirou
@@ -380,8 +555,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add direct process backend by @jackspirou
 - Add host lifecycle seam by @jackspirou
 - Add local enforcement binding by @jackspirou
-- Support native neovex source roots by @jackspirou
-- Close out CLI alignment and add install tooling by @jackspirou
 
 ### Appearance
 
@@ -402,29 +575,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Baseline
 
 - Capture in-flight plan, system-tenant, machine, and verification work by @jackspirou
-
-### Build
-
-- Refresh Cargo.lock for v0.1.21 by @jackspirou
-- Patch rustls-webpki and stabilize runtime coverage by @jackspirou
-- Refresh vite and typescript toolchain by @jackspirou
-- Add linux distribution release tooling by @jackspirou
-- Use stable machine-os workflow ref by @jackspirou
-- Repin machine-os workflow refs by @jackspirou
-- Cache rusty_v8 artifacts by @jackspirou
-- Repin machine-os performance updates by @jackspirou
-- Shorten release critical path by @jackspirou
-- Fix machine-os workflow pin by @jackspirou
-- Reuse staged machine-os release bundles by @jackspirou
-- Switch machine-os release flow to app auth by @jackspirou
-- Repin machine-os reusable workflow by @jackspirou
-- Use reusable machine-os release workflow by @jackspirou
-- Dispatch native machine-os releases by @jackspirou
-- Bump workspace to v0.1.3 by @jackspirou
-- Pin machine-os release workflow contract by @jackspirou
-- Bump workspace to v0.1.2 by @jackspirou
-- Bump workspace to v0.1.1 by @jackspirou
-- Patch rustls-webpki advisory by @jackspirou
 
 ### CA0
 
@@ -508,31 +658,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Unblock workspace + desktop-ui + cargo deny lanes by @jackspirou
 - Generate nimbus-ui convex codegen before cargo workspace jobs by @jackspirou
-- Stabilize test lanes and node compat catalogs by @jackspirou
-- Title case harness check names by @jackspirou
-- Make harness gate names event-neutral by @jackspirou
-- Speed workspace tests with nextest by @jackspirou
-- Clarify workflow gate names by @jackspirou
-- Stabilize checks after locker repin by @jackspirou
-- Split Rust gates and trim coverage by @jackspirou
-- Fix linux sqlcipher package proof by @jackspirou
-- Refresh GitHub Actions versions by @jackspirou
-- Restore release target caching safely by @jackspirou
-- Avoid stale release target caches by @jackspirou
-- Opt release workflow into node24 actions by @jackspirou
-- Make machine-os watcher attempt-aware by @jackspirou
-- Document rerun-safe artifact naming by @jackspirou
-- Stabilize machine-os staged artifact naming by @jackspirou
-- Release machine-os before neovex by @jackspirou
-- Dispatch machine-os publish workflow by @jackspirou
-- Harden workflow timeouts and permissions by @jackspirou
-- Use authenticated googlesource path and update Cargo.lock by @jackspirou
-- Add googlesource auth and cache-on-failure to all Rust jobs by @jackspirou
-- Add Rust toolchain and cargo cache to deny job by @jackspirou
-- Mark all workspace crates as unpublished for cargo-deny by @jackspirou
-- Fix deny.toml for workspace custom license and path deps by @jackspirou
-- Fix deny.toml for cargo-deny 0.19.0 by @jackspirou
-- Fix deny.toml config, add weekly audit schedule, dependabot, and codecov config by @jackspirou
 
 ### CM0
 
@@ -584,66 +709,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **cli**: Render wire surfaces from one presentation list + adapter status in start summary by @jackspirou
-- **cli**: Dev-loop hygiene — adoption outcomes as data, cached covered set by @jackspirou
-- **server**: Add WireProtocolAdapter seam for sibling listeners by @jackspirou
-- **server**: Make Firestore REST auth structural via route-layer middleware by @jackspirou
-- **cli**: Decompose dev.rs — tests to dev/tests/, firebase wiring to dev/firebase.rs by @jackspirou
-- **repo**: Docs/private goes fully untracked; pipeline inputs move by @jackspirou
-- **bin**: LR1 — finish Service->Engine naming in start/ by @jackspirou
 - Extract nimbus node crate by @jackspirou
 - Extract pure tenant crate by @jackspirou
 - Move artifact verifier effects out of tenant by @jackspirou
 - Audit tenant crate boundary by @jackspirou
 - Rename tenant isolation module path by @jackspirou
-
-### D5.5
-
-- ListStreams + read-triggered retention (T5 Streams complete) by @jackspirou
-
-### D6.1
-
-- UpdateTimeToLive + DescribeTimeToLive (T6 begins) by @jackspirou
-
-### D6.2
-
-- TTL sweeper integration by @jackspirou
-
-### D6.3
-
-- Tagging surface (T6 complete; full T0-T6 op surface) by @jackspirou
-
-### D7.3
-
-- Nimbus-native persisted access-key management (T7 complete) by @jackspirou
-
-### D8.7
-
-- Five DynamoDB verification-harness cases (PR + nightly lanes) by @jackspirou
-
-### D9.1
-
-- Feature-parity coverage table (T0-T7) by @jackspirou
-
-### D9.3
-
-- Failure-injection + fail-closed proof by @jackspirou
-
-### D9.4
-
-- Tenant + auth isolation proof by @jackspirou
-
-### D9.5
-
-- Mixed-workload soak test by @jackspirou
-
-### D9.6
-
-- Performance benchmark baseline (p50/p95/p99 for every op family) by @jackspirou
-
-### D9.7
-
-- Enterprise-readiness closeout; verifier green (23 passed, 0 failed) by @jackspirou
 
 ### DA1
 
@@ -765,72 +835,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- Correctness + consistency pass across all six groups by @jackspirou
-- **website**: Tighten landing hero to "your cloud, one binary" by @jackspirou
-- Retire dead docs/private links from package READMEs by @jackspirou
-- DXD1 — flip docs to autodetect + default-on adapter reality by @jackspirou
-- **site**: Editorial pass — nimbus dev-led landing, de-self-praised voice, Diátaxis heading fixes by @jackspirou
-- **site**: Agents group, value-ladder landing, deploy tutorial, title hygiene by @jackspirou
-- Favicon follows the page theme; unique page titles; Firebase tab by @jackspirou
-- **site**: Brand glyphs in the landing adapter tabs by @jackspirou
-- **site**: Landing tabs named by surface, all six proof snippets by @jackspirou
-- **agents**: LR13 — launch-readiness baseline archived by @jackspirou
-- **plans**: LR0 — launch-readiness verifier + proof bundle by @jackspirou
-- **plans**: Launch-readiness plan — close the 13-item docs-truth gap list by @jackspirou
-- **private**: DOC13 closeout — nimbus-docs-site plan done + archived by @jackspirou
-- **private**: DOC13 staging retirement sweep + editorial fix by @jackspirou
-- **agents**: DOC12 — .agents/skills migration + docs skill + AGENTS.md routing by @jackspirou
-- **repo**: DOC11 — README front door refactor + repo metadata by @jackspirou
-- **site**: DOC8 — llms-small.txt corpus tuning + scripts/check-docs.sh honesty gate by @jackspirou
-- **site**: DOC7 — public architecture pages + ARCHITECTURE.md rewrite by @jackspirou
-- **site**: DOC6 — Concepts core + CLI/configuration/SDK/capabilities reference by @jackspirou
-- **site**: DOC5 — Operators group, tenancy concepts, server reference by @jackspirou
-- **site**: DOC4 — Developers and adapter Reference corpus by @jackspirou
-- DOC3 — restructure docs/, five-group IA, landing, get-started by @jackspirou
-- DOC9 CI pipeline + DOC10 custom domain — nimbusdocs.com live by @jackspirou
-- Tighten verifier condition 3 against comment false-positive by @jackspirou
-- DOC2 design harmonization — theme tokens + DESIGN.md docs surface by @jackspirou
-- DOC0 verifier + DOC1 Starlight scaffold by @jackspirou
-- Archive completed dynamodb-adapter-plan by @jackspirou
-- Point NDB routing at archived plan path by @jackspirou
-- Close remaining NDB review items (minor + verifier rigor) by @jackspirou
-- Harden NDB plan after pre-execution review by @jackspirou
-- Update CHANGELOG.md for v0.1.33 by @github-actions[bot]
-- Update CHANGELOG.md for v0.1.32 by @github-actions[bot]
 - Scaffold node dbus client binding plan by @jackspirou
 - Clarify node lifecycle surfaces by @jackspirou
 - Define local enforcement boundary by @jackspirou
 - Align tenant module naming by @jackspirou
 - Update CHANGELOG.md for v0.1.31 by @github-actions[bot]
-- Update CHANGELOG.md for v0.1.30 by @github-actions[bot]
-- Update CHANGELOG.md for v0.1.29 by @github-actions[bot]
-- Update CHANGELOG.md for v0.1.28 by @github-actions[bot]
-- Update runtime compatibility and rename plans by @jackspirou
-- Archive encryption at rest plan by @jackspirou
-- Add generated node lts baseline by @jackspirou
-- Update CHANGELOG.md for v0.1.22 by @github-actions[bot]
-- Promote maintainability control plan by @jackspirou
-- Update CHANGELOG.md for v0.1.20 by @github-actions[bot]
-- Update CHANGELOG.md for v0.1.18 by @github-actions[bot]
-- Update CHANGELOG.md for v0.1.17 by @github-actions[bot]
-- Update CHANGELOG.md for v0.1.16 by @github-actions[bot]
-- Update CHANGELOG.md for v0.1.15 by @github-actions[bot]
-- Update CHANGELOG.md for v0.1.14 by @github-actions[bot]
-- Add storage and rename planning research by @jackspirou
-- Update CHANGELOG.md for v0.1.11 by @github-actions[bot]
-- Fix mermaid edge label syntax in bootc evaluation by @jackspirou
-- Add bootc adoption evaluation research by @jackspirou
-- Update CHANGELOG.md for v0.1.10 by @github-actions[bot]
-- Add machine flow and deferred machine plans by @jackspirou
-- Update CHANGELOG.md for v0.1.8 by @github-actions[bot]
-- Update CHANGELOG.md for v0.1.7 by @github-actions[bot]
-- Update CHANGELOG.md for v0.1.5 by @github-actions[bot]
-- Update CHANGELOG.md for v0.1.4 by @github-actions[bot]
-- Update CHANGELOG.md for v0.1.3 by @github-actions[bot]
-- Harden machine image release contract by @jackspirou
-- Add macos machine support control plane by @jackspirou
-- Archive external SQL provider plan by @jackspirou
-- Restructure repo guidance and codex roadmap control plane by @jackspirou
 
 ### EPS0-EPS2
 
@@ -886,42 +895,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **engine**: Close lost-wakeup race in applied-visibility wait by @jackspirou
-- **cli**: Close artifact-order race in convex adoption test by @jackspirou
-- **bin**: Machine API client deadlocked on Connection: close responses by @jackspirou
-- **ci,server**: Ring-backed rustls + make-wrapped LR12 lane by @jackspirou
-- **ci**: Finish the docs/private relocation sweep + D-Bus lane UI deps by @jackspirou
-- **repo**: Restore docs/private/* gitignore pattern + recover orphans by @jackspirou
-- **release**: LR11 — apt channel live + release->distribution dispatch by @jackspirou
-- Pool floor 8, pinned rustls provider, Waker::noop — three CI reds by @jackspirou
-- **storage**: Bounded wait before sqlite read-pool exhaustion by @jackspirou
-- **bin**: Retry one-shot machine-API test requests on accept races by @jackspirou
-- **runtime**: Convert warm-pool partition test to invocation-kind reuse by @jackspirou
-- **nds**: Release-train proof gate paths + regenerated artifacts by @jackspirou
-- **runtime,ci**: Restore node22 grant contracts + finish stale-path sweep by @jackspirou
-- **ci**: Repair the two remaining red-main causes beyond the path hotfix by @jackspirou
-- Repair stale docs/private/staging/architecture paths in crates + NDS scripts by @jackspirou
-- Remediate full code review findings by @jackspirou
-- **ndb3**: Idempotent Manager.Subscribe (AlreadySubscribed) by @jackspirou
 - Catch up materialized serving snapshots by @jackspirou
-- Satisfy runtime linux clippy by @jackspirou
-- Declare runtime libc dependency by @jackspirou
-- Complete neovex→nimbus rename in remaining files by @jackspirou
-- Fix hex encoding allocation, stale doc reference, add license path tests by @jackspirou
-- Fix sanitize_dir_name edge cases, hoist allocation in env_local writer by @jackspirou
-- Gate cli progress helpers to unix builds by @jackspirou
-- Gate unix-only protocol imports by @jackspirou
-- Gate unix machine types on windows by @jackspirou
-- Repair v0.1.10 ci lanes by @jackspirou
-- Grant reusable machine-os workflow write access by @jackspirou
-- Pin valid machine-os workflow commit by @jackspirou
-- Use valid release workflow step ids by @jackspirou
-- Match machine-os release run names by @jackspirou
-- Account worker load before dispatch send by @jackspirou
-- Narrow windows machine compilation seams by @jackspirou
-- Gate machine module on unix hosts by @jackspirou
-- Isolate cooperative locker tests and annotate V8 reset repro by @jackspirou
-- **deps**: Update Cargo.lock to submodule-free rusty_v8 tag by @jackspirou
 
 ### H1
 
@@ -985,12 +959,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Miscellaneous
 
-- Point dev-autodetect verifier at the archived plan path by @jackspirou
-- Baseline service backend refactor by @jackspirou
-- Baseline workspace before service backend refactor by @jackspirou
 - Update tenant crate lockfile by @jackspirou
 - Checkpoint current workspace baseline by @jackspirou
-- Checkpoint remaining workspace changes by @jackspirou
 
 ### PW0
 
@@ -1115,27 +1085,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bump actions/create-github-app-token v3.2.0 -> v3 by @jackspirou
 - Closure — archive Phase 1 + Phase 2 plans by @jackspirou
 
-### Styling
-
-- Rustfmt the NDB systemd D-Bus binding by @jackspirou
-
 ### Testing
 
 - Add tenant node extraction verifier by @jackspirou
-- Serialize Postgres provider fixtures by @jackspirou
-- Widen postgres repeated CRUD timeout by @jackspirou
-- Harden runtime isolation under coverage by @jackspirou
-- Bound postgres repeated crud lane by @jackspirou
-- Fix machine contract assertions off macOS by @jackspirou
-- Fix krun fake buildah unshare parsing by @jackspirou
-- Harden executable test stubs by @jackspirou
-- Run krun fake buildah via shell by @jackspirou
-- Harden fake buildah script publishing by @jackspirou
-- Invoke fake buildah via shell launcher by @jackspirou
-- Close fake buildah temp path before exec by @jackspirou
-- Harden fake buildah helper creation by @jackspirou
-- Derive machine image version from crate version by @jackspirou
-- Ignore snapshot-aware reset repro that SIGABRTs on cycle 2 by @jackspirou
 
 ### UL1
 
@@ -1197,82 +1149,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Lift Auth Token chip above Other ways to login disclosure by @jackspirou
 - Rename label to Local Token, demote token chip into disclosure by @jackspirou
 
-### Cargo
+### Nimbus-bin
 
-- Inherit workspace package metadata by @jackspirou
+- Silence unused-import warnings on Windows release by @jackspirou
+
+### Ui
+
+- Scrub leftover /app and /admin refs missed by rename pass by @jackspirou
+- Rename persona URL prefixes /app→/developer, /admin→/operator by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.31...v0.1.32
+
+## [0.1.31] - 2026-05-14
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.30 by @github-actions[bot]
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.30...v0.1.31
+
+## [0.1.30] - 2026-05-14
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.29 by @github-actions[bot]
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.29...v0.1.30
+
+## [0.1.29] - 2026-05-14
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.28 by @github-actions[bot]
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.28...v0.1.29
+
+## [0.1.28] - 2026-05-14
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.27...v0.1.28
+
+## [0.1.27] - 2026-05-14
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.26...v0.1.27
+
+## [0.1.26] - 2026-05-14
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.25...v0.1.26
+
+## [0.1.25] - 2026-05-14
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.24...v0.1.25
+
+## [0.1.24] - 2026-05-14
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.23...v0.1.24
+
+## [0.1.23] - 2026-05-14
+
+### CI/CD
+
+- Stabilize test lanes and node compat catalogs by @jackspirou
+- Title case harness check names by @jackspirou
+- Make harness gate names event-neutral by @jackspirou
+- Speed workspace tests with nextest by @jackspirou
+- Clarify workflow gate names by @jackspirou
+- Stabilize checks after locker repin by @jackspirou
+- Split Rust gates and trim coverage by @jackspirou
+- Fix linux sqlcipher package proof by @jackspirou
+
+### Documentation
+
+- Update runtime compatibility and rename plans by @jackspirou
+- Archive encryption at rest plan by @jackspirou
+- Add generated node lts baseline by @jackspirou
+- Update CHANGELOG.md for v0.1.22 by @github-actions[bot]
+
+### Fixed
+
+- Satisfy runtime linux clippy by @jackspirou
+- Declare runtime libc dependency by @jackspirou
+- Complete neovex→nimbus rename in remaining files by @jackspirou
+- Fix hex encoding allocation, stale doc reference, add license path tests by @jackspirou
+- Fix sanitize_dir_name edge cases, hoist allocation in env_local writer by @jackspirou
 
 ### Cli
 
 - Harden onboarding flow and add node runtime plan by @jackspirou
 
-### Codegen
-
-- Replace compile-time new Function paths by @jackspirou
-
 ### Deps
 
 - Repin Deno fork to rusty_v8 locker release by @jackspirou
 - Repin Deno fork security release by @jackspirou
-
-### Design
-
-- Nav lockup spacing, ink-cropped transparent marks, favicon tile by @jackspirou
-- Unify the sky-cycle default theme across console, docs, and brand by @jackspirou
-
-### Dev
-
-- DXL2 — mid-session app-adapter adoption through the boot-time flow by @jackspirou
-- DXL1 — live manifest re-detection with presentation-only adoption by @jackspirou
-- DXW2 — shared persisted wire credentials + Nimbus-owned .env.local keys by @jackspirou
-- D7 — start serves all adapters by default; reshape verifier condition 3 by @jackspirou
-- D6 — always-available wire listeners; reshape verifier condition 10 by @jackspirou
-- DXW1 — wire-surface detection reads runtime dependencies only by @jackspirou
-
-### Dev-autodetect
-
-- DXF5 — client-app loop semantics by @jackspirou
-- DXF4 — projectId→tenant mapping with live round-trip by @jackspirou
-- DXF1-DXF3 — scan-gated FirestoreClient detection + wiring by @jackspirou
-- DXA2 — always-on Firestore routes in dev by @jackspirou
-- DXA1 — app-adapter/wire-surface model split by @jackspirou
-- DXA0 — completion-gate verifier scaffold by @jackspirou
-
-### Dist
-
-- Ship bundled gvproxy for macos by @jackspirou
-
-### Engine
-
-- Move provider behavior behind capability methods by @jackspirou
-- Relax concurrent materialized load assertion by @jackspirou
-
-### Hardening
-
-- **H7**: Evidence rigor + doc accuracy; plan complete by @jackspirou
-- **H6**: Query skips non-scalar/absent index keys instead of aborting by @jackspirou
-- **H5**: Reserved-tenant guard + redacted access-key listing by @jackspirou
-- **H4**: DeleteTable reclaims stream/streamseq/ttl/tag sidecars by @jackspirou
-- **H3**: Atomic stream capture for batch/transact + atomic sequencing by @jackspirou
-- **H2**: Atomic single-item + catalog writes, close conditional TOCTOU by @jackspirou
-- **H1**: Bind SigV4 body, harden auth robustness, strict-by-default by @jackspirou
-- Scaffold verifier + promote plan to in_progress by @jackspirou
-
-### Machine
-
-- Reflect guest override in non-unix stub by @jackspirou
-- Fix stale client fixtures and clippy by @jackspirou
-- Harden macos convergence path by @jackspirou
-- Harden guest api and service control by @jackspirou
-
-### Nimbus-bin
-
-- Silence unused-import warnings on Windows release by @jackspirou
-
-### Release
-
-- V0.1.21 by @jackspirou
-- Prepare v0.1.10 by @jackspirou
-- Prepare v0.1.9 by @jackspirou
 
 ### Rename
 
@@ -1281,7 +1266,200 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Runtime
 
 - Land node22 groundwork and lts plan by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.22...v0.1.23
+
+## [0.1.22] - 2026-04-24
+
+### Codegen
+
+- Replace compile-time new Function paths by @jackspirou
+
+### Engine
+
+- Move provider behavior behind capability methods by @jackspirou
+
+### Runtime
+
 - Make service activation async and type the host ABI by @jackspirou
+
+### Server
+
+- Harden localhost access surface by @jackspirou
+
+### Workspace
+
+- Curate facade and JS verification contract by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.21...v0.1.22
+
+## [0.1.21] - 2026-04-23
+
+### Added
+
+- Support native neovex source roots by @jackspirou
+
+### Build
+
+- Refresh Cargo.lock for v0.1.21 by @jackspirou
+- Patch rustls-webpki and stabilize runtime coverage by @jackspirou
+- Refresh vite and typescript toolchain by @jackspirou
+
+### CI/CD
+
+- Refresh GitHub Actions versions by @jackspirou
+
+### Documentation
+
+- Promote maintainability control plan by @jackspirou
+- Update CHANGELOG.md for v0.1.20 by @github-actions[bot]
+
+### Testing
+
+- Serialize Postgres provider fixtures by @jackspirou
+
+### Release
+
+- V0.1.21 by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.20...v0.1.21
+
+## [0.1.20] - 2026-04-19
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.18 by @github-actions[bot]
+
+### Fixed
+
+- Gate cli progress helpers to unix builds by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.19...v0.1.20
+
+## [0.1.19] - 2026-04-19
+
+### Added
+
+- Close out CLI alignment and add install tooling by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.18...v0.1.19
+
+## [0.1.18] - 2026-04-19
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.17 by @github-actions[bot]
+
+### Testing
+
+- Widen postgres repeated CRUD timeout by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.17...v0.1.18
+
+## [0.1.17] - 2026-04-19
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.16 by @github-actions[bot]
+- Update CHANGELOG.md for v0.1.15 by @github-actions[bot]
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.16...v0.1.17
+
+## [0.1.16] - 2026-04-19
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.15...v0.1.16
+
+## [0.1.15] - 2026-04-19
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.14 by @github-actions[bot]
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.14...v0.1.15
+
+## [0.1.14] - 2026-04-18
+
+### Machine
+
+- Reflect guest override in non-unix stub by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.13...v0.1.14
+
+## [0.1.13] - 2026-04-18
+
+### Documentation
+
+- Add storage and rename planning research by @jackspirou
+
+### Testing
+
+- Harden runtime isolation under coverage by @jackspirou
+- Bound postgres repeated crud lane by @jackspirou
+- Fix machine contract assertions off macOS by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.12...v0.1.13
+
+## [0.1.12] - 2026-04-18
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.11 by @github-actions[bot]
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.11...v0.1.12
+
+## [0.1.11] - 2026-04-18
+
+### Build
+
+- Add linux distribution release tooling by @jackspirou
+
+### Documentation
+
+- Fix mermaid edge label syntax in bootc evaluation by @jackspirou
+- Add bootc adoption evaluation research by @jackspirou
+- Update CHANGELOG.md for v0.1.10 by @github-actions[bot]
+
+### Cargo
+
+- Inherit workspace package metadata by @jackspirou
+
+### Dist
+
+- Ship bundled gvproxy for macos by @jackspirou
+
+### Engine
+
+- Relax concurrent materialized load assertion by @jackspirou
+
+### Machine
+
+- Fix stale client fixtures and clippy by @jackspirou
+- Harden macos convergence path by @jackspirou
+- Harden guest api and service control by @jackspirou
 
 ### Sandbox
 
@@ -1291,23 +1469,252 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Server
 
-- Harden localhost access surface by @jackspirou
 - Collapse index read tracking match guards by @jackspirou
 
-### Ui
 
-- Scrub leftover /app and /admin refs missed by rename pass by @jackspirou
-- Rename persona URL prefixes /app→/developer, /admin→/operator by @jackspirou
 
-### Workspace
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.10...v0.1.11
 
-- Curate facade and JS verification contract by @jackspirou
+## [0.1.10] - 2026-04-17
+
+### CI/CD
+
+- Restore release target caching safely by @jackspirou
+- Avoid stale release target caches by @jackspirou
+
+### Fixed
+
+- Gate unix-only protocol imports by @jackspirou
+- Gate unix machine types on windows by @jackspirou
+- Repair v0.1.10 ci lanes by @jackspirou
+
+### Release
+
+- Prepare v0.1.10 by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.9...v0.1.10
+
+## [0.1.9] - 2026-04-17
+
+### Documentation
+
+- Add machine flow and deferred machine plans by @jackspirou
+- Update CHANGELOG.md for v0.1.8 by @github-actions[bot]
+
+### Testing
+
+- Fix krun fake buildah unshare parsing by @jackspirou
+- Harden executable test stubs by @jackspirou
+- Run krun fake buildah via shell by @jackspirou
+- Harden fake buildah script publishing by @jackspirou
+
+### Release
+
+- Prepare v0.1.9 by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.8...v0.1.9
+
+## [0.1.8] - 2026-04-16
+
+### CI/CD
+
+- Opt release workflow into node24 actions by @jackspirou
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.7 by @github-actions[bot]
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.7...v0.1.8
+
+## [0.1.7] - 2026-04-16
+
+### CI/CD
+
+- Make machine-os watcher attempt-aware by @jackspirou
+- Document rerun-safe artifact naming by @jackspirou
+- Stabilize machine-os staged artifact naming by @jackspirou
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.5 by @github-actions[bot]
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.6...v0.1.7
+
+## [0.1.6] - 2026-04-16
+
+### CI/CD
+
+- Release machine-os before neovex by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.5...v0.1.6
+
+## [0.1.5] - 2026-04-15
+
+### CI/CD
+
+- Dispatch machine-os publish workflow by @jackspirou
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.4 by @github-actions[bot]
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.4...v0.1.5
+
+## [0.1.4] - 2026-04-15
+
+### Build
+
+- Use stable machine-os workflow ref by @jackspirou
+- Repin machine-os workflow refs by @jackspirou
+- Cache rusty_v8 artifacts by @jackspirou
+- Repin machine-os performance updates by @jackspirou
+- Shorten release critical path by @jackspirou
+- Fix machine-os workflow pin by @jackspirou
+- Reuse staged machine-os release bundles by @jackspirou
+- Switch machine-os release flow to app auth by @jackspirou
+- Repin machine-os reusable workflow by @jackspirou
+- Use reusable machine-os release workflow by @jackspirou
+- Dispatch native machine-os releases by @jackspirou
+
+### CI/CD
+
+- Harden workflow timeouts and permissions by @jackspirou
+
+### Documentation
+
+- Update CHANGELOG.md for v0.1.3 by @github-actions[bot]
+
+### Fixed
+
+- Grant reusable machine-os workflow write access by @jackspirou
+- Pin valid machine-os workflow commit by @jackspirou
+- Use valid release workflow step ids by @jackspirou
+- Match machine-os release run names by @jackspirou
+- Account worker load before dispatch send by @jackspirou
+
+### Testing
+
+- Invoke fake buildah via shell launcher by @jackspirou
+- Close fake buildah temp path before exec by @jackspirou
+- Harden fake buildah helper creation by @jackspirou
 
 ### New Contributors
-* @jackspirou made their first contribution
 * @github-actions[bot] made their first contribution
 
 
-**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.33...v0.1.34
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.3...v0.1.4
+
+## [0.1.3] - 2026-04-15
+
+### Build
+
+- Bump workspace to v0.1.3 by @jackspirou
+- Pin machine-os release workflow contract by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.2...v0.1.3
+
+## [0.1.2] - 2026-04-15
+
+### Build
+
+- Bump workspace to v0.1.2 by @jackspirou
+
+### Fixed
+
+- Narrow windows machine compilation seams by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.1...v0.1.2
+
+## [0.1.1] - 2026-04-15
+
+### Build
+
+- Bump workspace to v0.1.1 by @jackspirou
+- Patch rustls-webpki advisory by @jackspirou
+
+### Fixed
+
+- Gate machine module on unix hosts by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.0...v0.1.1
+
+## [0.1.0] - 2026-04-15
+
+### Documentation
+
+- Harden machine image release contract by @jackspirou
+
+### Testing
+
+- Derive machine image version from crate version by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/machine-os/v0.1.2...v0.1.0
+
+## [machine-os/v0.1.2] - 2026-04-14
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/machine-os/v0.1.1...machine-os/v0.1.2
+
+## [machine-os/v0.1.1] - 2026-04-14
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/machine-os/v0.1.0...machine-os/v0.1.1
+
+## [machine-os/v0.1.0] - 2026-04-14
+
+### CI/CD
+
+- Use authenticated googlesource path and update Cargo.lock by @jackspirou
+- Add googlesource auth and cache-on-failure to all Rust jobs by @jackspirou
+- Add Rust toolchain and cargo cache to deny job by @jackspirou
+- Mark all workspace crates as unpublished for cargo-deny by @jackspirou
+- Fix deny.toml for workspace custom license and path deps by @jackspirou
+- Fix deny.toml for cargo-deny 0.19.0 by @jackspirou
+- Fix deny.toml config, add weekly audit schedule, dependabot, and codecov config by @jackspirou
+
+### Documentation
+
+- Add macos machine support control plane by @jackspirou
+- Archive external SQL provider plan by @jackspirou
+- Restructure repo guidance and codex roadmap control plane by @jackspirou
+
+### Fixed
+
+- Isolate cooperative locker tests and annotate V8 reset repro by @jackspirou
+- **deps**: Update Cargo.lock to submodule-free rusty_v8 tag by @jackspirou
+
+### Miscellaneous
+
+- Checkpoint remaining workspace changes by @jackspirou
+
+### Testing
+
+- Ignore snapshot-aware reset repro that SIGABRTs on cycle 2 by @jackspirou
+
+### New Contributors
+* @jackspirou made their first contribution
+
 
 <!-- generated by git-cliff -->
