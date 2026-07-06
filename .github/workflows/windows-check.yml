@@ -66,6 +66,7 @@ jobs:
         run: |
           npm ci
           npm run build
+          npm run build:embedded-packages
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
