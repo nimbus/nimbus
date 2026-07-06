@@ -112,4 +112,25 @@ fi
 grep -F "expected path missing: " "${output_dir}/bad-vfkit.txt" >/dev/null
 grep -F "libexec/vfkit" "${output_dir}/bad-vfkit.txt" >/dev/null
 
-printf 'verified: release archive layout helper accepts the bundled macOS gvproxy + vfkit layout and rejects a missing gvproxy helper, missing vfkit helper, or missing LICENSE payloads\n'
+# --skip-windows: windows zip must be ABSENT (pass) ...
+skipwin_artifacts="${output_dir}/skipwin"
+cp -R "${good_artifacts}" "${skipwin_artifacts}"
+rm -f "${skipwin_artifacts}/nimbus_windows_x86_64.zip"
+bash "${repo_root}/scripts/verify-release-archive-layout.sh" \
+  --artifacts-dir "${skipwin_artifacts}" \
+  --skip-windows \
+  > "${output_dir}/skipwin.txt" 2>&1
+
+# ... and a PRESENT windows zip under --skip-windows must FAIL (a stale
+# artifact must not masquerade as a fresh build).
+if bash "${repo_root}/scripts/verify-release-archive-layout.sh" \
+  --artifacts-dir "${good_artifacts}" \
+  --skip-windows \
+  > "${output_dir}/skipwin-stale.txt" 2>&1; then
+  echo "expected verification to fail when --skip-windows finds a windows zip" >&2
+  exit 1
+fi
+grep -F "unexpected path present: " "${output_dir}/skipwin-stale.txt" >/dev/null
+grep -F "nimbus_windows_x86_64.zip" "${output_dir}/skipwin-stale.txt" >/dev/null
+
+printf 'verified: release archive layout helper accepts the bundled macOS gvproxy + vfkit layout, rejects a missing gvproxy helper, missing vfkit helper, or missing LICENSE payloads, and enforces --skip-windows absent-zip semantics\n'

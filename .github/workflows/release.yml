@@ -258,13 +258,19 @@ jobs:
             esbuild_platform: darwin-arm64
             archive: tar.gz
             runtime_feature_mode: ptrcomp
-          - target: x86_64-pc-windows-msvc
-            runner: windows-latest
-            os: windows
-            arch: x86_64
-            esbuild_platform: win32-x64
-            archive: zip
-            runtime_feature_mode: non-ptrcomp
+          # Windows x86_64 — TEMPORARILY OUT of the release matrix
+          # (2026-07-06): K11P/SELH-era code (nimbus-proxy pingora_io,
+          # nimbus-sandbox OCI egress/netns) grew unix-only APIs with no
+          # Windows lane to catch them; restoration is tracked work that
+          # starts with a PR-time `cargo check --target x86_64-pc-windows-msvc`
+          # lane so fixes get fast feedback, then re-enable this entry.
+          # - target: x86_64-pc-windows-msvc
+          #   runner: windows-latest
+          #   os: windows
+          #   arch: x86_64
+          #   esbuild_platform: win32-x64
+          #   archive: zip
+          #   runtime_feature_mode: non-ptrcomp
           # Windows ARM64 — V8 prebuilt available, but no free GitHub runner yet.
           # Uncomment when GitHub adds a free windows-arm64 runner.
           # See: https://github.com/actions/runner-images/issues
@@ -1044,7 +1050,7 @@ jobs:
           merge-multiple: true
 
       - name: Verify release archive layout
-        run: bash scripts/verify-release-archive-layout.sh --artifacts-dir artifacts
+        run: bash scripts/verify-release-archive-layout.sh --artifacts-dir artifacts --skip-windows
 
       - name: Verify optional Bun/JSC adapter assets
         run: bash scripts/verify-bun-jsc-release-assets.sh --artifacts-dir artifacts

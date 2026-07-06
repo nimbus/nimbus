@@ -51,12 +51,20 @@ assert_executable() {
 }
 
 artifacts_dir=""
+skip_windows=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --artifacts-dir)
       artifacts_dir="${2:?missing artifacts dir}"
       shift 2
+      ;;
+    --skip-windows)
+      # Windows is temporarily out of the release matrix (unix-only APIs in
+      # K11P/SELH-era code; restoration tracked). The zip must then be ABSENT
+      # so a stale artifact cannot masquerade as a fresh build.
+      skip_windows=1
+      shift
       ;;
     -h|--help)
       usage
@@ -86,7 +94,11 @@ windows_archive="${artifacts_dir}/nimbus_windows_x86_64.zip"
 assert_present "${darwin_archive}"
 assert_present "${linux_x86_archive}"
 assert_present "${linux_arm_archive}"
-assert_present "${windows_archive}"
+if [[ "${skip_windows}" == "1" ]]; then
+  assert_absent "${windows_archive}"
+else
+  assert_present "${windows_archive}"
+fi
 
 darwin_dir="${tmp_root}/darwin"
 linux_x86_dir="${tmp_root}/linux-x86_64"
@@ -97,7 +109,9 @@ mkdir -p "${darwin_dir}" "${linux_x86_dir}" "${linux_arm_dir}" "${windows_dir}"
 tar -xzf "${darwin_archive}" -C "${darwin_dir}"
 tar -xzf "${linux_x86_archive}" -C "${linux_x86_dir}"
 tar -xzf "${linux_arm_archive}" -C "${linux_arm_dir}"
-unzip -q "${windows_archive}" -d "${windows_dir}"
+if [[ "${skip_windows}" != "1" ]]; then
+  unzip -q "${windows_archive}" -d "${windows_dir}"
+fi
 
 assert_present "${darwin_dir}/README.md"
 assert_present "${darwin_dir}/LICENSE"
@@ -122,8 +136,10 @@ assert_executable "${linux_arm_dir}/nimbus"
 assert_absent "${linux_arm_dir}/libexec/gvproxy"
 assert_absent "${linux_arm_dir}/libexec/vfkit"
 
-assert_present "${windows_dir}/README.md"
-assert_present "${windows_dir}/LICENSE"
-assert_present "${windows_dir}/nimbus.exe"
+if [[ "${skip_windows}" != "1" ]]; then
+  assert_present "${windows_dir}/README.md"
+  assert_present "${windows_dir}/LICENSE"
+  assert_present "${windows_dir}/nimbus.exe"
+fi
 
 printf 'verified: release archives match the published binary/layout contract\n'
