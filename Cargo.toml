@@ -29,6 +29,7 @@ members = [
     "crates/nimbus-services",
     "crates/nimbus-system",
     "crates/nimbus-tenant",
+    "crates/nimbus-workload-identity",
     "crates/nimbus-runtime",
     "crates/nimbus-sandbox",
     "crates/nimbus-s3",

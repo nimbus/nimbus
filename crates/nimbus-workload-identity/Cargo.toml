@@ -1,0 +1,20 @@
+[package]
+name = "nimbus-workload-identity"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nimbus-core = { path = "../nimbus-core" }
+nimbus-tenant = { path = "../nimbus-tenant" }
+serde.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
