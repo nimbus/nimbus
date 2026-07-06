@@ -42,7 +42,7 @@ env:
   MACHINE_OS_PACKAGE: ghcr.io/nimbus/machine-os
   MACHINE_OS_STAGED_ARTIFACT: nimbus-machine-os-arm64-staged
   MACHINE_OS_RELEASE_ARTIFACT: machine-os-arm64-release
-  MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:5cb3f1ce33bb0663effecf6b278dae5c91a97f4ab0b5dddd8a883ba9a9f6b354
+  MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:077182b6ba853b3348d0bede602ac30b9e6568c6422bcf0654de5af96f19b9c3
   MACHINE_OS_BOOTC_IMAGE_BUILDER: quay.io/centos-bootc/bootc-image-builder@sha256:754fc17718f977313885379e2c779066aba7d15af88fe04b486baec74759f574
   NIMBUS_IMAGE_PACKAGE: ghcr.io/nimbus/nimbus
   TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c
@@ -276,6 +276,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+
+      # The windows-latest image ships Visual Studio 2026 (v18), whose cmake
+      # generator name the runner's cmake does not know yet; libz-ng-sys's
+      # cmake build then dies on "Could not create named generator". Ninja is
+      # preinstalled on the image and sidesteps VS generator naming entirely.
+      - name: Force Ninja cmake generator (Windows)
+        if: matrix.os == 'windows'
+        shell: bash
+        run: echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
 
       # CA4: Centralize toolchain + sccache + Swatinem cache + googlesource
       # bootstrap through the composite action. The composite's mold step is
