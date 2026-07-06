@@ -7,6 +7,10 @@
 [release]
 repo = "nimbus/rusty_v8"
 tag = "v149.4.0-nimbus.10"
+# The fork commit this tag must resolve to (moved-tag guard): the composite
+# fails unless Cargo.lock's v8 package source is exactly
+# git+https://github.com/<repo>?tag=<tag>#<commit>.
+commit = "f9457373150679d9db9eb577dcd3a687a3ec25ef"
 
 [assets]
 "librusty_v8_simdutf_release_x86_64-unknown-linux-gnu.a.gz" = "657bb10e885a2178a898901fa58f2cb1193dac3dc35c5ff008f077bc18883f80"

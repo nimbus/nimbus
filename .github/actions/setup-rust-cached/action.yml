@@ -284,6 +284,23 @@ runs:
                 ".cargo/rusty-v8-digests.toml release.tag "
                 f"{release_tag!r} != expected {expected_v8_tag!r} from RUSTY_V8_VERSION"
             )
+        # Moved-tag / stale-lock guard (review HIGH): the digest-verified assets
+        # and the compiled v8 crate must come from the SAME fork commit. The
+        # committed digests file pins the commit; Cargo.lock's v8 source string
+        # must resolve this exact tag to this exact commit.
+        release_commit = release.get("commit")
+        if not isinstance(release_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", release_commit):
+            raise SystemExit(".cargo/rusty-v8-digests.toml release.commit must be a 40-hex commit")
+        lock_text = Path("Cargo.lock").read_text()
+        expected_source = (
+            f"git+https://github.com/{release_repo}?tag={release_tag}#{release_commit}"
+        )
+        if expected_source not in lock_text:
+            raise SystemExit(
+                "Cargo.lock does not pin v8 to the digest-anchored commit: expected "
+                f"source {expected_source!r} (moved tag or stale lockfile?)"
+            )
+
         assets = digests.get("assets")
         if not isinstance(assets, dict) or not assets:
             raise SystemExit(".cargo/rusty-v8-digests.toml is missing non-empty [assets]")
@@ -381,6 +398,7 @@ runs:
 
         archive_name = archive_gz_name[:-3]
         print(f"ARCHIVE_GZ_NAME={archive_gz_name}")
+        print(f"ARCHIVE_NAME={archive_name}")
         print(f"BINDING_NAME={binding_name}")
         print(f"ARCHIVE_GZ_SHA={archive_gz_sha}")
         print(f"BINDING_SHA={binding_sha}")
@@ -428,12 +446,23 @@ runs:
             "${mirror_dir}/${ARCHIVE_GZ_NAME}" \
             "${mirror_dir}/${ARCHIVE_NAME}" \
             "${mirror_dir}/${BINDING_NAME}"
-          gh release download "${NIMBUS_PREBUILT_V8_RELEASE_TAG}" \
-            --repo "${NIMBUS_PREBUILT_V8_RELEASE_REPO}" \
-            --dir "${mirror_dir}" \
-            --clobber \
-            --pattern "${ARCHIVE_GZ_NAME}" \
-            --pattern "${BINDING_NAME}"
+          download_ok=0
+          for attempt in 1 2 3; do
+            if gh release download "${NIMBUS_PREBUILT_V8_RELEASE_TAG}" \
+              --repo "${NIMBUS_PREBUILT_V8_RELEASE_REPO}" \
+              --dir "${mirror_dir}" \
+              --clobber \
+              --pattern "${ARCHIVE_GZ_NAME}" \
+              --pattern "${BINDING_NAME}"; then
+              download_ok=1
+              break
+            fi
+            echo "gh release download attempt ${attempt} failed; retrying" >&2
+            sleep $(( attempt * 5 ))
+          done
+          if [[ "${download_ok}" != "1" ]]; then
+            fail "could not download canonical assets from ${NIMBUS_PREBUILT_V8_RELEASE_REPO}@${NIMBUS_PREBUILT_V8_RELEASE_TAG} after 3 attempts."
+          fi
           verify_downloaded_assets
         fi
 

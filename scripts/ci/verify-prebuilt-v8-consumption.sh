@@ -66,4 +66,13 @@ else
 fi
 
 
+
+# Target-suffix equality (review LOW): archive and binding must be for the
+# SAME target triple, not merely the same variant.
+archive_target="${archive_base##*release_}"; archive_target="${archive_target%.a}"
+binding_target="${binding_base##*release_}"; binding_target="${binding_target%.rs}"
+if [[ "${archive_target}" != "${binding_target}" ]]; then
+  fail "archive target ${archive_target} != binding target ${binding_target}"
+fi
+
 printf 'prebuilt rusty_v8 env is valid\n'
