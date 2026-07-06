@@ -1,17 +1,6 @@
-use nimbus_core::{
-    CommitEntry, Document, DocumentId, DocumentLocator, Error, Result, TableName, WriteOp,
-    WriteOpType,
-};
-use redb::ReadableTable;
+use nimbus_core::{CommitEntry, Document, DocumentId, Error, Result, TableName};
 
-use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
-use crate::keys::document_key;
-
-use super::super::resource_paths::remove_resource_path_binding_in_write_txn;
-use super::super::table_catalog::{
-    resolve_or_create_table_id_in_write_txn, resolve_table_id_in_write_txn,
-};
-use super::super::{DOCUMENTS, TenantStore, TenantWriteTransaction, map_redb_error};
+use super::super::{TenantStore, TenantWriteTransaction};
 
 fn expect_write_commit(commit: Option<CommitEntry>, expectation: &str) -> Result<CommitEntry> {
     commit.ok_or_else(|| Error::Internal(expectation.to_string()))
@@ -19,31 +8,7 @@ fn expect_write_commit(commit: Option<CommitEntry>, expectation: &str) -> Result
 
 impl TenantWriteTransaction {
     pub fn insert_document(&mut self, document: &Document) -> Result<()> {
-        self.check_cancel()?;
-        let payload = encode_document_msgpack(document)
-            .map_err(|error| Error::Serialization(error.to_string()))?;
-        let table_id = resolve_or_create_table_id_in_write_txn(self.write_txn()?, &document.table)?;
-        {
-            let mut documents = self
-                .write_txn()?
-                .open_table(DOCUMENTS)
-                .map_err(map_redb_error)?;
-            let key = document_key(&table_id, &document.id);
-            documents
-                .insert(key.as_slice(), payload.as_slice())
-                .map_err(map_redb_error)?;
-        }
-        self.record_commit_write(WriteOp {
-            table: document.table.clone(),
-            table_id,
-            op_type: WriteOpType::Insert,
-            doc_id: document.id.clone(),
-            resource_path_binding: None,
-            trigger_write_origin: None,
-            previous: None,
-            current: Some(document.clone()),
-        });
-        Ok(())
+        self.apply_document_insert(document, &[], None, None)
     }
 
     pub fn update_document_validated<F>(
@@ -56,48 +21,14 @@ impl TenantWriteTransaction {
     where
         F: FnOnce(&Document, &Document) -> Result<()>,
     {
-        self.check_cancel()?;
-        let table_id = resolve_table_id_in_write_txn(self.write_txn()?, table)?
-            .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
-        let key = document_key(&table_id, id);
-        let (existing_document, document) = {
-            let mut documents = self
-                .write_txn()?
-                .open_table(DOCUMENTS)
-                .map_err(map_redb_error)?;
-            let existing_document = {
-                let existing = documents
-                    .get(key.as_slice())
-                    .map_err(map_redb_error)?
-                    .ok_or(Error::DocumentNotFound(id.clone()))?;
-                decode_document_msgpack(existing.value())
-                    .map_err(|error| Error::Serialization(error.to_string()))?
-            };
-            let mut document = existing_document.clone();
-            for (field, value) in patch {
-                document.set_field(field.clone(), value.clone());
-            }
-            document.update_time = self.clock.now();
-            validate(&existing_document, &document)?;
-            let payload = encode_document_msgpack(&document)
-                .map_err(|error| Error::Serialization(error.to_string()))?;
-            documents
-                .insert(key.as_slice(), payload.as_slice())
-                .map_err(map_redb_error)?;
-            (existing_document, document)
-        };
-
-        self.record_commit_write(WriteOp {
-            table: table.clone(),
-            table_id,
-            op_type: WriteOpType::Update,
-            doc_id: id.clone(),
-            resource_path_binding: None,
-            trigger_write_origin: None,
-            previous: Some(existing_document),
-            current: Some(document),
-        });
-        Ok(())
+        let existing_document = self.read_existing_document_for_point_write(table, id)?;
+        let mut document = existing_document.clone();
+        for (field, value) in patch {
+            document.set_field(field.clone(), value.clone());
+        }
+        document.update_time = self.now();
+        validate(&existing_document, &document)?;
+        self.apply_point_document_update(&existing_document, &document, &[])
     }
 
     pub fn delete_document_validated<F>(
@@ -109,35 +40,9 @@ impl TenantWriteTransaction {
     where
         F: FnOnce(&Document) -> Result<()>,
     {
-        self.check_cancel()?;
-        let table_id = resolve_table_id_in_write_txn(self.write_txn()?, table)?
-            .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
-        let removed_document = {
-            let mut documents = self
-                .write_txn()?
-                .open_table(DOCUMENTS)
-                .map_err(map_redb_error)?;
-            let key = document_key(&table_id, id);
-            let removed = documents.remove(key.as_slice()).map_err(map_redb_error)?;
-            let removed = removed.ok_or(Error::DocumentNotFound(id.clone()))?;
-            decode_document_msgpack(removed.value())
-                .map_err(|error| Error::Serialization(error.to_string()))?
-        };
+        let removed_document = self.read_existing_document_for_point_write(table, id)?;
         validate(&removed_document)?;
-        let resource_path_binding = remove_resource_path_binding_in_write_txn(
-            self.write_txn()?,
-            &DocumentLocator::new(table.clone(), id.clone()),
-        )?;
-        self.record_commit_write(WriteOp {
-            table: table.clone(),
-            table_id,
-            op_type: WriteOpType::Delete,
-            doc_id: id.clone(),
-            resource_path_binding,
-            trigger_write_origin: None,
-            previous: Some(removed_document.clone()),
-            current: None,
-        });
+        self.apply_point_document_delete(&removed_document, &[])?;
         Ok(removed_document)
     }
 }

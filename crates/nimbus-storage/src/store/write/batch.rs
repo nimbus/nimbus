@@ -1,20 +1,6 @@
-use nimbus_core::{CommitEntry, Document, Error, Result, TableId, Timestamp, WriteOp, WriteOpType};
-use redb::ReadableTable;
+use nimbus_core::{CommitEntry, Error, Result, Timestamp};
 
-use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
-use crate::index::index_key_for_document;
-use crate::keys::document_key;
-use crate::store::resource_paths::{
-    remove_resource_path_binding_in_write_txn, upsert_resource_path_binding_in_write_txn,
-};
-
-use super::super::table_catalog::{
-    resolve_or_create_table_id_in_write_txn, resolve_table_id_in_write_txn,
-};
-use super::super::{
-    DOCUMENTS, EMPTY_TABLE_VALUE, INDEXES, ResolvedScheduleOp, ResolvedWrite, TenantStore,
-    map_redb_error,
-};
+use super::super::{ResolvedScheduleOp, ResolvedWrite, TenantStore};
 use super::scheduled::apply_schedule_ops;
 
 impl TenantStore {
@@ -46,290 +32,59 @@ impl TenantStore {
             ));
         }
 
-        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        let mut commit_writes = Vec::with_capacity(writes.len());
-
-        {
-            let mut documents = write_txn.open_table(DOCUMENTS).map_err(map_redb_error)?;
-            let mut index_table = write_txn.open_table(INDEXES).map_err(map_redb_error)?;
-
-            for write in writes {
-                match write {
-                    ResolvedWrite::Insert {
-                        document,
-                        indexes,
-                        resource_path_binding,
-                    } => {
-                        let table_id =
-                            resolve_or_create_table_id_in_write_txn(&write_txn, &document.table)?;
-                        apply_insert(
-                            &write_txn,
+        let committed =
+            self.execute_write_with_commit_timestamp(commit_timestamp, |transaction| {
+                for write in writes {
+                    match write {
+                        ResolvedWrite::Insert {
+                            document,
+                            indexes,
+                            resource_path_binding,
+                        } => transaction.apply_document_insert(
                             document,
                             indexes,
                             resource_path_binding.as_ref(),
                             trigger_write_origin,
-                            &table_id,
-                            &mut documents,
-                            &mut index_table,
-                            &mut commit_writes,
-                        )?;
-                    }
-                    ResolvedWrite::Update {
-                        previous,
-                        current,
-                        indexes,
-                        resource_path_binding,
-                    } => {
-                        let table_id = resolve_table_id_in_write_txn(&write_txn, &current.table)?
-                            .ok_or_else(|| {
-                            Error::Conflict(format!(
-                                "document {} changed before transaction commit",
-                                current.id
-                            ))
-                        })?;
-                        apply_update(
-                            &write_txn,
+                        )?,
+                        ResolvedWrite::Update {
+                            previous,
+                            current,
+                            indexes,
+                            resource_path_binding,
+                        } => transaction.apply_batch_document_update(
                             previous,
                             current,
                             indexes,
                             resource_path_binding.as_ref(),
                             trigger_write_origin,
-                            &table_id,
-                            &mut documents,
-                            &mut index_table,
-                            &mut commit_writes,
-                        )?;
-                    }
-                    ResolvedWrite::Delete { previous, indexes } => {
-                        let table_id = resolve_table_id_in_write_txn(&write_txn, &previous.table)?
-                            .ok_or_else(|| {
-                                Error::Conflict(format!(
-                                    "document {} changed before transaction commit",
-                                    previous.id
-                                ))
-                            })?;
-                        apply_delete(
-                            &write_txn,
-                            previous,
-                            indexes,
-                            trigger_write_origin,
-                            &table_id,
-                            &mut documents,
-                            &mut index_table,
-                            &mut commit_writes,
-                        )?;
+                        )?,
+                        ResolvedWrite::Delete { previous, indexes } => transaction
+                            .apply_batch_document_delete(previous, indexes, trigger_write_origin)?,
                     }
                 }
-            }
-        }
 
-        apply_schedule_ops(&write_txn, schedule_ops)?;
-
-        let commit = if commit_writes.is_empty() {
-            None
-        } else {
-            Some(self.append_commit_entry(&write_txn, commit_writes, commit_timestamp)?)
-        };
-        self.commit_write_txn(write_txn)?;
-        Ok(commit)
+                apply_schedule_ops(transaction.write_txn()?, schedule_ops)?;
+                Ok(())
+            })?;
+        Ok(committed.commit)
     }
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "execution-unit inserts need document state, index/path metadata, optional trigger origin, and commit sinks inside one storage transaction helper"
-)]
-fn apply_insert(
-    write_txn: &redb::WriteTransaction,
-    document: &Document,
-    indexes: &[nimbus_core::IndexDefinition],
-    resource_path_binding: Option<&nimbus_core::ResourcePathBinding>,
-    trigger_write_origin: Option<&nimbus_core::TriggerWriteOrigin>,
-    table_id: &TableId,
-    documents: &mut redb::Table<&[u8], &[u8]>,
-    index_table: &mut redb::Table<&[u8], &[u8]>,
-    commit_writes: &mut Vec<WriteOp>,
-) -> Result<()> {
-    let key = document_key(table_id, &document.id);
-    if documents
-        .get(key.as_slice())
-        .map_err(map_redb_error)?
-        .is_some()
-    {
-        return Err(Error::Conflict(format!(
-            "document {} changed before transaction commit",
-            document.id
-        )));
-    }
-
-    let payload = encode_document_msgpack(document)
-        .map_err(|error| Error::Serialization(error.to_string()))?;
-    documents
-        .insert(key.as_slice(), payload.as_slice())
-        .map_err(map_redb_error)?;
-    for index in indexes.iter().filter(|index| index.is_maintained()) {
-        if let Some(index_key) = index_key_for_document(document, index, table_id)? {
-            index_table
-                .insert(index_key.as_slice(), EMPTY_TABLE_VALUE)
-                .map_err(map_redb_error)?;
-        }
-    }
-    // Resource path bindings are stable metadata for the document locator.
-    // Updates may refresh a supplied binding, but only deletes remove it.
-    if let Some(resource_path_binding) = resource_path_binding {
-        upsert_resource_path_binding_in_write_txn(write_txn, resource_path_binding)?;
-    }
-    commit_writes.push(WriteOp {
-        table: document.table.clone(),
-        table_id: table_id.clone(),
-        op_type: WriteOpType::Insert,
-        doc_id: document.id.clone(),
-        resource_path_binding: resource_path_binding.cloned(),
-        trigger_write_origin: trigger_write_origin.cloned(),
-        previous: None,
-        current: Some(document.clone()),
-    });
-    Ok(())
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "execution-unit updates need the current document pair, index context, commit sink, and optional path metadata in one storage-transaction helper"
-)]
-fn apply_update(
-    write_txn: &redb::WriteTransaction,
-    previous: &Document,
-    current: &Document,
-    indexes: &[nimbus_core::IndexDefinition],
-    resource_path_binding: Option<&nimbus_core::ResourcePathBinding>,
-    trigger_write_origin: Option<&nimbus_core::TriggerWriteOrigin>,
-    table_id: &TableId,
-    documents: &mut redb::Table<&[u8], &[u8]>,
-    index_table: &mut redb::Table<&[u8], &[u8]>,
-    commit_writes: &mut Vec<WriteOp>,
-) -> Result<()> {
-    let key = document_key(table_id, &current.id);
-    let existing = {
-        let existing = documents
-            .get(key.as_slice())
-            .map_err(map_redb_error)?
-            .ok_or(Error::Conflict(format!(
-                "document {} changed before transaction commit",
-                current.id
-            )))?;
-        decode_document_msgpack(existing.value())
-            .map_err(|error| Error::Serialization(error.to_string()))?
-    };
-    if &existing != previous {
-        return Err(Error::Conflict(format!(
-            "document {} changed before transaction commit",
-            current.id
-        )));
-    }
-
-    let payload = encode_document_msgpack(current)
-        .map_err(|error| Error::Serialization(error.to_string()))?;
-    documents
-        .insert(key.as_slice(), payload.as_slice())
-        .map_err(map_redb_error)?;
-
-    for index in indexes.iter().filter(|index| index.is_maintained()) {
-        let old_key = index_key_for_document(previous, index, table_id)?;
-        let new_key = index_key_for_document(current, index, table_id)?;
-        if old_key == new_key {
-            continue;
-        }
-        if let Some(old_key) = old_key {
-            index_table
-                .remove(old_key.as_slice())
-                .map_err(map_redb_error)?;
-        }
-        if let Some(new_key) = new_key {
-            index_table
-                .insert(new_key.as_slice(), EMPTY_TABLE_VALUE)
-                .map_err(map_redb_error)?;
-        }
-    }
-    if let Some(resource_path_binding) = resource_path_binding {
-        upsert_resource_path_binding_in_write_txn(write_txn, resource_path_binding)?;
-    }
-
-    commit_writes.push(WriteOp {
-        table: current.table.clone(),
-        table_id: table_id.clone(),
-        op_type: WriteOpType::Update,
-        doc_id: current.id.clone(),
-        resource_path_binding: resource_path_binding.cloned(),
-        trigger_write_origin: trigger_write_origin.cloned(),
-        previous: Some(previous.clone()),
-        current: Some(current.clone()),
-    });
-    Ok(())
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "execution-unit deletes need prior document state, index context, optional trigger origin, table identity, and commit sinks inside one storage transaction helper"
-)]
-fn apply_delete(
-    write_txn: &redb::WriteTransaction,
-    previous: &Document,
-    indexes: &[nimbus_core::IndexDefinition],
-    trigger_write_origin: Option<&nimbus_core::TriggerWriteOrigin>,
-    table_id: &TableId,
-    documents: &mut redb::Table<&[u8], &[u8]>,
-    index_table: &mut redb::Table<&[u8], &[u8]>,
-    commit_writes: &mut Vec<WriteOp>,
-) -> Result<()> {
-    let key = document_key(table_id, &previous.id);
-    let removed = documents
-        .remove(key.as_slice())
-        .map_err(map_redb_error)?
-        .ok_or(Error::Conflict(format!(
-            "document {} changed before transaction commit",
-            previous.id
-        )))?;
-    let removed = decode_document_msgpack(removed.value())
-        .map_err(|error| Error::Serialization(error.to_string()))?;
-    if &removed != previous {
-        return Err(Error::Conflict(format!(
-            "document {} changed before transaction commit",
-            previous.id
-        )));
-    }
-
-    for index in indexes.iter().filter(|index| index.is_maintained()) {
-        if let Some(index_key) = index_key_for_document(previous, index, table_id)? {
-            index_table
-                .remove(index_key.as_slice())
-                .map_err(map_redb_error)?;
-        }
-    }
-    let resource_path_binding = remove_resource_path_binding_in_write_txn(
-        write_txn,
-        &nimbus_core::DocumentLocator::new(previous.table.clone(), previous.id.clone()),
-    )?;
-
-    commit_writes.push(WriteOp {
-        table: previous.table.clone(),
-        table_id: table_id.clone(),
-        op_type: WriteOpType::Delete,
-        doc_id: previous.id.clone(),
-        resource_path_binding,
-        trigger_write_origin: trigger_write_origin.cloned(),
-        previous: Some(previous.clone()),
-        current: None,
-    });
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use nimbus_core::{
-        DocumentId, DocumentLocator, DocumentPath, FieldSchema, FieldType, IndexDefinition,
-        ResourcePathBinding, SequenceNumber, TableName, TableSchema,
+        Document, DocumentId, DocumentLocator, DocumentPath, FieldSchema, FieldType,
+        IndexDefinition, ResourcePathBinding, SequenceNumber, TableName, TableSchema, Timestamp,
+        WriteOp, WriteOpType,
     };
     use serde_json::json;
+
+    use crate::simulation::{
+        FaultOccurrence, FaultPoint, ManualClock, NoopFaultInjector, ScriptedFaultInjector,
+    };
+    use crate::store::INDEXES;
 
     use super::*;
 
@@ -367,6 +122,47 @@ mod tests {
                 ("body".to_string(), json!(body)),
             ]),
         )
+    }
+
+    fn fixed_document(table: &TableName, id: &str, body: &str, timestamp: Timestamp) -> Document {
+        let mut document = document(table, id, body);
+        document.creation_time = timestamp;
+        document.update_time = timestamp;
+        document
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct WriteOpShape {
+        table: TableName,
+        op_type: WriteOpType,
+        doc_id: DocumentId,
+        has_table_id: bool,
+        has_resource_path_binding: bool,
+        has_trigger_write_origin: bool,
+        previous: Option<Document>,
+        current: Option<Document>,
+    }
+
+    fn write_op_shape(write: &WriteOp) -> WriteOpShape {
+        WriteOpShape {
+            table: write.table.clone(),
+            op_type: write.op_type,
+            doc_id: write.doc_id.clone(),
+            has_table_id: !write.table_id.as_str().is_empty(),
+            has_resource_path_binding: write.resource_path_binding.is_some(),
+            has_trigger_write_origin: write.trigger_write_origin.is_some(),
+            previous: write.previous.clone(),
+            current: write.current.clone(),
+        }
+    }
+
+    fn only_write(commit: &CommitEntry) -> &WriteOp {
+        assert_eq!(
+            commit.writes.len(),
+            1,
+            "test commits should contain exactly one document write"
+        );
+        &commit.writes[0]
     }
 
     #[test]
@@ -434,6 +230,240 @@ mod tests {
                 .expect("latest sequence should remain readable"),
             SequenceNumber(2),
             "failed batch must not append a commit log entry"
+        );
+    }
+
+    #[test]
+    fn failed_point_delete_rolls_back_document_indexes_bindings_and_commit_log() {
+        let clock = Arc::new(ManualClock::new(Timestamp(10_000)));
+        let faults = Arc::new(ScriptedFaultInjector::new([FaultOccurrence {
+            point: FaultPoint::StorageCommitBeforeVisibility,
+            visit: 3,
+        }]));
+        let store = TenantStore::create_in_memory_with_simulation(clock, faults)
+            .expect("store should open");
+        let table = TableName::new("tasks_atomic_point").expect("table should parse");
+        let schema = schema(&table);
+        store
+            .replace_table_schema(&schema)
+            .expect("schema should persist");
+
+        let existing = document(&table, "existing", "before");
+        let binding = ResourcePathBinding::new(
+            DocumentLocator::new(table.clone(), existing.id.clone()),
+            DocumentPath::from_segments(["projects", "alpha", "tasks", "existing"])
+                .expect("path should parse"),
+        );
+        store
+            .apply_execution_unit_batch(
+                &[ResolvedWrite::Insert {
+                    document: existing.clone(),
+                    indexes: schema.indexes.clone(),
+                    resource_path_binding: Some(binding.clone()),
+                }],
+                &[],
+            )
+            .expect("bound insert batch should succeed")
+            .expect("bound insert should emit a commit");
+
+        let failed = store
+            .delete_with_indexes(&table, &existing.id, &schema.indexes)
+            .expect_err("commit fault should abort the point delete");
+
+        assert!(
+            matches!(failed, Error::Internal(ref message) if message.contains("storage_commit_before_visibility")),
+            "expected injected commit fault, got {failed:?}"
+        );
+        assert!(
+            store
+                .get(&table, &existing.id)
+                .expect("document lookup should succeed")
+                .is_some(),
+            "failed point delete must not remove the document"
+        );
+        assert_eq!(
+            store
+                .index_scan_eq(&table, "by_body", &json!("before"))
+                .expect("index scan should succeed")
+                .len(),
+            1,
+            "failed point delete must not remove index entries"
+        );
+        assert_eq!(
+            store
+                .resource_path_binding(&binding.locator)
+                .expect("binding lookup should succeed"),
+            Some(binding),
+            "failed point delete must not remove path metadata"
+        );
+        assert_eq!(
+            store
+                .latest_sequence()
+                .expect("latest sequence should remain readable"),
+            SequenceNumber(2),
+            "failed point delete must not append a commit log entry"
+        );
+    }
+
+    #[test]
+    fn with_index_point_update_stamps_update_time() {
+        let clock = Arc::new(ManualClock::new(Timestamp(10_000)));
+        let store = TenantStore::create_in_memory_with_simulation(
+            clock.clone(),
+            Arc::new(NoopFaultInjector),
+        )
+        .expect("store should open");
+        let table = TableName::new("tasks_index_update_time").expect("table should parse");
+        let schema = schema(&table);
+        store
+            .replace_table_schema(&schema)
+            .expect("schema should persist");
+
+        let existing = fixed_document(&table, "indexed", "before", Timestamp(1_000));
+        store
+            .insert_with_indexes(&existing, &schema.indexes)
+            .expect("seed document should insert");
+
+        clock.set(Timestamp(20_000));
+        let patch = serde_json::Map::from_iter([("body".to_string(), json!("after"))]);
+        let commit = store
+            .update_with_indexes(&table, &existing.id, &patch, &schema.indexes)
+            .expect("indexed update should commit");
+        let updated = store
+            .get(&table, &existing.id)
+            .expect("document lookup should succeed")
+            .expect("document should exist");
+
+        assert_eq!(updated.update_time, Timestamp(20_000));
+        assert_eq!(
+            only_write(&commit)
+                .current
+                .as_ref()
+                .expect("update should record current")
+                .update_time,
+            Timestamp(20_000),
+            "with-index update WriteOp must carry the stamped document"
+        );
+    }
+
+    #[test]
+    fn with_index_point_delete_removes_resource_path_binding() {
+        let store = TenantStore::create_in_memory().expect("store should open");
+        let table = TableName::new("tasks_index_delete_binding").expect("table should parse");
+        let schema = schema(&table);
+        store
+            .replace_table_schema(&schema)
+            .expect("schema should persist");
+
+        let existing = document(&table, "bound", "before");
+        let binding = ResourcePathBinding::new(
+            DocumentLocator::new(table.clone(), existing.id.clone()),
+            DocumentPath::from_segments(["projects", "alpha", "tasks", "bound"])
+                .expect("path should parse"),
+        );
+        store
+            .apply_execution_unit_batch(
+                &[ResolvedWrite::Insert {
+                    document: existing.clone(),
+                    indexes: schema.indexes.clone(),
+                    resource_path_binding: Some(binding.clone()),
+                }],
+                &[],
+            )
+            .expect("bound insert batch should succeed")
+            .expect("bound insert should emit a commit");
+
+        let (commit, removed) = store
+            .delete_with_indexes_returning_document(&table, &existing.id, &schema.indexes)
+            .expect("indexed delete should commit");
+
+        assert_eq!(removed, existing);
+        assert_eq!(
+            store
+                .resource_path_binding(&binding.locator)
+                .expect("binding lookup should succeed"),
+            None,
+            "with-index point delete must remove locator path metadata"
+        );
+        assert_eq!(
+            store
+                .locator_for_document_path(&binding.document_path)
+                .expect("path lookup should succeed"),
+            None,
+            "with-index point delete must remove reverse path metadata"
+        );
+        assert_eq!(
+            only_write(&commit).resource_path_binding,
+            Some(binding),
+            "delete WriteOp must report the removed resource path binding"
+        );
+    }
+
+    #[test]
+    fn point_and_batch_updates_emit_identical_write_op_shapes() {
+        let table = TableName::new("tasks_write_op_shape").expect("table should parse");
+        let schema = schema(&table);
+        let previous = fixed_document(&table, "shape", "before", Timestamp(1_000));
+        let mut current = previous.clone();
+        current.set_field("body", json!("after"));
+        current.update_time = Timestamp(2_000);
+        let patch = serde_json::Map::from_iter([("body".to_string(), json!("after"))]);
+
+        let no_index_clock = Arc::new(ManualClock::new(Timestamp(2_000)));
+        let no_index_store = TenantStore::create_in_memory_with_simulation(
+            no_index_clock,
+            Arc::new(NoopFaultInjector),
+        )
+        .expect("store should open");
+        no_index_store
+            .insert(&previous)
+            .expect("no-index seed insert should commit");
+        let no_index_commit = no_index_store
+            .update(&table, &previous.id, &patch)
+            .expect("no-index update should commit");
+
+        let with_index_clock = Arc::new(ManualClock::new(Timestamp(2_000)));
+        let with_index_store = TenantStore::create_in_memory_with_simulation(
+            with_index_clock,
+            Arc::new(NoopFaultInjector),
+        )
+        .expect("store should open");
+        with_index_store
+            .replace_table_schema(&schema)
+            .expect("schema should persist");
+        with_index_store
+            .insert_with_indexes(&previous, &schema.indexes)
+            .expect("with-index seed insert should commit");
+        let with_index_commit = with_index_store
+            .update_with_indexes(&table, &previous.id, &patch, &schema.indexes)
+            .expect("with-index update should commit");
+
+        let batch_store = TenantStore::create_in_memory().expect("store should open");
+        batch_store
+            .replace_table_schema(&schema)
+            .expect("schema should persist");
+        batch_store
+            .insert_with_indexes(&previous, &schema.indexes)
+            .expect("batch seed insert should commit");
+        let batch_commit = batch_store
+            .apply_resolved_write_batch(&[ResolvedWrite::Update {
+                previous: previous.clone(),
+                current,
+                indexes: schema.indexes.clone(),
+                resource_path_binding: None,
+            }])
+            .expect("batch update should commit");
+
+        let no_index_shape = write_op_shape(only_write(&no_index_commit));
+        assert_eq!(
+            no_index_shape,
+            write_op_shape(only_write(&with_index_commit)),
+            "no-index and with-index point updates should emit the same WriteOp shape"
+        );
+        assert_eq!(
+            no_index_shape,
+            write_op_shape(only_write(&batch_commit)),
+            "point and batch updates should emit the same WriteOp shape"
         );
     }
 
