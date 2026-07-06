@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use nimbus_core::Result;
+use nimbus_core::{Result, Timestamp};
 use redb::backends::InMemoryBackend;
 
 use crate::RetentionFloor;
@@ -182,6 +182,20 @@ impl TenantStore {
         let mut transaction = self.begin_write_transaction_cancellable(check_cancel)?;
         let value = task(&mut transaction)?;
         let commit = transaction.commit()?;
+        Ok(TenantWriteCommit { value, commit })
+    }
+
+    pub(crate) fn execute_write_with_commit_timestamp<T, F>(
+        &self,
+        commit_timestamp: Option<Timestamp>,
+        task: F,
+    ) -> Result<TenantWriteCommit<T>>
+    where
+        F: FnOnce(&mut TenantWriteTransaction) -> Result<T>,
+    {
+        let mut transaction = self.begin_write_transaction()?;
+        let value = task(&mut transaction)?;
+        let commit = transaction.commit_with_timestamp(commit_timestamp)?;
         Ok(TenantWriteCommit { value, commit })
     }
 

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use nimbus_core::{CommitEntry, Error, Result, TenantEventKind, WriteOp};
+use nimbus_core::{CommitEntry, Error, Result, TenantEventKind, Timestamp, WriteOp};
 
 use crate::simulation::{Clock, FaultInjector};
 
@@ -37,6 +37,10 @@ impl TenantWriteTransaction {
         (self.check_cancel.as_ref())()
     }
 
+    pub(crate) fn now(&self) -> Timestamp {
+        self.clock.now()
+    }
+
     pub(crate) fn record_commit_write(&mut self, write: WriteOp) {
         self.commit_writes.push(write);
     }
@@ -45,7 +49,14 @@ impl TenantWriteTransaction {
         self.tenant_events.push(event);
     }
 
-    pub fn commit(mut self) -> Result<Option<CommitEntry>> {
+    pub fn commit(self) -> Result<Option<CommitEntry>> {
+        self.commit_with_timestamp(None)
+    }
+
+    pub(crate) fn commit_with_timestamp(
+        mut self,
+        commit_timestamp: Option<Timestamp>,
+    ) -> Result<Option<CommitEntry>> {
         self.check_cancel()?;
         let Some(write_txn) = self.write_txn.take() else {
             return Err(Error::Internal(
@@ -72,7 +83,7 @@ impl TenantWriteTransaction {
         } else {
             Some(append_commit(
                 &write_txn,
-                clock.now(),
+                commit_timestamp.unwrap_or_else(|| clock.now()),
                 commit_writes,
                 tenant_events,
             )?)

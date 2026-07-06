@@ -58,24 +58,6 @@ impl TenantStore {
         Ok(entries)
     }
 
-    pub(crate) fn append_commit_entry(
-        &self,
-        write_txn: &redb::WriteTransaction,
-        writes: Vec<WriteOp>,
-        commit_timestamp: Option<Timestamp>,
-    ) -> Result<CommitEntry> {
-        append_commit(
-            write_txn,
-            commit_timestamp.unwrap_or_else(|| self.now()),
-            writes.clone(),
-            if writes.is_empty() {
-                Vec::new()
-            } else {
-                vec![TenantEventKind::DocumentWrite { writes }]
-            },
-        )
-    }
-
     pub fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
         if records.is_empty() {
             return Ok(());
