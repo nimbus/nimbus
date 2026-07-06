@@ -3,7 +3,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
-use std::process::Stdio;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,6 +17,7 @@ use nimbus_blob::{BlobHash, BlobStore};
 use nimbus_storage::{ObjectBlobLayout, ObjectManifest, ObjectManifestAttributes, ObjectMetaStore};
 
 use crate::ObjectUnsupportedOperation;
+use crate::PlatformStdio;
 use crate::bridge::block_on_byte_plane;
 
 const OBJECT_FS_LIST_LIMIT: usize = 10_000;
@@ -1305,7 +1305,7 @@ impl File for ObjectFile {
         self.write_sync(buf)
     }
 
-    fn as_stdio(self: Rc<Self>) -> FsResult<Stdio> {
+    fn as_stdio(self: Rc<Self>) -> FsResult<PlatformStdio> {
         Err(FsError::NotSupported)
     }
 

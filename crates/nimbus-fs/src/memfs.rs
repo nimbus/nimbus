@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Component, Path, PathBuf};
-use std::process::Stdio;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -11,6 +10,8 @@ use deno_fs::sync::MaybeArc;
 use deno_fs::{FileSystem, FsDirEntry, FsFileType, FsReadDir, FsReadDirRc, OpenOptions};
 use deno_io::fs::{File, FsError, FsResult, FsStat, FsStatFs};
 use deno_permissions::{CheckedPath, CheckedPathBuf};
+
+use crate::PlatformStdio;
 
 #[derive(Debug, Clone)]
 pub struct MemFsBackend {
@@ -1115,7 +1116,7 @@ impl File for MemFile {
         self.fs.write_at_path(&self.path, position, buf)
     }
 
-    fn as_stdio(self: Rc<Self>) -> FsResult<Stdio> {
+    fn as_stdio(self: Rc<Self>) -> FsResult<PlatformStdio> {
         Err(FsError::NotSupported)
     }
 

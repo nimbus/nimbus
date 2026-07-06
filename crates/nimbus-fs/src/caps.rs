@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Component, Path, PathBuf};
-use std::process::Stdio;
 use std::rc::Rc;
 
 use deno_core::{BufMutView, BufView, ResourceHandleFd, WriteOutcome};
@@ -11,6 +10,7 @@ use deno_fs::{FileSystem, FsDirEntry, FsFileType, FsReadDirRc, OpenOptions};
 use deno_io::fs::{File, FsResult, FsStat, FsStatFs};
 use deno_permissions::{CheckedPath, CheckedPathBuf};
 
+use crate::PlatformStdio;
 use crate::mount::{MountEntry, MountTable, MountTarget};
 
 #[derive(Debug, Clone, Default)]
@@ -843,7 +843,7 @@ impl File for CappedFile {
         self.inner.clone().write_at_sync(buf, position)
     }
 
-    fn as_stdio(self: Rc<Self>) -> FsResult<Stdio> {
+    fn as_stdio(self: Rc<Self>) -> FsResult<PlatformStdio> {
         self.inner.clone().as_stdio()
     }
 

@@ -29,6 +29,9 @@ thiserror.workspace = true
 tokio.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
+[target.'cfg(windows)'.dependencies]
+deno_subprocess_windows.workspace = true
+
 [dev-dependencies]
 proptest = "1"
 tempfile.workspace = true
