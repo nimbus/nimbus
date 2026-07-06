@@ -13823,7 +13823,7 @@ dependencies = [
 
 [[package]]
 name = "workspace-hack"
-version = "0.1.0"
+version = "0.1.45"
 dependencies = [
  "allocator-api2",
  "arrayvec",
