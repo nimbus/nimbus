@@ -101,8 +101,11 @@ extension-registry seam before the second concern edits `extensions.rs`.
 - `secret-management-plan.md` - `deferred`. Owns tenant-scoped secret references,
   providers, storage, cache invalidation, host bridge, and audit model. Promote
   when a named consumer needs stronger-than-env-var credentials.
-- `service-identity-provider-auth-plan.md` - `deferred`. Owns workload identity
-  minting into provider credentials. It consumes workload identity and cluster
+- `service-identity-provider-auth-plan.md` - `in_progress`. Owns workload identity
+  minting into provider credentials. SI0 landed (PR #126: `nimbus-workload-identity`
+  crate — provider-auth policy, admission-anchored mint authorization, claim set,
+  audit schema); SI1+ remain gated (production minting on HS1, provider adapters
+  on a concrete provider need). It consumes workload identity and cluster
   node identity; it does not own secret values.
 - `agent-browser-service-plan.md` - `deferred`. Owns the built-in browser
   service, session/profile storage, warm pool, Playwright-compatible surface,
