@@ -47,6 +47,7 @@ All Rust workspace members, per the root `Cargo.toml`.
 | `nimbus-system` | System-tenant records, route inventory, and status projections. |
 | `nimbus-tenant` | Tenant isolation decisions, workload identity, and admission policy. |
 | `nimbus-testing` | Shared test fixtures and the deterministic verification harness. |
+| `nimbus-workload-identity` | Workload-identity issuance seam: provider-auth policy, admission-anchored mint authorization, credential claim set, and mint/deny audit schema (SI0). Projection stays in `nimbus-tenant`. |
 
 ### npm packages (`packages/`)
 

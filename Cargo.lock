@@ -7410,6 +7410,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nimbus-workload-identity"
+version = "0.1.45"
+dependencies = [
+ "nimbus-core",
+ "nimbus-tenant",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "zeroize",
+]
+
+[[package]]
 name = "nimbus-workloads"
 version = "0.1.45"
 dependencies = [
