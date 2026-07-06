@@ -457,6 +457,10 @@ pub(crate) fn bootstrap_object_master_key(path: &Path) -> Result<(), Box<dyn Err
 }
 
 fn set_private_file_permissions(path: &Path) -> std::io::Result<()> {
+    // Off unix the key file relies on the platform's default ACLs; Windows
+    // ACL tightening is windows-machine-support-plan territory.
+    #[cfg(not(unix))]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -466,6 +470,10 @@ fn set_private_file_permissions(path: &Path) -> std::io::Result<()> {
 }
 
 fn set_private_dir_permissions(path: &Path) -> std::io::Result<()> {
+    // Off unix the key directory relies on the platform's default ACLs;
+    // Windows ACL tightening is windows-machine-support-plan territory.
+    #[cfg(not(unix))]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
