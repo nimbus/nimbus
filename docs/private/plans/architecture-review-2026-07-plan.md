@@ -161,6 +161,7 @@ moves; one evidence line per completed item (test name/count or commit).
 | GR6 | Engine production unwrap/expect pass (~115 sites): confirm each is a true invariant; fix the two known non-invariants — `persistence_config.rs:533` key-provider `.unwrap()` → typed `EncryptionValidationError`; consider propagating `background_executor.rs:32`. | `nimbus-engine/src` (non-test) | small | todo |
 | GR7 | Prove the KV RESP surface cannot serve without credentials: verify `CredentialRegistry` is wired non-optionally in `serve`, add a deny test if absent. | `nimbus-kv/src/server.rs:241` | small | todo |
 | GR8 | Provenance negative-path tests: failing-verifier + policy-mismatch cases proving fail-closed admission at the provenance layer (or confirm equivalent coverage in `nimbus-artifacts/src/admission.rs` tests and record it). | `nimbus-provenance`, `nimbus-artifacts/src/admission.rs` | small | todo |
+| GR9 | BlobGc write-intent pins: `BlobGc::sweep` (`nimbus-blob/src/gc.rs:54`) is enumerate-then-release protected only by a wall-clock grace_window — no write-intent pin registry, no seal-before-enumerate barrier (TOCTOU). Concrete repro: `nimbus-sandbox/src/volume.rs:271` puts a snapshot blob unpinned between `store.put` and recording the SnapshotId. Add a pin/lease registry so in-flight writes are protected by an explicit hold, not just grace time. (Surfaced by the 2026-07-07 DS3 storage inventory.) | `nimbus-blob/src/gc.rs`, `nimbus-sandbox/src/volume.rs:271` | medium | todo |
 
 ### Band SR — Seam repairs
 
