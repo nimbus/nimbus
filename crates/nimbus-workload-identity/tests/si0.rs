@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -20,10 +20,11 @@ use nimbus_tenant::{
     TenantIsolationPolicyInput, WorkloadAttributes, WorkloadLocation,
 };
 use nimbus_workload_identity::{
-    CredentialKind, CredentialMintError, DenyAllIssuer, IdentityAuditOutcome, IdentityIssueError,
-    IdentityIssuer, IdentityMintError, IdentityMintRequest, IdentityTrustConfig, LocalDevIssuer,
-    MintParams, MintedCredential, NodeIdentityRecord, PolicyValidationError, ProviderAuthPolicy,
-    ProviderAuthRule, SubjectMatch, TrustConfigError, authorize_mint, mint_credential,
+    CredentialFormat, CredentialKind, CredentialMintError, DenyAllIssuer, IdentityAuditOutcome,
+    IdentityIssueError, IdentityIssuer, IdentityMintError, IdentityMintRequest,
+    IdentityTrustConfig, LocalDevIssuer, MintParams, MintedCredential, NodeIdentityRecord,
+    PolicyValidationError, ProviderAuthPolicy, ProviderAuthRule, SpiffeRegistrationEntry,
+    SubjectMatch, TrustConfigError, authorize_mint, mint_credential,
 };
 use ring::signature::{ED25519, UnparsedPublicKey};
 use serde_json::Value;
@@ -564,6 +565,89 @@ fn local_dev_issuer_mints_expected_jwt_and_omits_null_placement_claims() {
 }
 
 #[test]
+fn jwt_svid_subject_matches_tenant_spiffe_id_for_real_admitted_decision() {
+    let decision = decision_for_tenant("alpha");
+    let expected_spiffe_id = decision
+        .workload_identity()
+        .spiffe_id("identity.test")
+        .expect("trust domain should be valid");
+    let policy = allow_subject(decision.workload_identity().subject());
+    let request = IdentityMintRequest::for_decision(&decision, AUDIENCE, Duration::from_secs(30));
+    let signer = TestIdentitySigner::new("svid-subject");
+    let issuer = local_dev_issuer_with_format(&signer, CredentialFormat::JwtSvid);
+
+    let mint = mint_credential(&policy, &request, &params("jti-svid-subject"), &issuer);
+    let credential = mint.outcome.expect("JWT-SVID should mint");
+    let payload = decode_jwt_json_segment(jwt_segments(credential.secret())[1]);
+
+    assert_eq!(credential.kind(), CredentialKind::SpiffeSvid);
+    assert_eq!(payload["sub"], expected_spiffe_id);
+}
+
+#[test]
+fn jwt_svid_payload_uses_spiffe_sub_array_audience_and_verifies_independently() {
+    let decision = decision_for_tenant_with_location("alpha");
+    let expected_spiffe_id = decision
+        .workload_identity()
+        .spiffe_id("identity.test")
+        .expect("trust domain should be valid");
+    let policy = allow_subject(decision.workload_identity().subject());
+    let request = IdentityMintRequest::for_decision(&decision, AUDIENCE, Duration::from_secs(30));
+    let signer = TestIdentitySigner::new("svid-payload");
+    let issuer = local_dev_issuer_with_format(&signer, CredentialFormat::JwtSvid);
+
+    let mint = mint_credential(&policy, &request, &params("jti-svid-payload"), &issuer);
+    let credential = mint.outcome.expect("JWT-SVID should mint");
+    assert_eq!(credential.kind(), CredentialKind::SpiffeSvid);
+    let token = credential.secret();
+    let segments = jwt_segments(token);
+
+    let header = decode_jwt_json_segment(segments[0]);
+    assert_eq!(header["alg"], "EdDSA");
+    assert_eq!(header["typ"], "JWT");
+    assert_eq!(header["kid"], signer.signer.public_key().fingerprint());
+
+    let payload = decode_jwt_json_segment(segments[1]);
+    assert_eq!(payload["iss"], "identity.test");
+    assert_eq!(payload["sub"], expected_spiffe_id);
+    assert_eq!(payload["aud"], serde_json::json!([AUDIENCE]));
+    assert_eq!(payload["iat"], 1);
+    assert_eq!(payload["exp"], 31);
+    assert_eq!(payload["jti"], "jti-svid-payload");
+    assert_eq!(payload["nimbus_decision_id"], decision.id().as_str());
+    assert_eq!(
+        payload["nimbus_workload_subject"],
+        decision.workload_identity().subject()
+    );
+    assert_eq!(
+        payload["nimbus_workload_audit_projection"],
+        decision.workload_identity().audit_projection()
+    );
+    assert_eq!(payload["nimbus_node_id"], "node-a");
+    assert_eq!(payload["nimbus_machine_id"], "machine-a");
+    assert_eq!(payload["nimbus_sandbox_id"], "sandbox-a");
+    assert_eq!(payload["nimbus_invocation_id"], "invoke-a");
+
+    assert_ring_verifies_jwt(token, signer.signer.public_key());
+
+    let (signing_input, signature) = jwt_signing_input_and_signature(token);
+    let mut tampered_payload = payload;
+    tampered_payload["sub"] = Value::String(format!("{expected_spiffe_id}/tampered"));
+    let tampered_payload = URL_SAFE_NO_PAD
+        .encode(serde_json::to_vec(&tampered_payload).expect("tampered payload should encode"));
+    let tampered_input = format!("{}.{}", jwt_segments(token)[0], tampered_payload);
+    assert_ne!(tampered_input, signing_input);
+    let public_key = signer.signer.public_key();
+    let verifier = UnparsedPublicKey::new(&ED25519, public_key.as_bytes());
+    assert!(
+        verifier
+            .verify(tampered_input.as_bytes(), &signature)
+            .is_err(),
+        "tampered JWT-SVID payload must not verify against the original signature"
+    );
+}
+
+#[test]
 fn minted_jwt_signature_verifies_independently_with_ring_and_rejects_tampered_payload() {
     let decision = decision_for_tenant("alpha");
     let policy = allow_subject(decision.workload_identity().subject());
@@ -596,6 +680,102 @@ fn minted_jwt_signature_verifies_independently_with_ring_and_rejects_tampered_pa
             .is_err(),
         "tampered payload must not verify against the original signature"
     );
+}
+
+#[test]
+fn jwt_svid_rotation_denies_stale_kid_but_old_signature_still_verifies_with_old_key() {
+    let decision = decision_for_tenant("alpha");
+    let policy = allow_subject(decision.workload_identity().subject());
+    let request = IdentityMintRequest::for_decision(&decision, AUDIENCE, Duration::from_secs(30));
+    let signer = RotatingTestIdentitySigner::new("svid-rotation");
+    let record = NodeIdentityRecord::local_dev(&signer.public_key());
+    let trust = IdentityTrustConfig::local_dev("identity.test").expect("local trust should build");
+    let issuer =
+        LocalDevIssuer::with_format(trust, &record, signer.erased(), CredentialFormat::JwtSvid)
+            .expect("JWT-SVID issuer should build");
+
+    let first = mint_credential(
+        &policy,
+        &request,
+        &MintParams {
+            issued_at_epoch_ms: 10_000,
+            credential_instance_id: "jti-rotation-1".to_string(),
+        },
+        &issuer,
+    )
+    .outcome
+    .expect("first JWT-SVID should mint");
+    let first_token = first.secret().to_string();
+    let first_header = decode_jwt_json_segment(jwt_segments(&first_token)[0]);
+    let first_payload = decode_jwt_json_segment(jwt_segments(&first_token)[1]);
+    let first_kid = first_header["kid"]
+        .as_str()
+        .expect("kid should be a string")
+        .to_string();
+    let first_sub = first_payload["sub"]
+        .as_str()
+        .expect("sub should be a string")
+        .to_string();
+    let first_jti = first_payload["jti"]
+        .as_str()
+        .expect("jti should be a string")
+        .to_string();
+    let first_exp = first_payload["exp"]
+        .as_u64()
+        .expect("exp should be numeric");
+    let old_public_key = signer.public_key();
+
+    signer.rotate();
+    let new_public_key = signer.public_key();
+    assert_ne!(new_public_key.fingerprint(), first_kid);
+
+    let (first_signing_input, first_signature) = jwt_identity_signature_from_token(&first_token);
+    assert!(matches!(
+        signer.verify(first_signing_input.as_bytes(), &first_signature),
+        Err(SigningError::StaleKey {
+            expected_key_id,
+            actual_key_id,
+        }) if expected_key_id == new_public_key.fingerprint() && actual_key_id == first_kid
+    ));
+    // Rotation is issuer-side denial by key id, not retroactive
+    // cryptographic revocation. An old public key can still verify bytes that
+    // were signed before rotation; providers rely on exp for token retirement.
+    UnparsedPublicKey::new(&ED25519, old_public_key.as_bytes())
+        .verify(
+            first_signing_input.as_bytes(),
+            first_signature.signature_bytes(),
+        )
+        .expect("old public key should still verify the old JWT-SVID signature");
+
+    let second = mint_credential(
+        &policy,
+        &request,
+        &MintParams {
+            issued_at_epoch_ms: 20_000,
+            credential_instance_id: "jti-rotation-2".to_string(),
+        },
+        &issuer,
+    )
+    .outcome
+    .expect("second JWT-SVID should mint");
+    let second_token = second.secret().to_string();
+    let second_header = decode_jwt_json_segment(jwt_segments(&second_token)[0]);
+    let second_payload = decode_jwt_json_segment(jwt_segments(&second_token)[1]);
+    assert_eq!(second_header["kid"], new_public_key.fingerprint());
+    assert_eq!(second_payload["sub"], first_sub);
+    assert_ne!(second_payload["jti"], first_jti);
+    assert_ne!(
+        second_payload["exp"]
+            .as_u64()
+            .expect("exp should be numeric"),
+        first_exp
+    );
+
+    let (second_signing_input, second_signature) = jwt_identity_signature_from_token(&second_token);
+    signer
+        .verify(second_signing_input.as_bytes(), &second_signature)
+        .expect("rotated signer should verify the re-minted JWT-SVID");
+    assert_ring_verifies_jwt(&second_token, new_public_key);
 }
 
 #[test]
@@ -637,6 +817,69 @@ fn local_dev_issuer_is_unconstructible_under_production_trust() {
 
     assert!(matches!(
         result,
+        Err(TrustConfigError::SourceNotAdmitted { .. })
+    ));
+}
+
+#[test]
+fn spiffe_registration_entry_renders_selectors_and_fails_closed_on_source() {
+    let decision = decision_for_tenant_with_location("alpha");
+    let identity = decision.workload_identity();
+    let public_key = IdentityPublicKey::from_ed25519_bytes([0x55; 32]);
+    let node = NodeIdentityRecord::local_dev(&public_key);
+    let trust = IdentityTrustConfig::local_dev("identity.test").expect("local trust should build");
+
+    let entry = SpiffeRegistrationEntry::for_workload(&trust, &identity, &node)
+        .expect("local registration entry should render");
+
+    assert_eq!(
+        entry.spiffe_id(),
+        identity
+            .spiffe_id("identity.test")
+            .expect("trust domain should be valid")
+    );
+    assert_eq!(
+        entry.parent_id(),
+        format!("spiffe://identity.test/nimbus/node/{}", node.id())
+    );
+    let selectors = entry
+        .selectors()
+        .iter()
+        .map(|selector| (selector.key(), selector.value()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        selectors,
+        vec![
+            ("nimbus:tenant", "alpha"),
+            ("nimbus:deployment", "none"),
+            ("nimbus:surface", "identity.test"),
+            ("nimbus:kind", "service"),
+            ("nimbus:name", "worker"),
+            ("nimbus:runtime-tier", "none"),
+            ("nimbus:runtime-backend", "none"),
+            ("nimbus:sandbox-backend", "none"),
+            ("nimbus:node", "node-a"),
+            ("nimbus:machine", "machine-a"),
+            ("nimbus:sandbox", "sandbox-a"),
+        ]
+    );
+    assert!(
+        !entry
+            .selectors()
+            .iter()
+            .any(|selector| selector.key() == "nimbus:invocation"),
+        "invocation IDs must not become SPIFFE selectors"
+    );
+
+    let serialized = serde_json::to_string(&entry).expect("registration entry should serialize");
+    assert!(!serialized.contains("invoke-a"));
+    assert!(!serialized.contains("public_key"));
+    assert!(!serialized.contains(&public_key.to_hex()));
+
+    let production =
+        IdentityTrustConfig::production("identity.test").expect("production trust should build");
+    assert!(matches!(
+        SpiffeRegistrationEntry::for_workload(&production, &identity, &node),
         Err(TrustConfigError::SourceNotAdmitted { .. })
     ));
 }
@@ -788,10 +1031,102 @@ impl Drop for TestIdentitySigner {
     }
 }
 
+struct RotatingTestIdentitySigner {
+    signer: SharedRotatingIdentitySigner,
+    key_path: PathBuf,
+}
+
+impl RotatingTestIdentitySigner {
+    fn new(label: &str) -> Self {
+        let key_path = unique_key_path(label);
+        remove_identity_key_files(&key_path);
+        let signer = FileBackedIdentitySigner::open(&key_path, OpenMode::GenerateIfAbsent)
+            .expect("rotating test identity signer should open");
+        Self {
+            signer: SharedRotatingIdentitySigner {
+                inner: Arc::new(Mutex::new(signer)),
+            },
+            key_path,
+        }
+    }
+
+    fn erased(&self) -> Arc<dyn IdentitySigner> {
+        Arc::new(self.signer.clone())
+    }
+
+    fn public_key(&self) -> IdentityPublicKey {
+        self.signer.public_key()
+    }
+
+    fn rotate(&self) {
+        self.signer
+            .inner
+            .lock()
+            .expect("rotating signer mutex should not be poisoned")
+            .rotate()
+            .expect("signer rotation should complete");
+    }
+
+    fn verify(&self, message: &[u8], signature: &IdentitySignature) -> SigningResult<()> {
+        self.signer.verify(message, signature)
+    }
+}
+
+impl Drop for RotatingTestIdentitySigner {
+    fn drop(&mut self) {
+        remove_identity_key_files(&self.key_path);
+    }
+}
+
+#[derive(Clone)]
+struct SharedRotatingIdentitySigner {
+    inner: Arc<Mutex<FileBackedIdentitySigner>>,
+}
+
+impl IdentitySigner for SharedRotatingIdentitySigner {
+    fn sign(&self, message: &[u8]) -> SigningResult<IdentitySignature> {
+        self.inner
+            .lock()
+            .expect("rotating signer mutex should not be poisoned")
+            .sign(message)
+    }
+
+    fn verify(&self, message: &[u8], signature: &IdentitySignature) -> SigningResult<()> {
+        self.inner
+            .lock()
+            .expect("rotating signer mutex should not be poisoned")
+            .verify(message, signature)
+    }
+
+    fn public_key(&self) -> IdentityPublicKey {
+        self.inner
+            .lock()
+            .expect("rotating signer mutex should not be poisoned")
+            .public_key()
+    }
+
+    fn kind(&self) -> IdentitySignerKind {
+        self.inner
+            .lock()
+            .expect("rotating signer mutex should not be poisoned")
+            .kind()
+    }
+}
+
 fn local_dev_issuer(signer: &TestIdentitySigner) -> LocalDevIssuer {
     let record = NodeIdentityRecord::local_dev(&signer.signer.public_key());
     let trust = IdentityTrustConfig::local_dev("identity.test").expect("local trust should build");
     LocalDevIssuer::new(trust, &record, signer.erased()).expect("local issuer should build")
+}
+
+fn local_dev_issuer_with_format(
+    signer: &TestIdentitySigner,
+    format: CredentialFormat,
+) -> LocalDevIssuer {
+    let record = NodeIdentityRecord::local_dev(&signer.signer.public_key());
+    let trust = IdentityTrustConfig::local_dev("identity.test").expect("local trust should build");
+    LocalDevIssuer::with_format(trust, &record, signer.erased(), format)
+        .expect("local issuer should build")
 }
 
 fn jwt_segments(token: &str) -> Vec<&str> {
@@ -809,6 +1144,36 @@ fn decode_jwt_json_segment(segment: &str) -> Value {
         .decode(segment)
         .expect("JWT segment should use base64url no-pad");
     serde_json::from_slice(&bytes).expect("JWT segment should decode as JSON")
+}
+
+fn jwt_signing_input_and_signature(token: &str) -> (String, Vec<u8>) {
+    let segments = jwt_segments(token);
+    let signing_input = format!("{}.{}", segments[0], segments[1]);
+    let signature = URL_SAFE_NO_PAD
+        .decode(segments[2])
+        .expect("signature segment should decode");
+    (signing_input, signature)
+}
+
+fn jwt_identity_signature_from_token(token: &str) -> (String, IdentitySignature) {
+    let segments = jwt_segments(token);
+    let header = decode_jwt_json_segment(segments[0]);
+    let kid = header["kid"]
+        .as_str()
+        .expect("kid should be a string")
+        .to_string();
+    let signing_input = format!("{}.{}", segments[0], segments[1]);
+    let signature = URL_SAFE_NO_PAD
+        .decode(segments[2])
+        .expect("signature segment should decode");
+    (signing_input, IdentitySignature::new(kid, signature))
+}
+
+fn assert_ring_verifies_jwt(token: &str, public_key: IdentityPublicKey) {
+    let (signing_input, signature) = jwt_signing_input_and_signature(token);
+    UnparsedPublicKey::new(&ED25519, public_key.as_bytes())
+        .verify(signing_input.as_bytes(), &signature)
+        .expect("ring should independently verify the JWT signature");
 }
 
 fn unique_key_path(label: &str) -> PathBuf {

@@ -42,20 +42,22 @@ mod issuer;
 mod jwt;
 mod mint;
 mod policy;
+mod registration;
 mod source;
 mod trust;
 
 pub use audit::{IdentityAuditEvent, IdentityAuditOutcome};
 pub use claims::CredentialClaims;
 pub use issuer::{
-    CredentialKind, DenyAllIssuer, IdentityIssueError, IdentityIssuer, LocalDevIssuer,
-    MintedCredential,
+    CredentialFormat, CredentialKind, DenyAllIssuer, IdentityIssueError, IdentityIssuer,
+    LocalDevIssuer, MintedCredential,
 };
 pub use mint::{
     CredentialMint, CredentialMintError, IdentityMintError, IdentityMintRequest, MintAuthorization,
     MintParams, authorize_mint, mint_credential,
 };
 pub use policy::{PolicyValidationError, ProviderAuthPolicy, ProviderAuthRule, SubjectMatch};
+pub use registration::{SpiffeRegistrationEntry, SpiffeSelector};
 pub use source::{
     IdentitySourceKind, MachineIdentityRecord, MembershipAttestation, NodeIdentityRecord,
 };

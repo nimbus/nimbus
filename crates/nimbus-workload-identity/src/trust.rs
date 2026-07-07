@@ -54,9 +54,11 @@ pub enum TrustConfigError {
     #[error("identity trust domain cannot be empty")]
     EmptyTrustDomain,
     #[error(
-        "identity trust domain `{trust_domain}` must not include a scheme, slash, or whitespace"
+        "identity trust domain `{trust_domain}` must contain only lowercase ASCII letters, digits, '.', '-', or '_'"
     )]
     InvalidTrustDomain { trust_domain: String },
+    #[error("workload subject `{subject}` cannot be rendered as a SPIFFE workload identity")]
+    InvalidWorkloadSubject { subject: String },
     #[error("identity source {identity_source:?} is not admitted in {mode:?} trust mode")]
     SourceNotAdmitted {
         mode: TrustMode,
@@ -67,13 +69,12 @@ pub enum TrustConfigError {
 fn validate_trust_domain(trust_domain: &str) -> Result<&str, TrustConfigError> {
     // Mirrors nimbus-tenant::identity::validate_spiffe_trust_domain locally so
     // workload identity does not import tenant-private validation internals.
-    let trust_domain = trust_domain.trim();
     if trust_domain.is_empty() {
         return Err(TrustConfigError::EmptyTrustDomain);
     }
-    if trust_domain.contains("://")
-        || trust_domain.contains('/')
-        || trust_domain.chars().any(char::is_whitespace)
+    if !trust_domain
+        .bytes()
+        .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'.' | b'-' | b'_'))
     {
         return Err(TrustConfigError::InvalidTrustDomain {
             trust_domain: trust_domain.to_string(),
@@ -94,6 +95,11 @@ mod tests {
             "https://example.com",
             "example.com/ns",
             "example com",
+            " example.com ",
+            "Example.COM",
+            "example@com",
+            "example:com",
+            "examplé.com",
         ] {
             assert!(
                 IdentityTrustConfig::local_dev(trust_domain).is_err(),
@@ -102,9 +108,18 @@ mod tests {
         }
 
         let config =
-            IdentityTrustConfig::production(" example.com ").expect("trimmed domain is valid");
+            IdentityTrustConfig::production("example.com").expect("lowercase domain is valid");
         assert_eq!(config.trust_domain(), "example.com");
         assert_eq!(config.mode(), TrustMode::Production);
+
+        for trust_domain in ["example-1.com", "example_1.test"] {
+            assert_eq!(
+                IdentityTrustConfig::local_dev(trust_domain)
+                    .expect("SPIFFE charset domain should be valid")
+                    .trust_domain(),
+                trust_domain
+            );
+        }
     }
 
     #[test]

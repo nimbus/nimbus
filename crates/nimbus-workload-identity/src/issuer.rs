@@ -26,6 +26,7 @@ pub struct LocalDevIssuer {
     trust: IdentityTrustConfig,
     source: IdentitySourceKind,
     signer: Arc<dyn IdentitySigner>,
+    format: CredentialFormat,
 }
 
 impl LocalDevIssuer {
@@ -38,11 +39,21 @@ impl LocalDevIssuer {
         record: &NodeIdentityRecord,
         signer: Arc<dyn IdentitySigner>,
     ) -> Result<Self, TrustConfigError> {
+        Self::with_format(trust, record, signer, CredentialFormat::OidcJwt)
+    }
+
+    pub fn with_format(
+        trust: IdentityTrustConfig,
+        record: &NodeIdentityRecord,
+        signer: Arc<dyn IdentitySigner>,
+        format: CredentialFormat,
+    ) -> Result<Self, TrustConfigError> {
         trust.admit_source(record.source())?;
         Ok(Self {
             trust,
             source: record.source().clone(),
             signer,
+            format,
         })
     }
 }
@@ -50,10 +61,26 @@ impl LocalDevIssuer {
 impl IdentityIssuer for LocalDevIssuer {
     fn mint(&self, claims: &CredentialClaims) -> Result<MintedCredential, IdentityIssueError> {
         debug_assert!(self.trust.admit_source(&self.source).is_ok());
-        let token = jwt::mint_oidc_jwt(self.trust.trust_domain(), claims, self.signer.as_ref())
-            .map_err(|error| IdentityIssueError::Failed(error.tenant_safe_message()))?;
-        Ok(MintedCredential::new(CredentialKind::OidcJwt, token))
+        let (kind, token) = match self.format {
+            CredentialFormat::OidcJwt => (
+                CredentialKind::OidcJwt,
+                jwt::mint_oidc_jwt(self.trust.trust_domain(), claims, self.signer.as_ref()),
+            ),
+            CredentialFormat::JwtSvid => (
+                CredentialKind::SpiffeSvid,
+                jwt::mint_jwt_svid(self.trust.trust_domain(), claims, self.signer.as_ref()),
+            ),
+        };
+        let token =
+            token.map_err(|error| IdentityIssueError::Failed(error.tenant_safe_message()))?;
+        Ok(MintedCredential::new(kind, token))
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CredentialFormat {
+    OidcJwt,
+    JwtSvid,
 }
 
 pub struct MintedCredential {
