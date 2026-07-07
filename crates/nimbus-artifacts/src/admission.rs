@@ -216,6 +216,26 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone)]
+    struct FailingArtifactVerifier {
+        error: ArtifactVerifierError,
+    }
+
+    impl FailingArtifactVerifier {
+        fn new(error: ArtifactVerifierError) -> Self {
+            Self { error }
+        }
+    }
+
+    impl ArtifactVerifierBackend for FailingArtifactVerifier {
+        fn verify_artifact(
+            &self,
+            _request: &ArtifactVerificationRequest,
+        ) -> crate::ArtifactVerifierResult<ArtifactVerificationEvidence> {
+            Err(self.error.clone())
+        }
+    }
+
     fn policy() -> ArtifactVerificationPolicy {
         ArtifactVerificationPolicy::new().require_provenance_from_source(
             BUILDER_ID,
@@ -278,6 +298,32 @@ mod tests {
                 .to_string()
                 .contains("invalid sha256 identity"),
             "invalid digest error should be actionable: {invalid_digest_error}"
+        );
+    }
+
+    #[test]
+    fn runtime_bundle_artifact_admission_fails_closed_when_verifier_errors() {
+        let verifier = FailingArtifactVerifier::new(ArtifactVerifierError::command_failure(
+            "cosign verify-attestation exited with status 1",
+        ));
+
+        let error = admit_artifact_subject(
+            runtime_subject(DIGEST),
+            &policy(),
+            &verifier,
+            "runtime invocation",
+        )
+        .expect_err("a failing verifier backend must fail closed rather than admit the artifact");
+
+        assert!(
+            matches!(error, Error::PermissionDenied(_)),
+            "verifier failure must map to PermissionDenied, got {error:?}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("artifact verifier failed closed"),
+            "verifier failure error should be actionable: {error}"
         );
     }
 
