@@ -172,7 +172,19 @@ impl HttpProtocolAdapter for CloudFunctionsHttpAdapter {
 
 #[cfg(test)]
 mod tests {
+    use axum::body::{Body, Bytes, to_bytes};
+    use axum::http::{Request, StatusCode};
+    use nimbus_engine::Engine;
+    use nimbus_testing::EngineFixture;
+    use tower::ServiceExt;
+
     use super::*;
+    use crate::config::control_plane::ControlPlaneConfig;
+    use crate::config::deployment::DeploymentConfig;
+    use crate::config::node_services::NodeServicesConfig;
+    use crate::config::runtime::RuntimeGovernorConfig;
+    use crate::config::transport::TransportConfig;
+    use crate::state::AppStateConfig;
 
     struct StubAdapter {
         name: &'static str,
@@ -193,14 +205,58 @@ mod tests {
             self.is_fallback
         }
 
+        // Mirrors the production adapters: an `is_fallback` stub installs a
+        // router-wide fallback (like `CloudFunctionsHttpAdapter`) instead of
+        // merging a route, so the fallback tests below can observe which
+        // adapter actually won the fallback slot.
         fn mount(self: Box<Self>, router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
-            let name = self.name;
-            router.route(name, axum::routing::get(move || async move { name }))
+            let Self {
+                name, is_fallback, ..
+            } = *self;
+            if is_fallback {
+                router.fallback(axum::routing::any(move || async move { name }))
+            } else {
+                router.route(name, axum::routing::get(move || async move { name }))
+            }
         }
     }
 
-    #[test]
-    fn mount_adapters_skips_disabled_adapters() {
+    /// Minimal `AppState` for driving requests through a `mount_adapters`
+    /// router: the stub adapters' handlers never read state, so every field
+    /// is a default. The `EngineFixture` must outlive the router.
+    fn test_state() -> (Arc<AppState>, EngineFixture<Engine>) {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let state = Arc::new(AppState::from_config(AppStateConfig {
+            engine: fixture.engine(),
+            deployment: DeploymentConfig::default(),
+            control_plane: ControlPlaneConfig::router_options_default(),
+            node_services: NodeServicesConfig::default(),
+            transport: TransportConfig::default(),
+            runtime: RuntimeGovernorConfig::default(),
+        }));
+        (state, fixture)
+    }
+
+    async fn get(router: &Router, path: &str) -> (StatusCode, Bytes) {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(path)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("route should respond");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should collect");
+        (status, body)
+    }
+
+    #[tokio::test]
+    async fn mount_adapters_skips_disabled_adapters() {
+        let (state, _fixture) = test_state();
         let router = mount_adapters(
             Router::new(),
             vec![
@@ -215,12 +271,27 @@ mod tests {
                     is_fallback: false,
                 }),
             ],
+        )
+        .with_state(state);
+
+        let (status, body) = get(&router, "/enabled").await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the enabled adapter's route must be mounted and reachable"
         );
-        // Disabled adapters must not register a route: attempting to
-        // register the same path twice would panic at merge/route time,
-        // so a clean build is itself proof the disabled adapter mounted
-        // nothing.
-        let _ = router;
+        assert_eq!(
+            &body[..],
+            b"/enabled",
+            "the enabled adapter's own handler must answer its route"
+        );
+
+        let (status, _) = get(&router, "/disabled").await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "a disabled adapter must not have its route mounted, so its path 404s"
+        );
     }
 
     #[test]
@@ -243,23 +314,38 @@ mod tests {
         );
     }
 
-    #[test]
-    fn mount_adapters_allows_two_fallback_capable_adapters_when_only_one_is_enabled() {
+    #[tokio::test]
+    async fn mount_adapters_routes_unmatched_paths_to_the_enabled_fallback_when_only_one_is_enabled()
+     {
+        let (state, _fixture) = test_state();
         let router = mount_adapters(
             Router::new(),
             vec![
                 Box::new(StubAdapter {
-                    name: "/only-enabled",
+                    name: "/only-enabled-fallback",
                     enabled: true,
                     is_fallback: true,
                 }),
                 Box::new(StubAdapter {
-                    name: "second",
+                    name: "/disabled-fallback",
                     enabled: false,
                     is_fallback: true,
                 }),
             ],
+        )
+        .with_state(state);
+
+        let (status, body) = get(&router, "/this-path-matches-no-adapter-route").await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the enabled fallback-capable adapter must install a router-wide fallback"
         );
-        let _ = router;
+        assert_eq!(
+            &body[..],
+            b"/only-enabled-fallback",
+            "an unmatched path must be answered by the enabled fallback adapter, proving the \
+             disabled fallback-capable adapter did not (silently) win the fallback slot"
+        );
     }
 }
