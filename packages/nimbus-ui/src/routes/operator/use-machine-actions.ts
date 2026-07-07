@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
+import { machines } from "../../lib/api-mutations";
 import type { MachineDoc } from "./machine-types";
 
 export type LifecycleAction = "start" | "stop" | "restart" | "delete";
@@ -70,48 +71,20 @@ export function useMachineActions(): MachineActions {
         delete next[key];
         return next;
       });
-      try {
-        const path =
-          action === "delete"
-            ? `/api/machines/${encodeURIComponent(machine.name)}`
-            : `/api/machines/${encodeURIComponent(machine.name)}/${action}`;
-        const response = await fetch(path, {
-          method: action === "delete" ? "DELETE" : "POST",
-          credentials: "same-origin",
-          headers: {
-            "content-type": "application/json",
-            accept: "application/json",
-          },
-          body: action === "delete" ? undefined : JSON.stringify({}),
-        });
-        if (!response.ok) {
-          const text = await response.text().catch(() => "");
-          let message = `${action} failed (${response.status})`;
-          if (text) {
-            try {
-              const parsed = JSON.parse(text);
-              if (typeof parsed === "object" && parsed && "error" in parsed) {
-                message = String((parsed as { error: unknown }).error);
-              } else {
-                message = text;
-              }
-            } catch {
-              message = text;
-            }
-          }
-          throw new Error(message);
-        }
+      const result =
+        action === "delete"
+          ? await machines.remove(machine.name)
+          : await machines.action(machine.name, action);
+      if (!result.ok) {
+        setErrors((prev) => ({ ...prev, [key]: result.error }));
+      } else {
         toast(`${capitalize(action)} sent to ${machine.name}`);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        setErrors((prev) => ({ ...prev, [key]: message }));
-      } finally {
-        setPending((prev) => {
-          const next = { ...prev };
-          delete next[key];
-          return next;
-        });
       }
+      setPending((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
     },
     [],
   );

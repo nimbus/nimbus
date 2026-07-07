@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { system } from "../../../lib/api-mutations";
 import { DialogShell, SectionCard } from "./primitives";
 
 export function DangerZoneSection() {
@@ -67,32 +68,17 @@ function RotateTokenDialog({ onClose }: { onClose: () => void }) {
     }
     setSubmitting(true);
     setError(null);
-    try {
-      const res = await fetch("/api/system/token/rotate", {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          Authorization: `Bearer ${token.trim()}`,
-        },
-      });
-      const body = (await res.json()) as {
-        generation?: number;
-        error?: string;
-      };
-      if (!res.ok) {
-        setError(body.error ?? `Rotation failed (${res.status}).`);
-        setSubmitting(false);
-        return;
-      }
-      setResult({ generation: body.generation ?? 0 });
-      toast.success("Admin token rotated", {
-        description: `New generation ${body.generation}. All other sessions invalidated.`,
-      });
-    } catch (e) {
-      setError(`Rotation failed: ${(e as Error).message}`);
-    } finally {
+    const result = await system.rotateToken(token.trim());
+    if (!result.ok) {
+      setError(result.error);
       setSubmitting(false);
+      return;
     }
+    setResult({ generation: result.data.generation ?? 0 });
+    toast.success("Admin token rotated", {
+      description: `New generation ${result.data.generation}. All other sessions invalidated.`,
+    });
+    setSubmitting(false);
   }, [token]);
 
   return (
@@ -189,30 +175,18 @@ function ShutdownDialog({ onClose }: { onClose: () => void }) {
   const submit = useCallback(async () => {
     setSubmitting(true);
     setError(null);
-    try {
-      const res = await fetch("/api/system/shutdown", {
-        method: "POST",
-        credentials: "include",
-      });
-      const body = (await res.json()) as {
-        accepted?: boolean;
-        error?: string;
-      };
-      if (!res.ok) {
-        setError(body.error ?? `Shutdown failed (${res.status}).`);
-        setSubmitting(false);
-        return;
-      }
-      setAccepted(true);
-      toast("Shutdown requested", {
-        description:
-          "Server will close listeners. The disconnect overlay will appear shortly.",
-      });
-    } catch (e) {
-      setError(`Shutdown failed: ${(e as Error).message}`);
-    } finally {
+    const result = await system.shutdown();
+    if (!result.ok) {
+      setError(result.error);
       setSubmitting(false);
+      return;
     }
+    setAccepted(true);
+    toast("Shutdown requested", {
+      description:
+        "Server will close listeners. The disconnect overlay will appear shortly.",
+    });
+    setSubmitting(false);
   }, []);
 
   return (

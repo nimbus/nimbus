@@ -1,82 +1,21 @@
-import { useEffect, useState } from "react";
+import { useApiRead } from "../../../hooks/use-api-read";
+import type { LoadingValue } from "../../../shell/loading-value";
 import type {
-  AsyncSnapshot,
   EncryptionStatus,
   LicenseSnapshot,
   RuntimeDiagnostics,
 } from "./types";
 
-export function useLicenseSnapshot(): AsyncSnapshot<LicenseSnapshot> {
-  const [license, setLicense] =
-    useState<AsyncSnapshot<LicenseSnapshot>>("loading");
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await fetch("/debug/license/status", {
-          credentials: "include",
-        });
-        if (!res.ok) throw new Error(`license ${res.status}`);
-        const body = (await res.json()) as LicenseSnapshot;
-        if (!cancelled) setLicense(body);
-      } catch {
-        if (!cancelled) setLicense("error");
-      }
-    };
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return license;
+// The settings page's three one-shot debug reads. Each is a `useApiRead` over
+// its `/debug/*` endpoint, reporting the console's shared `LoadingValue<T>`.
+export function useLicenseSnapshot(): LoadingValue<LicenseSnapshot> {
+  return useApiRead<LicenseSnapshot>("/debug/license/status", []);
 }
 
-export function useEncryptionStatus(): AsyncSnapshot<EncryptionStatus> {
-  const [encryption, setEncryption] =
-    useState<AsyncSnapshot<EncryptionStatus>>("loading");
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await fetch("/debug/encryption/status", {
-          credentials: "include",
-        });
-        if (!res.ok) throw new Error(`encryption ${res.status}`);
-        const body = (await res.json()) as EncryptionStatus;
-        if (!cancelled) setEncryption(body);
-      } catch {
-        if (!cancelled) setEncryption("error");
-      }
-    };
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return encryption;
+export function useEncryptionStatus(): LoadingValue<EncryptionStatus> {
+  return useApiRead<EncryptionStatus>("/debug/encryption/status", []);
 }
 
-export function useRuntimeDiagnostics(): AsyncSnapshot<RuntimeDiagnostics> {
-  const [diagnostics, setDiagnostics] =
-    useState<AsyncSnapshot<RuntimeDiagnostics>>("loading");
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await fetch("/debug/runtime/metrics", {
-          credentials: "include",
-        });
-        if (!res.ok) throw new Error(`metrics ${res.status}`);
-        const body = (await res.json()) as RuntimeDiagnostics;
-        if (!cancelled) setDiagnostics(body);
-      } catch {
-        if (!cancelled) setDiagnostics("error");
-      }
-    };
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return diagnostics;
+export function useRuntimeDiagnostics(): LoadingValue<RuntimeDiagnostics> {
+  return useApiRead<RuntimeDiagnostics>("/debug/runtime/metrics", []);
 }

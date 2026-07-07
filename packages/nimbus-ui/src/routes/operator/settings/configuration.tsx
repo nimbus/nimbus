@@ -1,8 +1,8 @@
 import { StateChip } from "../../../components/state-chip";
 import { RelativeTime } from "../../../components/time";
+import type { LoadingValue } from "../../../shell/loading-value";
 import { Definition, DefinitionList, SectionCard } from "./primitives";
 import type {
-  AsyncSnapshot,
   LicenseSnapshot,
   RuntimeDiagnostics,
   RuntimeLaneDiagnostics,
@@ -14,18 +14,23 @@ export function ConfigurationSection({
   license,
   status,
 }: {
-  diagnostics: AsyncSnapshot<RuntimeDiagnostics>;
-  license: AsyncSnapshot<LicenseSnapshot>;
+  diagnostics: LoadingValue<RuntimeDiagnostics>;
+  license: LoadingValue<LicenseSnapshot>;
   status: SystemStatusDoc | undefined;
 }) {
-  const limits =
-    diagnostics === "loading" || diagnostics === "error"
-      ? null
-      : (diagnostics.limits ?? null);
-  const lanes =
-    diagnostics === "loading" || diagnostics === "error"
-      ? []
-      : (diagnostics.lanes ?? []);
+  const diagnosticsSnap =
+    diagnostics.kind === "ok" ? diagnostics.value : null;
+  const diagnosticsState: "loading" | "error" | "ok" =
+    diagnostics.kind === "loading"
+      ? "loading"
+      : diagnosticsSnap
+        ? "ok"
+        : "error";
+  const licenseSnap = license.kind === "ok" ? license.value : null;
+  const licenseState: "loading" | "error" | "ok" =
+    license.kind === "loading" ? "loading" : licenseSnap ? "ok" : "error";
+  const limits = diagnosticsSnap?.limits ?? null;
+  const lanes = diagnosticsSnap?.lanes ?? [];
   const details = (status?.details ?? {}) as Record<string, unknown>;
   const authProvider =
     typeof details.authProvider === "string"
@@ -40,10 +45,7 @@ export function ConfigurationSection({
   const adaptersEnabled = adaptersEnabledRaw
     ? Object.keys(adaptersEnabledRaw).filter((k) => adaptersEnabledRaw[k])
     : null;
-  const licenseWarnings =
-    license !== "loading" && license !== "error"
-      ? (license.warnings ?? [])
-      : [];
+  const licenseWarnings = licenseSnap?.warnings ?? [];
   return (
     <SectionCard
       title="Configuration"
@@ -55,9 +57,9 @@ export function ConfigurationSection({
           <h3 className="mb-2 text-xs uppercase tracking-[0.14em] text-muted">
             Runtime limits
           </h3>
-          {diagnostics === "loading" ? (
+          {diagnosticsState === "loading" ? (
             <p className="text-sm text-muted">Loading runtime metrics…</p>
-          ) : diagnostics === "error" ? (
+          ) : diagnosticsState === "error" ? (
             <p className="text-sm text-danger">Runtime metrics unavailable.</p>
           ) : limits === null || Object.keys(limits).length === 0 ? (
             <p className="text-sm text-muted">
@@ -132,9 +134,9 @@ export function ConfigurationSection({
             <h3 className="mb-2 text-xs uppercase tracking-[0.14em] text-muted">
               Runtime lanes
             </h3>
-            {diagnostics === "loading" ? (
+            {diagnosticsState === "loading" ? (
               <p className="text-sm text-muted">Loading runtime lanes…</p>
-            ) : diagnostics === "error" ? (
+            ) : diagnosticsState === "error" ? (
               <p className="text-sm text-danger">Runtime lanes unavailable.</p>
             ) : lanes.length === 0 ? (
               <p className="text-sm text-muted">
@@ -169,41 +171,43 @@ export function ConfigurationSection({
           <h3 className="mt-4 mb-2 text-xs uppercase tracking-[0.14em] text-muted">
             License
           </h3>
-          {license === "loading" ? (
+          {licenseState === "loading" ? (
             <p className="text-sm text-muted">Loading license snapshot…</p>
-          ) : license === "error" ? (
+          ) : licenseState === "error" ? (
             <p className="text-sm text-danger">License unavailable.</p>
           ) : (
             <DefinitionList compact>
               <Definition label="Kind">
-                <span className="font-mono text-xs">{license.kind ?? "—"}</span>
+                <span className="font-mono text-xs">
+                  {licenseSnap?.kind ?? "—"}
+                </span>
               </Definition>
               <Definition label="Status">
-                <StateChip state={license.status ?? "unknown"} />
+                <StateChip state={licenseSnap?.status ?? "unknown"} />
               </Definition>
               <Definition label="Issued to">
                 <span className="font-mono text-xs">
-                  {license.issued_to ?? "—"}
+                  {licenseSnap?.issued_to ?? "—"}
                 </span>
               </Definition>
               <Definition label="Issued by">
                 <span className="font-mono text-xs">
-                  {license.issued_by ?? "—"}
+                  {licenseSnap?.issued_by ?? "—"}
                 </span>
               </Definition>
               <Definition label="MAU">
                 <span className="font-mono text-xs tabular">
-                  {typeof license.usage?.monthly_active_users === "number"
-                    ? license.usage.monthly_active_users
+                  {typeof licenseSnap?.usage?.monthly_active_users === "number"
+                    ? licenseSnap.usage.monthly_active_users
                     : "—"}
-                  {license.monthly_active_user_limit
-                    ? ` / ${license.monthly_active_user_limit}`
+                  {licenseSnap?.monthly_active_user_limit
+                    ? ` / ${licenseSnap.monthly_active_user_limit}`
                     : ""}
                 </span>
               </Definition>
               <Definition label="Expires">
-                {typeof license.expires_at_unix_ms === "number" ? (
-                  <RelativeTime epochMs={license.expires_at_unix_ms} />
+                {typeof licenseSnap?.expires_at_unix_ms === "number" ? (
+                  <RelativeTime epochMs={licenseSnap.expires_at_unix_ms} />
                 ) : (
                   <span className="text-muted">—</span>
                 )}

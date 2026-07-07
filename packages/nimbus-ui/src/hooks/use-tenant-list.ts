@@ -16,6 +16,23 @@ export type TenantListState =
   | { kind: "loaded"; tenants: TenantListEntry[] }
   | { kind: "error"; message: string };
 
+// Normalize the `/api/tenants` payload — entries arrive as bare id strings or
+// as objects under any of `tenantId`/`id`/`name` — into sorted, non-empty
+// entries. Shared by both readers below so the parse lives in one place.
+function normalizeEntries(body: TenantListResponse): TenantListEntry[] {
+  return (body.tenants ?? [])
+    .map<TenantListEntry | null>((entry) => {
+      if (typeof entry === "string") return { id: entry };
+      const id = entry.tenantId ?? entry.id ?? entry.name;
+      if (!id) return null;
+      return { id, backend: entry.backend };
+    })
+    .filter((entry): entry is TenantListEntry => entry !== null)
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// Throwing reader for the reactive hook and any caller that wants full entries
+// (id + backend). Rejects on a non-OK response with the error-envelope message.
 export async function loadTenantList(
   signal: AbortSignal,
 ): Promise<TenantListEntry[]> {
@@ -31,16 +48,24 @@ export async function loadTenantList(
       body?.error?.message ?? `Request failed: ${response.status}`,
     );
   }
-  const body = (await response.json()) as TenantListResponse;
-  return (body.tenants ?? [])
-    .map<TenantListEntry | null>((entry) => {
-      if (typeof entry === "string") return { id: entry };
-      const id = entry.tenantId ?? entry.id ?? entry.name;
-      if (!id) return null;
-      return { id, backend: entry.backend };
-    })
-    .filter((entry): entry is TenantListEntry => entry !== null)
-    .sort((a, b) => a.id.localeCompare(b.id));
+  return normalizeEntries((await response.json()) as TenantListResponse);
+}
+
+// Non-throwing id-only reader for route loaders and bootstrap effects that only
+// need the ids and treat a non-OK response as "no list" (null) rather than an
+// error. Network faults still reject, matching the contract these call sites
+// were built around before the tenant-list fetchers were consolidated here.
+export async function fetchTenants(
+  signal: AbortSignal,
+): Promise<string[] | null> {
+  const response = await fetch("/api/tenants", {
+    credentials: "include",
+    signal,
+  });
+  if (!response.ok) return null;
+  return normalizeEntries((await response.json()) as TenantListResponse).map(
+    (entry) => entry.id,
+  );
 }
 
 export function useTenantList(): TenantListState {

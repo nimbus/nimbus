@@ -8,11 +8,14 @@ describe("ConfigurationSection runtime diagnostics", () => {
   it("renders the default V8 lane and fail-closed Bun/JSC lane contract", () => {
     render(
       <ConfigurationSection
-        diagnostics={defaultRuntimeDiagnostics}
+        diagnostics={{ kind: "ok", value: defaultRuntimeDiagnostics }}
         license={{
-          kind: "community",
-          status: "active",
-          warnings: [],
+          kind: "ok",
+          value: {
+            kind: "community",
+            status: "active",
+            warnings: [],
+          },
         }}
         status={{
           details: {
