@@ -1,8 +1,8 @@
 //! Concrete provider implementations for the storage capability traits.
 
 use nimbus_core::{
-    CommitEntry, Document, DocumentId, Filter, Result, SequenceNumber, TableName,
-    TenantEventRecord, TenantId, Timestamp,
+    CollectionName, CommitEntry, Document, DocumentId, Filter, ResourcePathBinding, Result,
+    SequenceNumber, TableId, TableName, TenantEventRecord, TenantId, Timestamp,
 };
 use serde_json::{Map, Value};
 
@@ -14,10 +14,15 @@ use crate::async_storage::{
 use crate::libsql::OpenedLibsqlReplicaTenant;
 use crate::mysql::OpenedMySqlTenant;
 use crate::postgres::OpenedPostgresTenant;
-use crate::store::{DurableJournalBootstrap, DurableJournalPage, JournalProgress};
+use crate::retention::RetentionGcConfig;
+use crate::store::{
+    DurableJournalBootstrap, DurableJournalPage, JournalProgress, PointInTimeRestoreArchive,
+    PointInTimeRestoreTarget, TenantReadSnapshot,
+};
 use crate::{
-    LibsqlReplicaProvider, LibsqlReplicaTenantStore, MySqlProvider, MySqlTenantStore,
-    PostgresProvider, PostgresTenantStore, RedbUsageStorage, SqliteTenantStore, TenantStore,
+    LibsqlReplicaProvider, LibsqlReplicaTenantStore, MySqlProvider, MySqlReadSnapshot,
+    MySqlTenantStore, PostgresProvider, PostgresReadSnapshot, PostgresTenantStore,
+    RedbUsageStorage, SqliteReadSnapshot, SqliteTenantStore, TenantStore,
 };
 
 use super::object_metadata::{
@@ -27,9 +32,9 @@ use super::object_metadata::{
     put_multipart_upload_for_store, put_object_manifest_for_store,
 };
 use super::{
-    ControlPlaneUsage, DurableJournal, KeyProviderSurface, ObjectManifest, ObjectMetaStore,
-    ObjectMultipartUpload, SchedulerStore, StorageEngine, TenantLifecycle, TenantPointRead,
-    TenantPointWrite, TenantRangeScan,
+    ControlPlaneUsage, DurableJournal, KeyProviderSurface, MaterializedRebuild, ObjectManifest,
+    ObjectMetaStore, ObjectMultipartUpload, ResourcePathScan, ResourcePathSnapshot, SchedulerStore,
+    StorageEngine, TenantLifecycle, TenantPointRead, TenantPointWrite, TenantRangeScan,
 };
 
 impl TenantLifecycle for EmbeddedRedbProvider {
@@ -139,6 +144,10 @@ impl_point_read!(
     PostgresTenantStore,
     MySqlTenantStore,
     LibsqlReplicaTenantStore,
+    TenantReadSnapshot,
+    SqliteReadSnapshot,
+    PostgresReadSnapshot,
+    MySqlReadSnapshot,
 );
 
 macro_rules! impl_point_write {
@@ -308,6 +317,10 @@ impl_range_scan!(
     PostgresTenantStore,
     MySqlTenantStore,
     LibsqlReplicaTenantStore,
+    TenantReadSnapshot,
+    SqliteReadSnapshot,
+    PostgresReadSnapshot,
+    MySqlReadSnapshot,
 );
 
 macro_rules! impl_durable_journal {
@@ -336,12 +349,133 @@ macro_rules! impl_durable_journal {
                   fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap> {
                       <$ty>::export_durable_journal_bootstrap(self)
                   }
+
+                  fn latest_sequence(&self) -> Result<SequenceNumber> {
+                      <$ty>::latest_sequence(self)
+                  }
+
+                  fn applied_sequence(&self) -> Result<SequenceNumber> {
+                      <$ty>::applied_sequence(self)
+                  }
+
+                  fn read_commit_log_from(&self, sequence: SequenceNumber) -> Result<Vec<CommitEntry>> {
+                      <$ty>::read_commit_log_from(self, sequence)
+                  }
+
+                  fn recover_durable_journal(&self) -> Result<JournalProgress> {
+                      <$ty>::recover_durable_journal(self)
+                  }
+
+                  fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+                      <$ty>::append_durable_records_batch(self, records)
+                  }
+
+                  fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+                      <$ty>::apply_durable_records_batch(self, records)
+                  }
+
+                  fn export_point_in_time_restore_archive(
+                      &self,
+                      target: PointInTimeRestoreTarget,
+                      retention_config: RetentionGcConfig,
+                  ) -> Result<PointInTimeRestoreArchive> {
+                      <$ty>::export_point_in_time_restore_archive(self, target, retention_config)
+                  }
+
+                  fn import_point_in_time_restore_archive(
+                      &self,
+                      archive: &PointInTimeRestoreArchive,
+                  ) -> Result<JournalProgress> {
+                      <$ty>::import_point_in_time_restore_archive(self, archive)
+                  }
               }
           )+
       };
   }
 
 impl_durable_journal!(
+    TenantStore,
+    SqliteTenantStore,
+    PostgresTenantStore,
+    MySqlTenantStore,
+    LibsqlReplicaTenantStore,
+);
+
+macro_rules! impl_resource_path_snapshot {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl ResourcePathSnapshot for $ty {
+                fn scan_resource_path_bindings(&self) -> Result<Vec<ResourcePathBinding>> {
+                    <$ty>::scan_resource_path_bindings(self)
+                }
+            }
+        )+
+    };
+}
+
+impl_resource_path_snapshot!(
+    TenantReadSnapshot,
+    SqliteReadSnapshot,
+    PostgresReadSnapshot,
+    MySqlReadSnapshot,
+);
+
+macro_rules! impl_resource_path_scan {
+    ($(($ty:ty, $snapshot:ty)),+ $(,)?) => {
+        $(
+            impl ResourcePathScan for $ty {
+                type Snapshot = $snapshot;
+
+                fn read_snapshot(&self) -> Result<Self::Snapshot> {
+                    <$ty>::read_snapshot(self)
+                }
+
+                fn table_id(&self, table: &TableName) -> Result<Option<TableId>> {
+                    <$ty>::table_id(self, table)
+                }
+
+                fn scan_collection_group_bindings(
+                    &self,
+                    collection_group: &CollectionName,
+                ) -> Result<Vec<ResourcePathBinding>> {
+                    <$ty>::scan_collection_group_bindings(self, collection_group)
+                }
+            }
+        )+
+    };
+}
+
+impl_resource_path_scan!(
+    (TenantStore, TenantReadSnapshot),
+    (SqliteTenantStore, SqliteReadSnapshot),
+    (PostgresTenantStore, PostgresReadSnapshot),
+    (MySqlTenantStore, MySqlReadSnapshot),
+    // libsql's local read replica cache is backed by a SQLite store, so its
+    // read snapshot is a `SqliteReadSnapshot` rather than a distinct type.
+    (LibsqlReplicaTenantStore, SqliteReadSnapshot),
+);
+
+macro_rules! impl_materialized_rebuild {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl MaterializedRebuild for $ty {
+                fn scan_table_matching_cancellable<F>(
+                    &self,
+                    table: &TableName,
+                    check_cancel: &mut dyn FnMut() -> Result<()>,
+                    include_document: F,
+                ) -> Result<Vec<Document>>
+                where
+                    F: FnMut(&Document) -> Result<bool>,
+                {
+                    <$ty>::scan_table_matching_cancellable(self, table, check_cancel, include_document)
+                }
+            }
+        )+
+    };
+}
+
+impl_materialized_rebuild!(
     TenantStore,
     SqliteTenantStore,
     PostgresTenantStore,

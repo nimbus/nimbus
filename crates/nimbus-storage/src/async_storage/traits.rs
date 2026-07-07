@@ -4,6 +4,7 @@ use std::sync::Arc;
 use nimbus_core::{Result, TenantId};
 
 use crate::TenantWriteCommit;
+use crate::traits::ReadCapabilities;
 
 /// Minimal async composition root for embedded persistence providers.
 ///
@@ -25,7 +26,7 @@ pub trait EmbeddedPersistenceProvider {
 /// the existing snapshot, query-planner loading, journal, and materialized-read
 /// helpers without translating them into a separate CRUD vocabulary.
 pub trait TenantReadStorage: Send + Sync {
-    type Store: Send + Sync + 'static;
+    type Store: Send + Sync + 'static + ReadCapabilities;
 
     async fn execute<T, F>(&self, task: F) -> Result<T>
     where

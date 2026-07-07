@@ -22,6 +22,7 @@ mod runtime_bridge;
 pub mod scheduler;
 pub mod schema_store;
 pub mod simulation;
+pub(crate) mod sql;
 pub mod sqlite;
 pub mod store;
 mod table_identity;
@@ -119,9 +120,10 @@ pub use table_identity::{
 };
 pub use traits::{
     ControlPlaneUsage, DurableJournal, KeyProviderSurface, KvBatchOp, KvBatchOutcome, KvEntry,
-    KvMutation, KvPut, KvScanPage, KvStorageEngine, KvSweepOutcome, OBJECT_MANIFEST_TABLE,
-    OBJECT_MULTIPART_TABLE, ObjectBlobLayout, ObjectChecksums, ObjectChunkRef, ObjectManifest,
-    ObjectManifestAttributes, ObjectMetaStore, ObjectMultipartPart, ObjectMultipartUpload,
+    KvMutation, KvPut, KvScanPage, KvStorageEngine, KvSweepOutcome, MaterializedRebuild,
+    OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectBlobLayout, ObjectChecksums,
+    ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMetaStore, ObjectMultipartPart,
+    ObjectMultipartUpload, ReadCapabilities, ResourcePathScan, ResourcePathSnapshot,
     SchedulerStore, StorageEngine, TenantKvStore, TenantLifecycle, TenantPointRead,
     TenantPointWrite, TenantRangeScan,
 };

@@ -1,8 +1,8 @@
 //! Core storage capability traits.
 
 use nimbus_core::{
-    CommitEntry, Document, DocumentId, Filter, Result, SequenceNumber, TableName,
-    TenantEventRecord, TenantId, Timestamp,
+    CollectionName, CommitEntry, Document, DocumentId, Filter, ResourcePathBinding, Result,
+    SequenceNumber, TableId, TableName, TenantEventRecord, TenantId, Timestamp,
 };
 use nimbus_crypto::LocalKeyProvider;
 use serde_json::{Map, Value};
@@ -10,7 +10,11 @@ use serde_json::{Map, Value};
 use crate::IndexRangeBound;
 use crate::async_storage::UsageStorage;
 use crate::changefeed::{ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage};
-use crate::store::{DurableJournalBootstrap, DurableJournalPage, JournalProgress};
+use crate::retention::RetentionGcConfig;
+use crate::store::{
+    DurableJournalBootstrap, DurableJournalPage, JournalProgress, PointInTimeRestoreArchive,
+    PointInTimeRestoreTarget,
+};
 
 use super::object_metadata::ObjectMetaStore;
 
@@ -131,6 +135,32 @@ pub trait DurableJournal {
     ) -> Result<DurableJournalPage>;
     fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap>;
 
+    /// Latest sequence number durably appended to the journal (may be ahead
+    /// of `applied_sequence` while replay/apply is still catching up).
+    fn latest_sequence(&self) -> Result<SequenceNumber>;
+    /// Latest sequence number whose effects are visible to reads.
+    fn applied_sequence(&self) -> Result<SequenceNumber>;
+    /// Reads applied commit-log entries (document-level write effects),
+    /// starting at `sequence`, in contrast to `read_durable_journal_from`'s
+    /// raw event records.
+    fn read_commit_log_from(&self, sequence: SequenceNumber) -> Result<Vec<CommitEntry>>;
+    /// Replays any durable records not yet applied, bringing
+    /// `applied_sequence` back up to `latest_sequence`.
+    fn recover_durable_journal(&self) -> Result<JournalProgress>;
+    /// Appends records to the durable journal without applying them.
+    fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()>;
+    /// Appends and applies records to the durable journal in one step.
+    fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()>;
+    fn export_point_in_time_restore_archive(
+        &self,
+        target: PointInTimeRestoreTarget,
+        retention_config: RetentionGcConfig,
+    ) -> Result<PointInTimeRestoreArchive>;
+    fn import_point_in_time_restore_archive(
+        &self,
+        archive: &PointInTimeRestoreArchive,
+    ) -> Result<JournalProgress>;
+
     fn export_changefeed_bootstrap(&self) -> Result<ChangefeedBootstrap> {
         ChangefeedBootstrap::from_durable_bootstrap(self.export_durable_journal_bootstrap()?)
     }
@@ -156,6 +186,57 @@ pub trait ControlPlaneUsage: UsageStorage {}
 
 /// Local database key-provider capability.
 pub trait KeyProviderSurface: LocalKeyProvider {}
+
+/// Resource-path binding lookups backing document-path <-> locator
+/// resolution (collection listing, path uniqueness). `Snapshot` is the
+/// point-in-time read surface returned by `read_snapshot`, which owns the
+/// bulk `scan_resource_path_bindings` listing.
+pub trait ResourcePathScan {
+    type Snapshot: ResourcePathSnapshot;
+
+    fn read_snapshot(&self) -> Result<Self::Snapshot>;
+    fn table_id(&self, table: &TableName) -> Result<Option<TableId>>;
+    fn scan_collection_group_bindings(
+        &self,
+        collection_group: &CollectionName,
+    ) -> Result<Vec<ResourcePathBinding>>;
+}
+
+/// Snapshot-scoped resource-path surface obtained via `ResourcePathScan::read_snapshot`.
+pub trait ResourcePathSnapshot {
+    fn scan_resource_path_bindings(&self) -> Result<Vec<ResourcePathBinding>>;
+}
+
+/// Materialized read-surface rebuild triad: the minimal surface
+/// `tenant/materialized_reads` needs to load or catch up a table's
+/// in-memory serving snapshot from the durable commit log. `applied_sequence`
+/// and `read_commit_log_from` come from the `DurableJournal` supertrait
+/// (declared once there to avoid an ambiguous two-trait method call); this
+/// trait adds the one method `DurableJournal` doesn't cover: an unfiltered,
+/// cancellable full-table scan.
+pub trait MaterializedRebuild: DurableJournal {
+    fn scan_table_matching_cancellable<F>(
+        &self,
+        table: &TableName,
+        check_cancel: &mut dyn FnMut() -> Result<()>,
+        include_document: F,
+    ) -> Result<Vec<Document>>
+    where
+        F: FnMut(&Document) -> Result<bool>;
+}
+
+/// Composite capability bound for the async read seam: everything an
+/// `engine/queries/` read closure may need from a tenant store, without
+/// naming a concrete backend type. See `TenantReadStorage`.
+pub trait ReadCapabilities:
+    TenantPointRead + TenantRangeScan + DurableJournal + ResourcePathScan + MaterializedRebuild
+{
+}
+
+impl<T> ReadCapabilities for T where
+    T: TenantPointRead + TenantRangeScan + DurableJournal + ResourcePathScan + MaterializedRebuild
+{
+}
 
 /// Composite convenience trait for tenant data stores that support the core
 /// engine read, write, journal, and scheduler capabilities.

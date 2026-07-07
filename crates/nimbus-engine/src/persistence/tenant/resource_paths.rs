@@ -14,4 +14,10 @@ impl TenantPersistence {
             locator: &DocumentLocator
         ) -> Result<Option<ResourcePathBinding>>
     );
+    delegate_store_method!(
+        fn scan_collection_group_bindings(
+            &self,
+            collection_group: &CollectionName
+        ) -> Result<Vec<ResourcePathBinding>>
+    );
 }

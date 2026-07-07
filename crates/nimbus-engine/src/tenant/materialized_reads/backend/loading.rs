@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
 use nimbus_core::{Error, Result, SequenceNumber, TableName};
+use nimbus_storage::MaterializedRebuild;
 
 use super::publication::apply_write_to_materialized_documents;
 use super::state::estimate_document_bytes;
 use super::{MaterializedServingBackend, ServingSnapshot, ServingSnapshotManager};
-use crate::persistence::TenantPersistence;
 use crate::tenant::materialized_reads::warm_load::{
     MaterializedWarmLoadDecision, MaterializedWarmLoadPermit,
 };
@@ -39,14 +39,17 @@ impl MaterializedServingBackend {
         snapshots.snapshot_covering_table(table, required_sequence)
     }
 
-    pub(crate) fn load_serving_snapshot_cancellable(
+    pub(crate) fn load_serving_snapshot_cancellable<S>(
         &self,
         snapshots: &ServingSnapshotManager,
-        store: &TenantPersistence,
+        store: &S,
         table: &TableName,
         required_sequence: SequenceNumber,
         check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<ServingSnapshot> {
+    ) -> Result<ServingSnapshot>
+    where
+        S: MaterializedRebuild + ?Sized,
+    {
         loop {
             if let Some(snapshot) =
                 self.serving_snapshot_for_table_with_mode(snapshots, table, required_sequence, true)
@@ -161,12 +164,15 @@ impl MaterializedServingBackend {
         }
     }
 
-    fn catch_up_loaded_tables_before_publish(
+    fn catch_up_loaded_tables_before_publish<S>(
         &self,
         snapshots: &ServingSnapshotManager,
-        store: &TenantPersistence,
+        store: &S,
         target_sequence: SequenceNumber,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        S: MaterializedRebuild + ?Sized,
+    {
         let earliest_loaded_sequence = {
             let tables = self
                 .tables

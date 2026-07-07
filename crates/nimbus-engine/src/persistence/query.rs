@@ -1,13 +1,20 @@
 use nimbus_core::{Document, DocumentId, Result, TableName};
-use nimbus_storage::{IndexRangeBound, QueryReadStore};
+use nimbus_storage::{IndexRangeBound, TenantPointRead, TenantRangeScan};
 
 use super::{TenantPersistence, TenantPersistenceSnapshot};
 
-impl QueryReadStore for TenantPersistence {
+// `QueryReadStore` (and, transitively, `ReadCapabilities`) are blanket-impl'd
+// for any type implementing `TenantPointRead` + `TenantRangeScan` (see
+// `nimbus_storage::query_read`), so implementing those two capability traits
+// here is sufficient — no separate `QueryReadStore` impl is needed.
+
+impl TenantPointRead for TenantPersistence {
     fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
         TenantPersistence::get(self, table, id)
     }
+}
 
+impl TenantRangeScan for TenantPersistence {
     fn scan_table_matching_with_filters_cancellable<F>(
         &self,
         table: &TableName,
@@ -110,11 +117,13 @@ impl QueryReadStore for TenantPersistence {
     }
 }
 
-impl QueryReadStore for TenantPersistenceSnapshot {
+impl TenantPointRead for TenantPersistenceSnapshot {
     fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
         TenantPersistenceSnapshot::get(self, table, id)
     }
+}
 
+impl TenantRangeScan for TenantPersistenceSnapshot {
     fn scan_table_matching_with_filters_cancellable<F>(
         &self,
         table: &TableName,

@@ -1,9 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use nimbus_core::{
-    CommitEntry, CronJob, Document, DocumentId, DocumentLocator, ResourcePathBinding, Result,
-    ScheduledJob, ScheduledJobResult, Schema, SequenceNumber, TableId, TableName, TableSchema,
-    TenantEventRecord, Timestamp, TriggerDeliveryCursor, TriggerInvocationRecord,
+    CollectionName, CommitEntry, CronJob, Document, DocumentId, DocumentLocator,
+    ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SequenceNumber, TableId,
+    TableName, TableSchema, TenantEventRecord, Timestamp, TriggerDeliveryCursor,
+    TriggerInvocationRecord,
 };
 use nimbus_storage::{
     ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage, DurableJournalBootstrap,
