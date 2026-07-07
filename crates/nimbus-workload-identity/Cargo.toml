@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 nimbus-core = { path = "../nimbus-core" }
+nimbus-crypto = { path = "../nimbus-crypto" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 serde.workspace = true
 thiserror.workspace = true
