@@ -267,3 +267,31 @@ cargo check -p nimbus-server   # proves workspace membership didn't break the bi
 ```
 
 Record actual test counts in your report.
+
+## As built (PR #126, squash-merged `c3a92d486`, 2026-07-06)
+
+Landed exactly to this contract; no deviations.
+
+- `ProviderAuthPolicy` / `ProviderAuthRule` fail-closed construction:
+  audit-projection subjects, placement segments (`/node/`, `/machine/`,
+  `/sandbox/`, `/invocation/`), non-`nimbus-workload:v1` prefixes, empty
+  audiences, and zero max-TTL are all rejected at build time.
+  `SegmentPrefix` matches only on path boundaries (`/tenant/acme` does
+  not match `/tenant/acme-corp`).
+- `IdentityMintRequest` is admission-anchored: constructible only from a
+  `TenantIsolationDecision`; a `compile_fail` doctest proves there is no
+  forged-construction path. `WorkloadIdentity` stayed in `nimbus-tenant`
+  (`from_decision`-only).
+- `authorize_mint -> MintAuthorization { outcome, audit }` with the
+  audit event unskippable on both mint and deny paths; audit events have
+  no field that can carry secret material.
+- `CredentialClaims` carries the exact Identity Contract claim names;
+  `sub == nimbus_workload_subject`; placement claims serialize as
+  explicit nulls.
+- `IdentityIssuer` seam with `DenyAllIssuer` fail-closed default;
+  `MintedCredential` wraps its secret in `Zeroizing<String>` with a
+  redacting `Debug`. Zero I/O; deps `nimbus-core` + `nimbus-tenant` only.
+
+Evidence: 9 integration tests + 1 `compile_fail` doctest; fmt/clippy
+clean; `cargo check -p nimbus-server`; autoreview (Codex) clean first
+pass ("patch is correct (0.89)").

@@ -133,6 +133,13 @@ extension-registry seam before the second concern edits `extensions.rs`.
 - `native-transport-evolution-plan.md` - `proposed`. Owns benchmark-driven
   Nimbus-native transport evolution without replacing the established WebSocket
   protocol by default.
+- `enterprise-crate-adoption-plan.md` - `proposed`. Owns the cross-workspace
+  screen for mature Rust crates at commodity substrate seams: Sigstore artifact
+  verification, DNS, OIDC/JWKS, OCI spec types, local-socket HTTP parsing,
+  policy engines, telemetry, object-storage breadth, QUIC/H3, crypto/TLS
+  provider posture, and path-capability primitives. It is a routing and
+  promotion control plane; individual rows execute in their owning substrate
+  plans after current-source and dependency-graph proof.
 - `nimbus-tenant-admission-audit-plan.md` - `draft`. Owns aggregate admission,
   OCSF spool, H-gate ratification, and admitted quota enforcement. Consumes the
   node-scoped `EgressEngine` seams landed by the completed

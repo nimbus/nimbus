@@ -121,3 +121,33 @@ cargo check -p nimbus-cli
 
 Report real per-suite counts. CI's full workspace suite is the final
 oracle.
+
+## As built (PR #132, squash-merged `2e30e88e0`, 2026-07-07)
+
+Landed to contract; the silent `CoarsePermissions` fallback is gone
+workspace-wide (~40 call sites, each naming its posture).
+
+- Public `RuntimeEgressPosture { Gateway(Arc<dyn EgressGateway>),
+  CoarsePermissions }`; `new`/`with_limits`/`with_policy` take it
+  (breaking). The `with_egress_gateway` builder, the dead `Missing`
+  binding arm, and the hidden `cfg(test)` coarse default were all
+  deleted; a `compile_fail` doctest pins the old signature out.
+- Server helper pair collapsed onto the `H: HostBridge + EgressGateway`
+  bound — the bridge/gateway pairing is construction-time,
+  compiler-enforced.
+- Cloudflare bridge: no admission/readiness state for a real gateway
+  yet (KV-only) → NAMED `Gateway(DenyAllEgressGateway)` posture, plus a
+  new e2e test proving a Worker guest `fetch` is denied with the
+  explicit reason (previously untested).
+- The `nimbus` facade re-exports `RuntimeEgressPosture`,
+  `EgressGateway`, and `DenyAllEgressGateway` so embedders and
+  `nimbus-cli` codegen name postures without reaching into
+  `nimbus_runtime`.
+
+Evidence: 588 nimbus-server + 54 bridge/testing/system tests;
+fmt/clippy clean; `cargo check -p nimbus-cli -p nimbus`; autoreview
+(Codex) two passes with all verified findings fixed (hidden test
+default deleted, facade gateway exports added) and one fmt prediction
+rejected against a passing `cargo fmt --check`. The local
+`nimbus-runtime` V8-teardown SIGABRT reproduced identically on
+unmodified main; the CI runtime lane (green) was the merge oracle.

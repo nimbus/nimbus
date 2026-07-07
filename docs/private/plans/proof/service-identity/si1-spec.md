@@ -104,3 +104,27 @@ report it as the known environment gap and continue — the main-checkout
 copies live at `/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/{dist,.nimbus}`
 and MAY be copied into the worktree's `packages/nimbus-ui/` to unblock
 the gate; that copy is a build artifact, never committed.)
+
+## As built (PR #128, squash-merged `4b1245b8f`, 2026-07-06)
+
+Landed to contract; no deviations.
+
+- `authorize_mint` denies with `IdentityMintError::IdentityGrantMissing`
+  unless the admitted decision's runtime grants carry at least one
+  `identity` entry. The grant check runs BEFORE any policy matching, so
+  an ungranted workload learns nothing about provider-policy shape from
+  its deny reason.
+- `IdentityMintRequest::for_decision` captures a sorted/deduped private
+  copy of the identity grants, read through nimbus-tenant's public
+  accessors; zero production `nimbus_runtime` coupling (dev-dependency
+  only, for test fixtures).
+- `IdentityAuditEvent` gained `identity_grants`, recorded on both mint
+  and deny paths; entries stay opaque (no grant-string grammar) —
+  audience/subject/TTL scoping remains `ProviderAuthPolicy`-owned.
+- Guest-visible behavior unchanged: an identity grant synthesizes
+  nothing in-guest (`ctx.auth` stays request-owned); projection is SI6.
+
+Evidence: 13 integration tests + 1 `compile_fail` doctest (the 9 SI0
+tests kept green via the fixture grant; 4 new SI1 tests); fmt/clippy
+clean; `cargo check -p nimbus-server`; autoreview (Codex) clean
+("patch is correct (0.9)").

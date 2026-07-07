@@ -137,3 +137,34 @@ cargo check -p nimbus-server
 ```
 
 Report real per-suite counts.
+
+## As built (PR #131, squash-merged `f0dc7509c`, 2026-07-07)
+
+Landed to contract with one deliberate, documented deviation from the
+plan's dependency preference.
+
+- `jwt.rs`: JOSE compact assembly signed THROUGH the SI2
+  `IdentitySigner` seam rather than via jsonwebtoken — handing raw key
+  material to an `EncodingKey` would bypass the seam's locking,
+  rotation, stale-key denial, and future FIPS/HS1 swap. `kid` = key
+  fingerprint with a defensive `SignatureKeyMismatch` check against
+  rotation races; `exp`/`iat` in RFC 7519 NumericDate seconds (floor);
+  `None` placement claims omitted from tokens while the audit shape
+  keeps explicit nulls.
+- `LocalDevIssuer`: fail-closed constructor via `admit_source` —
+  unconstructible under `TrustMode::Production`, so the HS1 hard gate
+  holds through the issuance layer.
+- `mint_credential` composes authorization + issuance;
+  authorized-but-issuance-failed audits as `Denied` with correlatable
+  `exp`/`jti`; the audit event remains unskippable.
+- `CredentialClaims` gained `iat_epoch_ms` (audit key
+  `nimbus_issued_at_ms`).
+- Deps: `base64` (prod), `serde_json` (prod), `ring` dev-only for
+  independent `UnparsedPublicKey` verification in tests. No
+  jsonwebtoken/openidconnect (SI5).
+
+Evidence: 108 tests (workload-identity 25 incl. 6 new SI3 tests + 2
+compile_fail doctests; crypto 83), including independent ring
+verification of a minted token and tamper rejection; fmt/clippy clean;
+`cargo check -p nimbus-server`; autoreview (Codex, adversarial focus on
+claim fidelity/leakage/trust-gate bypass) clean first pass.

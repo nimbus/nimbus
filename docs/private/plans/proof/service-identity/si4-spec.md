@@ -113,3 +113,31 @@ cargo check -p nimbus-server
 Report real per-suite counts. nimbus-tenant's suite is substantial —
 all of it must stay green (the validator tightening is the only tenant
 change allowed).
+
+## As built (PR #133, squash-merged `352094a4d`, 2026-07-07)
+
+Landed to contract; no SPIRE/Workload-API dependencies, no serving
+endpoints, no X.509 (SI5+); the proxy MITM-CA fence holds.
+
+- Trust-domain hardening in BOTH mirror validators
+  (`nimbus-workload-identity` + `nimbus-tenant`): SPIFFE charset only,
+  loud rejection, copies kept identical.
+- JWT-SVID format on `LocalDevIssuer` via construction-time
+  `CredentialFormat`: `sub` = the `spiffe://` URI through a documented
+  transform, pinned byte-for-byte against
+  `WorkloadIdentity::spiffe_id` by a cross-crate equality test; `aud`
+  as a JSON array; `CredentialKind::SpiffeSvid`.
+- `SpiffeRegistrationEntry`: `admit_source`-gated (Production cannot
+  build from LocalDev nodes), 8 subject selectors + placement,
+  invocation excluded, node-fingerprint parent id, zero I/O.
+- SVID rotation proof: stale-key denial by key-id post-rotation while
+  old-pubkey ring verification still passes — documented as issuer-side
+  denial (providers rely on `exp`) — then re-mint with the new `kid`.
+
+Evidence: 205 tests (workload-identity 29 / tenant 93 / crypto 83);
+fmt/clippy clean; `cargo check -p nimbus-server`; branch rebased onto
+post-GR2 main with first-party `cargo clean -p` first
+(contamination-proofed); autoreview (Codex, adversarial: transform
+drift, validator divergence, selector injection, parent-id collisions)
+clean first pass. CI green; single flaky engine-subscription lane
+attributed 5/5 green locally before merge.

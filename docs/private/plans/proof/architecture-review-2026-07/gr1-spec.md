@@ -120,3 +120,35 @@ test counts per suite in the report. If any pre-existing test asserts the
 D1/D2 divergent behavior (stale update_time or lingering binding), do NOT
 weaken it silently — flag it in the report with file:line and the
 behavior change rationale.
+
+## As built (PR #129, squash-merged `bcac953bb`, 2026-07-06)
+
+Landed to contract. The three transactional write bodies collapsed to
+one shared apply core; net −185 lines of production code.
+
+- New `store/write/apply.rs`: the ONLY implementation of document write
+  + index maintenance (`is_maintained` filter + old/new key diff) +
+  resource-path bindings + `WriteOp` recording. Both point families and
+  the batch loop call it; batch routes through the same `execute_write`
+  choke point, so there is one transaction-opening site and one atomic
+  doc+index+binding+commit body to audit for the storage-atomicity
+  invariant. The batch-only `append_commit_entry` helper was deleted.
+- Entry semantics preserved via `WriteExpectation`: point keeps
+  `DocumentNotFound` + in-txn validation closures + returns the removed
+  `Document` + `_once` dedup; batch keeps optimistic `Conflict` +
+  schedule ops + trigger origin + commit timestamps.
+- Drift bugs the duplication had already caused, fixed with regression
+  tests: D1 — with-index point updates were not stamping `update_time`
+  (the no-index family was); D2 — with-index point deletes were not
+  removing the resource-path binding. Patch application unified on
+  `Document::set_field`.
+- Deliberate strictness unification: point insert now errors `Conflict`
+  on an existing key (was silent overwrite), matching batch;
+  engine-generated ULID ids make collisions unreachable and no caller
+  relied on overwrite (verified, incl. `nimbus-system`'s
+  get-then-update upsert branch).
+
+Evidence: 328 nimbus-storage + 308 nimbus-engine + 30 nimbus-system
+tests, 0 failures; fmt/clippy clean; `cargo check -p nimbus-server`;
+autoreview (Codex) clean — atomicity boundary, error surfaces, filter
+parity, `_once` dedup all confirmed.

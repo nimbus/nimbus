@@ -178,3 +178,35 @@ cargo check -p nimbus-server
 
 Report real per-suite counts. nimbus-crypto currently has substantial
 tests (materials/rotation/framed) — they must all stay green.
+
+## As built (PR #130, squash-merged `9f8dcbc58`, 2026-07-07)
+
+Landed to contract with review-driven hardening beyond it. Zero new
+external dependencies (Ed25519 via the workspace's existing `ring`).
+
+- `nimbus-crypto/signing.rs`: `IdentitySigner` trait (deliberate sibling
+  of `LocalKeyProvider`); `FileBackedIdentitySigner` with O_NOFOLLOW
+  handle-tied opens (permission AND owner-uid checks on the inode
+  actually read), 0600 fail-closed, staged atomic rotation with
+  in-memory adoption at rename (a failed durability fsync can never
+  split sign/verify), stale-key denial via signature key-id,
+  cross-process flock serializing open/rotate, `Zeroizing` key material
+  with redacted `Debug`.
+- `nimbus-workload-identity` (zero-I/O): `NodeIdentityRecord` /
+  `MachineIdentityRecord` with fingerprint-derived canonical ids
+  (`nk_` / `mk_`), `local_dev` constructors only;
+  `IdentitySourceKind::ClusterMembership(MembershipAttestation)` has NO
+  public constructor — `TrustMode::Production` is structurally
+  unreachable until HS1 (compile_fail doctest);
+  `IdentityTrustConfig.admit_source` maps Production ⇒
+  ClusterMembership only, LocalDev ⇒ LocalDev only.
+
+Review hardening: three adversarial Codex passes produced 8 verified
+findings, each fixed with a regression test — symlink/TOCTOU on key
+open, rotation split-brain window, forgeable production gate, owner
+binding, relative-path fsync skip, concurrent-publication race, lock
+parent-dir creation, lock-path extension clobbering. Fourth pass clean.
+
+Evidence: 102 tests (82 crypto incl. symlink/rotation/lock regressions;
+20 workload-identity incl. 2 compile_fail doctests); fmt/clippy clean;
+`cargo check -p nimbus-server`.
