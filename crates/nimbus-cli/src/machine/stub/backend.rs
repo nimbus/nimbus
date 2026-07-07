@@ -7,6 +7,8 @@ use super::client::MachineApiClient;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ForwardedMachineApiSandboxBackend {
+    // realized by WIN2: the unix twin forwards through `client`; this stub
+    // returns a canned error from every method without dispatching through it.
     #[allow(dead_code)]
     client: MachineApiClient,
 }

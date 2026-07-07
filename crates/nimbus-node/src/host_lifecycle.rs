@@ -872,7 +872,7 @@ fn trusted_runner_bundle_path(value: impl Into<String>, field: &str) -> Result<S
             "{field} `{value}` must be an absolute path without control characters"
         )));
     }
-    if value.contains("/../") || value.ends_with("/..") {
+    if nimbus_core::has_parent_dir_component(std::path::Path::new(&value)) {
         return Err(Error::InvalidInput(format!(
             "{field} `{value}` must not contain parent-directory segments"
         )));

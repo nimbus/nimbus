@@ -1,5 +1,4 @@
 use super::*;
-use std::path::Component;
 use std::sync::Arc;
 
 use nimbus_artifacts::{ArtifactVerificationPolicy, ArtifactVerifierBackend};
@@ -535,21 +534,11 @@ fn validate_node_external_packages_manifest(
 }
 
 fn validate_relative_manifest_path(field: &str, value: &str) -> Result<(), Error> {
-    let path = Path::new(value);
-    if value.trim().is_empty()
-        || path.is_absolute()
-        || path.components().any(|component| {
-            matches!(
-                component,
-                Component::Prefix(_) | Component::RootDir | Component::ParentDir
-            )
-        })
-    {
-        return Err(Error::InvalidInput(format!(
+    nimbus_core::reject_relative_traversal(value).map_err(|_| {
+        Error::InvalidInput(format!(
             "convex Node external packages manifest field `{field}` must be a non-empty relative path without parent traversal"
-        )));
-    }
-    Ok(())
+        ))
+    })
 }
 
 fn validate_schema_manifest(schema: &Schema) -> Result<(), Error> {

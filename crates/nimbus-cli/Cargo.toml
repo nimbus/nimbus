@@ -26,6 +26,7 @@ axum.workspace = true
 clap.workspace = true
 comfy-table.workspace = true
 fs2.workspace = true
+hyper = { workspace = true, features = ["client", "http1", "runtime"] }
 indicatif.workspace = true
 libc.workspace = true
 nimbus = { path = "../nimbus", features = ["aws-kms"] }

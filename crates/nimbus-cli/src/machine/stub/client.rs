@@ -9,12 +9,10 @@ use nimbus_machine::api::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) struct MachineApiClient {
     socket_path: PathBuf,
 }
 
-#[allow(dead_code)]
 impl MachineApiClient {
     pub(crate) fn new(socket_path: impl Into<PathBuf>) -> Self {
         Self {
