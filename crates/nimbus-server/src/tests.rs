@@ -1486,15 +1486,17 @@ fn async_runtime_integration_removes_hot_path_blocking_adapters() {
         "engine should not retain the call_blocking adapter"
     );
 
-    let async_host_calls =
-        fs::read_to_string(workspace_root.join("../nimbus-bridge/src/host_calls/async_calls.rs"))
-            .expect("runtime async host call module should be readable");
+    // SR6 consolidated host_calls/{sync,async_calls,async_trace}.rs into one
+    // dispatch.rs — the guard now reads the consolidated module.
+    let host_call_dispatch =
+        fs::read_to_string(workspace_root.join("../nimbus-bridge/src/host_calls/dispatch.rs"))
+            .expect("runtime host call dispatch module should be readable");
     assert!(
-        !async_host_calls.contains("spawn_blocking("),
+        !host_call_dispatch.contains("spawn_blocking("),
         "runtime async host calls should await real futures instead of spawn_blocking wrappers"
     );
     assert!(
-        !async_host_calls.contains("execute_async_blocking_host_call"),
+        !host_call_dispatch.contains("execute_async_blocking_host_call"),
         "runtime async host calls should not retain the blocking adapter helper"
     );
 
