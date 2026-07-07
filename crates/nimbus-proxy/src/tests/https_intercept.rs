@@ -56,7 +56,8 @@ fn egress_proxy_intercepts_https_and_injects_credentials_after_tls_decryption() 
         ])
         .expect("proxy authority should trust upstream test CA");
     let (log_tx, log_rx) = mpsc::channel();
-    let proxy = start_test_proxy_with_store_logger_tls_and_phase_observer(
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let proxy = start_test_proxy_with_provider_logger_tls_durable_sink_and_phase_observer(
         allow_policy([EgressRule::new(
             "credentialed-https",
             EgressProtocol::Https,
@@ -68,10 +69,11 @@ fn egress_proxy_intercepts_https_and_injects_credentials_after_tls_decryption() 
             EgressCredentialInjection::new("api-token", "Authorization")
                 .with_value_prefix("Bearer "),
         )]),
-        CredentialSecretStore::from_entries([("api-token", "secret-token")]),
+        CredentialSecretStore::from_entries([("api-token", "secret-token")]).into_provider(),
         Arc::new(move |log| {
             let _ = log_tx.send(log);
         }),
+        capturing_durable_sink_for_test(Arc::clone(&captured)),
         proxy_authority.clone(),
         Arc::new(|_| {}),
     );
@@ -120,6 +122,135 @@ fn egress_proxy_intercepts_https_and_injects_credentials_after_tls_decryption() 
         log.destination()
     );
     assert!(log_rx.recv_timeout(Duration::from_millis(200)).is_err());
+    let records = snapshot_durable_logs(&captured);
+    assert_eq!(
+        records.len(),
+        3,
+        "successful intercepted HTTPS must produce outer intent + inner intent + terminal rows: {records:?}"
+    );
+    assert_eq!(records[0].record_kind(), DecisionRecordKind::Intent);
+    assert!(
+        records[0].is_allowed() && records[0].credential_identity().is_none(),
+        "first row must be the outer CONNECT intent without inner credentials: {:?}",
+        records[0]
+    );
+    let outer_destination = format!("https://allowed.test:{}", upstream.addr.port());
+    assert_eq!(records[0].destination(), outer_destination.as_str());
+    assert_eq!(records[1].record_kind(), DecisionRecordKind::Intent);
+    assert!(
+        records[1].is_allowed(),
+        "second row must be the inner HTTPS allow intent: {:?}",
+        records[1]
+    );
+    assert_eq!(records[1].credential_identity(), Some("api-token"));
+    assert!(
+        records[1].destination().contains("/ok?token=<redacted>")
+            && !records[1].destination().contains("secret"),
+        "inner intent must carry the redacted inner URL: {:?}",
+        records[1]
+    );
+    assert_eq!(records[2].record_kind(), DecisionRecordKind::Terminal);
+    assert!(
+        records[2].is_allowed(),
+        "third row must be the successful inner terminal allow: {:?}",
+        records[2]
+    );
+    assert_eq!(records[2].credential_identity(), Some("api-token"));
+    assert_eq!(records[1].destination(), records[2].destination());
+    assert!(
+        records
+            .iter()
+            .all(|record| record.request_id() == records[0].request_id()),
+        "all intercepted HTTPS durable rows must share one request id: {records:?}"
+    );
+}
+
+#[test]
+fn egress_proxy_intercepted_https_inner_intent_append_failure_denies_before_upstream() {
+    let upstream_authority =
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+    let upstream = TestHttpsServer::start(
+        &upstream_authority,
+        "allowed.test",
+        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+    );
+    let proxy_authority =
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+            upstream_authority.trust_anchor_der(),
+        ])
+        .expect("proxy authority should trust upstream test CA");
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let proxy = start_test_proxy_with_provider_logger_tls_durable_sink_and_phase_observer(
+        allow_policy([EgressRule::new(
+            "credentialed-https",
+            EgressProtocol::Https,
+            "allowed.test",
+            upstream.addr.port(),
+        )
+        .allow_internal_ips(true)
+        .with_credential_injection(
+            EgressCredentialInjection::new("api-token", "Authorization")
+                .with_value_prefix("Bearer "),
+        )]),
+        CredentialSecretStore::from_entries([("api-token", "secret-token")]).into_provider(),
+        Arc::new(|_| {}),
+        failing_second_durable_sink_for_test(Arc::clone(&captured)),
+        proxy_authority.clone(),
+        Arc::new(|_| {}),
+    );
+
+    let mut tls = connect_tls_through_proxy(
+        proxy.local_addr(),
+        &proxy_authority,
+        "allowed.test",
+        upstream.addr.port(),
+    );
+    tls.write_all(
+        format!(
+            "GET /ok HTTP/1.1\r\nHost: allowed.test:{}\r\nConnection: close\r\n\r\n",
+            upstream.addr.port()
+        )
+        .as_bytes(),
+    )
+    .expect("inner HTTPS request should write");
+    let mut response = String::new();
+    read_tls_to_string(&mut tls, &mut response).expect("inner audit failure response should read");
+
+    assert!(
+        response.starts_with("HTTP/1.1 502 Bad Gateway")
+            && response.contains("inner decision audit append failed"),
+        "failed inner intent append must return an inner deny response, got: {response}"
+    );
+    assert!(
+        upstream
+            .request
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "failed inner intent append must stop before upstream TLS contact"
+    );
+    let readiness = proxy.readiness().expect("readiness should be observable");
+    assert!(
+        !readiness.audit_healthy && !readiness.ready,
+        "failed inner intent append must make readiness fail closed: {readiness:?}"
+    );
+    let records = snapshot_durable_logs(&captured);
+    assert_eq!(
+        records.len(),
+        2,
+        "failed inner intent append should leave only outer intent + terminal deny rows: {records:?}"
+    );
+    assert_eq!(records[0].record_kind(), DecisionRecordKind::Intent);
+    assert!(records[0].is_allowed());
+    assert_eq!(records[1].record_kind(), DecisionRecordKind::Terminal);
+    assert!(
+        !records[1].is_allowed()
+            && records[1]
+                .reason()
+                .contains("inner decision audit append failed"),
+        "terminal row must record the fail-closed audit append denial: {:?}",
+        records[1]
+    );
+    assert_eq!(records[0].request_id(), records[1].request_id());
 }
 
 #[test]
@@ -310,6 +441,117 @@ fn egress_proxy_intercepted_https_denies_caller_credentials_before_upstream() {
             .recv_timeout(Duration::from_millis(100))
             .is_err(),
         "caller credential denial must happen before upstream TLS contact"
+    );
+}
+
+#[test]
+fn egress_proxy_intercepted_https_inner_deny_writes_terminal_row_before_403() {
+    let upstream_authority =
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+    let upstream = TestHttpsServer::start(
+        &upstream_authority,
+        "allowed.test",
+        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+    );
+    let proxy_authority =
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+            upstream_authority.trust_anchor_der(),
+        ])
+        .expect("proxy authority should trust upstream test CA");
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let (durable_sink, terminal_started, release_terminal) =
+        blocking_second_durable_sink_for_test(Arc::clone(&captured));
+    let proxy = start_test_proxy_with_provider_logger_tls_durable_sink_and_phase_observer(
+        allow_policy([EgressRule::new(
+            "credentialed-https",
+            EgressProtocol::Https,
+            "allowed.test",
+            upstream.addr.port(),
+        )
+        .allow_internal_ips(true)
+        .with_credential_injection(
+            EgressCredentialInjection::new("api-token", "Authorization")
+                .with_value_prefix("Bearer "),
+        )]),
+        CredentialSecretStore::from_entries([("api-token", "secret-token")]).into_provider(),
+        Arc::new(|_| {}),
+        durable_sink,
+        proxy_authority.clone(),
+        Arc::new(|_| {}),
+    );
+    let proxy_addr = proxy.local_addr();
+    let port = upstream.addr.port();
+    let client_authority = proxy_authority.clone();
+    let (response_tx, response_rx) = mpsc::channel();
+    let client = thread::spawn(move || {
+        let mut tls =
+            connect_tls_through_proxy(proxy_addr, &client_authority, "allowed.test", port);
+        tls.write_all(
+            format!(
+                "GET /ok HTTP/1.1\r\nHost: allowed.test:{port}\r\nAuthorization: Bearer caller-token\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .expect("inner HTTPS request should write");
+        let mut response = String::new();
+        read_tls_to_string(&mut tls, &mut response).expect("inner HTTPS deny response should read");
+        let _ = response_tx.send(response);
+    });
+
+    terminal_started
+        .recv_timeout(Duration::from_secs(2))
+        .expect("inner terminal durable append should start before the TLS 403");
+    assert!(
+        response_rx
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "the TLS 403 must not reach the client before the terminal durable append returns"
+    );
+    release_terminal
+        .send(())
+        .expect("terminal durable append release should send");
+    let response = response_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("client should receive the TLS 403 after terminal append returns");
+    client.join().expect("client thread should finish");
+
+    assert!(
+        response.starts_with("HTTP/1.1 403 Forbidden")
+            && response.contains("credential-bearing caller header"),
+        "caller credentials inside intercepted HTTPS must fail closed, got: {response}"
+    );
+    assert!(
+        upstream
+            .request
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "inner credential denial must happen before upstream TLS contact"
+    );
+    let records = snapshot_durable_logs(&captured);
+    assert_eq!(
+        records.len(),
+        2,
+        "intercepted inner deny must produce outer intent + inner terminal rows: {records:?}"
+    );
+    assert!(
+        records[0].is_allowed(),
+        "first durable row must be the outer CONNECT allow intent: {:?}",
+        records[0]
+    );
+    assert_eq!(records[0].record_kind(), DecisionRecordKind::Intent);
+    assert!(
+        !records[1].is_allowed()
+            && records[1]
+                .reason()
+                .contains("credential-bearing caller header"),
+        "second durable row must be the inner terminal deny: {:?}",
+        records[1]
+    );
+    assert_eq!(records[1].record_kind(), DecisionRecordKind::Terminal);
+    assert_eq!(
+        records[0].request_id(),
+        records[1].request_id(),
+        "outer CONNECT intent and inner terminal deny must pair by request id: {records:?}"
     );
 }
 
@@ -1050,10 +1292,11 @@ fn egress_proxy_intercepted_https_audits_allow_when_upstream_drops_mid_body() {
             upstream_authority.trust_anchor_der(),
         ])
         .expect("proxy authority should trust upstream test CA");
+    let captured = Arc::new(Mutex::new(Vec::new()));
     let (log_tx, log_rx) = mpsc::channel();
     // A credential rule forces interception (a plain rule would splice); the
     // point of the test is the audit verdict once interception has committed.
-    let proxy = start_test_proxy_with_store_logger_tls_and_phase_observer(
+    let proxy = start_test_proxy_with_provider_logger_tls_durable_sink_and_phase_observer(
         allow_policy([EgressRule::new(
             "credentialed-https",
             EgressProtocol::Https,
@@ -1065,10 +1308,11 @@ fn egress_proxy_intercepted_https_audits_allow_when_upstream_drops_mid_body() {
             EgressCredentialInjection::new("api-token", "Authorization")
                 .with_value_prefix("Bearer "),
         )]),
-        CredentialSecretStore::from_entries([("api-token", "secret-token")]),
+        CredentialSecretStore::from_entries([("api-token", "secret-token")]).into_provider(),
         Arc::new(move |log| {
             let _ = log_tx.send(log);
         }),
+        capturing_durable_sink_for_test(Arc::clone(&captured)),
         proxy_authority.clone(),
         Arc::new(|_| {}),
     );
@@ -1101,9 +1345,510 @@ fn egress_proxy_intercepted_https_audits_allow_when_upstream_drops_mid_body() {
         log.is_allowed(),
         "an authorized request that reached upstream must audit as ALLOW even when the upstream drops mid-body: {log:?}"
     );
+    assert_eq!(log.record_kind(), DecisionRecordKind::TerminalAfterResponse);
     assert!(
         log_rx.recv_timeout(Duration::from_millis(200)).is_err(),
         "the mid-body drop must not add a second terminal event"
+    );
+    let records = snapshot_durable_logs(&captured);
+    assert_eq!(
+        records.len(),
+        3,
+        "mid-body upstream close must produce outer intent + inner intent + after-response durable rows: {records:?}"
+    );
+    assert_eq!(records[0].record_kind(), DecisionRecordKind::Intent);
+    assert!(
+        records[0].is_allowed() && records[0].credential_identity().is_none(),
+        "the outer CONNECT intent row must remain an allow without inner credential identity: {:?}",
+        records[0]
+    );
+    assert_eq!(records[1].record_kind(), DecisionRecordKind::Intent);
+    assert!(
+        records[1].is_allowed() && records[1].credential_identity() == Some("api-token"),
+        "the inner intent row must carry the credential identity: {:?}",
+        records[1]
+    );
+    assert!(
+        records[1].destination().contains("/ok"),
+        "inner intent must carry the inner path: {:?}",
+        records[1]
+    );
+    assert_eq!(
+        records[2].record_kind(),
+        DecisionRecordKind::TerminalAfterResponse
+    );
+    assert!(
+        records[2].is_allowed(),
+        "post-response transport failure is executed egress and must not audit as deny: {:?}",
+        records[2]
+    );
+    assert!(
+        records
+            .iter()
+            .all(|record| record.request_id() == records[0].request_id()),
+        "intercept intent and after-response terminal must pair by request id: {records:?}"
+    );
+    assert_eq!(records[1].destination(), records[2].destination());
+    assert_eq!(records[2].credential_identity(), Some("api-token"));
+    assert_eq!(
+        records[2].reason(),
+        crate::decision_log::UPSTREAM_FAILURE_AFTER_RESPONSE_REASON
+    );
+    assert!(
+        !records[2].reason().contains("short"),
+        "after-response reason must not include upstream body bytes: {:?}",
+        records[2]
+    );
+}
+
+#[test]
+fn egress_proxy_intercepted_https_informational_response_then_upstream_close_is_terminal_deny() {
+    let upstream_authority =
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+    let upstream = TestHttpsServer::start(
+        &upstream_authority,
+        "allowed.test",
+        "HTTP/1.1 100 Continue\r\n\r\n",
+    );
+    let proxy_authority =
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+            upstream_authority.trust_anchor_der(),
+        ])
+        .expect("proxy authority should trust upstream test CA");
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let (log_tx, log_rx) = mpsc::channel();
+    let proxy = start_test_proxy_with_provider_logger_tls_durable_sink_and_phase_observer(
+        allow_policy([EgressRule::new(
+            "credentialed-https",
+            EgressProtocol::Https,
+            "allowed.test",
+            upstream.addr.port(),
+        )
+        .allow_internal_ips(true)
+        .with_credential_injection(
+            EgressCredentialInjection::new("api-token", "Authorization")
+                .with_value_prefix("Bearer "),
+        )]),
+        CredentialSecretStore::from_entries([("api-token", "secret-token")]).into_provider(),
+        Arc::new(move |log| {
+            let _ = log_tx.send(log);
+        }),
+        capturing_durable_sink_for_test(Arc::clone(&captured)),
+        proxy_authority.clone(),
+        Arc::new(|_| {}),
+    );
+
+    let mut tls = connect_tls_through_proxy(
+        proxy.local_addr(),
+        &proxy_authority,
+        "allowed.test",
+        upstream.addr.port(),
+    );
+    tls.write_all(
+        format!(
+            "GET /one-hundred-then-close HTTP/1.1\r\nHost: allowed.test:{}\r\nConnection: close\r\n\r\n",
+            upstream.addr.port()
+        )
+        .as_bytes(),
+    )
+    .expect("inner HTTPS request should write");
+    let mut response = String::new();
+    read_tls_to_string(&mut tls, &mut response)
+        .expect("informational response followed by local 502 should read");
+    assert!(
+        response.starts_with("HTTP/1.1 100 Continue")
+            && response.contains("HTTP/1.1 502 Bad Gateway")
+            && response.contains("upstream response read failed"),
+        "the client should see the informational response followed by the local final 502: {response}"
+    );
+
+    let log = log_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("1xx followed by upstream close should emit one terminal deny log");
+    assert_eq!(log.record_kind(), DecisionRecordKind::Terminal);
+    assert!(
+        !log.is_allowed() && log.reason().contains("upstream response read failed"),
+        "upstream failure after only a 1xx must audit as pre-final deny: {log:?}"
+    );
+    assert!(log_rx.recv_timeout(Duration::from_millis(200)).is_err());
+
+    let records = snapshot_durable_logs(&captured);
+    assert_eq!(
+        records.len(),
+        3,
+        "1xx followed by upstream close should produce outer intent + inner intent + pre-final terminal rows: {records:?}"
+    );
+    assert_eq!(records[0].record_kind(), DecisionRecordKind::Intent);
+    assert!(records[0].is_allowed());
+    assert_eq!(records[1].record_kind(), DecisionRecordKind::Intent);
+    assert!(
+        records[1].is_allowed() && records[1].credential_identity() == Some("api-token"),
+        "second durable row must be the inner allow intent: {:?}",
+        records[1]
+    );
+    assert!(
+        records[1].destination().contains("/one-hundred-then-close"),
+        "inner intent must carry the inner path: {:?}",
+        records[1]
+    );
+    assert_eq!(records[2].record_kind(), DecisionRecordKind::Terminal);
+    assert!(
+        !records[2].is_allowed()
+            && records[2]
+                .reason()
+                .contains("upstream response read failed"),
+        "upstream failure after only a 1xx must not become an after-response allow: {:?}",
+        records[2]
+    );
+    assert!(
+        records
+            .iter()
+            .all(|record| record.request_id() == records[0].request_id()),
+        "intercepted 1xx pre-final terminal must pair with the request intent row: {records:?}"
+    );
+}
+
+#[test]
+fn egress_proxy_intercepted_https_rejects_upstream_switching_protocols_before_forwarding() {
+    let upstream_authority =
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+    let upstream = TestHttpsServer::start(
+        &upstream_authority,
+        "allowed.test",
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+    );
+    let proxy_authority =
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+            upstream_authority.trust_anchor_der(),
+        ])
+        .expect("proxy authority should trust upstream test CA");
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let (log_tx, log_rx) = mpsc::channel();
+    let proxy = start_test_proxy_with_provider_logger_tls_durable_sink_and_phase_observer(
+        allow_policy([EgressRule::new(
+            "credentialed-https",
+            EgressProtocol::Https,
+            "allowed.test",
+            upstream.addr.port(),
+        )
+        .allow_internal_ips(true)
+        .with_credential_injection(
+            EgressCredentialInjection::new("api-token", "Authorization")
+                .with_value_prefix("Bearer "),
+        )]),
+        CredentialSecretStore::from_entries([("api-token", "secret-token")]).into_provider(),
+        Arc::new(move |log| {
+            let _ = log_tx.send(log);
+        }),
+        capturing_durable_sink_for_test(Arc::clone(&captured)),
+        proxy_authority.clone(),
+        Arc::new(|_| {}),
+    );
+
+    let mut tls = connect_tls_through_proxy(
+        proxy.local_addr(),
+        &proxy_authority,
+        "allowed.test",
+        upstream.addr.port(),
+    );
+    tls.write_all(
+        format!(
+            "GET /upgrade HTTP/1.1\r\nHost: allowed.test:{}\r\nConnection: close\r\n\r\n",
+            upstream.addr.port()
+        )
+        .as_bytes(),
+    )
+    .expect("inner HTTPS request should write");
+    let mut response = String::new();
+    read_tls_to_string(&mut tls, &mut response).expect("upgrade denial should read");
+
+    assert!(
+        response.starts_with("HTTP/1.1 502 Bad Gateway")
+            && response.contains("HTTPS interception does not support protocol upgrades")
+            && !response.contains("101 Switching Protocols"),
+        "intercepted upstream 101 must be replaced with the local deny response: {response}"
+    );
+    let upstream_request = upstream
+        .request
+        .recv_timeout(Duration::from_secs(1))
+        .expect("upstream should receive the re-originated request before returning 101");
+    assert!(
+        upstream_request.contains("GET /upgrade HTTP/1.1")
+            && upstream_request.contains("Authorization: Bearer secret-token"),
+        "upstream should see the authorized inner request before its unsupported 101: {upstream_request}"
+    );
+
+    let log = log_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("unsupported 101 should emit one terminal deny log");
+    assert_eq!(log.record_kind(), DecisionRecordKind::Terminal);
+    assert!(
+        !log.is_allowed() && log.reason().contains("does not support protocol upgrades"),
+        "unsupported 101 must audit as a pre-final deny: {log:?}"
+    );
+    assert!(log_rx.recv_timeout(Duration::from_millis(200)).is_err());
+
+    let records = snapshot_durable_logs(&captured);
+    assert_eq!(
+        records.len(),
+        3,
+        "unsupported 101 must produce outer intent + inner intent + terminal deny rows: {records:?}"
+    );
+    assert_eq!(records[0].record_kind(), DecisionRecordKind::Intent);
+    assert!(records[0].is_allowed());
+    assert_eq!(records[1].record_kind(), DecisionRecordKind::Intent);
+    assert!(
+        records[1].is_allowed() && records[1].credential_identity() == Some("api-token"),
+        "second durable row must be the inner allow intent: {:?}",
+        records[1]
+    );
+    assert!(
+        records[1].destination().contains("/upgrade"),
+        "inner intent must carry the inner path: {:?}",
+        records[1]
+    );
+    assert_eq!(records[2].record_kind(), DecisionRecordKind::Terminal);
+    assert!(
+        !records[2].is_allowed()
+            && records[2]
+                .reason()
+                .contains("does not support protocol upgrades"),
+        "third durable row must be the unsupported-upgrade terminal deny: {:?}",
+        records[2]
+    );
+    assert!(
+        records
+            .iter()
+            .all(|record| record.request_id() == records[0].request_id()),
+        "unsupported-upgrade rows must pair by request id: {records:?}"
+    );
+}
+
+#[test]
+fn egress_proxy_intercepted_https_bounds_informational_responses_and_fails_closed() {
+    let upstream_authority =
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+    // 12 informational heads and no final response: over the cap of 8.
+    let endless_informational = "HTTP/1.1 100 Continue\r\n\r\n".repeat(12);
+    let upstream = TestHttpsServer::start(
+        &upstream_authority,
+        "allowed.test",
+        Box::leak(endless_informational.into_boxed_str()),
+    );
+    let proxy_authority =
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+            upstream_authority.trust_anchor_der(),
+        ])
+        .expect("proxy authority should trust upstream test CA");
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let (log_tx, log_rx) = mpsc::channel();
+    let proxy = start_test_proxy_with_provider_logger_tls_durable_sink_and_phase_observer(
+        allow_policy([EgressRule::new(
+            "credentialed-https",
+            EgressProtocol::Https,
+            "allowed.test",
+            upstream.addr.port(),
+        )
+        .allow_internal_ips(true)
+        .with_credential_injection(
+            EgressCredentialInjection::new("api-token", "Authorization")
+                .with_value_prefix("Bearer "),
+        )]),
+        CredentialSecretStore::from_entries([("api-token", "secret-token")]).into_provider(),
+        Arc::new(move |log| {
+            let _ = log_tx.send(log);
+        }),
+        capturing_durable_sink_for_test(Arc::clone(&captured)),
+        proxy_authority.clone(),
+        Arc::new(|_| {}),
+    );
+
+    let mut tls = connect_tls_through_proxy(
+        proxy.local_addr(),
+        &proxy_authority,
+        "allowed.test",
+        upstream.addr.port(),
+    );
+    tls.write_all(
+        format!(
+            "GET /endless-informational HTTP/1.1\r\nHost: allowed.test:{}\r\nConnection: close\r\n\r\n",
+            upstream.addr.port()
+        )
+        .as_bytes(),
+    )
+    .expect("inner HTTPS request should write");
+    let mut response = String::new();
+    read_tls_to_string(&mut tls, &mut response)
+        .expect("bounded informational stream followed by local 502 should read");
+    assert!(
+        response.contains("HTTP/1.1 502 Bad Gateway")
+            && response.contains("informational-response limit"),
+        "exceeding the 1xx cap must fail closed with the limit reason: {response}"
+    );
+
+    let log = log_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("exceeding the 1xx cap should emit one terminal deny log");
+    assert_eq!(log.record_kind(), DecisionRecordKind::Terminal);
+    assert!(
+        !log.is_allowed() && log.reason().contains("informational-response limit"),
+        "the 1xx-cap terminal must audit as a pre-final deny: {log:?}"
+    );
+    assert!(log_rx.recv_timeout(Duration::from_millis(200)).is_err());
+
+    let records = snapshot_durable_logs(&captured);
+    assert_eq!(
+        records.len(),
+        3,
+        "1xx-cap termination should produce outer intent + inner intent + pre-final terminal rows: {records:?}"
+    );
+    assert_eq!(records[0].record_kind(), DecisionRecordKind::Intent);
+    assert!(records[0].is_allowed());
+    assert_eq!(records[1].record_kind(), DecisionRecordKind::Intent);
+    assert!(
+        records[1].is_allowed() && records[1].credential_identity() == Some("api-token"),
+        "second durable row must be the inner allow intent: {:?}",
+        records[1]
+    );
+    assert!(
+        records[1].destination().contains("/endless-informational"),
+        "inner intent must carry the inner path: {:?}",
+        records[1]
+    );
+    assert_eq!(records[2].record_kind(), DecisionRecordKind::Terminal);
+    assert!(
+        !records[2].is_allowed(),
+        "the 1xx-cap terminal row must not be an after-response allow: {:?}",
+        records[2]
+    );
+    assert!(
+        records
+            .iter()
+            .all(|record| record.request_id() == records[0].request_id()),
+        "the 1xx-cap terminal must pair with the request intent row: {records:?}"
+    );
+}
+
+#[test]
+fn egress_proxy_intercepted_https_abort_mid_relay_writes_after_response_terminal() {
+    let upstream_authority =
+        WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");
+    let upstream = TestStallingHttpsBodyServer::start(&upstream_authority, "allowed.test");
+    let proxy_authority =
+        WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([
+            upstream_authority.trust_anchor_der(),
+        ])
+        .expect("proxy authority should trust upstream test CA");
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let proxy = start_test_proxy_with_provider_logger_tls_durable_sink_and_phase_observer(
+        allow_policy([EgressRule::new(
+            "credentialed-https",
+            EgressProtocol::Https,
+            "allowed.test",
+            upstream.addr.port(),
+        )
+        .allow_internal_ips(true)
+        .with_credential_injection(
+            EgressCredentialInjection::new("api-token", "Authorization")
+                .with_value_prefix("Bearer "),
+        )]),
+        CredentialSecretStore::from_entries([("api-token", "secret-token")]).into_provider(),
+        Arc::new(|_| {}),
+        capturing_durable_sink_for_test(Arc::clone(&captured)),
+        proxy_authority.clone(),
+        Arc::new(|_| {}),
+    );
+
+    let proxy_addr = proxy.local_addr();
+    let upstream_port = upstream.addr.port();
+    let client_authority = proxy_authority.clone();
+    let (head_tx, head_rx) = mpsc::channel();
+    let client = thread::spawn(move || {
+        let mut tls =
+            connect_tls_through_proxy(proxy_addr, &client_authority, "allowed.test", upstream_port);
+        tls.write_all(
+            format!(
+                "GET /slow HTTP/1.1\r\nHost: allowed.test:{upstream_port}\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .expect("inner HTTPS request should write");
+        let head = read_tls_headers_to_string(&mut tls).expect("response head should read");
+        let _ = head_tx.send(head);
+        let mut rest = String::new();
+        let _ = read_tls_to_string(&mut tls, &mut rest);
+    });
+
+    let upstream_request = upstream
+        .request
+        .recv_timeout(Duration::from_secs(2))
+        .expect("stalled HTTPS upstream should receive the intercepted request");
+    assert!(
+        upstream_request.starts_with("GET /slow HTTP/1.1"),
+        "intercepted request should reach upstream before cancellation: {upstream_request}"
+    );
+    let response_head = head_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("client should receive the upstream response head before cancellation");
+    assert!(
+        response_head.starts_with("HTTP/1.1 200 OK"),
+        "response head must reach the client before proxy cancellation: {response_head}"
+    );
+
+    drop(proxy);
+    client.join().expect("client thread should finish");
+    upstream.release();
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let records = loop {
+        let records = snapshot_durable_logs(&captured);
+        if records.len() >= 3 || Instant::now() >= deadline {
+            break records;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(
+        records.len(),
+        3,
+        "mid-relay cancellation must produce outer intent + inner intent + after-response durable rows: {records:?}"
+    );
+    assert_eq!(records[0].record_kind(), DecisionRecordKind::Intent);
+    assert!(records[0].is_allowed());
+    assert!(records[0].credential_identity().is_none());
+    assert_eq!(records[1].record_kind(), DecisionRecordKind::Intent);
+    assert!(
+        records[1].is_allowed() && records[1].credential_identity() == Some("api-token"),
+        "second durable row must be the inner allow intent: {:?}",
+        records[1]
+    );
+    assert!(
+        records[1].destination().contains("/slow"),
+        "inner intent must carry the inner path: {:?}",
+        records[1]
+    );
+    assert_eq!(
+        records[2].record_kind(),
+        DecisionRecordKind::TerminalAfterResponse
+    );
+    assert!(
+        records[2].is_allowed(),
+        "response-started cancellation must audit as executed allow, not synthetic deny: {records:?}"
+    );
+    assert!(
+        records
+            .iter()
+            .all(|record| record.request_id() == records[0].request_id()),
+        "after-response terminal must pair with the original intent row: {records:?}"
+    );
+    assert_eq!(records[1].destination(), records[2].destination());
+    assert_eq!(records[2].credential_identity(), Some("api-token"));
+    assert!(
+        records.iter().all(EgressDecisionLog::is_allowed),
+        "response-started cancellation must not append a synthetic deny: {records:?}"
+    );
+    assert_eq!(
+        records[2].reason(),
+        crate::decision_log::ABORT_AFTER_RESPONSE_REASON
     );
 }
 

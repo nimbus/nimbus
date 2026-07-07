@@ -19,6 +19,7 @@ mod redaction;
 mod request;
 mod response;
 mod substrate;
+mod terminal;
 mod tls_authority;
 mod worker;
 
@@ -29,7 +30,8 @@ pub use credentials::{
     CredentialSecretProvider, CredentialSecretProviderRef, CredentialSecretStore,
 };
 pub use decision_log::{
-    AppendOnlyDecisionLogSink, DecisionLogSinkContext, DecisionLogger, EgressDecisionLog,
+    AppendOnlyDecisionLogSink, DecisionLogSinkContext, DecisionLogger, DecisionRecordKind,
+    DurableDecisionSink, EgressDecisionLog,
 };
 pub use dns::{DnsCacheConfig, DnsResolution};
 pub use engine::{EgressEngine, RegistrationSlot};

@@ -125,6 +125,7 @@ mod tests {
     fn ready() -> WorkloadPepReadiness {
         WorkloadPepReadiness {
             ready: true,
+            audit_healthy: true,
             policy_generation: None,
         }
     }
@@ -132,6 +133,15 @@ mod tests {
     fn not_ready() -> WorkloadPepReadiness {
         WorkloadPepReadiness {
             ready: false,
+            audit_healthy: true,
+            policy_generation: None,
+        }
+    }
+
+    fn audit_unhealthy() -> WorkloadPepReadiness {
+        WorkloadPepReadiness {
+            ready: false,
+            audit_healthy: false,
             policy_generation: None,
         }
     }
@@ -187,6 +197,30 @@ mod tests {
             !denied.allowed,
             "enforcement-required egress with no ready PEP must fail closed: {}",
             denied.reason
+        );
+        assert!(denied.reason.contains("not ready"));
+    }
+
+    #[test]
+    fn enforcement_required_with_unhealthy_audit_sink_fails_closed() {
+        let rule = EgressRule::new("api", EgressProtocol::Https, "api.example", 443)
+            .with_credential_injection(nimbus_egress::EgressCredentialInjection::new(
+                "stripe",
+                "Authorization",
+            ));
+        let egress = OutboundEgress::new(allow_policy(vec![rule]));
+
+        let denied = egress.authorize_outbound(
+            OutboundOp::Fetch,
+            "api.example",
+            443,
+            true,
+            audit_unhealthy(),
+        );
+
+        assert!(
+            !denied.allowed,
+            "audit-unhealthy readiness must fail closed for enforcement-required egress"
         );
         assert!(denied.reason.contains("not ready"));
     }

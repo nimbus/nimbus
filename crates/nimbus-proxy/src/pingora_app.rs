@@ -1,3 +1,6 @@
+use std::io;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -8,11 +11,15 @@ use pingora_core::{Error, InvalidHTTPHeader};
 use pingora_http::RequestHeader;
 use pingora_proxy::{FailToProxy, ProxyHttp, Session};
 
-use crate::decision_log::{DecisionLogger, EgressDecisionLog};
+use crate::decision_log::{
+    DecisionLogger, DurableDecisionSink, EgressDecisionLog, UPSTREAM_FAILURE_AFTER_RESPONSE_REASON,
+};
 use crate::phase::{EgressProxyRequestPhase, RequestPhaseRecorder};
 use crate::pingora_identity::PingoraPeerPlan;
+use crate::pingora_io::FinalResponseWriteGate;
 use crate::policy_state::PolicyGeneration;
 use crate::request::{ParsedProxyRequest, ProxyRequestMode};
+use crate::terminal::{ResponseStartedSignal, emit_terminal_log, record_durable_decision};
 
 const UPSTREAM_FAILURE_BODY: &str = "egress proxy failed to dial the upstream";
 
@@ -30,6 +37,10 @@ pub(crate) struct ForwardRequestPlan {
     pub(crate) io_timeout: Duration,
     pub(crate) phase_recorder: RequestPhaseRecorder,
     pub(crate) decision_logger: DecisionLogger,
+    pub(crate) durable_decision_sink: DurableDecisionSink,
+    pub(crate) audit_healthy: Arc<AtomicBool>,
+    pub(crate) response_started_signal: ResponseStartedSignal,
+    pub(crate) final_response_write_gate: FinalResponseWriteGate,
 }
 
 pub(crate) struct NimbusForwardApp {
@@ -45,15 +56,41 @@ impl NimbusForwardApp {
         Self { plan }
     }
 
-    fn emit_denied_terminal(&self, ctx: &mut NimbusForwardContext, reason: String) {
+    fn emit_denied_terminal(
+        &self,
+        ctx: &mut NimbusForwardContext,
+        reason: String,
+    ) -> io::Result<()> {
+        if ctx.terminal_logged {
+            return Ok(());
+        }
+        let decision_log = EgressDecisionLog::denied(
+            self.plan.allowed_decision_log.request_id(),
+            &self.plan.parsed,
+            reason,
+            self.plan.matched_rule.clone(),
+        )
+        .with_policy_generation(self.plan.policy_generation);
+        let result = self.record_durable_terminal(&decision_log);
+        ctx.terminal_logged = true;
+        self.emit_terminal(decision_log);
+        self.plan.response_started_signal.disarm();
+        result
+    }
+
+    fn emit_after_response_terminal(&self, ctx: &mut NimbusForwardContext) {
         if ctx.terminal_logged {
             return;
         }
+        let decision_log = self
+            .plan
+            .allowed_decision_log
+            .clone()
+            .into_terminal_after_response(UPSTREAM_FAILURE_AFTER_RESPONSE_REASON);
+        let _ = self.record_durable_terminal(&decision_log);
         ctx.terminal_logged = true;
-        let decision_log =
-            EgressDecisionLog::denied(&self.plan.parsed, reason, self.plan.matched_rule.clone())
-                .with_policy_generation(self.plan.policy_generation);
         self.emit_terminal(decision_log);
+        self.plan.response_started_signal.disarm();
     }
 
     fn emit_allowed_terminal(&self, ctx: &mut NimbusForwardContext) {
@@ -61,14 +98,29 @@ impl NimbusForwardApp {
             return;
         }
         ctx.terminal_logged = true;
-        self.emit_terminal(self.plan.allowed_decision_log.clone());
+        self.emit_terminal(self.plan.allowed_decision_log.clone().into_terminal());
+        self.plan.response_started_signal.disarm();
     }
 
     fn emit_terminal(&self, decision_log: EgressDecisionLog) {
-        self.plan
-            .phase_recorder
-            .record(EgressProxyRequestPhase::TerminalLog);
-        (self.plan.decision_logger)(decision_log);
+        emit_terminal_log(
+            &self.plan.phase_recorder,
+            &self.plan.decision_logger,
+            decision_log,
+        );
+    }
+
+    fn record_durable_terminal(&self, decision_log: &EgressDecisionLog) -> io::Result<()> {
+        record_durable_decision(
+            &self.plan.phase_recorder,
+            &self.plan.durable_decision_sink,
+            self.plan.audit_healthy.as_ref(),
+            decision_log,
+        )
+    }
+
+    async fn shutdown_downstream_without_response(&self, session: &mut Session) {
+        session.downstream_session.shutdown().await;
     }
 }
 
@@ -99,8 +151,14 @@ impl ProxyHttp for NimbusForwardApp {
         let uri_matches = uri == self.plan.downstream_target;
         if !method_matches || !uri_matches {
             let body = Bytes::from_static(b"egress proxy internal request mismatch");
-            let _ = session.respond_error_with_body(400, body).await;
-            self.emit_denied_terminal(ctx, "egress proxy internal request mismatch".to_owned());
+            if self
+                .emit_denied_terminal(ctx, "egress proxy internal request mismatch".to_owned())
+                .is_ok()
+            {
+                let _ = session.respond_error_with_body(400, body).await;
+            } else {
+                self.shutdown_downstream_without_response(session).await;
+            }
             return Ok(true);
         }
         self.plan
@@ -203,12 +261,25 @@ impl ProxyHttp for NimbusForwardApp {
     where
         Self::CTX: Send + Sync,
     {
-        if session.response_written().is_none() {
-            let _ = session
-                .respond_error_with_body(502, Bytes::from_static(UPSTREAM_FAILURE_BODY.as_bytes()))
-                .await;
+        if self.plan.response_started_signal.response_started() {
+            self.emit_after_response_terminal(ctx);
+            return FailToProxy {
+                error_code: 502,
+                can_reuse_downstream: false,
+            };
         }
-        self.emit_denied_terminal(ctx, UPSTREAM_FAILURE_BODY.to_owned());
+
+        let terminal_append = self.emit_denied_terminal(ctx, UPSTREAM_FAILURE_BODY.to_owned());
+        if terminal_append.is_err() {
+            self.shutdown_downstream_without_response(session).await;
+            return FailToProxy {
+                error_code: 0,
+                can_reuse_downstream: false,
+            };
+        }
+        let _ = session
+            .respond_error_with_body(502, Bytes::from_static(UPSTREAM_FAILURE_BODY.as_bytes()))
+            .await;
         FailToProxy {
             error_code: 502,
             can_reuse_downstream: false,
@@ -218,7 +289,7 @@ impl ProxyHttp for NimbusForwardApp {
     async fn response_filter(
         &self,
         _session: &mut Session,
-        _upstream_response: &mut pingora_http::ResponseHeader,
+        upstream_response: &mut pingora_http::ResponseHeader,
         _ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()>
     where
@@ -227,6 +298,10 @@ impl ProxyHttp for NimbusForwardApp {
         self.plan
             .phase_recorder
             .record(EgressProxyRequestPhase::ResponseFilters);
+        let status = upstream_response.status.as_u16();
+        if status >= 200 || status == 101 {
+            self.plan.final_response_write_gate.arm_final_response();
+        }
         Ok(())
     }
 

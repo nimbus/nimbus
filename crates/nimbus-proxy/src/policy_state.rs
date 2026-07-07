@@ -20,6 +20,10 @@ impl PolicyGeneration {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkloadPepReadiness {
     pub ready: bool,
+    /// False after the first durable decision-log append failure. This is
+    /// sticky for the lifetime of the PEP, so readiness fail-closes until the
+    /// process restarts with a healthy audit sink.
+    pub audit_healthy: bool,
     pub policy_generation: Option<PolicyGeneration>,
 }
 
@@ -90,13 +94,41 @@ impl EgressProxyPolicyState {
         next_generation
     }
 
-    pub(crate) fn readiness(&self) -> WorkloadPepReadiness {
+    pub(crate) fn readiness(&self, audit_healthy: bool) -> WorkloadPepReadiness {
+        let policy_generation = self
+            .last_known_good
+            .as_ref()
+            .map(|policy| policy.policy_generation);
         WorkloadPepReadiness {
-            ready: self.last_known_good.is_some(),
-            policy_generation: self
-                .last_known_good
-                .as_ref()
-                .map(|policy| policy.policy_generation),
+            ready: policy_generation.is_some() && audit_healthy,
+            audit_healthy,
+            policy_generation,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn readiness_fails_closed_when_audit_health_is_false() {
+        let state = EgressProxyPolicyState::with_policy(CompiledEgressPolicy::deny_all());
+
+        let readiness = state.readiness(false);
+
+        assert!(
+            !readiness.ready,
+            "an unhealthy durable audit sink must make the PEP not ready"
+        );
+        assert!(
+            !readiness.audit_healthy,
+            "readiness should expose sticky audit health"
+        );
+        assert_eq!(
+            readiness.policy_generation,
+            Some(PolicyGeneration::initial()),
+            "audit health must not erase the last-known policy generation"
+        );
     }
 }

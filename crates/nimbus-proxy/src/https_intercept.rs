@@ -1,6 +1,7 @@
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use nimbus_egress::{EgressProtocol, EgressRequest, EgressRule, LayeredEgressPolicy};
@@ -16,7 +17,9 @@ use crate::body::{
     stream_content_length_body, timeout_io,
 };
 use crate::credentials::CredentialSecretProvider;
-use crate::decision_log::{DecisionLogger, EgressDecisionLog};
+use crate::decision_log::{
+    ABORT_AFTER_RESPONSE_REASON, DecisionLogger, DurableDecisionSink, EgressDecisionLog,
+};
 use crate::enforcement::{
     ProxyRequestEnforcementContext, prepare_proxy_request_enforcement,
     reject_unapproved_caller_credentials_for_rule,
@@ -27,7 +30,14 @@ use crate::pingora_io::PrereadStream;
 use crate::policy_state::PolicyGeneration;
 use crate::request::{ParsedProxyRequest, ProxyRequestMode};
 use crate::response::{HttpProxyResponse, write_http_response_async};
+use crate::terminal::ResponseStartedSignal;
 use crate::tls_authority::WorkloadPepTlsAuthority;
+
+/// Upper bound on informational (1xx) responses forwarded per intercepted
+/// request. RFC-conformant upstreams send at most a couple (100 Continue,
+/// 103 Early Hints); anything past this is an allowed-but-misbehaving
+/// upstream holding the request open, which must fail closed.
+const MAX_INFORMATIONAL_RESPONSES: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConnectInterceptAction {
@@ -62,10 +72,35 @@ pub(crate) struct HttpsInterceptContext<'a> {
     pub(crate) tls_authority: &'a WorkloadPepTlsAuthority,
     pub(crate) phase_recorder: &'a RequestPhaseRecorder,
     pub(crate) decision_logger: &'a DecisionLogger,
+    pub(crate) durable_decision_sink: &'a DurableDecisionSink,
+    pub(crate) audit_healthy: &'a AtomicBool,
+    pub(crate) response_started_signal: ResponseStartedSignal,
+    pub(crate) request_id: &'a str,
     pub(crate) policy_generation: PolicyGeneration,
     pub(crate) tenant_fairness: Option<Arc<TenantFairness>>,
     pub(crate) connect_timeout: Duration,
     pub(crate) io_timeout: Duration,
+}
+
+pub(crate) struct HttpsInterceptCompletion {
+    pub(crate) decision_log: EgressDecisionLog,
+    pub(crate) relay_failed_after_response: bool,
+}
+
+impl HttpsInterceptCompletion {
+    fn normal(decision_log: EgressDecisionLog) -> Self {
+        Self {
+            decision_log,
+            relay_failed_after_response: false,
+        }
+    }
+
+    fn relay_failed_after_response(decision_log: EgressDecisionLog) -> Self {
+        Self {
+            decision_log,
+            relay_failed_after_response: true,
+        }
+    }
 }
 
 /// Records the terminal phase and emits the decision log BEFORE any
@@ -78,13 +113,44 @@ fn emit_inner_terminal(context: &HttpsInterceptContext<'_>, decision_log: &Egres
         .phase_recorder
         .record(EgressProxyRequestPhase::TerminalLog);
     (context.decision_logger)(decision_log.clone());
+    context.response_started_signal.disarm();
+}
+
+fn record_inner_durable_decision(
+    context: &HttpsInterceptContext<'_>,
+    decision_log: &EgressDecisionLog,
+) -> io::Result<()> {
+    match (context.durable_decision_sink)(decision_log) {
+        Ok(()) => {
+            context.phase_recorder.mark_durable_any_recorded();
+            if decision_log.record_kind().is_terminal() {
+                context.phase_recorder.mark_durable_terminal_recorded();
+            }
+            Ok(())
+        }
+        Err(error) => {
+            context.audit_healthy.store(false, Ordering::SeqCst);
+            Err(error)
+        }
+    }
+}
+
+async fn close_inner_without_response<W>(
+    context: &HttpsInterceptContext<'_>,
+    client_tls: &mut W,
+) -> io::Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    let _ = timeout_io(context.io_timeout, client_tls.shutdown()).await;
+    Ok(())
 }
 
 pub(crate) async fn intercept_connect_h1(
     mut client: TcpStream,
     buffered_client_bytes: &[u8],
     context: HttpsInterceptContext<'_>,
-) -> io::Result<EgressDecisionLog> {
+) -> io::Result<HttpsInterceptCompletion> {
     timeout_io(
         context.io_timeout,
         client.write_all(b"HTTP/1.1 200 Connection Established\r\nConnection: close\r\n\r\n"),
@@ -103,34 +169,28 @@ pub(crate) async fn intercept_connect_h1(
     {
         Ok(Ok(stream)) => stream,
         Ok(Err(error)) => {
-            return Ok(connect_denied_log(
+            return Ok(HttpsInterceptCompletion::normal(connect_denied_log(
                 context.parsed_connect,
+                context.request_id,
                 format!("HTTPS interception failed closed: client TLS handshake failed: {error}"),
                 context.outer_matched_rule,
-            ));
+            )));
         }
         Err(_) => {
-            return Ok(connect_denied_log(
+            return Ok(HttpsInterceptCompletion::normal(connect_denied_log(
                 context.parsed_connect,
+                context.request_id,
                 "HTTPS interception failed closed: client TLS handshake failed: I/O timed out"
                     .to_owned(),
                 context.outer_matched_rule,
-            ));
+            )));
         }
     };
 
     let mut inner_buffer = Vec::new();
     if let Err(response) = read_inner_h1_headers(&mut client_tls, &mut inner_buffer, &context).await
     {
-        let decision_log = connect_denied_log(
-            context.parsed_connect,
-            response.body().to_owned(),
-            context.outer_matched_rule.clone(),
-        )
-        .with_policy_generation(context.policy_generation);
-        emit_inner_terminal(&context, &decision_log);
-        let _ = write_http_response_async(&mut client_tls, response).await;
-        return Ok(decision_log);
+        return write_connect_deny(&context, &mut client_tls, response).await;
     }
     let inner = match parse_intercepted_h1_request(
         &inner_buffer,
@@ -139,15 +199,7 @@ pub(crate) async fn intercept_connect_h1(
     ) {
         Ok(inner) => inner,
         Err(response) => {
-            let decision_log = connect_denied_log(
-                context.parsed_connect,
-                response.body().to_owned(),
-                context.outer_matched_rule.clone(),
-            )
-            .with_policy_generation(context.policy_generation);
-            emit_inner_terminal(&context, &decision_log);
-            let _ = write_http_response_async(&mut client_tls, response).await;
-            return Ok(decision_log);
+            return write_connect_deny(&context, &mut client_tls, response).await;
         }
     };
 
@@ -192,6 +244,7 @@ pub(crate) async fn intercept_connect_h1(
             reason: authorization.reason(),
             credential_provider: context.credential_provider,
             phase_recorder: context.phase_recorder,
+            request_id: context.request_id,
         },
     ) {
         Ok(enforcement) => enforcement,
@@ -266,6 +319,23 @@ pub(crate) async fn intercept_connect_h1(
             &inner,
             HttpProxyResponse::bad_request(
                 "egress proxy HTTP request bodies require Content-Length",
+            ),
+            authorization.matched_rule().map(ToOwned::to_owned),
+        )
+        .await;
+    }
+
+    let allowed_decision_log = prepared
+        .decision_log
+        .clone()
+        .with_policy_generation(context.policy_generation);
+    if record_inner_durable_decision(&context, &allowed_decision_log).is_err() {
+        return write_inner_deny(
+            &context,
+            &mut client_tls,
+            &inner,
+            HttpProxyResponse::bad_gateway(
+                "HTTPS interception failed closed: inner decision audit append failed",
             ),
             authorization.matched_rule().map(ToOwned::to_owned),
         )
@@ -388,22 +458,96 @@ pub(crate) async fn intercept_connect_h1(
         fairness.record_bytes_to_upstream(request.len() as u64 + body_bytes);
     }
 
-    let upstream_head =
-        match read_upstream_response_head(&mut upstream_tls, context.io_timeout).await {
-            Ok(head) => head,
-            Err(_) => {
+    let mut informational_responses = 0usize;
+    let upstream_head = loop {
+        let upstream_head =
+            match read_upstream_response_head(&mut upstream_tls, context.io_timeout).await {
+                Ok(head) => head,
+                Err(_) => {
+                    return write_inner_deny(
+                        &context,
+                        &mut client_tls,
+                        &inner,
+                        HttpProxyResponse::bad_gateway(
+                            "HTTPS interception failed closed: upstream response read failed",
+                        ),
+                        authorization.matched_rule().map(ToOwned::to_owned),
+                    )
+                    .await;
+                }
+            };
+        // Classify the upstream head with a FAIL-CLOSED default: only a
+        // status line that strictly parses to a known code is forwarded.
+        // This closes the whole parser-differential class — a head we cannot
+        // positively classify (exotic start-line whitespace, malformed
+        // version, missing/oversized code, non-UTF8 that defeats parsing) is
+        // DENIED, never forwarded, so a tolerant downstream parser can never
+        // be shown bytes we did not understand.
+        match classify_upstream_status(&upstream_head) {
+            UpstreamStatusClass::Final => break upstream_head,
+            UpstreamStatusClass::Informational => {}
+            UpstreamStatusClass::Upgrade => {
                 return write_inner_deny(
                     &context,
                     &mut client_tls,
                     &inner,
                     HttpProxyResponse::bad_gateway(
-                        "HTTPS interception failed closed: upstream response read failed",
+                        "HTTPS interception does not support protocol upgrades",
                     ),
                     authorization.matched_rule().map(ToOwned::to_owned),
                 )
                 .await;
             }
-        };
+            UpstreamStatusClass::Unrecognized => {
+                return write_inner_deny(
+                    &context,
+                    &mut client_tls,
+                    &inner,
+                    HttpProxyResponse::bad_gateway(
+                        "HTTPS interception failed closed: unrecognized upstream response status line",
+                    ),
+                    authorization.matched_rule().map(ToOwned::to_owned),
+                )
+                .await;
+            }
+        }
+        // Bound informational responses: an allowed upstream must not be able
+        // to hold the request open forever (or stream unbounded 1xx heads to
+        // the client) by emitting 100 Continue before every per-read timeout.
+        informational_responses += 1;
+        if informational_responses > MAX_INFORMATIONAL_RESPONSES {
+            return write_inner_deny(
+                &context,
+                &mut client_tls,
+                &inner,
+                HttpProxyResponse::bad_gateway(
+                    "HTTPS interception failed closed: upstream exceeded the \
+                     informational-response limit before a final response",
+                ),
+                authorization.matched_rule().map(ToOwned::to_owned),
+            )
+            .await;
+        }
+        let informational_head = strip_alt_svc_response_headers(&upstream_head);
+        if timeout_io(
+            context.io_timeout,
+            client_tls.write_all(&informational_head),
+        )
+        .await
+        .is_err()
+        {
+            return write_inner_deny(
+                &context,
+                &mut client_tls,
+                &inner,
+                HttpProxyResponse::bad_gateway(
+                    "HTTPS interception failed closed: upstream response read failed",
+                ),
+                authorization.matched_rule().map(ToOwned::to_owned),
+            )
+            .await;
+        }
+    };
     let response_content_length = response_content_length(&upstream_head);
     let filtered_head = strip_alt_svc_response_headers(&upstream_head);
     // Past this point the request is authorized AND executed: policy allowed it,
@@ -413,7 +557,17 @@ pub(crate) async fn intercept_connect_h1(
     // client gone) is an operational transport failure, not a policy denial;
     // logging it as a deny would corrupt the audit trail into showing the PEP
     // blocked egress it actually permitted.
-    let _ = timeout_io(context.io_timeout, client_tls.write_all(&filtered_head)).await;
+    let response_head_reached_client =
+        timeout_io(context.io_timeout, client_tls.write_all(&filtered_head))
+            .await
+            .is_ok();
+    if response_head_reached_client {
+        context.response_started_signal.mark_response_started(
+            allowed_decision_log
+                .clone()
+                .into_terminal_after_response(ABORT_AFTER_RESPONSE_REASON),
+        );
+    }
     let relayed_to_workload = match response_content_length {
         Some(length) => stream_response_content_length(
             &mut upstream_tls,
@@ -430,7 +584,37 @@ pub(crate) async fn intercept_connect_h1(
     if let (Ok(bytes), Some(fairness)) = (&relayed_to_workload, &context.tenant_fairness) {
         fairness.record_bytes_to_workload(*bytes);
     }
-    Ok(prepared.decision_log)
+    if response_head_reached_client && relayed_to_workload.is_err() {
+        return Ok(HttpsInterceptCompletion::relay_failed_after_response(
+            allowed_decision_log,
+        ));
+    }
+    Ok(HttpsInterceptCompletion::normal(allowed_decision_log))
+}
+
+async fn write_connect_deny<W>(
+    context: &HttpsInterceptContext<'_>,
+    client_tls: &mut W,
+    response: HttpProxyResponse,
+) -> io::Result<HttpsInterceptCompletion>
+where
+    W: AsyncWrite + Unpin,
+{
+    let decision_log = connect_denied_log(
+        context.parsed_connect,
+        context.request_id,
+        response.body().to_owned(),
+        context.outer_matched_rule.clone(),
+    )
+    .with_policy_generation(context.policy_generation);
+    if record_inner_durable_decision(context, &decision_log).is_err() {
+        emit_inner_terminal(context, &decision_log);
+        let _ = close_inner_without_response(context, client_tls).await;
+        return Ok(HttpsInterceptCompletion::normal(decision_log));
+    }
+    emit_inner_terminal(context, &decision_log);
+    let _ = write_http_response_async(client_tls, response).await;
+    Ok(HttpsInterceptCompletion::normal(decision_log))
 }
 
 async fn write_inner_deny<W>(
@@ -439,16 +623,21 @@ async fn write_inner_deny<W>(
     parsed: &ParsedProxyRequest,
     response: HttpProxyResponse,
     matched_rule: Option<String>,
-) -> io::Result<EgressDecisionLog>
+) -> io::Result<HttpsInterceptCompletion>
 where
     W: AsyncWrite + Unpin,
 {
     let reason = response.body().to_owned();
-    let decision_log = EgressDecisionLog::denied(parsed, reason, matched_rule)
+    let decision_log = EgressDecisionLog::denied(context.request_id, parsed, reason, matched_rule)
         .with_policy_generation(context.policy_generation);
+    if record_inner_durable_decision(context, &decision_log).is_err() {
+        emit_inner_terminal(context, &decision_log);
+        let _ = close_inner_without_response(context, client_tls).await;
+        return Ok(HttpsInterceptCompletion::normal(decision_log));
+    }
     emit_inner_terminal(context, &decision_log);
     let _ = write_http_response_async(client_tls, response).await;
-    Ok(decision_log)
+    Ok(HttpsInterceptCompletion::normal(decision_log))
 }
 
 #[derive(Debug)]
@@ -807,6 +996,67 @@ fn response_content_length(response_head: &[u8]) -> Option<usize> {
     })
 }
 
+/// Fail-closed classification of an upstream response head's status line.
+/// `Unrecognized` is the default for anything that does not strictly parse
+/// to a known code — the intercept relay denies it rather than forwarding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpstreamStatusClass {
+    /// A final response the client should receive (2xx–5xx).
+    Final,
+    /// An interim informational response (100 / 102–199) to forward.
+    Informational,
+    /// 101 Switching Protocols — upgrades are unsupported, fail closed.
+    Upgrade,
+    /// Unparseable or out-of-range status line — fail closed.
+    Unrecognized,
+}
+
+fn classify_upstream_status(response_head: &[u8]) -> UpstreamStatusClass {
+    match response_status(response_head) {
+        Some(101) => UpstreamStatusClass::Upgrade,
+        Some(100) | Some(102..=199) => UpstreamStatusClass::Informational,
+        Some(200..=599) => UpstreamStatusClass::Final,
+        // None (could not parse) or any other numeric range is never
+        // forwarded — fail closed.
+        _ => UpstreamStatusClass::Unrecognized,
+    }
+}
+
+fn response_status(response_head: &[u8]) -> Option<u16> {
+    // Decode ONLY the version and status-code tokens as raw ASCII bytes,
+    // never the reason phrase. HTTP/1.x reason phrases (and later header
+    // values) may carry non-UTF8 obs-text; UTF-8-decoding any of that would
+    // fail open — a valid `HTTP/1.1 101 \xff` would return None and slip
+    // past the 101 upgrade guard. Version + status code are ASCII by the
+    // HTTP grammar, so we can read them without touching the reason bytes.
+    let line_end = response_head
+        .windows(2)
+        .position(|window| window == b"\r\n")
+        .unwrap_or(response_head.len());
+    let status_line = &response_head[..line_end];
+    // Split on HTTP whitespace (SP or HTAB): the grammar specifies single
+    // SP, but tolerant downstream parsers accept HTAB/runs, so a strict
+    // SP-only split would let an HTAB-delimited `HTTP/1.1\t101` fail open
+    // past the upgrade guard.
+    let mut tokens = status_line
+        .split(|byte| *byte == b' ' || *byte == b'\t')
+        .filter(|token| !token.is_empty());
+    // Validate the version token: this is an HTTP/1 relay, so only
+    // `HTTP/1.0` / `HTTP/1.1` are understood. Anything else (`ICY`, HTTP/2
+    // preface fragments, a CR-embedded version) is unparseable and must fail
+    // closed rather than be classified from the next digit token alone.
+    let version = tokens.next()?;
+    if version != b"HTTP/1.0" && version != b"HTTP/1.1" {
+        return None;
+    }
+    let status_code = tokens.next()?;
+    // A status code is exactly three ASCII digits.
+    if status_code.len() != 3 || !status_code.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    std::str::from_utf8(status_code).ok()?.parse().ok()
+}
+
 async fn stream_response_content_length<R, W>(
     reader: &mut R,
     writer: &mut W,
@@ -840,16 +1090,131 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
 
 fn connect_denied_log(
     parsed: &ParsedProxyRequest,
+    request_id: &str,
     reason: String,
     matched_rule: Option<String>,
 ) -> EgressDecisionLog {
-    EgressDecisionLog::denied(parsed, reason, matched_rule)
+    EgressDecisionLog::denied(request_id, parsed, reason, matched_rule)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use nimbus_egress::{EgressCredentialInjection, EgressDlpRule};
+
+    #[test]
+    fn response_status_reads_status_line_despite_non_utf8_headers() {
+        // A valid 101 status line followed by a header carrying non-UTF8
+        // obs-text must still be classified as 101 — the upgrade guard must
+        // not fail open just because a later header byte is not UTF-8.
+        let mut head = b"HTTP/1.1 101 Switching Protocols\r\nX-Obs: ".to_vec();
+        head.extend_from_slice(&[0xff, 0xfe, 0x80]);
+        head.extend_from_slice(b"\r\n\r\n");
+        assert_eq!(response_status(&head), Some(101));
+        assert_eq!(
+            classify_upstream_status(&head),
+            UpstreamStatusClass::Upgrade
+        );
+
+        // Non-UTF8 bytes in the REASON PHRASE itself must not fail open.
+        let mut obs_reason = b"HTTP/1.1 101 ".to_vec();
+        obs_reason.extend_from_slice(&[0xff, 0xfe]);
+        obs_reason.extend_from_slice(b"\r\n\r\n");
+        assert_eq!(response_status(&obs_reason), Some(101));
+        assert_eq!(
+            classify_upstream_status(&obs_reason),
+            UpstreamStatusClass::Upgrade
+        );
+
+        // A 1xx with an obs-text reason must still classify as informational.
+        let mut obs_100 = b"HTTP/1.1 100 ".to_vec();
+        obs_100.extend_from_slice(&[0x80]);
+        obs_100.extend_from_slice(b"\r\n\r\n");
+        assert_eq!(response_status(&obs_100), Some(100));
+        assert_eq!(
+            classify_upstream_status(&obs_100),
+            UpstreamStatusClass::Informational
+        );
+
+        // HTAB-delimited status lines (accepted by tolerant parsers) must
+        // not fail open past the upgrade guard.
+        assert_eq!(
+            response_status(b"HTTP/1.1\t101\tSwitching Protocols\r\n\r\n"),
+            Some(101)
+        );
+        assert_eq!(
+            response_status(b"HTTP/1.1 101\tSwitching Protocols\r\n\r\n"),
+            Some(101)
+        );
+        // Non-3-digit or missing codes classify as unknown, never a bypass.
+        assert_eq!(response_status(b"HTTP/1.1 1010 x\r\n\r\n"), None);
+        assert_eq!(response_status(b"HTTP/1.1\r\n\r\n"), None);
+    }
+
+    #[test]
+    fn response_status_parses_ordinary_final_and_informational() {
+        assert_eq!(
+            response_status(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"),
+            Some(200)
+        );
+        assert_eq!(response_status(b"HTTP/1.1 100 Continue\r\n\r\n"), Some(100));
+        assert_eq!(
+            classify_upstream_status(b"HTTP/1.1 100 Continue\r\n\r\n"),
+            UpstreamStatusClass::Informational
+        );
+    }
+
+    #[test]
+    fn classify_upstream_status_fails_closed_on_unparseable_status_lines() {
+        // Final and known interim/upgrade classes.
+        assert_eq!(
+            classify_upstream_status(b"HTTP/1.1 200 OK\r\n\r\n"),
+            UpstreamStatusClass::Final
+        );
+        assert_eq!(
+            classify_upstream_status(b"HTTP/1.1 503 x\r\n\r\n"),
+            UpstreamStatusClass::Final
+        );
+        assert_eq!(
+            classify_upstream_status(b"HTTP/1.1 101 Switching Protocols\r\n\r\n"),
+            UpstreamStatusClass::Upgrade
+        );
+
+        // The whole parser-differential class fails CLOSED: any start-line
+        // whitespace we do not split on (VT, FF, bare CR) yields an
+        // unparseable status and is denied, never forwarded — so a tolerant
+        // downstream parser can never be shown a 101 we did not classify.
+        for exotic in [b"\x0b".as_slice(), b"\x0c", b"\r"] {
+            let mut head = b"HTTP/1.1".to_vec();
+            head.extend_from_slice(exotic);
+            head.extend_from_slice(b"101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n");
+            assert_eq!(
+                classify_upstream_status(&head),
+                UpstreamStatusClass::Unrecognized,
+                "exotic start-line whitespace must fail closed, not forward"
+            );
+        }
+        // Missing status code and an unknown numeric range also fail closed.
+        assert_eq!(
+            classify_upstream_status(b"HTTP/1.1\r\n\r\n"),
+            UpstreamStatusClass::Unrecognized
+        );
+        assert_eq!(
+            classify_upstream_status(b"HTTP/1.1 700 weird\r\n\r\n"),
+            UpstreamStatusClass::Unrecognized
+        );
+        // A non-HTTP/1 version token must fail closed even with a valid code.
+        assert_eq!(response_status(b"ICY 200 OK\r\n\r\n"), None);
+        assert_eq!(response_status(b"HTTP/2 200\r\n\r\n"), None);
+        assert_eq!(
+            classify_upstream_status(b"ICY 200 OK\r\n\r\n"),
+            UpstreamStatusClass::Unrecognized
+        );
+        assert_eq!(
+            response_status(b"HTTP/1.0 204 No Content\r\n\r\n"),
+            Some(204)
+        );
+    }
 
     #[test]
     fn connect_classifier_selects_splice_or_intercept_from_rule_requirements() {

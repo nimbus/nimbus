@@ -306,3 +306,233 @@ fn egress_proxy_drop_emits_terminal_record_for_aborted_in_flight_request() {
         records[0]
     );
 }
+
+#[test]
+fn egress_proxy_abort_guard_writes_durable_terminal_after_intent_only_abort() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let stalled_upstream = TestStallingHttpServer::start();
+    let proxy = start_test_proxy_with_store_logger_and_durable_sink(
+        allow_policy([EgressRule::new(
+            "stall",
+            EgressProtocol::Http,
+            "allowed.test",
+            stalled_upstream.addr.port(),
+        )
+        .allow_internal_ips(true)]),
+        CredentialSecretStore::empty(),
+        Arc::new(|_| {}),
+        capturing_durable_sink_for_test(Arc::clone(&captured)),
+    );
+    let proxy_addr = proxy.local_addr();
+    let stalled_port = stalled_upstream.addr.port();
+    let client = thread::spawn(move || {
+        let _ = proxy_request_until_close(
+            proxy_addr,
+            format!(
+                "GET http://allowed.test:{stalled_port}/slow HTTP/1.1\r\nHost: allowed.test\r\n\r\n"
+            ),
+        );
+    });
+    stalled_upstream
+        .request
+        .recv_timeout(Duration::from_secs(2))
+        .expect("stalled upstream should receive the in-flight request");
+
+    drop(proxy);
+    client.join().expect("client thread should finish");
+    stalled_upstream.release();
+
+    let records = captured.lock().expect("capture lock should hold").clone();
+    assert_eq!(
+        records.len(),
+        2,
+        "an intent-only aborted request must receive a durable synthetic terminal: {records:?}"
+    );
+    assert_eq!(records[0].record_kind(), DecisionRecordKind::Intent);
+    assert!(records[0].is_allowed());
+    assert_eq!(records[1].record_kind(), DecisionRecordKind::Terminal);
+    assert!(
+        !records[1].is_allowed()
+            && records[1]
+                .reason()
+                .contains("terminated the request before a decision"),
+        "abort guard terminal must be a synthetic deny naming the abort: {:?}",
+        records[1]
+    );
+    assert_eq!(
+        records[0].request_id(),
+        records[1].request_id(),
+        "abort guard terminal must pair with the request intent row: {records:?}"
+    );
+}
+
+#[test]
+fn egress_proxy_forward_http_abort_after_response_head_writes_after_response_terminal() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let stalled_upstream = TestStallingHttpBodyServer::start();
+    let proxy = start_test_proxy_with_store_logger_and_durable_sink(
+        allow_policy([EgressRule::new(
+            "stall-body",
+            EgressProtocol::Http,
+            "allowed.test",
+            stalled_upstream.addr.port(),
+        )
+        .allow_internal_ips(true)]),
+        CredentialSecretStore::empty(),
+        Arc::new(|_| {}),
+        capturing_durable_sink_for_test(Arc::clone(&captured)),
+    );
+
+    let proxy_addr = proxy.local_addr();
+    let stalled_port = stalled_upstream.addr.port();
+    let (head_tx, head_rx) = mpsc::channel();
+    let client = thread::spawn(move || {
+        let mut stream = TcpStream::connect(proxy_addr).expect("client should connect to proxy");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("read timeout should set");
+        stream
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .expect("write timeout should set");
+        stream
+            .write_all(
+                format!(
+                    "GET http://allowed.test:{stalled_port}/slow HTTP/1.1\r\nHost: allowed.test\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .expect("client should write request");
+        let head = read_http_headers_from_raw_stream(&mut stream);
+        let _ = head_tx.send(head);
+        let mut chunk = [0_u8; 1024];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::ConnectionReset
+                            | io::ErrorKind::UnexpectedEof
+                            | io::ErrorKind::WouldBlock
+                            | io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    break;
+                }
+                Err(error) => panic!("client body read should finish or be reset: {error}"),
+            }
+        }
+    });
+
+    let upstream_request = stalled_upstream
+        .request
+        .recv_timeout(Duration::from_secs(2))
+        .expect("stalled HTTP upstream should receive the forwarded request");
+    assert!(
+        upstream_request.starts_with("GET /slow HTTP/1.1"),
+        "forwarded request should reach upstream before cancellation: {upstream_request}"
+    );
+    let response_head = head_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("client should receive the upstream response head before cancellation");
+    assert!(
+        response_head.starts_with("HTTP/1.1 200 OK"),
+        "response head must reach the client before proxy cancellation: {response_head}"
+    );
+
+    drop(proxy);
+    client.join().expect("client thread should finish");
+    stalled_upstream.release();
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let records = loop {
+        let records = snapshot_durable_logs(&captured);
+        if records.len() >= 2 || Instant::now() >= deadline {
+            break records;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(
+        records.len(),
+        2,
+        "forward cancellation after response head must produce exactly intent + after-response durable rows: {records:?}"
+    );
+    assert_eq!(records[0].record_kind(), DecisionRecordKind::Intent);
+    assert!(
+        records[0].is_allowed(),
+        "the intent row must remain an allow: {:?}",
+        records[0]
+    );
+    assert_eq!(
+        records[1].record_kind(),
+        DecisionRecordKind::TerminalAfterResponse
+    );
+    assert!(
+        records[1].is_allowed(),
+        "response-started cancellation must audit as executed allow, not synthetic deny: {records:?}"
+    );
+    assert_eq!(
+        records[0].request_id(),
+        records[1].request_id(),
+        "after-response terminal must pair with the original intent row: {records:?}"
+    );
+    assert!(
+        records.iter().all(EgressDecisionLog::is_allowed),
+        "response-started cancellation must not append a synthetic deny: {records:?}"
+    );
+    assert_eq!(
+        records[1].reason(),
+        crate::decision_log::ABORT_AFTER_RESPONSE_REASON
+    );
+}
+
+#[test]
+fn egress_proxy_abort_guard_marks_audit_unhealthy_when_durable_append_fails() {
+    let audit_healthy = Arc::new(AtomicBool::new(true));
+    let resolver_entered = Arc::new(AtomicBool::new(false));
+    let resolver_entered_for_call = Arc::clone(&resolver_entered);
+    let resolver = Arc::new(move |_host: &str, port: u16| {
+        resolver_entered_for_call.store(true, Ordering::SeqCst);
+        thread::sleep(Duration::from_secs(5));
+        Ok(vec![SocketAddr::from(([127, 0, 0, 1], port))])
+    });
+    let proxy = WorkloadPep::start(
+        WorkloadPepConfig::new(allow_policy([EgressRule::new(
+            "stall",
+            EgressProtocol::Http,
+            "allowed.test",
+            80,
+        )
+        .allow_internal_ips(true)]))
+        .with_timeouts(Duration::from_secs(5), Duration::from_secs(5))
+        .with_durable_decision_sink(failing_durable_sink_for_test())
+        .with_audit_health_probe(Arc::clone(&audit_healthy))
+        .with_resolver(resolver),
+    )
+    .expect("proxy should start");
+    let proxy_addr = proxy.local_addr();
+    let client = thread::spawn(move || {
+        let _ = proxy_request_until_close(
+            proxy_addr,
+            "GET http://allowed.test:80/slow HTTP/1.1\r\nHost: allowed.test\r\n\r\n".to_owned(),
+        );
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !resolver_entered.load(Ordering::SeqCst) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        resolver_entered.load(Ordering::SeqCst),
+        "request should reach the resolver stall before cancellation"
+    );
+
+    drop(proxy);
+    client.join().expect("client thread should finish");
+
+    assert!(
+        !audit_healthy.load(Ordering::SeqCst),
+        "abort guard durable append failure must flip sticky audit health"
+    );
+}
