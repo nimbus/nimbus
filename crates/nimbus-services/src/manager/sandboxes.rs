@@ -13,18 +13,6 @@ use super::ServiceManager;
 use super::clock::{next_version, now_millis};
 
 impl ServiceManager {
-    pub async fn create_sandbox_resource_async(
-        &self,
-        tenant_id: &TenantId,
-        profile: impl Into<String>,
-        spec: SandboxSpec,
-        labels: BTreeMap<String, String>,
-    ) -> Result<SandboxResource, Error> {
-        let context = TenantIsolationContext::system(tenant_id.clone(), "sandbox.resource.create");
-        self.create_sandbox_resource_for_context_async(&context, profile, spec, labels)
-            .await
-    }
-
     pub async fn create_sandbox_resource_for_context_async(
         &self,
         isolation: &TenantIsolationContext,
@@ -38,7 +26,7 @@ impl ServiceManager {
             .await
     }
 
-    pub async fn create_sandbox_resource_for_decision_async(
+    async fn create_sandbox_resource_for_decision_async(
         &self,
         decision: &TenantIsolationDecision,
         profile: impl Into<String>,

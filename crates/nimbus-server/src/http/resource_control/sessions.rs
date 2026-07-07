@@ -6,13 +6,14 @@ use nimbus_services::{SessionResource, SessionTarget};
 use serde_json::Value;
 
 use super::super::authz::{
-    OperatorRouteAccess, PrincipalClass, extract_operator_route_access, permission_actions_allow,
-    permission_claim_values, principal_claim_string, principal_class_from_principal,
+    OperatorAuthScope, OperatorRouteAccess, PrincipalClass, authorize_operator_route,
+    extract_operator_route_access, permission_actions_allow, permission_claim_values,
+    principal_claim_string, principal_class_from_principal, record_operator_authorization_audit,
 };
 use super::super::parse_operator_tenant_context;
 use super::super::parse_user_tenant_id;
 use super::super::service_grants::principal_has_exact_service_grant;
-use crate::local_server::{LocalServerAuditEvent, LocalServerRouteFamily, origin_from_headers};
+use super::sandboxes::sandbox_permission_scope_allows;
 use crate::state::{AppError, AppState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,10 +196,11 @@ pub(in crate::http) async fn authorize_session_route(
     let resolved = crate::application_auth::resolve_application_auth_from_headers(state, headers)
         .await
         .map_err(|error| {
-            record_session_authorization_audit(
+            record_operator_authorization_audit(
                 state,
                 headers,
-                tenant_id,
+                tenant_id.as_str(),
+                OperatorAuthScope::Session,
                 PrincipalClass::Tenant,
                 Some("application_bearer"),
                 false,
@@ -207,10 +209,11 @@ pub(in crate::http) async fn authorize_session_route(
             error
         })?;
     if !resolved.principal.authenticated {
-        record_session_authorization_audit(
+        record_operator_authorization_audit(
             state,
             headers,
-            tenant_id,
+            tenant_id.as_str(),
+            OperatorAuthScope::Session,
             PrincipalClass::Tenant,
             None,
             false,
@@ -275,30 +278,19 @@ fn authorize_operator_session_route(
     tenant_id: &TenantId,
     surface: &'static str,
 ) -> Result<Option<SessionAuthorization>, AppError> {
-    match extract_operator_route_access(headers, state.local_server_security().as_deref())? {
-        Ok(OperatorRouteAccess::Authorized { auth_method }) => {
-            let tenant_context = parse_operator_tenant_context(tenant_id.as_str(), surface)?;
-            Ok(Some(SessionAuthorization {
-                principal_class: PrincipalClass::Operator,
-                tenant_id: tenant_context.tenant_id().clone(),
-                auth_method,
-                principal: None,
-            }))
-        }
-        Ok(OperatorRouteAccess::Missing) => Ok(None),
-        Err(rejection) => {
-            record_session_authorization_audit(
-                state,
-                headers,
-                tenant_id,
-                PrincipalClass::Operator,
-                rejection.auth_method(),
-                false,
-                format!("operator session route rejected: {}", rejection.reason()),
-            );
-            Err(rejection.app_error())
-        }
-    }
+    authorize_operator_route(
+        headers,
+        state,
+        tenant_id,
+        surface,
+        OperatorAuthScope::Session,
+        |grant| SessionAuthorization {
+            principal_class: PrincipalClass::Operator,
+            tenant_id: grant.tenant_context.tenant_id().clone(),
+            auth_method: grant.auth_method,
+            principal: None,
+        },
+    )
 }
 
 fn session_target_reachable(principal: &PrincipalContext, target: &SessionTarget) -> bool {
@@ -426,7 +418,7 @@ fn principal_has_sandbox_reach(principal: &PrincipalContext, sandbox_id: &str) -
         .into_iter()
         .any(|permission| {
             permission_actions_allow(permission, "get")
-                && sandbox_permission_scope_allows(permission, sandbox_id)
+                && sandbox_permission_scope_allows(permission, Some(sandbox_id))
         })
 }
 
@@ -440,46 +432,4 @@ fn sandbox_permission_values(principal: &PrincipalContext) -> Vec<&Value> {
             "sandboxPermissions",
         ],
     )
-}
-
-fn sandbox_permission_scope_allows(permission: &Value, sandbox_id: &str) -> bool {
-    let Some(scope) = permission.get("scope") else {
-        return false;
-    };
-    match scope.get("kind").and_then(Value::as_str) {
-        Some("tenant") => true,
-        Some("exactId") => scope
-            .get("id")
-            .and_then(Value::as_str)
-            .is_some_and(|id| id == sandbox_id),
-        Some("idPrefix") => scope
-            .get("prefix")
-            .and_then(Value::as_str)
-            .is_some_and(|prefix| sandbox_id.starts_with(prefix)),
-        _ => false,
-    }
-}
-
-pub(in crate::http) fn record_session_authorization_audit(
-    state: &AppState,
-    headers: &HeaderMap,
-    tenant_id: &TenantId,
-    principal_class: PrincipalClass,
-    auth_method: Option<&'static str>,
-    success: bool,
-    reason: impl Into<String>,
-) {
-    state.record_local_server_audit(LocalServerAuditEvent {
-        route_family: LocalServerRouteFamily::NativeApi,
-        tenant_id: Some(tenant_id.as_str().to_owned()),
-        auth_scope: "session_principal_class",
-        auth_method,
-        success,
-        origin: origin_from_headers(headers),
-        reason: format!(
-            "principal_class={} {}",
-            principal_class.as_str(),
-            reason.into()
-        ),
-    });
 }

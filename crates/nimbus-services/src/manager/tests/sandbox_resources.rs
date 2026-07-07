@@ -13,8 +13,8 @@ async fn create_sandbox_resource_stops_backend_after_post_start_validation_error
         backend.clone(),
     );
     let result = manager
-        .create_sandbox_resource_async(
-            &tenant_id,
+        .create_sandbox_resource_for_context_async(
+            &TenantIsolationContext::system(tenant_id.clone(), "sandbox.resource.create"),
             "worker",
             standalone_resource_spec(&tenant_id, "task"),
             BTreeMap::new(),
@@ -59,8 +59,8 @@ async fn create_sandbox_resource_preserves_existing_backend_after_duplicate_star
     );
 
     manager
-        .create_sandbox_resource_async(
-            &tenant_id,
+        .create_sandbox_resource_for_context_async(
+            &TenantIsolationContext::system(tenant_id.clone(), "sandbox.resource.create"),
             "worker",
             standalone_resource_spec(&tenant_id, "task"),
             BTreeMap::new(),
@@ -68,8 +68,8 @@ async fn create_sandbox_resource_preserves_existing_backend_after_duplicate_star
         .await
         .expect("first standalone sandbox should start");
     let duplicate = manager
-        .create_sandbox_resource_async(
-            &tenant_id,
+        .create_sandbox_resource_for_context_async(
+            &TenantIsolationContext::system(tenant_id.clone(), "sandbox.resource.create"),
             "worker",
             standalone_resource_spec(&tenant_id, "task"),
             BTreeMap::new(),
@@ -113,8 +113,8 @@ async fn sandbox_create_records_desired_workload() {
     );
 
     let resource = manager
-        .create_sandbox_resource_async(
-            &tenant_id,
+        .create_sandbox_resource_for_context_async(
+            &TenantIsolationContext::system(tenant_id.clone(), "sandbox.resource.create"),
             "worker",
             standalone_resource_spec(&tenant_id, "task"),
             BTreeMap::new(),

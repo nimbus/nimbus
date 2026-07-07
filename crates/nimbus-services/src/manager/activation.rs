@@ -7,9 +7,10 @@ use nimbus_tenant::{
     TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput,
     TenantServiceGrantPolicyDecision, WorkloadAttributes,
 };
+#[cfg(test)]
+use nimbus_workloads::TenantEgressReloadRequest;
 use nimbus_workloads::{
     DesiredWorkload, DesiredWorkloadState, DesiredWorkloadStore, LocalEnforcementBinding,
-    TenantEgressReloadRequest,
 };
 use tokio::time::sleep;
 
@@ -103,7 +104,7 @@ impl ServiceManager {
             .await
     }
 
-    pub async fn start_service_for_decision_async(
+    pub(super) async fn start_service_for_decision_async(
         &self,
         decision: &TenantIsolationDecision,
         service_name: &str,
@@ -162,7 +163,7 @@ impl ServiceManager {
             .await
     }
 
-    pub async fn stop_service_for_decision_async(
+    pub(super) async fn stop_service_for_decision_async(
         &self,
         decision: &TenantIsolationDecision,
         service_name: &str,
@@ -224,7 +225,7 @@ impl ServiceManager {
             .await
     }
 
-    pub async fn restart_service_for_decision_async(
+    pub(super) async fn restart_service_for_decision_async(
         &self,
         decision: &TenantIsolationDecision,
         service_name: &str,
@@ -236,7 +237,13 @@ impl ServiceManager {
             .await
     }
 
-    pub async fn reload_service_egress_for_decision_async(
+    // Zero production callers today: nothing derives a `TenantIsolationDecision`
+    // for an already-active service ahead of time and hands it in here. It stays
+    // as a `pub(super)` decision-injection hook (`manager` + descendants only, so
+    // the grant-enforcement test in `manager/tests/lifecycle.rs` keeps direct
+    // access) gated to test builds so it isn't dead code in production.
+    #[cfg(test)]
+    pub(super) async fn reload_service_egress_for_decision_async(
         &self,
         tenant_id: &TenantId,
         decision: &TenantIsolationDecision,

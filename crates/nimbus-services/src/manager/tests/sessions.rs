@@ -46,8 +46,8 @@ async fn open_session_rejects_not_ready_sandbox_targets() {
         backend,
     );
     let sandbox = manager
-        .create_sandbox_resource_async(
-            &tenant_id,
+        .create_sandbox_resource_for_context_async(
+            &TenantIsolationContext::system(tenant_id.clone(), "sandbox.resource.create"),
             "worker",
             standalone_resource_spec(&tenant_id, "task"),
             BTreeMap::new(),

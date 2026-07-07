@@ -1,6 +1,47 @@
 use super::*;
 
 #[tokio::test]
+async fn principal_class_sandbox_route_policy_allows_operator_cross_tenant_and_audits() {
+    let temp = tempfile::tempdir().expect("tempdir should create");
+    let (local_server_security, token) = local_server_security(temp.path());
+    let audit_log_path = local_server_security.paths().audit_log_path.clone();
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+    let backend = Arc::new(ReadySandboxBackend {
+        image_starts: AtomicUsize::new(0),
+        stop_calls: AtomicUsize::new(0),
+    });
+    let server = ServerFixture::start(
+        crate::router::RouterBuildConfig::core(engine.clone())
+            .with_service_manager(service_manager(backend.clone()))
+            .with_local_server_security(local_server_security)
+            .without_deploy_admin_token()
+            .build(),
+    )
+    .await;
+
+    let response = server
+        .client()
+        .post(server.http_url("/api/tenants/tenantb/sandboxes"))
+        .bearer_auth(&token.token)
+        .json(&sandbox_create_body("tenantb", "task"))
+        .send()
+        .await
+        .expect("operator cross-tenant sandbox create request should send");
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let records = read_audit_records(&audit_log_path);
+    assert!(records.iter().any(|record| {
+        record.success
+            && record.tenant_id.as_deref() == Some("tenantb")
+            && record.auth_scope == "sandbox_principal_class"
+            && record.reason.contains("principal_class=operator")
+            && record
+                .reason
+                .contains("sandbox create authorized with profile worker")
+    }));
+}
+
+#[tokio::test]
 async fn sandbox_resource_routes_are_id_addressed_and_do_not_publish_services() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let (local_server_security, token) = local_server_security(temp.path());
@@ -276,8 +317,11 @@ async fn sandbox_routes_mask_cross_tenant_sandbox_ids_as_not_found() {
     let manager = service_manager(backend.clone());
     let tenant_id = TenantId::new("tenanta").expect("tenant id should parse");
     let sandbox = manager
-        .create_sandbox_resource_async(
-            &tenant_id,
+        .create_sandbox_resource_for_context_async(
+            &crate::tenant::TenantIsolationContext::system(
+                tenant_id.clone(),
+                "sandbox.resource.create",
+            ),
             "worker",
             standalone_sandbox_spec(&tenant_id, "task"),
             BTreeMap::new(),

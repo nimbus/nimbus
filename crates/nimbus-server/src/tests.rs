@@ -1802,6 +1802,8 @@ mod firebase_rest_crud;
 mod firebase_rest_query;
 #[path = "tests/firebase/write_stream.rs"]
 mod firebase_write_stream;
+#[path = "tests/http_mount_gating.rs"]
+mod http_mount_gating;
 #[path = "tests/local_admin.rs"]
 mod local_admin;
 #[path = "tests/local_audit.rs"]

@@ -9,11 +9,9 @@ use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_services::SandboxResource;
 use serde::{Deserialize, Serialize};
 
-use super::authz::format_millis_rfc3339;
+use super::authz::{OperatorAuthScope, format_millis_rfc3339, record_operator_authorization_audit};
 use super::pagination::{CollectionMetadataResponse, paginate_by_key};
-use super::resource_control::sandboxes::{
-    SandboxAction, authorize_sandbox_route, record_sandbox_authorization_audit,
-};
+use super::resource_control::sandboxes::{SandboxAction, authorize_sandbox_route};
 use super::sandbox_spec::{SandboxSpecInput, SandboxSpecResponse};
 use super::{AppError, AppState};
 
@@ -142,10 +140,11 @@ pub(crate) async fn create_sandbox(
             request.labels.unwrap_or_default(),
         )
         .await?;
-    record_sandbox_authorization_audit(
+    record_operator_authorization_audit(
         &state,
         &headers,
-        &authorization.tenant_id,
+        authorization.tenant_id.as_str(),
+        OperatorAuthScope::Sandbox,
         authorization.principal_class,
         authorization.auth_method,
         true,

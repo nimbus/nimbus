@@ -5,12 +5,11 @@ use nimbus_core::PrincipalContext;
 use serde_json::Value;
 
 use super::super::authz::{
-    OperatorRouteAccess, PrincipalClass, extract_operator_route_access, permission_actions_allow,
-    permission_claim_values, principal_class_from_principal,
+    OperatorAuthScope, PrincipalClass, authorize_operator_route, permission_actions_allow,
+    permission_claim_values, principal_class_from_principal, record_operator_authorization_audit,
 };
 use super::super::parse_user_tenant_id;
 use super::super::service_grants::principal_has_exact_service_grant;
-use crate::local_server::{LocalServerAuditEvent, LocalServerRouteFamily, origin_from_headers};
 use crate::state::{AppError, AppState};
 use crate::tenant::TenantIsolationContext;
 
@@ -100,10 +99,11 @@ pub(in crate::http) async fn authorize_service_definition_route(
     let resolved = crate::application_auth::resolve_application_auth_from_headers(state, headers)
         .await
         .map_err(|error| {
-            record_service_definition_authorization_audit(
+            record_operator_authorization_audit(
                 state,
                 headers,
                 &tenant_id,
+                OperatorAuthScope::ServiceDefinition,
                 PrincipalClass::Tenant,
                 Some("application_bearer"),
                 false,
@@ -113,10 +113,11 @@ pub(in crate::http) async fn authorize_service_definition_route(
         })?;
     if !resolved.principal.authenticated {
         let tenant = parse_user_tenant_id(tenant_id)?;
-        record_service_definition_authorization_audit(
+        record_operator_authorization_audit(
             state,
             headers,
             tenant.as_str(),
+            OperatorAuthScope::ServiceDefinition,
             PrincipalClass::Tenant,
             None,
             false,
@@ -134,10 +135,11 @@ pub(in crate::http) async fn authorize_service_definition_route(
     if let Err(error) =
         tenant_context.require_matching_principal_claim("service definition route policy")
     {
-        record_service_definition_authorization_audit(
+        record_operator_authorization_audit(
             state,
             headers,
             tenant.as_str(),
+            OperatorAuthScope::ServiceDefinition,
             principal_class,
             Some("application_bearer"),
             false,
@@ -156,10 +158,11 @@ pub(in crate::http) async fn authorize_service_definition_route(
         None => principal_has_any_service_definition_permission(&resolved.principal, action),
     };
     if !allowed {
-        record_service_definition_authorization_audit(
+        record_operator_authorization_audit(
             state,
             headers,
             tenant.as_str(),
+            OperatorAuthScope::ServiceDefinition,
             principal_class,
             Some("application_bearer"),
             false,
@@ -198,10 +201,11 @@ pub(in crate::http) async fn authorize_service_route(
     let resolved = crate::application_auth::resolve_application_auth_from_headers(state, headers)
         .await
         .map_err(|error| {
-            record_service_authorization_audit(
+            record_operator_authorization_audit(
                 state,
                 headers,
                 &tenant_id,
+                OperatorAuthScope::Service,
                 PrincipalClass::Tenant,
                 Some("application_bearer"),
                 false,
@@ -211,10 +215,11 @@ pub(in crate::http) async fn authorize_service_route(
         })?;
     if !resolved.principal.authenticated {
         let tenant = parse_user_tenant_id(tenant_id)?;
-        record_service_authorization_audit(
+        record_operator_authorization_audit(
             state,
             headers,
             tenant.as_str(),
+            OperatorAuthScope::Service,
             PrincipalClass::Tenant,
             None,
             false,
@@ -232,10 +237,11 @@ pub(in crate::http) async fn authorize_service_route(
     if let Err(error) = tenant_context
         .require_matching_principal_claim("service lifecycle principal-class route policy")
     {
-        record_service_authorization_audit(
+        record_operator_authorization_audit(
             state,
             headers,
             tenant.as_str(),
+            OperatorAuthScope::Service,
             principal_class,
             Some("application_bearer"),
             false,
@@ -248,10 +254,11 @@ pub(in crate::http) async fn authorize_service_route(
     }
 
     if !principal_has_exact_service_grant(&resolved.principal, service_name) {
-        record_service_authorization_audit(
+        record_operator_authorization_audit(
             state,
             headers,
             tenant.as_str(),
+            OperatorAuthScope::Service,
             principal_class,
             Some("application_bearer"),
             false,
@@ -280,28 +287,18 @@ fn authorize_operator_service_route(
     surface: &'static str,
 ) -> Result<Option<ServiceRouteAuthorization>, AppError> {
     let route_tenant = parse_user_tenant_id(tenant_id)?;
-    match extract_operator_route_access(headers, state.local_server_security().as_deref())? {
-        Ok(OperatorRouteAccess::Authorized { auth_method }) => {
-            Ok(Some(ServiceRouteAuthorization {
-                principal_class: PrincipalClass::Operator,
-                tenant_context: TenantIsolationContext::operator(route_tenant, surface),
-                auth_method,
-            }))
-        }
-        Ok(OperatorRouteAccess::Missing) => Ok(None),
-        Err(rejection) => {
-            record_service_authorization_audit(
-                state,
-                headers,
-                route_tenant.as_str(),
-                PrincipalClass::Operator,
-                rejection.auth_method(),
-                false,
-                format!("operator service route rejected: {}", rejection.reason()),
-            );
-            Err(rejection.app_error())
-        }
-    }
+    authorize_operator_route(
+        headers,
+        state,
+        &route_tenant,
+        surface,
+        OperatorAuthScope::Service,
+        |grant| ServiceRouteAuthorization {
+            principal_class: PrincipalClass::Operator,
+            tenant_context: grant.tenant_context,
+            auth_method: grant.auth_method,
+        },
+    )
 }
 
 fn principal_has_any_service_definition_permission(
@@ -354,56 +351,4 @@ fn service_definition_permission_scope_allows(permission: &Value, service_name: 
             .is_some_and(|prefix| service_name.starts_with(prefix)),
         _ => false,
     }
-}
-
-/// `tenant_id` is the raw route value, not a validated [`nimbus_core::TenantId`]: an
-/// authorization failure can happen before tenant parsing, and the audit trail should
-/// record what the caller actually sent rather than a fabricated placeholder.
-pub(in crate::http) fn record_service_authorization_audit(
-    state: &AppState,
-    headers: &HeaderMap,
-    tenant_id: &str,
-    principal_class: PrincipalClass,
-    auth_method: Option<&'static str>,
-    success: bool,
-    reason: impl Into<String>,
-) {
-    state.record_local_server_audit(LocalServerAuditEvent {
-        route_family: LocalServerRouteFamily::NativeApi,
-        tenant_id: Some(tenant_id.to_owned()),
-        auth_scope: "service_principal_class",
-        auth_method,
-        success,
-        origin: origin_from_headers(headers),
-        reason: format!(
-            "principal_class={} {}",
-            principal_class.as_str(),
-            reason.into()
-        ),
-    });
-}
-
-/// See [`record_service_authorization_audit`] on why `tenant_id` is a raw `&str`.
-pub(in crate::http) fn record_service_definition_authorization_audit(
-    state: &AppState,
-    headers: &HeaderMap,
-    tenant_id: &str,
-    principal_class: PrincipalClass,
-    auth_method: Option<&'static str>,
-    success: bool,
-    reason: impl Into<String>,
-) {
-    state.record_local_server_audit(LocalServerAuditEvent {
-        route_family: LocalServerRouteFamily::NativeApi,
-        tenant_id: Some(tenant_id.to_owned()),
-        auth_scope: "service_definition_principal_class",
-        auth_method,
-        success,
-        origin: origin_from_headers(headers),
-        reason: format!(
-            "principal_class={} {}",
-            principal_class.as_str(),
-            reason.into()
-        ),
-    });
 }

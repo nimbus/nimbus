@@ -475,8 +475,11 @@ async fn session_routes_open_sandbox_sessions_by_id_and_expire_fail_closed() {
     let manager = service_manager(backend.clone());
     let tenant_id = TenantId::new("tenanta").expect("tenant id should parse");
     let sandbox = manager
-        .create_sandbox_resource_async(
-            &tenant_id,
+        .create_sandbox_resource_for_context_async(
+            &crate::tenant::TenantIsolationContext::system(
+                tenant_id.clone(),
+                "sandbox.resource.create",
+            ),
             "worker",
             standalone_sandbox_spec(&tenant_id, "task"),
             BTreeMap::new(),
