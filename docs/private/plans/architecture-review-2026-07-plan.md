@@ -119,6 +119,34 @@ on horizontal-scaling HS1 (cluster node identity) per the SI plan; a
 local-dev issuer is the only pre-HS1 issuance path and must stay
 explicitly non-production.
 
+### AD3 — SR7/SR8: keep typed enum dispatch; delete EmbeddedPersistenceProvider (2026-07-07)
+
+**Decision (SR7):** retain the typed `TenantPersistence`/`match_tenant_persistence!`
+enum dispatch. Do NOT introduce `Arc<dyn ProviderObject>` now. Rationale:
+the dispatch is documented-deliberate (`persistence/provider.rs:43`); the
+capability traits carry generic closure methods that are not object-safe
+as written, so erasure is a design project, not a refactor; object-safety
+would box futures/closures through the hottest read path that is
+monomorphized today; and GR1's evidence shows drift bugs come from
+duplicated bodies, not macro fan-out — the exhaustive macros are a drift
+DEFENSE. A 6th in-tree backend is bounded, compiler-enforced mechanical
+work.
+
+**Re-open conditions (either):** (a) a genuine out-of-tree/plugin backend
+requirement appears; or (b) after SR1 is merged, a small prototype proves
+an object-safe provider facade (including a decision for
+`TenantPersistenceSnapshot`) removes more complexity than it adds. Absent
+those, the enum stands.
+
+**Decision (SR8):** delete `EmbeddedPersistenceProvider`
+(`async_storage/traits.rs`) — one real method (`list_tenants`) plus an
+associated read type doing too little; `TenantLifecycle` already covers
+the surface. Move redb `list_tenants` to an inherent method, update the
+`TenantLifecycle` impl, remove the export. SEQUENCE: after the
+storage-lane (SR1/CO6/DS3) PR merges, to avoid same-file churn. If a
+future SR7 re-open deliberately reuses the name for a deeper seam, that
+ADR supersedes this deletion's naming, not its cleanup.
+
 ## Corrected / No-Action Ledger
 
 Recorded so later reviews do not re-flag these:
@@ -173,8 +201,8 @@ moves; one evidence line per completed item (test name/count or commit).
 | SR4 | HTTP-mount seam mirroring `WireProtocolAdapter`: `build_router` iterates registered HTTP protocol adapters instead of hardcoded merges. | `nimbus-server/src/router.rs:563-571`, `adapters/wire.rs:22` | medium | todo |
 | SR5 | Seal the `object_store` constructor leak: accept a Nimbus-owned cloud-config enum; build `Arc<dyn ObjectStore>` internally behind a feature-gated factory. | `nimbus-blob/src/object_store.rs:33,48` | small | todo |
 | SR6 | Consolidate `nimbus-bridge/src/host_calls/` sub-40-line dispatch shims into one `host_calls/dispatch.rs` keyed by call kind; ABI logic stays in `abi/`. | `nimbus-bridge/src/host_calls/{sync.rs,async_calls.rs,async_trace.rs}` | small | todo |
-| SR7 | (Speculative — requires SR1; discussion first.) Erase the three parallel 5-arm persistence enums + `match_*!` macros in favor of `Arc<dyn ProviderObject>` over the capability traits. `provider.rs:42-44` documents the enum dispatch as deliberate — treat as an ADR discussion, not a defect. | `nimbus-engine/src/persistence.rs:1-58`, `persistence/{provider,tenant,executor}.rs` | large | blocked (owner ADR decision required: enum dispatch is documented-deliberate; no decision recorded as of 2026-07-07) |
-| SR8 | Deepen or delete `EmbeddedPersistenceProvider` (abstracts almost nothing; own doc admits the migration contract lives on the concrete store). Resolve together with SR7. | `nimbus-storage/src/async_storage/traits.rs:16-20` | small | blocked (paired with SR7's owner ADR decision) |
+| SR7 | (Speculative — requires SR1; discussion first.) Erase the three parallel 5-arm persistence enums + `match_*!` macros in favor of `Arc<dyn ProviderObject>` over the capability traits. `provider.rs:42-44` documents the enum dispatch as deliberate — treat as an ADR discussion, not a defect. | `nimbus-engine/src/persistence.rs:1-58`, `persistence/{provider,tenant,executor}.rs` | large | no-action (AD3, 2026-07-07: keep typed enum dispatch — drift-defending, monomorphized hot path; re-open only on out-of-tree-backend need or a post-SR1 prototype proving net complexity removal) |
+| SR8 | Deepen or delete `EmbeddedPersistenceProvider` (abstracts almost nothing; own doc admits the migration contract lives on the concrete store). Resolve together with SR7. | `nimbus-storage/src/async_storage/traits.rs:16-20` | small | todo (AD3: delete EmbeddedPersistenceProvider; sequenced after the storage-lane SR1 PR merges) |
 
 ### Band CO — Consolidations and shared primitives
 
