@@ -37,3 +37,12 @@ export function shortId(value: string, length = 7): string {
   if (value.length <= length + 2) return value;
   return value.slice(0, length);
 }
+
+export function formatMemory(mib: number | undefined | null): string {
+  if (mib === undefined || mib === null) return "—";
+  if (mib >= 1024) {
+    const gib = mib / 1024;
+    return `${gib % 1 === 0 ? gib.toFixed(0) : gib.toFixed(1)} GiB`;
+  }
+  return `${mib} MiB`;
+}

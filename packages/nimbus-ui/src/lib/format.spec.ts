@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatAbsoluteTime,
   formatDuration,
+  formatMemory,
   formatRelativeTime,
   formatUptime,
   shortId,
@@ -107,5 +108,24 @@ describe("shortId", () => {
 
   it("honors a custom length", () => {
     expect(shortId("0123456789", 4)).toBe("0123");
+  });
+});
+
+describe("formatMemory", () => {
+  it("renders an em dash for missing values", () => {
+    expect(formatMemory(undefined)).toBe("—");
+    expect(formatMemory(null)).toBe("—");
+  });
+
+  it("renders MiB below 1024", () => {
+    expect(formatMemory(512)).toBe("512 MiB");
+  });
+
+  it("renders whole GiB without a fraction", () => {
+    expect(formatMemory(2048)).toBe("2 GiB");
+  });
+
+  it("renders one fractional digit for partial GiB", () => {
+    expect(formatMemory(1536)).toBe("1.5 GiB");
   });
 });

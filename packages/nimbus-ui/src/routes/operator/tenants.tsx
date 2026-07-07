@@ -10,6 +10,7 @@ import { Td, Th } from "../../components/data-table";
 import { PageHeader } from "../../components/page-header";
 import { cn } from "../../lib/cn";
 import { getNimbusClient } from "../../lib/nimbus-client";
+import type { TableDoc } from "../../lib/types/table";
 import {
   type SubDrawerSpec,
   useContributeSubDrawer,
@@ -18,14 +19,6 @@ import { fetchTenants } from "../../shell/tenants-fetch";
 
 type TenantsSearch = {
   create?: 1;
-};
-
-type TableDoc = {
-  _id: string;
-  tenantId?: string;
-  name?: string;
-  rowCount?: number;
-  lastWriteAt?: number;
 };
 
 type TenantRow = {
@@ -276,9 +269,10 @@ function TenantsPage() {
             testid="storage-server-error-envelope"
           />
         ) : rows.length === 0 ? (
-          <Empty
+          <EmptyState
             title="No tenants"
-            detail="Use the form above or POST /api/tenants to create your first tenant. Tables and documents live inside tenants."
+            body="Use the form above or POST /api/tenants to create your first tenant. Tables and documents live inside tenants."
+            testid="storage-empty"
           />
         ) : (
           <div className="overflow-auto">
@@ -382,17 +376,5 @@ function TenantsPage() {
         testid="storage-delete-tenant-dialog"
       />
     </section>
-  );
-}
-
-function Empty({ title, detail }: { title: string; detail: string }) {
-  return (
-    <div
-      className="flex h-full flex-col items-center justify-center gap-2 px-6 py-10 text-center"
-      data-testid="storage-empty"
-    >
-      <p className="font-mono text-sm text-default">{title}</p>
-      <p className="max-w-md text-xs text-muted">{detail}</p>
-    </div>
   );
 }

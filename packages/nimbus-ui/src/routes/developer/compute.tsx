@@ -4,8 +4,11 @@ import { Search } from "lucide-react";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
+import { EmptyState } from "../../components/empty-state";
+import { LoadingState } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
 import { cn } from "../../lib/cn";
+import type { FunctionDoc } from "../../lib/types/function";
 import { buildFunctionTree } from "../../shell/function-tree";
 import { FunctionTreeView } from "../../shell/function-tree-view";
 import {
@@ -27,19 +30,6 @@ export const Route = createFileRoute("/developer/compute")({
   }),
   component: ComputePage,
 });
-
-type FunctionDoc = {
-  _id: string;
-  _updateTime?: number;
-  path?: string;
-  kind?: string;
-  adapter?: string;
-  bundleId?: string;
-  argsSchema?: unknown;
-  returnsSchema?: unknown;
-  lastStatus?: string;
-  lastRunAt?: number;
-};
 
 type BundleDoc = {
   _id: string;
@@ -206,7 +196,7 @@ function FunctionsView({
       </Toolbar>
       <div className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface">
         {functions === undefined ? (
-          <Loading label="Loading functions…" />
+          <LoadingState label="Loading functions…" />
         ) : (
           <FunctionTreeView
             tree={tree}
@@ -255,9 +245,9 @@ function SandboxesView() {
       className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-app bg-surface"
       data-testid="compute-sandboxes"
     >
-      <Empty
+      <EmptyState
         title="No live sandboxes"
-        detail="Sandboxes are live runtime state, not deployment records. Live runtime wiring is in progress; running sandboxes for this tenant will appear here once connected. No placeholder data is shown."
+        body="Sandboxes are live runtime state, not deployment records. Live runtime wiring is in progress; running sandboxes for this tenant will appear here once connected. No placeholder data is shown."
         testid="compute-sandboxes-empty"
       />
     </div>
@@ -382,32 +372,4 @@ function uniqueSorted<T>(
     if (value) set.add(value);
   }
   return Array.from(set).sort();
-}
-
-function Loading({ label }: { label: string }) {
-  return (
-    <div className="flex h-32 items-center justify-center text-xs text-muted">
-      {label}
-    </div>
-  );
-}
-
-function Empty({
-  title,
-  detail,
-  testid,
-}: {
-  title: string;
-  detail: string;
-  testid?: string;
-}) {
-  return (
-    <div
-      className="flex h-32 flex-col items-center justify-center gap-1 text-center"
-      data-testid={testid}
-    >
-      <span className="font-mono text-sm text-default">{title}</span>
-      <span className="max-w-md text-xs text-muted">{detail}</span>
-    </div>
-  );
 }
