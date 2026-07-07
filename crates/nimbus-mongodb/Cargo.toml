@@ -13,7 +13,6 @@ doctest = false
 workspace = true
 
 [dependencies]
-base64.workspace = true
 bson.workspace = true
 crc32c.workspace = true
 hmac.workspace = true

@@ -36,7 +36,10 @@ pub use dependency::{
 };
 pub use document::Document;
 pub use document_history::{DocumentVersion, DocumentVersionHistory};
-pub use encoding::hex_encode;
+pub use encoding::{
+    base64_decode_standard, base64_decode_url_safe_no_pad, base64_encode_standard,
+    base64_encode_url_safe_no_pad, hex_encode,
+};
 pub use error::{Error, HistoricalReadErrorKind, Result, StorageErrorKind, non_empty};
 pub use identity::{
     InvocationAuth, RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,

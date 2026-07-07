@@ -33,7 +33,6 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 libc.workspace = true
 
 [dev-dependencies]
-base64.workspace = true
 hyper.workspace = true
 serde_json.workspace = true
 serial_test.workspace = true

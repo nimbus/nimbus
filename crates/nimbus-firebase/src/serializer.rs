@@ -1,9 +1,8 @@
 use std::collections::BTreeMap;
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use nimbus_core::{
     Document, NumericValue, SpecialDouble, StoredValue, Timestamp, TypedScalarValue,
+    base64_decode_standard, base64_encode_standard,
 };
 use serde_json::{Map, Number, Value, json};
 use thiserror::Error;
@@ -155,7 +154,7 @@ impl FirestoreValue {
             Self::Double(value) => json!({ "doubleValue": value.to_proto_json_value() }),
             Self::Timestamp(value) => json!({ "timestampValue": value }),
             Self::String(value) => json!({ "stringValue": value }),
-            Self::Bytes(value) => json!({ "bytesValue": BASE64_STANDARD.encode(value) }),
+            Self::Bytes(value) => json!({ "bytesValue": base64_encode_standard(value) }),
             Self::Reference(value) => json!({ "referenceValue": value }),
             Self::GeoPoint {
                 latitude,
@@ -418,8 +417,7 @@ fn parse_bytes_value(value: &Value) -> Result<Vec<u8>, FirestoreProtoJsonError> 
             "expected base64 string".to_string(),
         ));
     };
-    BASE64_STANDARD
-        .decode(value)
+    base64_decode_standard(value)
         .map_err(|error| invalid_field("bytesValue", format!("invalid base64: {error}")))
 }
 

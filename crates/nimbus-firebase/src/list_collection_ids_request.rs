@@ -1,5 +1,4 @@
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use nimbus_core::{base64_decode_url_safe_no_pad, base64_encode_url_safe_no_pad};
 use serde::Deserialize;
 use serde_json::Value;
 use thiserror::Error;
@@ -97,8 +96,7 @@ fn decode_page_token(page_token: &str) -> Result<usize, FirestoreListCollectionI
     if page_token.is_empty() {
         return Ok(0);
     }
-    let decoded = URL_SAFE_NO_PAD
-        .decode(page_token)
+    let decoded = base64_decode_url_safe_no_pad(page_token)
         .map_err(|error| invalid_request(format!("invalid `pageToken`: {error}")))?;
     let decoded = String::from_utf8(decoded)
         .map_err(|error| invalid_request(format!("invalid `pageToken`: {error}")))?;
@@ -108,7 +106,7 @@ fn decode_page_token(page_token: &str) -> Result<usize, FirestoreListCollectionI
 }
 
 fn encode_page_token(page_offset: usize) -> String {
-    URL_SAFE_NO_PAD.encode(page_offset.to_string().as_bytes())
+    base64_encode_url_safe_no_pad(page_offset.to_string().as_bytes())
 }
 
 #[derive(Debug, Deserialize)]

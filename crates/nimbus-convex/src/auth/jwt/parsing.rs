@@ -1,11 +1,10 @@
 use std::borrow::Cow;
 
-use base64::Engine;
-use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use serde::Deserialize;
 use serde_json::Value;
 
 use nimbus_auth::ApplicationAuthError;
+use nimbus_core::{base64_decode_standard, base64_decode_url_safe_no_pad};
 
 pub fn decode_json_segment<T: for<'de> Deserialize<'de>>(
     segment: &str,
@@ -19,7 +18,7 @@ pub fn decode_json_segment<T: for<'de> Deserialize<'de>>(
 }
 
 pub fn decode_base64_url(input: &str) -> Result<Vec<u8>, base64::DecodeError> {
-    URL_SAFE_NO_PAD.decode(input)
+    base64_decode_url_safe_no_pad(input)
 }
 
 pub fn decode_data_url_json(source: &str) -> Result<Value, ApplicationAuthError> {
@@ -27,7 +26,7 @@ pub fn decode_data_url_json(source: &str) -> Result<Value, ApplicationAuthError>
         ApplicationAuthError::unauthorized("invalid data URL in auth configuration")
     })?;
     let bytes = if metadata.ends_with(";base64") {
-        STANDARD.decode(payload).map_err(|error| {
+        base64_decode_standard(payload).map_err(|error| {
             ApplicationAuthError::unauthorized(format!("invalid base64 data URL: {error}"))
         })?
     } else {

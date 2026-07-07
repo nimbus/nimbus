@@ -359,12 +359,11 @@ mod tests {
     use std::net::TcpListener;
     use std::sync::{Arc, Mutex};
 
-    use base64::Engine;
-    use base64::engine::general_purpose::STANDARD as BASE64;
     use hyper::body::to_bytes;
     use hyper::service::{make_service_fn, service_fn};
     use hyper::{Body, Request, Response, Server, StatusCode};
     use nimbus_core::TenantId;
+    use nimbus_core::base64_encode_standard;
     use serde_json::{Value, json};
     use serial_test::serial;
 
@@ -594,8 +593,8 @@ mod tests {
             ResponseSpec {
                 target: "TrentService.GenerateDataKey",
                 body: json!({
-                    "Plaintext": BASE64.encode(&plaintext),
-                    "CiphertextBlob": BASE64.encode(&ciphertext),
+                    "Plaintext": base64_encode_standard(&plaintext),
+                    "CiphertextBlob": base64_encode_standard(&ciphertext),
                     "KeyId": "arn:aws:kms:us-east-1:123456789012:key/generated",
                 }),
                 status: StatusCode::OK,
@@ -603,7 +602,7 @@ mod tests {
             ResponseSpec {
                 target: "TrentService.Decrypt",
                 body: json!({
-                    "Plaintext": BASE64.encode(&plaintext),
+                    "Plaintext": base64_encode_standard(&plaintext),
                     "KeyId": "arn:aws:kms:us-east-1:123456789012:key/generated",
                 }),
                 status: StatusCode::OK,
@@ -653,7 +652,7 @@ mod tests {
         let server = TestKmsServer::start(vec![ResponseSpec {
             target: "TrentService.ReEncrypt",
             body: json!({
-                "CiphertextBlob": BASE64.encode(b"kms-rewrapped"),
+                "CiphertextBlob": base64_encode_standard(b"kms-rewrapped"),
                 "KeyId": "arn:aws:kms:us-east-1:123456789012:key/rotated",
             }),
             status: StatusCode::OK,

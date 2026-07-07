@@ -6807,6 +6807,7 @@ dependencies = [
 name = "nimbus-core"
 version = "0.1.45"
 dependencies = [
+ "base64 0.22.1",
  "hex",
  "rmp-serde",
  "serde",
@@ -6823,7 +6824,6 @@ dependencies = [
  "aes-gcm-siv",
  "aws-config",
  "aws-sdk-kms",
- "base64 0.22.1",
  "blake3",
  "crc32fast",
  "fs2",
@@ -7010,7 +7010,6 @@ dependencies = [
 name = "nimbus-mongodb"
 version = "0.1.45"
 dependencies = [
- "base64 0.22.1",
  "bson",
  "crc32c",
  "hmac 0.12.1",
@@ -7093,7 +7092,6 @@ name = "nimbus-proxy"
 version = "0.1.45"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
  "blake3",
  "bytes",
  "http 1.4.2",

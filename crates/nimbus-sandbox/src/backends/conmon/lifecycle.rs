@@ -1,10 +1,10 @@
 use std::path::Path;
-use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 
 use crate::backends::oci::command::{CommandSpec, render_command_failure};
+use crate::backends::poll::poll_until_deadline;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxStatus;
 use crate::process::pid_is_alive;
@@ -183,15 +183,10 @@ pub(crate) fn runtime_state(command: &CommandSpec) -> Result<Option<String>> {
 
 pub(crate) fn wait_for_runtime_state(command: &CommandSpec, timeout: Duration) -> Result<String> {
     let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if let Some(status) = runtime_state(command)?
-            && (status == "created" || status == "running")
-        {
-            return Ok(status);
-        }
-        thread::sleep(Duration::from_millis(200));
-    }
-    Err(SandboxError::OperationFailed {
+    let status = poll_until_deadline(Some(deadline), Duration::from_millis(200), || {
+        Ok(runtime_state(command)?.filter(|status| status == "created" || status == "running"))
+    })?;
+    status.ok_or_else(|| SandboxError::OperationFailed {
         message: format!(
             "sandbox runtime did not reach created state before timeout via {}",
             command.program.display()
@@ -231,13 +226,12 @@ pub(crate) fn read_pid(path: &Path) -> Result<u32> {
 
 pub(crate) fn wait_for_path(path: &Path, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if path.exists() {
-            return true;
-        }
-        thread::sleep(Duration::from_millis(200));
-    }
-    path.exists()
+    let found = poll_until_deadline(Some(deadline), Duration::from_millis(200), || {
+        Ok(path.exists().then_some(()))
+    })
+    .unwrap_or(None) // the probe here is infallible
+    .is_some();
+    found || path.exists()
 }
 
 pub(crate) fn read_exit_code(path: &Path) -> Result<i32> {

@@ -1,5 +1,3 @@
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use nimbus_core::TransactionSessionMode;
 use serde::Deserialize;
 use serde_json::Value;
@@ -8,6 +6,7 @@ use thiserror::Error;
 use super::resource_names::{
     FirestoreDatabaseName, FirestoreResourceNameError, parse_database_name,
 };
+use super::transaction_token;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedBeginTransactionRequest {
@@ -50,9 +49,8 @@ pub fn parse_rollback_request(
     let request: RollbackRequestJson = serde_json::from_value(request.clone())
         .map_err(|error| invalid_request(format!("malformed JSON body: {error}")))?;
     let database = resolve_database(request.database.as_deref(), route_database)?;
-    let transaction = BASE64_STANDARD
-        .decode(request.transaction)
-        .map_err(|error| invalid_request(format!("invalid base64 transaction bytes: {error}")))?;
+    let transaction = transaction_token::decode(&request.transaction)
+        .map_err(|error| invalid_request(error.to_string()))?;
 
     Ok(ParsedRollbackRequest {
         database,

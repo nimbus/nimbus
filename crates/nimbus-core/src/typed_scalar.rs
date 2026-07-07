@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 
 use crate::Timestamp;
+use crate::encoding::base64_encode_standard;
 
 /// Shared metadata for scalar values that plain JSON cannot carry without
 /// losing database semantics.
@@ -42,7 +43,7 @@ impl TypedScalarValue {
             Self::Binary { data, .. } => {
                 // Clean JSON cannot represent BSON binary subtype metadata; the
                 // typed sidecar remains the authoritative lossless value.
-                Value::String(base64_encode(data))
+                Value::String(base64_encode_standard(data))
             }
             Self::Decimal128 { repr } => Value::String(repr.clone()),
             Self::Regex { pattern, .. } => Value::String(pattern.clone()),
@@ -62,7 +63,7 @@ impl TypedScalarValue {
             Self::BinarySet { values } => Value::Array(
                 values
                     .iter()
-                    .map(|b| Value::String(base64_encode(b)))
+                    .map(|b| Value::String(base64_encode_standard(b)))
                     .collect(),
             ),
         }
@@ -78,31 +79,6 @@ fn number_repr_to_json(repr: &str) -> Value {
         Ok(value @ Value::Number(_)) => value,
         _ => Value::String(repr.to_string()),
     }
-}
-
-fn base64_encode(data: &[u8]) -> String {
-    use std::fmt::Write;
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-        let n = (b0 << 16) | (b1 << 8) | b2;
-        let _ = out.write_char(CHARS[((n >> 18) & 63) as usize] as char);
-        let _ = out.write_char(CHARS[((n >> 12) & 63) as usize] as char);
-        if chunk.len() > 1 {
-            let _ = out.write_char(CHARS[((n >> 6) & 63) as usize] as char);
-        } else {
-            let _ = out.write_char('=');
-        }
-        if chunk.len() > 2 {
-            let _ = out.write_char(CHARS[(n & 63) as usize] as char);
-        } else {
-            let _ = out.write_char('=');
-        }
-    }
-    out
 }
 
 /// Special floating-point values that do not round-trip through JSON numbers.
@@ -374,7 +350,10 @@ mod tests {
                 values: vec![vec![0u8], vec![255u8]]
             }
             .projected_json(),
-            json!([base64_encode(&[0u8]), base64_encode(&[255u8])])
+            json!([
+                base64_encode_standard([0u8]),
+                base64_encode_standard([255u8])
+            ])
         );
 
         for value in [
@@ -431,7 +410,10 @@ mod tests {
         // roundtrip below).
         let projected = tree.projected_json();
         assert!(projected["amount"].is_number());
-        assert_eq!(projected["blobs"], json!([base64_encode(&[1, 2, 3])]));
+        assert_eq!(
+            projected["blobs"],
+            json!([base64_encode_standard([1, 2, 3])])
+        );
         assert_eq!(projected["label"], json!("ok"));
 
         // The typed tree itself roundtrips losslessly, so the nested typed
