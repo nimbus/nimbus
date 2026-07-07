@@ -19,7 +19,6 @@ pub use app_contract::{
     CloudFunctionsResolvedAppRoot, covered_admin_app_methods, covered_admin_firestore_methods,
     resolve_cloud_functions_app_root, validate_admin_method_support,
 };
-#[allow(unused_imports)]
 pub use host_bridge::CloudFunctionsHostBridge;
 pub use http::{
     CloudFunctionsHttpResponseParts, CloudFunctionsRuntimeContext, build_callable_request_args,

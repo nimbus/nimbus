@@ -428,6 +428,9 @@ pub(super) fn libsql_active_table_id_for_diagnostic(
         .clone()
 }
 
+// Test-only helper mirroring `WriteOp` field-by-field; call sites pass
+// distinctly-typed newtypes positionally, so a wrapper struct would only add
+// call-site ceremony without reducing risk of mixups.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn libsql_durable_write_record(
     sequence: SequenceNumber,

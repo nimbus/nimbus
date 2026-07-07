@@ -29,9 +29,9 @@ use super::{
 use crate::protocol::ScheduleResponse;
 use crate::state::{AppError, AppState, RequestCancellationGuard, record_authenticated_usage};
 
-mod common;
 mod function_routes;
 mod http;
+mod registry_auth;
 mod scheduling;
 mod socket;
 

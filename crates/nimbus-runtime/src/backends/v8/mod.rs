@@ -17,13 +17,13 @@ mod warm_pool;
 use self::embedder::{JsRuntime, v8};
 
 pub(crate) use self::lifecycle::{
-    RuntimeReuseLifecycle, WarmPoolMemoryPressureEviction, WarmRuntimeBoundaryMaintenance,
-    WarmRuntimeCondemnationReason, WarmRuntimeRetentionDecision,
-    prepare_warm_runtime_for_retention, retained_entry_eviction_count_for_pressure,
+    RuntimeReuseLifecycle, WarmRuntimeBoundaryMaintenance, WarmRuntimeCondemnationReason,
+    WarmRuntimeRetentionDecision, prepare_warm_runtime_for_retention,
 };
 #[cfg(test)]
 pub(crate) use self::lifecycle::{
-    RuntimeReuseLifecycleState, heap_carryover_limit_bytes_for_test,
+    RuntimeReuseLifecycleState, WarmPoolMemoryPressureEviction,
+    heap_carryover_limit_bytes_for_test, retained_entry_eviction_count_for_pressure,
     retained_entry_eviction_count_for_pressure_for_test,
 };
 #[cfg(test)]

@@ -18,7 +18,9 @@ use crate::host::HostCallCancellation;
 use crate::watchdog::WatchdogTimer;
 
 use super::bootstrap::{clear_runtime_wait_until_pending, take_runtime_wait_until_pending};
-use super::helpers::{deserialize_json_value, ensure_wait_until_drain_succeeded, runtime_js_error};
+use super::classify::{
+    deserialize_json_value, ensure_wait_until_drain_succeeded, runtime_js_error,
+};
 use super::realm_lifecycle::destroy_fresh_realm;
 use super::{
     FreshRealmInvocationTrace, InvocationRequest, NimbusRuntime, RuntimeBundle,

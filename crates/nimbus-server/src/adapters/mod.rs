@@ -1,10 +1,9 @@
 pub(crate) mod cloud_functions;
-pub mod cloudflare;
+pub(crate) mod cloudflare;
 pub(crate) mod convex;
-pub mod dynamodb;
+pub(crate) mod dynamodb;
 pub(crate) mod firebase;
 pub(crate) mod http_mount;
-#[allow(dead_code, clippy::approx_constant, clippy::collapsible_if)]
-pub mod mongodb;
-pub mod s3;
+pub(crate) mod mongodb;
+pub(crate) mod s3;
 pub(crate) mod wire;

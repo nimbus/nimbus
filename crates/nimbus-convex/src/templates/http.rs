@@ -1,4 +1,4 @@
-use super::helpers::{placeholder_name, resolve_nested_value};
+use super::render::{placeholder_name, resolve_nested_value};
 use super::*;
 
 pub fn resolve_http_template(

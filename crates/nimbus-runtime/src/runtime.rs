@@ -19,10 +19,10 @@ use crate::watchdog::WatchdogTimer;
 
 pub(crate) mod bootstrap;
 pub(crate) mod bundle;
+mod classify;
 mod cooperative;
 pub(crate) mod driver;
 mod facade;
-mod helpers;
 mod invocation;
 pub(crate) mod realm_lease;
 mod realm_lifecycle;
@@ -36,7 +36,7 @@ pub use self::bundle::{
     RuntimeBundle, RuntimeBundleContent, RuntimeBundleWasmComponentContent, RuntimeComponentWorld,
 };
 #[cfg(test)]
-use self::helpers::deserialize_json_value;
+use self::classify::deserialize_json_value;
 pub use self::invocation::{
     InvocationKind, InvocationRequest, InvocationServiceBinding, InvocationServiceEndpoint,
     InvocationServiceProtocol, InvocationServices,

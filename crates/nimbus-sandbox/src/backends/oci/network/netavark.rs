@@ -97,6 +97,12 @@ pub(crate) fn teardown_container_network(
     Ok(())
 }
 
+// This param cluster (layout, config, sandbox_id, sandbox_name, hostname, ...)
+// is shared verbatim with sibling functions in this module (setup/teardown
+// above, build_netavark_request below); bundling only this one call would
+// fragment the pattern rather than clarify it. A struct-based refactor across
+// the whole module is a larger, separate change, not a hygiene-sweep edit to
+// this network-isolation-sensitive path.
 #[allow(clippy::too_many_arguments)]
 fn run_netavark(
     action: &str,

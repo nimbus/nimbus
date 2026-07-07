@@ -23,7 +23,9 @@ use nimbus::Error;
 
 use super::super::guest_config::GUEST_MACHINE_CONFIG_MOUNT_TAG;
 use super::super::{MachineBootstrapMode, MachineConfigRecord, MachinePaths, MachineProvider};
-use super::helpers::{bundled_helper_candidates, known_helper_candidates, resolve_helper_binary};
+use super::helper_paths::{
+    bundled_helper_candidates, known_helper_candidates, resolve_helper_binary,
+};
 use super::launch::{
     MachineCommandLine, build_virtio_vsock_listen_arg, build_virtiofs_arg, build_virtiofs_args,
 };

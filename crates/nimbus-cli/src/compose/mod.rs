@@ -26,8 +26,6 @@ use self::commands::{
     ComposeExportSubcommand, ComposeInspectCommand, ComposeLogsCommand, ComposePsCommand,
     ComposeQuadletExportMode, ComposeSubcommand, ComposeTopCommand, ComposeUpCommand,
 };
-#[allow(unused_imports)]
-use self::commands::{ComposeInspectOutputFormat, ComposePsOutputFormat, ComposeTopOutputFormat};
 use self::execution::{
     ServiceExecutionSurface, ServiceHostPlatform,
     load_host_backed_service_manager_for_platform_selection_with_admission,
@@ -38,17 +36,8 @@ use self::execution::{
     resolve_service_execution_surface, validate_forwarded_machine_api_backend,
     validate_forwarded_machine_api_operations,
 };
-#[allow(unused_imports)]
-use self::lifecycle::{ServiceLifecycleAction, ServiceLifecycleTarget};
-use self::lifecycle::{
-    ServiceLifecycleOutcome, service_down_outcomes_for_selection, service_up_outcomes_for_selection,
-};
-#[cfg(test)]
-use self::lifecycle::{service_down_outcomes_for_platform, service_up_outcomes_for_platform};
+use self::lifecycle::{service_down_outcomes_for_selection, service_up_outcomes_for_selection};
 use self::logs::run_compose_logs_for_platform;
-#[allow(unused_imports)]
-use self::process::ServiceProcessRow;
-use self::process::ServiceProcessSnapshot;
 use self::quadlet_export::run_compose_export_quadlet;
 use self::render::{
     ServiceSandboxSummaryView, render_service_inspect_view,
@@ -241,36 +230,6 @@ pub(crate) fn resolve_required_compose_selection(
         ))),
         Err(error) => Err(Error::InvalidInput(error.to_string())),
     }
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-async fn render_service_up(
-    command: &ComposeUpCommand,
-    control_data_dir: &Path,
-) -> Result<String, Error> {
-    render_service_up_for_platform(
-        command,
-        control_data_dir,
-        ServiceHostPlatform::current(),
-        None,
-    )
-    .await
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-async fn render_service_down(
-    command: &ComposeDownCommand,
-    control_data_dir: &Path,
-) -> Result<String, Error> {
-    render_service_down_for_platform(
-        command,
-        control_data_dir,
-        ServiceHostPlatform::current(),
-        None,
-    )
-    .await
 }
 
 fn render_service_list_for_platform(
@@ -539,36 +498,6 @@ fn render_compose_top_for_platform(
         machine_api_client,
     )?;
     render_service_sandbox_process_snapshot_view(&snapshot, command.format, command.no_heading)
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-async fn service_up_outcomes(
-    command: &ComposeUpCommand,
-    control_data_dir: &Path,
-) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
-    service_up_outcomes_for_platform(
-        command,
-        control_data_dir,
-        ServiceHostPlatform::current(),
-        None,
-    )
-    .await
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-async fn service_down_outcomes(
-    command: &ComposeDownCommand,
-    control_data_dir: &Path,
-) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
-    service_down_outcomes_for_platform(
-        command,
-        control_data_dir,
-        ServiceHostPlatform::current(),
-        None,
-    )
-    .await
 }
 
 fn control_data_dir_from_persistence_config(config: &EnginePersistenceConfig) -> &Path {

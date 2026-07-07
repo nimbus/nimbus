@@ -1,6 +1,7 @@
+use crate::limits::RuntimeLimits;
+#[cfg(test)]
 use crate::limits::{
-    RuntimeLimits, RuntimeMemoryPressureDecision, RuntimeMemoryPressureLevel,
-    RuntimeMemoryPressureSourceStatus,
+    RuntimeMemoryPressureDecision, RuntimeMemoryPressureLevel, RuntimeMemoryPressureSourceStatus,
 };
 
 use super::{
@@ -90,8 +91,8 @@ pub(crate) struct RuntimeReuseLifecycle {
     history: Vec<RuntimeReuseLifecycleState>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) struct WarmPoolMemoryPressureEviction {
     pub(crate) pressure: RuntimeMemoryPressureLevel,
     pub(crate) evicted_entries: usize,
@@ -213,6 +214,7 @@ pub(crate) fn prepare_warm_runtime_for_retention(
     WarmRuntimeRetentionDecision::Retain(maintenance)
 }
 
+#[cfg(test)]
 pub(crate) fn retained_entry_eviction_count_for_pressure(
     pressure: RuntimeMemoryPressureLevel,
     retained_entries: usize,

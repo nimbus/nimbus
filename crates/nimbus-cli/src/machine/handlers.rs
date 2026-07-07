@@ -49,18 +49,13 @@ use nimbus_machine::api::{
 mod os;
 mod transfer;
 
+#[cfg(test)]
+pub(in crate::machine) use os::plan_machine_os_upgrade;
 use os::run_machine_os;
 pub(in crate::machine) use os::{MachineOsApplyOutcome, MachineOsUpgradePlan};
 #[cfg(test)]
-#[allow(unused_imports)]
-pub(in crate::machine) use os::{
-    current_machine_oci_reference, parse_machine_os_apply_source, parse_machine_release_version,
-    plan_machine_os_upgrade, split_tagged_machine_image_reference,
-};
-#[cfg(test)]
-#[allow(unused_imports)]
 pub(in crate::machine) use transfer::{
-    MachineCpEndpoint, MachineCpTransfer, parse_machine_cp_endpoint, resolve_machine_cp_transfer,
+    MachineCpEndpoint, parse_machine_cp_endpoint, resolve_machine_cp_transfer,
     resolve_machine_ssh_target,
 };
 use transfer::{resolve_machine_cp_target_name, resolve_machine_ssh_target_name};

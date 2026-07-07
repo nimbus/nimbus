@@ -3,10 +3,9 @@ use serde::Serialize;
 
 use crate::cli_ux;
 
-use super::{
-    ComposeInspectOutputFormat, ComposePsOutputFormat, ComposeTopOutputFormat,
-    ServiceLifecycleOutcome, ServiceProcessSnapshot,
-};
+use super::commands::{ComposeInspectOutputFormat, ComposePsOutputFormat, ComposeTopOutputFormat};
+use super::lifecycle::ServiceLifecycleOutcome;
+use super::process::ServiceProcessSnapshot;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(super) struct ServiceSandboxSummaryView {

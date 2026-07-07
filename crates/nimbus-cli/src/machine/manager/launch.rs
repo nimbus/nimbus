@@ -12,7 +12,7 @@ use super::super::{
     MachineBootstrapMode, MachineConfigRecord, MachinePaths, MachineStateRecord, MachineVolume,
     describe_machine_image_source, machine_bootstrap_mode,
 };
-use super::helpers::resolve_gvproxy_binary;
+use super::helper_paths::resolve_gvproxy_binary;
 use super::image::resolve_bootable_image_path;
 use super::ports::allocate_machine_ssh_port;
 use super::vmm::{MachineVmmBackend, VmmLaunchContext, vmm_backend};

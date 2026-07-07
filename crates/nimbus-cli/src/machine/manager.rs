@@ -12,7 +12,9 @@ use signal_hook_registry::{SigId, register as register_signal, unregister as unr
 use crate::cli_ux;
 
 mod guest;
-mod helpers;
+#[cfg(test)]
+mod helper_env_guard;
+mod helper_paths;
 mod image;
 mod launch;
 mod ports;
@@ -22,7 +24,7 @@ mod stop;
 mod vmm;
 
 #[cfg(test)]
-pub(crate) use self::helpers::MachineHelperEnvGuard;
+pub(crate) use self::helper_env_guard::MachineHelperEnvGuard;
 use self::launch::MachineLaunchPlan;
 use self::readiness::{
     bind_ready_listener, conduct_readiness_check, post_start_networking, pre_start_networking,

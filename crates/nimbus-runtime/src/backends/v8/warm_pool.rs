@@ -1,18 +1,22 @@
 use crate::affinity::{RuntimeAffinityKey, runtime_affinity_key};
 use crate::context::RuntimeInvocationContext;
 use crate::error::Result;
-use crate::limits::{RuntimeLimits, RuntimeMemoryPressureLevel, RuntimePoolKind};
+#[cfg(test)]
+use crate::limits::RuntimeMemoryPressureLevel;
+use crate::limits::{RuntimeLimits, RuntimePoolKind};
 use crate::runtime::realm_lease::{RuntimeRealmLeaseController, RuntimeRealmLeaseRetentionPolicy};
 use crate::runtime::{NimbusRuntime, RuntimeBundle, RuntimeBundleIdentity};
 use crate::runtime_capabilities::RuntimePermissionProfile;
 
-#[cfg(test)]
-use super::RuntimeReuseLifecycleState;
 use super::{
-    RuntimeReuseLifecycle, WarmPoolMemoryPressureEviction, WarmRuntimeBoundaryMaintenance,
-    WarmRuntimeCondemnationReason, WarmRuntimeRetentionDecision, embedder::JsRuntime,
-    prepare_warm_runtime_for_retention, retained_entry_eviction_count_for_pressure,
+    RuntimeReuseLifecycle, WarmRuntimeBoundaryMaintenance, WarmRuntimeCondemnationReason,
+    WarmRuntimeRetentionDecision, embedder::JsRuntime, prepare_warm_runtime_for_retention,
     startup::V8RuntimeConstructionMode,
+};
+#[cfg(test)]
+use super::{
+    RuntimeReuseLifecycleState, WarmPoolMemoryPressureEviction,
+    retained_entry_eviction_count_for_pressure,
 };
 
 pub(crate) struct V8WorkerRuntimePool {
@@ -317,7 +321,7 @@ impl V8WorkerRuntimePool {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn apply_memory_pressure(
         &mut self,
         runtime_owner: &NimbusRuntime,
@@ -364,13 +368,11 @@ impl V8WorkerRuntimePool {
     }
 
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn warm_pool_count_for_test(&self) -> usize {
         self.warm_pool.len()
     }
 
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn last_boundary_maintenance_for_test(
         &self,
     ) -> Option<WarmRuntimeBoundaryMaintenance> {
@@ -381,7 +383,6 @@ impl V8WorkerRuntimePool {
     }
 
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn last_lifecycle_state_for_test(&self) -> Option<RuntimeReuseLifecycleState> {
         self.warm_pool
             .iter()
@@ -390,7 +391,6 @@ impl V8WorkerRuntimePool {
     }
 
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn last_lifecycle_history_for_test(&self) -> Option<&[RuntimeReuseLifecycleState]> {
         self.warm_pool
             .iter()

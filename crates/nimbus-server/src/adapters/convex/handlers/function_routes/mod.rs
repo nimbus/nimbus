@@ -1,4 +1,4 @@
-use super::common::registry_and_auth_for_path;
+use super::registry_auth::registry_and_auth_for_path;
 use super::*;
 use std::time::Instant;
 use tracing::warn;

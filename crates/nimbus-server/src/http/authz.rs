@@ -279,6 +279,9 @@ pub(super) fn authorize_operator_route<A>(
 /// Single parameterized audit recorder for operator/application principal
 /// class authorization outcomes across the session, service, service
 /// definition, and sandbox route families.
+// 20+ call sites each vary every field independently (flat audit-event
+// shape); a struct would only move the same 8 fields into a literal at every
+// call site without adding a meaningful sub-concept.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn record_operator_authorization_audit(
     state: &AppState,

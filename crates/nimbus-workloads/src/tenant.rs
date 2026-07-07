@@ -7,6 +7,13 @@ use nimbus_tenant::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+mod credential_projection;
+
+pub use credential_projection::{
+    TenantCredentialProjectionBinding, TenantCredentialProjectionPolicy,
+    TenantCredentialProjectionRequest, TenantCredentialProjectionScope,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct NodeIdentity(String);
 
@@ -85,48 +92,7 @@ impl LocalEnforcementBinding {
         &self,
         request: &TenantCredentialProjectionRequest,
     ) -> Result<TenantCredentialProjectionBinding> {
-        self.spec.ensure_request_identity(
-            &request.workload_uid,
-            request.generation,
-            &request.decision_id,
-            "credential projection",
-        )?;
-        if let Some(request_node) = &request.requester_node_id {
-            self.spec.ensure_assigned_node_matches(
-                request_node,
-                "node-mediated credential projection",
-            )?;
-        }
-        if self.spec.runtime_invocation_id.as_deref() != request.runtime_invocation_id.as_deref() {
-            return Err(Error::PermissionDenied(format!(
-                "credential projection for workload {} referenced invocation {:?}, but admitted invocation is {:?}",
-                self.spec.workload_uid.as_str(),
-                request.runtime_invocation_id.as_deref(),
-                self.spec.runtime_invocation_id.as_deref()
-            )));
-        }
-        if !request.redaction_metadata_present {
-            return Err(Error::InvalidInput(
-                "credential projection request is missing redaction metadata".to_string(),
-            ));
-        }
-        if request.echo_back_workload_subject.is_some() {
-            return Err(Error::PermissionDenied(
-                "credential projection request attempted to echo back a subject".to_string(),
-            ));
-        }
-        let scope = self
-            .spec
-            .credential_projection
-            .scope(&request.provider, &request.audience)?;
-        Ok(TenantCredentialProjectionBinding {
-            workload_uid: self.spec.workload_uid.clone(),
-            generation: self.spec.generation,
-            decision_id: self.spec.decision_id.clone(),
-            scope: scope.clone(),
-            workload_subject: self.spec.workload_identity.subject(),
-            redacted_fields: self.spec.audit_redactions.redacted_fields().to_vec(),
-        })
+        credential_projection::authorize(&self.spec, request)
     }
 
     pub fn authorize_egress_reload(&self, request: &TenantEgressReloadRequest) -> Result<()> {
@@ -372,183 +338,6 @@ impl TenantServiceProjection {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TenantCredentialProjectionPolicy {
-    scopes: Vec<TenantCredentialProjectionScope>,
-}
-
-impl TenantCredentialProjectionPolicy {
-    pub fn new(scopes: impl IntoIterator<Item = TenantCredentialProjectionScope>) -> Self {
-        Self {
-            scopes: scopes.into_iter().collect(),
-        }
-    }
-
-    pub fn scopes(&self) -> &[TenantCredentialProjectionScope] {
-        &self.scopes
-    }
-
-    fn scope(&self, provider: &str, audience: &str) -> Result<&TenantCredentialProjectionScope> {
-        self.scopes
-            .iter()
-            .find(|scope| scope.provider() == provider && scope.audience() == audience)
-            .ok_or_else(|| {
-                Error::PermissionDenied(format!(
-                    "credential projection did not admit provider `{provider}` with audience `{audience}`"
-                ))
-            })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct TenantCredentialProjectionScope {
-    provider: String,
-    audience: String,
-}
-
-impl TenantCredentialProjectionScope {
-    pub fn new(provider: impl Into<String>, audience: impl Into<String>) -> Result<Self> {
-        Ok(Self {
-            provider: non_empty(provider, "credential provider")?,
-            audience: non_empty(audience, "credential audience")?,
-        })
-    }
-
-    pub fn provider(&self) -> &str {
-        &self.provider
-    }
-
-    pub fn audience(&self) -> &str {
-        &self.audience
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TenantCredentialProjectionRequest {
-    workload_uid: TenantWorkloadUid,
-    generation: TenantWorkloadGeneration,
-    decision_id: TenantIsolationDecisionId,
-    requester_node_id: Option<NodeIdentity>,
-    runtime_invocation_id: Option<String>,
-    provider: String,
-    audience: String,
-    redaction_metadata_present: bool,
-    echo_back_workload_subject: Option<String>,
-}
-
-impl TenantCredentialProjectionRequest {
-    pub fn node_mediated(
-        spec: &TenantWorkloadSpec,
-        requester_node_id: NodeIdentity,
-        provider: impl Into<String>,
-        audience: impl Into<String>,
-    ) -> Result<Self> {
-        Self::for_spec(spec, provider, audience).map(|request| {
-            request
-                .with_requester_node_id(Some(requester_node_id))
-                .with_runtime_invocation_id(spec.runtime_invocation_id.clone())
-        })
-    }
-
-    pub fn server_owned(
-        spec: &TenantWorkloadSpec,
-        provider: impl Into<String>,
-        audience: impl Into<String>,
-    ) -> Result<Self> {
-        Self::for_spec(spec, provider, audience)
-            .map(|request| request.with_runtime_invocation_id(spec.runtime_invocation_id.clone()))
-    }
-
-    fn for_spec(
-        spec: &TenantWorkloadSpec,
-        provider: impl Into<String>,
-        audience: impl Into<String>,
-    ) -> Result<Self> {
-        Ok(Self {
-            workload_uid: spec.workload_uid.clone(),
-            generation: spec.generation,
-            decision_id: spec.decision_id.clone(),
-            requester_node_id: None,
-            runtime_invocation_id: None,
-            provider: non_empty(provider, "credential provider")?,
-            audience: non_empty(audience, "credential audience")?,
-            redaction_metadata_present: true,
-            echo_back_workload_subject: None,
-        })
-    }
-
-    pub fn with_requester_node_id(mut self, requester_node_id: Option<NodeIdentity>) -> Self {
-        self.requester_node_id = requester_node_id;
-        self
-    }
-
-    pub fn with_runtime_invocation_id(mut self, runtime_invocation_id: Option<String>) -> Self {
-        self.runtime_invocation_id = runtime_invocation_id;
-        self
-    }
-
-    pub fn with_generation(mut self, generation: TenantWorkloadGeneration) -> Self {
-        self.generation = generation;
-        self
-    }
-
-    pub fn with_workload_uid(mut self, workload_uid: TenantWorkloadUid) -> Self {
-        self.workload_uid = workload_uid;
-        self
-    }
-
-    pub fn with_decision_id(mut self, decision_id: TenantIsolationDecisionId) -> Self {
-        self.decision_id = decision_id;
-        self
-    }
-
-    pub fn without_redaction_metadata(mut self) -> Self {
-        self.redaction_metadata_present = false;
-        self
-    }
-
-    pub fn with_echo_back_workload_subject(mut self, subject: impl Into<String>) -> Self {
-        self.echo_back_workload_subject = Some(subject.into());
-        self
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TenantCredentialProjectionBinding {
-    workload_uid: TenantWorkloadUid,
-    generation: TenantWorkloadGeneration,
-    decision_id: TenantIsolationDecisionId,
-    scope: TenantCredentialProjectionScope,
-    workload_subject: String,
-    redacted_fields: Vec<String>,
-}
-
-impl TenantCredentialProjectionBinding {
-    pub fn workload_uid(&self) -> &TenantWorkloadUid {
-        &self.workload_uid
-    }
-
-    pub fn generation(&self) -> TenantWorkloadGeneration {
-        self.generation
-    }
-
-    pub fn decision_id(&self) -> &TenantIsolationDecisionId {
-        &self.decision_id
-    }
-
-    pub fn scope(&self) -> &TenantCredentialProjectionScope {
-        &self.scope
-    }
-
-    pub fn workload_subject(&self) -> &str {
-        &self.workload_subject
-    }
-
-    pub fn redacted_fields(&self) -> &[String] {
-        &self.redacted_fields
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenantWorkloadResourcePolicy {
     admitted_quotas: TenantQuotaPolicyDecision,
@@ -703,16 +492,21 @@ impl TenantSystemEvidenceProjection {
     }
 }
 
+/// Test fixtures shared by [`tests`] and [`credential_projection::tests`],
+/// kept at the `tenant` module level so both descendant test modules can use
+/// them (a nested `mod tests` is only visible to its own descendants).
 #[cfg(test)]
-mod tests {
+pub(crate) mod test_support {
     use super::*;
     use nimbus_tenant::{
-        TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput,
-        TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision, WorkloadAttributes,
-        WorkloadLocation,
+        TenantIsolationContext, TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision,
+        TenantStoragePolicyDecision, WorkloadAttributes, WorkloadLocation,
     };
 
-    fn admitted_decision(workload_name: &str, generation: u64) -> TenantIsolationDecision {
+    pub(crate) fn admitted_decision(
+        workload_name: &str,
+        generation: u64,
+    ) -> TenantIsolationDecision {
         let tenant_id = TenantId::new("tenant-a").expect("tenant id should parse");
         let context = TenantIsolationContext::operator(tenant_id, "workloads.test")
             .with_deployment_generation(generation)
@@ -726,7 +520,7 @@ mod tests {
             .expect("decision should admit")
     }
 
-    fn binding_with_credentials() -> LocalEnforcementBinding {
+    pub(crate) fn binding_with_credentials() -> LocalEnforcementBinding {
         let decision = admitted_decision("messages:send", 7);
         let spec = TenantWorkloadSpec::from_decision(&decision)
             .expect("spec should materialize from decision")
@@ -737,13 +531,19 @@ mod tests {
         LocalEnforcementBinding::from_spec(spec)
     }
 
-    fn assert_error_contains<T: std::fmt::Debug>(result: Result<T>, expected: &str) {
+    pub(crate) fn assert_error_contains<T: std::fmt::Debug>(result: Result<T>, expected: &str) {
         let error = result.expect_err("operation should fail closed");
         assert!(
             error.to_string().contains(expected),
             "expected error containing `{expected}`, got `{error}`"
         );
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::{admitted_decision, assert_error_contains, binding_with_credentials};
+    use super::*;
 
     #[test]
     fn binding_materializes_decision_derived_spec_and_projections() {
@@ -807,117 +607,6 @@ mod tests {
                 .redacted_fields()
                 .contains(&"raw_credentials".to_string()),
             "system evidence projection should preserve redaction metadata"
-        );
-    }
-
-    #[test]
-    fn credential_projection_requires_admitted_scope_node_generation_and_redaction() {
-        let binding = binding_with_credentials();
-        let spec = binding.spec();
-        let request = TenantCredentialProjectionRequest::node_mediated(
-            spec,
-            NodeIdentity::new("node-a").expect("node should parse"),
-            "vault",
-            "runtime",
-        )
-        .expect("credential request should build");
-        let projection = binding
-            .authorize_credential_projection(&request)
-            .expect("matching credential projection should be admitted");
-
-        assert_eq!(projection.workload_uid(), spec.workload_uid());
-        assert_eq!(projection.generation(), spec.generation());
-        assert_eq!(projection.decision_id(), spec.decision_id());
-        assert_eq!(projection.scope().provider(), "vault");
-        assert_eq!(projection.scope().audience(), "runtime");
-        assert_eq!(
-            projection.workload_subject(),
-            spec.workload_identity().subject()
-        );
-        assert!(
-            projection
-                .redacted_fields()
-                .contains(&"raw_credentials".to_string())
-        );
-
-        assert_error_contains(
-            binding.authorize_credential_projection(
-                &TenantCredentialProjectionRequest::node_mediated(
-                    spec,
-                    NodeIdentity::new("node-a").expect("node should parse"),
-                    "vault",
-                    "wrong-audience",
-                )
-                .expect("credential request should build"),
-            ),
-            "did not admit provider `vault` with audience `wrong-audience`",
-        );
-        assert_error_contains(
-            binding.authorize_credential_projection(
-                &TenantCredentialProjectionRequest::node_mediated(
-                    spec,
-                    NodeIdentity::new("node-b").expect("node should parse"),
-                    "vault",
-                    "runtime",
-                )
-                .expect("credential request should build"),
-            ),
-            "assigned to node node-a",
-        );
-        assert_error_contains(
-            binding.authorize_credential_projection(
-                &TenantCredentialProjectionRequest::node_mediated(
-                    spec,
-                    NodeIdentity::new("node-a").expect("node should parse"),
-                    "vault",
-                    "runtime",
-                )
-                .expect("credential request should build")
-                .with_generation(TenantWorkloadGeneration::new(6)),
-            ),
-            "referenced generation 6",
-        );
-        assert_error_contains(
-            binding.authorize_credential_projection(
-                &TenantCredentialProjectionRequest::node_mediated(
-                    spec,
-                    NodeIdentity::new("node-a").expect("node should parse"),
-                    "vault",
-                    "runtime",
-                )
-                .expect("credential request should build")
-                .without_redaction_metadata(),
-            ),
-            "missing redaction metadata",
-        );
-        assert_error_contains(
-            binding.authorize_credential_projection(
-                &TenantCredentialProjectionRequest::node_mediated(
-                    spec,
-                    NodeIdentity::new("node-a").expect("node should parse"),
-                    "vault",
-                    "runtime",
-                )
-                .expect("credential request should build")
-                .with_echo_back_workload_subject("spiffe://attacker"),
-            ),
-            "echo back a subject",
-        );
-
-        let no_grant_binding =
-            LocalEnforcementBinding::from_decision(&admitted_decision("messages:send", 7))
-                .expect("binding should materialize");
-        assert_error_contains(
-            no_grant_binding.authorize_credential_projection(
-                &TenantCredentialProjectionRequest::node_mediated(
-                    no_grant_binding.spec(),
-                    NodeIdentity::new("node-a").expect("node should parse"),
-                    "vault",
-                    "runtime",
-                )
-                .expect("credential request should build"),
-            ),
-            "did not admit provider",
         );
     }
 
