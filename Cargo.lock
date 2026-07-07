@@ -7417,10 +7417,12 @@ dependencies = [
 name = "nimbus-workload-identity"
 version = "0.1.45"
 dependencies = [
+ "base64 0.22.1",
  "nimbus-core",
  "nimbus-crypto",
  "nimbus-runtime",
  "nimbus-tenant",
+ "ring",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

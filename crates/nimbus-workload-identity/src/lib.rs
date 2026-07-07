@@ -7,8 +7,8 @@
 //! still own subject, audience, and TTL scoping.
 //!
 //! SI2 adds key-derived node/machine identity records and trust-domain
-//! configuration, but credential issuance remains deliberately unimplemented:
-//! `DenyAllIssuer` stays the only issuer until SI3.
+//! configuration. SI3 adds local-development JWT minting while keeping
+//! production issuance fail-closed until HS1 provides membership-bound identity.
 //!
 //! Cluster-membership-sourced identity is not constructible in SI2 — the
 //! variant demands a [`MembershipAttestation`], which has no public
@@ -39,6 +39,7 @@
 mod audit;
 mod claims;
 mod issuer;
+mod jwt;
 mod mint;
 mod policy;
 mod source;
@@ -47,10 +48,12 @@ mod trust;
 pub use audit::{IdentityAuditEvent, IdentityAuditOutcome};
 pub use claims::CredentialClaims;
 pub use issuer::{
-    CredentialKind, DenyAllIssuer, IdentityIssueError, IdentityIssuer, MintedCredential,
+    CredentialKind, DenyAllIssuer, IdentityIssueError, IdentityIssuer, LocalDevIssuer,
+    MintedCredential,
 };
 pub use mint::{
-    IdentityMintError, IdentityMintRequest, MintAuthorization, MintParams, authorize_mint,
+    CredentialMint, CredentialMintError, IdentityMintError, IdentityMintRequest, MintAuthorization,
+    MintParams, authorize_mint, mint_credential,
 };
 pub use policy::{PolicyValidationError, ProviderAuthPolicy, ProviderAuthRule, SubjectMatch};
 pub use source::{

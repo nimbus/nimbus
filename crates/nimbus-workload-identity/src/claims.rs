@@ -10,6 +10,8 @@ pub struct CredentialClaims {
     aud: String,
     #[serde(rename = "exp")]
     exp_epoch_ms: u64,
+    #[serde(rename = "nimbus_issued_at_ms")]
+    iat_epoch_ms: u64,
     #[serde(rename = "jti")]
     jti: String,
     nimbus_decision_id: String,
@@ -26,6 +28,7 @@ impl CredentialClaims {
         identity: &WorkloadIdentity,
         decision_id: &TenantIsolationDecisionId,
         audience: String,
+        iat_epoch_ms: u64,
         exp_epoch_ms: u64,
         credential_instance_id: String,
     ) -> Self {
@@ -34,6 +37,7 @@ impl CredentialClaims {
             sub: subject.clone(),
             aud: audience,
             exp_epoch_ms,
+            iat_epoch_ms,
             jti: credential_instance_id,
             nimbus_decision_id: decision_id.as_str().to_string(),
             nimbus_workload_subject: subject,
@@ -55,6 +59,10 @@ impl CredentialClaims {
 
     pub fn exp_epoch_ms(&self) -> u64 {
         self.exp_epoch_ms
+    }
+
+    pub fn iat_epoch_ms(&self) -> u64 {
+        self.iat_epoch_ms
     }
 
     pub fn jti(&self) -> &str {
