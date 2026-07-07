@@ -6,8 +6,6 @@
 
 #![forbid(unsafe_code)]
 
-pub mod integrity;
-
 #[cfg(feature = "js-packages")]
 pub mod js_packages;
 

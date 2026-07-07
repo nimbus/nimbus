@@ -1,4 +1,4 @@
-use nimbus_core::{Error, Result, TenantId};
+use nimbus_core::{Error, Result, TenantId, non_empty};
 use nimbus_tenant::{
     TenantAuditRedactionPolicy, TenantIsolationDecision, TenantIsolationDecisionId,
     TenantQuotaPolicyDecision, TenantServiceAccessDecision, TenantStorageAccessDecision,
@@ -701,14 +701,6 @@ impl TenantSystemEvidenceProjection {
     pub fn redacted_fields(&self) -> &[String] {
         &self.redacted_fields
     }
-}
-
-fn non_empty(value: impl Into<String>, field: &str) -> Result<String> {
-    let value = value.into();
-    if value.trim().is_empty() {
-        return Err(Error::InvalidInput(format!("{field} must not be empty")));
-    }
-    Ok(value)
 }
 
 #[cfg(test)]

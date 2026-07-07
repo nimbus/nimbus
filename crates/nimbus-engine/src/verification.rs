@@ -1,4 +1,4 @@
-use nimbus_core::{Document, Error, Result, Schema, TableSchema};
+use nimbus_core::{Document, Error, Result, Schema, TableSchema, hex_encode};
 use nimbus_storage::{DurableJournalBootstrap, MaterializedJournalSnapshot};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -430,13 +430,4 @@ where
     T: Serialize,
 {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "<unserializable>".to_string())
-}
-
-fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
-    let mut output = String::with_capacity(bytes.as_ref().len().saturating_mul(2));
-    for byte in bytes.as_ref() {
-        output.push(char::from_digit(u32::from(byte >> 4), 16).unwrap_or('0'));
-        output.push(char::from_digit(u32::from(byte & 0x0f), 16).unwrap_or('0'));
-    }
-    output
 }

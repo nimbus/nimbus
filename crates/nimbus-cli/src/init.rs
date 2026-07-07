@@ -33,10 +33,10 @@ pub(crate) struct InitCommand {
 pub(crate) async fn run_init_command(
     command: InitCommand,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let adapter = crate::node::Adapter::from_cli_arg(&command.adapter)
+    let adapter = crate::node_runtime::Adapter::from_cli_arg(&command.adapter)
         .ok_or_else(|| format!("unknown adapter: {}", command.adapter))?;
 
-    if adapter == crate::node::Adapter::Convex {
+    if adapter == crate::node_runtime::Adapter::Convex {
         check_source_root_flag(&command.source_root)?;
     }
 
@@ -85,7 +85,7 @@ pub(crate) async fn run_init_command(
     if command.install && adapter.needs_node_dependencies() {
         let npm_dir = adapter_npm_install_dir(adapter, &canonical);
         cli_ux::write_stderr_line("")?;
-        crate::node::auto_install_node_dependencies(&npm_dir)
+        crate::node_runtime::auto_install_node_dependencies(&npm_dir)
             .await
             .map_err(|error| io::Error::other(format_init_install_failure(&canonical, &*error)))?;
     }
@@ -205,19 +205,19 @@ fn is_unsafe_directory(dir: &Path) -> Option<&'static str> {
     None
 }
 
-fn adapter_templates(adapter: crate::node::Adapter) -> &'static [TemplateFile] {
+fn adapter_templates(adapter: crate::node_runtime::Adapter) -> &'static [TemplateFile] {
     match adapter {
-        crate::node::Adapter::Convex => CONVEX_TEMPLATE,
-        crate::node::Adapter::CloudFunctions => CLOUD_FUNCTIONS_TEMPLATE,
+        crate::node_runtime::Adapter::Convex => CONVEX_TEMPLATE,
+        crate::node_runtime::Adapter::CloudFunctions => CLOUD_FUNCTIONS_TEMPLATE,
     }
 }
 
 fn check_adapter_already_exists(
-    adapter: crate::node::Adapter,
+    adapter: crate::node_runtime::Adapter,
     target_dir: &Path,
 ) -> Result<(), String> {
     match adapter {
-        crate::node::Adapter::Convex => {
+        crate::node_runtime::Adapter::Convex => {
             if target_dir.join("convex").is_dir() || target_dir.join("nimbus").is_dir() {
                 return Err(
                     "Source root already exists. Run `nimbus dev` to start the development server."
@@ -225,7 +225,7 @@ fn check_adapter_already_exists(
                 );
             }
         }
-        crate::node::Adapter::CloudFunctions => {
+        crate::node_runtime::Adapter::CloudFunctions => {
             if target_dir.join("firebase.json").is_file() {
                 return Err(
                     "firebase.json already exists. Run `nimbus dev` to start the development server."
@@ -237,10 +237,10 @@ fn check_adapter_already_exists(
     Ok(())
 }
 
-fn adapter_npm_install_dir(adapter: crate::node::Adapter, target_dir: &Path) -> PathBuf {
+fn adapter_npm_install_dir(adapter: crate::node_runtime::Adapter, target_dir: &Path) -> PathBuf {
     match adapter {
-        crate::node::Adapter::Convex => target_dir.to_path_buf(),
-        crate::node::Adapter::CloudFunctions => target_dir.join("functions"),
+        crate::node_runtime::Adapter::Convex => target_dir.to_path_buf(),
+        crate::node_runtime::Adapter::CloudFunctions => target_dir.join("functions"),
     }
 }
 
@@ -731,7 +731,7 @@ mod tests {
     fn adapter_npm_install_dir_convex_is_project_root() {
         let dir = Path::new("/project");
         assert_eq!(
-            adapter_npm_install_dir(crate::node::Adapter::Convex, dir),
+            adapter_npm_install_dir(crate::node_runtime::Adapter::Convex, dir),
             PathBuf::from("/project")
         );
     }
@@ -740,7 +740,7 @@ mod tests {
     fn adapter_npm_install_dir_cloud_functions_is_functions_subdir() {
         let dir = Path::new("/project");
         assert_eq!(
-            adapter_npm_install_dir(crate::node::Adapter::CloudFunctions, dir),
+            adapter_npm_install_dir(crate::node_runtime::Adapter::CloudFunctions, dir),
             PathBuf::from("/project/functions")
         );
     }
@@ -748,14 +748,17 @@ mod tests {
     #[test]
     fn check_adapter_already_exists_convex_ok_for_empty_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        assert!(check_adapter_already_exists(crate::node::Adapter::Convex, tmp.path()).is_ok());
+        assert!(
+            check_adapter_already_exists(crate::node_runtime::Adapter::Convex, tmp.path()).is_ok()
+        );
     }
 
     #[test]
     fn check_adapter_already_exists_cloud_functions_ok_for_empty_dir() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(
-            check_adapter_already_exists(crate::node::Adapter::CloudFunctions, tmp.path()).is_ok()
+            check_adapter_already_exists(crate::node_runtime::Adapter::CloudFunctions, tmp.path())
+                .is_ok()
         );
     }
 }

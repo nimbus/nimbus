@@ -13,7 +13,7 @@ sources exist.
 | --- | --- | --- |
 | `get-started/quickstart.md` | `nimbus init convex` scaffold contents | `crates/nimbus-cli/src/init.rs`, `crates/nimbus-assets/embedded/templates/convex/` |
 | `get-started/quickstart.md` | `nimbus dev` watch / codegen / `demo` tenant / port 3210; automatic adapter detection (Convex `convex/` dir; `firebase`, `mongodb`, `@aws-sdk/client-dynamodb` dependencies) | `crates/nimbus-cli/src/dev.rs`, `crates/nimbus-cli/src/dev/adapter.rs` |
-| `get-started/quickstart.md` | Node 22 floor for npm dependency installs; codegen runs in-binary | `crates/nimbus-cli/src/node.rs`, `crates/nimbus-cli/src/codegen.rs` |
+| `get-started/quickstart.md` | Node 22 floor for npm dependency installs; codegen runs in-binary | `crates/nimbus-cli/src/node_runtime.rs`, `crates/nimbus-cli/src/codegen.rs` |
 | `get-started/self-host.md` | `nimbus start` flags, localhost default, SQLite default | `crates/nimbus-cli/src/start/mod.rs`, `crates/nimbus-cli/src/start/config.rs` |
 | `get-started/self-host.md` | Protocol adapters served by default (Firestore routes on the main listener, MongoDB `127.0.0.1:27017`, DynamoDB `127.0.0.1:8000`; `--no-firestore`/`--no-mongodb`/`--no-dynamodb` opt-outs) | `crates/nimbus-cli/src/start/adapters.rs`, `crates/nimbus-cli/src/start/mod.rs` |
 | `get-started/self-host.md` | `/api/tenants`, `/documents`, `/query` endpoints | `crates/nimbus-server/src/router.rs` |
@@ -55,7 +55,7 @@ sources exist.
 | `developers/convex/index.md` | Deployment URL `http://localhost:3210/convex/demo` | `crates/nimbus-server/src/router.rs`, `crates/nimbus-cli/src/dev/plan.rs` |
 | `developers/convex/index.md` | ctx capability split (query read / mutation write+scheduler / action run-only) | `packages/codegen/src/planner/context_api.mjs` |
 | `developers/convex/index.md` | React/HTTP client surface (`ConvexProvider`, `useQuery`, `ConvexHttpClient`) | `packages/convex/src/react.ts`, `packages/convex/src/browser.ts` |
-| `developers/convex/migrate.md` | Dev provisions packages for detected Convex apps and rewires the `convex` dependency to `file:./.nimbus/packages/convex` | `crates/nimbus-cli/src/dev.rs`, `crates/nimbus-cli/src/provision.rs`, `crates/nimbus-cli/src/node.rs` |
+| `developers/convex/migrate.md` | Dev provisions packages for detected Convex apps and rewires the `convex` dependency to `file:./.nimbus/packages/convex` | `crates/nimbus-cli/src/dev.rs`, `crates/nimbus-cli/src/provision.rs`, `crates/nimbus-cli/src/node_runtime.rs` |
 | `developers/convex/migrate.md` | Generated files import from `convex/server`/`browser`/`values` | `packages/codegen/src/emit/generated_files.mjs`, `packages/codegen/src/app.mjs` |
 | `developers/convex/migrate.md` | `.env.local` `NIMBUS_DEPLOYMENT=local:<slug>`; `nimbus codegen --app .` | `crates/nimbus-cli/src/dev/env_file.rs`, `crates/nimbus-cli/src/codegen.rs` |
 | `reference/convex/compatibility.md` | Auth providers, OIDC discovery, audience rules, `getUserIdentity`/`getVerifiedIdentity` | `packages/codegen/src/auth_config.mjs`, `crates/nimbus-convex/src/auth/`, `crates/nimbus-runtime/src/runtime/bootstrap/source.rs` |
@@ -87,7 +87,7 @@ sources exist.
 | `developers/cloud-functions/index.md` | `nimbus init cloud-functions` scaffold; serves on main port | `crates/nimbus-cli/src/init.rs`, `crates/nimbus-assets/embedded/templates/cloud-functions/`, `crates/nimbus-server/src/router.rs` |
 | `developers/cloud-functions/index.md` | Walk-up rules (`nimbus dev` bounded by `.git`; `firebase.json` root marker) | `crates/nimbus-cli/src/start/boot.rs`, `crates/nimbus-cli/src/dev/plan.rs` |
 | `developers/cloud-functions/index.md` | Artifact set `artifact.json`/`targets.json`/`bundle.mjs`/`bundle.sha256` | `crates/nimbus-cloud-functions/src/lib.rs` |
-| `developers/cloud-functions/index.md` | Authoring needs Node 22 or newer: external Node major below 22 rejected, 22 exact, newer majors allowed with a warning | `crates/nimbus-cli/src/node.rs` |
+| `developers/cloud-functions/index.md` | Authoring needs Node 22 or newer: external Node major below 22 rejected, 22 exact, newer majors allowed with a warning | `crates/nimbus-cli/src/node_runtime.rs` |
 | `developers/cloud-functions/migrate.md` | Version-1 `targets.json` schema; service-account execution for Firestore bindings | `crates/nimbus-cloud-functions/src/lib.rs`, `packages/codegen/src/selftest/cloud_functions_fixtures.mjs` |
 | `developers/cloud-functions/migrate.md` | `nimbus deploy --url/--token` + env vars | `crates/nimbus-cli/src/deploy.rs` |
 | `reference/cloud-functions/compatibility.md` | Path rules; at-least-once delivery, replay, chain-depth limit | `packages/codegen/src/cloud_functions/runtime_sources.mjs`, `crates/nimbus-engine/src/triggers/execution.rs`, `crates/nimbus-server/src/adapters/cloud_functions/execution.rs` |
@@ -133,7 +133,7 @@ sources exist.
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
 | `developers/runtimes/nodejs/index.md` | `"use node"` first-statement opt-in; actions-only | `packages/codegen/src/parser.mjs` |
-| `developers/runtimes/nodejs/configuration.md` | `nodeVersion` values {20,22,24,26} default 24; `--debug-node-apis`; Node 22 toolchain floor | `packages/codegen/src/project_config.mjs`, `crates/nimbus-cli/src/dev.rs`, `crates/nimbus-cli/src/codegen.rs`, `crates/nimbus-cli/src/node.rs` |
+| `developers/runtimes/nodejs/configuration.md` | `nodeVersion` values {20,22,24,26} default 24; `--debug-node-apis`; Node 22 toolchain floor | `packages/codegen/src/project_config.mjs`, `crates/nimbus-cli/src/dev.rs`, `crates/nimbus-cli/src/codegen.rs`, `crates/nimbus-cli/src/node_runtime.rs` |
 | `developers/runtimes/nodejs/packages-and-bundling.md` | `externalPackages` rules; staging paths; size references | `packages/codegen/src/project_config.mjs`, `packages/codegen/src/node_external_packages.mjs`, `packages/codegen/src/main.mjs` |
 | `concepts/nodejs-runtime.md` | Compatibility targets and permission modes are separate axes; in-process V8 | `crates/nimbus-runtime/src/limits/axes.rs`, `crates/nimbus-runtime/src/limits/grants.rs`, `crates/nimbus-runtime/src/backends/v8/` |
 | `reference/runtimes/node-apis.md` | API-family support table | generated evidence: `tests/runtime/node/published/nodejs/reference/node-apis.md` |
@@ -418,7 +418,7 @@ sources exist.
 | `concepts/architecture/cli-codegen.md` | 500ms poll / 300ms debounce; mtime+length fingerprints; skip dirs; codegen-then-deploy-to-self via HTTP POST with per-run token | `crates/nimbus-cli/src/dev/watch.rs` |
 | `concepts/architecture/cli-codegen.md` | App-dir ancestor walk (nimbus/, convex/, generated functions, firebase.json) bounded at `.git`; existence check covers worktree gitfiles | `crates/nimbus-cli/src/dev/plan.rs`, `crates/nimbus-cli/src/path_boundary.rs` |
 | `concepts/architecture/cli-codegen.md` | Embedded codegen runner: tooling closure into `<app>/.nimbus/tmp`; bootstrap module; Node-22 tooling limits; run-to-completion; snapshot cache; host bridge rejects host calls; external-Node auto-route for Cloud Functions; `NIMBUS_CODEGEN_RUNNER=external-node` | `crates/nimbus-cli/src/codegen.rs` |
-| `concepts/architecture/cli-codegen.md` | Node major floor 22 (older rejected, newer warned) | `crates/nimbus-cli/src/node.rs` |
+| `concepts/architecture/cli-codegen.md` | Node major floor 22 (older rejected, newer warned) | `crates/nimbus-cli/src/node_runtime.rs` |
 | `concepts/architecture/cli-codegen.md` | Codegen implemented in JS (`packages/codegen`, esbuild + TypeScript deps, bundle outputs) | `packages/codegen/package.json` |
 | `concepts/architecture/cli-codegen.md` | Asset catalog; per-file SHA-256 manifest; digest re-verification at materialization; templates compiled in with project-name substitution | `crates/nimbus-assets/src/lib.rs`, `crates/nimbus-assets/src/js_packages.rs`, `crates/nimbus-assets/src/templates.rs` |
 | `concepts/architecture/cli-codegen.md` | Provisioning into `.nimbus/packages/<name>/`; `.version` stamp = manifest digest, written last; idempotent short-circuit; re-provision on binary upgrade; implicit on init/dev/codegen/deploy; `file:./.nimbus/packages/...` specifiers | `crates/nimbus-cli/src/provision.rs`, `crates/nimbus-cli/src/init.rs` |

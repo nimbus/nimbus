@@ -487,7 +487,7 @@ fn force_node_reinstall(app_dir: &Path) -> io::Result<()> {
             fs::remove_dir_all(&installed)?;
         }
     }
-    crate::node::clear_node_dependency_state(app_dir)
+    crate::node_runtime::clear_node_dependency_state(app_dir)
 }
 
 /// Verify every provisioned file under `<app>/.nimbus/packages/` matches the
@@ -541,7 +541,7 @@ fn verify_package_dirs(app_dir: &Path, dirs: &[String]) -> Result<usize, String>
             let path = package_root.join(&file.path);
             let bytes = fs::read(&path)
                 .map_err(|e| format!("missing provisioned file {}/{}: {e}", pkg.dir, file.path))?;
-            let digest = nimbus_assets::integrity::sha256_hex(&bytes);
+            let digest = nimbus_assets::js_packages::sha256_hex(&bytes);
             if digest != file.sha256 {
                 return Err(format!(
                     "checksum mismatch for provisioned {}/{}: expected {}, got {}",

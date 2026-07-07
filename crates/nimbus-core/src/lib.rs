@@ -4,6 +4,7 @@ pub mod auth;
 pub mod dependency;
 pub mod document;
 pub mod document_history;
+pub mod encoding;
 pub mod error;
 pub mod identity;
 pub mod index_history;
@@ -34,7 +35,8 @@ pub use dependency::{
 };
 pub use document::Document;
 pub use document_history::{DocumentVersion, DocumentVersionHistory};
-pub use error::{Error, HistoricalReadErrorKind, Result, StorageErrorKind};
+pub use encoding::hex_encode;
+pub use error::{Error, HistoricalReadErrorKind, Result, StorageErrorKind, non_empty};
 pub use identity::{
     InvocationAuth, RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
 };

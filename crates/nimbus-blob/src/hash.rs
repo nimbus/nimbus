@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use nimbus_core::{Error, Result};
+use nimbus_core::{Error, Result, hex_encode};
 
 /// Length of a BLAKE3 digest in bytes.
 pub const BLAKE3_HASH_LEN: usize = 32;
@@ -37,12 +37,7 @@ impl BlobHash {
 
     /// Lowercase hex rendering of the digest.
     pub fn to_hex(&self) -> String {
-        let mut out = String::with_capacity(BLAKE3_HASH_LEN * 2);
-        for byte in self.0 {
-            out.push(char::from_digit((byte >> 4) as u32, 16).expect("nibble is < 16"));
-            out.push(char::from_digit((byte & 0x0f) as u32, 16).expect("nibble is < 16"));
-        }
-        out
+        hex_encode(self.0)
     }
 
     /// Parses a 64-char lowercase-or-uppercase hex string into a [`BlobHash`].

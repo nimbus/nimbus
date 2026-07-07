@@ -1,7 +1,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::node;
+use crate::node_runtime;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum DevAdapter {
@@ -21,8 +21,8 @@ pub(super) enum DevAdapter {
 impl DevAdapter {
     pub(super) fn name(&self) -> &'static str {
         match self {
-            Self::Convex { .. } => node::Adapter::Convex.name(),
-            Self::CloudFunctions { .. } => node::Adapter::CloudFunctions.name(),
+            Self::Convex { .. } => node_runtime::Adapter::Convex.name(),
+            Self::CloudFunctions { .. } => node_runtime::Adapter::CloudFunctions.name(),
             Self::FirestoreClient => "firestore-client",
         }
     }
@@ -37,8 +37,10 @@ impl DevAdapter {
 
     pub(super) fn needs_node_dependencies(&self) -> bool {
         match self {
-            Self::Convex { .. } => node::Adapter::Convex.needs_node_dependencies(),
-            Self::CloudFunctions { .. } => node::Adapter::CloudFunctions.needs_node_dependencies(),
+            Self::Convex { .. } => node_runtime::Adapter::Convex.needs_node_dependencies(),
+            Self::CloudFunctions { .. } => {
+                node_runtime::Adapter::CloudFunctions.needs_node_dependencies()
+            }
             // The scan-gated wiring rewires `firebase` to the provisioned
             // drop-in copy, which must then be installed.
             Self::FirestoreClient => true,
@@ -51,8 +53,8 @@ impl DevAdapter {
     /// only behind the fail-closed import scan in `dev.rs`.
     pub(super) fn provision_target(&self) -> Option<&'static str> {
         match self {
-            Self::Convex { .. } => node::Adapter::Convex.provision_target(),
-            Self::CloudFunctions { .. } => node::Adapter::CloudFunctions.provision_target(),
+            Self::Convex { .. } => node_runtime::Adapter::Convex.provision_target(),
+            Self::CloudFunctions { .. } => node_runtime::Adapter::CloudFunctions.provision_target(),
             Self::FirestoreClient => None,
         }
     }
@@ -96,7 +98,7 @@ pub(super) fn detect_dev_adapter(app_dir: &Path) -> io::Result<Option<DevAdapter
 }
 
 fn detect_cloud_functions_adapter(app_dir: &Path) -> io::Result<Option<DevAdapter>> {
-    if let Some(project) = node::firebase_functions_project(app_dir)? {
+    if let Some(project) = node_runtime::firebase_functions_project(app_dir)? {
         return Ok(Some(DevAdapter::CloudFunctions {
             source_roots: project.source_dirs(),
         }));

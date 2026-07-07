@@ -2,14 +2,14 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 
-use nimbus_core::{Error, Result};
+use nimbus_core::{Error, Result, non_empty};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::{
     LocalEnforcementBinding, NodeStatusAuthorizer, TenantWorkloadCondition,
     TenantWorkloadConditionStatus, TenantWorkloadConditionType, TenantWorkloadPhase,
-    TenantWorkloadSpec, TenantWorkloadStatus, TenantWorkloadStatusPatch, non_empty,
+    TenantWorkloadSpec, TenantWorkloadStatus, TenantWorkloadStatusPatch,
 };
 
 pub type HostLifecycleFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;

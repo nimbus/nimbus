@@ -6806,6 +6806,7 @@ dependencies = [
 name = "nimbus-core"
 version = "0.1.45"
 dependencies = [
+ "hex",
  "rmp-serde",
  "serde",
  "serde_json",
