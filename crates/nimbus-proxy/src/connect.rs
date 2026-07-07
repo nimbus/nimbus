@@ -7,18 +7,23 @@ use tokio::net::TcpStream;
 use tokio::time;
 
 use crate::body::{BODY_STREAM_CHUNK_BYTES, timeout_io};
+use crate::decision_log::EgressDecisionLog;
+use crate::terminal::ResponseStartedSignal;
 
 pub(crate) async fn splice_connect(
     mut client: TcpStream,
     mut upstream: TcpStream,
     buffered_client_bytes: &[u8],
     io_timeout: Duration,
+    response_started_signal: ResponseStartedSignal,
+    after_response_abort_log: EgressDecisionLog,
 ) -> io::Result<(u64, u64)> {
     timeout_io(
         io_timeout,
         client.write_all(b"HTTP/1.1 200 Connection Established\r\nConnection: close\r\n\r\n"),
     )
     .await?;
+    response_started_signal.mark_response_started(after_response_abort_log);
     if !buffered_client_bytes.is_empty() {
         timeout_io(io_timeout, upstream.write_all(buffered_client_bytes)).await?;
     }

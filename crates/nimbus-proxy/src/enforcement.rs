@@ -11,6 +11,7 @@ pub(crate) struct ProxyRequestEnforcementContext<'a> {
     pub(crate) reason: &'a str,
     pub(crate) credential_provider: &'a dyn crate::credentials::CredentialSecretProvider,
     pub(crate) phase_recorder: &'a RequestPhaseRecorder,
+    pub(crate) request_id: &'a str,
 }
 
 pub(crate) struct ProxyRequestEnforcementPlan<'a> {
@@ -68,6 +69,7 @@ pub(crate) fn prepare_proxy_request_enforcement<'a>(
             header_lines: parsed.header_lines.clone(),
             dlp_rules: &[],
             decision_log: EgressDecisionLog::allowed(
+                context.request_id,
                 parsed,
                 None,
                 context.reason.to_owned(),
@@ -86,6 +88,7 @@ pub(crate) fn prepare_proxy_request_enforcement<'a>(
         .phase_recorder
         .record(EgressProxyRequestPhase::BoundedDlpInspection);
     let decision_log = EgressDecisionLog::allowed(
+        context.request_id,
         parsed,
         credential_identity.clone(),
         context.reason.to_owned(),

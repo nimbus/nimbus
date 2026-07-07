@@ -2,7 +2,7 @@ use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc,
 };
 use std::thread;
@@ -55,10 +55,26 @@ fn start_test_proxy_with_store_and_logger(
     credential_store: CredentialSecretStore,
     decision_logger: DecisionLogger,
 ) -> WorkloadPep {
-    start_test_proxy_with_store_logger_and_phase_observer(
+    start_test_proxy_with_store_logger_durable_sink_and_phase_observer(
         policy,
         credential_store,
         decision_logger,
+        noop_durable_sink_for_test(),
+        Arc::new(|_| {}),
+    )
+}
+
+fn start_test_proxy_with_store_logger_and_durable_sink(
+    policy: CompiledEgressPolicy,
+    credential_store: CredentialSecretStore,
+    decision_logger: DecisionLogger,
+    durable_decision_sink: DurableDecisionSink,
+) -> WorkloadPep {
+    start_test_proxy_with_store_logger_durable_sink_and_phase_observer(
+        policy,
+        credential_store,
+        decision_logger,
+        durable_decision_sink,
         Arc::new(|_| {}),
     )
 }
@@ -69,15 +85,114 @@ fn start_test_proxy_with_store_logger_and_phase_observer(
     decision_logger: DecisionLogger,
     phase_observer: crate::phase::PhaseObserver,
 ) -> WorkloadPep {
+    start_test_proxy_with_store_logger_durable_sink_and_phase_observer(
+        policy,
+        credential_store,
+        decision_logger,
+        noop_durable_sink_for_test(),
+        phase_observer,
+    )
+}
+
+fn start_test_proxy_with_store_logger_durable_sink_and_phase_observer(
+    policy: CompiledEgressPolicy,
+    credential_store: CredentialSecretStore,
+    decision_logger: DecisionLogger,
+    durable_decision_sink: DurableDecisionSink,
+    phase_observer: crate::phase::PhaseObserver,
+) -> WorkloadPep {
     WorkloadPep::start(
         WorkloadPepConfig::new(policy)
             .with_timeouts(Duration::from_secs(5), Duration::from_secs(5))
             .with_credential_store(credential_store)
+            .with_durable_decision_sink(durable_decision_sink)
             .with_decision_logger(decision_logger)
             .with_phase_observer(phase_observer)
             .with_resolver(loopback_test_resolver()),
     )
     .expect("proxy should start")
+}
+
+fn noop_durable_sink_for_test() -> DurableDecisionSink {
+    Arc::new(|_| Ok(()))
+}
+
+fn failing_durable_sink_for_test() -> DurableDecisionSink {
+    Arc::new(|_| Err(io::Error::other("test durable sink failure")))
+}
+
+fn capturing_durable_sink_for_test(
+    captured: Arc<Mutex<Vec<EgressDecisionLog>>>,
+) -> DurableDecisionSink {
+    Arc::new(move |log| {
+        captured
+            .lock()
+            .expect("durable log capture lock should hold")
+            .push(log.clone());
+        Ok(())
+    })
+}
+
+fn blocking_second_durable_sink_for_test(
+    captured: Arc<Mutex<Vec<EgressDecisionLog>>>,
+) -> (DurableDecisionSink, mpsc::Receiver<()>, mpsc::Sender<()>) {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (started_tx, started_rx) = mpsc::channel();
+    let started_tx = Arc::new(Mutex::new(Some(started_tx)));
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+    let sink = {
+        let calls = Arc::clone(&calls);
+        let started_tx = Arc::clone(&started_tx);
+        let release_rx = Arc::clone(&release_rx);
+        Arc::new(move |log: &EgressDecisionLog| {
+            let call = calls.fetch_add(1, Ordering::SeqCst) + 1;
+            captured
+                .lock()
+                .expect("durable log capture lock should hold")
+                .push(log.clone());
+            if call == 2 {
+                if let Some(started_tx) = started_tx
+                    .lock()
+                    .expect("terminal append signal lock should hold")
+                    .take()
+                {
+                    let _ = started_tx.send(());
+                }
+                release_rx
+                    .lock()
+                    .expect("terminal append release lock should hold")
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("test should release blocked terminal durable append");
+            }
+            Ok(())
+        }) as DurableDecisionSink
+    };
+    (sink, started_rx, release_tx)
+}
+
+fn failing_second_durable_sink_for_test(
+    captured: Arc<Mutex<Vec<EgressDecisionLog>>>,
+) -> DurableDecisionSink {
+    let calls = Arc::new(AtomicUsize::new(0));
+    Arc::new(move |log| {
+        let call = calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if call == 2 {
+            return Err(io::Error::other("test terminal durable sink failure"));
+        }
+        captured
+            .lock()
+            .expect("durable log capture lock should hold")
+            .push(log.clone());
+        Ok(())
+    })
+}
+
+fn snapshot_durable_logs(captured: &Arc<Mutex<Vec<EgressDecisionLog>>>) -> Vec<EgressDecisionLog> {
+    captured
+        .lock()
+        .expect("durable log capture lock should hold")
+        .clone()
 }
 
 fn start_test_proxy_with_store_logger_tls_and_phase_observer(
@@ -103,11 +218,30 @@ fn start_test_proxy_with_provider_logger_tls_and_phase_observer(
     tls_authority: WorkloadPepTlsAuthority,
     phase_observer: crate::phase::PhaseObserver,
 ) -> WorkloadPep {
+    start_test_proxy_with_provider_logger_tls_durable_sink_and_phase_observer(
+        policy,
+        credential_provider,
+        decision_logger,
+        noop_durable_sink_for_test(),
+        tls_authority,
+        phase_observer,
+    )
+}
+
+fn start_test_proxy_with_provider_logger_tls_durable_sink_and_phase_observer(
+    policy: CompiledEgressPolicy,
+    credential_provider: CredentialSecretProviderRef,
+    decision_logger: DecisionLogger,
+    durable_decision_sink: DurableDecisionSink,
+    tls_authority: WorkloadPepTlsAuthority,
+    phase_observer: crate::phase::PhaseObserver,
+) -> WorkloadPep {
     WorkloadPep::start(
         WorkloadPepConfig::new(policy)
             .with_timeouts(Duration::from_secs(5), Duration::from_secs(5))
             .with_credential_provider(credential_provider)
             .with_decision_logger(decision_logger)
+            .with_durable_decision_sink(durable_decision_sink)
             .with_tls_authority(tls_authority)
             .with_phase_observer(phase_observer)
             .with_resolver(loopback_test_resolver()),
@@ -194,6 +328,27 @@ fn proxy_request_until_close(proxy_addr: SocketAddr, request: String) -> io::Res
         .expect("client should write request");
     let mut response = String::new();
     stream.read_to_string(&mut response)?;
+    Ok(response)
+}
+
+fn proxy_request_bytes_until_close(proxy_addr: SocketAddr, request: String) -> io::Result<Vec<u8>> {
+    let mut stream = TcpStream::connect(proxy_addr).expect("client should connect to proxy");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("read timeout should set");
+    stream
+        .write_all(request.as_bytes())
+        .expect("client should write request");
+    let mut response = Vec::new();
+    let mut chunk = [0_u8; 1024];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => response.extend_from_slice(&chunk[..read]),
+            Err(error) if error.kind() == io::ErrorKind::ConnectionReset => break,
+            Err(error) => return Err(error),
+        }
+    }
     Ok(response)
 }
 
@@ -300,6 +455,45 @@ impl TestStallingHttpServer {
     }
 }
 
+struct TestStallingHttpBodyServer {
+    addr: SocketAddr,
+    request: mpsc::Receiver<String>,
+    release: mpsc::Sender<()>,
+}
+
+impl TestStallingHttpBodyServer {
+    fn start() -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("test upstream should bind");
+        let addr = listener
+            .local_addr()
+            .expect("upstream address should resolve");
+        let (request_tx, request_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let Ok(request) = read_h1_request_from_stream(&mut stream) else {
+                return;
+            };
+            let _ = request_tx.send(request);
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n");
+            let _ = stream.flush();
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+        });
+        Self {
+            addr,
+            request: request_rx,
+            release: release_tx,
+        }
+    }
+
+    fn release(&self) {
+        let _ = self.release.send(());
+    }
+}
+
 struct TestTcpServer {
     addr: SocketAddr,
     request: mpsc::Receiver<String>,
@@ -325,6 +519,40 @@ impl TestTcpServer {
             addr,
             request: request_rx,
         }
+    }
+}
+
+struct TestStallingTcpTunnelServer {
+    addr: SocketAddr,
+    accepted: mpsc::Receiver<()>,
+    release: mpsc::Sender<()>,
+}
+
+impl TestStallingTcpTunnelServer {
+    fn start() -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("test upstream should bind");
+        let addr = listener
+            .local_addr()
+            .expect("upstream address should resolve");
+        let (accepted_tx, accepted_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let Ok((stream, _)) = listener.accept() else {
+                return;
+            };
+            let _stream = stream;
+            let _ = accepted_tx.send(());
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+        });
+        Self {
+            addr,
+            accepted: accepted_rx,
+            release: release_tx,
+        }
+    }
+
+    fn release(&self) {
+        let _ = self.release.send(());
     }
 }
 
@@ -366,6 +594,52 @@ impl TestHttpsServer {
             addr,
             request: request_rx,
         }
+    }
+}
+
+struct TestStallingHttpsBodyServer {
+    addr: SocketAddr,
+    request: mpsc::Receiver<String>,
+    release: mpsc::Sender<()>,
+}
+
+impl TestStallingHttpsBodyServer {
+    fn start(authority: &WorkloadPepTlsAuthority, hostname: &'static str) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("test upstream should bind");
+        let addr = listener
+            .local_addr()
+            .expect("upstream address should resolve");
+        let server_config = authority
+            .server_config_for_host(hostname)
+            .expect("upstream TLS server config should build");
+        let (request_tx, request_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let Ok((stream, _)) = listener.accept() else {
+                return;
+            };
+            let Ok(server_connection) = rustls::ServerConnection::new(server_config) else {
+                return;
+            };
+            let mut tls = rustls::StreamOwned::new(server_connection, stream);
+            let Ok(request) = read_h1_request_from_stream(&mut tls) else {
+                return;
+            };
+            let _ = request_tx.send(request);
+            let _ = tls
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n");
+            let _ = tls.flush();
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+        });
+        Self {
+            addr,
+            request: request_rx,
+            release: release_tx,
+        }
+    }
+
+    fn release(&self) {
+        let _ = self.release.send(());
     }
 }
 
@@ -512,6 +786,21 @@ fn read_http_headers_from_raw_stream(stream: &mut TcpStream) -> String {
         response.extend_from_slice(&chunk[..read]);
     }
     String::from_utf8_lossy(&response).to_string()
+}
+
+fn read_tls_headers_to_string(
+    stream: &mut rustls::StreamOwned<rustls::ClientConnection, TcpStream>,
+) -> io::Result<String> {
+    let mut response = Vec::new();
+    let mut chunk = [0_u8; 1];
+    while !response.ends_with(b"\r\n\r\n") {
+        let read = stream.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        response.extend_from_slice(&chunk[..read]);
+    }
+    Ok(String::from_utf8_lossy(&response).to_string())
 }
 
 fn read_tls_to_string(

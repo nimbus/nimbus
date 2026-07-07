@@ -128,7 +128,7 @@ impl EgressProxyRegistry {
         let compiled = policy
             .compile()
             .map_err(|message| SandboxError::InvalidSpec { message })?;
-        let decision_logger = AppendOnlyDecisionLogSink::open(
+        let durable_decision_sink = AppendOnlyDecisionLogSink::open(
             &decision_log_path,
             DecisionLogSinkContext::new(tenant_id.as_str(), id.as_str()),
         )
@@ -138,7 +138,7 @@ impl EgressProxyRegistry {
                 decision_log_path.display()
             ),
         })?
-        .logger();
+        .durable_sink();
         let tls_authority =
             WorkloadPepTlsAuthority::generate_ephemeral().map_err(egress_proxy_error)?;
         // EE3/EE4: check out the tenant's fairness lease once, at
@@ -146,13 +146,12 @@ impl EgressProxyRegistry {
         // the pin via Drop (no zero-pin zombie entries).
         let tenant_lease = self.engine.fairness().checkout(tenant_id);
         let tenant_fairness = Arc::clone(tenant_lease.handle());
-        // EE4: fan the decision stream out — the SELH append-only sink stays
-        // FIRST (the durability baseline receives every event, unchanged);
-        // the per-tenant counter sink subscribes behind it.
-        let decision_logger = fan_out_decision_loggers(vec![
-            decision_logger,
-            tenant_decision_counter_sink(Arc::clone(&tenant_fairness)),
-        ]);
+        // EE4/GR3: fan out only best-effort telemetry sinks. The append-only
+        // file sink is installed separately as the durable-before-response
+        // audit sink.
+        let decision_logger = fan_out_decision_loggers(vec![tenant_decision_counter_sink(
+            Arc::clone(&tenant_fairness),
+        )]);
         // Publish + register under one lock hold: the engine's registration
         // slot re-checks a concurrent winner first and holds the registry lock
         // until commit, so the trust-anchor file on disk is written by the same
@@ -174,6 +173,7 @@ impl EgressProxyRegistry {
             WorkloadPepConfig::new(compiled)
                 .with_bind_addr(bind_addr)
                 .with_tls_authority(tls_authority)
+                .with_durable_decision_sink(durable_decision_sink)
                 .with_decision_logger(decision_logger)
                 // EE3: capture the tenant's fairness handle at registration —
                 // the request path never looks tenants up.
@@ -824,7 +824,7 @@ mod tests {
             .expect("readiness lookup should succeed")
             .expect("a registered proxy should report readiness");
         assert!(
-            readiness.ready && readiness.policy_generation.is_some(),
+            readiness.ready && readiness.audit_healthy && readiness.policy_generation.is_some(),
             "a PEP started with a compiled policy must be ready with an active generation: {readiness:?}"
         );
     }
@@ -842,7 +842,7 @@ mod tests {
             .expect("readiness lookup should succeed")
             .expect("the registered proxy should report readiness");
         assert!(
-            !readiness.ready && readiness.policy_generation.is_none(),
+            !readiness.ready && readiness.audit_healthy && readiness.policy_generation.is_none(),
             "a PEP with no loaded policy must report not-ready so the gate denies: {readiness:?}"
         );
     }

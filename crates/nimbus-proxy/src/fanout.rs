@@ -1,11 +1,10 @@
 //! EE4: egress decision-event fan-out seam + per-tenant decision counters.
 //!
-//! The PEP's decision sink is the `Arc<DecisionLogger>` closure. This module
-//! adds a composable multi-sink fan-out over it so node-wide consumers — the
-//! tenant-admission-audit plan's hash-chained OCSF collector (TAA2), metrics,
-//! per-tenant counters — can subscribe to decision events WITHOUT touching the
-//! SELH append-only decision-log baseline: the append-only sink stays first in
-//! the fan-out and still receives every event, unchanged.
+//! The PEP's best-effort terminal telemetry sink is the `Arc<DecisionLogger>`
+//! closure. This module adds a composable multi-sink fan-out over it so
+//! node-wide consumers — the tenant-admission-audit plan's hash-chained OCSF
+//! collector (TAA2), metrics, per-tenant counters — can subscribe to terminal
+//! events without participating in the durable-before-response audit commit.
 //!
 //! Per-tenant counters live on [`TenantFairness`] (the same node-wide,
 //! registration-keyed home as the EE3 budgets): node-wide per-tenant keying is
@@ -18,7 +17,7 @@
 //!
 //! Sinks run synchronously, inline, on the request task (including terminal
 //! deny paths). A slow subscriber adds its latency directly to request
-//! handling AND delays the durability baseline's subsequent events. A
+//! handling. A
 //! subscriber with untrusted latency (network, disk spool, OCSF collector)
 //! must decouple itself behind a bounded channel + drop counter and hand this
 //! seam only the cheap enqueue.
@@ -29,8 +28,8 @@ use crate::decision_log::{DecisionLogger, EgressDecisionLog};
 use crate::fairness::TenantFairness;
 
 /// Compose decision-log sinks: every event is delivered to every sink, in
-/// order. The first sink should remain the durability baseline (the SELH
-/// append-only sink) so audit persistence is never behind a subscriber.
+/// order. These sinks are best-effort telemetry only; durable audit commits use
+/// the separate fallible sink on `WorkloadPepConfig`.
 pub fn fan_out_decision_loggers(sinks: Vec<DecisionLogger>) -> DecisionLogger {
     Arc::new(move |log: EgressDecisionLog| {
         let Some((last, rest)) = sinks.split_last() else {

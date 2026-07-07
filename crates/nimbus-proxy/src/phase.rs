@@ -55,6 +55,8 @@ pub(crate) struct RequestPhaseRecorder {
     // adapter's logging callback, the intercept relay) defuses the request's
     // abort guard.
     terminal_seen: Arc<std::sync::atomic::AtomicBool>,
+    durable_any_recorded: Arc<std::sync::atomic::AtomicBool>,
+    durable_terminal_recorded: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl RequestPhaseRecorder {
@@ -62,6 +64,8 @@ impl RequestPhaseRecorder {
         Self {
             observer,
             terminal_seen: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            durable_any_recorded: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            durable_terminal_recorded: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -77,5 +81,20 @@ impl RequestPhaseRecorder {
     /// request, across every clone of the recorder.
     pub(crate) fn terminal_recorded(&self) -> bool {
         self.terminal_seen.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub(crate) fn mark_durable_any_recorded(&self) {
+        self.durable_any_recorded
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn mark_durable_terminal_recorded(&self) {
+        self.durable_terminal_recorded
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn durable_terminal_recorded(&self) -> bool {
+        self.durable_terminal_recorded
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 }

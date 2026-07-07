@@ -11,9 +11,41 @@ use crate::redaction::redact_query_values;
 use crate::request::{ParsedProxyRequest, ProxyRequestMode};
 
 pub type DecisionLogger = Arc<dyn Fn(EgressDecisionLog) + Send + Sync + 'static>;
+pub type DurableDecisionSink =
+    Arc<dyn Fn(&EgressDecisionLog) -> io::Result<()> + Send + Sync + 'static>;
+
+pub(crate) const UPSTREAM_FAILURE_AFTER_RESPONSE_REASON: &str =
+    "egress proxy upstream transport failed after the response started";
+pub(crate) const ABORT_AFTER_RESPONSE_REASON: &str =
+    "egress proxy terminated the request after the response started";
 
 pub(crate) fn noop_decision_logger() -> DecisionLogger {
     Arc::new(|_| {})
+}
+
+pub(crate) fn noop_durable_decision_sink() -> DurableDecisionSink {
+    Arc::new(|_| Ok(()))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecisionRecordKind {
+    Intent,
+    Terminal,
+    TerminalAfterResponse,
+}
+
+impl DecisionRecordKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Intent => "intent",
+            Self::Terminal => "terminal",
+            Self::TerminalAfterResponse => "terminal_after_response",
+        }
+    }
+
+    pub(crate) fn is_terminal(self) -> bool {
+        matches!(self, Self::Terminal | Self::TerminalAfterResponse)
+    }
 }
 
 /// Audit record emitted for every terminal egress decision. Both allow and
@@ -23,6 +55,8 @@ pub(crate) fn noop_decision_logger() -> DecisionLogger {
 /// optional credential *reference* (never the secret material itself).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EgressDecisionLog {
+    request_id: String,
+    record_kind: DecisionRecordKind,
     destination: String,
     protocol: EgressProtocol,
     canonical_host: String,
@@ -36,12 +70,15 @@ pub struct EgressDecisionLog {
 
 impl EgressDecisionLog {
     pub(crate) fn allowed(
+        request_id: impl Into<String>,
         parsed: &ParsedProxyRequest,
         credential_identity: Option<String>,
         reason: String,
         matched_rule: Option<String>,
     ) -> Self {
         Self {
+            request_id: request_id.into(),
+            record_kind: DecisionRecordKind::Intent,
             destination: redacted_destination(parsed),
             protocol: parsed.egress_request.protocol,
             canonical_host: parsed.upstream_host.clone(),
@@ -59,6 +96,12 @@ impl EgressDecisionLog {
     #[cfg(test)]
     pub(crate) fn synthetic_for_test(allowed: bool) -> Self {
         Self {
+            request_id: if allowed {
+                "test-allow-request".to_owned()
+            } else {
+                "test-deny-request".to_owned()
+            },
+            record_kind: DecisionRecordKind::Terminal,
             destination: "https://example.test:443".to_owned(),
             protocol: nimbus_egress::EgressProtocol::Https,
             canonical_host: "example.test".to_owned(),
@@ -76,11 +119,14 @@ impl EgressDecisionLog {
     }
 
     pub(crate) fn denied(
+        request_id: impl Into<String>,
         parsed: &ParsedProxyRequest,
         reason: String,
         matched_rule: Option<String>,
     ) -> Self {
         Self {
+            request_id: request_id.into(),
+            record_kind: DecisionRecordKind::Terminal,
             destination: redacted_destination(parsed),
             protocol: parsed.egress_request.protocol,
             canonical_host: parsed.upstream_host.clone(),
@@ -98,8 +144,10 @@ impl EgressDecisionLog {
     /// parser-differential authorities, oversized headers). Blocked smuggling
     /// attempts are exactly what an auditor wants to see, so they must not be
     /// an audit blind spot just because no destination could be parsed.
-    pub(crate) fn malformed(reason: String) -> Self {
+    pub(crate) fn malformed(request_id: impl Into<String>, reason: String) -> Self {
         Self {
+            request_id: request_id.into(),
+            record_kind: DecisionRecordKind::Terminal,
             destination: "<unparsed>".to_owned(),
             protocol: EgressProtocol::Tcp,
             canonical_host: String::new(),
@@ -115,6 +163,26 @@ impl EgressDecisionLog {
     pub(crate) fn with_policy_generation(mut self, generation: PolicyGeneration) -> Self {
         self.policy_generation = Some(generation);
         self
+    }
+
+    pub(crate) fn into_terminal(mut self) -> Self {
+        self.record_kind = DecisionRecordKind::Terminal;
+        self
+    }
+
+    pub(crate) fn into_terminal_after_response(mut self, reason: impl Into<String>) -> Self {
+        self.record_kind = DecisionRecordKind::TerminalAfterResponse;
+        self.allowed = true;
+        self.reason = reason.into();
+        self
+    }
+
+    pub fn request_id(&self) -> &str {
+        &self.request_id
+    }
+
+    pub fn record_kind(&self) -> DecisionRecordKind {
+        self.record_kind
     }
 
     pub fn destination(&self) -> &str {
@@ -229,6 +297,8 @@ impl AppendOnlyDecisionLogSink {
             file: Arc::new(Mutex::new(file)),
         };
         let probe = EgressDecisionLog {
+            request_id: "audit-readiness-probe".to_owned(),
+            record_kind: DecisionRecordKind::Terminal,
             destination: "http://audit-probe.invalid:80/".to_owned(),
             protocol: EgressProtocol::Http,
             canonical_host: "audit-probe.invalid".to_owned(),
@@ -247,13 +317,9 @@ impl AppendOnlyDecisionLogSink {
         Ok(sink)
     }
 
-    pub fn logger(self) -> DecisionLogger {
+    pub fn durable_sink(self) -> DurableDecisionSink {
         let sink = Arc::new(self);
-        Arc::new(move |log| {
-            if let Err(error) = sink.append(&log) {
-                eprintln!("failed to append egress decision log: {error}");
-            }
-        })
+        Arc::new(move |log| sink.append(log))
     }
 
     pub fn append(&self, log: &EgressDecisionLog) -> io::Result<()> {
@@ -273,6 +339,8 @@ impl AppendOnlyDecisionLogSink {
         serde_json::to_string(&serde_json::json!({
             "tenant_id": &self.context.tenant_id,
             "workload_id": &self.context.workload_id,
+            "request_id": log.request_id(),
+            "record_kind": log.record_kind().as_str(),
             "policy_generation": log.policy_generation().map(PolicyGeneration::get),
             "rule_id": log.matched_rule(),
             "protocol": protocol_label(log.protocol()),
