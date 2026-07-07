@@ -1,8 +1,6 @@
-use std::sync::Arc;
-
-use nimbus_core::{DocumentId, Error, Mutation, PrincipalContext, TableName, TenantId};
+use nimbus_core::{DocumentId, Error, Mutation, TableName, TenantId};
 use nimbus_engine::Engine;
-use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
+use nimbus_testing::{AdmittedDecisionScenario, EngineFixture};
 use serde_json::{Value, json};
 
 use nimbus_node::{
@@ -11,12 +9,7 @@ use nimbus_node::{
     TenantWorkloadDiagnostics, TenantWorkloadLifecycleEvidence, TenantWorkloadPhase,
     TenantWorkloadStatusPatch,
 };
-use nimbus_tenant::{
-    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode, TenantIsolationPolicyInput,
-    TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision, WorkloadAttributes,
-    WorkloadLocation,
-};
-use nimbus_workloads::LocalEnforcementBinding;
+use nimbus_tenant::TenantIsolationContext;
 
 use super::*;
 
@@ -105,8 +98,8 @@ fn system_table_schemas_are_valid_and_cover_control_plane_contract() {
 
 #[tokio::test]
 async fn ensure_system_tenant_creates_reserved_tenant_and_schemas_idempotently() {
-    let temp = tempfile::tempdir().expect("tempdir should create");
-    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
 
     ensure_system_tenant_async(&engine)
         .await
@@ -148,8 +141,8 @@ async fn ensure_system_tenant_creates_reserved_tenant_and_schemas_idempotently()
 
 #[tokio::test]
 async fn prepare_system_tenant_seeds_network_and_adapter_posture_documents() {
-    let temp = tempfile::tempdir().expect("tempdir should create");
-    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
     let listen_addr = "127.0.0.1:34567".parse().expect("listen addr should parse");
 
     prepare_system_tenant_async(&engine, Some(listen_addr))
@@ -216,9 +209,9 @@ async fn prepare_system_tenant_seeds_network_and_adapter_posture_documents() {
 
 #[tokio::test]
 async fn source_package_build_store_record_and_read_round_trip() {
-    let temp = tempfile::tempdir().expect("tempdir should create");
-    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let store = DiskSourcePackageStore::new(temp.path().join("source-packages"));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let store = DiskSourcePackageStore::new(fixture.data_dir().join("source-packages"));
 
     // Build a source package the way the deploy client does, store it
     // content-addressed, project its rows, then read a module back end-to-end.
@@ -289,8 +282,8 @@ async fn source_package_build_store_record_and_read_round_trip() {
 
 #[tokio::test]
 async fn record_source_package_state_projects_package_and_modules_with_gc() {
-    let temp = tempfile::tempdir().expect("tempdir should create");
-    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
 
     let input = SystemSourcePackageRecordInput {
         digest: "aaaa1111",
@@ -383,8 +376,8 @@ async fn record_source_package_state_projects_package_and_modules_with_gc() {
 
 #[tokio::test]
 async fn record_deployment_state_projects_neutral_bundle_and_functions() {
-    let temp = tempfile::tempdir().expect("tempdir should create");
-    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
 
     let input = SystemDeploymentRecordInput {
         source_ref: "deploy:test",
@@ -487,18 +480,10 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
 
 #[tokio::test]
 async fn sync_scheduler_state_deletes_only_matching_tenant_pending_projection() {
-    let temp = tempfile::tempdir().expect("tempdir should create");
-    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let tenant_id = TenantId::new("demo").expect("tenant should parse");
-    let other_tenant_id = TenantId::new("other").expect("tenant should parse");
-    engine
-        .create_tenant_async(tenant_id.clone())
-        .await
-        .expect("tenant should create");
-    engine
-        .create_tenant_async(other_tenant_id.clone())
-        .await
-        .expect("other tenant should create");
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let other_tenant_id = fixture.create_tenant("other", Engine::create_tenant);
 
     let stale_demo = nimbus_core::ScheduledJob {
         id: DocumentId::from_key("demo-stale-job").expect("job id should parse"),
@@ -550,14 +535,14 @@ async fn sync_scheduler_state_deletes_only_matching_tenant_pending_projection() 
 
 #[tokio::test]
 async fn record_machine_state_projects_machine_listener_and_port_documents() {
-    let temp = tempfile::tempdir().expect("tempdir should create");
-    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
     let roots = nimbus_machine::MachineRootLayout::new(
-        temp.path().join("config"),
-        temp.path().join("state"),
-        temp.path().join("data"),
-        temp.path().join("cache"),
-        temp.path().join("run"),
+        fixture.data_dir().join("config"),
+        fixture.data_dir().join("state"),
+        fixture.data_dir().join("data"),
+        fixture.data_dir().join("cache"),
+        fixture.data_dir().join("run"),
     );
     let config = nimbus_machine::MachineConfigRecord {
         version: nimbus_machine::CURRENT_MACHINE_CONFIG_VERSION,
@@ -607,11 +592,11 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
     state.manager = nimbus_machine::MachineManagerState::Ready;
     state.runtime = Some(nimbus_machine::MachineRuntimeState {
         helper_binaries: nimbus_machine::MachineHelperBinaryPaths {
-            vmm: temp.path().join("krunkit"),
-            gvproxy: temp.path().join("gvproxy"),
+            vmm: fixture.data_dir().join("krunkit"),
+            gvproxy: fixture.data_dir().join("gvproxy"),
         },
-        image_path: temp.path().join("default.raw"),
-        efi_variable_store_path: temp.path().join("efi"),
+        image_path: fixture.data_dir().join("default.raw"),
+        efi_variable_store_path: fixture.data_dir().join("efi"),
         machine_image_source: "docker://ghcr.io/nimbus/machine-os:v0.1.31".to_string(),
         ssh_port: 2222,
         rest_uri: "unix:///tmp/nimbus/default-krunkit.sock".to_string(),
@@ -651,8 +636,8 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
 
 #[tokio::test]
 async fn record_service_handle_removes_only_stale_ports_for_that_service() {
-    let temp = tempfile::tempdir().expect("tempdir should create");
-    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
     let tenant_id = TenantId::new("demo").expect("tenant should parse");
 
     let first_search = nimbus_sandbox::SandboxHandle::new(
@@ -747,8 +732,8 @@ async fn record_service_handle_removes_only_stale_ports_for_that_service() {
 
 #[tokio::test]
 async fn record_subscription_state_projects_live_subscription_document() {
-    let temp = tempfile::tempdir().expect("tempdir should create");
-    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
     let tenant_id = TenantId::new("demo").expect("tenant should parse");
 
     record_subscription_state_async(
@@ -790,8 +775,8 @@ async fn record_subscription_state_projects_live_subscription_document() {
 
 #[tokio::test]
 async fn subscription_projection_skips_system_tenant_state_delivery_and_error() {
-    let temp = tempfile::tempdir().expect("tempdir should create");
-    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
     prepare_system_tenant_async(&engine, None)
         .await
         .expect("system tenant should prepare");
@@ -838,42 +823,13 @@ async fn subscription_projection_skips_system_tenant_state_delivery_and_error() 
 
 #[tokio::test]
 async fn workload_status_projection_requires_system_or_operator_authority() {
-    let temp = tempfile::tempdir().expect("tempdir should create");
-    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
-    let context = TenantIsolationContext::application(
-        tenant_id.clone(),
-        PrincipalContext {
-            authenticated: true,
-            claims: serde_json::Map::from_iter([("tenant_id".to_string(), json!("tenant-a"))]),
-            verified_claims: serde_json::Map::new(),
-        },
-        "system_tenant.workload_status.test",
-    )
-    .with_deployment_generation(3)
-    .with_workload_location(WorkloadLocation::new().with_node_id("node-a"));
-    let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
-    let decision = context
-        .admit_decision(
-            TenantIsolationPolicyInput::new(
-                WorkloadAttributes::runtime_function(
-                    "messages:send",
-                    RuntimeIsolationTier::InProcessUntrusted,
-                )
-                .with_invocation_id("invoke-1"),
-            )
-            .with_runtime_policy(
-                &context,
-                &policy,
-                RuntimeIsolationTier::InProcessUntrusted,
-                TenantIsolationMode::Production,
-            )
-            .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
-            .with_storage(TenantStoragePolicyDecision::namespace("tenant-a")),
-        )
-        .expect("decision should admit");
-    let binding =
-        LocalEnforcementBinding::from_decision(&decision).expect("binding should materialize");
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let scenario = AdmittedDecisionScenario::new()
+        .with_surface("system_tenant.workload_status.test")
+        .with_generation(3);
+    let context = scenario.context();
+    let binding = scenario.binding();
     let spec = binding.spec();
     let lifecycle = TenantWorkloadLifecycleEvidence::for_observed_unit(
         HostLifecycleBackendKind::SystemdTransientUnit,

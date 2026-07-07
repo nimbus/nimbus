@@ -6,6 +6,7 @@ mod repro;
 mod runtime_profiles;
 mod server_fixture;
 mod simulation;
+mod tenant_isolation_fixture;
 mod timing;
 mod websocket_fixture;
 
@@ -29,5 +30,6 @@ pub use simulation::{
     generated_task_history_seed_corpus, replay_generated_task_history,
     replay_generated_task_history_async, selected_generated_task_history_seed_corpus,
 };
+pub use tenant_isolation_fixture::{AdmittedDecisionScenario, principal_with_tenant_claim};
 pub use timing::{ci_or_local_duration, duration_ms_env_or, usize_env_or};
 pub use websocket_fixture::WebSocketFixture;

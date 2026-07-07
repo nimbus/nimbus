@@ -226,58 +226,21 @@ impl DirectProcessEvidence {
 
 #[cfg(test)]
 mod tests {
-    use nimbus_core::{PrincipalContext, TenantId};
-    use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
+    use nimbus_testing::AdmittedDecisionScenario;
 
     use super::*;
     use crate::{
         HostExecutable, HostLifecycleProperty, HostLifecyclePropertySet, HostLifecycleStatusReason,
         HostRestartPolicy, RuntimePoolTrustClass, TenantWorkloadPhase,
     };
-    use nimbus_tenant::{
-        RuntimeIsolationTier, TenantIsolationContext, TenantIsolationDecision, TenantIsolationMode,
-        TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision,
-        WorkloadAttributes, WorkloadLocation,
-    };
-
-    fn admitted_decision() -> TenantIsolationDecision {
-        let context = TenantIsolationContext::application(
-            TenantId::new("tenant-a").expect("tenant id should parse"),
-            PrincipalContext {
-                authenticated: true,
-                claims: serde_json::Map::from_iter([(
-                    "tenant_id".to_string(),
-                    serde_json::Value::String("tenant-a".to_string()),
-                )]),
-                verified_claims: serde_json::Map::new(),
-            },
-            "direct.process",
-        )
-        .with_deployment_generation(11)
-        .with_workload_location(WorkloadLocation::new().with_node_id("node-a"));
-        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
-        let workload = WorkloadAttributes::runtime_function(
-            "smoke:run",
-            RuntimeIsolationTier::InProcessUntrusted,
-        )
-        .with_invocation_id("invoke-direct");
-        let input = TenantIsolationPolicyInput::new(workload)
-            .with_runtime_policy(
-                &context,
-                &policy,
-                RuntimeIsolationTier::InProcessUntrusted,
-                TenantIsolationMode::Production,
-            )
-            .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
-            .with_storage(TenantStoragePolicyDecision::namespace("tenant-a"));
-        context
-            .admit_decision(input)
-            .expect("decision should admit")
-    }
 
     fn binding() -> LocalEnforcementBinding {
-        LocalEnforcementBinding::from_decision(&admitted_decision())
-            .expect("binding should materialize")
+        AdmittedDecisionScenario::new()
+            .with_surface("direct.process")
+            .with_generation(11)
+            .with_workload_name("smoke:run")
+            .with_invocation_id("invoke-direct")
+            .binding()
     }
 
     fn request() -> HostLifecycleRequest {

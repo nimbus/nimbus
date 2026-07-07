@@ -17,6 +17,8 @@ nimbus-runtime = { path = "../nimbus-runtime" }
 # providers so replay/drill lanes can exercise provider-backed tenant stores
 # without pulling engine/server ownership backedges into this crate.
 nimbus-storage = { path = "../nimbus-storage" }
+nimbus-tenant = { path = "../nimbus-tenant" }
+nimbus-workloads = { path = "../nimbus-workloads" }
 futures.workspace = true
 http.workspace = true
 reqwest.workspace = true
