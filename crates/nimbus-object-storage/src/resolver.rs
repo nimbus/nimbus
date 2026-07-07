@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use nimbus_blob::{
-    BlobStore, EncryptedBlobStore, LocalPackStore, ObjectStoreBlobStore, PlacementBlobStore,
-    PlacementMode,
+    BlobCloudConfig, BlobS3Credentials, BlobStore, EncryptedBlobStore, LocalPackStore,
+    ObjectStoreBlobStore, PlacementBlobStore, PlacementMode,
 };
 use nimbus_core::{Error, Result, StorageErrorKind, TenantId};
 use nimbus_crypto::{
@@ -161,23 +161,74 @@ impl ObjectStorageResolver {
         tenant: &TenantId,
         target: &ObjectStorePlacementTarget,
     ) -> Result<Arc<dyn BlobStore>> {
-        let store: Arc<dyn object_store::ObjectStore> = match target.provider {
-            ObjectStoreProviderKind::Memory => Arc::new(object_store::memory::InMemory::new()),
-            ObjectStoreProviderKind::Local => {
-                Arc::new(local_object_store(self.engine.data_dir(), target)?)
-            }
-            ObjectStoreProviderKind::S3 => Arc::new(self.s3_object_store(target)?),
-            ObjectStoreProviderKind::Gcs | ObjectStoreProviderKind::Azure => {
-                return Err(Error::InvalidInput(format!(
-                    "object placement provider {:?} is not enabled in this build; use s3, local, or memory",
-                    target.provider
-                )));
-            }
-        };
+        let config = self.blob_cloud_config(target)?;
+        let store = ObjectStoreBlobStore::from_cloud_config(config, target.prefix.as_str())?;
         Ok(Arc::new(EncryptedBlobStore::new(
-            ObjectStoreBlobStore::new(store, target.prefix.as_str()),
+            store,
             self.tenant_blob_key(tenant)?,
         )))
+    }
+
+    /// Turns policy config (env vars, secret-ref resolution, data-dir-relative
+    /// local roots) into the Nimbus-owned [`BlobCloudConfig`] `nimbus-blob`
+    /// accepts. All provider-selection and credential-resolution *policy*
+    /// stays here; `nimbus-blob` only owns the mechanical
+    /// `object_store::ObjectStore` construction (SR5).
+    fn blob_cloud_config(&self, target: &ObjectStorePlacementTarget) -> Result<BlobCloudConfig> {
+        match target.provider {
+            ObjectStoreProviderKind::Memory => Ok(BlobCloudConfig::Memory),
+            ObjectStoreProviderKind::Local => Ok(BlobCloudConfig::Local {
+                root: local_object_store_root(self.engine.data_dir(), target),
+            }),
+            ObjectStoreProviderKind::S3 => {
+                let (credentials, secret_ref_token) = self.blob_s3_credentials(target)?;
+                Ok(BlobCloudConfig::S3 {
+                    bucket: target.bucket.clone(),
+                    region: target.region.clone().or_else(env_region),
+                    endpoint: target.endpoint.clone().or_else(env_s3_endpoint),
+                    credentials,
+                    // `AWS_SESSION_TOKEN`, when set, overrides any token a
+                    // secret-ref credential carried.
+                    session_token: std::env::var("AWS_SESSION_TOKEN").ok().or(secret_ref_token),
+                })
+            }
+            ObjectStoreProviderKind::Gcs | ObjectStoreProviderKind::Azure => {
+                Err(Error::InvalidInput(format!(
+                    "object placement provider {:?} is not enabled in this build; use s3, local, or memory",
+                    target.provider
+                )))
+            }
+        }
+    }
+
+    /// Resolves S3 credentials plus any inline session token they carry.
+    fn blob_s3_credentials(
+        &self,
+        target: &ObjectStorePlacementTarget,
+    ) -> Result<(BlobS3Credentials, Option<String>)> {
+        match &target.credentials {
+            ObjectStoreProviderCredentials::Anonymous => Ok((BlobS3Credentials::Anonymous, None)),
+            ObjectStoreProviderCredentials::Environment => Ok((
+                BlobS3Credentials::Keys {
+                    access_key_id: required_env("AWS_ACCESS_KEY_ID", "S3 object placement")?,
+                    secret_access_key: required_env(
+                        "AWS_SECRET_ACCESS_KEY",
+                        "S3 object placement",
+                    )?,
+                },
+                None,
+            )),
+            ObjectStoreProviderCredentials::SecretRef { id } => {
+                let secret = self.credentials.resolve_object_store_secret(id)?;
+                Ok((
+                    BlobS3Credentials::Keys {
+                        access_key_id: secret.access_key_id,
+                        secret_access_key: secret.secret_access_key,
+                    },
+                    secret.session_token,
+                ))
+            }
+        }
     }
 
     fn tenant_blob_key(&self, tenant: &TenantId) -> Result<FramedBlobKey> {
@@ -210,49 +261,6 @@ impl ObjectStorageResolver {
         )?;
         Ok(FramedBlobKey::new(data_key))
     }
-
-    fn s3_object_store(
-        &self,
-        target: &ObjectStorePlacementTarget,
-    ) -> Result<object_store::aws::AmazonS3> {
-        let mut builder = object_store::aws::AmazonS3Builder::new()
-            .with_bucket_name(target.bucket.clone())
-            .with_virtual_hosted_style_request(false);
-        if let Some(region) = target.region.clone().or_else(env_region) {
-            builder = builder.with_region(region);
-        }
-        if let Some(endpoint) = target.endpoint.clone().or_else(env_s3_endpoint) {
-            builder = builder.with_endpoint(endpoint.clone());
-            if endpoint.starts_with("http://") {
-                builder = builder.with_allow_http(true);
-            }
-        }
-        builder = match &target.credentials {
-            ObjectStoreProviderCredentials::Anonymous => builder.with_skip_signature(true),
-            ObjectStoreProviderCredentials::Environment => builder
-                .with_access_key_id(required_env("AWS_ACCESS_KEY_ID", "S3 object placement")?)
-                .with_secret_access_key(required_env(
-                    "AWS_SECRET_ACCESS_KEY",
-                    "S3 object placement",
-                )?),
-            ObjectStoreProviderCredentials::SecretRef { id } => {
-                let secret = self.credentials.resolve_object_store_secret(id)?;
-                let mut builder = builder
-                    .with_access_key_id(secret.access_key_id)
-                    .with_secret_access_key(secret.secret_access_key);
-                if let Some(token) = secret.session_token {
-                    builder = builder.with_token(token);
-                }
-                builder
-            }
-        };
-        if let Ok(token) = std::env::var("AWS_SESSION_TOKEN") {
-            builder = builder.with_token(token);
-        }
-        builder
-            .build()
-            .map_err(|error| Error::InvalidInput(format!("build S3 object placement: {error}")))
-    }
 }
 
 /// Returns the local byte-plane root for one tenant under a deployment data dir.
@@ -270,27 +278,14 @@ pub fn object_blob_key_path(data_dir: &Path, tenant: &TenantId) -> PathBuf {
     object_blob_root(data_dir, tenant).join(BLOB_KEY_PROTECTED_NAME)
 }
 
-fn local_object_store(
-    data_dir: &Path,
-    target: &ObjectStorePlacementTarget,
-) -> Result<object_store::local::LocalFileSystem> {
-    let root = target
+/// Computes the local byte-plane root a `Local` placement target resolves to.
+/// `nimbus-blob`'s `from_cloud_config` is responsible for creating it.
+fn local_object_store_root(data_dir: &Path, target: &ObjectStorePlacementTarget) -> PathBuf {
+    target
         .endpoint
         .as_deref()
         .map(PathBuf::from)
-        .unwrap_or_else(|| data_dir.join("object-store-targets").join(&target.bucket));
-    std::fs::create_dir_all(&root).map_err(|error| {
-        Error::storage(
-            StorageErrorKind::Io,
-            format!("create local object_store root {}: {error}", root.display()),
-        )
-    })?;
-    object_store::local::LocalFileSystem::new_with_prefix(&root).map_err(|error| {
-        Error::storage(
-            StorageErrorKind::Io,
-            format!("open local object_store root {}: {error}", root.display()),
-        )
-    })
+        .unwrap_or_else(|| data_dir.join("object-store-targets").join(&target.bucket))
 }
 
 fn ensure_object_master_key_file(path: &Path) -> Result<()> {

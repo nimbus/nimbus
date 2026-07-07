@@ -1,13 +1,13 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write as _;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::StreamExt;
 use nimbus_blob::{BlobHash, BlobStore, MemoryBlobStore};
-use nimbus_core::{CommitEntry, Result, SequenceNumber, TenantId, Timestamp};
+use nimbus_core::{CommitEntry, Error, Result, SequenceNumber, TenantId, Timestamp};
 use nimbus_storage::{
     ObjectBlobLayout, ObjectChunkRef, ObjectManifest, ObjectManifestAttributes,
     ObjectMultipartUpload,
@@ -25,38 +25,103 @@ use crate::convex::{
     CONVEX_STORAGE_BUCKET, ConvexObjectStorage, ConvexStorageError, ConvexStorageId,
     DownloadTokenSigner,
 };
-use crate::{AccessKeyRegistry, NimbusS3, S3ObjectBackend};
+use crate::{
+    AccessKeyRegistry, NimbusS3, S3ObjectMeta, S3TenantBlobs, S3TenantObjects, S3TenantResolver,
+};
 
 const ACCESS_KEY_A: &str = "AKIATESTANTA";
 const ACCESS_KEY_B: &str = "AKIATESTANTB";
 const BUCKET: &str = "bucket";
 
+/// Shared mutable state behind [`InMemoryBackend`], held via `Arc` so a
+/// resolved [`InMemoryTenantMeta`] handle can outlive the `&self` call that
+/// created it without borrowing back from `InMemoryBackend` itself.
 #[derive(Default)]
-struct InMemoryBackend {
+struct Inner {
     blobs: Mutex<HashMap<TenantId, Arc<MemoryBlobStore>>>,
     manifests: Mutex<BTreeMap<(TenantId, String, String), ObjectManifest>>,
     uploads: Mutex<BTreeMap<(TenantId, String), ObjectMultipartUpload>>,
+    known_tenants: Mutex<HashSet<TenantId>>,
     fail_put_manifest: AtomicBool,
     fail_put_multipart_upload: AtomicBool,
+    /// Counts calls to [`InMemoryBlobs::resolve`], so tests can assert that
+    /// metadata-only operations never resolve (or create) blob-plane state.
+    blob_resolutions: AtomicUsize,
+}
+
+#[derive(Default)]
+struct InMemoryBackend {
+    inner: Arc<Inner>,
 }
 
 #[async_trait]
-impl S3ObjectBackend for InMemoryBackend {
+impl S3TenantResolver for InMemoryBackend {
+    async fn resolve(&self, tenant: &TenantId) -> Result<S3TenantObjects> {
+        if !self.inner.known_tenants.lock().unwrap().contains(tenant) {
+            return Err(Error::TenantNotFound(tenant.clone()));
+        }
+        let blobs = Arc::new(InMemoryBlobs {
+            tenant: tenant.clone(),
+            inner: self.inner.clone(),
+            resolved: tokio::sync::OnceCell::new(),
+        });
+        Ok(S3TenantObjects::new(blobs, self.meta(tenant)))
+    }
+
     async fn ensure_tenant(&self, tenant: &TenantId) -> Result<()> {
+        self.inner
+            .known_tenants
+            .lock()
+            .unwrap()
+            .insert(tenant.clone());
         self.store(tenant);
         Ok(())
     }
+}
 
+impl InMemoryBackend {
+    fn store(&self, tenant: &TenantId) -> Arc<MemoryBlobStore> {
+        self.inner
+            .blobs
+            .lock()
+            .unwrap()
+            .entry(tenant.clone())
+            .or_insert_with(|| Arc::new(MemoryBlobStore::new()))
+            .clone()
+    }
+
+    fn meta(&self, tenant: &TenantId) -> Arc<InMemoryTenantMeta> {
+        Arc::new(InMemoryTenantMeta {
+            tenant: tenant.clone(),
+            inner: self.inner.clone(),
+        })
+    }
+
+    /// Number of times a resolved [`S3TenantObjects`] for this backend has
+    /// had its lazy blob accessor actually invoked. Used to assert
+    /// metadata-only S3/Convex operations never touch the byte plane.
+    fn blob_resolutions(&self) -> usize {
+        self.inner.blob_resolutions.load(Ordering::SeqCst)
+    }
+
+    fn convex_manifest_keys(&self, tenant: &TenantId) -> Vec<String> {
+        self.inner
+            .manifests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|((entry_tenant, entry_bucket, _), manifest)| {
+                (entry_tenant == tenant && entry_bucket == CONVEX_STORAGE_BUCKET)
+                    .then_some(manifest.key.clone())
+            })
+            .collect()
+    }
+
+    // Test-setup conveniences mirroring what a resolved `S3TenantObjects`
+    // would offer, used by tests that poke tenant state directly (bypassing
+    // the `NimbusS3`/`ConvexObjectStorage` surfaces under test).
     async fn put_blob(&self, tenant: &TenantId, bytes: Bytes) -> Result<BlobHash> {
         self.store(tenant).put(bytes).await
-    }
-
-    async fn get_blob(&self, tenant: &TenantId, hash: &BlobHash) -> Result<Bytes> {
-        self.store(tenant).get(hash).await
-    }
-
-    async fn release_blob(&self, tenant: &TenantId, hash: &BlobHash) -> Result<()> {
-        self.store(tenant).release(hash).await
     }
 
     async fn put_manifest(
@@ -64,49 +129,7 @@ impl S3ObjectBackend for InMemoryBackend {
         tenant: &TenantId,
         manifest: ObjectManifest,
     ) -> Result<CommitEntry> {
-        if self.fail_put_manifest.load(Ordering::SeqCst) {
-            return Err(nimbus_core::Error::storage(
-                nimbus_core::StorageErrorKind::Unavailable,
-                "injected put_manifest failure",
-            ));
-        }
-        self.manifests.lock().unwrap().insert(
-            (
-                tenant.clone(),
-                manifest.bucket.clone(),
-                manifest.key.clone(),
-            ),
-            manifest,
-        );
-        Ok(commit())
-    }
-
-    async fn get_manifest(
-        &self,
-        tenant: &TenantId,
-        bucket: &str,
-        key: &str,
-    ) -> Result<Option<ObjectManifest>> {
-        Ok(self
-            .manifests
-            .lock()
-            .unwrap()
-            .get(&(tenant.clone(), bucket.to_string(), key.to_string()))
-            .cloned())
-    }
-
-    async fn delete_manifest(
-        &self,
-        tenant: &TenantId,
-        bucket: &str,
-        key: &str,
-    ) -> Result<Option<(CommitEntry, ObjectManifest)>> {
-        Ok(self
-            .manifests
-            .lock()
-            .unwrap()
-            .remove(&(tenant.clone(), bucket.to_string(), key.to_string()))
-            .map(|manifest| (commit(), manifest)))
+        self.meta(tenant).put_manifest(manifest).await
     }
 
     async fn list_manifests(
@@ -116,11 +139,108 @@ impl S3ObjectBackend for InMemoryBackend {
         prefix: &str,
         limit: usize,
     ) -> Result<Vec<ObjectManifest>> {
-        let manifests_guard = self.manifests.lock().unwrap();
+        self.meta(tenant)
+            .list_manifests(bucket, prefix, limit)
+            .await
+    }
+
+    async fn release_blob(&self, tenant: &TenantId, hash: &BlobHash) -> Result<()> {
+        self.store(tenant).release(hash).await
+    }
+}
+
+/// Lazy [`S3TenantBlobs`] handle for a resolved [`InMemoryBackend`] tenant.
+/// Resolution is deferred to [`resolve`](S3TenantBlobs::resolve) and
+/// memoized in `resolved`, mirroring how the real engine-backed resolver
+/// only opens per-tenant byte-plane state once a byte operation actually
+/// needs it, and only opens it once per request.
+struct InMemoryBlobs {
+    tenant: TenantId,
+    inner: Arc<Inner>,
+    resolved: tokio::sync::OnceCell<Arc<dyn BlobStore>>,
+}
+
+#[async_trait]
+impl S3TenantBlobs for InMemoryBlobs {
+    async fn resolve(&self) -> Result<Arc<dyn BlobStore>> {
+        self.resolved
+            .get_or_try_init(|| async {
+                self.inner.blob_resolutions.fetch_add(1, Ordering::SeqCst);
+                let store = self
+                    .inner
+                    .blobs
+                    .lock()
+                    .unwrap()
+                    .entry(self.tenant.clone())
+                    .or_insert_with(|| Arc::new(MemoryBlobStore::new()))
+                    .clone();
+                Ok::<Arc<dyn BlobStore>, Error>(store)
+            })
+            .await
+            .map(Arc::clone)
+    }
+}
+
+struct InMemoryTenantMeta {
+    tenant: TenantId,
+    inner: Arc<Inner>,
+}
+
+#[async_trait]
+impl S3ObjectMeta for InMemoryTenantMeta {
+    async fn put_manifest(&self, manifest: ObjectManifest) -> Result<CommitEntry> {
+        if self.inner.fail_put_manifest.load(Ordering::SeqCst) {
+            return Err(nimbus_core::Error::storage(
+                nimbus_core::StorageErrorKind::Unavailable,
+                "injected put_manifest failure",
+            ));
+        }
+        self.inner.manifests.lock().unwrap().insert(
+            (
+                self.tenant.clone(),
+                manifest.bucket.clone(),
+                manifest.key.clone(),
+            ),
+            manifest,
+        );
+        Ok(commit())
+    }
+
+    async fn get_manifest(&self, bucket: &str, key: &str) -> Result<Option<ObjectManifest>> {
+        Ok(self
+            .inner
+            .manifests
+            .lock()
+            .unwrap()
+            .get(&(self.tenant.clone(), bucket.to_string(), key.to_string()))
+            .cloned())
+    }
+
+    async fn delete_manifest(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<Option<(CommitEntry, ObjectManifest)>> {
+        Ok(self
+            .inner
+            .manifests
+            .lock()
+            .unwrap()
+            .remove(&(self.tenant.clone(), bucket.to_string(), key.to_string()))
+            .map(|manifest| (commit(), manifest)))
+    }
+
+    async fn list_manifests(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<ObjectManifest>> {
+        let manifests_guard = self.inner.manifests.lock().unwrap();
         let mut manifests = manifests_guard
             .iter()
             .filter_map(|((entry_tenant, entry_bucket, _), manifest)| {
-                (entry_tenant == tenant
+                (entry_tenant == &self.tenant
                     && entry_bucket == bucket
                     && manifest.key.starts_with(prefix))
                 .then_some(manifest.clone())
@@ -132,71 +252,64 @@ impl S3ObjectBackend for InMemoryBackend {
         Ok(manifests)
     }
 
-    async fn put_multipart_upload(
-        &self,
-        tenant: &TenantId,
-        upload: ObjectMultipartUpload,
-    ) -> Result<CommitEntry> {
-        if self.fail_put_multipart_upload.load(Ordering::SeqCst) {
+    async fn put_multipart_upload(&self, upload: ObjectMultipartUpload) -> Result<CommitEntry> {
+        if self.inner.fail_put_multipart_upload.load(Ordering::SeqCst) {
             return Err(nimbus_core::Error::storage(
                 nimbus_core::StorageErrorKind::Unavailable,
                 "injected put_multipart_upload failure",
             ));
         }
-        self.uploads
-            .lock()
-            .unwrap()
-            .insert((tenant.clone(), upload.upload_id.clone()), upload);
-        Ok(commit())
-    }
-
-    async fn get_multipart_upload(
-        &self,
-        tenant: &TenantId,
-        upload_id: &str,
-    ) -> Result<Option<ObjectMultipartUpload>> {
-        Ok(self
+        self.inner
             .uploads
             .lock()
             .unwrap()
-            .get(&(tenant.clone(), upload_id.to_string()))
+            .insert((self.tenant.clone(), upload.upload_id.clone()), upload);
+        Ok(commit())
+    }
+
+    async fn get_multipart_upload(&self, upload_id: &str) -> Result<Option<ObjectMultipartUpload>> {
+        Ok(self
+            .inner
+            .uploads
+            .lock()
+            .unwrap()
+            .get(&(self.tenant.clone(), upload_id.to_string()))
             .cloned())
     }
 
     async fn delete_multipart_upload(
         &self,
-        tenant: &TenantId,
         upload_id: &str,
     ) -> Result<Option<(CommitEntry, ObjectMultipartUpload)>> {
         Ok(self
+            .inner
             .uploads
             .lock()
             .unwrap()
-            .remove(&(tenant.clone(), upload_id.to_string()))
+            .remove(&(self.tenant.clone(), upload_id.to_string()))
             .map(|upload| (commit(), upload)))
     }
-}
 
-impl InMemoryBackend {
-    fn store(&self, tenant: &TenantId) -> Arc<MemoryBlobStore> {
-        self.blobs
-            .lock()
-            .unwrap()
-            .entry(tenant.clone())
-            .or_insert_with(|| Arc::new(MemoryBlobStore::new()))
-            .clone()
-    }
-
-    fn convex_manifest_keys(&self, tenant: &TenantId) -> Vec<String> {
-        self.manifests
-            .lock()
-            .unwrap()
+    async fn list_multipart_uploads(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<ObjectMultipartUpload>> {
+        let uploads_guard = self.inner.uploads.lock().unwrap();
+        let mut uploads = uploads_guard
             .iter()
-            .filter_map(|((entry_tenant, entry_bucket, _), manifest)| {
-                (entry_tenant == tenant && entry_bucket == CONVEX_STORAGE_BUCKET)
-                    .then_some(manifest.key.clone())
+            .filter_map(|((entry_tenant, _), upload)| {
+                (entry_tenant == &self.tenant
+                    && upload.bucket == bucket
+                    && upload.key.starts_with(prefix))
+                .then_some(upload.clone())
             })
-            .collect()
+            .collect::<Vec<_>>();
+        drop(uploads_guard);
+        uploads.sort_by(|left, right| left.upload_id.cmp(&right.upload_id));
+        uploads.truncate(limit);
+        Ok(uploads)
     }
 }
 
@@ -417,7 +530,10 @@ async fn overwriting_object_with_same_bytes_keeps_blob_readable() {
 async fn put_object_releases_new_blob_when_manifest_commit_fails() {
     let backend = Arc::new(InMemoryBackend::default());
     let service = service_with_backend(backend.clone());
-    backend.fail_put_manifest.store(true, Ordering::SeqCst);
+    backend
+        .inner
+        .fail_put_manifest
+        .store(true, Ordering::SeqCst);
 
     service
         .put_object(req(
@@ -859,6 +975,7 @@ async fn upload_part_releases_new_blob_when_upload_commit_fails() {
         .expect("create multipart should succeed");
     let upload_id = created.output.upload_id.expect("upload id");
     backend
+        .inner
         .fail_put_multipart_upload
         .store(true, Ordering::SeqCst);
 
@@ -1125,4 +1242,115 @@ async fn convex_import_zip_requires_content_type_extension_to_match_manifest() {
         ConvexStorageError::Archive(message)
             if message.contains("archive missing object bytes")
     ));
+}
+
+/// A read against a tenant that was never `ensure_tenant`'d must fail at
+/// [`S3TenantResolver::resolve`] time with the same error the old per-call
+/// facade produced on its first tenant-scoped storage call — it must not
+/// succeed on a resolve that silently creates the tenant, and it must not
+/// surface as an object-not-found error instead of a tenant-not-found error.
+#[tokio::test]
+async fn resolve_fails_closed_for_a_tenant_that_was_never_ensured() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let never_created = tenant("tenant-a");
+
+    let error = match backend.resolve(&never_created).await {
+        Ok(_) => panic!("resolve must not implicitly create an unensured tenant"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        Error::TenantNotFound(missing) if missing == never_created
+    ));
+
+    // The same failure must reach callers through the S3 surface: a GET
+    // against a tenant nobody has ever written through (so `ensure_tenant`
+    // was never called) fails at `resolve` inside `get_object`, before any
+    // manifest lookup runs.
+    let service = service_with_backend(backend.clone());
+    let get_error = service
+        .get_object(req(
+            GetObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "anything.txt".to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect_err("a request against a never-created tenant must fail at resolve");
+    assert_eq!(get_error.code(), &S3ErrorCode::InternalError);
+}
+
+/// HeadObject and ListObjectsV2 are metadata-only: they must be answerable
+/// from `ctx.meta` alone. Resolving (and thereby creating) per-tenant
+/// byte-plane state for these requests would be both a behavior regression
+/// (pre-existing deployments never required blob-plane credentials for
+/// these calls) and a tenant-safety hole (byte-plane state could be opened
+/// for a tenant outside of any `enter_operation` guard). Assert the lazy
+/// blob accessor is never invoked for either operation.
+#[tokio::test]
+async fn head_object_and_list_objects_v2_never_resolve_blob_plane_state() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let owner = tenant("tenant-a");
+    backend.ensure_tenant(&owner).await.expect("ensure tenant");
+    // `ensure_tenant` itself touches `store` directly (not through the lazy
+    // `S3TenantBlobs` accessor), so the resolution counter starts at zero.
+    assert_eq!(backend.blob_resolutions(), 0);
+
+    backend
+        .put_manifest(
+            &owner,
+            ObjectManifest::whole(
+                BUCKET.to_string(),
+                "docs/readme.txt".to_string(),
+                11,
+                BlobHash::of(b"hello world").to_hex(),
+                ObjectManifestAttributes::new("\"etag\"", 0),
+            )
+            .expect("manifest should build"),
+        )
+        .await
+        .expect("manifest write should succeed");
+    assert_eq!(
+        backend.blob_resolutions(),
+        0,
+        "writing manifest metadata directly must not touch the blob accessor"
+    );
+
+    let service = service_with_backend(backend.clone());
+
+    service
+        .head_object(req(
+            HeadObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "docs/readme.txt".to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("head should succeed from metadata alone");
+    assert_eq!(
+        backend.blob_resolutions(),
+        0,
+        "HeadObject must never resolve blob-plane state"
+    );
+
+    service
+        .list_objects_v2(req(
+            ListObjectsV2Input {
+                bucket: BUCKET.to_string(),
+                prefix: Some("docs/".to_string()),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("list should succeed from metadata alone");
+    assert_eq!(
+        backend.blob_resolutions(),
+        0,
+        "ListObjectsV2 must never resolve blob-plane state"
+    );
 }

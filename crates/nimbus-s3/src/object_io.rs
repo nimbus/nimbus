@@ -1,21 +1,16 @@
 use std::collections::BTreeSet;
 
 use bytes::Bytes;
-use nimbus_blob::BlobHash;
-use nimbus_core::{Error, Result, TenantId};
+use nimbus_blob::{BlobHash, BlobStore};
+use nimbus_core::{Error, Result};
 use nimbus_storage::{ObjectBlobLayout, ObjectManifest, ObjectMultipartUpload};
 
-use crate::backend::S3ObjectBackend;
-
 pub(crate) async fn read_manifest_bytes(
-    backend: &dyn S3ObjectBackend,
-    tenant: &TenantId,
+    blobs: &dyn BlobStore,
     manifest: &ObjectManifest,
 ) -> Result<Bytes> {
     match &manifest.blob_layout {
-        ObjectBlobLayout::Whole { blob_hash } => {
-            backend.get_blob(tenant, &parse_blob_hash(blob_hash)?).await
-        }
+        ObjectBlobLayout::Whole { blob_hash } => blobs.get(&parse_blob_hash(blob_hash)?).await,
         ObjectBlobLayout::Chunked { chunks } => {
             let mut out = Vec::with_capacity(manifest.size as usize);
             let mut expected_offset = 0_u64;
@@ -26,9 +21,7 @@ pub(crate) async fn read_manifest_bytes(
                         chunk.offset
                     )));
                 }
-                let bytes = backend
-                    .get_blob(tenant, &parse_blob_hash(&chunk.blob_hash)?)
-                    .await?;
+                let bytes = blobs.get(&parse_blob_hash(&chunk.blob_hash)?).await?;
                 if bytes.len() as u64 != chunk.len {
                     return Err(corrupt_manifest(format!(
                         "chunk at offset {} expected {} bytes but blob returned {} bytes",
@@ -54,16 +47,14 @@ pub(crate) async fn read_manifest_bytes(
 }
 
 pub(crate) async fn release_manifest_blobs(
-    backend: &dyn S3ObjectBackend,
-    tenant: &TenantId,
+    blobs: &dyn BlobStore,
     manifest: &ObjectManifest,
 ) -> Result<()> {
-    release_manifest_blobs_except(backend, tenant, manifest, None).await
+    release_manifest_blobs_except(blobs, manifest, None).await
 }
 
 pub(crate) async fn release_manifest_blobs_except(
-    backend: &dyn S3ObjectBackend,
-    tenant: &TenantId,
+    blobs: &dyn BlobStore,
     manifest: &ObjectManifest,
     retained: Option<&ObjectManifest>,
 ) -> Result<()> {
@@ -75,14 +66,14 @@ pub(crate) async fn release_manifest_blobs_except(
         ObjectBlobLayout::Whole { blob_hash } => {
             let hash = parse_blob_hash(blob_hash)?;
             if !retained.contains(&hash) {
-                backend.release_blob(tenant, &hash).await?;
+                blobs.release(&hash).await?;
             }
         }
         ObjectBlobLayout::Chunked { chunks } => {
             for chunk in chunks {
                 let hash = parse_blob_hash(&chunk.blob_hash)?;
                 if !retained.contains(&hash) {
-                    backend.release_blob(tenant, &hash).await?;
+                    blobs.release(&hash).await?;
                 }
             }
         }

@@ -5,8 +5,12 @@
 //! crate so operator config can inject S3/GCS/Azure/local object stores later.
 
 use std::ops::Range;
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use ::object_store::aws::AmazonS3Builder;
+use ::object_store::local::LocalFileSystem;
+use ::object_store::memory::InMemory;
 use ::object_store::path::Path as ObjectPath;
 use ::object_store::{ObjectStore, ObjectStoreExt};
 use async_trait::async_trait;
@@ -16,6 +20,47 @@ use tokio::io::AsyncReadExt;
 
 use crate::hash::BlobHash;
 use crate::store::{BlobStore, ByteStream};
+
+/// Nimbus-owned description of the cloud/object-store backend to build.
+///
+/// This is the only way external callers configure [`ObjectStoreBlobStore`];
+/// the third-party `object_store::ObjectStore` construction it wraps stays
+/// entirely inside this crate, gated behind the same features
+/// (`object_store`'s `aws`/`fs`) the workspace already enables. Variants are
+/// limited to what Nimbus actually builds today — GCS/Azure are not wired
+/// into any placement path yet, so they are not modeled here.
+#[derive(Clone, Debug)]
+pub enum BlobCloudConfig {
+    /// An in-process, non-durable store (tests and `Memory` placement).
+    Memory,
+    /// A filesystem-backed store rooted at `root` (auto-created if absent).
+    Local { root: PathBuf },
+    /// An S3-compatible store.
+    S3 {
+        bucket: String,
+        region: Option<String>,
+        /// A custom endpoint (e.g. an S3-compatible service). `http://`
+        /// endpoints implicitly allow plaintext HTTP.
+        endpoint: Option<String>,
+        credentials: BlobS3Credentials,
+        /// Applied after `credentials`, so it overrides any token carried by
+        /// [`BlobS3Credentials::Keys`] — mirrors the AWS CLI/SDK convention
+        /// that `AWS_SESSION_TOKEN` overrides a caller-supplied token.
+        session_token: Option<String>,
+    },
+}
+
+/// Credentials for [`BlobCloudConfig::S3`].
+#[derive(Clone, Debug)]
+pub enum BlobS3Credentials {
+    /// Unsigned requests (`skip_signature`).
+    Anonymous,
+    /// Static access key / secret key.
+    Keys {
+        access_key_id: String,
+        secret_access_key: String,
+    },
+}
 
 /// A [`BlobStore`] implementation backed by an `object_store::ObjectStore`.
 ///
@@ -29,8 +74,15 @@ pub struct ObjectStoreBlobStore {
 }
 
 impl ObjectStoreBlobStore {
+    /// Builds a cloud/object-store blob leg from a Nimbus-owned config,
+    /// keeping the third-party `object_store::ObjectStore` construction
+    /// (and its crate-specific feature gates) internal to this crate.
+    pub fn from_cloud_config(config: BlobCloudConfig, prefix: impl AsRef<str>) -> Result<Self> {
+        Ok(Self::new(build_cloud_store(config)?, prefix))
+    }
+
     /// Creates a cloud/object-store blob leg under `prefix`.
-    pub fn new(store: Arc<dyn ObjectStore>, prefix: impl AsRef<str>) -> Self {
+    pub(crate) fn new(store: Arc<dyn ObjectStore>, prefix: impl AsRef<str>) -> Self {
         let prefix_parts = prefix
             .as_ref()
             .split('/')
@@ -42,11 +94,6 @@ impl ObjectStoreBlobStore {
             store,
             prefix_parts,
         }
-    }
-
-    /// Creates a cloud/object-store blob leg at the store root.
-    pub fn at_root(store: Arc<dyn ObjectStore>) -> Self {
-        Self::new(store, "")
     }
 
     fn object_path(&self, hash: &BlobHash) -> ObjectPath {
@@ -194,6 +241,71 @@ fn verify_content_address(expected: &BlobHash, bytes: Bytes) -> Result<Bytes> {
     Ok(bytes)
 }
 
+/// Turns a [`BlobCloudConfig`] into the concrete `object_store::ObjectStore`
+/// it describes. This is the only place in the crate (and, after SR5, in the
+/// workspace) that constructs a third-party `object_store` backend directly.
+fn build_cloud_store(config: BlobCloudConfig) -> Result<Arc<dyn ObjectStore>> {
+    match config {
+        BlobCloudConfig::Memory => Ok(Arc::new(InMemory::new())),
+        BlobCloudConfig::Local { root } => {
+            std::fs::create_dir_all(&root).map_err(|err| {
+                Error::storage(
+                    StorageErrorKind::Io,
+                    format!("create local object_store root {}: {err}", root.display()),
+                )
+            })?;
+            let fs = LocalFileSystem::new_with_prefix(&root).map_err(|err| {
+                Error::storage(
+                    StorageErrorKind::Io,
+                    format!("open local object_store root {}: {err}", root.display()),
+                )
+            })?;
+            Ok(Arc::new(fs))
+        }
+        BlobCloudConfig::S3 {
+            bucket,
+            region,
+            endpoint,
+            credentials,
+            session_token,
+        } => {
+            let mut builder = AmazonS3Builder::new()
+                .with_bucket_name(bucket)
+                .with_virtual_hosted_style_request(false);
+            if let Some(region) = region {
+                builder = builder.with_region(region);
+            }
+            if let Some(endpoint) = endpoint {
+                let allow_http = endpoint.starts_with("http://");
+                builder = builder.with_endpoint(endpoint);
+                if allow_http {
+                    builder = builder.with_allow_http(true);
+                }
+            }
+            builder = match credentials {
+                BlobS3Credentials::Anonymous => builder.with_skip_signature(true),
+                BlobS3Credentials::Keys {
+                    access_key_id,
+                    secret_access_key,
+                } => builder
+                    .with_access_key_id(access_key_id)
+                    .with_secret_access_key(secret_access_key),
+            };
+            // Applied last, unconditionally, so it overrides any token a
+            // `Keys` credential might otherwise imply — mirrors the previous
+            // call-site behavior of always honoring an explicit session token
+            // as the final word.
+            if let Some(token) = session_token {
+                builder = builder.with_token(token);
+            }
+            let s3 = builder
+                .build()
+                .map_err(|err| Error::InvalidInput(format!("build S3 object store: {err}")))?;
+            Ok(Arc::new(s3))
+        }
+    }
+}
+
 fn map_object_error(err: ::object_store::Error, operation: &str, path: &ObjectPath) -> Error {
     match err {
         ::object_store::Error::NotFound { .. } => Error::NotFound(format!("blob object {path}")),
@@ -223,7 +335,6 @@ mod tests {
     use std::fmt;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use ::object_store::memory::InMemory;
     use ::object_store::path::Path;
     use ::object_store::{
         CopyOptions, GetOptions, GetResult, GetResultPayload, ListResult, MultipartUpload,
@@ -427,5 +538,83 @@ mod tests {
 
         let err = store.get_range(&hash, 0..4).await.unwrap_err();
         assert!(matches!(err, Error::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn from_cloud_config_memory_round_trips() {
+        let store =
+            ObjectStoreBlobStore::from_cloud_config(BlobCloudConfig::Memory, "tenant-a").unwrap();
+
+        let hash = store
+            .put(Bytes::from_static(b"memory config bytes"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store.get(&hash).await.unwrap(),
+            Bytes::from_static(b"memory config bytes")
+        );
+    }
+
+    #[tokio::test]
+    async fn from_cloud_config_local_creates_root_and_round_trips() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("nested").join("object-store-root");
+        assert!(!root.exists(), "test root must not pre-exist");
+
+        let store = ObjectStoreBlobStore::from_cloud_config(
+            BlobCloudConfig::Local { root: root.clone() },
+            "tenant-a",
+        )
+        .unwrap();
+
+        assert!(
+            root.exists(),
+            "from_cloud_config must auto-create the local object_store root"
+        );
+
+        let hash = store
+            .put(Bytes::from_static(b"local config bytes"))
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get(&hash).await.unwrap(),
+            Bytes::from_static(b"local config bytes")
+        );
+    }
+
+    #[test]
+    fn from_cloud_config_s3_builds_with_anonymous_credentials() {
+        let result = ObjectStoreBlobStore::from_cloud_config(
+            BlobCloudConfig::S3 {
+                bucket: "test-bucket".to_string(),
+                region: Some("us-east-1".to_string()),
+                endpoint: Some("http://localhost:9000".to_string()),
+                credentials: BlobS3Credentials::Anonymous,
+                session_token: None,
+            },
+            "",
+        );
+
+        assert!(result.is_ok(), "{:?}", result.err());
+    }
+
+    #[test]
+    fn from_cloud_config_s3_builds_with_static_keys_and_session_token() {
+        let result = ObjectStoreBlobStore::from_cloud_config(
+            BlobCloudConfig::S3 {
+                bucket: "test-bucket".to_string(),
+                region: None,
+                endpoint: None,
+                credentials: BlobS3Credentials::Keys {
+                    access_key_id: "AKIAEXAMPLE".to_string(),
+                    secret_access_key: "secret".to_string(),
+                },
+                session_token: Some("session-token".to_string()),
+            },
+            "",
+        );
+
+        assert!(result.is_ok(), "{:?}", result.err());
     }
 }

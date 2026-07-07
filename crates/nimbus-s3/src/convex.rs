@@ -21,7 +21,7 @@ use sha2::Sha256;
 use zip::CompressionMethod;
 use zip::write::SimpleFileOptions;
 
-use crate::backend::S3ObjectBackend;
+use crate::backend::{S3TenantObjects, S3TenantResolver};
 use crate::checksum::ComputedChecksums;
 use crate::object_io::{
     read_manifest_bytes, release_manifest_blobs, release_manifest_blobs_except,
@@ -276,13 +276,13 @@ impl DownloadTokenSigner {
 
 #[derive(Clone)]
 pub struct ConvexObjectStorage {
-    backend: Arc<dyn S3ObjectBackend>,
+    resolver: Arc<dyn S3TenantResolver>,
 }
 
 impl ConvexObjectStorage {
     #[must_use]
-    pub fn new(backend: Arc<dyn S3ObjectBackend>) -> Self {
-        Self { backend }
+    pub fn new(resolver: Arc<dyn S3TenantResolver>) -> Self {
+        Self { resolver }
     }
 
     pub async fn store(
@@ -306,11 +306,13 @@ impl ConvexObjectStorage {
         creation_time_millis: u64,
         update_time_millis: u64,
     ) -> ConvexStorageResult<ConvexStorageMetadata> {
-        self.backend.ensure_tenant(tenant).await?;
-        let previous = self.manifest_for_storage_id(tenant, id).await?;
+        self.resolver.ensure_tenant(tenant).await?;
+        let ctx = self.resolver.resolve(tenant).await?;
+        let previous = self.manifest_for_storage_id(&ctx, id).await?;
         let byte_len = bytes.len() as u64;
         let computed = ComputedChecksums::for_bytes(&bytes);
-        let hash = self.backend.put_blob(tenant, bytes).await?;
+        let blobs = ctx.blobs().await?;
+        let hash = blobs.put(bytes).await?;
         let mut attributes =
             ObjectManifestAttributes::new(computed.md5_hex.clone(), update_time_millis);
         attributes.content_type = content_type.clone();
@@ -328,21 +330,15 @@ impl ConvexObjectStorage {
             hash.to_hex(),
             attributes,
         )?;
-        self.backend.put_manifest(tenant, manifest.clone()).await?;
+        ctx.meta.put_manifest(manifest.clone()).await?;
         if let Some(previous) = previous
-            && self
-                .backend
-                .delete_manifest(tenant, &previous.bucket, &previous.key)
+            && ctx
+                .meta
+                .delete_manifest(&previous.bucket, &previous.key)
                 .await?
                 .is_some()
         {
-            release_manifest_blobs_except(
-                self.backend.as_ref(),
-                tenant,
-                &previous,
-                Some(&manifest),
-            )
-            .await?;
+            release_manifest_blobs_except(blobs.as_ref(), &previous, Some(&manifest)).await?;
         }
         metadata_from_manifest(&manifest)?.ok_or_else(|| {
             ConvexStorageError::Core(Error::Internal(
@@ -356,8 +352,9 @@ impl ConvexObjectStorage {
         tenant: &TenantId,
         id: &ConvexStorageId,
     ) -> ConvexStorageResult<Option<ConvexStorageMetadata>> {
+        let ctx = self.resolver.resolve(tenant).await?;
         Ok(self
-            .manifest_for_storage_id(tenant, id)
+            .manifest_for_storage_id(&ctx, id)
             .await?
             .as_ref()
             .map(metadata_from_manifest)
@@ -370,7 +367,8 @@ impl ConvexObjectStorage {
         tenant: &TenantId,
         id: &ConvexStorageId,
     ) -> ConvexStorageResult<Option<ConvexStoredObject>> {
-        let Some(manifest) = self.manifest_for_storage_id(tenant, id).await? else {
+        let ctx = self.resolver.resolve(tenant).await?;
+        let Some(manifest) = self.manifest_for_storage_id(&ctx, id).await? else {
             return Ok(None);
         };
         let metadata = metadata_from_manifest(&manifest)?.ok_or_else(|| {
@@ -378,7 +376,8 @@ impl ConvexObjectStorage {
                 "Convex storage manifest missing virtual metadata".to_string(),
             ))
         })?;
-        let bytes = read_manifest_bytes(self.backend.as_ref(), tenant, &manifest).await?;
+        let blobs = ctx.blobs().await?;
+        let bytes = read_manifest_bytes(blobs.as_ref(), &manifest).await?;
         Ok(Some(ConvexStoredObject { metadata, bytes }))
     }
 
@@ -387,16 +386,18 @@ impl ConvexObjectStorage {
         tenant: &TenantId,
         id: &ConvexStorageId,
     ) -> ConvexStorageResult<bool> {
-        let Some(manifest) = self.manifest_for_storage_id(tenant, id).await? else {
+        let ctx = self.resolver.resolve(tenant).await?;
+        let Some(manifest) = self.manifest_for_storage_id(&ctx, id).await? else {
             return Ok(false);
         };
-        if self
-            .backend
-            .delete_manifest(tenant, &manifest.bucket, &manifest.key)
+        if ctx
+            .meta
+            .delete_manifest(&manifest.bucket, &manifest.key)
             .await?
             .is_some()
         {
-            release_manifest_blobs(self.backend.as_ref(), tenant, &manifest).await?;
+            let blobs = ctx.blobs().await?;
+            release_manifest_blobs(blobs.as_ref(), &manifest).await?;
             Ok(true)
         } else {
             Ok(false)
@@ -410,8 +411,9 @@ impl ConvexObjectStorage {
         now_millis: u64,
     ) -> ConvexStorageResult<ConvexStoredObject> {
         let verified = signer.verify(token, now_millis)?;
+        let ctx = self.resolver.resolve(&verified.tenant).await?;
         let Some(manifest) = self
-            .manifest_for_storage_id(&verified.tenant, &verified.storage_id)
+            .manifest_for_storage_id(&ctx, &verified.storage_id)
             .await?
         else {
             return Err(ConvexStorageError::MissingObject);
@@ -421,7 +423,8 @@ impl ConvexObjectStorage {
                 "Convex storage manifest missing virtual metadata".to_string(),
             ))
         })?;
-        let bytes = read_manifest_bytes(self.backend.as_ref(), &verified.tenant, &manifest)
+        let blobs = ctx.blobs().await?;
+        let bytes = read_manifest_bytes(blobs.as_ref(), &manifest)
             .await
             .map_err(|error| match error {
                 Error::NotFound(_) => ConvexStorageError::Forbidden(
@@ -433,9 +436,10 @@ impl ConvexObjectStorage {
     }
 
     pub async fn export_zip(&self, tenant: &TenantId) -> ConvexStorageResult<Bytes> {
-        let raw_manifests = self
-            .backend
-            .list_manifests(tenant, CONVEX_STORAGE_BUCKET, "", usize::MAX)
+        let ctx = self.resolver.resolve(tenant).await?;
+        let raw_manifests = ctx
+            .meta
+            .list_manifests(CONVEX_STORAGE_BUCKET, "", usize::MAX)
             .await?;
         let mut manifests = Vec::new();
         for manifest in raw_manifests {
@@ -450,8 +454,9 @@ impl ConvexObjectStorage {
         let mut writer = zip::ZipWriter::new(cursor);
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
+        let blobs = ctx.blobs().await?;
         for (metadata, manifest) in manifests {
-            let object = read_manifest_bytes(self.backend.as_ref(), tenant, &manifest).await?;
+            let object = read_manifest_bytes(blobs.as_ref(), &manifest).await?;
             let document = metadata.to_virtual_document();
             documents.push_str(
                 &serde_json::to_string(&document)
@@ -525,12 +530,12 @@ impl ConvexObjectStorage {
 
     async fn manifest_for_storage_id(
         &self,
-        tenant: &TenantId,
+        ctx: &S3TenantObjects,
         id: &ConvexStorageId,
     ) -> ConvexStorageResult<Option<ObjectManifest>> {
-        let manifests = self
-            .backend
-            .list_manifests(tenant, CONVEX_STORAGE_BUCKET, "", usize::MAX)
+        let manifests = ctx
+            .meta
+            .list_manifests(CONVEX_STORAGE_BUCKET, "", usize::MAX)
             .await?;
         Ok(manifests
             .into_iter()

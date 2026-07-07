@@ -15,6 +15,7 @@ pub use engine::{
     AsyncMutationContext, CommittedMutationEvent, CommittedMutationObserver, EncryptionStatus,
     Engine, InitializedKeyProvider, MutationActor, MutationExecutionUnit, SubscribeOptions,
     SubscriptionBootstrapCancellation, TableSchemaChangeEvent, TableSchemaChangeObserver,
+    TenantObjectMeta,
 };
 pub use evaluator::{
     encode_cursor, evaluate_paginated, evaluate_paginated_with_docs, evaluate_query,
@@ -50,6 +51,7 @@ pub use tenant::{
     MaterializedReadSurfaceStats, MutationAdmissionPhase, MutationAdmissionStats,
     MutationJournalStats, PinnedServingReadSnapshot, QueryPlanningStats,
     ServingSnapshotManagerStats, SubscriptionDeliveryStats, TenantEngineDiagnosticsSnapshot,
+    TenantOperationGuard,
 };
 pub use triggers::{
     TriggerInvocationExecution, TriggerInvocationExecutor, TriggerLookupMatch, TriggerRegistration,
