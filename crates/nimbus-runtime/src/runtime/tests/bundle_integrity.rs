@@ -44,7 +44,11 @@ export {};
     limits.initial_heap_mb = 16;
     limits.execution_timeout = std::time::Duration::from_secs(2);
     limits.max_concurrent_runtime_instances = 1;
-    let runtime = NimbusRuntime::with_limits(Arc::new(RecordingHost::default()), limits);
+    let runtime = NimbusRuntime::with_limits(
+        Arc::new(RecordingHost::default()),
+        limits,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let error = runtime
         .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
@@ -95,6 +99,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let error = runtime
         .invoke_bundle_for_tenant(
@@ -154,6 +159,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::with_expected_sha256(&bundle_path, expected_sha256)
         .expect("bundle integrity metadata should build");
@@ -320,6 +326,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = InvocationRequest {
@@ -401,6 +408,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = InvocationRequest {
@@ -648,6 +656,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let request = InvocationRequest {
         kind: InvocationKind::Query,
@@ -747,6 +756,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         product_default_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let request = InvocationRequest {
         kind: InvocationKind::Query,
@@ -847,6 +857,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let request = InvocationRequest {
         kind: InvocationKind::Query,

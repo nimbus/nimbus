@@ -45,6 +45,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(AsyncOnlyHost),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -116,6 +117,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -225,6 +227,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -331,6 +334,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -387,6 +391,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -485,6 +490,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_policy_with_secret_and_identity_grants(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -540,6 +546,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -627,6 +634,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         run_to_completion_policy_with_service_grant("db"),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let error = runtime
         .invoke_bundle_for_tenant(
@@ -730,6 +738,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         run_to_completion_policy_with_native_service_grant("db"),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -836,6 +845,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         run_to_completion_policy_with_native_service_grant("db"),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let error = runtime
         .invoke_bundle_for_tenant(
@@ -897,6 +907,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -970,6 +981,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -1074,6 +1086,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -1131,6 +1144,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -1216,8 +1230,11 @@ export {};
     .expect("bundle should write");
 
     let host = Arc::new(PaginateContinuationHost);
-    let runtime =
-        NimbusRuntime::with_policy(host, run_to_completion_snapshot_runtime_test_policy());
+    let runtime = NimbusRuntime::with_policy(
+        host,
+        run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let result = runtime
         .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
@@ -1278,6 +1295,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -1351,6 +1369,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(

@@ -95,7 +95,11 @@ async fn permit_suspend_frees_capacity() {
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     slow_request,
                     context,
@@ -110,7 +114,11 @@ async fn permit_suspend_frees_capacity() {
     let fast_result = tokio::time::timeout(
         Duration::from_secs(1),
         executor.invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy.clone()),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             bundle.clone(),
             fast_request.clone(),
             test_context_for_tenant(&fast_request, "tenant-b", "req-permit-fast"),
@@ -173,7 +181,11 @@ async fn host_pressure_reduces_runtime_dispatch_seats_before_tenant_quota_exhaus
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     slow_a,
                     context,
@@ -194,7 +206,11 @@ async fn host_pressure_reduces_runtime_dispatch_seats_before_tenant_quota_exhaus
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     slow_b,
                     context,
@@ -215,7 +231,11 @@ async fn host_pressure_reduces_runtime_dispatch_seats_before_tenant_quota_exhaus
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     queued,
                     context,
@@ -287,7 +307,11 @@ async fn host_pressure_queue_promotion_respects_effective_dispatch_seats() {
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     first_request,
                     context,
@@ -308,7 +332,11 @@ async fn host_pressure_queue_promotion_respects_effective_dispatch_seats() {
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     second_request,
                     context,
@@ -328,7 +356,11 @@ async fn host_pressure_queue_promotion_respects_effective_dispatch_seats() {
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     third_request,
                     context,
@@ -404,7 +436,11 @@ async fn host_pressure_sheds_burstable_work_under_critical_pressure() {
 
     let error = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy.clone()),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             bundle,
             request.clone(),
             test_context_for_tenant(&request, "tenant-a", "req-host-pressure-shed"),
@@ -460,7 +496,11 @@ async fn parked_invocation_resumes_after_host_completion() {
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     request,
                     context,
@@ -510,7 +550,11 @@ async fn parked_invocation_counts_toward_in_flight_limit() {
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     first_request,
                     context,
@@ -531,7 +575,11 @@ async fn parked_invocation_counts_toward_in_flight_limit() {
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     second_request,
                     context,
@@ -552,7 +600,11 @@ async fn parked_invocation_counts_toward_in_flight_limit() {
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     third_request,
                     context,
@@ -616,7 +668,11 @@ async fn timeout_excludes_permit_reacquire_wait() {
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(parked_host, policy),
+                    NimbusRuntime::with_policy(
+                        parked_host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     async_bundle,
                     slow_request,
                     context,
@@ -642,7 +698,11 @@ async fn timeout_excludes_permit_reacquire_wait() {
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(blocker_host, policy),
+                    NimbusRuntime::with_policy(
+                        blocker_host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     sync_bundle,
                     blocker_request,
                     context,
@@ -699,7 +759,11 @@ pub(crate) async fn tenant_queue_limit_rejections_record_metrics_inner() {
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     slow_request,
                     context,
@@ -720,7 +784,11 @@ pub(crate) async fn tenant_queue_limit_rejections_record_metrics_inner() {
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     queued_request,
                     context,
@@ -735,7 +803,11 @@ pub(crate) async fn tenant_queue_limit_rejections_record_metrics_inner() {
     let rejected_request = test_request("slow-3");
     let error = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy.clone()),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             bundle.clone(),
             rejected_request.clone(),
             test_context_for_tenant(&rejected_request, "tenant-a", "req-slow-3"),
@@ -822,7 +894,11 @@ pub(crate) async fn tenant_fairness_prevents_one_tenant_from_starving_another_in
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     slow_request,
                     context,
@@ -843,7 +919,11 @@ pub(crate) async fn tenant_fairness_prevents_one_tenant_from_starving_another_in
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     queued_request,
                     context,
@@ -859,7 +939,11 @@ pub(crate) async fn tenant_fairness_prevents_one_tenant_from_starving_another_in
     let fast_result = tokio::time::timeout(
         Duration::from_secs(1),
         executor.invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy.clone()),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             bundle.clone(),
             fast_request.clone(),
             test_context_for_tenant(&fast_request, "tenant-b", "req-tenant-b-1"),

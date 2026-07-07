@@ -146,6 +146,7 @@ globalThis.__nimbusInvoke = async function(request) {
     let v8_runtime = NimbusRuntime::with_policy(
         Arc::new(NoopHost),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_web_standard())),
+        nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
     );
     let v8_request = |body: &str| InvocationRequest {
         kind: InvocationKind::Query,
@@ -171,6 +172,7 @@ globalThis.__nimbusInvoke = async function(request) {
     let bun_runtime = NimbusRuntime::with_policy(
         Arc::new(NoopHost),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_bun_jsc())),
+        nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
     );
     let bun_request = InvocationRequest {
         kind: InvocationKind::Query,
@@ -234,6 +236,7 @@ globalThis.__nimbusInvoke = async function(request) {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(NoopHost),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_bun_jsc())),
+        nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
     );
     let request = InvocationRequest {
         kind: InvocationKind::Query,
@@ -287,6 +290,7 @@ globalThis.__nimbusInvoke = async function(request) {
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_bun_jsc())),
+        nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
     );
     let request = InvocationRequest {
         kind: InvocationKind::Mutation,
@@ -357,6 +361,7 @@ globalThis.__nimbusInvoke = async function() {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::new(RecordingHostPolicy::DenyAll)),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_bun_jsc())),
+        nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
     );
     let request = InvocationRequest {
         kind: InvocationKind::Mutation,
@@ -415,6 +420,7 @@ globalThis.__nimbusInvoke = async function() {
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_bun_jsc())),
+        nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
     );
     let request = InvocationRequest {
         kind: InvocationKind::Mutation,
@@ -480,6 +486,7 @@ globalThis.__nimbusInvoke = async function() {
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_bun_jsc())),
+        nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
     );
     let request = InvocationRequest {
         kind: InvocationKind::Mutation,
@@ -528,6 +535,7 @@ globalThis.__nimbusInvoke = async function(request) {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(NoopHost),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_bun_jsc())),
+        nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
     );
     let request = InvocationRequest {
         kind: InvocationKind::Query,
@@ -568,6 +576,7 @@ globalThis.__nimbusInvoke = async function() {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(NoopHost),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_bun_jsc())),
+        nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
     );
     let request = InvocationRequest {
         kind: InvocationKind::Query,

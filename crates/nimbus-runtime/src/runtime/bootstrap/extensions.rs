@@ -361,10 +361,10 @@ fn nimbus_fetch_egress_gateway_hook(
     state: &mut deno_core::OpState,
     request: deno_fetch::FetchEgressGatewayRequest<'_>,
 ) -> Result<deno_fetch::FetchEgressGatewayAuthorization, JsErrorBox> {
-    let binding = state
-        .try_borrow::<InstalledRuntimeEgressGateway>()
-        .map(|installed| installed.binding.clone())
-        .unwrap_or(RuntimeEgressGatewayBinding::Missing);
+    let Some(installed) = state.try_borrow::<InstalledRuntimeEgressGateway>() else {
+        return Err(JsErrorBox::generic("fetch egress gateway is not installed"));
+    };
+    let binding = installed.binding.clone();
     match binding {
         RuntimeEgressGatewayBinding::CoarsePermissions => state
             .borrow_mut::<PermissionsContainer>()
@@ -405,9 +405,6 @@ fn nimbus_fetch_egress_gateway_hook(
                 }
                 Err(reason) => Err(JsErrorBox::generic(reason)),
             }
-        }
-        RuntimeEgressGatewayBinding::Missing => {
-            Err(JsErrorBox::generic("fetch egress gateway is not installed"))
         }
     }
 }

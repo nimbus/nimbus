@@ -272,6 +272,7 @@ async fn invoke_probe(limits: RuntimeLimits) -> Value {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     runtime
         .invoke_bundle_for_tenant(
@@ -363,6 +364,7 @@ async fn pir3_node_worker_thread_side_channel_surface_is_hardened_inner() {
         Arc::new(RuntimePolicy::new(
             RuntimeLimits::application_node22_local_development(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(

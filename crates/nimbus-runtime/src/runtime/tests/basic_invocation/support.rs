@@ -405,6 +405,7 @@ pub(super) async fn run_application_networking_canary_bundle(
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(limits),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     runtime
         .invoke_bundle_for_tenant(
@@ -435,6 +436,7 @@ pub(super) async fn run_application_sdk_canary_bundle(
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(limits),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     runtime
         .invoke_bundle_for_tenant(
@@ -463,6 +465,7 @@ pub(super) async fn run_application_host_heavy_canary_bundle(
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(limits),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     runtime
         .invoke_bundle_for_tenant(
@@ -493,6 +496,7 @@ pub(super) async fn run_tooling_canary_bundle(
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(limits),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     runtime
         .invoke_bundle_for_tenant(

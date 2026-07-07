@@ -473,7 +473,11 @@ fn build_runtime_with_config(
     limits.max_warm_reuses = 1_000_000;
     configure(&mut limits);
     let policy = Arc::new(RuntimePolicy::new(limits));
-    let runtime = NimbusRuntime::with_policy(host, policy.clone());
+    let runtime = NimbusRuntime::with_policy(
+        host,
+        policy.clone(),
+        nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
+    );
     let executor = RuntimeExecutor::new(policy);
     (runtime, executor)
 }
@@ -1151,7 +1155,11 @@ impl RetainedDensityScenario {
         limits.max_warm_reuses = 1_000_000;
         let max_heap_mb = limits.max_heap_mb;
         let policy = Arc::new(RuntimePolicy::new(limits));
-        let runtime = NimbusRuntime::with_policy(Arc::new(NoopHost), policy.clone());
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(NoopHost),
+            policy.clone(),
+            nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
+        );
         let executor = RuntimeExecutor::new(policy);
         Self {
             _tempdir: tempdir,

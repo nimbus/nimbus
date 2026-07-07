@@ -40,7 +40,11 @@ export {};
 
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.execution_timeout = std::time::Duration::from_millis(50);
-    let runtime = NimbusRuntime::with_limits(Arc::new(RecordingHost::default()), limits);
+    let runtime = NimbusRuntime::with_limits(
+        Arc::new(RecordingHost::default()),
+        limits,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let error = runtime
         .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
@@ -85,7 +89,11 @@ export {};
 
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.execution_timeout = std::time::Duration::from_secs(5);
-    let runtime = NimbusRuntime::with_limits(Arc::new(RecordingHost::default()), limits);
+    let runtime = NimbusRuntime::with_limits(
+        Arc::new(RecordingHost::default()),
+        limits,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let cancellation = HostCallCancellation::default();
     let cancellation_clone = cancellation.clone();
     std::thread::spawn(move || {
@@ -140,6 +148,7 @@ export {};
             delay: std::time::Duration::from_millis(200),
         }),
         limits,
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -188,6 +197,7 @@ export {};
             delay: std::time::Duration::from_millis(200),
         }),
         limits,
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let error = runtime
         .invoke_bundle_for_tenant(
@@ -240,7 +250,11 @@ export {};
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.execution_timeout = std::time::Duration::from_millis(50);
     limits.system_timeout = std::time::Duration::from_secs(1);
-    let runtime = NimbusRuntime::with_limits(Arc::new(FailingAsyncEnvelopeHost), limits);
+    let runtime = NimbusRuntime::with_limits(
+        Arc::new(FailingAsyncEnvelopeHost),
+        limits,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let error = tokio::time::timeout(
         std::time::Duration::from_secs(2),
         runtime.invoke_bundle_for_tenant(
@@ -296,7 +310,11 @@ export {};
     let host = Arc::new(CountingDelayedAsyncEnvelopeHost::new(
         std::time::Duration::from_millis(10),
     ));
-    let runtime = NimbusRuntime::with_limits(host.clone(), limits);
+    let runtime = NimbusRuntime::with_limits(
+        host.clone(),
+        limits,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let result = runtime
         .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
@@ -346,7 +364,11 @@ export {};
     let host = Arc::new(CountingDelayedAsyncEnvelopeHost::new(
         std::time::Duration::from_millis(120),
     ));
-    let runtime = NimbusRuntime::with_limits(host.clone(), limits);
+    let runtime = NimbusRuntime::with_limits(
+        host.clone(),
+        limits,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let result = runtime
         .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
@@ -395,7 +417,11 @@ export {};
     let host = Arc::new(CountingDelayedAsyncEnvelopeHost::new(
         std::time::Duration::from_millis(200),
     ));
-    let runtime = NimbusRuntime::with_limits(host.clone(), limits);
+    let runtime = NimbusRuntime::with_limits(
+        host.clone(),
+        limits,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let error = runtime
         .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
@@ -443,7 +469,11 @@ export {};
     let mut limits = run_to_completion_snapshot_runtime_test_limits();
     limits.execution_timeout = std::time::Duration::from_secs(1);
     limits.system_timeout = std::time::Duration::from_millis(300);
-    let runtime = NimbusRuntime::with_limits(Arc::new(RecordingHost::default()), limits);
+    let runtime = NimbusRuntime::with_limits(
+        Arc::new(RecordingHost::default()),
+        limits,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let error = runtime
         .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
@@ -496,7 +526,11 @@ export {};
     let host = Arc::new(CountingDelayedAsyncEnvelopeHost::new(
         std::time::Duration::from_millis(10),
     ));
-    let runtime = NimbusRuntime::with_limits(host.clone(), limits);
+    let runtime = NimbusRuntime::with_limits(
+        host.clone(),
+        limits,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let result = runtime
         .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),

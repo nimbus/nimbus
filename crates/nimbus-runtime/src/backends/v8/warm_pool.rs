@@ -493,7 +493,11 @@ mod tests {
     }
 
     fn runtime_owner_for_limits(limits: RuntimeLimits) -> NimbusRuntime {
-        NimbusRuntime::with_policy(Arc::new(RejectHost), Arc::new(RuntimePolicy::new(limits)))
+        NimbusRuntime::with_policy(
+            Arc::new(RejectHost),
+            Arc::new(RuntimePolicy::new(limits)),
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        )
     }
 
     fn context_recycle_limits() -> RuntimeLimits {

@@ -39,7 +39,11 @@ async fn cooperative_execution_model_processes_worker_invocations() {
 
     let first_result = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy.clone()),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             test_context(&request, "req-cooperative-1"),
@@ -49,7 +53,11 @@ async fn cooperative_execution_model_processes_worker_invocations() {
         .expect("first cooperative worker invocation should succeed");
     let second_result = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host, policy.clone()),
+            NimbusRuntime::with_policy(
+                host,
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             test_context(&request, "req-cooperative-2"),
@@ -89,7 +97,11 @@ async fn cooperative_execution_model_resumes_parked_invocations_after_host_compl
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     request,
                     context,
@@ -148,7 +160,11 @@ async fn cooperative_execution_model_cancels_parked_invocations_on_shutdown() {
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     request,
                     context,
@@ -207,7 +223,11 @@ async fn pir4_response_ready_returns_before_wait_until_background_completion() {
     let response_ready = tokio::time::timeout(
         Duration::from_secs(1),
         executor.invoke_on_worker_response_ready(
-            NimbusRuntime::with_policy(host.clone(), policy),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy,
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             bundle,
             request.clone(),
             test_context_for_tenant(&request, "tenant-a", "req-pir4-response-ready"),
@@ -280,7 +300,11 @@ async fn response_ready_completion_reports_rejected_wait_until_background_work_i
 
     let response_ready = executor
         .invoke_on_worker_response_ready(
-            NimbusRuntime::with_policy(host, policy),
+            NimbusRuntime::with_policy(
+                host,
+                policy,
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             bundle,
             request.clone(),
             test_context_for_tenant(&request, "tenant-a", "req-rejected-wait-until"),
@@ -354,7 +378,11 @@ async fn cooperative_execution_model_startup_snapshot_handles_multiple_parked_ru
         tokio::spawn(async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     request,
                     context,
@@ -428,6 +456,7 @@ async fn cooperative_warm_pool_handles_synthetic_await_four_tenants_inner() {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(SyntheticAwaitHost::new(Duration::ZERO)),
         policy.clone(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     const BATCHES: usize = 16;

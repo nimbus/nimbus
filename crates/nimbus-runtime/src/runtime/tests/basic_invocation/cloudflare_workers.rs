@@ -42,6 +42,7 @@ export default {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -117,6 +118,7 @@ export default {
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -201,6 +203,7 @@ export default {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let error = runtime
         .invoke_bundle_for_tenant(
@@ -245,6 +248,7 @@ export default {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let error = runtime
         .invoke_bundle_for_tenant(

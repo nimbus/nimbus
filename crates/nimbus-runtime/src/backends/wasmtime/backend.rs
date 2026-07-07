@@ -552,8 +552,11 @@ mod tests {
         limits.max_concurrent_runtime_instances = 1;
         limits.max_active_top_level_invocations_per_tenant = 1;
         limits.max_in_flight_top_level_invocations_per_tenant = 1;
-        let runtime =
-            NimbusRuntime::with_policy(Arc::new(NoopHost), Arc::new(RuntimePolicy::new(limits)));
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(NoopHost),
+            Arc::new(RuntimePolicy::new(limits)),
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        );
 
         let response = runtime
             .invoke_bundle_for_tenant(&bundle, &request(), "tenant-a")
@@ -600,7 +603,10 @@ mod tests {
             .expect("tokio runtime should build")
             .block_on(backend.invoke(RuntimeBackendInvocation {
                 watchdog: crate::watchdog::WatchdogTimer::new(),
-                host: crate::runtime::RuntimeHost::new(Arc::new(NoopHost)),
+                host: crate::runtime::RuntimeHost::new_with_egress_gateway(
+                    Arc::new(NoopHost),
+                    crate::egress::RuntimeEgressGatewayBinding::coarse_permissions(),
+                ),
                 policy,
                 bundle,
                 request,
@@ -644,7 +650,10 @@ mod tests {
             .expect("tokio runtime should build")
             .block_on(backend.invoke(RuntimeBackendInvocation {
                 watchdog: crate::watchdog::WatchdogTimer::new(),
-                host: crate::runtime::RuntimeHost::new(Arc::new(NoopHost)),
+                host: crate::runtime::RuntimeHost::new_with_egress_gateway(
+                    Arc::new(NoopHost),
+                    crate::egress::RuntimeEgressGatewayBinding::coarse_permissions(),
+                ),
                 policy,
                 bundle: agent_bundle,
                 request,

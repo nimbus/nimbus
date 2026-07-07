@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::RuntimeInvocationContext;
-use crate::egress::{EgressGateway, RuntimeEgressGatewayBinding};
+use crate::egress::{RuntimeEgressGatewayBinding, RuntimeEgressPosture};
 use crate::error::Result;
 use crate::executor::RuntimeExecutor;
 use crate::host::{HostBridge, HostCallCancellation};
@@ -12,34 +12,33 @@ use crate::limits::{RuntimeLimits, RuntimePolicy};
 use super::{InvocationRequest, NimbusRuntime, RuntimeBundle, RuntimeHost};
 
 impl NimbusRuntime {
-    pub fn new(host: Arc<dyn HostBridge>) -> Self {
-        Self::with_policy(host, Arc::new(RuntimePolicy::default()))
+    pub fn new(
+        host: Arc<dyn HostBridge>,
+        limits: RuntimeLimits,
+        posture: RuntimeEgressPosture,
+    ) -> Self {
+        Self::with_policy(host, Arc::new(RuntimePolicy::new(limits)), posture)
     }
 
-    pub fn with_limits(host: Arc<dyn HostBridge>, limits: RuntimeLimits) -> Self {
-        Self::with_policy(host, Arc::new(RuntimePolicy::new(limits)))
+    pub fn with_limits(
+        host: Arc<dyn HostBridge>,
+        limits: RuntimeLimits,
+        posture: RuntimeEgressPosture,
+    ) -> Self {
+        Self::with_policy(host, Arc::new(RuntimePolicy::new(limits)), posture)
     }
 
-    pub fn with_policy(host: Arc<dyn HostBridge>, policy: Arc<RuntimePolicy>) -> Self {
+    pub fn with_policy(
+        host: Arc<dyn HostBridge>,
+        policy: Arc<RuntimePolicy>,
+        posture: RuntimeEgressPosture,
+    ) -> Self {
         Self {
             host,
             policy,
-            egress_gateway: RuntimeEgressGatewayBinding::coarse_permissions(),
+            egress_gateway: posture.into(),
             owned_executor: Arc::default(),
         }
-    }
-
-    pub fn with_egress_gateway(mut self, gateway: Arc<dyn EgressGateway>) -> Self {
-        self.egress_gateway = RuntimeEgressGatewayBinding::gateway(gateway);
-        self
-    }
-
-    pub(crate) fn with_egress_gateway_binding(
-        mut self,
-        binding: RuntimeEgressGatewayBinding,
-    ) -> Self {
-        self.egress_gateway = binding;
-        self
     }
 
     pub(crate) fn invocation_host(&self) -> RuntimeHost {

@@ -2075,9 +2075,13 @@ impl PostPirCooperativeMixedScenario {
                 shape.synthetic_await_ms,
             ))),
             policy.clone(),
+            nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
         );
-        let compute_runtime =
-            nimbus_runtime::NimbusRuntime::with_policy(Arc::new(NoopHost), policy);
+        let compute_runtime = nimbus_runtime::NimbusRuntime::with_policy(
+            Arc::new(NoopHost),
+            policy,
+            nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
+        );
         let tokio_runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()

@@ -57,11 +57,6 @@ pub(crate) struct RuntimeHost {
 }
 
 impl RuntimeHost {
-    #[cfg(test)]
-    pub(crate) fn new(bridge: Arc<dyn HostBridge>) -> Self {
-        Self::new_with_egress_gateway(bridge, RuntimeEgressGatewayBinding::coarse_permissions())
-    }
-
     pub(crate) fn new_with_egress_gateway(
         bridge: Arc<dyn HostBridge>,
         egress_gateway: RuntimeEgressGatewayBinding,
@@ -77,8 +72,11 @@ impl RuntimeHost {
     }
 
     pub(crate) fn runtime_with_policy(&self, policy: Arc<RuntimePolicy>) -> NimbusRuntime {
-        NimbusRuntime::with_policy(self.bridge.clone(), policy)
-            .with_egress_gateway_binding(self.egress_gateway.clone())
+        NimbusRuntime::with_policy(
+            self.bridge.clone(),
+            policy,
+            self.egress_gateway.clone().into_posture(),
+        )
     }
 
     pub(crate) fn bridge(&self) -> Arc<dyn HostBridge> {

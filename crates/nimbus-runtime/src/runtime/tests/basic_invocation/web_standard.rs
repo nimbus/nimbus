@@ -4,7 +4,11 @@ use super::*;
 #[tokio::test]
 async fn runtime_new_uses_product_default_runtime_policy() {
     let _guard = acquire_basic_invocation_suite_lock().await;
-    let runtime = NimbusRuntime::new(Arc::new(RecordingHost::default()));
+    let runtime = NimbusRuntime::new(
+        Arc::new(RecordingHost::default()),
+        crate::RuntimeLimits::default(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     assert_eq!(
         runtime.policy().limits(),
         &product_default_runtime_test_limits()
@@ -40,6 +44,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -101,6 +106,7 @@ async fn runtime_requires_bundle_contract() {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let error = runtime
         .invoke_bundle_for_tenant(
@@ -154,8 +160,11 @@ export {};
     .expect("bundle should write");
 
     let host = Arc::new(RecordingHost::default());
-    let runtime =
-        NimbusRuntime::with_policy(host, run_to_completion_snapshot_runtime_test_policy());
+    let runtime = NimbusRuntime::with_policy(
+        host,
+        run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let result = runtime
         .invoke_bundle_for_tenant(
             &RuntimeBundle::new(&bundle_path),
@@ -212,6 +221,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -267,6 +277,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -318,7 +329,11 @@ export {};
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
-    let runtime = NimbusRuntime::with_policy(Arc::new(RecordingHost::default()), policy.clone());
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        policy.clone(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = InvocationRequest {
         kind: InvocationKind::Query,
@@ -376,6 +391,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_web_standard())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
