@@ -1,179 +1,166 @@
+// Generates the firebase package's protobuf bindings via `buf generate`
+// (pure npm — no cargo-registry protoc dependency). The proto sources stay
+// vendored under crates/nimbus-firebase/proto; the Rust crate remains their
+// owner. Output is gitignored (see DE16) and regenerated on every
+// build/test/typecheck via the package.json `codegen:proto` pre-step.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const protoRoot = path.join(repoRoot, "crates", "nimbus-firebase", "proto");
-const googleProtoRoot = path.join(protoRoot, "google");
-const outputRoot = path.join(packageRoot, "src", "gen");
-const protocPlugin = resolvePluginBinary();
+const defaultOutputRoot = path.join(packageRoot, "src", "gen");
 
-await main();
-
-async function main() {
-  const protoc = resolveProtocBinary();
-  const protoFiles = await listProtoFiles(googleProtoRoot);
-  assert.ok(protoFiles.length > 0, "No vendored Firestore proto files were found.");
+// Generates the buf/protoc-gen-es output into `outputRoot`, wiping it first.
+// Exported (not just invoked as a CLI script) so the DE16 determinism check
+// (selftest/codegen_determinism.mjs) can call this twice into disposable
+// directories and diff the results without touching the real src/gen tree.
+export async function generateProtos(outputRoot) {
+  const bufBinary = resolveBinBinary("@bufbuild/buf", "buf");
+  const protocGenEsBinary = resolveBinBinary(
+    "@bufbuild/protoc-gen-es",
+    "protoc-gen-es",
+  );
+  assert.ok(
+    fs.existsSync(path.join(protoRoot, "google")),
+    "No vendored Firestore proto files were found.",
+  );
 
   await fsp.rm(outputRoot, { recursive: true, force: true });
   await fsp.mkdir(outputRoot, { recursive: true });
 
-  const args = [
-    `--plugin=protoc-gen-es=${protocPlugin}`,
-    `--proto_path=${protoRoot}`,
-    `--es_out=${outputRoot}`,
-    // import_extension=ts so tsc's rewriteRelativeImportExtensions emits real
-    // `.js` specifiers in dist/ — extensionless relative imports break Node ESM
-    // consumers of the provisioned package (bundlers masked this).
-    "--es_opt=target=ts,json_types=true,import_extension=ts",
-    ...protoFiles,
-  ];
-  const result = spawnSync(protoc, args, {
-    cwd: packageRoot,
-    stdio: "inherit",
+  const templateDir = await fsp.mkdtemp(path.join(os.tmpdir(), "nimbus-firebase-buf-"));
+  const templatePath = path.join(templateDir, "buf.gen.yaml");
+  try {
+    await fsp.writeFile(
+      templatePath,
+      renderBufGenTemplate(protocGenEsBinary, outputRoot),
+      "utf8",
+    );
+    execFileSync(
+      bufBinary,
+      ["generate", protoRoot, "--template", templatePath],
+      { cwd: packageRoot, stdio: "inherit" },
+    );
+  } finally {
+    await fsp.rm(templateDir, { recursive: true, force: true });
+  }
+}
+
+const expectedOutputFiles = [
+  "google/firestore/v1/document_pb.ts",
+  "google/firestore/v1/firestore_pb.ts",
+  "google/firestore/v1/query_pb.ts",
+  "google/firestore/v1/write_pb.ts",
+  "google/protobuf/timestamp_pb.ts",
+];
+
+async function missingOutputFiles(outputRoot) {
+  const missing = [];
+  for (const relativePath of expectedOutputFiles) {
+    try {
+      await fsp.access(path.join(outputRoot, relativePath));
+    } catch {
+      missing.push(relativePath);
+    }
+  }
+  return missing;
+}
+
+// Regenerates `outputRoot` only if it is missing expected output, serialized
+// via an advisory lock directory. `npm run test`/`build`/`typecheck` already
+// regenerate the real src/gen tree via the package.json `codegen:proto`
+// pre-step, but some callers invoke selftest.mjs directly (the Rust
+// node-dependent tests that exercise the firebase package: nimbus-cli's
+// dev-adoption round-trip and nimbus-server's firebase REST CRUD smoke test),
+// bypassing that pre-step. Those two tests run in separate cargo-nextest test
+// binaries that CI executes concurrently, so both can independently spawn
+// `node ./src/selftest.mjs` against a clean checkout where src/gen does not
+// exist yet — without locking, one process's wipe-and-regenerate would tear
+// the directory out from under the other mid-build (observed as esbuild
+// "Could not resolve" errors during local reproduction of this fix).
+export async function ensureProtosGenerated(outputRoot = defaultOutputRoot) {
+  if ((await missingOutputFiles(outputRoot)).length === 0) {
+    return;
+  }
+  await withGenerationLock(outputRoot, async () => {
+    // Re-check inside the lock: another process may have finished
+    // generating while this one was waiting to acquire it.
+    if ((await missingOutputFiles(outputRoot)).length > 0) {
+      await generateProtos(outputRoot);
+    }
   });
-  if (result.status !== 0) {
-    throw new Error(`protoc exited with status ${result.status ?? "unknown"}`);
+  const stillMissing = await missingOutputFiles(outputRoot);
+  assert.deepEqual(
+    stillMissing,
+    [],
+    `Missing generated Firestore protobuf output under ${outputRoot} after running codegen: ${stillMissing.join(", ")}. Check that crates/nimbus-firebase/proto has vendored Firestore proto sources.`,
+  );
+}
+
+async function withGenerationLock(outputRoot, fn) {
+  // `fs.mkdir` without `recursive` fails with EEXIST if the directory is
+  // already there, which makes directory creation an atomic mutex primitive
+  // usable across separate OS processes (no extra dependency required).
+  const lockDir = `${outputRoot}.lock`;
+  const deadlineMs = Date.now() + 60_000;
+  for (;;) {
+    try {
+      await fsp.mkdir(lockDir);
+      break;
+    } catch (err) {
+      if (err.code !== "EEXIST") {
+        throw err;
+      }
+      if (Date.now() > deadlineMs) {
+        throw new Error(`Timed out waiting for the protobuf codegen lock at ${lockDir}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  try {
+    await fn();
+  } finally {
+    await fsp.rm(lockDir, { recursive: true, force: true });
   }
 }
 
-function resolvePluginBinary() {
-  const packageJsonPath = require.resolve("@bufbuild/protoc-gen-es/package.json");
+// Only regenerate the package's real src/gen when this file runs as the CLI
+// entry point (`npm run codegen:proto`) — not when imported as a module.
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  await generateProtos(defaultOutputRoot);
+}
+
+function renderBufGenTemplate(protocGenEsBinary, outDir) {
+  // Same plugin + options as the prior raw-protoc invocation:
+  // import_extension=ts so tsc's rewriteRelativeImportExtensions gives correct
+  // `.js` specifiers in the emitted JS; we post-process the emitted `.d.ts` to
+  // match, since tsc leaves `.ts` specifiers there.
+  return [
+    "version: v2",
+    "plugins:",
+    `  - local: ${protocGenEsBinary}`,
+    `    out: ${outDir}`,
+    "    opt:",
+    "      - target=ts",
+    "      - json_types=true",
+    "      - import_extension=ts",
+    "",
+  ].join("\n");
+}
+
+function resolveBinBinary(packageName, binName) {
+  const packageJsonPath = require.resolve(`${packageName}/package.json`);
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-  const pluginRelativePath =
-    typeof packageJson.bin === "string"
-      ? packageJson.bin
-      : packageJson.bin?.["protoc-gen-es"];
-  assert.ok(pluginRelativePath, "Unable to resolve protoc-gen-es binary.");
-  return path.join(path.dirname(packageJsonPath), pluginRelativePath);
-}
-
-function resolveProtocBinary() {
-  if (process.env.PROTOC) {
-    return process.env.PROTOC;
-  }
-
-  const vendoredCrateName = vendoredProtocCrateName();
-  const pinnedVersion = readPinnedCargoPackageVersion(vendoredCrateName);
-  const cargoHome = process.env.CARGO_HOME ?? path.join(os.homedir(), ".cargo");
-  const registrySrc = path.join(cargoHome, "registry", "src");
-  const executableName = process.platform === "win32" ? "protoc.exe" : "protoc";
-  const candidates = [];
-
-  if (fs.existsSync(registrySrc)) {
-    for (const registryEntry of fs.readdirSync(registrySrc, { withFileTypes: true })) {
-      if (!registryEntry.isDirectory()) {
-        continue;
-      }
-      const registryPath = path.join(registrySrc, registryEntry.name);
-      if (pinnedVersion) {
-        const exactCandidate = path.join(
-          registryPath,
-          `${vendoredCrateName}-${pinnedVersion}`,
-          "bin",
-          executableName,
-        );
-        if (fs.existsSync(exactCandidate)) {
-          return exactCandidate;
-        }
-      }
-      for (const crateEntry of fs.readdirSync(registryPath, { withFileTypes: true })) {
-        if (!crateEntry.isDirectory() || !crateEntry.name.startsWith(`${vendoredCrateName}-`)) {
-          continue;
-        }
-        const candidate = path.join(registryPath, crateEntry.name, "bin", executableName);
-        if (fs.existsSync(candidate)) {
-          candidates.push(candidate);
-        }
-      }
-    }
-  }
-
-  if (candidates.length > 0) {
-    candidates.sort((left, right) => right.localeCompare(left));
-    return candidates[0];
-  }
-
-  throw new Error(
-    [
-      "Unable to find the vendored protoc binary used by nimbus-server.",
-      "Set PROTOC explicitly or run a cargo command that fetches the",
-      `"${vendoredCrateName}" package into your Cargo registry first.`,
-    ].join(" "),
-  );
-}
-
-function readPinnedCargoPackageVersion(packageName) {
-  const cargoLockPath = path.join(repoRoot, "Cargo.lock");
-  if (!fs.existsSync(cargoLockPath)) {
-    return null;
-  }
-  const cargoLock = fs.readFileSync(cargoLockPath, "utf8");
-  const escapedName = packageName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = cargoLock.match(
-    new RegExp(`name = "${escapedName}"\\nversion = "([^"]+)"`),
-  );
-  return match?.[1] ?? null;
-}
-
-function vendoredProtocCrateName() {
-  if (process.platform === "darwin") {
-    if (process.arch === "arm64") {
-      return "protoc-bin-vendored-macos-aarch_64";
-    }
-    if (process.arch === "x64") {
-      return "protoc-bin-vendored-macos-x86_64";
-    }
-  }
-  if (process.platform === "linux") {
-    if (process.arch === "arm64") {
-      return "protoc-bin-vendored-linux-aarch_64";
-    }
-    if (process.arch === "x64") {
-      return "protoc-bin-vendored-linux-x86_64";
-    }
-    if (process.arch === "ia32") {
-      return "protoc-bin-vendored-linux-x86_32";
-    }
-    if (process.arch === "ppc64") {
-      return "protoc-bin-vendored-linux-ppcle_64";
-    }
-    if (process.arch === "s390x") {
-      return "protoc-bin-vendored-linux-s390_64";
-    }
-  }
-  if (process.platform === "win32") {
-    return "protoc-bin-vendored-win32";
-  }
-  throw new Error(
-    `Unsupported platform for vendored protoc resolution: ${process.platform}/${process.arch}`,
-  );
-}
-
-async function listProtoFiles(root) {
-  const files = [];
-  await walk(root, files);
-  files.sort((left, right) => left.localeCompare(right));
-  return files;
-}
-
-async function walk(directory, files) {
-  for (const entry of await fsp.readdir(directory, { withFileTypes: true })) {
-    const entryPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      await walk(entryPath, files);
-      continue;
-    }
-    if (!entry.isFile() || !entry.name.endsWith(".proto")) {
-      continue;
-    }
-    files.push(path.relative(protoRoot, entryPath));
-  }
+  const binRelativePath =
+    typeof packageJson.bin === "string" ? packageJson.bin : packageJson.bin?.[binName];
+  assert.ok(binRelativePath, `Unable to resolve ${binName} binary from ${packageName}.`);
+  return path.join(path.dirname(packageJsonPath), binRelativePath);
 }

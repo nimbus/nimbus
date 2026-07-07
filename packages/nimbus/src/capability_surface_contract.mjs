@@ -30,6 +30,7 @@ const packageContracts = {
     path: "packages/nimbus/package.json",
     exports: {
       ".": "./src/index.ts",
+      "./control-plane": "./src/control-plane/index.ts",
       "./react": "./src/react.ts",
       "./browser": "./src/browser.ts",
       "./server": "./src/server.ts",
@@ -216,6 +217,64 @@ const entryContracts = {
       "NimbusSessionResource",
       "NimbusSessionSelector",
       "NimbusSessionTarget",
+    ],
+  },
+  "@nimbus/nimbus/control-plane": {
+    path: "packages/nimbus/src/control-plane/index.ts",
+    exports: [
+      "Nimbus",
+      "NimbusBuiltInProviderId",
+      "NimbusClientOptions",
+      "NimbusCondition",
+      "NimbusCredential",
+      "NimbusExternalAuthPolicy",
+      "NimbusExternalEndpointPolicy",
+      "NimbusHealthCheckPolicy",
+      "NimbusRedactedValues",
+      "NimbusSandboxBackendKind",
+      "NimbusSandboxCollection",
+      "NimbusSandboxCreateRequest",
+      "NimbusSandboxListRequest",
+      "NimbusSandboxOciImageReferenceSource",
+      "NimbusSandboxOwnerSpec",
+      "NimbusSandboxProcessResponse",
+      "NimbusSandboxProcessSpec",
+      "NimbusSandboxProfile",
+      "NimbusSandboxResource",
+      "NimbusSandboxRootResponse",
+      "NimbusSandboxRootSpec",
+      "NimbusSandboxSelector",
+      "NimbusSandboxSpec",
+      "NimbusSandboxSpecResponse",
+      "NimbusSandboxes",
+      "NimbusService",
+      "NimbusServiceActivationWaitCondition",
+      "NimbusServiceBackendResponse",
+      "NimbusServiceBackendSpec",
+      "NimbusServiceCreateRequest",
+      "NimbusServiceDefinition",
+      "NimbusServiceDefinitionCollection",
+      "NimbusServiceDeleteRequest",
+      "NimbusServiceEndpoint",
+      "NimbusServiceLifecycleRequest",
+      "NimbusServiceListRequest",
+      "NimbusServiceSelector",
+      "NimbusServiceStartRequest",
+      "NimbusServiceStopRequest",
+      "NimbusServiceStopWaitCondition",
+      "NimbusServiceUpdateRequest",
+      "NimbusServiceWaitCondition",
+      "NimbusServiceWaitRequest",
+      "NimbusServices",
+      "NimbusSessionChannel",
+      "NimbusSessionCloseRequest",
+      "NimbusSessionCollection",
+      "NimbusSessionListRequest",
+      "NimbusSessionOpenRequest",
+      "NimbusSessionResource",
+      "NimbusSessionSelector",
+      "NimbusSessionTarget",
+      "NimbusSessions",
     ],
   },
   "@nimbus/nimbus/browser": {
@@ -573,13 +632,20 @@ async function assertEntryExportSurfaces() {
 }
 
 async function assertNimbusRootSdkBoundary() {
-  const source = await fs.readFile(repoPath("packages/nimbus/src/index.ts"), "utf8");
+  // The root SDK's private control-plane implementation spans two sibling
+  // modules post-CO14: `client.ts` (the `Nimbus` class + its private request
+  // machinery) and `discovery.ts` (credential/endpoint discovery, including
+  // the default `NimbusRestClient` construction). Boundary fragments are
+  // checked against the concatenation of both.
+  const clientSource = await fs.readFile(repoPath("packages/nimbus/src/control-plane/client.ts"), "utf8");
+  const discoverySource = await fs.readFile(repoPath("packages/nimbus/src/control-plane/discovery.ts"), "utf8");
+  const source = `${clientSource}\n${discoverySource}`;
   const routes = await fs.readFile(repoPath("packages/nimbus/src/control_plane_routes.ts"), "utf8");
   for (const fragment of NIMBUS_ROOT_SDK_FORBIDDEN_FRAGMENTS) {
     assert.equal(
       source.includes(fragment),
       false,
-      `packages/nimbus/src/index.ts contains forbidden root SDK fragment: ${fragment}`,
+      `packages/nimbus/src/control-plane/{client,discovery}.ts contains forbidden root SDK fragment: ${fragment}`,
     );
   }
   for (const fragment of NIMBUS_ROOT_SDK_CONTROL_PLANE_ROUTE_FRAGMENTS) {
@@ -593,7 +659,7 @@ async function assertNimbusRootSdkBoundary() {
     assert.equal(
       source.includes(fragment),
       false,
-      `packages/nimbus/src/index.ts must use control_plane_routes.ts instead of embedding ${fragment}`,
+      `packages/nimbus/src/control-plane/{client,discovery}.ts must use control_plane_routes.ts instead of embedding ${fragment}`,
     );
   }
   assert.equal(

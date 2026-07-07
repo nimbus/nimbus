@@ -112,8 +112,8 @@ for (const pkg of PROVISIONED) {
   const stagedDir = path.join(OUT_DIR, pkg.stageDir);
   copyTree(distDir, stagedDir, "", files);
   if (distManifest.name === "@nimbus/nimbus") {
-    verifyNimbusRootSdkArtifact(path.join(stagedDir, "index.js"), true);
-    verifyNimbusRootSdkArtifact(path.join(stagedDir, "index.d.ts"), false);
+    verifyNimbusRootSdkArtifact(path.join(stagedDir, "control-plane", "client.js"), true);
+    verifyNimbusRootSdkArtifact(path.join(stagedDir, "control-plane", "client.d.ts"), false);
     verifyNimbusRootSdkRouteArtifact(path.join(stagedDir, "control_plane_routes.js"));
     verifyNimbusRootSdkRouteArtifact(path.join(stagedDir, "control_plane_routes.d.ts"));
   }

@@ -158,432 +158,218 @@ function withConvexDeploymentUrlCheck<T extends { skipConvexDeploymentUrlCheck?:
   };
 }
 
-export class ConvexHttpClient extends NimbusHttpClient {
+// The `query`/`mutation`/`action`/`paginatedQuery`/`scheduleAfter`/`scheduleAt`
+// bodies below are identical across NimbusHttpClient, NimbusClient, and
+// NimbusReactClient: each accepts either a real (branded) reference or a
+// string/anyApi name, coerces the latter to a real reference, and forwards to
+// the Nimbus base class implementation. `withConvexInvocationMethods` and
+// `withConvexLiveQuery` (below) are mixins that define these bodies once and
+// are composed onto each Nimbus base class, so the logic exists in exactly
+// one place per method regardless of how many client classes need it.
+type Constructor<T = object> = new (...args: any[]) => T;
+
+interface ConvexInvocationBaseInstance {
+  query(query: any, args?: any): Promise<any>;
+  mutation(mutation: any, args?: any): Promise<any>;
+  action(action: any, args?: any): Promise<any>;
+  paginatedQuery(query: any, args: any, pageSize: number, cursor: string | null): Promise<any>;
+  scheduleAfter(mutation: any, args: any, runAfterMs: number): Promise<string>;
+  scheduleAt(mutation: any, args: any, runAtMs: number): Promise<string>;
+}
+
+function withConvexInvocationMethods<TBase extends Constructor<ConvexInvocationBaseInstance>>(
+  Base: TBase,
+) {
+  return class extends Base {
+    async query<Query extends ConvexQueryReference<any, any>>(
+      query: Query,
+      args?: InferArgs<Query>,
+    ): Promise<InferResult<Query>>;
+    async query(query: string | AnyApi, args?: NamedArgs): Promise<unknown>;
+    async query<Query extends ConvexQueryReference<any, any>>(
+      query: Query | string | AnyApi,
+      args?: InferArgs<Query> | NamedArgs,
+    ): Promise<InferResult<Query> | unknown> {
+      return super.query(
+        coerceQueryReference(query) as ConvexQueryReference<any, any>,
+        args as InferArgs<Query>,
+      ) as Promise<
+        InferResult<Query> | unknown
+      >;
+    }
+
+    async mutation<Mutation extends ConvexMutationReference<any, any>>(
+      mutation: Mutation,
+      args?: InferArgs<Mutation>,
+    ): Promise<InferResult<Mutation>>;
+    async mutation(mutation: string | AnyApi, args?: NamedArgs): Promise<unknown>;
+    async mutation<Mutation extends ConvexMutationReference<any, any>>(
+      mutation: Mutation | string | AnyApi,
+      args?: InferArgs<Mutation> | NamedArgs,
+    ): Promise<InferResult<Mutation> | unknown> {
+      return super.mutation(
+        coerceMutationReference(mutation) as ConvexMutationReference<any, any>,
+        args as InferArgs<Mutation>,
+      ) as Promise<
+        InferResult<Mutation> | unknown
+      >;
+    }
+
+    async action<Action extends ConvexActionReference<any, any>>(
+      action: Action,
+      args?: InferArgs<Action>,
+    ): Promise<InferResult<Action>>;
+    async action(action: string | AnyApi, args?: NamedArgs): Promise<unknown>;
+    async action<Action extends ConvexActionReference<any, any>>(
+      action: Action | string | AnyApi,
+      args?: InferArgs<Action> | NamedArgs,
+    ): Promise<InferResult<Action> | unknown> {
+      return super.action(
+        coerceActionReference(action) as ConvexActionReference<any, any>,
+        args as InferArgs<Action>,
+      ) as Promise<
+        InferResult<Action> | unknown
+      >;
+    }
+
+    async paginatedQuery<Query extends ConvexPaginatedQueryReference<any, any>>(
+      query: Query,
+      args: InferArgs<Query> | undefined,
+      pageSize: number,
+      cursor: string | null,
+    ): Promise<ConvexPage<InferResult<Query>>> {
+      return super.paginatedQuery(query, args, pageSize, cursor) as Promise<
+        ConvexPage<InferResult<Query>>
+      >;
+    }
+
+    async scheduleAfter<Mutation extends ConvexMutationReference<any, any>>(
+      mutation: Mutation,
+      args: InferArgs<Mutation> | undefined,
+      runAfterMs: number,
+    ): Promise<string>;
+    async scheduleAfter(
+      mutation: string | AnyApi,
+      args: NamedArgs | undefined,
+      runAfterMs: number,
+    ): Promise<string>;
+    async scheduleAfter<Mutation extends ConvexMutationReference<any, any>>(
+      mutation: Mutation | string | AnyApi,
+      args: InferArgs<Mutation> | NamedArgs | undefined,
+      runAfterMs: number,
+    ): Promise<string> {
+      return super.scheduleAfter(
+        coerceMutationReference(mutation) as ConvexMutationReference<any, any>,
+        args as InferArgs<Mutation> | undefined,
+        runAfterMs,
+      );
+    }
+
+    async scheduleAt<Mutation extends ConvexMutationReference<any, any>>(
+      mutation: Mutation,
+      args: InferArgs<Mutation> | undefined,
+      runAtMs: number,
+    ): Promise<string>;
+    async scheduleAt(
+      mutation: string | AnyApi,
+      args: NamedArgs | undefined,
+      runAtMs: number,
+    ): Promise<string>;
+    async scheduleAt<Mutation extends ConvexMutationReference<any, any>>(
+      mutation: Mutation | string | AnyApi,
+      args: InferArgs<Mutation> | NamedArgs | undefined,
+      runAtMs: number,
+    ): Promise<string> {
+      return super.scheduleAt(
+        coerceMutationReference(mutation) as ConvexMutationReference<any, any>,
+        args as InferArgs<Mutation> | undefined,
+        runAtMs,
+      );
+    }
+  };
+}
+
+interface ConvexLiveQueryBaseInstance {
+  onUpdate(
+    query: any,
+    args: any,
+    callback: (result: any) => unknown,
+    onError?: (error: Error) => unknown,
+    options?: { pageSize?: number; cursor?: string | null },
+  ): Unsubscribe<any>;
+}
+
+function withConvexLiveQuery<TBase extends Constructor<ConvexLiveQueryBaseInstance>>(
+  Base: TBase,
+) {
+  return class extends Base {
+    onUpdate<Query extends ConvexQueryReference<any, any>>(
+      query: Query,
+      args: InferArgs<Query>,
+      callback: (result: InferResult<Query>) => unknown,
+      onError?: (error: Error) => unknown,
+    ): Unsubscribe<InferResult<Query>>;
+    onUpdate(
+      query: string | AnyApi,
+      args: NamedArgs,
+      callback: (result: unknown) => unknown,
+      onError?: (error: Error) => unknown,
+    ): Unsubscribe<unknown>;
+    onUpdate<Query extends ConvexQueryReference<any, any> | ConvexPaginatedQueryReference<any, any>>(
+      query: Query | string | AnyApi,
+      args: InferArgs<Query> | NamedArgs,
+      callback: (
+        result: Query extends ConvexPaginatedQueryReference<any, infer Item>
+          ? Item[]
+          : InferResult<Query>,
+      ) => unknown,
+      onError?: (error: Error) => unknown,
+      options?: { pageSize?: number; cursor?: string | null },
+    ): Unsubscribe<
+      Query extends ConvexPaginatedQueryReference<any, infer Item>
+        ? Item[]
+        : InferResult<Query>
+    > {
+      if (typeof query === "string" || isAnyApiReference(query)) {
+        assertNamedLiveQueryOptions(query, options);
+        return super.onUpdate(
+          coerceQueryReference(query) as ConvexQueryReference<any, any>,
+          args as NamedArgs,
+          callback as (result: unknown) => unknown,
+          onError,
+        ) as Unsubscribe<
+          Query extends ConvexPaginatedQueryReference<any, infer Item>
+            ? Item[]
+            : InferResult<Query>
+        >;
+      }
+      return super.onUpdate(query as Query, args as InferArgs<Query>, callback, onError, options) as Unsubscribe<
+        Query extends ConvexPaginatedQueryReference<any, infer Item>
+          ? Item[]
+          : InferResult<Query>
+      >;
+    }
+  };
+}
+
+export class ConvexHttpClient extends withConvexInvocationMethods(NimbusHttpClient) {
   constructor(address: string, options: ConvexHttpClientOptions = {}) {
     super(address, withConvexDeploymentUrlCheck(options));
   }
-
-  async query<Query extends ConvexQueryReference<any, any>>(
-    query: Query,
-    args?: InferArgs<Query>,
-  ): Promise<InferResult<Query>>;
-  async query(query: string | AnyApi, args?: NamedArgs): Promise<unknown>;
-  async query<Query extends ConvexQueryReference<any, any>>(
-    query: Query | string | AnyApi,
-    args?: InferArgs<Query> | NamedArgs,
-  ): Promise<InferResult<Query> | unknown> {
-    return super.query(
-      coerceQueryReference(query) as ConvexQueryReference<any, any>,
-      args as InferArgs<Query>,
-    ) as Promise<
-      InferResult<Query> | unknown
-    >;
-  }
-
-  async mutation<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation,
-    args?: InferArgs<Mutation>,
-  ): Promise<InferResult<Mutation>>;
-  async mutation(mutation: string | AnyApi, args?: NamedArgs): Promise<unknown>;
-  async mutation<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation | string | AnyApi,
-    args?: InferArgs<Mutation> | NamedArgs,
-  ): Promise<InferResult<Mutation> | unknown> {
-    return super.mutation(
-      coerceMutationReference(mutation) as ConvexMutationReference<any, any>,
-      args as InferArgs<Mutation>,
-    ) as Promise<
-      InferResult<Mutation> | unknown
-    >;
-  }
-
-  async action<Action extends ConvexActionReference<any, any>>(
-    action: Action,
-    args?: InferArgs<Action>,
-  ): Promise<InferResult<Action>>;
-  async action(action: string | AnyApi, args?: NamedArgs): Promise<unknown>;
-  async action<Action extends ConvexActionReference<any, any>>(
-    action: Action | string | AnyApi,
-    args?: InferArgs<Action> | NamedArgs,
-  ): Promise<InferResult<Action> | unknown> {
-    return super.action(
-      coerceActionReference(action) as ConvexActionReference<any, any>,
-      args as InferArgs<Action>,
-    ) as Promise<
-      InferResult<Action> | unknown
-    >;
-  }
-
-  async paginatedQuery<Query extends ConvexPaginatedQueryReference<any, any>>(
-    query: Query,
-    args: InferArgs<Query> | undefined,
-    pageSize: number,
-    cursor: string | null,
-  ): Promise<ConvexPage<InferResult<Query>>> {
-    return super.paginatedQuery(query, args, pageSize, cursor) as Promise<
-      ConvexPage<InferResult<Query>>
-    >;
-  }
-
-  async scheduleAfter<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation,
-    args: InferArgs<Mutation> | undefined,
-    runAfterMs: number,
-  ): Promise<string>;
-  async scheduleAfter(
-    mutation: string | AnyApi,
-    args: NamedArgs | undefined,
-    runAfterMs: number,
-  ): Promise<string>;
-  async scheduleAfter<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation | string | AnyApi,
-    args: InferArgs<Mutation> | NamedArgs | undefined,
-    runAfterMs: number,
-  ): Promise<string> {
-    return super.scheduleAfter(
-      coerceMutationReference(mutation) as ConvexMutationReference<any, any>,
-      args as InferArgs<Mutation> | undefined,
-      runAfterMs,
-    );
-  }
-
-  async scheduleAt<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation,
-    args: InferArgs<Mutation> | undefined,
-    runAtMs: number,
-  ): Promise<string>;
-  async scheduleAt(
-    mutation: string | AnyApi,
-    args: NamedArgs | undefined,
-    runAtMs: number,
-  ): Promise<string>;
-  async scheduleAt<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation | string | AnyApi,
-    args: InferArgs<Mutation> | NamedArgs | undefined,
-    runAtMs: number,
-  ): Promise<string> {
-    return super.scheduleAt(
-      coerceMutationReference(mutation) as ConvexMutationReference<any, any>,
-      args as InferArgs<Mutation> | undefined,
-      runAtMs,
-    );
-  }
 }
 
-export class ConvexClient extends NimbusClient {
+export class ConvexClient extends withConvexLiveQuery(
+  withConvexInvocationMethods(NimbusClient),
+) {
   constructor(address: string, options: ConvexClientOptions = {}) {
     super(address, withConvexDeploymentUrlCheck(options));
   }
-
-  async query<Query extends ConvexQueryReference<any, any>>(
-    query: Query,
-    args?: InferArgs<Query>,
-  ): Promise<InferResult<Query>>;
-  async query(query: string | AnyApi, args?: NamedArgs): Promise<unknown>;
-  async query<Query extends ConvexQueryReference<any, any>>(
-    query: Query | string | AnyApi,
-    args?: InferArgs<Query> | NamedArgs,
-  ): Promise<InferResult<Query> | unknown> {
-    return super.query(
-      coerceQueryReference(query) as ConvexQueryReference<any, any>,
-      args as InferArgs<Query>,
-    ) as Promise<
-      InferResult<Query> | unknown
-    >;
-  }
-
-  async mutation<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation,
-    args?: InferArgs<Mutation>,
-  ): Promise<InferResult<Mutation>>;
-  async mutation(mutation: string | AnyApi, args?: NamedArgs): Promise<unknown>;
-  async mutation<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation | string | AnyApi,
-    args?: InferArgs<Mutation> | NamedArgs,
-  ): Promise<InferResult<Mutation> | unknown> {
-    return super.mutation(
-      coerceMutationReference(mutation) as ConvexMutationReference<any, any>,
-      args as InferArgs<Mutation>,
-    ) as Promise<
-      InferResult<Mutation> | unknown
-    >;
-  }
-
-  async action<Action extends ConvexActionReference<any, any>>(
-    action: Action,
-    args?: InferArgs<Action>,
-  ): Promise<InferResult<Action>>;
-  async action(action: string | AnyApi, args?: NamedArgs): Promise<unknown>;
-  async action<Action extends ConvexActionReference<any, any>>(
-    action: Action | string | AnyApi,
-    args?: InferArgs<Action> | NamedArgs,
-  ): Promise<InferResult<Action> | unknown> {
-    return super.action(
-      coerceActionReference(action) as ConvexActionReference<any, any>,
-      args as InferArgs<Action>,
-    ) as Promise<
-      InferResult<Action> | unknown
-    >;
-  }
-
-  async paginatedQuery<Query extends ConvexPaginatedQueryReference<any, any>>(
-    query: Query,
-    args: InferArgs<Query> | undefined,
-    pageSize: number,
-    cursor: string | null,
-  ): Promise<ConvexPage<InferResult<Query>>> {
-    return super.paginatedQuery(query, args, pageSize, cursor) as Promise<
-      ConvexPage<InferResult<Query>>
-    >;
-  }
-
-  async scheduleAfter<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation,
-    args: InferArgs<Mutation> | undefined,
-    runAfterMs: number,
-  ): Promise<string>;
-  async scheduleAfter(
-    mutation: string | AnyApi,
-    args: NamedArgs | undefined,
-    runAfterMs: number,
-  ): Promise<string>;
-  async scheduleAfter<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation | string | AnyApi,
-    args: InferArgs<Mutation> | NamedArgs | undefined,
-    runAfterMs: number,
-  ): Promise<string> {
-    return super.scheduleAfter(
-      coerceMutationReference(mutation) as ConvexMutationReference<any, any>,
-      args as InferArgs<Mutation> | undefined,
-      runAfterMs,
-    );
-  }
-
-  async scheduleAt<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation,
-    args: InferArgs<Mutation> | undefined,
-    runAtMs: number,
-  ): Promise<string>;
-  async scheduleAt(
-    mutation: string | AnyApi,
-    args: NamedArgs | undefined,
-    runAtMs: number,
-  ): Promise<string>;
-  async scheduleAt<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation | string | AnyApi,
-    args: InferArgs<Mutation> | NamedArgs | undefined,
-    runAtMs: number,
-  ): Promise<string> {
-    return super.scheduleAt(
-      coerceMutationReference(mutation) as ConvexMutationReference<any, any>,
-      args as InferArgs<Mutation> | undefined,
-      runAtMs,
-    );
-  }
-
-  onUpdate<Query extends ConvexQueryReference<any, any>>(
-    query: Query,
-    args: InferArgs<Query>,
-    callback: (result: InferResult<Query>) => unknown,
-    onError?: (error: Error) => unknown,
-  ): Unsubscribe<InferResult<Query>>;
-  onUpdate(
-    query: string | AnyApi,
-    args: NamedArgs,
-    callback: (result: unknown) => unknown,
-    onError?: (error: Error) => unknown,
-  ): Unsubscribe<unknown>;
-  onUpdate<Query extends ConvexQueryReference<any, any> | ConvexPaginatedQueryReference<any, any>>(
-    query: Query | string | AnyApi,
-    args: InferArgs<Query> | NamedArgs,
-    callback: (
-      result: Query extends ConvexPaginatedQueryReference<any, infer Item>
-        ? Item[]
-        : InferResult<Query>,
-    ) => unknown,
-    onError?: (error: Error) => unknown,
-    options?: { pageSize?: number; cursor?: string | null },
-  ): Unsubscribe<
-    Query extends ConvexPaginatedQueryReference<any, infer Item>
-      ? Item[]
-      : InferResult<Query>
-  > {
-    if (typeof query === "string" || isAnyApiReference(query)) {
-      assertNamedLiveQueryOptions(query, options);
-      return super.onUpdate(
-        coerceQueryReference(query) as ConvexQueryReference<any, any>,
-        args as NamedArgs,
-        callback as (result: unknown) => unknown,
-        onError,
-      ) as Unsubscribe<
-        Query extends ConvexPaginatedQueryReference<any, infer Item>
-          ? Item[]
-          : InferResult<Query>
-      >;
-    }
-    return super.onUpdate(query as Query, args as InferArgs<Query>, callback, onError, options) as Unsubscribe<
-      Query extends ConvexPaginatedQueryReference<any, infer Item>
-        ? Item[]
-        : InferResult<Query>
-    >;
-  }
 }
 
-export class ConvexReactClient extends NimbusReactClient {
+export class ConvexReactClient extends withConvexLiveQuery(
+  withConvexInvocationMethods(NimbusReactClient),
+) {
   constructor(address: string, options: ConvexClientOptions = {}) {
     super(address, withConvexDeploymentUrlCheck(options));
-  }
-
-  async query<Query extends ConvexQueryReference<any, any>>(
-    query: Query,
-    args?: InferArgs<Query>,
-  ): Promise<InferResult<Query>>;
-  async query(query: string | AnyApi, args?: NamedArgs): Promise<unknown>;
-  async query<Query extends ConvexQueryReference<any, any>>(
-    query: Query | string | AnyApi,
-    args?: InferArgs<Query> | NamedArgs,
-  ): Promise<InferResult<Query> | unknown> {
-    return super.query(
-      coerceQueryReference(query) as ConvexQueryReference<any, any>,
-      args as InferArgs<Query>,
-    ) as Promise<
-      InferResult<Query> | unknown
-    >;
-  }
-
-  async mutation<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation,
-    args?: InferArgs<Mutation>,
-  ): Promise<InferResult<Mutation>>;
-  async mutation(mutation: string | AnyApi, args?: NamedArgs): Promise<unknown>;
-  async mutation<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation | string | AnyApi,
-    args?: InferArgs<Mutation> | NamedArgs,
-  ): Promise<InferResult<Mutation> | unknown> {
-    return super.mutation(
-      coerceMutationReference(mutation) as ConvexMutationReference<any, any>,
-      args as InferArgs<Mutation>,
-    ) as Promise<
-      InferResult<Mutation> | unknown
-    >;
-  }
-
-  async action<Action extends ConvexActionReference<any, any>>(
-    action: Action,
-    args?: InferArgs<Action>,
-  ): Promise<InferResult<Action>>;
-  async action(action: string | AnyApi, args?: NamedArgs): Promise<unknown>;
-  async action<Action extends ConvexActionReference<any, any>>(
-    action: Action | string | AnyApi,
-    args?: InferArgs<Action> | NamedArgs,
-  ): Promise<InferResult<Action> | unknown> {
-    return super.action(
-      coerceActionReference(action) as ConvexActionReference<any, any>,
-      args as InferArgs<Action>,
-    ) as Promise<
-      InferResult<Action> | unknown
-    >;
-  }
-
-  async paginatedQuery<Query extends ConvexPaginatedQueryReference<any, any>>(
-    query: Query,
-    args: InferArgs<Query> | undefined,
-    pageSize: number,
-    cursor: string | null,
-  ): Promise<ConvexPage<InferResult<Query>>> {
-    return super.paginatedQuery(query, args, pageSize, cursor) as Promise<
-      ConvexPage<InferResult<Query>>
-    >;
-  }
-
-  async scheduleAfter<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation,
-    args: InferArgs<Mutation> | undefined,
-    runAfterMs: number,
-  ): Promise<string>;
-  async scheduleAfter(
-    mutation: string | AnyApi,
-    args: NamedArgs | undefined,
-    runAfterMs: number,
-  ): Promise<string>;
-  async scheduleAfter<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation | string | AnyApi,
-    args: InferArgs<Mutation> | NamedArgs | undefined,
-    runAfterMs: number,
-  ): Promise<string> {
-    return super.scheduleAfter(
-      coerceMutationReference(mutation) as ConvexMutationReference<any, any>,
-      args as InferArgs<Mutation> | undefined,
-      runAfterMs,
-    );
-  }
-
-  async scheduleAt<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation,
-    args: InferArgs<Mutation> | undefined,
-    runAtMs: number,
-  ): Promise<string>;
-  async scheduleAt(
-    mutation: string | AnyApi,
-    args: NamedArgs | undefined,
-    runAtMs: number,
-  ): Promise<string>;
-  async scheduleAt<Mutation extends ConvexMutationReference<any, any>>(
-    mutation: Mutation | string | AnyApi,
-    args: InferArgs<Mutation> | NamedArgs | undefined,
-    runAtMs: number,
-  ): Promise<string> {
-    return super.scheduleAt(
-      coerceMutationReference(mutation) as ConvexMutationReference<any, any>,
-      args as InferArgs<Mutation> | undefined,
-      runAtMs,
-    );
-  }
-
-  onUpdate<Query extends ConvexQueryReference<any, any>>(
-    query: Query,
-    args: InferArgs<Query>,
-    callback: (result: InferResult<Query>) => unknown,
-    onError?: (error: Error) => unknown,
-  ): Unsubscribe<InferResult<Query>>;
-  onUpdate(
-    query: string | AnyApi,
-    args: NamedArgs,
-    callback: (result: unknown) => unknown,
-    onError?: (error: Error) => unknown,
-  ): Unsubscribe<unknown>;
-  onUpdate<Query extends ConvexQueryReference<any, any> | ConvexPaginatedQueryReference<any, any>>(
-    query: Query | string | AnyApi,
-    args: InferArgs<Query> | NamedArgs,
-    callback: (
-      result: Query extends ConvexPaginatedQueryReference<any, infer Item>
-        ? Item[]
-        : InferResult<Query>,
-    ) => unknown,
-    onError?: (error: Error) => unknown,
-    options?: { pageSize?: number; cursor?: string | null },
-  ): Unsubscribe<
-    Query extends ConvexPaginatedQueryReference<any, infer Item>
-      ? Item[]
-      : InferResult<Query>
-  > {
-    if (typeof query === "string" || isAnyApiReference(query)) {
-      assertNamedLiveQueryOptions(query, options);
-      return super.onUpdate(
-        coerceQueryReference(query) as ConvexQueryReference<any, any>,
-        args as NamedArgs,
-        callback as (result: unknown) => unknown,
-        onError,
-      ) as Unsubscribe<
-        Query extends ConvexPaginatedQueryReference<any, infer Item>
-          ? Item[]
-          : InferResult<Query>
-      >;
-    }
-    return super.onUpdate(query as Query, args as InferArgs<Query>, callback, onError, options) as Unsubscribe<
-      Query extends ConvexPaginatedQueryReference<any, infer Item>
-        ? Item[]
-        : InferResult<Query>
-    >;
   }
 }

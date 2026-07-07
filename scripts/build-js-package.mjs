@@ -170,8 +170,8 @@ if (manifest.peerDependenciesMeta) provisioned.peerDependenciesMeta = manifest.p
 fs.writeFileSync(path.join(distDir, "package.json"), `${JSON.stringify(provisioned, null, 2)}\n`);
 
 if (manifest.name === "@nimbus/nimbus") {
-  verifyNimbusRootSdkArtifact(path.join(distDir, "index.js"), true);
-  verifyNimbusRootSdkArtifact(path.join(distDir, "index.d.ts"), false);
+  verifyNimbusRootSdkArtifact(path.join(distDir, "control-plane", "client.js"), true);
+  verifyNimbusRootSdkArtifact(path.join(distDir, "control-plane", "client.d.ts"), false);
   verifyNimbusRootSdkRouteArtifact(path.join(distDir, "control_plane_routes.js"));
   verifyNimbusRootSdkRouteArtifact(path.join(distDir, "control_plane_routes.d.ts"));
 }
