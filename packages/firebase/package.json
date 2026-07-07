@@ -7,9 +7,9 @@
   "sideEffects": false,
   "scripts": {
     "codegen:proto": "node ./src/codegen-protos.mjs",
-    "build": "node ../../scripts/build-js-package.mjs firebase",
-    "test": "node ./src/selftest.mjs",
-    "typecheck": "node ./src/selftest.mjs --typecheck-only"
+    "build": "npm run codegen:proto && node ../../scripts/build-js-package.mjs firebase",
+    "test": "npm run codegen:proto && node ./src/selftest.mjs",
+    "typecheck": "npm run codegen:proto && node ./src/selftest.mjs --typecheck-only"
   },
   "exports": {
     ".": "./src/index.ts",
@@ -17,6 +17,7 @@
     "./firestore": "./src/firestore.ts"
   },
   "devDependencies": {
+    "@bufbuild/buf": "^1.71.0",
     "@bufbuild/protoc-gen-es": "^2.12.0",
     "esbuild": "0.28.1",
     "typescript": "6.0.3"

@@ -1,4 +1,5 @@
 import { assert } from "./selftest/support.mjs";
+import { assertCodegenDeterminism } from "./selftest/codegen_determinism.mjs";
 import {
   assertGeneratedProtoSurface,
   assertPackageExports,
@@ -28,6 +29,7 @@ function optionalFlagValue(flag) {
 async function main() {
   await assertPackageExports();
   await assertGeneratedProtoSurface();
+  await assertCodegenDeterminism();
   if (buildOnly) {
     await buildPackageSurface();
     return;

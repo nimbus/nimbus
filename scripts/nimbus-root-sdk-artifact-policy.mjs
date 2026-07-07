@@ -1,8 +1,8 @@
 export const NIMBUS_ROOT_SDK_ARTIFACT_PATHS = [
-  "packages/nimbus/dist/index.js",
-  "packages/nimbus/dist/index.d.ts",
-  "crates/nimbus-assets/embedded/packages/@nimbus/nimbus/index.js",
-  "crates/nimbus-assets/embedded/packages/@nimbus/nimbus/index.d.ts",
+  "packages/nimbus/dist/control-plane/client.js",
+  "packages/nimbus/dist/control-plane/client.d.ts",
+  "crates/nimbus-assets/embedded/packages/@nimbus/nimbus/control-plane/client.js",
+  "crates/nimbus-assets/embedded/packages/@nimbus/nimbus/control-plane/client.d.ts",
 ];
 
 export const NIMBUS_ROOT_SDK_ROUTE_ARTIFACT_PATHS = [

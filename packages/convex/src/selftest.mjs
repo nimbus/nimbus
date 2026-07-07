@@ -37,6 +37,7 @@ async function main() {
   await testIifeBundleBuild();
   const browserModule = await loadBundledBrowserModule();
   await testStringRefsAndAnyApiUseNamedRequests(browserModule);
+  await testLiveQueryClientsCoerceAllRefKindsAtRuntime(browserModule);
   await testInjectedNodeSocketSupportsAnyApiSubscriptions(browserModule);
   await testNamedLiveQueriesRejectPaginationOptions(browserModule);
   await testHttpClientAuthFetcherRetriesUnauthorized(browserModule);
@@ -166,7 +167,7 @@ async function typecheckConvexSurface() {
   await fs.writeFile(
     path.join(fixtureDir, "fixture.ts"),
     `
-	import { ConvexHttpClient, ConvexReactClient, anyApi } from "convex/browser";
+	import { ConvexClient, ConvexHttpClient, ConvexReactClient, anyApi, makeQueryReference } from "convex/browser";
 import {
   ConvexProvider,
   ConvexProviderWithAuth,
@@ -258,7 +259,53 @@ export const identityHttp = httpAction(async (ctx) => {
 	  await _convexHttpClient.scheduleAfter("messages:send", {}, 10);
 	}
 
+	// CO13: the mixin-composed ConvexHttpClient/ConvexClient/ConvexReactClient
+	// must each keep accepting all three reference shapes (string name, anyApi,
+	// and a real branded reference) with correctly inferred argument/result
+	// types, since every class is built from the same overload signatures.
+	async function exerciseTypedRefsAcrossAllClientShapes() {
+	  const typedQuery = makeQueryReference<{ author: string }, { body: string }[]>(
+	    "messages:list",
+	  );
+	  const httpTypedResult = await _convexHttpClient.query(typedQuery, { author: "Ada" });
+	  const _httpTyped: { body: string }[] = httpTypedResult;
+	  void _httpTyped;
+
+	  const liveClient = new ConvexClient("http://localhost:8080/convex/demo", {
+	    skipConvexDeploymentUrlCheck: true,
+	    disabled: true,
+	  });
+	  const unsubscribeString = liveClient.onUpdate("messages:list", {}, (value) => {
+	    void value;
+	  });
+	  const unsubscribeAnyApi = liveClient.onUpdate(anyApi.messages.list, {}, (value) => {
+	    void value;
+	  });
+	  const unsubscribeTyped = liveClient.onUpdate(
+	    typedQuery,
+	    { author: "Ada" },
+	    (value) => {
+	      const _typed: { body: string }[] = value;
+	      void _typed;
+	    },
+	  );
+	  void unsubscribeString;
+	  void unsubscribeAnyApi;
+	  void unsubscribeTyped;
+
+	  const reactUnsubscribeTyped = _convexReactClient.onUpdate(
+	    typedQuery,
+	    { author: "Ada" },
+	    (value) => {
+	      const _typed: { body: string }[] = value;
+	      void _typed;
+	    },
+	  );
+	  void reactUnsubscribeTyped;
+	}
+
 	void exerciseNamedRefs;
+	void exerciseTypedRefsAcrossAllClientShapes;
 	`,
     "utf8",
   );
@@ -424,7 +471,7 @@ async function testIifeBundleBuild() {
 }
 
 async function testStringRefsAndAnyApiUseNamedRequests(browserModule) {
-  const { ConvexHttpClient, anyApi } = browserModule;
+  const { ConvexHttpClient, anyApi, makeQueryReference } = browserModule;
   const requests = [];
   const fetchImpl = async (url, init) => {
     requests.push({
@@ -448,6 +495,9 @@ async function testStringRefsAndAnyApiUseNamedRequests(browserModule) {
   await client.action(anyApi.dashboard.messages.run, { author: "Ada" });
   await client.scheduleAfter("messages:send", { author: "Ada", body: "later" }, 50);
   await client.scheduleAt(anyApi.dashboard.messages.send, { author: "Ada", body: "at" }, 100);
+  // CO13: a real (branded) reference must coerce through the same
+  // withConvexInvocationMethods mixin path as string/anyApi refs.
+  await client.query(makeQueryReference("messages:list"), { author: "Ada" });
 
   assert.deepEqual(requests, [
     {
@@ -483,7 +533,70 @@ async function testStringRefsAndAnyApiUseNamedRequests(browserModule) {
         run_at_ms: 100,
       },
     },
+    {
+      url: "http://localhost:8080/convex/demo/query",
+      method: "POST",
+      body: { name: "messages:list", args: { author: "Ada" } },
+    },
   ]);
+}
+
+async function testLiveQueryClientsCoerceAllRefKindsAtRuntime(browserModule) {
+  // CO13: withConvexLiveQuery is mixed onto both NimbusClient (-> ConvexClient)
+  // and NimbusReactClient (-> ConvexReactClient) independently; exercise both
+  // compositions with all three reference shapes (string name, anyApi, and a
+  // real branded reference) to prove the mixin runtime-composes correctly on
+  // each base rather than only being checked on one of the two classes.
+  const { ConvexClient, ConvexReactClient, anyApi, makeQueryReference } = browserModule;
+
+  for (const ClientClass of [ConvexClient, ConvexReactClient]) {
+    FakeNodeWebSocket.reset();
+    const client = new ClientClass("http://localhost:8080/convex/demo", {
+      skipConvexDeploymentUrlCheck: true,
+      webSocket: FakeNodeWebSocket,
+    });
+
+    const stringValues = [];
+    client.onUpdate("messages:list", { author: "Ada" }, (value) => {
+      stringValues.push(value);
+    });
+    const anyApiValues = [];
+    client.onUpdate(anyApi.messages.byAuthor, { author: "Ada" }, (value) => {
+      anyApiValues.push(value);
+    });
+    const realRefValues = [];
+    client.onUpdate(makeQueryReference("messages:recent"), { author: "Ada" }, (value) => {
+      realRefValues.push(value);
+    });
+
+    await delay(75);
+    assert.equal(FakeNodeWebSocket.instances.length, 1);
+    const socket = FakeNodeWebSocket.instances[0];
+    socket.open();
+    await delay(0);
+
+    const subscribeMessages = socket.sent.filter((message) => message.type === "subscribe_named");
+    assert.deepEqual(
+      subscribeMessages.map((message) => message.name).sort(),
+      ["messages:byAuthor", "messages:list", "messages:recent"].sort(),
+    );
+    subscribeMessages.forEach((message, index) => {
+      assert.deepEqual(message.args, { author: "Ada" });
+      socket.message({
+        type: "subscription_result",
+        request_id: message.request_id,
+        subscription_id: index + 1,
+        data: [{ body: message.name }],
+      });
+    });
+    await delay(0);
+
+    assert.deepEqual(stringValues, [[{ body: "messages:list" }]]);
+    assert.deepEqual(anyApiValues, [[{ body: "messages:byAuthor" }]]);
+    assert.deepEqual(realRefValues, [[{ body: "messages:recent" }]]);
+
+    client.close();
+  }
 }
 
 async function testInjectedNodeSocketSupportsAnyApiSubscriptions(browserModule) {

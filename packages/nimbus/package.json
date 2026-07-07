@@ -11,6 +11,7 @@
   },
   "exports": {
     ".": "./src/index.ts",
+    "./control-plane": "./src/control-plane/index.ts",
     "./react": "./src/react.ts",
     "./browser": "./src/browser.ts",
     "./server": "./src/server.ts",
