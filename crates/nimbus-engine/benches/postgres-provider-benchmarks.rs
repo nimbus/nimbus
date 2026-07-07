@@ -15,8 +15,8 @@ use nimbus_core::{
 use nimbus_engine::{
     ControlPlaneConfig, EmbeddedProviderKind, Engine, EnginePersistenceConfig,
     LocalEncryptionConfig, PersistenceDialect, PersistenceTopology, PoolConfig,
-    ProviderCredentials, SubscriptionRegistration, SubscriptionUpdate, TenantProviderConfig,
-    TenantRoutingConfig,
+    ProviderCredentials, SubscribeOptions, SubscriptionRegistration, SubscriptionUpdate,
+    TenantProviderConfig, TenantRoutingConfig,
 };
 use nimbus_storage::{PostgresProvider, PostgresProviderConfig};
 use serde_json::json;

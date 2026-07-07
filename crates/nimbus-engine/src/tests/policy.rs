@@ -148,7 +148,13 @@ async fn engine_read_policy_filters_full_scans_pagination_and_subscription_resul
 
     let (tx, mut rx) = subscription_channel();
     let _subscription = engine
-        .subscribe_with_principal(&tenant_id, query, &principal, "req-1".to_string(), tx)
+        .subscribe(
+            &tenant_id,
+            query,
+            "req-1".to_string(),
+            tx,
+            SubscribeOptions::for_principal(principal.clone()),
+        )
         .expect("subscription should succeed");
 
     match rx
@@ -399,7 +405,7 @@ async fn policy_revision_changes_terminate_active_authorized_subscriptions() {
     let (tx, mut rx) = subscription_channel();
     let principal = principal_with_subject("user-123");
     let _subscription = engine
-        .subscribe_with_principal(
+        .subscribe(
             &tenant_id,
             Query {
                 table: table.clone(),
@@ -407,9 +413,9 @@ async fn policy_revision_changes_terminate_active_authorized_subscriptions() {
                 order: None,
                 limit: None,
             },
-            &principal,
             "req-1".to_string(),
             tx,
+            SubscribeOptions::for_principal(principal.clone()),
         )
         .expect("subscription should succeed");
     assert_eq!(

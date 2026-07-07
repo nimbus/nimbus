@@ -168,6 +168,7 @@ async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
             },
             "system-machines-watch".to_string(),
             system_tx,
+            nimbus_engine::SubscribeOptions::anonymous(),
         )
         .await
         .expect("system machines table should be subscribable");

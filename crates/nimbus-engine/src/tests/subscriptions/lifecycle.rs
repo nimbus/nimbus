@@ -15,7 +15,13 @@ async fn engine_delete_tenant_tears_down_active_subscriptions() {
     };
 
     let subscription = engine
-        .subscribe(&tenant_id, query, "req-delete".to_string(), tx)
+        .subscribe(
+            &tenant_id,
+            query,
+            "req-delete".to_string(),
+            tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("subscribe should succeed");
     let subscription_id = subscription.id();
     let _ = rx.recv().await.expect("initial update should arrive");

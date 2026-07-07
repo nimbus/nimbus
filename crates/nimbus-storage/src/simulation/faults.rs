@@ -19,6 +19,7 @@ pub enum FaultPoint {
     TriggerInvocationMaterializeBeforeCommit = 8,
     ScheduledJobRecordResultBeforeWrite = 9,
     ScheduledJobCompleteBeforeWrite = 10,
+    TriggerExecutionBeforeSave = 11,
 }
 
 impl FaultPoint {
@@ -40,6 +41,7 @@ impl FaultPoint {
             }
             Self::ScheduledJobRecordResultBeforeWrite => "scheduled_job_record_result_before_write",
             Self::ScheduledJobCompleteBeforeWrite => "scheduled_job_complete_before_write",
+            Self::TriggerExecutionBeforeSave => "trigger_execution_before_save",
         }
     }
 }

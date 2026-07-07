@@ -39,6 +39,7 @@ async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_jo
             },
             "batch-delete".to_string(),
             tx,
+            SubscribeOptions::anonymous(),
         )
         .expect("subscribe should succeed");
     let initial = rx
@@ -187,7 +188,13 @@ async fn engine_does_not_fail_committed_mutation_when_subscription_re_evaluation
     };
 
     let _subscription = engine
-        .subscribe(&tenant_id, query, "req-3".to_string(), tx)
+        .subscribe(
+            &tenant_id,
+            query,
+            "req-3".to_string(),
+            tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("subscribe should succeed");
     let _ = rx
         .recv()

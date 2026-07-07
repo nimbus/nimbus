@@ -13,7 +13,7 @@ mod verification;
 
 pub use engine::{
     AsyncMutationContext, CommittedMutationEvent, CommittedMutationObserver, EncryptionStatus,
-    Engine, InitializedKeyProvider, MutationActor, MutationExecutionUnit,
+    Engine, InitializedKeyProvider, MutationActor, MutationExecutionUnit, SubscribeOptions,
     SubscriptionBootstrapCancellation, TableSchemaChangeEvent, TableSchemaChangeObserver,
 };
 pub use evaluator::{

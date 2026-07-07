@@ -123,7 +123,13 @@ async fn handle_plain_subscription(
     let sender = ctx.subscription_tx.clone();
     let principal = normalize_principal_context(current_auth.as_ref());
     match service
-        .subscribe_async_with_principal(tenant_id, query, principal, request_id_for_worker, sender)
+        .subscribe_async(
+            tenant_id,
+            query,
+            request_id_for_worker,
+            sender,
+            SubscribeOptions::for_principal(principal),
+        )
         .await
     {
         Ok(registration) => {

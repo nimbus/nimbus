@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use nimbus_core::{Error, Query, TenantId};
+use nimbus_core::{Error, PrincipalContext, Query, TenantId};
 use nimbus_engine::{
-    SubscriptionBootstrapCancellation, SubscriptionCleanupHandle, SubscriptionRegistration,
-    SubscriptionUpdate,
+    SubscribeOptions, SubscriptionBootstrapCancellation, SubscriptionCleanupHandle,
+    SubscriptionRegistration, SubscriptionUpdate,
 };
 use nimbus_runtime::HostCallCancellation;
 use tokio::sync::mpsc;
@@ -146,26 +146,30 @@ impl GenericSocketSession {
             let subscription_wait = subscription_cancellation.clone();
             let subscription_check = subscription_cancellation.clone();
             let result = service
-                .subscribe_async_cancellable(
+                .subscribe_async(
                     tenant_id,
                     query,
                     request_id_for_worker.clone(),
                     sender,
-                    SubscriptionBootstrapCancellation::new(
-                        async move {
-                            tokio::select! {
-                                _ = disconnect_wait.cancelled() => {}
-                                _ = subscription_wait.cancelled() => {}
-                            }
-                        },
-                        move || {
-                            if disconnect_check.is_cancelled() || subscription_check.is_cancelled()
-                            {
-                                Err(Error::Cancelled)
-                            } else {
-                                Ok(())
-                            }
-                        },
+                    SubscribeOptions::cancellable(
+                        PrincipalContext::anonymous(),
+                        SubscriptionBootstrapCancellation::new(
+                            async move {
+                                tokio::select! {
+                                    _ = disconnect_wait.cancelled() => {}
+                                    _ = subscription_wait.cancelled() => {}
+                                }
+                            },
+                            move || {
+                                if disconnect_check.is_cancelled()
+                                    || subscription_check.is_cancelled()
+                                {
+                                    Err(Error::Cancelled)
+                                } else {
+                                    Ok(())
+                                }
+                            },
+                        ),
                     ),
                 )
                 .await;

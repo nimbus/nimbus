@@ -12,7 +12,8 @@ use nimbus_core::{
     diff_subscription_snapshots,
 };
 use nimbus_engine::{
-    DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, Engine, SubscriptionCleanupHandle, SubscriptionUpdate,
+    DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, Engine, SubscribeOptions, SubscriptionCleanupHandle,
+    SubscriptionUpdate,
 };
 use nimbus_firestore::storage_table_for_collection_path;
 use tokio::sync::mpsc;
@@ -525,12 +526,12 @@ impl ActiveListenRequestStream {
         let registration = self
             .engine
             .clone()
-            .subscribe_async_with_principal(
+            .subscribe_async(
                 tenant_context.tenant_id().clone(),
                 prepared_target.query,
-                self.principal.clone(),
                 format!("firestore-listen-{target_id}"),
                 sender,
+                SubscribeOptions::for_principal(self.principal.clone()),
             )
             .await
             .map_err(firebase_grpc_status)?;

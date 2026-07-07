@@ -15,7 +15,8 @@ use nimbus_crypto::{
 };
 use nimbus_engine::{
     EmbeddedProviderKind, Engine, EnginePersistenceConfig, LocalEncryptionConfig,
-    LocalKeyProviderConfig, MasterKeyFileConfig, SubscriptionRegistration, SubscriptionUpdate,
+    LocalKeyProviderConfig, MasterKeyFileConfig, SubscribeOptions, SubscriptionRegistration,
+    SubscriptionUpdate,
 };
 use nimbus_storage::{
     sqlite_index_scan_composite_range_query_sql, sqlite_index_scan_prefix_query_sql,

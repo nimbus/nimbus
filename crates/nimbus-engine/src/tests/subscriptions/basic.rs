@@ -42,7 +42,13 @@ async fn engine_insert_drives_subscription_updates() {
     };
 
     let subscription = engine
-        .subscribe(&tenant_id, query, "req-1".to_string(), tx)
+        .subscribe(
+            &tenant_id,
+            query,
+            "req-1".to_string(),
+            tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("subscribe should succeed");
     let subscription_id = subscription.id();
     let initial = rx.recv().await.expect("initial update should arrive");
@@ -110,7 +116,13 @@ async fn engine_update_and_delete_drive_subscription_updates() {
     };
 
     let subscription = engine
-        .subscribe(&tenant_id, query, "req-2".to_string(), tx)
+        .subscribe(
+            &tenant_id,
+            query,
+            "req-2".to_string(),
+            tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("subscribe should succeed");
     let subscription_id = subscription.id();
     let initial = rx.recv().await.expect("initial update should arrive");
@@ -182,7 +194,13 @@ async fn slow_subscription_channels_are_dropped_instead_of_growing_unbounded() {
 
     let (tx, mut rx) = mpsc::channel::<SubscriptionUpdate>(1);
     let _subscription = engine
-        .subscribe(&tenant_id, query_for("tasks"), "slow-sub".to_string(), tx)
+        .subscribe(
+            &tenant_id,
+            query_for("tasks"),
+            "slow-sub".to_string(),
+            tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("subscribe should succeed");
 
     assert_eq!(
@@ -252,6 +270,7 @@ async fn subscription_snapshots_expose_covered_sequence_and_commit_timestamp_met
             query_for("tasks"),
             "snapshot-meta".to_string(),
             tx,
+            SubscribeOptions::anonymous(),
         )
         .expect("subscribe should succeed");
 

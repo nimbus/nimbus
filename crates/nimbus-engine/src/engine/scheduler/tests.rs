@@ -16,6 +16,7 @@ use tokio::time::{Duration, timeout};
 
 use super::{super::Engine, scheduled_jobs::SCHEDULED_JOB_CLAIM_BATCH_LIMIT};
 use crate::SubscriptionUpdate;
+use crate::engine::SubscribeOptions;
 
 fn tasks_table() -> TableName {
     TableName::new("tasks").expect("table name should be valid")
@@ -280,7 +281,13 @@ async fn scheduled_mutation_executes_and_triggers_reactive_update() {
 
     let (tx, mut rx) = subscription_channel();
     let subscription = engine
-        .subscribe(&tenant_id, query_for("tasks"), "sched-1".to_string(), tx)
+        .subscribe(
+            &tenant_id,
+            query_for("tasks"),
+            "sched-1".to_string(),
+            tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("subscribe should succeed");
     let subscription_id = subscription.id();
     let initial = rx.recv().await.expect("initial update should arrive");
@@ -342,8 +349,8 @@ async fn scheduled_mutation_executes_and_triggers_reactive_update() {
     scheduler_handle.await.expect("scheduler should shut down");
 }
 
-#[test]
-fn manual_clock_advances_scheduled_work_without_wall_clock_sleep() {
+#[tokio::test]
+async fn manual_clock_advances_scheduled_work_without_wall_clock_sleep() {
     let harness = DeterministicHarness::scenario("manual-clock-scheduler", 1, Timestamp(1_000));
     let fixture = EngineFixture::new_with_harness(harness.clone(), |path, harness| {
         Engine::new_with_simulation(path, harness.clock(), harness.fault_injector())
@@ -361,7 +368,9 @@ fn manual_clock_advances_scheduled_work_without_wall_clock_sleep() {
         )
         .expect("schedule should succeed");
 
-    crate::scheduler::tick_at(&engine, Timestamp(1_000)).expect("initial tick should succeed");
+    crate::scheduler::tick_at_async(&engine, Timestamp(1_000))
+        .await
+        .expect("initial tick should succeed");
     assert!(
         engine
             .query_documents(&tenant_id, &query_for("tasks"))
@@ -370,7 +379,9 @@ fn manual_clock_advances_scheduled_work_without_wall_clock_sleep() {
     );
 
     let advanced = harness.clock().advance_ms(500);
-    crate::scheduler::tick_at(&engine, advanced).expect("advanced tick should succeed");
+    crate::scheduler::tick_at_async(&engine, advanced)
+        .await
+        .expect("advanced tick should succeed");
     let documents = engine
         .query_documents(&tenant_id, &query_for("tasks"))
         .expect("query should succeed");
@@ -405,7 +416,9 @@ async fn scheduled_mutation_validates_against_schema() {
         )
         .expect("schedule should succeed");
 
-    crate::scheduler::tick_at(engine.as_ref(), Timestamp::now()).expect("tick should succeed");
+    crate::scheduler::tick_at_async(&engine, Timestamp::now())
+        .await
+        .expect("tick should succeed");
 
     assert!(
         engine
@@ -460,7 +473,9 @@ async fn cron_job_executes_repeatedly() {
             .into_iter()
             .next()
             .expect("cron should exist");
-        crate::scheduler::tick_at(engine.as_ref(), cron.next_run).expect("tick should succeed");
+        crate::scheduler::tick_at_async(&engine, cron.next_run)
+            .await
+            .expect("tick should succeed");
     }
 
     let documents = engine
@@ -498,7 +513,9 @@ async fn cron_missed_ticks_execute_once() {
         .update_cron_job(&tenant_id, &cron)
         .expect("cron should update");
 
-    crate::scheduler::tick_at(engine.as_ref(), Timestamp(10_000)).expect("tick should succeed");
+    crate::scheduler::tick_at_async(&engine, Timestamp(10_000))
+        .await
+        .expect("tick should succeed");
 
     let documents = engine
         .list_documents(&tenant_id, &tasks_table())
@@ -540,7 +557,7 @@ async fn load_tenants_with_scheduled_work_recovers_running_jobs() {
         assert_eq!(claimed.len(), 1);
     }
 
-    let reloaded = Engine::new(data_dir.path()).expect("engine should reopen");
+    let reloaded = Arc::new(Engine::new(data_dir.path()).expect("engine should reopen"));
     reloaded
         .load_tenants_with_scheduled_work()
         .expect("scheduled tenants should load");
@@ -554,7 +571,9 @@ async fn load_tenants_with_scheduled_work_recovers_running_jobs() {
         1
     );
 
-    crate::scheduler::tick_at(&reloaded, Timestamp::now()).expect("tick should succeed");
+    crate::scheduler::tick_at_async(&reloaded, Timestamp::now())
+        .await
+        .expect("tick should succeed");
     let documents = reloaded
         .list_documents(&tenant_id, &tasks_table())
         .expect("list should succeed");
@@ -597,12 +616,14 @@ async fn recovered_scheduled_job_does_not_double_apply_after_replay() {
         job_id
     };
 
-    let reloaded = Engine::new(data_dir.path()).expect("engine should reopen");
+    let reloaded = Arc::new(Engine::new(data_dir.path()).expect("engine should reopen"));
     reloaded
         .load_tenants_with_scheduled_work()
         .expect("scheduled tenants should load");
 
-    crate::scheduler::tick_at(&reloaded, Timestamp::now()).expect("tick should succeed");
+    crate::scheduler::tick_at_async(&reloaded, Timestamp::now())
+        .await
+        .expect("tick should succeed");
     let documents = reloaded
         .list_documents(&tenant_id, &tasks_table())
         .expect("list should succeed");
@@ -785,7 +806,8 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
         );
     }
 
-    let reloaded = Engine::new(data_dir.path()).expect("engine should reopen after second claim");
+    let reloaded =
+        Arc::new(Engine::new(data_dir.path()).expect("engine should reopen after second claim"));
     reloaded
         .load_tenants_with_scheduled_work()
         .expect("scheduled tenants should load after second claim restart");
@@ -801,7 +823,8 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
             Some(2),
         )
     );
-    crate::scheduler::tick_at(&reloaded, Timestamp::now())
+    crate::scheduler::tick_at_async(&reloaded, Timestamp::now())
+        .await
         .expect("scheduler tick should complete the recovered job");
     let mut titles = reloaded
         .list_documents(&tenant_id, &tasks_table())

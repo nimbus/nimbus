@@ -4,9 +4,9 @@ pub(crate) use nimbus_core::{
     TableAccessPolicy, TableName, TableSchema, TenantId, Timestamp,
 };
 pub(crate) use nimbus_testing::{
-    BlockingFaultInjector, EngineFixture, GeneratedTaskHistory, GeneratedTaskHistorySeedCase,
-    GeneratedTaskPageExpectation, GeneratedTaskRecord, VerificationHarnessMode,
-    ci_or_local_duration, replay_generated_task_history_async,
+    BlockingFaultInjector, CountedFaultInjector, EngineFixture, GeneratedTaskHistory,
+    GeneratedTaskHistorySeedCase, GeneratedTaskPageExpectation, GeneratedTaskRecord,
+    VerificationHarnessMode, ci_or_local_duration, replay_generated_task_history_async,
     selected_generated_task_history_seed_corpus, wait_for_value,
 };
 pub(crate) use serde_json::json;
@@ -21,8 +21,8 @@ pub(crate) use tokio::sync::{Notify, mpsc};
 pub(crate) use tokio::time::{Duration, timeout};
 
 pub(crate) use crate::engine::{
-    SubscriptionBootstrapCancellation, paginate_documents_for_docs_with_principal,
-    query_documents_for_docs_with_principal,
+    SubscribeOptions, SubscriptionBootstrapCancellation,
+    paginate_documents_for_docs_with_principal, query_documents_for_docs_with_principal,
 };
 pub(crate) use crate::tenant::DOCUMENT_CACHE_CAPACITY;
 pub(crate) use crate::test_support::{
@@ -800,7 +800,13 @@ async fn engine_unsubscribe_stops_notifications() {
 
     let (tx, mut rx) = subscription_channel();
     let subscription = engine
-        .subscribe(&tenant_id, query_for("tasks"), "req-unsub".to_string(), tx)
+        .subscribe(
+            &tenant_id,
+            query_for("tasks"),
+            "req-unsub".to_string(),
+            tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("subscribe should succeed");
     let subscription_id = subscription.id();
     let _ = rx.recv().await.expect("initial update should arrive");

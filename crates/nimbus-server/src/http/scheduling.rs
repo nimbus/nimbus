@@ -98,7 +98,7 @@ pub(crate) async fn list_cron_jobs(
     crate::system_tenant::sync_scheduler_state_for_tenant_async(&service, tenant.tenant_id())
         .await?;
     let crons = service
-        .list_cron_jobs_async(tenant.tenant_id().clone())
+        .load_cron_jobs_async(tenant.tenant_id().clone())
         .await?;
     Ok(Json(CronJobsResponse { crons }))
 }

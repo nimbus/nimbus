@@ -63,10 +63,22 @@ async fn engine_only_notifies_subscriptions_for_affected_tables() {
     };
 
     let _tasks_subscription = engine
-        .subscribe(&tenant_id, tasks_query, "tasks-1".to_string(), tasks_tx)
+        .subscribe(
+            &tenant_id,
+            tasks_query,
+            "tasks-1".to_string(),
+            tasks_tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("tasks subscribe should succeed");
     let _users_subscription = engine
-        .subscribe(&tenant_id, users_query, "users-1".to_string(), users_tx)
+        .subscribe(
+            &tenant_id,
+            users_query,
+            "users-1".to_string(),
+            users_tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("users subscribe should succeed");
 
     let _ = tasks_rx
@@ -125,10 +137,22 @@ async fn engine_insert_only_notifies_filtered_subscriptions_for_matching_documen
     };
 
     let _active_subscription = engine
-        .subscribe(&tenant_id, active_query, "active-1".to_string(), active_tx)
+        .subscribe(
+            &tenant_id,
+            active_query,
+            "active-1".to_string(),
+            active_tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("active subscribe should succeed");
     let _done_subscription = engine
-        .subscribe(&tenant_id, done_query, "done-1".to_string(), done_tx)
+        .subscribe(
+            &tenant_id,
+            done_query,
+            "done-1".to_string(),
+            done_tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("done subscribe should succeed");
 
     let _ = active_rx
@@ -216,10 +240,17 @@ async fn engine_delete_only_notifies_filtered_subscriptions_for_matching_documen
             active_query,
             "active-delete".to_string(),
             active_tx,
+            SubscribeOptions::anonymous(),
         )
         .expect("active subscribe should succeed");
     let _done_subscription = engine
-        .subscribe(&tenant_id, done_query, "done-delete".to_string(), done_tx)
+        .subscribe(
+            &tenant_id,
+            done_query,
+            "done-delete".to_string(),
+            done_tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("done subscribe should succeed");
 
     let _ = active_rx
@@ -332,10 +363,17 @@ async fn engine_updates_remain_conservative_for_filtered_subscriptions() {
             active_query,
             "active-update".to_string(),
             active_tx,
+            SubscribeOptions::anonymous(),
         )
         .expect("active subscribe should succeed");
     let _done_subscription = engine
-        .subscribe(&tenant_id, done_query, "done-update".to_string(), done_tx)
+        .subscribe(
+            &tenant_id,
+            done_query,
+            "done-update".to_string(),
+            done_tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("done subscribe should succeed");
 
     let _ = active_rx
@@ -410,7 +448,13 @@ async fn engine_limited_subscriptions_skip_out_of_window_ordered_writes() {
     };
 
     let _subscription = engine
-        .subscribe(&tenant_id, query, "ranked-limit".to_string(), tx)
+        .subscribe(
+            &tenant_id,
+            query,
+            "ranked-limit".to_string(),
+            tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("subscribe should succeed");
 
     let initial = rx.recv().await.expect("initial update should arrive");

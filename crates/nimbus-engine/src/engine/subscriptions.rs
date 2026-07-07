@@ -1,6 +1,6 @@
 mod bootstrap;
 
-use std::future::{Future, pending};
+use std::future::{Future, Pending, pending};
 use std::sync::Arc;
 
 use nimbus_core::{
@@ -37,6 +37,46 @@ struct SubscriptionBootstrapPublication<'a> {
     request_id: String,
     sender: &'a mpsc::Sender<SubscriptionUpdate>,
     covered_sequence: SequenceNumber,
+}
+
+/// Options controlling subscription registration: which principal evaluates
+/// policy for the bootstrap read, and (for the async path) a cancellation
+/// signal that aborts in-flight bootstrap work if it resolves first. The
+/// sync `subscribe` path and non-cancellable async subscriptions use the
+/// default `Fut`/`Check` (a never-resolving wait paired with an always-ok
+/// check), so cancellation is effectively disabled.
+pub struct SubscribeOptions<Fut = Pending<()>, Check = fn() -> Result<()>> {
+    pub principal: PrincipalContext,
+    pub cancellation: SubscriptionBootstrapCancellation<Fut, Check>,
+}
+
+impl SubscribeOptions<Pending<()>, fn() -> Result<()>> {
+    /// Anonymous principal, no cancellation support.
+    pub fn anonymous() -> Self {
+        Self::for_principal(PrincipalContext::anonymous())
+    }
+
+    /// Explicit principal, no cancellation support.
+    pub fn for_principal(principal: PrincipalContext) -> Self {
+        Self {
+            principal,
+            cancellation: SubscriptionBootstrapCancellation::new(pending(), || Ok(())),
+        }
+    }
+}
+
+impl<Fut, Check> SubscribeOptions<Fut, Check> {
+    /// Explicit principal plus a cancellation signal that aborts the async
+    /// bootstrap read if it resolves first.
+    pub fn cancellable(
+        principal: PrincipalContext,
+        cancellation: SubscriptionBootstrapCancellation<Fut, Check>,
+    ) -> Self {
+        Self {
+            principal,
+            cancellation,
+        }
+    }
 }
 
 impl Engine {
@@ -121,36 +161,19 @@ impl Engine {
         query: Query,
         request_id: String,
         sender: mpsc::Sender<SubscriptionUpdate>,
+        opts: SubscribeOptions,
     ) -> Result<SubscriptionRegistration> {
-        self.subscribe_with_principal(
-            tenant_id,
-            query,
-            &PrincipalContext::anonymous(),
-            request_id,
-            sender,
-        )
-    }
-
-    /// Registers a new subscription for the provided principal, sends the initial result,
-    /// and returns the stable id plus a cleanup handle owned by the caller.
-    pub fn subscribe_with_principal(
-        &self,
-        tenant_id: &TenantId,
-        query: Query,
-        principal: &PrincipalContext,
-        request_id: String,
-        sender: mpsc::Sender<SubscriptionUpdate>,
-    ) -> Result<SubscriptionRegistration> {
+        let SubscribeOptions { principal, .. } = opts;
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
         let registration =
-            self.register_pending_subscription(&runtime, &query, principal, &sender)?;
+            self.register_pending_subscription(&runtime, &query, &principal, &sender)?;
         let subscription_id = registration.id();
         let mut check_cancel = || Ok(());
         match evaluate_subscription_bootstrap_cancellable_for_principal(
             &runtime,
             &query,
-            principal,
+            &principal,
             &mut check_cancel,
         ) {
             Ok((documents, covered_sequence)) => {
@@ -182,85 +205,24 @@ impl Engine {
 
     /// Registers a new subscription asynchronously, sends the initial result,
     /// and returns the stable id plus a cleanup handle owned by the caller.
-    pub async fn subscribe_async(
-        self: &Arc<Self>,
-        tenant_id: TenantId,
-        query: Query,
-        request_id: String,
-        sender: mpsc::Sender<SubscriptionUpdate>,
-    ) -> Result<SubscriptionRegistration> {
-        self.subscribe_async_cancellable_with_principal(
-            tenant_id,
-            query,
-            PrincipalContext::anonymous(),
-            request_id,
-            sender,
-            SubscriptionBootstrapCancellation::new(pending(), || Ok(())),
-        )
-        .await
-    }
-
-    /// Registers a new subscription asynchronously for the provided principal.
-    pub async fn subscribe_async_with_principal(
-        self: &Arc<Self>,
-        tenant_id: TenantId,
-        query: Query,
-        principal: PrincipalContext,
-        request_id: String,
-        sender: mpsc::Sender<SubscriptionUpdate>,
-    ) -> Result<SubscriptionRegistration> {
-        self.subscribe_async_cancellable_with_principal(
-            tenant_id,
-            query,
-            principal,
-            request_id,
-            sender,
-            SubscriptionBootstrapCancellation::new(pending(), || Ok(())),
-        )
-        .await
-    }
-
-    /// Registers a new subscription asynchronously and aborts bootstrap work if
-    /// the provided cancellation future resolves first.
-    pub async fn subscribe_async_cancellable<Fut, Check>(
-        self: &Arc<Self>,
-        tenant_id: TenantId,
-        query: Query,
-        request_id: String,
-        sender: mpsc::Sender<SubscriptionUpdate>,
-        cancellation: SubscriptionBootstrapCancellation<Fut, Check>,
-    ) -> Result<SubscriptionRegistration>
-    where
-        Fut: Future<Output = ()> + Send,
-        Check: Fn() -> Result<()> + Send + Sync + 'static,
-    {
-        self.subscribe_async_cancellable_with_principal(
-            tenant_id,
-            query,
-            PrincipalContext::anonymous(),
-            request_id,
-            sender,
-            cancellation,
-        )
-        .await
-    }
-
-    /// Registers a new subscription asynchronously for the provided principal
-    /// and aborts bootstrap work if the provided cancellation future resolves
+    /// Aborts the in-flight bootstrap read if `opts.cancellation` resolves
     /// first.
-    pub async fn subscribe_async_cancellable_with_principal<Fut, Check>(
+    pub async fn subscribe_async<Fut, Check>(
         self: &Arc<Self>,
         tenant_id: TenantId,
         query: Query,
-        principal: PrincipalContext,
         request_id: String,
         sender: mpsc::Sender<SubscriptionUpdate>,
-        cancellation: SubscriptionBootstrapCancellation<Fut, Check>,
+        opts: SubscribeOptions<Fut, Check>,
     ) -> Result<SubscriptionRegistration>
     where
         Fut: Future<Output = ()> + Send,
         Check: Fn() -> Result<()> + Send + Sync + 'static,
     {
+        let SubscribeOptions {
+            principal,
+            cancellation,
+        } = opts;
         let (cancel_wait, check_cancel) = cancellation.into_parts();
         let check_cancel = Arc::new(check_cancel);
         let query_for_bootstrap = query.clone();

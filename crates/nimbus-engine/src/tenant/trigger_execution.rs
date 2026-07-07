@@ -3,16 +3,33 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use nimbus_core::{Timestamp, TriggerInvocationKey, TriggerInvocationState};
-use nimbus_storage::Clock;
+use nimbus_core::{
+    Timestamp, TriggerInvocationKey, TriggerInvocationRecord, TriggerInvocationState,
+};
+use nimbus_storage::{Clock, FaultPoint};
 use tracing::warn;
 
 use crate::triggers::execution::{SharedTriggerInvocationExecutor, TriggerInvocationExecution};
 
 use super::TenantRuntime;
+use super::background::BackgroundWorker;
 
 const TRIGGER_MAX_ATTEMPTS: u32 = 5;
 const TRIGGER_RETRY_POLL_INTERVAL: Duration = Duration::from_millis(25);
+/// Backoff before retrying a trigger invocation whose *store* interaction
+/// failed (e.g. a transient I/O error), as opposed to a business-level
+/// execution failure. Store retries are unbounded and never count against
+/// `TRIGGER_MAX_ATTEMPTS`, which governs business retries only. Mirrors
+/// `trigger_candidates`'s `TRIGGER_CANDIDATE_RETRY_BACKOFF` order of
+/// magnitude.
+const TRIGGER_EXECUTION_STORE_RETRY_BACKOFF: Duration = Duration::from_millis(10);
+/// Bound on in-place retries when persisting an already-computed execution
+/// outcome (`persist_execution_outcome`). Unlike the pre-execution store
+/// retry path above, this cannot be unbounded: the handler has already run
+/// by this point, so retrying forever would hold the worker thread hostage
+/// to one key's outcome save instead of logging and moving on to the rest
+/// of the queue.
+const TRIGGER_EXECUTION_OUTCOME_SAVE_MAX_ATTEMPTS: u32 = 5;
 
 #[derive(Clone, PartialEq, Eq)]
 struct QueuedTriggerInvocation {
@@ -26,8 +43,7 @@ struct TriggerExecutionQueueState {
 }
 
 struct TriggerExecutionWorker {
-    worker: Mutex<Option<std::thread::JoinHandle<()>>>,
-    shutdown: Arc<AtomicBool>,
+    worker: BackgroundWorker,
 }
 
 pub(super) struct TriggerExecutionQueue {
@@ -104,7 +120,17 @@ impl TriggerExecutionQueueState {
         }
     }
 
-    fn notify_all(&self) {
+    /// Sets `shutdown` and wakes every waiter while holding the same queue
+    /// lock `pop_next_ready` holds across its shutdown check, so the flag
+    /// flip can never land in the gap between that check and the waiter
+    /// actually parking on the condvar. See `WorkQueue::signal_shutdown` for
+    /// the full lost-wakeup rationale this mirrors.
+    fn signal_shutdown(&self, shutdown: &AtomicBool) {
+        let _queue = self
+            .queue
+            .lock()
+            .expect("trigger execution queue lock should not be poisoned");
+        shutdown.store(true, Ordering::Release);
         self.queue_ready.notify_all();
     }
 }
@@ -112,8 +138,7 @@ impl TriggerExecutionQueueState {
 impl TriggerExecutionWorker {
     fn new() -> Self {
         Self {
-            worker: Mutex::new(None),
-            shutdown: Arc::new(AtomicBool::new(false)),
+            worker: BackgroundWorker::new(),
         }
     }
 
@@ -124,40 +149,17 @@ impl TriggerExecutionWorker {
         clock: Arc<dyn Clock>,
         executor: SharedTriggerInvocationExecutor,
     ) {
-        let mut worker = self
-            .worker
-            .lock()
-            .expect("trigger execution worker lock should not be poisoned");
-        if worker.is_some() {
-            return;
-        }
-        self.shutdown.store(false, Ordering::Release);
         let runtime = Arc::downgrade(runtime);
-        let shutdown = self.shutdown.clone();
-        *worker = Some(
-            std::thread::Builder::new()
-                .name("nimbus-trigger-execution".to_string())
-                .spawn(move || {
-                    run_trigger_execution_worker(runtime, queue, shutdown, clock, executor)
-                })
-                .expect("trigger execution worker should spawn"),
-        );
+        self.worker
+            .start("nimbus-trigger-execution", move |shutdown| {
+                run_trigger_execution_worker(runtime, queue, shutdown, clock, executor)
+            });
     }
 
     fn shutdown(&self, queue: &Arc<TriggerExecutionQueueState>) {
-        self.shutdown.store(true, Ordering::Release);
-        queue.notify_all();
-        if let Some(worker) = self
-            .worker
-            .lock()
-            .expect("trigger execution worker lock should not be poisoned")
-            .take()
-        {
-            if worker.thread().id() == std::thread::current().id() {
-                return;
-            }
-            let _ = worker.join();
-        }
+        let queue = queue.clone();
+        self.worker
+            .shutdown(move |shutdown| queue.signal_shutdown(shutdown));
     }
 }
 
@@ -212,9 +214,15 @@ fn run_trigger_execution_worker(
         let Some(runtime) = runtime.upgrade() else {
             return;
         };
-        let result: nimbus_core::Result<()> = (|| {
+
+        // Phase 1 (pre-execution): load the record and, for a fresh
+        // Pending/RetryPending attempt, mark it Running before the handler
+        // runs. The handler has not executed anywhere in this phase, so any
+        // failure here is a plain store retry: re-enqueueing the key for
+        // another pass cannot cause a duplicate handler invocation.
+        let pre_execution: nimbus_core::Result<Option<TriggerInvocationRecord>> = (|| {
             let Some(mut record) = runtime.store.trigger_invocation(&key)? else {
-                return Ok(());
+                return Ok(None);
             };
             match record.state {
                 TriggerInvocationState::Pending | TriggerInvocationState::RetryPending { .. } => {
@@ -222,36 +230,138 @@ fn run_trigger_execution_worker(
                     runtime.store.save_trigger_invocation(&record)?;
                 }
                 TriggerInvocationState::Running { .. } => {}
-                _ => return Ok(()),
+                _ => return Ok(None),
             }
-            match executor.execute_invocation(runtime.tenant_id(), &record) {
-                TriggerInvocationExecution::Completed => {
-                    record.complete(clock.now())?;
-                }
-                TriggerInvocationExecution::RetryableFailure { error } => {
-                    let attempt = record.state.attempt();
-                    if let Some(next_attempt_at) = next_retry_attempt_at(attempt, clock.now()) {
-                        record.schedule_retry(clock.now(), next_attempt_at, error)?;
-                        runtime.store.save_trigger_invocation(&record)?;
+            Ok(Some(record))
+        })();
+
+        let mut record = match pre_execution {
+            Ok(Some(record)) => record,
+            Ok(None) => continue,
+            Err(error) => {
+                requeue_for_store_retry(&queue, &key, clock.as_ref(), &error);
+                continue;
+            }
+        };
+
+        // Phase 2 (post-execution): run the handler exactly once and
+        // compute the resulting state transition in memory. `record.state`
+        // is guaranteed `Running` here (just set above, or loaded as such),
+        // so `complete`/`schedule_retry`/`fail_terminal` cannot fail; the
+        // handler itself has now run, so from here on a persistence failure
+        // must retry the *save* in place (`persist_execution_outcome`)
+        // rather than re-enqueue the key, which would re-run the handler.
+        match executor.execute_invocation(runtime.tenant_id(), &record) {
+            TriggerInvocationExecution::Completed => {
+                record
+                    .complete(clock.now())
+                    .expect("record must be Running immediately after execute_invocation");
+                persist_execution_outcome(&runtime, &record);
+            }
+            TriggerInvocationExecution::RetryableFailure { error } => {
+                let attempt = record.state.attempt();
+                if let Some(next_attempt_at) = next_retry_attempt_at(attempt, clock.now()) {
+                    record
+                        .schedule_retry(clock.now(), next_attempt_at, error)
+                        .expect("record must be Running immediately after execute_invocation");
+                    if persist_execution_outcome(&runtime, &record) {
                         runtime.enqueue_trigger_invocation_scheduled(vec![(
                             record.key.clone(),
                             next_attempt_at,
                         )]);
-                        return Ok(());
                     }
-                    record.fail_terminal(clock.now(), error)?;
-                }
-                TriggerInvocationExecution::TerminalFailure { error } => {
-                    record.fail_terminal(clock.now(), error)?;
+                } else {
+                    record
+                        .fail_terminal(clock.now(), error)
+                        .expect("record must be Running immediately after execute_invocation");
+                    persist_execution_outcome(&runtime, &record);
                 }
             }
-            runtime.store.save_trigger_invocation(&record)?;
-            Ok(())
-        })();
-        if let Err(error) = result {
-            warn!(error = %error, "trigger execution worker failed to execute invocation");
+            TriggerInvocationExecution::TerminalFailure { error } => {
+                record
+                    .fail_terminal(clock.now(), error)
+                    .expect("record must be Running immediately after execute_invocation");
+                persist_execution_outcome(&runtime, &record);
+            }
         }
     }
+}
+
+/// Re-enqueues `key` for a plain store retry after a **pre-execution**
+/// failure (loading the record, or persisting a fresh Running attempt). The
+/// handler has not run yet at this point, so replaying the key is safe and
+/// matches GR4's at-least-once store-retry contract. Store retries are
+/// unbounded and never count against `TRIGGER_MAX_ATTEMPTS`.
+fn requeue_for_store_retry(
+    queue: &TriggerExecutionQueueState,
+    key: &TriggerInvocationKey,
+    clock: &dyn Clock,
+    error: &nimbus_core::Error,
+) {
+    let retry_at = store_retry_ready_at(clock.now());
+    queue.enqueue(vec![QueuedTriggerInvocation {
+        key: key.clone(),
+        ready_at: retry_at,
+    }]);
+    warn!(
+        error = %error,
+        key = ?key,
+        "trigger execution worker failed to prepare invocation for execution; re-enqueued for store retry"
+    );
+}
+
+/// Persists an already-computed execution outcome. The handler has already
+/// run by the time this is called, so — unlike `requeue_for_store_retry` —
+/// a failure here must never re-enqueue the key: that would run
+/// `execute_invocation` again for an attempt that already completed.
+/// Instead this retries the save itself, in place, up to
+/// `TRIGGER_EXECUTION_OUTCOME_SAVE_MAX_ATTEMPTS` times; if every attempt
+/// fails, it logs and leaves the durable record `Running`. Either way the
+/// handler ran exactly once: this is no worse than a pre-GR4 warn-and-drop,
+/// and never double-executes.
+///
+/// Returns whether the outcome was durably saved.
+fn persist_execution_outcome(runtime: &TenantRuntime, record: &TriggerInvocationRecord) -> bool {
+    for attempt in 1..=TRIGGER_EXECUTION_OUTCOME_SAVE_MAX_ATTEMPTS {
+        let result: nimbus_core::Result<()> = (|| {
+            runtime
+                .store
+                .check_fault(FaultPoint::TriggerExecutionBeforeSave)?;
+            runtime.store.save_trigger_invocation(record)?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => return true,
+            Err(error) if attempt < TRIGGER_EXECUTION_OUTCOME_SAVE_MAX_ATTEMPTS => {
+                warn!(
+                    error = %error,
+                    key = ?record.key,
+                    attempt,
+                    "trigger execution worker failed to persist a computed outcome; retrying the save in place without re-running the handler"
+                );
+                std::thread::sleep(TRIGGER_EXECUTION_STORE_RETRY_BACKOFF);
+            }
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    key = ?record.key,
+                    "trigger execution worker exhausted outcome-save retries; the handler already ran exactly once but its outcome could not be persisted, leaving the durable record Running"
+                );
+            }
+        }
+    }
+    false
+}
+
+fn store_retry_ready_at(now: Timestamp) -> Timestamp {
+    Timestamp(
+        now.0.saturating_add(
+            TRIGGER_EXECUTION_STORE_RETRY_BACKOFF
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX),
+        ),
+    )
 }
 
 fn next_retry_attempt_at(attempt: u32, now: Timestamp) -> Option<Timestamp> {

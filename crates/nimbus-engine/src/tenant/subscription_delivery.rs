@@ -8,7 +8,7 @@ mod worker;
 
 use std::sync::Arc;
 
-use crate::subscriptions::{QueuedSubscriptionWork, SubscriptionDispatchStats};
+use crate::subscriptions::QueuedSubscriptionWork;
 
 use super::TenantRuntime;
 
@@ -19,7 +19,7 @@ use pause::SubscriptionDeliveryPauseState;
 #[cfg(test)]
 pub(crate) use queue::DEFAULT_SUBSCRIPTION_WORK_QUEUE_CAPACITY;
 use queue::SubscriptionDeliveryQueueState;
-use stats::SubscriptionDeliveryMetrics;
+pub(crate) use stats::SubscriptionDeliveryMetrics;
 pub use stats::SubscriptionDeliveryStats;
 use worker::SubscriptionDeliveryWorker;
 
@@ -59,25 +59,16 @@ impl SubscriptionDeliveryQueue {
         self.queue.enqueue(work)
     }
 
-    pub(super) fn record_overflow_sync_fallback(&self) {
-        self.metrics.record_overflow_sync_fallback();
-    }
-
-    pub(super) fn record_coalesced_batch(
-        &self,
-        commit_count: u64,
-        merged_subscription_wakeup_count: u64,
-    ) {
-        self.metrics
-            .record_coalesced_batch(commit_count, merged_subscription_wakeup_count);
-    }
-
-    pub(super) fn record_dispatch_stats(&self, stats: SubscriptionDispatchStats) {
-        self.metrics.record_dispatch_stats(stats);
+    pub(super) fn metrics(&self) -> &Arc<SubscriptionDeliveryMetrics> {
+        &self.metrics
     }
 
     pub(super) fn shutdown(&self) {
-        self.worker.shutdown(&self.queue);
+        self.worker.shutdown(
+            &self.queue,
+            #[cfg(test)]
+            &self.pause,
+        );
     }
 
     pub(super) fn stats(&self) -> SubscriptionDeliveryStats {

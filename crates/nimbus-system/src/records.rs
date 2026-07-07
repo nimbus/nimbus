@@ -776,7 +776,7 @@ pub async fn sync_scheduler_state_for_tenant_async(
     )
     .await?;
 
-    let cron_jobs = engine.list_cron_jobs_async(tenant_id.clone()).await?;
+    let cron_jobs = engine.load_cron_jobs_async(tenant_id.clone()).await?;
     let active_cron_ids = cron_jobs
         .iter()
         .map(|cron| cron_job_document_id(tenant_id, &cron.name))

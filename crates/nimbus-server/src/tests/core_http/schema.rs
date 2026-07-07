@@ -178,6 +178,7 @@ async fn schema_and_document_writes_project_table_state_into_system_tenant() {
             },
             "system-tables-watch".to_string(),
             system_tx,
+            nimbus_engine::SubscribeOptions::anonymous(),
         )
         .await
         .expect("system tenant table directory should be subscribable");
@@ -246,6 +247,7 @@ async fn schema_and_document_writes_project_table_state_into_system_tenant() {
             },
             "system-tables-cleanup-watch".to_string(),
             cleanup_tx,
+            nimbus_engine::SubscribeOptions::anonymous(),
         )
         .await
         .expect("system tenant cleanup table directory should be subscribable");
