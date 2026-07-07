@@ -1,24 +1,10 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use nimbus_core::{Result, TenantId};
+use nimbus_core::Result;
 
 use crate::TenantWriteCommit;
 use crate::traits::ReadCapabilities;
-
-/// Minimal async composition root for embedded persistence providers.
-///
-/// This trait is intentionally small: it covers tenant discovery plus the
-/// async read/write executors rooted in `TenantStore` and
-/// `TenantWriteTransaction`. The broader migration contract still lives on the
-/// concrete store and transaction types because the engine depends on
-/// query-planner, journal, snapshot, and batch-apply surfaces that are more
-/// specific than CRUD.
-pub trait EmbeddedPersistenceProvider {
-    type TenantRead: TenantReadStorage;
-
-    async fn list_tenants(&self) -> Result<Vec<TenantId>>;
-}
 
 /// Async read executor over the live tenant store surface.
 ///

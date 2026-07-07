@@ -6,8 +6,8 @@ use nimbus_storage::libsql::OpenedLibsqlReplicaTenant;
 use nimbus_storage::mysql::OpenedMySqlTenant;
 use nimbus_storage::postgres::OpenedPostgresTenant;
 use nimbus_storage::{
-    EmbeddedPersistenceProvider, EmbeddedRedbProvider, EmbeddedSqliteProvider,
-    LibsqlReplicaProvider, MySqlProvider, PostgresProvider,
+    EmbeddedRedbProvider, EmbeddedSqliteProvider, LibsqlReplicaProvider, MySqlProvider,
+    PostgresProvider,
 };
 
 use super::{

@@ -8,8 +8,8 @@ use serde_json::{Map, Value};
 
 use crate::IndexRangeBound;
 use crate::async_storage::{
-    EmbeddedPersistenceProvider, EmbeddedRedbProvider, EmbeddedSqliteProvider,
-    OpenedEmbeddedRedbTenant, OpenedEmbeddedSqliteTenant,
+    EmbeddedRedbProvider, EmbeddedSqliteProvider, OpenedEmbeddedRedbTenant,
+    OpenedEmbeddedSqliteTenant,
 };
 use crate::libsql::OpenedLibsqlReplicaTenant;
 use crate::mysql::OpenedMySqlTenant;
@@ -41,7 +41,7 @@ impl TenantLifecycle for EmbeddedRedbProvider {
     type OpenedTenant = OpenedEmbeddedRedbTenant;
 
     async fn list_tenants(&self) -> Result<Vec<TenantId>> {
-        <Self as EmbeddedPersistenceProvider>::list_tenants(self).await
+        Self::list_tenants(self).await
     }
 
     async fn tenant_exists(&self, tenant_id: &TenantId) -> Result<bool> {
