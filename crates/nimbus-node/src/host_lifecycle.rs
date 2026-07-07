@@ -923,15 +923,9 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
-    use nimbus_core::{PrincipalContext, TenantId};
-    use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
+    use nimbus_testing::AdmittedDecisionScenario;
 
     use super::*;
-    use nimbus_tenant::{
-        RuntimeIsolationTier, TenantIsolationContext, TenantIsolationDecision, TenantIsolationMode,
-        TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision,
-        WorkloadAttributes, WorkloadLocation,
-    };
 
     #[derive(Default, Clone)]
     struct FakeHostLifecycleBackend {
@@ -1019,46 +1013,8 @@ mod tests {
         }
     }
 
-    fn admitted_decision() -> TenantIsolationDecision {
-        let tenant_id = TenantId::new("tenant-a").expect("tenant id should parse");
-        let context = TenantIsolationContext::application(
-            tenant_id,
-            PrincipalContext {
-                authenticated: true,
-                claims: serde_json::Map::from_iter([(
-                    "tenant_id".to_string(),
-                    serde_json::Value::String("tenant-a".to_string()),
-                )]),
-                verified_claims: serde_json::Map::new(),
-            },
-            "convex.runtime",
-        )
-        .with_deployment_generation(9)
-        .with_workload_location(WorkloadLocation::new().with_node_id("node-a"));
-        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
-        let workload = WorkloadAttributes::runtime_function(
-            "messages:send",
-            RuntimeIsolationTier::InProcessUntrusted,
-        )
-        .with_invocation_id("invoke-1");
-        let input = TenantIsolationPolicyInput::new(workload)
-            .with_runtime_policy(
-                &context,
-                &policy,
-                RuntimeIsolationTier::InProcessUntrusted,
-                TenantIsolationMode::Production,
-            )
-            .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
-            .with_storage(TenantStoragePolicyDecision::namespace("tenant-a"));
-
-        context
-            .admit_decision(input)
-            .expect("decision should admit matching tenant")
-    }
-
     fn binding() -> LocalEnforcementBinding {
-        LocalEnforcementBinding::from_decision(&admitted_decision())
-            .expect("binding should materialize from admitted decision")
+        AdmittedDecisionScenario::new().with_generation(9).binding()
     }
 
     fn request() -> HostLifecycleRequest {

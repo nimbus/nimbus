@@ -850,16 +850,10 @@ fn valid_object_path(value: impl Into<String>, field: &str) -> Result<String> {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use nimbus_core::{PrincipalContext, TenantId};
-    use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
+    use nimbus_testing::AdmittedDecisionScenario;
 
     use super::*;
     use crate::{HostExecutable, HostLifecyclePropertySet, HostRestartPolicy, TenantWorkloadPhase};
-    use nimbus_tenant::{
-        RuntimeIsolationTier, TenantIsolationContext, TenantIsolationDecision, TenantIsolationMode,
-        TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision,
-        WorkloadAttributes, WorkloadLocation,
-    };
 
     #[derive(Clone)]
     struct FakeSystemdDbusClient {
@@ -978,44 +972,13 @@ mod tests {
         }
     }
 
-    fn admitted_decision() -> TenantIsolationDecision {
-        let context = TenantIsolationContext::application(
-            TenantId::new("tenant-a").expect("tenant id should parse"),
-            PrincipalContext {
-                authenticated: true,
-                claims: serde_json::Map::from_iter([(
-                    "tenant_id".to_string(),
-                    serde_json::Value::String("tenant-a".to_string()),
-                )]),
-                verified_claims: serde_json::Map::new(),
-            },
-            "systemd.transient",
-        )
-        .with_deployment_generation(12)
-        .with_workload_location(WorkloadLocation::new().with_node_id("node-a"));
-        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
-        let workload = WorkloadAttributes::runtime_function(
-            "service:run",
-            RuntimeIsolationTier::InProcessUntrusted,
-        )
-        .with_invocation_id("invoke-systemd");
-        let input = TenantIsolationPolicyInput::new(workload)
-            .with_runtime_policy(
-                &context,
-                &policy,
-                RuntimeIsolationTier::InProcessUntrusted,
-                TenantIsolationMode::Production,
-            )
-            .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
-            .with_storage(TenantStoragePolicyDecision::namespace("tenant-a"));
-        context
-            .admit_decision(input)
-            .expect("decision should admit")
-    }
-
     fn binding() -> LocalEnforcementBinding {
-        LocalEnforcementBinding::from_decision(&admitted_decision())
-            .expect("binding should materialize")
+        AdmittedDecisionScenario::new()
+            .with_surface("systemd.transient")
+            .with_generation(12)
+            .with_workload_name("service:run")
+            .with_invocation_id("invoke-systemd")
+            .binding()
     }
 
     fn request() -> HostLifecycleRequest {
