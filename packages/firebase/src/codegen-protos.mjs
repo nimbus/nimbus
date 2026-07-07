@@ -44,9 +44,14 @@ export async function generateProtos(outputRoot) {
       renderBufGenTemplate(protocGenEsBinary, outputRoot),
       "utf8",
     );
+    // Run buf THROUGH node. `@bufbuild/buf` and `@bufbuild/protoc-gen-es`
+    // resolve to JS launcher scripts, not native executables; exec'ing them
+    // directly relies on a shebang, which Windows ignores (ENOENT on
+    // `bin/buf`). Invoking `node <bin>` works on every platform. The plugin
+    // is node-wrapped the same way inside the template (see below).
     execFileSync(
-      bufBinary,
-      ["generate", protoRoot, "--template", templatePath],
+      process.execPath,
+      [bufBinary, "generate", protoRoot, "--template", templatePath],
       { cwd: packageRoot, stdio: "inherit" },
     );
   } finally {
@@ -143,11 +148,20 @@ function renderBufGenTemplate(protocGenEsBinary, outDir) {
   // import_extension=ts so tsc's rewriteRelativeImportExtensions gives correct
   // `.js` specifiers in the emitted JS; we post-process the emitted `.d.ts` to
   // match, since tsc leaves `.ts` specifiers there.
+  //
+  // The `local` plugin is given as an argv list `[node, <protoc-gen-es>]` so
+  // buf invokes the JS plugin launcher through node — the extensionless
+  // `bin/protoc-gen-es` script is not directly executable on Windows.
+  // Paths are single-quoted because Windows paths contain backslashes, which
+  // are literal in YAML single-quoted scalars.
+  const yq = (value) => `'${String(value).replace(/'/g, "''")}'`;
   return [
     "version: v2",
     "plugins:",
-    `  - local: ${protocGenEsBinary}`,
-    `    out: ${outDir}`,
+    "  - local:",
+    `      - ${yq(process.execPath)}`,
+    `      - ${yq(protocGenEsBinary)}`,
+    `    out: ${yq(outDir)}`,
     "    opt:",
     "      - target=ts",
     "      - json_types=true",
