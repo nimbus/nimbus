@@ -1,4 +1,5 @@
 import { assert, build, fileURLToPath, fs, os, packageJsonPath, packageRoot, path, spawnSync, tscPath } from "./support.mjs";
+import { ensureProtosGenerated } from "../codegen-protos.mjs";
 
 export async function assertPackageExports() {
   const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
@@ -41,21 +42,7 @@ async function buildEntry(entryPoint, outfile, format) {
 
 
 export async function assertGeneratedProtoSurface() {
-  for (const relativePath of [
-    "src/gen/google/firestore/v1/document_pb.ts",
-    "src/gen/google/firestore/v1/firestore_pb.ts",
-    "src/gen/google/firestore/v1/query_pb.ts",
-    "src/gen/google/firestore/v1/write_pb.ts",
-    "src/gen/google/protobuf/timestamp_pb.ts",
-  ]) {
-    try {
-      await fs.access(path.join(packageRoot, relativePath));
-    } catch {
-      throw new Error(
-        `Missing generated Firestore protobuf output at ${relativePath}. Run "npm run codegen:proto --workspace firebase" first.`,
-      );
-    }
-  }
+  await ensureProtosGenerated();
 }
 
 

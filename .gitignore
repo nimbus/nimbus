@@ -81,5 +81,8 @@ crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.pc.bin
 
 # Firebase protobuf bindings are GENERATED from crates/nimbus-firebase/proto via
 # `buf generate` (packages/firebase/src/codegen-protos.mjs), run automatically as
-# a pre-step of the package's build/test/typecheck scripts (DE16).
+# a pre-step of the package's build/test/typecheck scripts (DE16). The .lock
+# sibling is a transient advisory lock directory (see ensureProtosGenerated)
+# that only outlives a run if the holder was killed mid-generation.
 packages/firebase/src/gen/
+packages/firebase/src/gen.lock/
