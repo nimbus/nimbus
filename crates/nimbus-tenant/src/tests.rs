@@ -478,6 +478,11 @@ fn workload_identity_rejects_invalid_spiffe_trust_domains() {
         "spiffe://nimbus.local",
         "nimbus.local/path",
         "nimbus local",
+        " nimbus.local ",
+        "Nimbus.local",
+        "nimbus@local",
+        "nimbus:local",
+        "nimbüs.local",
     ] {
         let error = identity
             .spiffe_id(trust_domain)

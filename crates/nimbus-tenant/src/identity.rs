@@ -284,18 +284,19 @@ impl WorkloadIdentity {
 }
 
 fn validate_spiffe_trust_domain(trust_domain: &str) -> Result<&str> {
-    let trust_domain = trust_domain.trim();
+    // Mirrors nimbus-workload-identity::trust::validate_trust_domain locally
+    // so tenant SPIFFE rendering stays aligned without exporting internals.
     if trust_domain.is_empty() {
         return Err(Error::InvalidInput(
             "SPIFFE trust domain cannot be empty".to_string(),
         ));
     }
-    if trust_domain.contains("://")
-        || trust_domain.contains('/')
-        || trust_domain.chars().any(char::is_whitespace)
+    if !trust_domain
+        .bytes()
+        .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'.' | b'-' | b'_'))
     {
         return Err(Error::InvalidInput(format!(
-            "SPIFFE trust domain `{trust_domain}` must not include a scheme, slash, or whitespace"
+            "SPIFFE trust domain `{trust_domain}` must contain only lowercase ASCII letters, digits, '.', '-', or '_'"
         )));
     }
     Ok(trust_domain)
