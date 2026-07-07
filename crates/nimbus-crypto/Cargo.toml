@@ -21,11 +21,16 @@ crc32fast.workspace = true
 hkdf.workspace = true
 nimbus-core = { path = "../nimbus-core" }
 rand.workspace = true
+ring.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+fs2.workspace = true
 zeroize.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 
 [dev-dependencies]
 base64.workspace = true

@@ -22,6 +22,7 @@ mod materials;
 mod provider;
 mod rotation;
 mod runtime;
+mod signing;
 mod subject;
 
 #[cfg(feature = "aws-kms")]
@@ -52,6 +53,10 @@ pub use rotation::{
     recover_interrupted_dek_rotation,
 };
 pub use runtime::{generate_key_manifest, resolve_subject_encryption_key, unwrap_key_manifest};
+pub use signing::{
+    FileBackedIdentitySigner, IdentityPublicKey, IdentitySignature, IdentitySigner,
+    IdentitySignerKind, OpenMode, SigningError, SigningResult,
+};
 pub use subject::{LocalArtifactRole, LocalDatabaseRole, LocalKeySubject, LocalKeySubjectKind};
 
 #[cfg(test)]

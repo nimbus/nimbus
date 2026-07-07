@@ -6824,10 +6824,13 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "crc32fast",
+ "fs2",
  "hkdf",
  "hyper 0.14.32",
+ "libc",
  "nimbus-core",
  "rand 0.8.5",
+ "ring",
  "serde_json",
  "serial_test",
  "sha2 0.10.9",
@@ -7415,6 +7418,7 @@ name = "nimbus-workload-identity"
 version = "0.1.45"
 dependencies = [
  "nimbus-core",
+ "nimbus-crypto",
  "nimbus-runtime",
  "nimbus-tenant",
  "serde",
