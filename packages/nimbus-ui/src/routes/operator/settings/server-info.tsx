@@ -4,9 +4,9 @@ import { StateDot } from "../../../components/state-dot";
 import { RelativeTime, Uptime } from "../../../components/time";
 import { UpgradePopover } from "../../../components/upgrade-popover";
 import { useStalenessContext } from "../../../hooks/use-staleness";
+import type { LoadingValue } from "../../../shell/loading-value";
 import { Cell, Definition, DefinitionList, SectionCard } from "./primitives";
 import type {
-  AsyncSnapshot,
   EncryptionStatus,
   LicenseSnapshot,
   SystemStatusDoc,
@@ -17,7 +17,7 @@ export function TenantHeaderStrip({
   license,
 }: {
   status: SystemStatusDoc | undefined;
-  license: AsyncSnapshot<LicenseSnapshot>;
+  license: LoadingValue<LicenseSnapshot>;
 }) {
   const details = (status?.details ?? {}) as Record<string, unknown>;
   const storageBackend =
@@ -26,24 +26,20 @@ export function TenantHeaderStrip({
       : typeof details.storage === "string"
         ? details.storage
         : "—";
+  const licenseSnap = license.kind === "ok" ? license.value : null;
   const licenseLabel =
-    license === "loading"
+    license.kind === "loading"
       ? "loading…"
-      : license === "error"
+      : licenseSnap === null
         ? "unavailable"
-        : (license.kind ?? "developer");
-  const licenseStatus =
-    license === "loading" || license === "error"
-      ? null
-      : (license.status ?? null);
-  const usageNow =
-    license !== "loading" && license !== "error"
-      ? (license.usage?.monthly_active_users ?? null)
-      : null;
-  const usageLimit =
-    license !== "loading" && license !== "error"
-      ? (license.monthly_active_user_limit ?? license.usage?.limit ?? null)
-      : null;
+        : (licenseSnap.kind ?? "developer");
+  const licenseStatus = licenseSnap?.status ?? null;
+  const usageNow = licenseSnap?.usage?.monthly_active_users ?? null;
+  const usageLimit = licenseSnap
+    ? (licenseSnap.monthly_active_user_limit ??
+      licenseSnap.usage?.limit ??
+      null)
+    : null;
   const usageLabel =
     usageNow === null
       ? "—"
@@ -93,7 +89,7 @@ export function ServerInfoSection({
   encryption,
 }: {
   status: SystemStatusDoc | undefined;
-  encryption: AsyncSnapshot<EncryptionStatus>;
+  encryption: LoadingValue<EncryptionStatus>;
 }) {
   const details = (status?.details ?? {}) as Record<string, unknown>;
   const listenAddress =
@@ -114,14 +110,14 @@ export function ServerInfoSection({
       : typeof details.storage === "string"
         ? details.storage
         : "—";
-  const encryptionEnabled =
-    encryption === "loading" || encryption === "error"
-      ? encryption
-      : (encryption.enabled ?? false);
-  const encryptedFamilies =
-    encryption === "loading" || encryption === "error"
-      ? []
-      : (encryption.encrypted_families ?? []);
+  const encryptionSnap = encryption.kind === "ok" ? encryption.value : null;
+  const encryptionEnabled: "loading" | "error" | boolean =
+    encryption.kind === "loading"
+      ? "loading"
+      : encryptionSnap === null
+        ? "error"
+        : (encryptionSnap.enabled ?? false);
+  const encryptedFamilies = encryptionSnap?.encrypted_families ?? [];
   return (
     <SectionCard
       title="Server"

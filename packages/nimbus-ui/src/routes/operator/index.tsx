@@ -9,12 +9,12 @@ import { LoadingCell } from "../../components/loading-cell";
 import { PageHeader } from "../../components/page-header";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime, Uptime } from "../../components/time";
+import { fetchTenants } from "../../hooks/use-tenant-list";
 import {
   type ConnectionSnapshot,
   type LoadingValue,
   toLoadingValue,
 } from "../../shell/loading-value";
-import { fetchTenants } from "../../shell/tenants-fetch";
 
 export const Route = createFileRoute("/operator/")({
   component: NodesPage,

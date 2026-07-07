@@ -11,11 +11,12 @@ import { PageHeader } from "../../components/page-header";
 import { cn } from "../../lib/cn";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { TableDoc } from "../../lib/types/table";
+import { fetchTenants } from "../../hooks/use-tenant-list";
+import { tenants as tenantApi } from "../../lib/api-mutations";
 import {
   type SubDrawerSpec,
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
-import { fetchTenants } from "../../shell/tenants-fetch";
 
 type TenantsSearch = {
   create?: 1;
@@ -100,31 +101,15 @@ function TenantsPage() {
       const id = newTenant.trim();
       if (!id) return;
       setCreating(true);
-      try {
-        const response = await fetch("/api/tenants", {
-          method: "POST",
-          credentials: "include",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ id }),
-        });
-        if (!response.ok) {
-          const body = (await response.json().catch(() => null)) as {
-            error?: { message?: string };
-          } | null;
-          throw new Error(
-            body?.error?.message ?? `Create failed: ${response.status}`,
-          );
-        }
-        toast.success(`Created tenant ${id}`);
-        setNewTenant("");
-        reload();
-      } catch (err) {
-        toast.error(
-          err instanceof Error ? err.message : "Failed to create tenant",
-        );
-      } finally {
-        setCreating(false);
+      const result = await tenantApi.create(id);
+      setCreating(false);
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
       }
+      toast.success(`Created tenant ${id}`);
+      setNewTenant("");
+      reload();
     },
     [newTenant, reload],
   );
@@ -135,28 +120,14 @@ function TenantsPage() {
     async (id: string) => {
       setDeletingTenant(id);
       setConfirmTenant(null);
-      try {
-        const response = await fetch(`/api/tenants/${encodeURIComponent(id)}`, {
-          method: "DELETE",
-          credentials: "include",
-        });
-        if (!response.ok) {
-          const body = (await response.json().catch(() => null)) as {
-            error?: { message?: string };
-          } | null;
-          throw new Error(
-            body?.error?.message ?? `Delete failed: ${response.status}`,
-          );
-        }
-        toast.success(`Deleted tenant ${id}`);
-        reload();
-      } catch (err) {
-        toast.error(
-          err instanceof Error ? err.message : "Failed to delete tenant",
-        );
-      } finally {
-        setDeletingTenant(null);
+      const result = await tenantApi.remove(id);
+      setDeletingTenant(null);
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
       }
+      toast.success(`Deleted tenant ${id}`);
+      reload();
     },
     [reload],
   );

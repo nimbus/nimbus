@@ -27,3 +27,19 @@ export type TableDoc = {
   rowCount?: number;
   lastWriteAt?: number;
 };
+
+// A single document as returned by the paginated query endpoint. Widens to an
+// arbitrary field bag with the reserved system columns pulled out by name.
+export type DocumentJson = Record<string, unknown> & {
+  _id?: string;
+  _creationTime?: number;
+  _updateTime?: number;
+};
+
+// One page of the tenant `query/paginated` response: the documents plus the
+// opaque cursor and a has-more flag that drive the storage-table pager.
+export type PageResponse = {
+  data: DocumentJson[];
+  next_cursor: string | null;
+  has_more: boolean;
+};

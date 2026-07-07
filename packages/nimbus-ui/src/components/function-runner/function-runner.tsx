@@ -1,10 +1,11 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { CopyChip } from "../copy-chip";
+import { useTenantList } from "../../hooks/use-tenant-list";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import { useUiStore } from "../../store/ui-store";
+import { CopyChip } from "../copy-chip";
 
 export type FunctionRunnerFn = {
   _id: string;
@@ -44,6 +45,10 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
   const lastSubmitRef = useRef<number>(0);
 
   const tenantList = useTenantList();
+  const tenantError = tenantList.kind === "error" ? tenantList.message : null;
+  const tenantLoading = tenantList.kind === "loading";
+  const tenantIds =
+    tenantList.kind === "loaded" ? tenantList.tenants.map((t) => t.id) : [];
   const tenant = tenantOverride ?? activeTenant ?? null;
 
   useEffect(() => {
@@ -193,22 +198,22 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
               <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
                 tenant
               </span>
-              {tenantList.error ? (
+              {tenantError ? (
                 <span className="font-mono text-[11px] text-danger">
-                  failed: {tenantList.error}
+                  failed: {tenantError}
                 </span>
               ) : (
                 <select
                   value={tenant ?? ""}
                   onChange={(e) => setTenantOverride(e.target.value || null)}
-                  disabled={tenantList.loading}
+                  disabled={tenantLoading}
                   data-testid="function-runner-tenant"
                   className="rounded border border-app bg-surface-2 px-2 py-1 font-mono text-xs text-default"
                 >
                   <option value="" disabled>
-                    {tenantList.loading ? "loading…" : "select tenant"}
+                    {tenantLoading ? "loading…" : "select tenant"}
                   </option>
-                  {tenantList.tenants.map((t) => (
+                  {tenantIds.map((t) => (
                     <option key={t} value={t}>
                       {t}
                     </option>
@@ -368,45 +373,4 @@ function isErrorEnvelope(value: unknown): value is {
     "error" in value &&
     typeof (value as { error: unknown }).error === "object"
   );
-}
-
-function useTenantList(): {
-  loading: boolean;
-  tenants: string[];
-  error: string | null;
-} {
-  const [tenants, setTenants] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    fetch("/api/tenants", { credentials: "include" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const body = await response.json();
-        const list = Array.isArray(body?.tenants)
-          ? body.tenants.filter(
-              (t: unknown): t is string => typeof t === "string",
-            )
-          : [];
-        if (!cancelled) {
-          setTenants(list);
-          setError(null);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled)
-          setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return { loading, tenants, error };
 }

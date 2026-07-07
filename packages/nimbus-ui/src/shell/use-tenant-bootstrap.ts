@@ -1,9 +1,9 @@
 import { useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 
+import { fetchTenants } from "../hooks/use-tenant-list";
 import { useUiStore } from "../store/ui-store";
 import { viewFromPathname } from "./nav-entries";
-import { fetchTenants } from "./tenants-fetch";
 
 export function useTenantBootstrap() {
   const { pathname, search } = useRouterState({

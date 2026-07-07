@@ -5,7 +5,7 @@ import {
   useSearch,
 } from "@tanstack/react-router";
 import { useQuery } from "@nimbus/nimbus/react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
@@ -16,6 +16,7 @@ import { FunctionRunner } from "../../components/function-runner/function-runner
 import { LoadingState } from "../../components/loading-state";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
+import { useApiRead } from "../../hooks/use-api-read";
 import { cn } from "../../lib/cn";
 import { formatDuration, shortId } from "../../lib/format";
 import type { FunctionDoc } from "../../lib/types/function";
@@ -307,18 +308,25 @@ type TypeHint = { name: string; line: number; col: number; hover: string };
 
 type CalledByEdge = { target: string; caller: string };
 
-type SourceState =
-  | { status: "loading" }
-  | {
-      status: "ready";
-      source: string;
-      digest: string;
-      analysis: ModuleAnalysis | null;
-      calledBy: CalledByEdge[] | null;
-      typeInfo: TypeHint[] | null;
-    }
-  | { status: "missing" }
-  | { status: "error"; message: string };
+// The module source once fetched: either present (with its analysis) or a
+// typed "missing" variant for a 404 — a mapped value over `LoadingValue`, so
+// the Source tab keeps the one loading vocabulary without a fourth state union.
+type SourceReady = {
+  source: string;
+  digest: string;
+  analysis: ModuleAnalysis | null;
+  calledBy: CalledByEdge[] | null;
+  typeInfo: TypeHint[] | null;
+};
+type SourceValue = { kind: "present"; ready: SourceReady } | { kind: "missing" };
+
+type RawSource = {
+  source?: string;
+  digest?: string;
+  analysis?: ModuleAnalysis;
+  called_by?: CalledByEdge[];
+  type_info?: TypeHint[];
+};
 
 function SourceTab({
   fn,
@@ -333,55 +341,50 @@ function SourceTab({
     return separator >= 0 ? path.slice(0, separator) : path;
   }, [fn.path]);
 
-  const [state, setState] = useState<SourceState>({ status: "loading" });
-
-  useEffect(() => {
-    if (!modulePath) {
-      setState({ status: "missing" });
-      return;
-    }
-    let cancelled = false;
-    setState({ status: "loading" });
-    fetch(`/api/console/source?module=${encodeURIComponent(modulePath)}`, {
-      credentials: "include",
-    })
-      .then(async (response) => {
-        if (cancelled) return;
-        if (response.status === 404) {
-          setState({ status: "missing" });
-          return;
-        }
-        if (!response.ok) {
-          setState({ status: "error", message: `HTTP ${response.status}` });
-          return;
-        }
-        const body = (await response.json()) as {
-          source?: string;
-          digest?: string;
-          analysis?: ModuleAnalysis;
-          called_by?: CalledByEdge[];
-          type_info?: TypeHint[];
+  const fetched = useApiRead<SourceValue, RawSource>(
+    `/api/console/source?module=${encodeURIComponent(modulePath)}`,
+    [modulePath],
+    (result) => {
+      if (result.ok) {
+        return {
+          kind: "ok",
+          value: {
+            kind: "present",
+            ready: {
+              source: result.data.source ?? "",
+              digest: result.data.digest ?? "",
+              analysis: result.data.analysis ?? null,
+              calledBy: result.data.called_by ?? null,
+              typeInfo: result.data.type_info ?? null,
+            },
+          },
         };
-        setState({
-          status: "ready",
-          source: body.source ?? "",
-          digest: body.digest ?? "",
-          analysis: body.analysis ?? null,
-          calledBy: body.called_by ?? null,
-          typeInfo: body.type_info ?? null,
-        });
-      })
-      .catch((error) => {
-        if (!cancelled) setState({ status: "error", message: String(error) });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [modulePath]);
+      }
+      if (result.status === 404) {
+        return { kind: "ok", value: { kind: "missing" } };
+      }
+      return { kind: "error", message: result.error };
+    },
+  );
 
-  if (state.status === "loading")
-    return <LoadingState label="Loading source…" />;
-  if (state.status === "missing") {
+  // A function with no resolvable module path is "missing" outright — surface it
+  // immediately rather than waiting on a read for an empty module.
+  const state = modulePath
+    ? fetched
+    : ({ kind: "ok", value: { kind: "missing" } } as const);
+
+  if (state.kind === "loading") return <LoadingState label="Loading source…" />;
+  if (state.kind === "error" || state.kind === "offline") {
+    return (
+      <EmptyState
+        title="Could not load source"
+        body={`The source endpoint returned an error (${
+          state.kind === "error" ? state.message : "offline"
+        }).`}
+      />
+    );
+  }
+  if (state.value.kind === "missing") {
     return (
       <EmptyState
         title="Source not available"
@@ -389,14 +392,7 @@ function SourceTab({
       />
     );
   }
-  if (state.status === "error") {
-    return (
-      <EmptyState
-        title="Could not load source"
-        body={`The source endpoint returned an error (${state.message}).`}
-      />
-    );
-  }
+  const ready = state.value.ready;
   return (
     <div
       className="flex h-full flex-col overflow-hidden"
@@ -404,25 +400,25 @@ function SourceTab({
     >
       <div className="flex shrink-0 items-center gap-2 border-b border-app bg-surface-2 px-6 py-1.5 font-mono text-[10px] uppercase tracking-wide text-muted">
         <span>{modulePath}</span>
-        {state.digest ? (
-          <span className="ml-auto normal-case" title={state.digest}>
-            source package {state.digest.slice(0, 12)}…
+        {ready.digest ? (
+          <span className="ml-auto normal-case" title={ready.digest}>
+            source package {ready.digest.slice(0, 12)}…
           </span>
         ) : null}
       </div>
-      {state.analysis ? (
+      {ready.analysis ? (
         <SymbolsBar
           modulePath={modulePath}
-          analysis={state.analysis}
-          calledBy={state.calledBy}
-          typeInfo={state.typeInfo}
+          analysis={ready.analysis}
+          calledBy={ready.calledBy}
+          typeInfo={ready.typeInfo}
         />
       ) : null}
       <div className="min-h-0 flex-1 overflow-hidden">
         <CodeBlock
-          code={state.source}
+          code={ready.source}
           lang="typescript"
-          hints={state.typeInfo ?? undefined}
+          hints={ready.typeInfo ?? undefined}
           highlightLine={highlightLine}
         />
       </div>

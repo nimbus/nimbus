@@ -176,5 +176,3 @@ export type RuntimeDiagnostics = {
   metrics?: Record<string, unknown> | null;
   lanes?: RuntimeLaneDiagnostics[];
 };
-
-export type AsyncSnapshot<T> = T | "loading" | "error";

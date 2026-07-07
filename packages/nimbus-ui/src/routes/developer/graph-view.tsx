@@ -1,5 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+
+import { useApiRead } from "../../hooks/use-api-read";
 
 // Deployment call graph (FSV7): functions as nodes, api.*/internal.* calls as
 // edges, laid out in columns by module. Data from GET /api/console/graph.
@@ -7,11 +9,6 @@ import { useEffect, useMemo, useState } from "react";
 type GraphNode = { id: string; module: string; name: string };
 type GraphEdge = { from: string; to: string };
 type GraphData = { nodes: GraphNode[]; edges: GraphEdge[] };
-
-type GraphState =
-  | { status: "loading" }
-  | { status: "ready"; graph: GraphData }
-  | { status: "error"; message: string };
 
 const NODE_W = 168;
 const NODE_H = 30;
@@ -22,44 +19,28 @@ const PAD = 28;
 const COL_W = NODE_W + COL_GAP_X;
 
 export function GraphView() {
-  const [state, setState] = useState<GraphState>({ status: "loading" });
-
-  useEffect(() => {
-    let cancelled = false;
-    setState({ status: "loading" });
-    fetch("/api/console/graph", { credentials: "include" })
-      .then(async (response) => {
-        if (cancelled) return;
-        if (!response.ok) {
-          setState({ status: "error", message: `HTTP ${response.status}` });
-          return;
-        }
-        const graph = (await response.json()) as GraphData;
-        setState({ status: "ready", graph });
-      })
-      .catch((error) => {
-        if (!cancelled) setState({ status: "error", message: String(error) });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const state = useApiRead<GraphData>("/api/console/graph", []);
 
   return (
     <div
       className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface"
       data-testid="compute-graph"
     >
-      {state.status === "loading" ? (
+      {state.kind === "ok" ? (
+        state.value.nodes.length === 0 ? (
+          <Centered>
+            No functions deployed yet. Deploy an app to see its call graph.
+          </Centered>
+        ) : (
+          <GraphCanvas graph={state.value} />
+        )
+      ) : state.kind === "loading" ? (
         <Centered>Loading call graph…</Centered>
-      ) : state.status === "error" ? (
-        <Centered>Could not load the call graph ({state.message}).</Centered>
-      ) : state.graph.nodes.length === 0 ? (
-        <Centered>
-          No functions deployed yet. Deploy an app to see its call graph.
-        </Centered>
       ) : (
-        <GraphCanvas graph={state.graph} />
+        <Centered>
+          Could not load the call graph (
+          {state.kind === "error" ? state.message : "offline"}).
+        </Centered>
       )}
     </div>
   );
