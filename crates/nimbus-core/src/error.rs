@@ -154,6 +154,18 @@ pub enum Error {
 /// Shared result alias.
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Validates that `value` is non-blank, returning it as a `String`.
+///
+/// Shared by the many newtype constructors across crates that reject
+/// empty-or-whitespace-only strings with a uniform `Error::InvalidInput`.
+pub fn non_empty(value: impl Into<String>, field: &str) -> Result<String> {
+    let value = value.into();
+    if value.trim().is_empty() {
+        return Err(Error::InvalidInput(format!("{field} must not be empty")));
+    }
+    Ok(value)
+}
+
 impl Error {
     pub fn storage(kind: StorageErrorKind, message: impl Into<String>) -> Self {
         Self::Storage {
@@ -212,6 +224,25 @@ mod tests {
         assert_eq!(
             StorageErrorKind::from_str("corruption").expect("kind should parse"),
             StorageErrorKind::Corruption
+        );
+    }
+
+    #[test]
+    fn non_empty_accepts_trimmed_value() {
+        let value = non_empty("  workload-a  ".to_string(), "field").expect("value should pass");
+        assert_eq!(value, "  workload-a  ");
+    }
+
+    #[test]
+    fn non_empty_rejects_empty_and_whitespace_only() {
+        let empty = non_empty(String::new(), "widget name").unwrap_err();
+        let blank = non_empty("   ".to_string(), "widget name").unwrap_err();
+
+        assert!(
+            matches!(empty, Error::InvalidInput(ref message) if message == "widget name must not be empty")
+        );
+        assert!(
+            matches!(blank, Error::InvalidInput(ref message) if message == "widget name must not be empty")
         );
     }
 

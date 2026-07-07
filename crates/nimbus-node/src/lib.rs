@@ -30,7 +30,6 @@ pub use reconciler::{
     NodeWorkloadDesiredState, NodeWorkloadReconcileAction, NodeWorkloadReconcileOutcome,
     NodeWorkloadReconciler, StatusEvidenceWrite, StatusEvidenceWriter,
 };
-pub(crate) use status::non_empty;
 pub use status::{
     NodeStatusAuthorizer, TenantNodeObservationIds, TenantObservedResourceUsage,
     TenantWorkloadCleanupProgress, TenantWorkloadCondition, TenantWorkloadConditionStatus,

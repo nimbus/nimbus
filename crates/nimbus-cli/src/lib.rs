@@ -18,7 +18,7 @@ mod kv;
 mod list;
 mod local_server_client;
 mod machine;
-mod node;
+mod node_runtime;
 mod node_service;
 mod node_workload_executor;
 mod object_storage;

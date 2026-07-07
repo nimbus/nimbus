@@ -11,8 +11,12 @@ use std::path::{Path, PathBuf};
 
 use rust_embed::Embed;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
-use crate::integrity::sha256_hex;
+/// Lowercase hex SHA-256 of `bytes`.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
 
 /// The staged package payload tree, version-locked to this binary build.
 #[derive(Embed)]

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use clap::{Args, ValueEnum};
 
 use crate::cli_ux;
-use crate::node;
+use crate::node_runtime;
 use crate::provision;
 use crate::start::run_start_command;
 
@@ -157,7 +157,7 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
             provision::ensure(&plan.app_dir, &selection)?;
         }
         for install_dir in adapter.npm_install_dirs(&plan.app_dir) {
-            node::auto_install_node_dependencies(&install_dir).await?;
+            node_runtime::auto_install_node_dependencies(&install_dir).await?;
         }
     }
 

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use nimbus_core::{Error, Result};
+use nimbus_core::{Error, Result, non_empty};
 use nimbus_tenant::{
     TenantIsolationDecisionId, TenantIsolationEvent, TenantIsolationEventKind,
     TenantIsolationEventResult, TenantIsolationEventValue,
@@ -658,14 +658,6 @@ fn merge_conditions_by_type(
         by_type.insert(condition.condition_type.clone(), condition);
     }
     by_type.into_values().collect()
-}
-
-pub(crate) fn non_empty(value: impl Into<String>, field: &str) -> Result<String> {
-    let value = value.into();
-    if value.trim().is_empty() {
-        return Err(Error::InvalidInput(format!("{field} must not be empty")));
-    }
-    Ok(value)
 }
 
 fn evidence_id(value: impl Into<String>, field: &str) -> Result<String> {

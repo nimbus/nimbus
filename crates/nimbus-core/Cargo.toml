@@ -10,6 +10,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hex.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
 serde_json.workspace = true

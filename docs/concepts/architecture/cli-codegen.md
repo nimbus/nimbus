@@ -112,7 +112,7 @@ between two runners:
   elsewhere. Even this path runs the *embedded* tooling closure — the
   app never needs a `@nimbus/codegen` dependency.
 
-When external Node is required, `crates/nimbus-bin/src/node.rs` enforces
+When external Node is required, `crates/nimbus-cli/src/node_runtime.rs` enforces
 a version floor: Node majors below 22 are rejected, newer majors are
 allowed with a warning.
 

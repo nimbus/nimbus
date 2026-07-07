@@ -14,7 +14,7 @@ use nimbus::{
 };
 use tokio::process::Command;
 
-use crate::node;
+use crate::node_runtime;
 use nimbus_assets::js_packages;
 
 /// Selects the codegen runner. Default (unset) is the in-binary V8 tooling
@@ -181,7 +181,7 @@ fn is_cloud_functions_app(app_dir: &Path) -> bool {
     let Ok(dir) = canonicalize_app_dir(app_dir) else {
         return false;
     };
-    node::firebase_functions_project(&dir)
+    node_runtime::firebase_functions_project(&dir)
         .ok()
         .flatten()
         .is_some()
@@ -247,7 +247,7 @@ fn resolve_codegen_execution_context(
     options: CodegenOptions,
 ) -> io::Result<CodegenExecutionContext> {
     let app_dir = canonicalize_app_dir(app_dir)?;
-    let package_install_dirs = node::firebase_functions_project(&app_dir)?
+    let package_install_dirs = node_runtime::firebase_functions_project(&app_dir)?
         .map(|project| project.source_dirs())
         .unwrap_or_else(|| vec![app_dir.clone()]);
     let embedded_package_install_dir = package_install_dirs
@@ -301,7 +301,7 @@ fn parse_codegen_runner_env(value: Option<std::ffi::OsString>) -> io::Result<Cod
 async fn run_external_codegen_for_app_dir(
     context: &CodegenExecutionContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    node::ensure_node22_runtime_available()?;
+    node_runtime::ensure_node22_runtime_available()?;
     // The external Node runner is a process boundary, not a package-distribution
     // boundary: it still runs the binary's embedded codegen/tooling closure so
     // developer apps never need an installed @nimbus/codegen package.
@@ -610,7 +610,7 @@ export const syncUser = onDocumentCreated("users/{userId}", async (event) => eve
             );
             return;
         }
-        if let Err(error) = crate::node::ensure_node22_runtime_available() {
+        if let Err(error) = crate::node_runtime::ensure_node22_runtime_available() {
             eprintln!("skipping external Node codegen test; Node.js baseline unavailable: {error}");
             return;
         }

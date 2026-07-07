@@ -234,7 +234,7 @@ async fn adopt_app_adapter(
         }
         Some(DevAdapter::FirestoreClient) => {
             super::firebase::wire_firestore_client_app(watch.app_dir)?;
-            crate::node::auto_install_node_dependencies(watch.app_dir).await?;
+            crate::node_runtime::auto_install_node_dependencies(watch.app_dir).await?;
             register_watch_roots(watch.watch_roots, Vec::new());
             notices.push(
                 "firebase dependency adopted: package.json now points at the drop-in \
@@ -262,7 +262,7 @@ async fn adopt_app_adapter(
             }
             if adapter.needs_node_dependencies() {
                 for install_dir in adapter.npm_install_dirs(watch.app_dir) {
-                    crate::node::auto_install_node_dependencies(&install_dir).await?;
+                    crate::node_runtime::auto_install_node_dependencies(&install_dir).await?;
                 }
             }
             register_watch_roots(watch.watch_roots, adapter.source_roots().to_vec());
@@ -528,13 +528,13 @@ mod tests {
         // rewired to the provisioned drop-in and its Node dependencies are
         // installed without restarting anything; a Firestore client app has
         // no codegen sources, so no watch roots register.
-        if let Err(error) = crate::node::ensure_node22_runtime_available() {
+        if let Err(error) = crate::node_runtime::ensure_node22_runtime_available() {
             eprintln!(
                 "skipping mid_session_firebase_adoption_runs_scan_gate; Node.js baseline unavailable: {error}"
             );
             return;
         }
-        if let Err(error) = crate::node::ensure_npm_available() {
+        if let Err(error) = crate::node_runtime::ensure_npm_available() {
             eprintln!(
                 "skipping mid_session_firebase_adoption_runs_scan_gate; npm unavailable: {error}"
             );
@@ -635,13 +635,13 @@ mod tests {
         // register the source roots with the codegen watch loop, whose
         // baseline reset gives the adopted sources their initial codegen.
         // Nothing restarts at any point.
-        if let Err(error) = crate::node::ensure_node22_runtime_available() {
+        if let Err(error) = crate::node_runtime::ensure_node22_runtime_available() {
             eprintln!(
                 "skipping mid_session_convex_adoption_registers_watch_roots; Node.js baseline unavailable: {error}"
             );
             return;
         }
-        if let Err(error) = crate::node::ensure_npm_available() {
+        if let Err(error) = crate::node_runtime::ensure_npm_available() {
             eprintln!(
                 "skipping mid_session_convex_adoption_registers_watch_roots; npm unavailable: {error}"
             );
