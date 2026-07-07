@@ -256,8 +256,8 @@ function OverviewTab({ service }: { service: ServiceDoc }) {
       <div className="rounded border border-app bg-surface-2 px-3 py-3 text-xs text-muted">
         Logs, environment variables, ports, and code-ref details are not yet
         surfaced by the system tenant for the services index. A follow-up plan
-        will wire these dimensions through the ServiceManager and
-        compose.yaml metadata.
+        will wire these dimensions through the ServiceManager and compose.yaml
+        metadata.
       </div>
     </div>
   );
@@ -267,9 +267,9 @@ function EndpointsTab({ service }: { service: ServiceDoc }) {
   const endpoints = Array.isArray(service.endpoints) ? service.endpoints : [];
   if (endpoints.length === 0) {
     return (
-      <Empty
+      <EmptyState
         title="No endpoints declared"
-        detail="Services expose endpoints once their compose.yaml binds host ports or a sidecar registers a route."
+        body="Services expose endpoints once their compose.yaml binds host ports or a sidecar registers a route."
       />
     );
   }
@@ -289,9 +289,9 @@ function HealthTab({ service }: { service: ServiceDoc }) {
   const health = service.health;
   if (!health) {
     return (
-      <Empty
+      <EmptyState
         title="No health snapshot"
-        detail="Health probes populate this panel once the service manager records its first readiness check."
+        body="Health probes populate this panel once the service manager records its first readiness check."
       />
     );
   }
@@ -316,17 +316,17 @@ function BundleTab({
 }) {
   if (!service.bundleId) {
     return (
-      <Empty
+      <EmptyState
         title="No bundle attached"
-        detail="This service has not been associated with a runtime bundle. Run `nimbus compose up` to register one."
+        body="This service has not been associated with a runtime bundle. Run `nimbus compose up` to register one."
       />
     );
   }
   if (bundle === null) {
     return (
-      <Empty
+      <EmptyState
         title="Bundle not found"
-        detail={`Service references bundleId ${shortId(service.bundleId, 12)} but no matching bundle is registered.`}
+        body={`Service references bundleId ${shortId(service.bundleId, 12)} but no matching bundle is registered.`}
       />
     );
   }
@@ -367,13 +367,7 @@ function BundleTab({
   );
 }
 
-function Stat({
-  label,
-  value,
-}: {
-  label: string;
-  value: React.ReactNode;
-}) {
+function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-3">
       <span className="w-32 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
@@ -402,9 +396,7 @@ function DetailSubDrawer({
     : services;
   if (services.length === 0) {
     return (
-      <div className="px-3 py-6 text-xs text-muted">
-        No services declared.
-      </div>
+      <div className="px-3 py-6 text-xs text-muted">No services declared.</div>
     );
   }
   if (filtered.length === 0) {
@@ -466,15 +458,6 @@ function ServiceNotFound() {
       >
         ← back to services
       </Link>
-    </div>
-  );
-}
-
-function Empty({ title, detail }: { title: string; detail: string }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
-      <span className="font-mono text-sm text-default">{title}</span>
-      <span className="max-w-md text-xs text-muted">{detail}</span>
     </div>
   );
 }

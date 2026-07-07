@@ -6,8 +6,11 @@ import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
 import { Td, Th } from "../../components/data-table";
+import { EmptyState } from "../../components/empty-state";
+import { LoadingState } from "../../components/loading-state";
 import { RelativeTime } from "../../components/time";
 import { useTenantList } from "../../hooks/use-tenant-list";
+import type { TableDoc } from "../../lib/types/table";
 import {
   type SubDrawerSpec,
   useContributeSubDrawer,
@@ -17,15 +20,6 @@ import { useUiStore } from "../../store/ui-store";
 export const Route = createFileRoute("/developer/storage")({
   component: StoragePage,
 });
-
-type TableDoc = {
-  _id: string;
-  tenantId?: string;
-  name?: string;
-  schema?: unknown;
-  rowCount?: number;
-  lastWriteAt?: number;
-};
 
 function StoragePage() {
   const tenant = useUiStore((s) => s.activeTenant);
@@ -154,22 +148,25 @@ function StoragePage() {
       <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
         {!tenant ? (
           hasTenants === false ? (
-            <Empty
+            <EmptyState
               title="No tenants yet"
-              detail="Click + CREATE TENANT in the top nav to create one. Tables and documents scope to a tenant — once a tenant exists, you can pick it from the selector to see its tables."
+              body="Click + CREATE TENANT in the top nav to create one. Tables and documents scope to a tenant — once a tenant exists, you can pick it from the selector to see its tables."
+              testid="tenant-tables-empty"
             />
           ) : (
-            <Empty
+            <EmptyState
               title="Select a tenant"
-              detail="Pick a tenant from the top-nav selector to see its tables."
+              body="Pick a tenant from the top-nav selector to see its tables."
+              testid="tenant-tables-empty"
             />
           )
         ) : tables === undefined ? (
-          <Loading label="Loading tables…" />
+          <LoadingState label="Loading tables…" />
         ) : sortedTables.length === 0 ? (
-          <Empty
+          <EmptyState
             title="No tables"
-            detail={`Insert a document via POST /api/tenants/${tenant}/documents or call ctx.db.insert("<table>", ...) from a registered function. Tables appear here as soon as they receive their first write.`}
+            body={`Insert a document via POST /api/tenants/${tenant}/documents or call ctx.db.insert("<table>", ...) from a registered function. Tables appear here as soon as they receive their first write.`}
+            testid="tenant-tables-empty"
           />
         ) : (
           <div className="overflow-auto">
@@ -234,25 +231,5 @@ function StoragePage() {
         )}
       </div>
     </section>
-  );
-}
-
-function Loading({ label }: { label: string }) {
-  return (
-    <div className="flex h-full items-center justify-center font-mono text-xs text-muted">
-      {label}
-    </div>
-  );
-}
-
-function Empty({ title, detail }: { title: string; detail: string }) {
-  return (
-    <div
-      className="flex h-full flex-col items-center justify-center gap-2 px-6 py-10 text-center"
-      data-testid="tenant-tables-empty"
-    >
-      <p className="font-mono text-sm text-default">{title}</p>
-      <p className="max-w-md text-xs text-muted">{detail}</p>
-    </div>
   );
 }

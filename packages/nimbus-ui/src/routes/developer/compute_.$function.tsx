@@ -11,11 +11,14 @@ import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CodeBlock } from "../../components/code-block";
 import { CopyChip } from "../../components/copy-chip";
+import { EmptyState } from "../../components/empty-state";
 import { FunctionRunner } from "../../components/function-runner/function-runner";
+import { LoadingState } from "../../components/loading-state";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import { formatDuration, shortId } from "../../lib/format";
+import type { FunctionDoc } from "../../lib/types/function";
 import { buildFunctionTree } from "../../shell/function-tree";
 import { FunctionTreeView } from "../../shell/function-tree-view";
 import {
@@ -61,19 +64,6 @@ function isTab(value: unknown): value is DetailTab {
     value === "runs"
   );
 }
-
-type FunctionDoc = {
-  _id: string;
-  _updateTime?: number;
-  path?: string;
-  kind?: string;
-  adapter?: string;
-  bundleId?: string;
-  argsSchema?: unknown;
-  returnsSchema?: unknown;
-  lastStatus?: string;
-  lastRunAt?: number;
-};
 
 type BundleDoc = {
   _id: string;
@@ -218,7 +208,7 @@ function FunctionDetailPage() {
 
       <div className="min-h-0 flex-1 overflow-hidden">
         {fn === null && functions === undefined ? (
-          <Loading label="Loading function…" />
+          <LoadingState label="Loading function…" />
         ) : fn === null ? (
           <NotFound path={functionPath} />
         ) : (
@@ -389,20 +379,21 @@ function SourceTab({
     };
   }, [modulePath]);
 
-  if (state.status === "loading") return <Loading label="Loading source…" />;
+  if (state.status === "loading")
+    return <LoadingState label="Loading source…" />;
   if (state.status === "missing") {
     return (
-      <Empty
+      <EmptyState
         title="Source not available"
-        detail="This deployment did not capture source for this module. Deploy with the Nimbus CLI to make source viewable here."
+        body="This deployment did not capture source for this module. Deploy with the Nimbus CLI to make source viewable here."
       />
     );
   }
   if (state.status === "error") {
     return (
-      <Empty
+      <EmptyState
         title="Could not load source"
-        detail={`The source endpoint returned an error (${state.message}).`}
+        body={`The source endpoint returned an error (${state.message}).`}
       />
     );
   }
@@ -569,12 +560,12 @@ function LogsTab({ fn }: { fn: FunctionDoc }) {
     });
   }, [events, fn.path]);
 
-  if (events === undefined) return <Loading label="Loading logs…" />;
+  if (events === undefined) return <LoadingState label="Loading logs…" />;
   if (filtered.length === 0) {
     return (
-      <Empty
+      <EmptyState
         title="No logs for this function"
-        detail="The Observability page hosts the full cross-function log feed. Run this function to populate its log stream."
+        body="The Observability page hosts the full cross-function log feed. Run this function to populate its log stream."
       />
     );
   }
@@ -614,12 +605,12 @@ function RunsTab({ fn }: { fn: FunctionDoc }) {
     status: null,
     limit: 50,
   }) as RunDoc[] | undefined;
-  if (runs === undefined) return <Loading label="Loading runs…" />;
+  if (runs === undefined) return <LoadingState label="Loading runs…" />;
   if (runs.length === 0) {
     return (
-      <Empty
+      <EmptyState
         title="No runs yet"
-        detail="Once this function has been invoked, recent runs appear here. Click a run to open its detail page."
+        body="Once this function has been invoked, recent runs appear here. Click a run to open its detail page."
       />
     );
   }
@@ -708,14 +699,6 @@ function DetailSubDrawer({
   );
 }
 
-function Loading({ label }: { label: string }) {
-  return (
-    <div className="flex h-full items-center justify-center text-xs text-muted">
-      {label}
-    </div>
-  );
-}
-
 function NotFound({ path }: { path: string }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
@@ -731,15 +714,6 @@ function NotFound({ path }: { path: string }) {
       >
         ← back to compute
       </Link>
-    </div>
-  );
-}
-
-function Empty({ title, detail }: { title: string; detail: string }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
-      <span className="font-mono text-sm text-default">{title}</span>
-      <span className="max-w-md text-xs text-muted">{detail}</span>
     </div>
   );
 }

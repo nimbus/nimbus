@@ -7,8 +7,13 @@ import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { CopyChip } from "../../components/copy-chip";
+import { EmptyState } from "../../components/empty-state";
+import { JsonEditorForm } from "../../components/json-editor-form";
+import { LoadingState } from "../../components/loading-state";
+import { PanelHeader, Slideover } from "../../components/slideover";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
+import type { TableDoc, TableSchemaShape } from "../../lib/types/table";
 import { useUiStore } from "../../store/ui-store";
 
 export const Route = createFileRoute("/developer/storage_/$table")({
@@ -23,31 +28,6 @@ export const Route = createFileRoute("/developer/storage_/$table")({
 
 type TableSearch = {
   panel?: "schema" | "indexes";
-};
-
-type TableDoc = {
-  _id: string;
-  tenantId?: string;
-  name?: string;
-  schema?: SchemaShape | null;
-  rowCount?: number;
-};
-
-type SchemaField = {
-  name: string;
-  field_type?: string;
-  required?: boolean;
-};
-
-type SchemaShape = {
-  table?: string;
-  fields?: SchemaField[];
-  indexes?: Array<{
-    name: string;
-    fields: string[];
-    unique?: boolean;
-    type?: string;
-  }>;
 };
 
 type DocumentJson = Record<string, unknown> & {
@@ -388,16 +368,17 @@ function TableDocumentsPage() {
       <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-app bg-surface">
           {loading && !page ? (
-            <Loading label="Loading documents…" />
+            <LoadingState label="Loading documents…" />
           ) : pageError ? (
             <PageError
               message={pageError}
               onRetry={() => setRefreshTick((t) => t + 1)}
             />
           ) : !page || page.data.length === 0 ? (
-            <Empty
+            <EmptyState
               title="No documents"
-              detail={`Insert a document using the toolbar or POST /api/tenants/${tenant}/documents with body { table: "${table}", fields: {...} }.`}
+              body={`Insert a document using the toolbar or POST /api/tenants/${tenant}/documents with body { table: "${table}", fields: {...} }.`}
+              testid="documents-empty"
             />
           ) : (
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -660,73 +641,26 @@ function InsertDrawer({
   onClose: () => void;
   onSubmit: (json: string) => Promise<void>;
 }) {
-  const [json, setJson] = useState("{\n  \n}");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = useCallback(async () => {
-    setError(null);
-    setSubmitting(true);
-    try {
-      await onSubmit(json);
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSubmitting(false);
-    }
-  }, [json, onSubmit, onClose]);
-
   return (
-    <Drawer
+    <Slideover
       title="Insert document"
       onClose={onClose}
       testid="documents-insert-drawer"
     >
-      <label
-        htmlFor="insert-json"
-        className="font-mono text-[10px] uppercase tracking-wide text-muted"
-      >
-        document fields (JSON object)
-      </label>
-      <textarea
-        id="insert-json"
-        value={json}
-        onChange={(e) => setJson(e.target.value)}
-        spellCheck={false}
-        className="min-h-[240px] flex-1 resize-none rounded border border-app bg-surface-2 p-2 font-mono text-xs text-default focus-visible:border-strong"
-        data-testid="documents-insert-textarea"
+      <JsonEditorForm
+        initialJson={"{\n  \n}"}
+        label="document fields (JSON object)"
+        fieldId="insert-json"
+        submitLabel="insert"
+        submittingLabel="inserting…"
+        testidPrefix="documents-insert"
+        onCancel={onClose}
+        onSubmit={async (json) => {
+          await onSubmit(json);
+          onClose();
+        }}
       />
-      {error ? (
-        <p
-          className="font-mono text-xs text-danger"
-          data-testid="documents-insert-error"
-        >
-          {error}
-        </p>
-      ) : null}
-      <div className="mt-2 flex items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
-        >
-          cancel
-        </button>
-        <button
-          type="button"
-          onClick={() => void submit()}
-          disabled={submitting}
-          className={cn(
-            "rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide",
-            submitting ? "text-muted" : "text-default hover:bg-surface",
-          )}
-          data-testid="documents-insert-submit"
-        >
-          {submitting ? "inserting…" : "insert"}
-        </button>
-      </div>
-    </Drawer>
+    </Slideover>
   );
 }
 
@@ -746,24 +680,9 @@ function EditDrawer({
     delete copy._updateTime;
     return JSON.stringify(copy, null, 2);
   }, [doc]);
-  const [json, setJson] = useState(initial);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = useCallback(async () => {
-    setError(null);
-    setSubmitting(true);
-    try {
-      await onSubmit(json);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSubmitting(false);
-    }
-  }, [json, onSubmit]);
 
   return (
-    <Drawer
+    <Slideover
       title={`Edit ${shortId(String(doc._id ?? ""))}`}
       onClose={onClose}
       testid="documents-edit-drawer"
@@ -776,50 +695,18 @@ function EditDrawer({
           testid="documents-edit-id"
         />
       </div>
-      <label
-        htmlFor="edit-json"
-        className="mt-2 font-mono text-[10px] uppercase tracking-wide text-muted"
-      >
-        patch (JSON object — only changed fields)
-      </label>
-      <textarea
-        id="edit-json"
-        value={json}
-        onChange={(e) => setJson(e.target.value)}
-        spellCheck={false}
-        className="min-h-[240px] flex-1 resize-none rounded border border-app bg-surface-2 p-2 font-mono text-xs text-default focus-visible:border-strong"
-        data-testid="documents-edit-textarea"
+      <JsonEditorForm
+        initialJson={initial}
+        label="patch (JSON object — only changed fields)"
+        fieldId="edit-json"
+        labelClassName="mt-2"
+        submitLabel="save"
+        submittingLabel="saving…"
+        testidPrefix="documents-edit"
+        onCancel={onClose}
+        onSubmit={onSubmit}
       />
-      {error ? (
-        <p
-          className="font-mono text-xs text-danger"
-          data-testid="documents-edit-error"
-        >
-          {error}
-        </p>
-      ) : null}
-      <div className="mt-2 flex items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
-        >
-          cancel
-        </button>
-        <button
-          type="button"
-          onClick={() => void submit()}
-          disabled={submitting}
-          className={cn(
-            "rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide",
-            submitting ? "text-muted" : "text-default hover:bg-surface",
-          )}
-          data-testid="documents-edit-submit"
-        >
-          {submitting ? "saving…" : "save"}
-        </button>
-      </div>
-    </Drawer>
+    </Slideover>
   );
 }
 
@@ -832,7 +719,7 @@ function SchemaPanel({
 }: {
   tenant: string;
   table: string;
-  schema: SchemaShape | null;
+  schema: TableSchemaShape | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -986,7 +873,7 @@ function IndexPanel({
   schema,
   onClose,
 }: {
-  schema: SchemaShape | null;
+  schema: TableSchemaShape | null;
   onClose: () => void;
 }) {
   const indexes = schema?.indexes ?? [];
@@ -1039,90 +926,6 @@ function IndexPanel({
         )}
       </div>
     </aside>
-  );
-}
-
-function Drawer({
-  title,
-  onClose,
-  testid,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  testid: string;
-  children: React.ReactNode;
-}) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-  return (
-    <div className="fixed inset-0 z-30 flex justify-end">
-      <button
-        type="button"
-        aria-label={`Dismiss ${title}`}
-        onClick={onClose}
-        className="absolute inset-0 bg-black/40"
-        data-testid={`${testid}-overlay`}
-      />
-      <div
-        role="dialog"
-        aria-label={title}
-        className="relative flex h-full w-[480px] flex-col gap-2 border-l border-app bg-bg p-4 shadow-xl"
-        data-testid={testid}
-      >
-        <PanelHeader title={title} onClose={onClose} />
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function PanelHeader({
-  title,
-  onClose,
-}: {
-  title: string;
-  onClose: () => void;
-}) {
-  return (
-    <div className="flex items-center justify-between border-b border-app px-3 py-2">
-      <h2 className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
-        {title}
-      </h2>
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label={`Close ${title}`}
-        className="rounded border border-app px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
-      >
-        close
-      </button>
-    </div>
-  );
-}
-
-function Loading({ label }: { label: string }) {
-  return (
-    <div className="flex h-full items-center justify-center font-mono text-xs text-muted">
-      {label}
-    </div>
-  );
-}
-
-function Empty({ title, detail }: { title: string; detail: string }) {
-  return (
-    <div
-      className="flex h-full flex-col items-center justify-center gap-2 px-6 py-10 text-center"
-      data-testid="documents-empty"
-    >
-      <p className="font-mono text-sm text-default">{title}</p>
-      <p className="max-w-md text-xs text-muted">{detail}</p>
-    </div>
   );
 }
 

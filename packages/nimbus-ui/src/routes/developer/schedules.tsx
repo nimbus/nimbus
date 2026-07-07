@@ -3,6 +3,8 @@ import { useQuery } from "@nimbus/nimbus/react";
 
 import { api } from "../../../convex/_generated/api";
 import { Td, Th } from "../../components/data-table";
+import { EmptyState } from "../../components/empty-state";
+import { LoadingState } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
@@ -111,12 +113,13 @@ function SchedulesPage() {
 }
 
 function ScheduledTable({ jobs }: { jobs: ScheduledJobDoc[] | undefined }) {
-  if (jobs === undefined) return <Loading label="Loading scheduled jobs…" />;
+  if (jobs === undefined)
+    return <LoadingState label="Loading scheduled jobs…" />;
   if (jobs.length === 0) {
     return (
-      <Empty
+      <EmptyState
         title="No scheduled jobs"
-        detail="Scheduler-driven invocations appear here. The list updates as jobs are enqueued."
+        body="Scheduler-driven invocations appear here. The list updates as jobs are enqueued."
       />
     );
   }
@@ -187,12 +190,12 @@ function ScheduledTable({ jobs }: { jobs: ScheduledJobDoc[] | undefined }) {
 }
 
 function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
-  if (jobs === undefined) return <Loading label="Loading cron jobs…" />;
+  if (jobs === undefined) return <LoadingState label="Loading cron jobs…" />;
   if (jobs.length === 0) {
     return (
-      <Empty
+      <EmptyState
         title="No cron jobs"
-        detail="Cron-scheduled functions appear here with their schedule and next-run time."
+        body="Cron-scheduled functions appear here with their schedule and next-run time."
       />
     );
   }
@@ -255,23 +258,6 @@ function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
           ))}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-function Loading({ label }: { label: string }) {
-  return (
-    <div className="flex h-32 items-center justify-center text-xs text-muted">
-      {label}
-    </div>
-  );
-}
-
-function Empty({ title, detail }: { title: string; detail: string }) {
-  return (
-    <div className="flex h-32 flex-col items-center justify-center gap-1 text-center">
-      <span className="font-mono text-sm text-default">{title}</span>
-      <span className="max-w-md text-xs text-muted">{detail}</span>
     </div>
   );
 }
