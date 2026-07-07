@@ -1,5 +1,5 @@
 use axum::http::HeaderMap;
-use nimbus_core::PrincipalContext;
+use nimbus_core::{PrincipalContext, TenantId};
 use nimbus_operator::{
     ExtractedServerAccessStatus, LocalServerCredentialMode, extract_server_access,
 };
@@ -8,7 +8,11 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use super::AppError;
-use crate::local_server::LocalServerSecurityState;
+use crate::local_server::{
+    LocalServerAuditEvent, LocalServerRouteFamily, LocalServerSecurityState, origin_from_headers,
+};
+use crate::state::AppState;
+use crate::tenant::TenantIsolationContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PrincipalClass {
@@ -187,6 +191,118 @@ pub(super) fn extract_operator_route_access(
             auth_method: extracted.auth_method,
         })),
     }
+}
+
+/// Which resource family an operator-route authorization decision (and its
+/// audit trail) belongs to. Carries the `auth_scope` audit literal so call
+/// sites never pass a raw string for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum OperatorAuthScope {
+    Session,
+    Service,
+    ServiceDefinition,
+    Sandbox,
+}
+
+impl OperatorAuthScope {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Session => "session_principal_class",
+            Self::Service => "service_principal_class",
+            Self::ServiceDefinition => "service_definition_principal_class",
+            Self::Sandbox => "sandbox_principal_class",
+        }
+    }
+
+    fn operator_route_noun(self) -> &'static str {
+        match self {
+            Self::Session => "session",
+            Self::Service => "service",
+            Self::ServiceDefinition => "service definition",
+            Self::Sandbox => "sandbox",
+        }
+    }
+}
+
+/// What an authorized operator-route check hands back to the caller's
+/// `build` closure: enough to construct any of the per-resource
+/// authorization results without the shared core knowing their shapes.
+pub(super) struct OperatorGrant {
+    pub(super) tenant_context: TenantIsolationContext,
+    pub(super) auth_method: Option<&'static str>,
+}
+
+/// Single implementation of the operator-route extract → authorized /
+/// missing / rejected flow shared by the session, service, and sandbox
+/// route families. `tenant` must already be a validated [`TenantId`].
+/// Returns `Ok(None)` when there is no operator credential on the route
+/// (the caller should fall through to application-auth), `Ok(Some(_))`
+/// when authorized, and `Err` (with the rejection already audited) when an
+/// operator credential was presented but rejected.
+pub(super) fn authorize_operator_route<A>(
+    headers: &HeaderMap,
+    state: &AppState,
+    tenant: &TenantId,
+    surface: &'static str,
+    scope: OperatorAuthScope,
+    build: impl FnOnce(OperatorGrant) -> A,
+) -> Result<Option<A>, AppError> {
+    match extract_operator_route_access(headers, state.local_server_security().as_deref())? {
+        Ok(OperatorRouteAccess::Authorized { auth_method }) => {
+            let tenant_context = TenantIsolationContext::operator(tenant.clone(), surface);
+            Ok(Some(build(OperatorGrant {
+                tenant_context,
+                auth_method,
+            })))
+        }
+        Ok(OperatorRouteAccess::Missing) => Ok(None),
+        Err(rejection) => {
+            record_operator_authorization_audit(
+                state,
+                headers,
+                tenant.as_str(),
+                scope,
+                PrincipalClass::Operator,
+                rejection.auth_method(),
+                false,
+                format!(
+                    "operator {} route rejected: {}",
+                    scope.operator_route_noun(),
+                    rejection.reason()
+                ),
+            );
+            Err(rejection.app_error())
+        }
+    }
+}
+
+/// Single parameterized audit recorder for operator/application principal
+/// class authorization outcomes across the session, service, service
+/// definition, and sandbox route families.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn record_operator_authorization_audit(
+    state: &AppState,
+    headers: &HeaderMap,
+    tenant_id: &str,
+    scope: OperatorAuthScope,
+    principal_class: PrincipalClass,
+    auth_method: Option<&'static str>,
+    success: bool,
+    reason: impl Into<String>,
+) {
+    state.record_local_server_audit(LocalServerAuditEvent {
+        route_family: LocalServerRouteFamily::NativeApi,
+        tenant_id: Some(tenant_id.to_owned()),
+        auth_scope: scope.as_str(),
+        auth_method,
+        success,
+        origin: origin_from_headers(headers),
+        reason: format!(
+            "principal_class={} {}",
+            principal_class.as_str(),
+            reason.into()
+        ),
+    });
 }
 
 #[cfg(test)]

@@ -30,8 +30,8 @@ async fn teardown_tenant_stops_tracked_sandboxes_and_clears_tenant_resources() {
         )
         .expect("dynamic built-in definition should be recorded");
     let standalone = manager
-        .create_sandbox_resource_async(
-            &tenant_id,
+        .create_sandbox_resource_for_context_async(
+            &TenantIsolationContext::system(tenant_id.clone(), "sandbox.resource.create"),
             "worker",
             standalone_resource_spec(&tenant_id, "task"),
             BTreeMap::new(),
@@ -120,8 +120,8 @@ async fn teardown_tenant_attempts_all_stops_and_clears_successes_before_returnin
         .expect("service activation should succeed")
         .expect("db binding should exist");
     let standalone = manager
-        .create_sandbox_resource_async(
-            &tenant_id,
+        .create_sandbox_resource_for_context_async(
+            &TenantIsolationContext::system(tenant_id.clone(), "sandbox.resource.create"),
             "worker",
             standalone_resource_spec(&tenant_id, "task"),
             BTreeMap::new(),

@@ -9,11 +9,10 @@ use nimbus_services::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::authz::format_millis_rfc3339;
+use super::authz::{OperatorAuthScope, format_millis_rfc3339, record_operator_authorization_audit};
 use super::pagination::{CollectionMetadataResponse, paginate_by_key};
 use super::resource_control::services::{
     ServiceDefinitionAction, authorize_service_definition_route, authorize_service_route,
-    record_service_authorization_audit, record_service_definition_authorization_audit,
 };
 use super::sandbox_spec::{SandboxSpecInput, SandboxSpecResponse};
 use super::*;
@@ -75,10 +74,11 @@ pub(crate) async fn list_service_definitions(
         |definition| definition.name.as_str(),
     );
 
-    record_service_definition_authorization_audit(
+    record_operator_authorization_audit(
         &state,
         &headers,
         authorized_tenant_id.as_str(),
+        OperatorAuthScope::ServiceDefinition,
         authorization.principal_class,
         authorization.auth_method,
         true,
@@ -148,10 +148,11 @@ pub(crate) async fn create_service_definition(
         backend,
         request.metadata.labels.unwrap_or_default(),
     )?;
-    record_service_definition_authorization_audit(
+    record_operator_authorization_audit(
         &state,
         &headers,
         tenant_context.tenant_id().as_str(),
+        OperatorAuthScope::ServiceDefinition,
         authorization.principal_class,
         authorization.auth_method,
         true,
@@ -204,10 +205,11 @@ pub(crate) async fn update_service_definition(
         backend,
         request.metadata.labels.unwrap_or_default(),
     )?;
-    record_service_definition_authorization_audit(
+    record_operator_authorization_audit(
         &state,
         &headers,
         tenant_context.tenant_id().as_str(),
+        OperatorAuthScope::ServiceDefinition,
         authorization.principal_class,
         authorization.auth_method,
         true,
@@ -244,10 +246,11 @@ pub(crate) async fn delete_service_definition(
     let manager = service_manager(&state)?;
     let force = query.force.unwrap_or(false);
     if force && !authorization.allows_force_delete(&service_name) {
-        record_service_definition_authorization_audit(
+        record_operator_authorization_audit(
             &state,
             &headers,
             tenant_context.tenant_id().as_str(),
+            OperatorAuthScope::ServiceDefinition,
             authorization.principal_class,
             authorization.auth_method,
             false,
@@ -269,10 +272,11 @@ pub(crate) async fn delete_service_definition(
             force,
         )
         .await?;
-    record_service_definition_authorization_audit(
+    record_operator_authorization_audit(
         &state,
         &headers,
         tenant_context.tenant_id().as_str(),
+        OperatorAuthScope::ServiceDefinition,
         authorization.principal_class,
         authorization.auth_method,
         true,
@@ -598,10 +602,11 @@ async fn service_lifecycle_route(
     if let (Some(action), Some(handle)) = (verb.event_action(), handle.as_ref()) {
         record_service_event(&state, tenant_context.tenant_id(), action, handle).await?;
     }
-    record_service_authorization_audit(
+    record_operator_authorization_audit(
         &state,
         &headers,
         tenant_context.tenant_id().as_str(),
+        OperatorAuthScope::Service,
         authorization.principal_class,
         authorization.auth_method,
         true,

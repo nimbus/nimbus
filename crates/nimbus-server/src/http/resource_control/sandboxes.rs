@@ -5,11 +5,10 @@ use nimbus_core::{PrincipalContext, TenantId};
 use serde_json::Value;
 
 use super::super::authz::{
-    OperatorRouteAccess, PrincipalClass, extract_operator_route_access, permission_actions_allow,
-    permission_claim_values, principal_class_from_principal,
+    OperatorAuthScope, PrincipalClass, authorize_operator_route, permission_actions_allow,
+    permission_claim_values, principal_class_from_principal, record_operator_authorization_audit,
 };
 use super::super::parse_user_tenant_id;
-use crate::local_server::{LocalServerAuditEvent, LocalServerRouteFamily, origin_from_headers};
 use crate::state::{AppError, AppState};
 use crate::tenant::TenantIsolationContext;
 
@@ -70,10 +69,11 @@ pub(in crate::http) async fn authorize_sandbox_route(
     let resolved = crate::application_auth::resolve_application_auth_from_headers(state, headers)
         .await
         .map_err(|error| {
-            record_sandbox_authorization_audit(
+            record_operator_authorization_audit(
                 state,
                 headers,
-                &route_tenant,
+                route_tenant.as_str(),
+                OperatorAuthScope::Sandbox,
                 PrincipalClass::Tenant,
                 Some("application_bearer"),
                 false,
@@ -82,10 +82,11 @@ pub(in crate::http) async fn authorize_sandbox_route(
             error
         })?;
     if !resolved.principal.authenticated {
-        record_sandbox_authorization_audit(
+        record_operator_authorization_audit(
             state,
             headers,
-            &route_tenant,
+            route_tenant.as_str(),
+            OperatorAuthScope::Sandbox,
             PrincipalClass::Tenant,
             None,
             false,
@@ -132,28 +133,20 @@ fn authorize_operator_sandbox_route(
     surface: &'static str,
 ) -> Result<Option<SandboxAuthorization>, AppError> {
     let route_tenant = parse_user_tenant_id(tenant_id.to_owned())?;
-    match extract_operator_route_access(headers, state.local_server_security().as_deref())? {
-        Ok(OperatorRouteAccess::Authorized { auth_method }) => Ok(Some(SandboxAuthorization {
+    authorize_operator_route(
+        headers,
+        state,
+        &route_tenant,
+        surface,
+        OperatorAuthScope::Sandbox,
+        |grant| SandboxAuthorization {
             principal_class: PrincipalClass::Operator,
-            tenant_context: TenantIsolationContext::operator(route_tenant.clone(), surface),
-            tenant_id: route_tenant,
-            auth_method,
+            tenant_id: grant.tenant_context.tenant_id().clone(),
+            tenant_context: grant.tenant_context,
+            auth_method: grant.auth_method,
             principal: None,
-        })),
-        Ok(OperatorRouteAccess::Missing) => Ok(None),
-        Err(rejection) => {
-            record_sandbox_authorization_audit(
-                state,
-                headers,
-                &route_tenant,
-                PrincipalClass::Operator,
-                rejection.auth_method(),
-                false,
-                format!("operator sandbox route rejected: {}", rejection.reason()),
-            );
-            Err(rejection.app_error())
-        }
-    }
+        },
+    )
 }
 
 fn principal_has_sandbox_permission(
@@ -190,7 +183,10 @@ fn sandbox_permission_values(principal: &PrincipalContext) -> Vec<&Value> {
     )
 }
 
-fn sandbox_permission_scope_allows(permission: &Value, sandbox_id: Option<&str>) -> bool {
+pub(super) fn sandbox_permission_scope_allows(
+    permission: &Value,
+    sandbox_id: Option<&str>,
+) -> bool {
     let Some(scope) = permission.get("scope") else {
         return false;
     };
@@ -219,28 +215,4 @@ fn sandbox_permission_scope_is_listable(permission: &Value) -> bool {
         Some("idPrefix") => scope.get("prefix").and_then(Value::as_str).is_some(),
         _ => false,
     }
-}
-
-pub(in crate::http) fn record_sandbox_authorization_audit(
-    state: &AppState,
-    headers: &HeaderMap,
-    tenant_id: &TenantId,
-    principal_class: PrincipalClass,
-    auth_method: Option<&'static str>,
-    success: bool,
-    reason: impl Into<String>,
-) {
-    state.record_local_server_audit(LocalServerAuditEvent {
-        route_family: LocalServerRouteFamily::NativeApi,
-        tenant_id: Some(tenant_id.as_str().to_owned()),
-        auth_scope: "sandbox_principal_class",
-        auth_method,
-        success,
-        origin: origin_from_headers(headers),
-        reason: format!(
-            "principal_class={} {}",
-            principal_class.as_str(),
-            reason.into()
-        ),
-    });
 }

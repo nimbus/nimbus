@@ -9,11 +9,11 @@ use nimbus_services::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::authz::format_millis_rfc3339;
+use super::authz::{OperatorAuthScope, format_millis_rfc3339, record_operator_authorization_audit};
 use super::pagination::{CollectionMetadataResponse, paginate_by_key};
 use super::resource_control::sessions::{
     SessionAction, SessionRouteAuthorizationRequest, authorize_session_resource_lookup,
-    authorize_session_resource_target, authorize_session_route, record_session_authorization_audit,
+    authorize_session_resource_target, authorize_session_route,
 };
 use super::{AppError, AppState, parse_user_tenant_id};
 
@@ -199,10 +199,11 @@ pub(crate) async fn open_session(
             request.requested_ttl_ms,
         )
         .await?;
-    record_session_authorization_audit(
+    record_operator_authorization_audit(
         &state,
         &headers,
-        &authorization.tenant_id,
+        authorization.tenant_id.as_str(),
+        OperatorAuthScope::Session,
         authorization.principal_class,
         authorization.auth_method,
         true,
@@ -299,10 +300,11 @@ pub(crate) async fn get_session(
         SessionAction::Get,
     )
     .await?;
-    record_session_authorization_audit(
+    record_operator_authorization_audit(
         &state,
         &headers,
-        &authorization.tenant_id,
+        authorization.tenant_id.as_str(),
+        OperatorAuthScope::Session,
         authorization.principal_class,
         authorization.auth_method,
         true,
@@ -348,10 +350,11 @@ pub(crate) async fn close_session(
     let session = manager
         .close_session(&authorization.tenant_id, &session_id, reason)
         .ok_or_else(|| session_not_found(&session_id))?;
-    record_session_authorization_audit(
+    record_operator_authorization_audit(
         &state,
         &headers,
-        &authorization.tenant_id,
+        authorization.tenant_id.as_str(),
+        OperatorAuthScope::Session,
         authorization.principal_class,
         authorization.auth_method,
         true,

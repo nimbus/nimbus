@@ -12,11 +12,14 @@ use nimbus_runtime::{
 use tower::ServiceBuilder;
 use tower_http::services::ServeDir;
 
-use crate::adapters::cloud_functions;
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
-use crate::adapters::cloudflare::{self, CloudflareConfig};
+use crate::adapters::cloudflare::CloudflareConfig;
 use crate::adapters::convex::{self, ConvexRegistry, ConvexTenancyConfig};
 use crate::adapters::firebase::{self, FirebaseConfig};
+use crate::adapters::http_mount::{
+    CloudFunctionsHttpAdapter, CloudflareHttpAdapter, ConvexHttpAdapter, FirebaseHttpAdapter,
+    mount_adapters,
+};
 use crate::config::control_plane::ControlPlaneConfig;
 use crate::config::deployment::DeploymentConfig;
 use crate::config::node_services::NodeServicesConfig;
@@ -531,7 +534,7 @@ impl RouterBuildConfig {
         let local_admin_policy = LocalServerAccessPolicy::standard(state.clone());
         let deploy_admin_policy = LocalServerAccessPolicy::deploy(state.clone());
 
-        let mut router = build_public_router()
+        let router = build_public_router()
             .merge(build_ui_router().route_layer(middleware::from_fn(http::ui_csp_middleware)))
             .merge(
                 build_local_admin_router()
@@ -555,21 +558,18 @@ impl RouterBuildConfig {
                         deploy_admin_policy,
                         server_access_extract_middleware,
                     )),
-            )
-            // The #43 network-bind stopgap (a route-layer refusing the convex
-            // surface on non-loopback) is gone: the #41 team-binding gate in the
-            // convex admission funnel (`registry_and_auth` + `dispatch.rs`) now
-            // refuses cross-team selection on every bind, superseding it.
-            .merge(build_convex_router());
-        if firebase_enabled {
-            router = router.merge(build_firebase_router(state.clone()));
-        }
-        if let Some(cloudflare_config) = cloudflare_config {
-            router = router.merge(cloudflare::build_cloudflare_router(cloudflare_config));
-        }
-        if deployment.cloud_functions_registry().is_some() {
-            router = router.fallback(any(cloud_functions::http_handler));
-        }
+            );
+        let router = mount_adapters(
+            router,
+            vec![
+                Box::new(ConvexHttpAdapter),
+                Box::new(FirebaseHttpAdapter::new(firebase_enabled, state.clone())),
+                Box::new(CloudflareHttpAdapter::new(cloudflare_config)),
+                Box::new(CloudFunctionsHttpAdapter::new(
+                    deployment.cloud_functions_registry().is_some(),
+                )),
+            ],
+        );
         router
             .layer(build_cors_layer(&cors_allowed_origins))
             .layer(middleware::from_fn_with_state(
@@ -760,7 +760,7 @@ fn build_deploy_router() -> Router<Arc<AppState>> {
     Router::new().route("/api/admin/deploy", post(http::deploy_app))
 }
 
-fn build_convex_router() -> Router<Arc<AppState>> {
+pub(crate) fn build_convex_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/convex/{tenant_id}/query", post(convex::query))
         .route(
@@ -786,7 +786,7 @@ fn build_convex_router() -> Router<Arc<AppState>> {
         .route("/convex/{tenant_id}/ws", get(convex::ws))
 }
 
-fn build_firebase_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
+pub(crate) fn build_firebase_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     // Keep one Firestore service instance so gRPC and WebSocket Listen share
     // retained target and write-stream state across reconnects.
     let firestore_service = firebase::grpc::FirestoreGrpcService::from_state(state.clone());
