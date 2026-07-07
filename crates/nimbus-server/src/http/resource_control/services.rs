@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::http::HeaderMap;
-use nimbus_core::{PrincipalContext, TenantId};
+use nimbus_core::PrincipalContext;
 use serde_json::Value;
 
 use super::super::authz::{
@@ -103,7 +103,7 @@ pub(in crate::http) async fn authorize_service_definition_route(
             record_service_definition_authorization_audit(
                 state,
                 headers,
-                &parse_user_tenant_id_lossy(&tenant_id),
+                &tenant_id,
                 PrincipalClass::Tenant,
                 Some("application_bearer"),
                 false,
@@ -116,7 +116,7 @@ pub(in crate::http) async fn authorize_service_definition_route(
         record_service_definition_authorization_audit(
             state,
             headers,
-            &tenant,
+            tenant.as_str(),
             PrincipalClass::Tenant,
             None,
             false,
@@ -137,7 +137,7 @@ pub(in crate::http) async fn authorize_service_definition_route(
         record_service_definition_authorization_audit(
             state,
             headers,
-            &tenant,
+            tenant.as_str(),
             principal_class,
             Some("application_bearer"),
             false,
@@ -159,7 +159,7 @@ pub(in crate::http) async fn authorize_service_definition_route(
         record_service_definition_authorization_audit(
             state,
             headers,
-            &tenant,
+            tenant.as_str(),
             principal_class,
             Some("application_bearer"),
             false,
@@ -201,7 +201,7 @@ pub(in crate::http) async fn authorize_service_route(
             record_service_authorization_audit(
                 state,
                 headers,
-                &parse_user_tenant_id_lossy(&tenant_id),
+                &tenant_id,
                 PrincipalClass::Tenant,
                 Some("application_bearer"),
                 false,
@@ -214,7 +214,7 @@ pub(in crate::http) async fn authorize_service_route(
         record_service_authorization_audit(
             state,
             headers,
-            &tenant,
+            tenant.as_str(),
             PrincipalClass::Tenant,
             None,
             false,
@@ -235,7 +235,7 @@ pub(in crate::http) async fn authorize_service_route(
         record_service_authorization_audit(
             state,
             headers,
-            &tenant,
+            tenant.as_str(),
             principal_class,
             Some("application_bearer"),
             false,
@@ -251,7 +251,7 @@ pub(in crate::http) async fn authorize_service_route(
         record_service_authorization_audit(
             state,
             headers,
-            &tenant,
+            tenant.as_str(),
             principal_class,
             Some("application_bearer"),
             false,
@@ -293,7 +293,7 @@ fn authorize_operator_service_route(
             record_service_authorization_audit(
                 state,
                 headers,
-                &route_tenant,
+                route_tenant.as_str(),
                 PrincipalClass::Operator,
                 rejection.auth_method(),
                 false,
@@ -356,10 +356,13 @@ fn service_definition_permission_scope_allows(permission: &Value, service_name: 
     }
 }
 
+/// `tenant_id` is the raw route value, not a validated [`nimbus_core::TenantId`]: an
+/// authorization failure can happen before tenant parsing, and the audit trail should
+/// record what the caller actually sent rather than a fabricated placeholder.
 pub(in crate::http) fn record_service_authorization_audit(
     state: &AppState,
     headers: &HeaderMap,
-    tenant_id: &TenantId,
+    tenant_id: &str,
     principal_class: PrincipalClass,
     auth_method: Option<&'static str>,
     success: bool,
@@ -367,7 +370,7 @@ pub(in crate::http) fn record_service_authorization_audit(
 ) {
     state.record_local_server_audit(LocalServerAuditEvent {
         route_family: LocalServerRouteFamily::NativeApi,
-        tenant_id: Some(tenant_id.as_str().to_owned()),
+        tenant_id: Some(tenant_id.to_owned()),
         auth_scope: "service_principal_class",
         auth_method,
         success,
@@ -380,10 +383,11 @@ pub(in crate::http) fn record_service_authorization_audit(
     });
 }
 
+/// See [`record_service_authorization_audit`] on why `tenant_id` is a raw `&str`.
 pub(in crate::http) fn record_service_definition_authorization_audit(
     state: &AppState,
     headers: &HeaderMap,
-    tenant_id: &TenantId,
+    tenant_id: &str,
     principal_class: PrincipalClass,
     auth_method: Option<&'static str>,
     success: bool,
@@ -391,7 +395,7 @@ pub(in crate::http) fn record_service_definition_authorization_audit(
 ) {
     state.record_local_server_audit(LocalServerAuditEvent {
         route_family: LocalServerRouteFamily::NativeApi,
-        tenant_id: Some(tenant_id.as_str().to_owned()),
+        tenant_id: Some(tenant_id.to_owned()),
         auth_scope: "service_definition_principal_class",
         auth_method,
         success,
@@ -402,10 +406,4 @@ pub(in crate::http) fn record_service_definition_authorization_audit(
             reason.into()
         ),
     });
-}
-
-fn parse_user_tenant_id_lossy(value: &str) -> TenantId {
-    parse_user_tenant_id(value.to_owned()).unwrap_or_else(|_| {
-        TenantId::new("invalid-tenant").expect("fallback tenant id should parse")
-    })
 }

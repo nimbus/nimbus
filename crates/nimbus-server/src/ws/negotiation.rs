@@ -65,10 +65,11 @@ struct HelloSession {
     server_now: i64,
 }
 
+/// `type` is validated against `"client_hello"` from the raw JSON `Value` in
+/// [`validate_client_hello`] before this struct is deserialized, so it is not
+/// repeated here.
 #[derive(Debug, Deserialize)]
 struct ClientHelloFrame {
-    #[serde(rename = "type")]
-    frame_type: String,
     protocol: String,
 }
 
@@ -118,7 +119,20 @@ pub(crate) async fn complete_handshake(
     }
 }
 
-async fn send_hello(socket: &mut WebSocket, hello_context: HelloContext) -> Result<(), ()> {
+/// Why `send_hello` can fail: encoding the hello frame, or writing it to the socket.
+/// The caller (`complete_handshake`) only needs to know that the handshake did not
+/// complete, but the variant still names which step failed rather than collapsing
+/// both into a meaningless unit error.
+#[derive(Debug)]
+enum SendHelloError {
+    Encode,
+    Send,
+}
+
+async fn send_hello(
+    socket: &mut WebSocket,
+    hello_context: HelloContext,
+) -> Result<(), SendHelloError> {
     let hello = HelloFrame {
         frame_type: "hello",
         protocol: NIMBUS_PROTOCOL_V2,
@@ -132,11 +146,11 @@ async fn send_hello(socket: &mut WebSocket, hello_context: HelloContext) -> Resu
             server_now: time::OffsetDateTime::now_utc().unix_timestamp_nanos() as i64 / 1_000_000,
         },
     };
-    let text = serde_json::to_string(&hello).map_err(|_| ())?;
+    let text = serde_json::to_string(&hello).map_err(|_| SendHelloError::Encode)?;
     socket
         .send(Message::Text(text.into()))
         .await
-        .map_err(|_| ())
+        .map_err(|_| SendHelloError::Send)
 }
 
 async fn wait_for_client_hello(mut socket: WebSocket) -> Option<WebSocket> {
@@ -212,11 +226,6 @@ fn validate_client_hello(text: &str) -> Result<(), Box<PublicError>> {
             "Invalid client_hello payload: {error}"
         )))
     })?;
-    if frame.frame_type != "client_hello" {
-        return Err(Box::new(PublicError::protocol_unsupported_message_type(
-            Some(frame.frame_type.as_str()),
-        )));
-    }
     if frame.protocol != NIMBUS_PROTOCOL_V2 {
         return Err(Box::new(PublicError::protocol_unsupported_version(
             frame.protocol,

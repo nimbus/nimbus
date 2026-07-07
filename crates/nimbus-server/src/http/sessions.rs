@@ -10,6 +10,7 @@ use nimbus_services::{
 use serde::{Deserialize, Serialize};
 
 use super::authz::format_millis_rfc3339;
+use super::pagination::{CollectionMetadataResponse, paginate_by_key};
 use super::resource_control::sessions::{
     SessionAction, SessionRouteAuthorizationRequest, authorize_session_resource_lookup,
     authorize_session_resource_target, authorize_session_route, record_session_authorization_audit,
@@ -68,19 +69,8 @@ pub(crate) struct SessionCloseRequest {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionCollectionResponse {
-    metadata: SessionCollectionMetadataResponse,
+    metadata: CollectionMetadataResponse,
     items: Vec<SessionResourceResponse>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionCollectionMetadataResponse {
-    tenant_id: String,
-    resource_version: String,
-    limit: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    next_page_token: Option<String>,
-    remaining_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -254,33 +244,26 @@ pub(crate) async fn list_sessions(
     let mut sessions = manager.list_sessions_for_tenant(&authorization.tenant_id);
     sessions.sort_by(|left, right| left.id.cmp(&right.id));
     sessions.retain(|session| authorization.can_list_session(session));
-    if let Some(token) = query.page_token.as_deref() {
-        sessions.retain(|session| session.id.as_str() > token);
-    }
     if let Some(state_filter) = query.state.as_deref() {
         sessions.retain(|session| session_state(session.lifecycle_state) == state_filter);
     }
-    let limit = query.limit.unwrap_or(100).clamp(1, 100);
-    let remaining_count = sessions.len().saturating_sub(limit);
-    let next_page_token = if remaining_count > 0 {
-        sessions
-            .get(limit.saturating_sub(1))
-            .map(|session| session.id.clone())
-    } else {
-        None
-    };
-    sessions.truncate(limit);
+    let (sessions, page) = paginate_by_key(
+        sessions,
+        query.page_token.as_deref(),
+        query.limit,
+        |session| session.id.as_str(),
+    );
     Ok(Json(SessionCollectionResponse {
-        metadata: SessionCollectionMetadataResponse {
+        metadata: CollectionMetadataResponse {
             tenant_id: authorization.tenant_id.as_str().to_owned(),
             resource_version: format!(
                 "sessions:{}:{}",
                 authorization.tenant_id,
-                sessions.len() + remaining_count
+                sessions.len() + page.remaining_count
             ),
-            limit,
-            next_page_token,
-            remaining_count,
+            limit: page.limit,
+            next_page_token: page.next_page_token,
+            remaining_count: page.remaining_count,
         },
         items: sessions
             .into_iter()

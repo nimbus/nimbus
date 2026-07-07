@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use axum::http::HeaderMap;
 use nimbus_core::{PrincipalContext, TenantId};
-use nimbus_tenant::TenantIsolationContext;
 use serde_json::Value;
 
 use super::super::authz::{
@@ -12,6 +11,7 @@ use super::super::authz::{
 use super::super::parse_user_tenant_id;
 use crate::local_server::{LocalServerAuditEvent, LocalServerRouteFamily, origin_from_headers};
 use crate::state::{AppError, AppState};
+use crate::tenant::TenantIsolationContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::http) enum SandboxAction {
@@ -97,7 +97,7 @@ pub(in crate::http) async fn authorize_sandbox_route(
     }
 
     let principal_class = principal_class_from_principal(&resolved.principal, "sandbox")?;
-    let tenant_context = crate::tenant::TenantIsolationContext::application(
+    let tenant_context = TenantIsolationContext::application(
         route_tenant.clone(),
         resolved.principal.clone(),
         surface,

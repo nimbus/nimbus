@@ -7,11 +7,12 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header}
 use axum::response::Response;
 use nimbus_cloud_functions::build_callable_request_args;
 use nimbus_core::InvocationAuth;
-use nimbus_core::{Error, StorageErrorKind, TenantId};
+use nimbus_core::{Error, TenantId};
 use serde_json::Value;
 
 use super::*;
 use crate::application_auth::verify_optional_application_auth_from_headers_in_deployment;
+use crate::error_envelope::StructuredHttpError;
 use crate::state::DeploymentState;
 use crate::state::{AppError, AppState, record_authenticated_usage};
 
@@ -126,84 +127,96 @@ pub(super) fn build_callable_preflight_response(
 }
 
 pub(super) fn callable_response_for_app_error(headers: &HeaderMap, error: AppError) -> Response {
-    let (status, callable_status, message) = match error {
-        AppError::Structured(error) => {
-            let status = error.status();
-            let callable_status = match status {
-                StatusCode::BAD_REQUEST => "INVALID_ARGUMENT",
-                StatusCode::UNAUTHORIZED => "UNAUTHENTICATED",
-                StatusCode::FORBIDDEN => "PERMISSION_DENIED",
-                StatusCode::NOT_FOUND => "NOT_FOUND",
-                StatusCode::CONFLICT => "ABORTED",
-                StatusCode::TOO_MANY_REQUESTS => "RESOURCE_EXHAUSTED",
-                StatusCode::SERVICE_UNAVAILABLE => "UNAVAILABLE",
-                _ => "INTERNAL",
-            };
-            (status, callable_status, error.message().to_string())
-        }
-        AppError::Unauthorized(message) => (StatusCode::UNAUTHORIZED, "UNAUTHENTICATED", message),
-        AppError::Forbidden(message) => (StatusCode::FORBIDDEN, "PERMISSION_DENIED", message),
-        AppError::NotFound(message) => (StatusCode::NOT_FOUND, "NOT_FOUND", message),
-        AppError::Core(error) => match error {
-            Error::Cancelled => (
-                StatusCode::from_u16(499).expect("499 should be a valid status code"),
-                "CANCELLED",
-                error.to_string(),
-            ),
-            Error::TenantNotFound(_)
-            | Error::DocumentNotFound(_)
-            | Error::ScheduledJobNotFound(_)
-            | Error::SchemaNotFound(_)
-            | Error::NotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND", error.to_string()),
-            Error::Transport(_) => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "UNAVAILABLE",
-                error.to_string(),
-            ),
-            Error::Conflict(_) => (StatusCode::CONFLICT, "ABORTED", error.to_string()),
-            Error::PreconditionFailed(_) => (
-                StatusCode::PRECONDITION_FAILED,
-                "FAILED_PRECONDITION",
-                error.to_string(),
-            ),
-            Error::ResourceExhausted(_) => (
-                StatusCode::TOO_MANY_REQUESTS,
-                "RESOURCE_EXHAUSTED",
-                error.to_string(),
-            ),
-            Error::PermissionDenied(_) => (
-                StatusCode::FORBIDDEN,
-                "PERMISSION_DENIED",
-                error.to_string(),
-            ),
-            Error::InvalidInput(_) | Error::SchemaValidation(_) => (
-                StatusCode::BAD_REQUEST,
-                "INVALID_ARGUMENT",
-                error.to_string(),
-            ),
-            Error::AlreadyExists(_) => (StatusCode::CONFLICT, "ALREADY_EXISTS", error.to_string()),
-            Error::Storage { kind, .. } => match kind {
-                StorageErrorKind::Busy
-                | StorageErrorKind::Transient
-                | StorageErrorKind::Unavailable => (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "UNAVAILABLE",
-                    error.to_string(),
-                ),
-                StorageErrorKind::Corruption | StorageErrorKind::Io | StorageErrorKind::Other => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "INTERNAL",
-                    error.to_string(),
-                ),
-            },
-            _ => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "INTERNAL",
-                error.to_string(),
-            ),
-        },
+    if let Some(response) = callable_legacy_status_override(headers, &error) {
+        return response;
+    }
+    let structured = StructuredHttpError::from_app_error(error);
+    let status = structured.status();
+    callable_error_response(
+        headers,
+        status,
+        callable_status_for_http_status(status),
+        structured.message(),
+        None,
+    )
+}
+
+/// The callable surface previously matched every `Error` variant by hand and disagreed
+/// with the canonical `StructuredHttpError::from_app_error` mapping (or with the generic
+/// [`callable_status_for_http_status`] text derived from it) for six of them:
+///
+/// - `Cancelled` used HTTP 499, not the canonical 408.
+/// - `MissingIndex` and `HistoricalRead` fell through to a flat 500/`INTERNAL`, not the
+///   canonical per-kind status (412 and varies-by-kind, respectively).
+/// - `SchemaValidation` used HTTP 400, not the canonical 422.
+/// - `AlreadyExists` and `PreconditionFailed` already match the canonical HTTP status, but
+///   the generic status-to-text mapping would relabel them `ABORTED`/`INTERNAL` instead of
+///   the callable-specific `ALREADY_EXISTS`/`FAILED_PRECONDITION` text.
+///
+/// Preserve today's exact status and text for these six variants; everything else defers
+/// to the canonical mapping.
+fn callable_legacy_status_override(headers: &HeaderMap, error: &AppError) -> Option<Response> {
+    let AppError::Core(core_error) = error else {
+        return None;
     };
-    callable_error_response(headers, status, callable_status, &message, None)
+    match core_error {
+        Error::Cancelled => Some(callable_error_response(
+            headers,
+            StatusCode::from_u16(499).expect("499 should be a valid status code"),
+            "CANCELLED",
+            &core_error.to_string(),
+            None,
+        )),
+        Error::AlreadyExists(_) => Some(callable_error_response(
+            headers,
+            StatusCode::CONFLICT,
+            "ALREADY_EXISTS",
+            &core_error.to_string(),
+            None,
+        )),
+        Error::PreconditionFailed(_) => Some(callable_error_response(
+            headers,
+            StatusCode::PRECONDITION_FAILED,
+            "FAILED_PRECONDITION",
+            &core_error.to_string(),
+            None,
+        )),
+        Error::MissingIndex { .. } => Some(callable_error_response(
+            headers,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            &core_error.to_string(),
+            None,
+        )),
+        Error::SchemaValidation(_) => Some(callable_error_response(
+            headers,
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            &core_error.to_string(),
+            None,
+        )),
+        Error::HistoricalRead { .. } => Some(callable_error_response(
+            headers,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            &core_error.to_string(),
+            None,
+        )),
+        _ => None,
+    }
+}
+
+fn callable_status_for_http_status(status: StatusCode) -> &'static str {
+    match status {
+        StatusCode::BAD_REQUEST => "INVALID_ARGUMENT",
+        StatusCode::UNAUTHORIZED => "UNAUTHENTICATED",
+        StatusCode::FORBIDDEN => "PERMISSION_DENIED",
+        StatusCode::NOT_FOUND => "NOT_FOUND",
+        StatusCode::CONFLICT => "ABORTED",
+        StatusCode::TOO_MANY_REQUESTS => "RESOURCE_EXHAUSTED",
+        StatusCode::SERVICE_UNAVAILABLE => "UNAVAILABLE",
+        _ => "INTERNAL",
+    }
 }
 
 pub(super) fn callable_error_response(

@@ -1053,7 +1053,11 @@ export {};
                 .is_file()
     }
 
-    fn write_firebase_cloud_functions_fixture(app_dir: &Path) {
+    /// Scaffolds a minimal Firebase Cloud Functions app (`firebase.json`, a
+    /// `functions/package.json`, and `functions/src/index.ts` holding `index_ts`)
+    /// shared by every firebase-authored fixture below; only the function body
+    /// under test differs between them.
+    fn write_firebase_functions_app(app_dir: &Path, index_ts: &str) {
         let functions_dir = app_dir.join("functions");
         let source_dir = functions_dir.join("src");
         fs::create_dir_all(&source_dir).expect("firebase functions source dir should create");
@@ -1073,8 +1077,13 @@ export {};
 "#,
         )
         .expect("functions package.json should write");
-        fs::write(
-            source_dir.join("index.ts"),
+        fs::write(source_dir.join("index.ts"), index_ts)
+            .expect("firebase source fixture should write");
+    }
+
+    fn write_firebase_cloud_functions_fixture(app_dir: &Path) {
+        write_firebase_functions_app(
+            app_dir,
             r#"
 import { setGlobalOptions } from "firebase-functions/v2";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
@@ -1098,32 +1107,12 @@ export const syncUser = onDocumentWritten("users/{userId}", async (event) => {
   return { ok: true };
 });
 "#,
-        )
-        .expect("firebase source fixture should write");
+        );
     }
 
     fn write_firebase_admin_cloud_functions_fixture(app_dir: &Path) {
-        let functions_dir = app_dir.join("functions");
-        let source_dir = functions_dir.join("src");
-        fs::create_dir_all(&source_dir).expect("firebase functions source dir should create");
-        fs::write(
-            app_dir.join("firebase.json"),
-            r#"{
-  "functions": { "source": "functions" }
-}
-"#,
-        )
-        .expect("firebase.json should write");
-        fs::write(
-            functions_dir.join("package.json"),
-            r#"{
-  "main": "lib/index.js"
-}
-"#,
-        )
-        .expect("functions package.json should write");
-        fs::write(
-            source_dir.join("index.ts"),
+        write_firebase_functions_app(
+            app_dir,
             r#"
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { Timestamp, getFirestore } from "firebase-admin/firestore";
@@ -1143,32 +1132,12 @@ export const syncUser = onDocumentWritten("users/{userId}", async (event) => {
   return { ok: true };
 });
 "#,
-        )
-        .expect("firebase admin source fixture should write");
+        );
     }
 
     fn write_firebase_admin_trigger_lifecycle_fixture(app_dir: &Path) {
-        let functions_dir = app_dir.join("functions");
-        let source_dir = functions_dir.join("src");
-        fs::create_dir_all(&source_dir).expect("firebase functions source dir should create");
-        fs::write(
-            app_dir.join("firebase.json"),
-            r#"{
-  "functions": { "source": "functions" }
-}
-"#,
-        )
-        .expect("firebase.json should write");
-        fs::write(
-            functions_dir.join("package.json"),
-            r#"{
-  "main": "lib/index.js"
-}
-"#,
-        )
-        .expect("functions package.json should write");
-        fs::write(
-            source_dir.join("index.ts"),
+        write_firebase_functions_app(
+            app_dir,
             r#"
 import { setGlobalOptions } from "firebase-functions/v2";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
@@ -1187,32 +1156,12 @@ export const syncUser = onDocumentWritten("users/{userId}", async (event) => {
   return { ok: true };
 });
 "#,
-        )
-        .expect("firebase lifecycle source fixture should write");
+        );
     }
 
     fn write_firebase_updated_noop_lifecycle_fixture(app_dir: &Path) {
-        let functions_dir = app_dir.join("functions");
-        let source_dir = functions_dir.join("src");
-        fs::create_dir_all(&source_dir).expect("firebase functions source dir should create");
-        fs::write(
-            app_dir.join("firebase.json"),
-            r#"{
-  "functions": { "source": "functions" }
-}
-"#,
-        )
-        .expect("firebase.json should write");
-        fs::write(
-            functions_dir.join("package.json"),
-            r#"{
-  "main": "lib/index.js"
-}
-"#,
-        )
-        .expect("functions package.json should write");
-        fs::write(
-            source_dir.join("index.ts"),
+        write_firebase_functions_app(
+            app_dir,
             r#"
 import { onDocumentUpdated } from "firebase-functions/v2/firestore";
 
@@ -1232,32 +1181,12 @@ export const syncUser = onDocumentUpdated("users/{userId}", async (event) => {
   return { ok: true };
 });
 "#,
-        )
-        .expect("firebase noop-update source fixture should write");
+        );
     }
 
     fn write_firebase_concurrent_trigger_lifecycle_fixture(app_dir: &Path) {
-        let functions_dir = app_dir.join("functions");
-        let source_dir = functions_dir.join("src");
-        fs::create_dir_all(&source_dir).expect("firebase functions source dir should create");
-        fs::write(
-            app_dir.join("firebase.json"),
-            r#"{
-  "functions": { "source": "functions" }
-}
-"#,
-        )
-        .expect("firebase.json should write");
-        fs::write(
-            functions_dir.join("package.json"),
-            r#"{
-  "main": "lib/index.js"
-}
-"#,
-        )
-        .expect("functions package.json should write");
-        fs::write(
-            source_dir.join("index.ts"),
+        write_firebase_functions_app(
+            app_dir,
             r#"
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
 
@@ -1276,32 +1205,12 @@ export const syncUser = onDocumentWritten("users/{userId}", async (event) => {
   return { ok: true };
 });
 "#,
-        )
-        .expect("firebase concurrent-trigger source fixture should write");
+        );
     }
 
     fn write_firebase_chain_depth_lifecycle_fixture(app_dir: &Path) {
-        let functions_dir = app_dir.join("functions");
-        let source_dir = functions_dir.join("src");
-        fs::create_dir_all(&source_dir).expect("firebase functions source dir should create");
-        fs::write(
-            app_dir.join("firebase.json"),
-            r#"{
-  "functions": { "source": "functions" }
-}
-"#,
-        )
-        .expect("firebase.json should write");
-        fs::write(
-            functions_dir.join("package.json"),
-            r#"{
-  "main": "lib/index.js"
-}
-"#,
-        )
-        .expect("functions package.json should write");
-        fs::write(
-            source_dir.join("index.ts"),
+        write_firebase_functions_app(
+            app_dir,
             r#"
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { getFirestore } from "firebase-admin/firestore";
@@ -1330,8 +1239,7 @@ export const cascade = onDocumentWritten("chain/{docId}", async (event) => {
   return { ok: true };
 });
 "#,
-        )
-        .expect("firebase chain-depth source fixture should write");
+        );
     }
 
     fn write_framework_admin_trigger_lifecycle_fixture(app_dir: &Path) {
