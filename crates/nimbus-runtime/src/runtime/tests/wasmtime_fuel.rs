@@ -20,6 +20,7 @@ async fn wasmtime_fuel_park_resume_invokes_component_through_worker_loop() {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(WasmtimeNoopHost),
         Arc::new(RuntimePolicy::new(wasmtime_fuel_test_limits())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
 
     let response = runtime
@@ -38,6 +39,7 @@ async fn wasmtime_fuel_exhaustion_maps_to_runtime_timeout() {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(WasmtimeNoopHost),
         Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
 
     let error = runtime

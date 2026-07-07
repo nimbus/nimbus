@@ -37,6 +37,7 @@ fn node_major_startup_snapshots_share_node_full_cell_subprocess() {
         let runtime_owner = NimbusRuntime::with_policy(
             Arc::new(AsyncEchoHost),
             Arc::new(RuntimePolicy::new(RuntimeLimits::application_node(target))),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let snapshot = runtime_owner
             .bootstrap_snapshot()
@@ -101,6 +102,7 @@ export {};
         let runtime_owner = NimbusRuntime::with_policy(
             Arc::new(AsyncEchoHost),
             Arc::new(RuntimePolicy::new(RuntimeLimits::application_node(target))),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let request = InvocationRequest {
             kind: InvocationKind::Query,
@@ -179,6 +181,7 @@ export {};
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let snapshot = runtime_owner
         .bootstrap_snapshot()
@@ -311,6 +314,7 @@ export {};
     let initial_owner = NimbusRuntime::with_policy(
         host.clone(),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let snapshot = initial_owner
         .bootstrap_snapshot()
@@ -335,6 +339,7 @@ export {};
         let runtime_owner = NimbusRuntime::with_policy(
             host.clone(),
             run_to_completion_snapshot_runtime_test_policy(),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let mut permit = SharedInvocationPermit::new(
             runtime_owner.policy(),
@@ -453,7 +458,7 @@ export {};
             let runtime_owner = NimbusRuntime::with_policy(
                 Arc::new(DelayedAsyncEchoHost::new(std::time::Duration::from_millis(1))),
                 run_to_completion_snapshot_runtime_test_policy(),
-            );
+            crate::RuntimeEgressPosture::CoarsePermissions);
             let snapshot = runtime_owner
                 .bootstrap_snapshot()
                 .expect("bootstrap snapshot should build");
@@ -578,6 +583,7 @@ export {};
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let mut runtime = v8_runtime_pool

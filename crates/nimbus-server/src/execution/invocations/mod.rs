@@ -6,7 +6,7 @@ use nimbus_provenance::RuntimeBundleProvenanceConfig;
 use nimbus_runtime::EgressGateway;
 use nimbus_runtime::{
     HostBridge, HostCallCancellation, InvocationRequest, NimbusRuntime, NimbusRuntimeError,
-    RuntimeInvocationContext, RuntimePolicy,
+    RuntimeEgressPosture, RuntimeInvocationContext, RuntimePolicy,
 };
 
 mod blocking;
@@ -119,15 +119,6 @@ pub(crate) fn runtime_invocation_context(
     }
 }
 
-fn runtime_for_host(
-    host_bridge: Arc<dyn HostBridge>,
-    runtime_policy: Arc<RuntimePolicy>,
-) -> std::result::Result<NimbusRuntime, NimbusRuntimeError> {
-    let file_system = fs_grants::resolved_file_system(fs_grants::resolve_fs_grants())?;
-    let runtime_policy = Arc::new(runtime_policy.clone_with_file_system(file_system));
-    Ok(NimbusRuntime::with_policy(host_bridge, runtime_policy))
-}
-
 fn runtime_for_host_with_egress_gateway<H>(
     host_bridge: Arc<H>,
     runtime_policy: Arc<RuntimePolicy>,
@@ -135,9 +126,15 @@ fn runtime_for_host_with_egress_gateway<H>(
 where
     H: HostBridge + EgressGateway + 'static,
 {
+    let file_system = fs_grants::resolved_file_system(fs_grants::resolve_fs_grants())?;
+    let runtime_policy = Arc::new(runtime_policy.clone_with_file_system(file_system));
     let host: Arc<dyn HostBridge> = host_bridge.clone();
     let gateway: Arc<dyn EgressGateway> = host_bridge;
-    Ok(runtime_for_host(host, runtime_policy)?.with_egress_gateway(gateway))
+    Ok(NimbusRuntime::with_policy(
+        host,
+        runtime_policy,
+        RuntimeEgressPosture::Gateway(gateway),
+    ))
 }
 
 pub(crate) use blocking::invoke_runtime_bundle_blocking_with_egress_gateway;

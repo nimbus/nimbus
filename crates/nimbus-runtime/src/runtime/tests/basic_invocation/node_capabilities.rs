@@ -52,6 +52,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -145,6 +146,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let request = |function_name: &str| InvocationRequest {
         kind: InvocationKind::Query,
@@ -221,6 +223,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -261,6 +264,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(RuntimeLimits::application_node22_local_development()),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -380,6 +384,7 @@ export {};
     let writer_runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(read_write_limits.clone()),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let written = writer_runtime
         .invoke_bundle_for_tenant(
@@ -421,6 +426,7 @@ export {};
     let worker_runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(worker_limits),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let worker_shared = worker_runtime
         .invoke_bundle_for_tenant(
@@ -456,6 +462,7 @@ export {};
     let reader_runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(read_write_limits),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let read = reader_runtime
         .invoke_bundle_for_tenant(
@@ -491,6 +498,7 @@ export {};
     let read_only_runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(read_only_limits),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let denied = read_only_runtime
         .invoke_bundle_for_tenant(
@@ -545,6 +553,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(RuntimeLimits::tooling_node22()),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -624,6 +633,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -681,6 +691,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -771,6 +782,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -865,6 +877,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(RuntimeLimits::tooling_node22()),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(

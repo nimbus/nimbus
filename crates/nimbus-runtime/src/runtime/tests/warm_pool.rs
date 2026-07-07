@@ -329,7 +329,11 @@ export {};
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
-    let runtime_owner = NimbusRuntime::with_policy(Arc::new(AsyncEchoHost), policy);
+    let runtime_owner = NimbusRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        policy,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let tenant_a_context = warm_pool_context("tenant-a");
     let tenant_b_context = warm_pool_context("tenant-b");
@@ -438,15 +442,22 @@ export {};
     native_limits.service_capability_enabled = true;
     native_limits.grants.service = vec!["db".to_string()];
     let native_policy = Arc::new(RuntimePolicy::new(native_limits));
-    let native_runtime = NimbusRuntime::with_policy(Arc::new(AsyncEchoHost), native_policy);
+    let native_runtime = NimbusRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        native_policy,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
 
     let mut adapter_granted_limits = cooperative_warm_pool_runtime_test_limits();
     adapter_granted_limits.max_concurrent_runtime_instances = 1;
     adapter_granted_limits.worker_threads = 1;
     adapter_granted_limits.grants.service = vec!["db".to_string()];
     let adapter_granted_policy = Arc::new(RuntimePolicy::new(adapter_granted_limits));
-    let adapter_granted_runtime =
-        NimbusRuntime::with_policy(Arc::new(AsyncEchoHost), adapter_granted_policy);
+    let adapter_granted_runtime = NimbusRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        adapter_granted_policy,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
 
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let context = warm_pool_context("tenant-a");
@@ -524,7 +535,11 @@ export {};
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
-    let runtime_owner = NimbusRuntime::with_policy(Arc::new(AsyncEchoHost), policy);
+    let runtime_owner = NimbusRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        policy,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
 
     let query_request = InvocationRequest {
@@ -641,6 +656,7 @@ export {};
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let context = warm_pool_context("tenant-a");
@@ -686,6 +702,7 @@ export {};
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let context = warm_pool_context("tenant-a");
@@ -801,6 +818,7 @@ export {};
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let context = warm_pool_context("tenant-a");
@@ -851,6 +869,7 @@ export {};
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
 
@@ -936,6 +955,7 @@ export {};
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let watchdog = WatchdogTimer::new();

@@ -244,6 +244,14 @@ mod tests {
                 runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
                 ..RuntimeLimits::default()
             })),
+            // CloudflareHostBridge carries only Engine + config + tenant — it
+            // lacks the admission decision/readiness state a real
+            // EgressGateway needs, so its egress posture is a NAMED deny-all
+            // until the Cloudflare adapters plan (CFA) wires a Worker front
+            // door with per-tenant egress policy.
+            nimbus_runtime::RuntimeEgressPosture::Gateway(Arc::new(
+                nimbus_runtime::DenyAllEgressGateway,
+            )),
         );
         let tempdir = tempfile::tempdir().expect("tempdir should build");
         let bundle_path = tempdir.path().join("worker.mjs");
@@ -312,5 +320,93 @@ export default {
         assert_eq!(body["list"]["list_complete"], json!(true));
         assert_eq!(body["list"]["keys"][0]["name"], json!("greeting"));
         assert_eq!(body["list"]["keys"][0]["metadata"], json!({ "lang": "en" }));
+    }
+
+    #[tokio::test]
+    async fn cloudflare_worker_guest_fetch_is_denied_by_named_deny_all_gateway() {
+        let fixture = EngineFixture::new(|path| {
+            Engine::new_with_embedded_provider(path, EmbeddedProviderKind::Redb)
+        });
+        let tenant = TenantId::new("tenant-a").expect("tenant id should build");
+        fixture
+            .engine()
+            .create_tenant(tenant.clone())
+            .expect("tenant should create");
+        let config = Arc::new(CloudflareConfig::new(CloudflareBindingRegistry::new(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )));
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(CloudflareHostBridge::new(
+                fixture.engine(),
+                config,
+                tenant.clone(),
+            )),
+            Arc::new(RuntimePolicy::new(RuntimeLimits {
+                execution_model: RuntimeExecutionModel::RunToCompletion,
+                runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+                ..RuntimeLimits::default()
+            })),
+            // Same NAMED posture as the KV test: the Cloudflare bridge has no
+            // per-tenant egress policy until the CFA front door exists, so
+            // guest fetch must deny loudly through an explicit gateway rather
+            // than an implicit constructor default.
+            nimbus_runtime::RuntimeEgressPosture::Gateway(Arc::new(
+                nimbus_runtime::DenyAllEgressGateway,
+            )),
+        );
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("worker.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+export default {
+  async fetch(_request, _env) {
+    try {
+      await fetch("https://denied.example.com/");
+      return new Response("unexpected-success", { status: 200 });
+    } catch (error) {
+      return new Response(String(error), { status: 502 });
+    }
+  },
+};
+"#,
+        )
+        .expect("worker bundle should write");
+
+        let request = InvocationRequest {
+            kind: InvocationKind::CloudflareWorkerFetch,
+            function_name: "worker:fetch".to_string(),
+            args: json!({
+                "request": {
+                    "url": "https://example.com/egress",
+                    "method": "GET",
+                },
+                "env": {},
+            }),
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: Default::default(),
+        };
+        let result = runtime
+            .invoke_bundle_for_tenant(&RuntimeBundle::new(&bundle_path), &request, tenant.as_str())
+            .await
+            .expect("Worker fetch handler should execute (the guest catches the denial)");
+
+        assert_eq!(
+            result["status"],
+            json!(502),
+            "guest fetch must be denied: {result:?}"
+        );
+        let body = result["body"]
+            .as_str()
+            .expect("Worker response body should be text");
+        assert!(
+            body.contains("egress gateway denied by default"),
+            "denial must surface the named DenyAllEgressGateway reason, got: {body}"
+        );
     }
 }

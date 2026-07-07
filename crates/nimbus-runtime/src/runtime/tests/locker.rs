@@ -34,8 +34,11 @@ fn runtime_builds_locker_jsruntime_from_snapshot_subprocess() {
     std::fs::write(&bundle_path, "export {};").expect("bundle should write");
 
     let bundle = RuntimeBundle::new(&bundle_path);
-    let runtime_owner =
-        NimbusRuntime::with_policy(Arc::new(RecordingHost::default()), locker_test_policy());
+    let runtime_owner = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        locker_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let mut runtime = v8_runtime_pool
         .take_runtime_with_options(&runtime_owner, &bundle, true)
@@ -86,8 +89,11 @@ fn runtime_snapshot_backed_locker_runtimes_interleave_on_same_thread_subprocess(
     std::fs::write(&bundle_path, "export {};").expect("bundle should write");
 
     let bundle = RuntimeBundle::new(&bundle_path);
-    let runtime_owner =
-        NimbusRuntime::with_policy(Arc::new(RecordingHost::default()), locker_test_policy());
+    let runtime_owner = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        locker_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
 
     let mut rt1 = v8_runtime_pool

@@ -393,7 +393,10 @@ mod tests {
         let policy = Arc::new(RuntimePolicy::default());
         let execution_plan = RuntimeExecutionPlan::for_invocation(&policy, &request, &context);
         RuntimeWorkerJob {
-            host: RuntimeHost::new(Arc::new(NoopHost)),
+            host: RuntimeHost::new_with_egress_gateway(
+                Arc::new(NoopHost),
+                crate::egress::RuntimeEgressGatewayBinding::coarse_permissions(),
+            ),
             policy,
             bundle: RuntimeBundle::new(&bundle_path),
             request: request.clone(),

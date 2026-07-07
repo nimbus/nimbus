@@ -146,6 +146,7 @@ pub(crate) fn install_nodefull_anchor(host: Arc<dyn HostBridge>) {
                     let owner = NimbusRuntime::with_policy(
                         host,
                         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+                        crate::RuntimeEgressPosture::CoarsePermissions,
                     );
                     let bundle = RuntimeBundle::virtual_anchor();
                     let snap = owner
@@ -207,6 +208,7 @@ pub fn smoke_install_committed_embedded_anchor() -> std::result::Result<(), Stri
     let owner = NimbusRuntime::with_policy(
         Arc::new(AnchorNoopHost),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::virtual_anchor();
     owner

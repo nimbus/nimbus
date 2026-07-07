@@ -1829,6 +1829,7 @@ fn execute_upstream_node_compat_test_with_extra_files(
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(limits),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let request = InvocationRequest {
         kind: InvocationKind::Query,

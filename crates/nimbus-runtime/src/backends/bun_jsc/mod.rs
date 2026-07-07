@@ -252,7 +252,10 @@ mod tests {
         };
         RuntimeBackendInvocation {
             watchdog: WatchdogTimer::new(),
-            host: RuntimeHost::new(Arc::new(NoopHost)),
+            host: RuntimeHost::new_with_egress_gateway(
+                Arc::new(NoopHost),
+                crate::egress::RuntimeEgressGatewayBinding::coarse_permissions(),
+            ),
             policy: policy.clone(),
             bundle: RuntimeBundle::new("unused-bun-jsc-proof-bundle.mjs"),
             request: request.clone(),
@@ -463,7 +466,11 @@ mod tests {
     #[test]
     fn bun_jsc_default_runtime_fails_closed_without_loaded_shared_adapter() {
         let policy = bun_no_timeout_policy();
-        let runtime = NimbusRuntime::with_policy(Arc::new(NoopHost), policy);
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(NoopHost),
+            policy,
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        );
         let request = InvocationRequest {
             kind: InvocationKind::Query,
             function_name: "messages:bunProof".to_string(),
@@ -813,7 +820,10 @@ globalThis.__nimbusInvoke = async function(request) {
             .expect("test runtime should build")
             .block_on(backend.invoke(RuntimeBackendInvocation {
                 watchdog: WatchdogTimer::new(),
-                host: RuntimeHost::new(Arc::new(NoopHost)),
+                host: RuntimeHost::new_with_egress_gateway(
+                    Arc::new(NoopHost),
+                    crate::egress::RuntimeEgressGatewayBinding::coarse_permissions(),
+                ),
                 policy: policy.clone(),
                 bundle: RuntimeBundle::new(&bundle_path),
                 request: request.clone(),
@@ -888,7 +898,11 @@ globalThis.__nimbusInvoke = async function(request) {
         let v8_policy = Arc::new(crate::limits::RuntimePolicy::new(
             RuntimeLimits::application_web_standard(),
         ));
-        let v8_runtime = NimbusRuntime::with_policy(Arc::new(NoopHost), v8_policy);
+        let v8_runtime = NimbusRuntime::with_policy(
+            Arc::new(NoopHost),
+            v8_policy,
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        );
         let v8_request = |body: &str| InvocationRequest {
             kind: InvocationKind::Query,
             function_name: "messages:v8Proof".to_string(),
@@ -934,7 +948,10 @@ globalThis.__nimbusInvoke = async function(request) {
             .expect("test runtime should build")
             .block_on(bun_backend.invoke(RuntimeBackendInvocation {
                 watchdog: WatchdogTimer::new(),
-                host: RuntimeHost::new(Arc::new(NoopHost)),
+                host: RuntimeHost::new_with_egress_gateway(
+                    Arc::new(NoopHost),
+                    crate::egress::RuntimeEgressGatewayBinding::coarse_permissions(),
+                ),
                 policy: bun_policy.clone(),
                 bundle: RuntimeBundle::new(&bun_bundle_path),
                 request: bun_request.clone(),

@@ -62,6 +62,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -120,6 +121,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -178,6 +180,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -223,6 +226,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -278,6 +282,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node26())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -341,6 +346,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -418,6 +424,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -529,6 +536,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -592,6 +600,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -652,6 +661,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -742,6 +752,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -849,6 +860,7 @@ module.exports = function runCorePackage() {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -909,6 +921,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(

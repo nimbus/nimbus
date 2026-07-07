@@ -9,7 +9,8 @@ use std::sync::Arc;
 use clap::Args;
 use nimbus::{
     HostBridge, HostCallRequest, InvocationKind, InvocationRequest, NimbusRuntime, RuntimeBundle,
-    RuntimeExecutionModel, RuntimeInvocationContext, RuntimeLimits, RuntimePolicy, RuntimePoolKind,
+    RuntimeEgressPosture, RuntimeExecutionModel, RuntimeInvocationContext, RuntimeLimits,
+    RuntimePolicy, RuntimePoolKind,
 };
 use tokio::process::Command;
 
@@ -363,8 +364,11 @@ async fn run_embedded_codegen_for_app_dir(
     let codegen_grants = nimbus_fs::FsCaps::new().grant("/", nimbus_fs::FsMountCaps::read_write());
     let runtime_policy = RuntimePolicy::new(limits)
         .clone_with_file_system(nimbus_fs::file_system_for_grants(&codegen_grants)?);
-    let runtime =
-        NimbusRuntime::with_policy(Arc::new(EmbeddedCodegenHost), Arc::new(runtime_policy));
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(EmbeddedCodegenHost),
+        Arc::new(runtime_policy),
+        RuntimeEgressPosture::CoarsePermissions,
+    );
     let invocation_context =
         RuntimeInvocationContext::top_level_for_tenant(&request, EMBEDDED_CODEGEN_TENANT_LABEL);
     let result = runtime

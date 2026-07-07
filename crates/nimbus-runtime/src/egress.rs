@@ -238,6 +238,35 @@ pub trait EgressGateway: Send + Sync + 'static {
     fn authorize(&self, request: &EgressRequest) -> EgressAuthorization;
 }
 
+/// How an isolate's outbound fetch is authorized. Every runtime construction
+/// must name one; there is no implicit default.
+///
+/// ```compile_fail
+/// # use std::sync::Arc;
+/// # use nimbus_runtime::{
+/// #     HostBridge, HostCallRequest, NimbusRuntime, Result, RuntimePolicy,
+/// # };
+/// # use serde_json::Value;
+/// # struct NoopHost;
+/// # impl HostBridge for NoopHost {
+/// #     fn call(&self, _request: HostCallRequest) -> Result<Value> {
+/// #         Ok(Value::Null)
+/// #     }
+/// # }
+/// let host: Arc<dyn HostBridge> = Arc::new(NoopHost);
+/// let policy = Arc::new(RuntimePolicy::default());
+/// let _runtime = NimbusRuntime::with_policy(host, policy);
+/// ```
+#[derive(Clone)]
+pub enum RuntimeEgressPosture {
+    /// Per-request authorization through an EgressGateway (production).
+    Gateway(Arc<dyn EgressGateway>),
+    /// Coarse deno_permissions net checks only. For runtimes whose profile
+    /// carries no tenant egress policy; names the fallback the old constructors
+    /// applied silently.
+    CoarsePermissions,
+}
+
 #[derive(Debug, Default)]
 pub struct DenyAllEgressGateway;
 
@@ -304,7 +333,6 @@ impl WasmHttpClientEgressGatewayBinding {
 pub(crate) enum RuntimeEgressGatewayBinding {
     CoarsePermissions,
     Gateway(Arc<dyn EgressGateway>),
-    Missing,
 }
 
 impl RuntimeEgressGatewayBinding {
@@ -314,6 +342,22 @@ impl RuntimeEgressGatewayBinding {
 
     pub(crate) fn gateway(gateway: Arc<dyn EgressGateway>) -> Self {
         Self::Gateway(gateway)
+    }
+
+    pub(crate) fn into_posture(self) -> RuntimeEgressPosture {
+        match self {
+            Self::CoarsePermissions => RuntimeEgressPosture::CoarsePermissions,
+            Self::Gateway(gateway) => RuntimeEgressPosture::Gateway(gateway),
+        }
+    }
+}
+
+impl From<RuntimeEgressPosture> for RuntimeEgressGatewayBinding {
+    fn from(posture: RuntimeEgressPosture) -> Self {
+        match posture {
+            RuntimeEgressPosture::Gateway(gateway) => Self::gateway(gateway),
+            RuntimeEgressPosture::CoarsePermissions => Self::coarse_permissions(),
+        }
     }
 }
 
@@ -616,8 +660,8 @@ export {{}};
             Arc::new(crate::RuntimePolicy::new(
                 crate::RuntimeLimits::application_node22(),
             )),
-        )
-        .with_egress_gateway(gateway.clone());
+            RuntimeEgressPosture::Gateway(gateway.clone()),
+        );
         let request = crate::InvocationRequest {
             kind: crate::InvocationKind::Query,
             function_name: "messages:egressFetch".to_string(),
@@ -708,8 +752,8 @@ export {};
             Arc::new(crate::RuntimePolicy::new(
                 crate::RuntimeLimits::application_node22(),
             )),
-        )
-        .with_egress_gateway(Arc::new(DenyAllEgressGateway));
+            RuntimeEgressPosture::Gateway(Arc::new(DenyAllEgressGateway)),
+        );
         let request = crate::InvocationRequest {
             kind: crate::InvocationKind::Query,
             function_name: "messages:deniedFetch".to_string(),

@@ -31,6 +31,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -98,6 +99,7 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -445,6 +447,7 @@ module.exports.namedValue = 42;
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -517,6 +520,7 @@ module.exports = {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -580,6 +584,7 @@ module.exports.exportedValue = "exports-from-app-root";
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::tooling_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(
@@ -687,6 +692,7 @@ exports.build = function build() {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::tooling_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
         .invoke_bundle_for_tenant(

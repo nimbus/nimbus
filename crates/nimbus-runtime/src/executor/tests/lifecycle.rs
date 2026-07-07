@@ -14,7 +14,11 @@ async fn pre_canceled_worker_invocation_records_request_correlation() {
 
     let error = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(Arc::new(NoopHost), policy.clone()),
+            NimbusRuntime::with_policy(
+                Arc::new(NoopHost),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new("unused.mjs"),
             request,
             context,
@@ -56,7 +60,11 @@ async fn worker_invocation_uses_invocation_runtime_policy_filesystem() {
 
     let warmup = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(Arc::new(NoopHost), executor_policy),
+            NimbusRuntime::with_policy(
+                Arc::new(NoopHost),
+                executor_policy,
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             warmup_request.clone(),
             test_context(&warmup_request, "req-worker-policy-fs-warmup"),
@@ -69,7 +77,11 @@ async fn worker_invocation_uses_invocation_runtime_policy_filesystem() {
     let request = test_request("messages:writePolicyFile");
     let result = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(Arc::new(NoopHost), invocation_policy.clone()),
+            NimbusRuntime::with_policy(
+                Arc::new(NoopHost),
+                invocation_policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             test_context(&request, "req-worker-policy-fs"),
@@ -102,7 +114,11 @@ async fn worker_invocations_reuse_worker_local_tokio_runtime() {
 
     let first_result = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy.clone()),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             test_context(&request, "req-worker-1"),
@@ -112,7 +128,11 @@ async fn worker_invocations_reuse_worker_local_tokio_runtime() {
         .expect("first worker invocation should succeed");
     let second_result = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host, policy.clone()),
+            NimbusRuntime::with_policy(
+                host,
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             test_context(&request, "req-worker-2"),
@@ -148,7 +168,11 @@ fn sibling_threads_can_boot_runtime_executors_in_parallel() {
                 let request = test_request("messages:list");
                 barrier.wait();
                 executor.invoke_blocking_with_cancellation(
-                    NimbusRuntime::with_policy(Arc::new(NoopHost), policy),
+                    NimbusRuntime::with_policy(
+                        Arc::new(NoopHost),
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     RuntimeBundle::new(bundle_path),
                     request.clone(),
                     test_context(&request, request_id),
@@ -208,6 +232,7 @@ fn blocking_worker_invocation_succeeds_without_tokio_runtime_on_calling_thread()
                     test_state: test_state.clone(),
                 }),
                 policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
@@ -235,7 +260,11 @@ async fn timed_out_worker_invocations_record_runtime_pool_replacements() {
 
     let error = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(Arc::new(NoopHost), policy.clone()),
+            NimbusRuntime::with_policy(
+                Arc::new(NoopHost),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&timeout_bundle_path),
             request.clone(),
             test_context(&request, "req-timeout"),
@@ -247,7 +276,11 @@ async fn timed_out_worker_invocations_record_runtime_pool_replacements() {
 
     let recovery_result = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(Arc::new(NoopHost), policy.clone()),
+            NimbusRuntime::with_policy(
+                Arc::new(NoopHost),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             test_context(&request, "req-recovery"),

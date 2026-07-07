@@ -69,7 +69,11 @@ pub(super) fn prepare_runtime_test_spawn_invocation(
             .read
             .push(source_bundle_root.to_string_lossy().into_owned());
     }
-    let runtime = NimbusRuntime::with_policy(host, Arc::new(RuntimePolicy::new(limits)));
+    let runtime = NimbusRuntime::with_policy(
+        host,
+        Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let process_state_snapshot = RuntimeTestProcessStateSnapshot::capture();
     let request = InvocationRequest {
         kind: InvocationKind::Query,

@@ -22,21 +22,22 @@ pub use nimbus_engine::{
 };
 // Runtime execution contract and limits.
 pub use nimbus_runtime::{
-    EffectiveRuntimeScalingPlan, HostBridge, HostBridgeFuture, HostCallRequest, InvocationKind,
-    InvocationRequest, NimbusRuntime, NimbusRuntimeError, RequestedRuntimeScalingTarget,
-    RuntimeAdaptiveCanaryPolicy, RuntimeAdaptiveControllerMode, RuntimeAdaptiveControllerSettings,
-    RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
-    RuntimeBackendTrustTier, RuntimeBundle, RuntimeBundleContent,
+    DenyAllEgressGateway, EffectiveRuntimeScalingPlan, EgressGateway, HostBridge, HostBridgeFuture,
+    HostCallRequest, InvocationKind, InvocationRequest, NimbusRuntime, NimbusRuntimeError,
+    RequestedRuntimeScalingTarget, RuntimeAdaptiveCanaryPolicy, RuntimeAdaptiveControllerMode,
+    RuntimeAdaptiveControllerSettings, RuntimeBackendKind, RuntimeBackendLifecyclePolicy,
+    RuntimeBackendLockdownProfile, RuntimeBackendTrustTier, RuntimeBundle, RuntimeBundleContent,
     RuntimeBundleWasmComponentContent, RuntimeComponentWorld, RuntimeControllerReplayConfig,
     RuntimeDensityBudget, RuntimeDensityMeasurement, RuntimeDensityMeasurementMethod,
-    RuntimeDensityPlan, RuntimeExecutionModel, RuntimeExecutor, RuntimeHostAdmissionAction,
-    RuntimeHostAdmissionDecision, RuntimeHostPressureLevel, RuntimeHostPressureSample,
-    RuntimeHostPressureSourceStatus, RuntimeHostResourceBudget, RuntimeHostResourceDecision,
-    RuntimeHostWorkClass, RuntimeInvocationContext, RuntimeIsolateGroupFfiStatus, RuntimeLimits,
-    RuntimeMemoryPressureDecision, RuntimeMemoryPressureLevel, RuntimeMemoryPressureSample,
-    RuntimeMemoryPressureSourceStatus, RuntimePolicy, RuntimePoolKind,
-    RuntimePrewarmScheduleDecision, RuntimeProfile, RuntimeScalingAdjustmentReason,
-    RuntimeScalingLimit, RuntimeScalingPlanSet, RuntimeScalingPreset, RuntimeScalingTarget,
+    RuntimeDensityPlan, RuntimeEgressPosture, RuntimeExecutionModel, RuntimeExecutor,
+    RuntimeHostAdmissionAction, RuntimeHostAdmissionDecision, RuntimeHostPressureLevel,
+    RuntimeHostPressureSample, RuntimeHostPressureSourceStatus, RuntimeHostResourceBudget,
+    RuntimeHostResourceDecision, RuntimeHostWorkClass, RuntimeInvocationContext,
+    RuntimeIsolateGroupFfiStatus, RuntimeLimits, RuntimeMemoryPressureDecision,
+    RuntimeMemoryPressureLevel, RuntimeMemoryPressureSample, RuntimeMemoryPressureSourceStatus,
+    RuntimePolicy, RuntimePoolKind, RuntimePrewarmScheduleDecision, RuntimeProfile,
+    RuntimeScalingAdjustmentReason, RuntimeScalingLimit, RuntimeScalingPlanSet,
+    RuntimeScalingPreset, RuntimeScalingTarget,
 };
 // Tenant egress policy decision point.
 pub use nimbus_egress::{

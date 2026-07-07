@@ -17,7 +17,11 @@ async fn worker_router_prefers_tenant_affinity_for_warm_worker_reuse() {
 
     let tenant_a_first = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy.clone()),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             test_context_for_tenant(&request, "tenant-a", "req-affinity-a-1"),
@@ -27,7 +31,11 @@ async fn worker_router_prefers_tenant_affinity_for_warm_worker_reuse() {
         .expect("tenant-a invocation should succeed");
     let tenant_b_first = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy.clone()),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             test_context_for_tenant(&request, "tenant-b", "req-affinity-b-1"),
@@ -37,7 +45,11 @@ async fn worker_router_prefers_tenant_affinity_for_warm_worker_reuse() {
         .expect("tenant-b invocation should succeed");
     let tenant_b_second = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host, policy),
+            NimbusRuntime::with_policy(
+                host,
+                policy,
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             test_context_for_tenant(&request, "tenant-b", "req-affinity-b-2"),
@@ -88,7 +100,11 @@ async fn worker_router_uses_least_loaded_fallback_when_affinity_is_absent() {
         async move {
             executor
                 .invoke_on_worker(
-                    NimbusRuntime::with_policy(host, policy),
+                    NimbusRuntime::with_policy(
+                        host,
+                        policy,
+                        crate::RuntimeEgressPosture::CoarsePermissions,
+                    ),
                     bundle,
                     slow_request,
                     context,
@@ -106,7 +122,11 @@ async fn worker_router_uses_least_loaded_fallback_when_affinity_is_absent() {
     let fast_request = test_request("fast-1");
     let fast_result = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy,
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             bundle,
             fast_request.clone(),
             test_context_for_tenant(&fast_request, "tenant-b", "req-router-fast"),
@@ -162,7 +182,11 @@ async fn worker_router_can_affinitize_by_function() {
 
     let function_a_first = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy.clone()),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             first_request.clone(),
             test_context_for_tenant(&first_request, "tenant-a", "req-function-a-1"),
@@ -172,7 +196,11 @@ async fn worker_router_can_affinitize_by_function() {
         .expect("first function-affinitized invocation should succeed");
     let function_b_first = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy.clone()),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             second_request.clone(),
             test_context_for_tenant(&second_request, "tenant-a", "req-function-b-1"),
@@ -182,7 +210,11 @@ async fn worker_router_can_affinitize_by_function() {
         .expect("second function-affinitized invocation should succeed");
     let function_b_second = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host, policy),
+            NimbusRuntime::with_policy(
+                host,
+                policy,
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             second_request.clone(),
             test_context_for_tenant(&second_request, "tenant-a", "req-function-b-2"),
@@ -221,7 +253,11 @@ async fn worker_router_rejects_missing_tenant_for_tenant_affinity() {
 
     let error = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host, policy),
+            NimbusRuntime::with_policy(
+                host,
+                policy,
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             RuntimeInvocationContext::top_level(&request),
@@ -254,7 +290,11 @@ async fn worker_router_rejects_missing_tenant_for_function_affinity() {
 
     let error = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host, policy),
+            NimbusRuntime::with_policy(
+                host,
+                policy,
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             RuntimeInvocationContext::top_level(&request),
@@ -290,7 +330,11 @@ async fn worker_router_can_affinitize_by_script_identity() {
 
     let script_a_first = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy.clone()),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path_a),
             request.clone(),
             test_context_for_tenant(&request, "tenant-a", "req-script-a-1"),
@@ -300,7 +344,11 @@ async fn worker_router_can_affinitize_by_script_identity() {
         .expect("first script-affinitized invocation should succeed");
     let script_b_first = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy.clone()),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path_b),
             request.clone(),
             test_context_for_tenant(&request, "tenant-a", "req-script-b-1"),
@@ -310,7 +358,11 @@ async fn worker_router_can_affinitize_by_script_identity() {
         .expect("second script-affinitized invocation should succeed");
     let script_b_second = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host, policy),
+            NimbusRuntime::with_policy(
+                host,
+                policy,
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path_b),
             request.clone(),
             test_context_for_tenant(&request, "tenant-a", "req-script-b-2"),
@@ -349,7 +401,11 @@ async fn worker_router_script_affinity_allows_missing_invocation_tenant() {
 
     let result = executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host, policy),
+            NimbusRuntime::with_policy(
+                host,
+                policy,
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             RuntimeInvocationContext::top_level(&request),
@@ -385,7 +441,11 @@ async fn worker_router_can_disable_affinity() {
 
     executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy.clone()),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             test_context_for_tenant(&request, "tenant-a", "req-no-affinity-1"),
@@ -395,7 +455,11 @@ async fn worker_router_can_disable_affinity() {
         .expect("first no-affinity invocation should succeed");
     executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host, policy.clone()),
+            NimbusRuntime::with_policy(
+                host,
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             test_context_for_tenant(&request, "tenant-a", "req-no-affinity-2"),
@@ -430,7 +494,11 @@ async fn worker_router_bounds_affinity_cache_and_records_evictions() {
 
     executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy.clone()),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             test_context_for_tenant(&request, "tenant-a", "req-affinity-cap-a-1"),
@@ -440,7 +508,11 @@ async fn worker_router_bounds_affinity_cache_and_records_evictions() {
         .expect("first bounded-affinity invocation should succeed");
     executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host.clone(), policy.clone()),
+            NimbusRuntime::with_policy(
+                host.clone(),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             test_context_for_tenant(&request, "tenant-b", "req-affinity-cap-b-1"),
@@ -450,7 +522,11 @@ async fn worker_router_bounds_affinity_cache_and_records_evictions() {
         .expect("second bounded-affinity invocation should succeed");
     executor
         .invoke_on_worker(
-            NimbusRuntime::with_policy(host, policy.clone()),
+            NimbusRuntime::with_policy(
+                host,
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
             test_context_for_tenant(&request, "tenant-a", "req-affinity-cap-a-2"),

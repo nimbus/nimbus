@@ -438,8 +438,11 @@ export {};
         services: Default::default(),
     };
     let host = Arc::new(DeferredAsyncHost::default());
-    let runtime_owner =
-        NimbusRuntime::with_policy(host.clone(), cooperative_warm_pool_runtime_test_policy());
+    let runtime_owner = NimbusRuntime::with_policy(
+        host.clone(),
+        cooperative_warm_pool_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let watchdog = WatchdogTimer::new();
     let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
@@ -590,6 +593,7 @@ export {};
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         cooperative_warm_pool_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let watchdog = WatchdogTimer::new();
@@ -697,7 +701,11 @@ export {};
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
-    let runtime_owner = NimbusRuntime::with_policy(Arc::new(AsyncEchoHost), policy);
+    let runtime_owner = NimbusRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        policy,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let watchdog = WatchdogTimer::new();
 
@@ -822,8 +830,11 @@ export {};
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = cooperative_query_request("messages:forged");
     let host = Arc::new(ImmediateRecordingAsyncHost::default());
-    let runtime_owner =
-        NimbusRuntime::with_policy(host.clone(), cooperative_warm_pool_runtime_test_policy());
+    let runtime_owner = NimbusRuntime::with_policy(
+        host.clone(),
+        cooperative_warm_pool_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let watchdog = WatchdogTimer::new();
     let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
@@ -933,8 +944,11 @@ export {};
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = cooperative_query_request("messages:query-write");
     let host = Arc::new(ImmediateRecordingAsyncHost::default());
-    let runtime_owner =
-        NimbusRuntime::with_policy(host.clone(), cooperative_warm_pool_runtime_test_policy());
+    let runtime_owner = NimbusRuntime::with_policy(
+        host.clone(),
+        cooperative_warm_pool_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let watchdog = WatchdogTimer::new();
     let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
@@ -1042,8 +1056,11 @@ export {};
 
     let bundle = RuntimeBundle::new(&bundle_path);
     let host = Arc::new(DeferredRecordingAsyncHost::default());
-    let runtime_owner =
-        NimbusRuntime::with_policy(host.clone(), cooperative_warm_pool_runtime_test_policy());
+    let runtime_owner = NimbusRuntime::with_policy(
+        host.clone(),
+        cooperative_warm_pool_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let watchdog = WatchdogTimer::new();
 
@@ -1233,7 +1250,11 @@ export {};
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
-    let runtime_owner = NimbusRuntime::with_policy(host.clone(), policy.clone());
+    let runtime_owner = NimbusRuntime::with_policy(
+        host.clone(),
+        policy.clone(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let executor = RuntimeExecutor::new(policy);
     let mutation_request = cooperative_mutation_request("messages:write");
     let query_request = cooperative_query_request("messages:read");
@@ -1373,7 +1394,11 @@ export {};
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
-    let runtime_owner = NimbusRuntime::with_policy(Arc::new(AsyncEchoHost), policy);
+    let runtime_owner = NimbusRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        policy,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let watchdog = WatchdogTimer::new();
     let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
@@ -1506,7 +1531,11 @@ export {};
         limits.max_concurrent_runtime_instances = 1;
         limits.worker_threads = 1;
         let policy = Arc::new(RuntimePolicy::new(limits));
-        let runtime = NimbusRuntime::with_policy(Arc::new(AsyncEchoHost), policy.clone());
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(AsyncEchoHost),
+            policy.clone(),
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        );
         let executor = RuntimeExecutor::new(policy);
 
         let handles: Vec<_> = (0..4)

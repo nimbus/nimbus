@@ -199,6 +199,7 @@ fn anchor_arm_blocks_until_installed_window_unreachable_via_create() {
         let owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
             std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let _ = owner.bootstrap_snapshot();
     })
@@ -249,6 +250,7 @@ fn anchor_floor_pre_arm_build_records_whether_floor_fires() {
             std::sync::Arc::new(RuntimePolicy::new(
                 crate::RuntimeLimits::application_node22(),
             )),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         owner
             .bootstrap_snapshot()
@@ -299,6 +301,7 @@ fn direct_path_webstandard_snapshotted_crashes_against_production_anchor() {
         let owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
             std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let bundle = RuntimeBundle::new(&bundle_path);
         let snap = owner
@@ -341,6 +344,7 @@ async fn direct_path_webstandard_unsnapshotted_no_crash_after_fix() {
     let runtime_owner = NimbusRuntime::with_policy(
         std::sync::Arc::new(RecordingHost::default()),
         std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let watchdog = WatchdogTimer::new();
     let mut permit = SharedInvocationPermit::new(runtime_owner.policy(), None, None, false, None);
@@ -417,6 +421,7 @@ fn concurrent_snapshot_isolate_creation_does_not_abort() {
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             warmup
                 .bootstrap_snapshot()
@@ -446,6 +451,7 @@ fn concurrent_snapshot_isolate_creation_does_not_abort() {
                         std::sync::Arc::new(RuntimePolicy::new(
                             crate::RuntimeLimits::application_node22(),
                         )),
+                        crate::RuntimeEgressPosture::CoarsePermissions,
                     );
                     let bundle = RuntimeBundle::new(&*bundle_path);
                     barrier.wait();
@@ -502,6 +508,7 @@ fn reuse_main_context_execution_under_concurrent_creation_does_not_abort() {
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             warmup
                 .bootstrap_snapshot()
@@ -531,6 +538,7 @@ fn reuse_main_context_execution_under_concurrent_creation_does_not_abort() {
                         std::sync::Arc::new(RuntimePolicy::new(
                             crate::RuntimeLimits::application_node22(),
                         )),
+                        crate::RuntimeEgressPosture::CoarsePermissions,
                     );
                     let bundle = RuntimeBundle::new(&*bundle_path);
                     barrier.wait();
@@ -592,6 +600,7 @@ fn create_realm_per_invocation_under_concurrent_creation_probe() {
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             warmup
                 .bootstrap_snapshot()
@@ -621,6 +630,7 @@ fn create_realm_per_invocation_under_concurrent_creation_probe() {
                         std::sync::Arc::new(RuntimePolicy::new(
                             crate::RuntimeLimits::application_node22(),
                         )),
+                        crate::RuntimeEgressPosture::CoarsePermissions,
                     );
                     let bundle = RuntimeBundle::new(&*bundle_path);
                     barrier.wait();
@@ -690,6 +700,7 @@ fn concurrent_both_profile_snapshot_creation_does_not_abort() {
                 let warmup = NimbusRuntime::with_policy(
                     std::sync::Arc::new(RecordingHost::default()),
                     std::sync::Arc::new(RuntimePolicy::new(limits)),
+                    crate::RuntimeEgressPosture::CoarsePermissions,
                 );
                 warmup
                     .bootstrap_snapshot()
@@ -724,6 +735,7 @@ fn concurrent_both_profile_snapshot_creation_does_not_abort() {
                     let runtime_owner = NimbusRuntime::with_policy(
                         std::sync::Arc::new(RecordingHost::default()),
                         std::sync::Arc::new(RuntimePolicy::new(limits)),
+                        crate::RuntimeEgressPosture::CoarsePermissions,
                     );
                     let bundle = RuntimeBundle::new(&*bundle_path);
                     barrier.wait();
@@ -779,6 +791,7 @@ fn concurrent_asymmetric_nodefull_snapshot_weblean_unsnapshotted_does_not_abort(
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             warmup
                 .bootstrap_snapshot()
@@ -812,6 +825,7 @@ fn concurrent_asymmetric_nodefull_snapshot_weblean_unsnapshotted_does_not_abort(
                     let runtime_owner = NimbusRuntime::with_policy(
                         std::sync::Arc::new(RecordingHost::default()),
                         std::sync::Arc::new(RuntimePolicy::new(limits)),
+                        crate::RuntimeEgressPosture::CoarsePermissions,
                     );
                     let bundle = RuntimeBundle::new(&*bundle_path);
                     barrier.wait();
@@ -873,6 +887,7 @@ fn serial_cross_profile_creation_does_not_abort() {
             let runtime_owner = NimbusRuntime::with_policy(
                 std::sync::Arc::new(RecordingHost::default()),
                 std::sync::Arc::new(RuntimePolicy::new(limits)),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             if is_node {
                 let snapshot = runtime_owner
@@ -929,6 +944,7 @@ fn cross_thread_coliveness_without_concurrent_creation_does_not_abort() {
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             let bundle = RuntimeBundle::new(&*bp_a);
             let snapshot = owner
@@ -955,6 +971,7 @@ fn cross_thread_coliveness_without_concurrent_creation_does_not_abort() {
         let owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
             std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let bundle = RuntimeBundle::new(&*bundle_path);
         for _ in 0..10 {
@@ -1012,6 +1029,7 @@ fn coliveness_at_scale_without_concurrent_cross_profile_creation_does_not_abort(
                         std::sync::Arc::new(RuntimePolicy::new(
                             crate::RuntimeLimits::application_node22(),
                         )),
+                        crate::RuntimeEgressPosture::CoarsePermissions,
                     );
                     let bundle = RuntimeBundle::new(&*bp);
                     let snapshot = owner
@@ -1045,6 +1063,7 @@ fn coliveness_at_scale_without_concurrent_cross_profile_creation_does_not_abort(
         let owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
             std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let bundle = RuntimeBundle::new(&*bundle_path);
         for _ in 0..10 {
@@ -1100,6 +1119,7 @@ fn concurrent_cross_profile_creation_without_drops_does_not_abort() {
                 let warmup = NimbusRuntime::with_policy(
                     std::sync::Arc::new(RecordingHost::default()),
                     std::sync::Arc::new(RuntimePolicy::new(limits)),
+                    crate::RuntimeEgressPosture::CoarsePermissions,
                 );
                 warmup
                     .bootstrap_snapshot()
@@ -1136,6 +1156,7 @@ fn concurrent_cross_profile_creation_without_drops_does_not_abort() {
                     let owner = NimbusRuntime::with_policy(
                         std::sync::Arc::new(RecordingHost::default()),
                         std::sync::Arc::new(RuntimePolicy::new(limits)),
+                        crate::RuntimeEgressPosture::CoarsePermissions,
                     );
                     let bundle = RuntimeBundle::new(&*bp);
                     // All threads build at once; no isolate is dropped meanwhile.
@@ -1169,6 +1190,7 @@ fn concurrent_cross_profile_creation_without_drops_does_not_abort() {
         let owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
             std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let bundle = RuntimeBundle::new(&*bundle_path);
         // One extra build on the main thread to ensure all workers are past the barrier.
@@ -1215,6 +1237,7 @@ fn grouped_concurrent_fill_does_not_abort() {
                 let w = NimbusRuntime::with_policy(
                     std::sync::Arc::new(RecordingHost::default()),
                     std::sync::Arc::new(RuntimePolicy::new(limits)),
+                    crate::RuntimeEgressPosture::CoarsePermissions,
                 );
                 w.bootstrap_snapshot()
                     .expect("startup snapshot should build");
@@ -1247,6 +1270,7 @@ fn grouped_concurrent_fill_does_not_abort() {
                     let owner = NimbusRuntime::with_policy(
                         std::sync::Arc::new(RecordingHost::default()),
                         std::sync::Arc::new(RuntimePolicy::new(limits)),
+                        crate::RuntimeEgressPosture::CoarsePermissions,
                     );
                     let bundle = RuntimeBundle::new(&*bp);
                     let mut iso = if is_node {
@@ -1317,6 +1341,7 @@ fn cross_profile_refill_into_resident_mixed_pool_does_not_abort() {
                 let w = NimbusRuntime::with_policy(
                     std::sync::Arc::new(RecordingHost::default()),
                     std::sync::Arc::new(RuntimePolicy::new(limits)),
+                    crate::RuntimeEgressPosture::CoarsePermissions,
                 );
                 w.bootstrap_snapshot()
                     .expect("startup snapshot should build");
@@ -1356,6 +1381,7 @@ fn cross_profile_refill_into_resident_mixed_pool_does_not_abort() {
                             let owner = NimbusRuntime::with_policy(
                                 std::sync::Arc::new(RecordingHost::default()),
                                 std::sync::Arc::new(RuntimePolicy::new(limits)),
+                                crate::RuntimeEgressPosture::CoarsePermissions,
                             );
                             let iso = if is_node {
                                 let snap = owner
@@ -1444,6 +1470,7 @@ fn weblean_installed_first_then_nodefull_does_not_abort() {
                 let w = NimbusRuntime::with_policy(
                     std::sync::Arc::new(RecordingHost::default()),
                     std::sync::Arc::new(RuntimePolicy::new(limits)),
+                    crate::RuntimeEgressPosture::CoarsePermissions,
                 );
                 w.bootstrap_snapshot()
                     .expect("startup snapshot should build");
@@ -1463,6 +1490,7 @@ fn weblean_installed_first_then_nodefull_does_not_abort() {
             let owner = NimbusRuntime::with_policy(
                 std::sync::Arc::new(RecordingHost::default()),
                 std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             let bundle = RuntimeBundle::new(&*bp);
             // WebLean installs the shared RO heap first, then stays resident.
@@ -1485,6 +1513,7 @@ fn weblean_installed_first_then_nodefull_does_not_abort() {
             std::sync::Arc::new(RuntimePolicy::new(
                 crate::RuntimeLimits::application_node22(),
             )),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let bundle = RuntimeBundle::new(&*bundle_path);
         for _ in 0..3 {
@@ -1540,6 +1569,7 @@ fn nodefull_anchor_first_then_cross_profile_refill_does_not_abort() {
                 let w = NimbusRuntime::with_policy(
                     std::sync::Arc::new(RecordingHost::default()),
                     std::sync::Arc::new(RuntimePolicy::new(limits)),
+                    crate::RuntimeEgressPosture::CoarsePermissions,
                 );
                 w.bootstrap_snapshot()
                     .expect("startup snapshot should build");
@@ -1562,6 +1592,7 @@ fn nodefull_anchor_first_then_cross_profile_refill_does_not_abort() {
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             let bundle = RuntimeBundle::new(&*abp);
             let snap = owner
@@ -1606,6 +1637,7 @@ fn nodefull_anchor_first_then_cross_profile_refill_does_not_abort() {
                             let owner = NimbusRuntime::with_policy(
                                 std::sync::Arc::new(RecordingHost::default()),
                                 std::sync::Arc::new(RuntimePolicy::new(limits)),
+                                crate::RuntimeEgressPosture::CoarsePermissions,
                             );
                             let iso = if is_node {
                                 let snap = owner
@@ -1766,6 +1798,7 @@ fn baseline_snapshotted_weblean_ro_intrinsics_correct() {
         let owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
             std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let bundle = RuntimeBundle::new(&bundle_path);
         let snap = owner
@@ -1816,6 +1849,7 @@ fn gate_snapshotted_weblean_against_nodefull_anchor_ro_intrinsics_correct() {
                 let w = NimbusRuntime::with_policy(
                     std::sync::Arc::new(RecordingHost::default()),
                     std::sync::Arc::new(RuntimePolicy::new(limits)),
+                    crate::RuntimeEgressPosture::CoarsePermissions,
                 );
                 w.bootstrap_snapshot()
                     .expect("startup snapshot should build");
@@ -1838,6 +1872,7 @@ fn gate_snapshotted_weblean_against_nodefull_anchor_ro_intrinsics_correct() {
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             let bundle = RuntimeBundle::new(&*abp);
             let snap = owner
@@ -1861,7 +1896,7 @@ fn gate_snapshotted_weblean_against_nodefull_anchor_ro_intrinsics_correct() {
         let owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
             std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
-        );
+        crate::RuntimeEgressPosture::CoarsePermissions);
         let bundle = RuntimeBundle::new(&*bundle_path);
         let snap = owner
             .bootstrap_snapshot()
@@ -1941,6 +1976,7 @@ fn anchor_ro_heap_persists_past_isolate_disposal_same_thread() {
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             let snap = owner.bootstrap_snapshot().expect("nodefull snapshot A");
             let a = owner
@@ -1953,6 +1989,7 @@ fn anchor_ro_heap_persists_past_isolate_disposal_same_thread() {
             let owner = NimbusRuntime::with_policy(
                 std::sync::Arc::new(RecordingHost::default()),
                 std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             let b = owner
                 .create_runtime(&bundle, None, false)
@@ -1965,6 +2002,7 @@ fn anchor_ro_heap_persists_past_isolate_disposal_same_thread() {
             std::sync::Arc::new(RuntimePolicy::new(
                 crate::RuntimeLimits::application_node22(),
             )),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let snap = owner.bootstrap_snapshot().expect("nodefull snapshot C");
         let mut c = owner
@@ -2013,6 +2051,7 @@ fn disposed_anchor_thread_exit_makes_crash_return() {
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             let snap = owner.bootstrap_snapshot().expect("nodefull snapshot");
             let a = owner
@@ -2035,6 +2074,7 @@ fn disposed_anchor_thread_exit_makes_crash_return() {
         let web_owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
             std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let _web = web_owner
             .create_runtime(&bundle, None, false)
@@ -2044,6 +2084,7 @@ fn disposed_anchor_thread_exit_makes_crash_return() {
             std::sync::Arc::new(RuntimePolicy::new(
                 crate::RuntimeLimits::application_node22(),
             )),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let snap = node_owner
             .bootstrap_snapshot()
@@ -2101,6 +2142,7 @@ fn option_c_both_unsnapshotted_concurrent_does_not_abort() {
                     let owner = NimbusRuntime::with_policy(
                         std::sync::Arc::new(RecordingHost::default()),
                         std::sync::Arc::new(RuntimePolicy::new(limits)),
+                        crate::RuntimeEgressPosture::CoarsePermissions,
                     );
                     let bundle = RuntimeBundle::new(&*bp);
                     barrier.wait();
@@ -2130,7 +2172,7 @@ fn option_c_both_unsnapshotted_concurrent_does_not_abort() {
             let owner = NimbusRuntime::with_policy(
                 std::sync::Arc::new(RecordingHost::default()),
                 std::sync::Arc::new(RuntimePolicy::new(limits)),
-            );
+            crate::RuntimeEgressPosture::CoarsePermissions);
             let bundle = RuntimeBundle::new(&*bundle_path);
             let mut iso = owner
                 .create_runtime(&bundle, None, false)
@@ -2225,6 +2267,7 @@ fn capture_weblean_primordial_shape() {
                 let w = NimbusRuntime::with_policy(
                     std::sync::Arc::new(RecordingHost::default()),
                     std::sync::Arc::new(RuntimePolicy::new(limits)),
+                    crate::RuntimeEgressPosture::CoarsePermissions,
                 );
                 w.bootstrap_snapshot()
                     .expect("startup snapshot should build");
@@ -2247,6 +2290,7 @@ fn capture_weblean_primordial_shape() {
                     std::sync::Arc::new(RuntimePolicy::new(
                         crate::RuntimeLimits::application_node22(),
                     )),
+                    crate::RuntimeEgressPosture::CoarsePermissions,
                 );
                 let bundle = RuntimeBundle::new(&*abp);
                 let snap = owner
@@ -2274,6 +2318,7 @@ fn capture_weblean_primordial_shape() {
         let owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
             std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let bundle = RuntimeBundle::new(&*bundle_path);
         let mut web = owner
@@ -2396,6 +2441,7 @@ where
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             w.bootstrap_snapshot()
                 .expect("nodefull snapshot should build");
@@ -2415,6 +2461,7 @@ where
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             let bundle = RuntimeBundle::new(&*abp);
             let snap = owner
@@ -2436,6 +2483,7 @@ where
         let owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
             std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let bundle = RuntimeBundle::new(&*bundle_path);
         let mut web = owner
@@ -2487,6 +2535,7 @@ fn audit1_unsnapshotted_weblean_web_api_correct() {
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             w.bootstrap_snapshot()
                 .expect("nodefull snapshot should build");
@@ -2506,6 +2555,7 @@ fn audit1_unsnapshotted_weblean_web_api_correct() {
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             let bundle = RuntimeBundle::new(&*abp);
             let snap = owner
@@ -2528,7 +2578,7 @@ fn audit1_unsnapshotted_weblean_web_api_correct() {
         let owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
             std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
-        );
+        crate::RuntimeEgressPosture::CoarsePermissions);
         let bundle = RuntimeBundle::new(&*bundle_path);
         let mut web = owner
             .create_runtime(&bundle, None, false)
@@ -2590,7 +2640,7 @@ fn web_api_presence_probe() {
         let owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
             std::sync::Arc::new(RuntimePolicy::new(limits)),
-        );
+        crate::RuntimeEgressPosture::CoarsePermissions);
         let bundle = RuntimeBundle::new(&bundle_path);
         let mut iso = if snapshot {
             let snap = owner.bootstrap_snapshot().expect("snapshot should build");
@@ -2650,6 +2700,7 @@ fn anchor_regression_i_weblean_first_forced_nodefull_first() {
         let owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
             std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let bundle = RuntimeBundle::new(&bundle_path);
         let mut web = owner
@@ -2691,6 +2742,7 @@ fn anchor_regression_ii_nodefull_scale_to_zero_anchor_pinned() {
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             let snap = owner
                 .bootstrap_snapshot()
@@ -2705,6 +2757,7 @@ fn anchor_regression_ii_nodefull_scale_to_zero_anchor_pinned() {
         let web_owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
             std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let _web = web_owner
             .create_runtime(&bundle, None, false)
@@ -2714,6 +2767,7 @@ fn anchor_regression_ii_nodefull_scale_to_zero_anchor_pinned() {
             std::sync::Arc::new(RuntimePolicy::new(
                 crate::RuntimeLimits::application_node22(),
             )),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let snap = node_owner
             .bootstrap_snapshot()
@@ -2772,6 +2826,7 @@ fn anchor_regression_iii_cross_profile_refill_green() {
                             let owner = NimbusRuntime::with_policy(
                                 std::sync::Arc::new(RecordingHost::default()),
                                 std::sync::Arc::new(RuntimePolicy::new(limits)),
+                                crate::RuntimeEgressPosture::CoarsePermissions,
                             );
                             let iso = if is_node {
                                 let snap = owner
@@ -2847,6 +2902,7 @@ fn anchor_floor_fires_when_armed_but_not_installed() {
             let owner = NimbusRuntime::with_policy(
                 std::sync::Arc::new(RecordingHost::default()),
                 std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             let bundle = RuntimeBundle::new(&bundle_path);
             let _ = owner.create_runtime(&bundle, None, false); // must panic at the floor
@@ -2923,6 +2979,7 @@ fn anchor_nodefull_build_host_call_count() {
             std::sync::Arc::new(RuntimePolicy::new(
                 crate::RuntimeLimits::application_node22(),
             )),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let bundle = RuntimeBundle::new(&bundle_path);
         let snap = owner
@@ -2970,6 +3027,7 @@ fn audit1b_weblean_fetch_present_and_deny_by_default() {
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             w.bootstrap_snapshot()
                 .expect("nodefull snapshot should build");
@@ -2989,6 +3047,7 @@ fn audit1b_weblean_fetch_present_and_deny_by_default() {
                 std::sync::Arc::new(RuntimePolicy::new(
                     crate::RuntimeLimits::application_node22(),
                 )),
+                crate::RuntimeEgressPosture::CoarsePermissions,
             );
             let bundle = RuntimeBundle::new(&*abp);
             let snap = owner
@@ -3010,7 +3069,7 @@ fn audit1b_weblean_fetch_present_and_deny_by_default() {
         let owner = NimbusRuntime::with_policy(
             std::sync::Arc::new(RecordingHost::default()),
             std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
-        );
+        crate::RuntimeEgressPosture::CoarsePermissions);
         let bundle = RuntimeBundle::new(&*bundle_path);
         let mut web = owner
             .create_runtime(&bundle, None, false)
@@ -3086,7 +3145,11 @@ export {};
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
-    let runtime = NimbusRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        policy,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = InvocationRequest {
         kind: InvocationKind::Query,
@@ -3140,7 +3203,11 @@ export {};
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
-    let runtime = NimbusRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        policy,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let bundle = RuntimeBundle::new(&bundle_path);
 
     let first = invoke_on_single_worker(
@@ -3264,6 +3331,7 @@ export {};
         NimbusRuntime::with_policy(
             Arc::new(TaggedAsyncDbGetHost { host_id: "first" }),
             policy.clone(),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         ),
         &bundle,
         request.clone(),
@@ -3272,7 +3340,11 @@ export {};
     .expect("first warm pooled invocation should succeed");
     let second = invoke_on_single_worker(
         &executor,
-        NimbusRuntime::with_policy(Arc::new(TaggedAsyncDbGetHost { host_id: "second" }), policy),
+        NimbusRuntime::with_policy(
+            Arc::new(TaggedAsyncDbGetHost { host_id: "second" }),
+            policy,
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        ),
         &bundle,
         request,
     )
@@ -3330,7 +3402,11 @@ globalThis.__nimbusInvoke = async function (request) {
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
-    let runtime = NimbusRuntime::with_policy(Arc::new(AsyncEchoHost), policy);
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        policy,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let bundle = RuntimeBundle::new(&bundle_path);
 
     let request = |function_name: &str| InvocationRequest {
@@ -3433,7 +3509,11 @@ export {};
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
-    let runtime = NimbusRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        policy,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = |function_name: &str| InvocationRequest {
         kind: InvocationKind::Query,
@@ -3520,6 +3600,7 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -3608,6 +3689,7 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -3788,6 +3870,7 @@ export {};
             Arc::new(RuntimePolicy::new(crate::RuntimeLimits::application_node(
                 target,
             ))),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let snapshot = target_owner
             .bootstrap_snapshot()
@@ -3836,12 +3919,14 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let node24_owner = NimbusRuntime::with_policy(
         host,
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node24(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let snapshot = node22_owner
         .bootstrap_snapshot()
@@ -3939,6 +4024,7 @@ export {{}};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle_a = RuntimeBundle::new(&bundle_a_path);
     let bundle_b = RuntimeBundle::new(&bundle_b_path);
@@ -4074,6 +4160,7 @@ module.exports.namedValue = 42;
             Arc::new(RuntimePolicy::new(crate::RuntimeLimits::application_node(
                 target,
             ))),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let snapshot = target_owner
             .bootstrap_snapshot()
@@ -4212,11 +4299,15 @@ export {};
     .expect("bundle should write");
 
     let host = Arc::new(ServiceLookupHost::default());
-    let db_owner =
-        NimbusRuntime::with_policy(host.clone(), node22_policy_with_native_service_grant("db"));
+    let db_owner = NimbusRuntime::with_policy(
+        host.clone(),
+        node22_policy_with_native_service_grant("db"),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let cache_owner = NimbusRuntime::with_policy(
         host.clone(),
         node22_policy_with_native_service_grant("cache"),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = db_owner
@@ -4422,6 +4513,7 @@ export {};
             Arc::new(RuntimePolicy::new(crate::RuntimeLimits::application_node(
                 target,
             ))),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let snapshot = runtime_owner
             .bootstrap_snapshot()
@@ -4526,6 +4618,7 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -4624,6 +4717,7 @@ module.exports = { marker: "commonjs-default" };
             Arc::new(RuntimePolicy::new(crate::RuntimeLimits::application_node(
                 target,
             ))),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let request = InvocationRequest {
             kind: InvocationKind::Query,
@@ -4713,6 +4807,7 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -4794,6 +4889,7 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -4884,6 +4980,7 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -4982,6 +5079,7 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -5092,6 +5190,7 @@ export {};
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = InvocationRequest {
@@ -5183,6 +5282,7 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = InvocationRequest {
@@ -5297,6 +5397,7 @@ export {};
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = InvocationRequest {
@@ -5385,6 +5486,7 @@ export {};
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = InvocationRequest {
@@ -5478,6 +5580,7 @@ export {};
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = InvocationRequest {
@@ -5568,6 +5671,7 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -5717,6 +5821,7 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -5858,6 +5963,7 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -5946,6 +6052,7 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -6071,6 +6178,7 @@ export {};
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(limits),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -6213,6 +6321,7 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -6333,6 +6442,7 @@ export {};
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -6455,6 +6565,7 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -6561,6 +6672,7 @@ export {};
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
     let snapshot = runtime_owner
@@ -6864,8 +6976,11 @@ export {};
     limits.worker_threads = 1;
     limits.max_warm_pool_entries_per_worker = 4;
     let policy = Arc::new(RuntimePolicy::new(limits));
-    let runtime_owner =
-        NimbusRuntime::with_policy(Arc::new(RecordingHost::default()), policy.clone());
+    let runtime_owner = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        policy.clone(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let mut pool = V8WorkerRuntimePool::new();
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = |function_name: &str| InvocationRequest {
@@ -7081,7 +7196,11 @@ export {};
     limits.max_warm_pool_entries_per_worker = 4;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
-    let runtime = NimbusRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        policy,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = InvocationRequest {
         kind: InvocationKind::Query,
@@ -7154,7 +7273,11 @@ export {};
     limits.max_warm_pool_entries_per_worker = 4;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
-    let runtime = NimbusRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        policy,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = |function_name: &str| InvocationRequest {
         kind: InvocationKind::Query,
@@ -7249,7 +7372,11 @@ export {};
     limits.max_warm_pool_entries_per_worker = 4;
     let policy = Arc::new(RuntimePolicy::new(limits));
     let executor = RuntimeExecutor::new(policy.clone());
-    let runtime = NimbusRuntime::with_policy(Arc::new(RecordingHost::default()), policy);
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        policy,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
     let bundle_a = RuntimeBundle::new(&bundle_a_path);
     let bundle_b = RuntimeBundle::new(&bundle_b_path);
     let request = InvocationRequest {
@@ -7336,6 +7463,7 @@ export {};
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let mut runtime = v8_runtime_pool
@@ -7439,6 +7567,7 @@ async fn reused_runtime_uses_bound_host_call_session_before_next_invoke() {
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let mut runtime = v8_runtime_pool
@@ -7534,6 +7663,7 @@ async fn fresh_realm_installs_bootstrap_and_uses_bound_host_bridge() {
     let runtime_owner = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let snapshot = runtime_owner
         .bootstrap_snapshot()
@@ -7685,6 +7815,7 @@ fn ro_heap_serialize_lock_isolate_drop_while_held_does_not_self_deadlock_subproc
         std::sync::Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let snap = owner
         .bootstrap_snapshot()
@@ -7723,6 +7854,7 @@ fn ro_heap_serialize_lock_isolate_drop_during_unwind_does_not_abort_subprocess()
             std::sync::Arc::new(RuntimePolicy::new(
                 crate::RuntimeLimits::application_node22(),
             )),
+            crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let snap = owner
             .bootstrap_snapshot()
@@ -7777,6 +7909,7 @@ async fn embedded_node22_snapshot_roundtrips_and_guard_is_fail_safe() {
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
         )),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::virtual_anchor();
     let mut runtime = owner

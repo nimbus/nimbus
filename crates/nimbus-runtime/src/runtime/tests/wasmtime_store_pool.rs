@@ -15,7 +15,11 @@ impl HostBridge for WasmtimeStorePoolHost {
 async fn wasmtime_store_pool_invokes_component_with_retained_store_pool() {
     let (_tempdir, bundle) = write_component_fixture(nimbus_function_component_wat());
     let policy = Arc::new(RuntimePolicy::new(wasmtime_store_pool_test_limits()));
-    let runtime = NimbusRuntime::with_policy(Arc::new(WasmtimeStorePoolHost), policy.clone());
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(WasmtimeStorePoolHost),
+        policy.clone(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
 
     let first = runtime
         .invoke_bundle_for_tenant(&bundle, &request(), "tenant-a")
@@ -51,6 +55,7 @@ async fn wasmtime_store_pool_resource_limiter_enforces_max_heap_mb() {
     let runtime = NimbusRuntime::with_policy(
         Arc::new(WasmtimeStorePoolHost),
         Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
     );
 
     let error = runtime
