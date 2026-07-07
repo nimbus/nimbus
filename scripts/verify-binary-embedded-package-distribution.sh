@@ -25,7 +25,6 @@ CONVEX_TMPL="crates/nimbus-assets/embedded/templates/convex/package.json.tmpl"
 CF_TMPL="crates/nimbus-assets/embedded/templates/cloud-functions/functions/package.json.tmpl"
 CODEGEN_RS="crates/nimbus-cli/src/codegen.rs"
 NODE_RS="crates/nimbus-cli/src/node_runtime.rs"
-CARGO_BIN="crates/nimbus-bin/Cargo.toml"
 CARGO_ASSETS="crates/nimbus-assets/Cargo.toml"
 LAUNCH_PLAN="docs/private/managed-service-launch-plan.md"
 
@@ -35,6 +34,16 @@ elif [ -f "${PLAN_ARCHIVED}" ]; then
   PLAN="${PLAN_ARCHIVED}"
 else
   PLAN=""
+fi
+
+# Dereference: BSD/macOS `grep -R` silently skips a bare FILE argument that is
+# itself a symlink (as PLAN is in a worktree that bridges untracked
+# docs/private content via a symlink), so every `has "${PLAN}"` check below
+# would otherwise silently find nothing instead of failing loudly. The
+# bridging symlink always carries an absolute target, so plain `readlink`
+# suffices — no `readlink -f` needed.
+if [ -n "${PLAN}" ] && [ -L "${PLAN}" ]; then
+  PLAN="$(readlink "${PLAN}")"
 fi
 
 PASS=0
@@ -190,7 +199,7 @@ c12() {
   # mention of `.nimbus/packages` (the embed module references it in prose) and
   # not the generic word "provision" (which appears in machine-config code).
   has 'fn provision_packages|fn provision_app|PackagesProvision|nimbus packages provision' \
-    crates/nimbus-bin/src &&
+    crates/nimbus-cli/src &&
     has '\.nimbus/' crates/nimbus-assets/embedded/templates/convex/gitignore
 }
 check "12. provisioning writes .nimbus/packages/* + .version; scaffold gitignores it" c12
@@ -198,9 +207,11 @@ check "12. provisioning writes .nimbus/packages/* + .version; scaffold gitignore
 # ---- 13: explicit package-provisioning command for client-only apps [BPD2] ---
 c13() {
   # The explicit `nimbus packages provision` subcommand: the PackagesCommand
-  # enum + its run fn + the wired top-level Command::Packages dispatch.
-  has 'enum PackagesCommand' crates/nimbus-bin/src/provision.rs &&
-    has 'Command::Packages' crates/nimbus-bin/src/main.rs
+  # enum + its run fn + the wired top-level Command::Packages dispatch. CLI
+  # logic (including the Command enum + dispatch) lives in nimbus-cli;
+  # nimbus-bin is a 5-line entrypoint that calls nimbus_cli::run_from_env().
+  has 'enum PackagesCommand' crates/nimbus-cli/src/provision.rs &&
+    has 'Command::Packages' crates/nimbus-cli/src/lib.rs
 }
 check "13. explicit 'nimbus packages provision' command exists" c13
 
@@ -262,7 +273,12 @@ check "15. ExternalNode classification is consistent (Convex in-binary/diagnosti
 # (plans/archive legitimately keep historical `npx convex codegen` prose).
 # Scope: live user docs + package READMEs. Excludes docs/private/plans/**, where
 # historical plans/proofs legitimately keep old command transcripts.
-USER_DOCS=(docs/private/adapters docs/private/operating packages/convex/README.md
+# Trailing slash on the two directory entries is load-bearing: BSD/macOS
+# `grep -R` silently skips a bare directory argument that is itself a symlink
+# (as it is in a worktree that bridges untracked docs/private content via a
+# symlink), which would make this scanner silently search zero files instead
+# of failing loudly.
+USER_DOCS=(docs/private/adapters/ docs/private/operating/ packages/convex/README.md
   packages/nimbus/README.md packages/codegen/README.md tests/runtime/node/published)
 # Detect a stale POSITIVE codegen instruction (`npx convex codegen`,
 # `convex codegen --app`, `nimbus-codegen --app`) while ALLOWING negative
@@ -316,12 +332,12 @@ check "17. no-network init->install->dev proof exists" c17
 
 # ---- 18: reconcile re-provisions on version drift, no-op on match [BPD5] ------
 c18() {
-  has 'packages/\.version|version.?drift' crates/nimbus-bin/src/provision.rs &&
-    has 'force_node_reinstall' crates/nimbus-bin/src/provision.rs &&
-    has 'provision::ensure' crates/nimbus-bin/src/init.rs &&
-    has 'provision::ensure' crates/nimbus-bin/src/dev.rs &&
-    has 'ensure_known_app_packages' crates/nimbus-bin/src/codegen.rs &&
-    has 'ensure_known_app_packages' crates/nimbus-bin/src/deploy.rs
+  has 'packages/\.version|version.?drift' crates/nimbus-cli/src/provision.rs &&
+    has 'force_node_reinstall' crates/nimbus-cli/src/provision.rs &&
+    has 'provision::ensure' crates/nimbus-cli/src/init.rs &&
+    has 'provision::ensure' crates/nimbus-cli/src/dev.rs &&
+    has 'ensure_known_app_packages' crates/nimbus-cli/src/codegen.rs &&
+    has 'ensure_known_app_packages' crates/nimbus-cli/src/deploy.rs
 }
 check "18. reconcile re-provisions on binary-version drift" c18
 
@@ -332,9 +348,9 @@ c19() {
   # transitive `closure` resolver that pulls only that adapter's dependency set,
   # and the CLI surface that accepts firebase|mongodb|dynamodb. All three are
   # live (non-test) code in provision.rs.
-  has 'Selection::Adapter' crates/nimbus-bin/src/provision.rs &&
-    has 'fn closure' crates/nimbus-bin/src/provision.rs &&
-    has 'firebase.*mongodb.*dynamodb|mongodb.*dynamodb' crates/nimbus-bin/src/provision.rs
+  has 'Selection::Adapter' crates/nimbus-cli/src/provision.rs &&
+    has 'fn closure' crates/nimbus-cli/src/provision.rs &&
+    has 'firebase.*mongodb.*dynamodb|mongodb.*dynamodb' crates/nimbus-cli/src/provision.rs
 }
 check "19. adapter SDKs provisioned only when requested/imported" c19
 
@@ -342,8 +358,10 @@ check "19. adapter SDKs provisioned only when requested/imported" c19
 c20() {
   # User-facing docs must not instruct a registry install of a Nimbus package.
   # docs/private/plans/* legitimately describes the migration/defect and is excluded.
+  # Trailing slash on the two directory args: see USER_DOCS comment above (BSD
+  # grep -R silently skips a bare symlinked-directory argument).
   ! grep -RqE 'npm install @nimbus/|npm install convex' \
-    docs/private/adapters docs/private/operating packages/*/README.md demos 2>/dev/null &&
+    docs/private/adapters/ docs/private/operating/ packages/*/README.md demos 2>/dev/null &&
     { [ ! -f "${LAUNCH_PLAN}" ] || ! grep -qE '[Pp]ublish .*to npm' "${LAUNCH_PLAN}"; }
 }
 check "20. no Nimbus-package registry-install/publish instructions in docs" c20
@@ -357,7 +375,7 @@ c21() {
   has 'fn verify_digest' crates/nimbus-assets/src/js_packages.rs &&
     has 'manifest\.tooling' crates/nimbus-assets/src/js_packages.rs &&
     has 'materialize_tooling' crates/nimbus-assets/src/js_packages.rs &&
-    has 'verify_package_dirs' crates/nimbus-bin/src/provision.rs &&
+    has 'verify_package_dirs' crates/nimbus-cli/src/provision.rs &&
     [ -f "${PROOF_DIR}/bpd7-offline-integrity.md" ]
 }
 check "21. provisioned bytes verify against manifest checksums (+ tamper test)" c21
@@ -409,18 +427,23 @@ c25() {
   # (provision-if-absent) called from BOTH `init` (after scaffold) and `dev`
   # (before the npm install loop). The code half stops this from passing on a
   # proof keyword alone.
+  #
+  # Trailing slash on PROOF_DIR is load-bearing: BSD/macOS `grep -R` does not
+  # descend into a bare directory argument that is itself a symlink (as it is
+  # in a worktree that bridges untracked docs/private content via a symlink)
+  # — it needs the trailing slash to resolve as a directory.
   grep -RqiE 'committed-lockfile|provision.*before.*npm ci|clone-then-install' \
-    "${PROOF_DIR}" 2>/dev/null &&
-    has 'provision::ensure' crates/nimbus-bin/src/init.rs &&
-    has 'provision::ensure' crates/nimbus-bin/src/dev.rs &&
-    has 'ensure_known_app_packages' crates/nimbus-bin/src/codegen.rs &&
-    has 'ensure_known_app_packages' crates/nimbus-bin/src/deploy.rs
+    "${PROOF_DIR}/" 2>/dev/null &&
+    has 'provision::ensure' crates/nimbus-cli/src/init.rs &&
+    has 'provision::ensure' crates/nimbus-cli/src/dev.rs &&
+    has 'ensure_known_app_packages' crates/nimbus-cli/src/codegen.rs &&
+    has 'ensure_known_app_packages' crates/nimbus-cli/src/deploy.rs
 }
 check "25. fresh-clone-then-install path handled; lockfile policy documented" c25
 
 # ---- 26: re-provision forces Node dependency reinstall [BPD5] -----------------
 c26() {
-  has 'invalidate.*fingerprint|force.*reinstall|reinstall.*node_modules' crates/nimbus-bin/src
+  has 'invalidate.*fingerprint|force.*reinstall|reinstall.*node_modules' crates/nimbus-cli/src
 }
 check "26. re-provision on drift forces a Node dependency reinstall" c26
 

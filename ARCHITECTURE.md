@@ -21,25 +21,32 @@ All Rust workspace members, per the root `Cargo.toml`.
 | `nimbus-artifacts` | Artifact verification: OCI references, SLSA provenance, admission checks. |
 | `nimbus-assets` | Embedded production asset catalog (distribution payloads, UI bytes, templates). |
 | `nimbus-auth` | Application auth contract: `ApplicationAuthVerifier` bearer-token verification into `InvocationAuth`. |
-| `nimbus-bin` | The `nimbus` CLI binary: `start`, `dev`, `deploy`, `run`, `sandbox`, `init`, `machine`, `backup`, `compose`, `encryption`, codegen, and more. |
+| `nimbus-bin` | The `nimbus` binary entrypoint: a 5-line `main.rs` that installs tracing and calls into `nimbus-cli`. All CLI logic lives in `nimbus-cli`. |
 | `nimbus-blob` | Content-addressed per-tenant byte storage and blob encryption decorator, with framed AEAD sourced from `nimbus-crypto`. |
 | `nimbus-bridge` | Runtime host bridge: bootstraps per-invocation host state and routes V8 host calls into the engine. |
+| `nimbus-cli` | The `nimbus` CLI application library: `start`, `dev`, `deploy`, `run`, `sandbox`, `init`, `machine`, `backup`, `compose`, `encryption`, codegen, and more. Invoked by the thin `nimbus-bin` entrypoint. |
 | `nimbus-cloud-functions` | Cloud Functions-compatible adapter contracts and runtime bridge. |
 | `nimbus-code-index` | Deploy-time structural JavaScript/TypeScript code-navigation index built with oxc. |
 | `nimbus-convex` | Convex protocol semantics: function registry, subscriptions, document identity, host-call payloads. |
 | `nimbus-core` | Shared types and validation. Zero I/O. |
 | `nimbus-crypto` | At-rest envelope/keyring primitives, crypto-shred, and framed blob AEAD; depends only on `nimbus-core` plus external crypto crates. |
 | `nimbus-dynamodb` | DynamoDB wire-protocol adapter: AttributeValue conversion, expressions, operation dispatch, SigV4, streams. |
+| `nimbus-egress` | Egress policy compilation and enforcement-plan types (rules, DLP, credential injection) shared by `nimbus-proxy` and the runtime egress gateway. |
 | `nimbus-engine` | Central coordinator (`Engine`): mutation path, query evaluation, subscriptions, scheduler, triggers. |
 | `nimbus-firebase` | Firestore protocol semantics: REST/gRPC request models, queries, transactions, serialization. |
 | `nimbus-firestore` | Firestore provider-family path, default-database, and storage-locator semantics shared by Firebase and Cloud Functions. |
+| `nimbus-fs` | In-process filesystem shell for V8 and WASI binders: mount table, `FsCaps`, and backends (Seam C). |
+| `nimbus-kv` | RESP-native Nimbus KV listener: tenant-bound authentication over the tenant-aware storage tiering seam. |
 | `nimbus-license` | License file loading and status (community / trial / enterprise). |
 | `nimbus-machine` | Render-independent machine records and provider contracts shared by CLI and server. |
 | `nimbus-mongodb` | MongoDB wire protocol: BSON bridging, command handlers, connections, auth. |
 | `nimbus-node` | Node-side workload lifecycle: systemd transient units over D-Bus, reconciler, host lifecycle backends. |
+| `nimbus-object-storage` | Native object-storage control-plane resolver: turns persisted placement policy and operator config into `BlobStore` compositions shared by S3, Convex `_storage`, and backup/restore. Deliberately not a protocol crate. |
 | `nimbus-operator` | Operator (host administrator) security model for local and deploy servers. |
 | `nimbus-provenance` | Runtime-bundle provenance policy plumbing over the artifact verifier. |
+| `nimbus-proxy` | Pingora-based egress proxy: policy enforcement, DNS/CONNECT handling, TLS interception, connection pooling, and fairness for tenant egress traffic. |
 | `nimbus-runtime` | V8 execution via `deno_core`; defines the runtime surface and the `HostBridge` trait. Zero workspace dependencies. |
+| `nimbus-s3` | S3-compatible object surface over the Nimbus blob and metadata planes (Seam D). |
 | `nimbus-sandbox` | Backend-agnostic sandbox and isolation lifecycle contracts. |
 | `nimbus-server` | HTTP/WebSocket transport: axum router, adapter transport shims, embedded UI, local-server security. |
 | `nimbus-services` | Service registry and service-manager primitives. |
@@ -47,7 +54,9 @@ All Rust workspace members, per the root `Cargo.toml`.
 | `nimbus-system` | System-tenant records, route inventory, and status projections. |
 | `nimbus-tenant` | Tenant isolation decisions, workload identity, and admission policy. |
 | `nimbus-testing` | Shared test fixtures and the deterministic verification harness. |
-| `nimbus-workload-identity` | Workload-identity issuance seam: provider-auth policy, admission-anchored mint authorization, credential claim set, and mint/deny audit schema (SI0). Projection stays in `nimbus-tenant`. |
+| `nimbus-workload-identity` | Workload-identity issuance seam: provider-auth policy, admission-anchored mint authorization, node/machine identity and trust-domain config, and short-lived JWT/SPIFFE-SVID minting (SI0–SI4). Production cluster-membership identity stays unconstructible until HS1; the `WorkloadIdentity` projection stays in `nimbus-tenant`. |
+| `nimbus-workloads` | Workload admission, desired-state, placement, and execution-control seams shared by the node reconciler and scheduler. |
+| `workspace-hack` | `cargo-hakari`-managed dependency-unification package. No product logic; exists only to speed up workspace builds. |
 
 ### npm packages (`packages/`)
 
@@ -176,7 +185,9 @@ enforcement but no PEP path exists.
 Two principal classes are kept distinct: operators (host administrators,
 `nimbus-operator`) and application users (`nimbus-auth`'s
 `ApplicationAuthVerifier`). Artifact and runtime-bundle trust is enforced by
-`nimbus-artifacts` and `nimbus-provenance`.
+`nimbus-artifacts` and `nimbus-provenance`. Workload credential issuance
+(distinct from either of the above) is a separate ladder — see
+[Tenancy](#tenancy) below.
 → <https://nimbusdocs.com/concepts/architecture/auth-trust/>
 
 ### Tenancy
@@ -184,6 +195,25 @@ Two principal classes are kept distinct: operators (host administrators,
 Every tenant gets an isolated persistence namespace. `nimbus-tenant` owns
 isolation decisions, workload identity, and admission policy; `nimbus-system`
 owns the system tenant's records and projections.
+
+**Workload-identity ladder.** Three deliberately separate types carry a
+workload's identity through the stack, each anchored to a different concern:
+
+| Layer | Type | Home | Role |
+| --- | --- | --- | --- |
+| Routing key | `WorkloadId` | `nimbus-core/src/types.rs` | Opaque routing key. Lives in `nimbus-core` on purpose: `nimbus-proxy`'s per-workload PEP registry keys on it without depending on `nimbus-sandbox`. |
+| Admitted identity | `WorkloadIdentity` | `nimbus-tenant/src/identity.rs` | Rich projection, constructible only via `from_decision(&TenantIsolationDecision)`; renders SPIFFE-shaped `subject()`/`spiffe_id()` strings. |
+| Node-local name | `TenantWorkloadId` | `nimbus-node/src/host_lifecycle.rs` | systemd unit naming. |
+
+`WorkloadIdentity` stays in `nimbus-tenant` rather than moving into a
+dedicated identity crate: construction is gated on holding a real
+`TenantIsolationDecision`, so minting is unreachable without an admission
+decision. `nimbus-workload-identity` builds credential issuance (provider
+auth policy, admission-anchored mint authorization, claim sets, mint/deny
+audit events, short-lived JWT minting) on top of that projection instead of
+replacing it — its mint-request types are likewise constructible only from a
+`TenantIsolationDecision`, so the admission anchor holds end to end from
+routing key to minted credential.
 → <https://nimbusdocs.com/concepts/architecture/tenancy/>
 
 ### Node lifecycle
@@ -195,11 +225,12 @@ status evidence.
 
 ### CLI & codegen
 
-`nimbus-bin` builds the `nimbus` binary. `crates/nimbus-bin/src/start/` boots
-the server; sibling modules implement the rest of the command surface (`dev`,
-`deploy`, `run`, `sandbox`, `init`, `machine`, `backup`, `compose`,
-`encryption`, auth/token management, and codegen, which embeds
-`@nimbus/codegen`).
+`nimbus-bin` is a 5-line entrypoint (`crates/nimbus-bin/src/main.rs`) that
+installs tracing and calls into `nimbus-cli`, which builds the actual command
+surface. `crates/nimbus-cli/src/start/` boots the server; sibling modules
+implement the rest (`dev`, `deploy`, `run`, `sandbox`, `init`, `machine`,
+`backup`, `compose`, `encryption`, auth/token management, and codegen, which
+embeds `@nimbus/codegen`).
 → <https://nimbusdocs.com/concepts/architecture/cli-codegen/>
 
 ### SDK & packages

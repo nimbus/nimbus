@@ -10,6 +10,12 @@ publish.workspace = true
 workspace = true
 
 [features]
+# Scaffolding only: no code in this crate is gated on `fuse` yet (no
+# `cfg(feature = "fuse")` sites), no CI workflow builds or tests it, and it
+# does not compile on a machine without libfuse/pkg-config installed
+# (`fuser`'s build.rs shells out to `pkg-config --libs --cflags fuse`). Wires
+# the optional `fuser` dependency ahead of a real host-FUSE backend; treat as
+# dormant, not dead, until that backend lands (DS4).
 fuse = ["dep:fuser"]
 
 [dependencies]

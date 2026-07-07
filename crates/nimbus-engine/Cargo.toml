@@ -10,6 +10,15 @@ publish.workspace = true
 workspace = true
 
 [features]
+# Gates test-only surface (`#[cfg(any(test, feature = "test-hooks"))]` in
+# tenant/mutation, engine/queries, engine/subscriptions) that integration
+# tests in other crates need to reach. Every workspace consumer enables it
+# only under [dev-dependencies] (see nimbus-mongodb, nimbus-firebase,
+# nimbus-server), never under [dependencies], so a plain `cargo build
+# --release -p nimbus-bin` never activates it: Cargo only compiles a crate's
+# dev-dependencies (and their features) when building that crate's own
+# tests/benches, not when the crate is used as a library by another crate's
+# release build (DS4).
 test-hooks = []
 aws-kms = ["nimbus-crypto/aws-kms", "nimbus-storage/aws-kms"]
 
