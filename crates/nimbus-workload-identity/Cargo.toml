@@ -10,13 +10,15 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+base64.workspace = true
 nimbus-core = { path = "../nimbus-core" }
 nimbus-crypto = { path = "../nimbus-crypto" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
 nimbus-runtime = { path = "../nimbus-runtime" }
-serde_json.workspace = true
+ring.workspace = true

@@ -4,8 +4,8 @@ use nimbus_tenant::{TenantIsolationDecision, TenantIsolationDecisionId, Workload
 
 use crate::audit::IdentityAuditEventParts;
 use crate::{
-    CredentialClaims, IdentityAuditEvent, IdentityAuditOutcome, ProviderAuthPolicy,
-    ProviderAuthRule,
+    CredentialClaims, IdentityAuditEvent, IdentityAuditOutcome, IdentityIssueError, IdentityIssuer,
+    MintedCredential, ProviderAuthPolicy, ProviderAuthRule,
 };
 
 /// Admission-anchored mint request.
@@ -54,6 +54,47 @@ pub fn authorize_mint(
 pub struct MintAuthorization {
     pub outcome: Result<CredentialClaims, IdentityMintError>,
     pub audit: IdentityAuditEvent,
+}
+
+pub struct CredentialMint {
+    pub outcome: Result<MintedCredential, CredentialMintError>,
+    pub audit: IdentityAuditEvent,
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum CredentialMintError {
+    #[error(transparent)]
+    Authorization(IdentityMintError),
+    #[error(transparent)]
+    Issuance(IdentityIssueError),
+}
+
+pub fn mint_credential(
+    policy: &ProviderAuthPolicy,
+    request: &IdentityMintRequest<'_>,
+    params: &MintParams,
+    issuer: &dyn IdentityIssuer,
+) -> CredentialMint {
+    let MintAuthorization { outcome, audit } = authorize_mint(policy, request, params);
+    let claims = match outcome {
+        Ok(claims) => claims,
+        Err(error) => {
+            return CredentialMint {
+                outcome: Err(CredentialMintError::Authorization(error)),
+                audit,
+            };
+        }
+    };
+    match issuer.mint(&claims) {
+        Ok(credential) => CredentialMint {
+            outcome: Ok(credential),
+            audit,
+        },
+        Err(error) => CredentialMint {
+            audit: audit_issuance_failure(request, &claims, &error),
+            outcome: Err(CredentialMintError::Issuance(error)),
+        },
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -115,6 +156,7 @@ fn authorize_claims(
         &request.identity,
         request.decision_id,
         request.audience.clone(),
+        params.issued_at_epoch_ms,
         exp_epoch_ms,
         params.credential_instance_id.clone(),
     ))
@@ -161,5 +203,25 @@ fn audit_event(
         outcome: audit_outcome,
         exp_epoch_ms,
         credential_instance_id,
+    })
+}
+
+fn audit_issuance_failure(
+    request: &IdentityMintRequest<'_>,
+    claims: &CredentialClaims,
+    error: &IdentityIssueError,
+) -> IdentityAuditEvent {
+    IdentityAuditEvent::from_parts(IdentityAuditEventParts {
+        tenant_id: request.identity.tenant_id().to_string(),
+        decision_id: request.decision_id.as_str().to_string(),
+        workload_subject: request.identity.subject(),
+        workload_audit_projection: request.identity.audit_projection(),
+        identity_grants: request.identity_grants.clone(),
+        audience: request.audience.clone(),
+        outcome: IdentityAuditOutcome::Denied {
+            reason: format!("issuance failed: {error}"),
+        },
+        exp_epoch_ms: Some(claims.exp_epoch_ms()),
+        credential_instance_id: Some(claims.jti().to_string()),
     })
 }
