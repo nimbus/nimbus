@@ -275,7 +275,13 @@ async fn subscription_re_evaluation_after_mutation_sees_fresh_cached_data() {
 
     let (tx, mut rx) = subscription_channel();
     let _subscription = engine
-        .subscribe(&tenant_id, query_for("tasks"), "cache-sub".to_string(), tx)
+        .subscribe(
+            &tenant_id,
+            query_for("tasks"),
+            "cache-sub".to_string(),
+            tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("subscribe should succeed");
 
     let initial = rx.recv().await.expect("initial update should arrive");

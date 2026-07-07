@@ -23,7 +23,7 @@ pub struct SubscriptionDeliveryStats {
     pub total_reevaluation_nanos: u64,
 }
 
-pub(super) struct SubscriptionDeliveryMetrics {
+pub(crate) struct SubscriptionDeliveryMetrics {
     overflow_sync_fallback_count: AtomicU64,
     coalesced_batch_count: AtomicU64,
     coalesced_commit_count: AtomicU64,
@@ -48,12 +48,12 @@ impl SubscriptionDeliveryMetrics {
         }
     }
 
-    pub(super) fn record_overflow_sync_fallback(&self) {
+    pub(crate) fn record_overflow_sync_fallback(&self) {
         self.overflow_sync_fallback_count
             .fetch_add(1, Ordering::Relaxed);
     }
 
-    pub(super) fn record_coalesced_batch(
+    pub(crate) fn record_coalesced_batch(
         &self,
         commit_count: u64,
         merged_subscription_wakeup_count: u64,
@@ -70,7 +70,7 @@ impl SubscriptionDeliveryMetrics {
             .fetch_add(merged_count, Ordering::Relaxed);
     }
 
-    pub(super) fn record_dispatch_stats(&self, stats: SubscriptionDispatchStats) {
+    pub(crate) fn record_dispatch_stats(&self, stats: SubscriptionDispatchStats) {
         self.coalesced_work_count
             .fetch_add(stats.coalesced_work_count, Ordering::Relaxed);
         self.reevaluation_count

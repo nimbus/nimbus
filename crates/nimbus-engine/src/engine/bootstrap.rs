@@ -140,7 +140,7 @@ fn build_embedded_from_plan(
         std::fs::create_dir_all(&control_data_dir).map_err(internal_error)?;
     }
 
-    let (engine_executor, storage_executor) = build_executors();
+    let (engine_executor, storage_executor) = build_executors()?;
     let control_plane_provider = build_control_plane_provider(
         control_data_dir,
         encryption_provider.clone(),
@@ -210,7 +210,7 @@ async fn build_postgres_from_plan(
     encryption_status: Option<encryption::EncryptionStatus>,
 ) -> Result<Engine> {
     std::fs::create_dir_all(&control_data_dir).map_err(internal_error)?;
-    let (engine_executor, storage_executor) = build_executors();
+    let (engine_executor, storage_executor) = build_executors()?;
     let control_plane_provider =
         build_control_plane_provider(control_data_dir, encryption_provider, &storage_executor)?;
     let provider_config = PostgresProviderConfig {
@@ -253,7 +253,7 @@ async fn build_libsql_replica_from_plan(
     encryption_status: Option<encryption::EncryptionStatus>,
 ) -> Result<Engine> {
     std::fs::create_dir_all(&control_data_dir).map_err(internal_error)?;
-    let (engine_executor, storage_executor) = build_executors();
+    let (engine_executor, storage_executor) = build_executors()?;
     let control_plane_provider = build_control_plane_provider(
         control_data_dir,
         encryption_provider.clone(),
@@ -302,7 +302,7 @@ async fn build_mysql_from_plan(
     encryption_status: Option<encryption::EncryptionStatus>,
 ) -> Result<Engine> {
     std::fs::create_dir_all(&control_data_dir).map_err(internal_error)?;
-    let (engine_executor, storage_executor) = build_executors();
+    let (engine_executor, storage_executor) = build_executors()?;
     let control_plane_provider =
         build_control_plane_provider(control_data_dir, encryption_provider, &storage_executor)?;
     let provider_config = MySqlProviderConfig {
@@ -335,11 +335,11 @@ async fn build_mysql_from_plan(
     }))
 }
 
-fn build_executors() -> (BackgroundExecutor, BackgroundExecutor) {
-    (
-        BackgroundExecutor::new("nimbus-engine-bg", 2),
-        BackgroundExecutor::new("nimbus-storage-bg", 1),
-    )
+fn build_executors() -> Result<(BackgroundExecutor, BackgroundExecutor)> {
+    Ok((
+        BackgroundExecutor::new("nimbus-engine-bg", 2).map_err(internal_error)?,
+        BackgroundExecutor::new("nimbus-storage-bg", 1).map_err(internal_error)?,
+    ))
 }
 
 fn build_control_plane_provider(

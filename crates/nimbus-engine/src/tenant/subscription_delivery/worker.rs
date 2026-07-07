@@ -1,7 +1,8 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use crate::subscriptions::{dispatch_subscription_work, merge_queued_subscription_work};
+use crate::tenant::background::BackgroundWorker;
 
 #[cfg(test)]
 use super::pause::SubscriptionDeliveryPauseState;
@@ -10,17 +11,13 @@ use super::stats::SubscriptionDeliveryMetrics;
 use crate::tenant::TenantRuntime;
 
 pub(super) struct SubscriptionDeliveryWorker {
-    worker: Mutex<Option<std::thread::JoinHandle<()>>>,
-    shutdown: Arc<AtomicBool>,
-    worker_start_count: AtomicU64,
+    worker: BackgroundWorker,
 }
 
 impl SubscriptionDeliveryWorker {
     pub(super) fn new() -> Self {
         Self {
-            worker: Mutex::new(None),
-            shutdown: Arc::new(AtomicBool::new(false)),
-            worker_start_count: AtomicU64::new(0),
+            worker: BackgroundWorker::new(),
         }
     }
 
@@ -52,59 +49,55 @@ impl SubscriptionDeliveryWorker {
         metrics: Arc<SubscriptionDeliveryMetrics>,
         #[cfg(test)] pause: Option<Arc<SubscriptionDeliveryPauseState>>,
     ) {
-        let mut worker = self
-            .worker
-            .lock()
-            .expect("subscription delivery worker lock should not be poisoned");
-        if worker.is_some() {
-            return;
-        }
-        self.shutdown.store(false, Ordering::Release);
-        self.worker_start_count.fetch_add(1, Ordering::Relaxed);
         let runtime = Arc::downgrade(runtime);
-        let shutdown = self.shutdown.clone();
-        *worker = Some(
-            std::thread::Builder::new()
-                .name("nimbus-subscription-delivery".to_string())
-                .spawn(move || {
-                    run_delivery_worker(
-                        runtime,
-                        queue,
-                        metrics,
-                        shutdown,
-                        #[cfg(test)]
-                        pause,
-                    )
-                })
-                .expect("subscription delivery worker should spawn"),
-        );
+        self.worker
+            .start("nimbus-subscription-delivery", move |shutdown| {
+                run_delivery_worker(
+                    runtime,
+                    queue,
+                    metrics,
+                    shutdown,
+                    #[cfg(test)]
+                    pause,
+                )
+            });
     }
 
+    #[cfg(test)]
+    pub(super) fn shutdown(
+        &self,
+        queue: &Arc<SubscriptionDeliveryQueueState>,
+        pause: &Arc<SubscriptionDeliveryPauseState>,
+    ) {
+        let queue = queue.clone();
+        let pause = pause.clone();
+        // Signal shutdown *before* releasing a worker parked in the test
+        // pause barrier: `BackgroundWorker::shutdown` runs this closure
+        // synchronously before it joins, so both orderings the two
+        // mechanisms need are satisfied by this single sequence — the flag
+        // is visible before the paused worker wakes (it won't process or
+        // dispatch the batch it paused before draining), and the worker is
+        // released before `shutdown` attempts to join it (no deadlock on a
+        // still-paused worker).
+        self.worker.shutdown(move |shutdown| {
+            queue.signal_shutdown(shutdown);
+            pause.release_for_shutdown();
+        });
+    }
+
+    #[cfg(not(test))]
     pub(super) fn shutdown(&self, queue: &Arc<SubscriptionDeliveryQueueState>) {
-        self.shutdown.store(true, Ordering::Release);
-        queue.notify_all();
-        if let Some(worker) = self
-            .worker
-            .lock()
-            .expect("subscription delivery worker lock should not be poisoned")
-            .take()
-        {
-            if worker.thread().id() == std::thread::current().id() {
-                return;
-            }
-            let _ = worker.join();
-        }
+        let queue = queue.clone();
+        self.worker
+            .shutdown(move |shutdown| queue.signal_shutdown(shutdown));
     }
 
     pub(super) fn running(&self) -> bool {
-        self.worker
-            .lock()
-            .expect("subscription delivery worker lock should not be poisoned")
-            .is_some()
+        self.worker.running()
     }
 
     pub(super) fn start_count(&self) -> u64 {
-        self.worker_start_count.load(Ordering::Relaxed)
+        self.worker.start_count()
     }
 }
 
@@ -129,7 +122,7 @@ fn run_delivery_worker(
 
         #[cfg(test)]
         if let Some(pause) = pause.as_ref() {
-            pause.wait_if_armed();
+            pause.wait_if_armed(());
         }
 
         let Some(mut work_batch) = queue.drain_ready_batch(&shutdown) else {

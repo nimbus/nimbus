@@ -1,6 +1,9 @@
+#[cfg(test)]
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use nimbus_core::CommitEntry;
@@ -12,6 +15,9 @@ use crate::triggers::dispatch::build_trigger_commit_candidates;
 use crate::triggers::materialize::build_trigger_invocation_records;
 
 use super::TenantRuntime;
+use super::background::{BackgroundWorker, WorkQueue};
+#[cfg(test)]
+use super::pause_barrier::{PauseBarrier, PauseBarrierHandle};
 
 const TRIGGER_CANDIDATE_RETRY_BACKOFF: Duration = Duration::from_millis(10);
 
@@ -20,8 +26,7 @@ struct QueuedTriggerCommitBatch {
 }
 
 struct TriggerCandidateQueueState {
-    queue: Mutex<VecDeque<QueuedTriggerCommitBatch>>,
-    queue_ready: Condvar,
+    queue: WorkQueue<QueuedTriggerCommitBatch>,
 }
 
 #[cfg(test)]
@@ -30,8 +35,7 @@ struct PendingTriggerCandidateState {
 }
 
 struct TriggerCandidateWorker {
-    worker: Mutex<Option<std::thread::JoinHandle<()>>>,
-    shutdown: Arc<AtomicBool>,
+    worker: BackgroundWorker,
 }
 
 pub(super) struct TriggerCandidateFeed {
@@ -44,31 +48,18 @@ pub(super) struct TriggerCandidateFeed {
 }
 
 #[cfg(test)]
+type TriggerCandidatePauseState = PauseBarrier;
+
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct TriggerCandidatePauseHandle {
-    state: Arc<TriggerCandidatePauseState>,
-}
-
-#[cfg(test)]
-#[derive(Debug, Default)]
-struct TriggerCandidatePauseControl {
-    armed: bool,
-    entered: bool,
-    released: bool,
-}
-
-#[cfg(test)]
-#[derive(Debug, Default)]
-struct TriggerCandidatePauseState {
-    control: Mutex<TriggerCandidatePauseControl>,
-    condvar: Condvar,
+    inner: PauseBarrierHandle,
 }
 
 impl TriggerCandidateQueueState {
     fn new() -> Self {
         Self {
-            queue: Mutex::new(VecDeque::new()),
-            queue_ready: Condvar::new(),
+            queue: WorkQueue::unbounded(),
         }
     }
 
@@ -76,64 +67,27 @@ impl TriggerCandidateQueueState {
         if commits.is_empty() {
             return;
         }
-        let mut queue = self
-            .queue
-            .lock()
-            .expect("trigger candidate queue lock should not be poisoned");
-        queue.push_back(QueuedTriggerCommitBatch { commits });
-        self.queue_ready.notify_one();
+        let _ = self.queue.enqueue(QueuedTriggerCommitBatch { commits });
     }
 
     fn requeue_front(&self, commits: Vec<CommitEntry>) {
         if commits.is_empty() {
             return;
         }
-        let mut queue = self
-            .queue
-            .lock()
-            .expect("trigger candidate queue lock should not be poisoned");
-        queue.push_front(QueuedTriggerCommitBatch { commits });
-        self.queue_ready.notify_one();
+        self.queue
+            .requeue_front(vec![QueuedTriggerCommitBatch { commits }]);
     }
 
     fn pop_next(&self, shutdown: &AtomicBool) -> Option<QueuedTriggerCommitBatch> {
-        let mut queue = self
-            .queue
-            .lock()
-            .expect("trigger candidate queue lock should not be poisoned");
-        loop {
-            if shutdown.load(Ordering::Acquire) {
-                queue.clear();
-                return None;
-            }
-            if let Some(batch) = queue.pop_front() {
-                return Some(batch);
-            }
-            queue = self
-                .queue_ready
-                .wait(queue)
-                .expect("trigger candidate queue wait should not be poisoned");
-        }
+        self.queue.pop_next(shutdown)
     }
 
     fn drain_ready_batches(&self, shutdown: &AtomicBool) -> Option<Vec<QueuedTriggerCommitBatch>> {
-        let mut queue = self
-            .queue
-            .lock()
-            .expect("trigger candidate queue lock should not be poisoned");
-        if shutdown.load(Ordering::Acquire) {
-            queue.clear();
-            return None;
-        }
-        let mut drained = Vec::new();
-        while let Some(batch) = queue.pop_front() {
-            drained.push(batch);
-        }
-        Some(drained)
+        self.queue.drain_ready_batch(shutdown, usize::MAX)
     }
 
-    fn notify_all(&self) {
-        self.queue_ready.notify_all();
+    fn signal_shutdown(&self, shutdown: &AtomicBool) {
+        self.queue.signal_shutdown(shutdown);
     }
 }
 
@@ -177,8 +131,7 @@ impl PendingTriggerCandidateState {
 impl TriggerCandidateWorker {
     fn new() -> Self {
         Self {
-            worker: Mutex::new(None),
-            shutdown: Arc::new(AtomicBool::new(false)),
+            worker: BackgroundWorker::new(),
         }
     }
 
@@ -205,51 +158,42 @@ impl TriggerCandidateWorker {
         #[cfg(test)] pending: Arc<PendingTriggerCandidateState>,
         #[cfg(test)] pause: Option<Arc<TriggerCandidatePauseState>>,
     ) {
-        let mut worker = self
-            .worker
-            .lock()
-            .expect("trigger candidate worker lock should not be poisoned");
-        if worker.is_some() {
-            return;
-        }
-        self.shutdown.store(false, Ordering::Release);
         let runtime = Arc::downgrade(runtime);
-        let shutdown = self.shutdown.clone();
-        *worker = Some(
-            std::thread::Builder::new()
-                .name("nimbus-trigger-candidates".to_string())
-                .spawn(move || {
-                    run_trigger_candidate_worker(
-                        runtime,
-                        queue,
-                        #[cfg(test)]
-                        pending,
-                        shutdown,
-                        #[cfg(test)]
-                        pause,
-                    )
-                })
-                .expect("trigger candidate worker should spawn"),
-        );
+        self.worker
+            .start("nimbus-trigger-candidates", move |shutdown| {
+                run_trigger_candidate_worker(
+                    runtime,
+                    queue,
+                    #[cfg(test)]
+                    pending,
+                    shutdown,
+                    #[cfg(test)]
+                    pause,
+                )
+            });
     }
 
-    fn request_shutdown(&self, queue: &Arc<TriggerCandidateQueueState>) {
-        self.shutdown.store(true, Ordering::Release);
-        queue.notify_all();
-    }
-
-    fn join(&self) {
-        if let Some(worker) = self
-            .worker
-            .lock()
-            .expect("trigger candidate worker lock should not be poisoned")
-            .take()
-        {
-            if worker.thread().id() == std::thread::current().id() {
-                return;
-            }
-            let _ = worker.join();
-        }
+    fn request_shutdown(
+        &self,
+        queue: &Arc<TriggerCandidateQueueState>,
+        #[cfg(test)] pause: &Arc<TriggerCandidatePauseState>,
+    ) {
+        let queue = queue.clone();
+        #[cfg(test)]
+        let pause = pause.clone();
+        self.worker.shutdown(move |shutdown| {
+            // Signal shutdown *before* releasing a worker parked in the test
+            // pause barrier: `BackgroundWorker::shutdown` runs this closure
+            // synchronously before it joins, so both orderings the two
+            // mechanisms need are satisfied by this single sequence — the
+            // flag is visible before the paused worker wakes (it won't
+            // process or advance past the point it paused at), and the
+            // worker is released before `shutdown` attempts to join it (no
+            // deadlock on a still-paused worker).
+            queue.signal_shutdown(shutdown);
+            #[cfg(test)]
+            pause.release_for_shutdown();
+        });
     }
 }
 
@@ -281,10 +225,11 @@ impl TriggerCandidateFeed {
     }
 
     pub(super) fn shutdown(&self) {
-        self.worker.request_shutdown(&self.queue);
-        #[cfg(test)]
-        self.pause.release_for_shutdown();
-        self.worker.join();
+        self.worker.request_shutdown(
+            &self.queue,
+            #[cfg(test)]
+            &self.pause,
+        );
     }
 
     #[cfg(test)]
@@ -299,9 +244,7 @@ impl TriggerCandidateFeed {
 
     #[cfg(test)]
     pub(super) fn pause_handle(&self) -> TriggerCandidatePauseHandle {
-        TriggerCandidatePauseHandle {
-            state: self.pause.clone(),
-        }
+        TriggerCandidatePauseHandle::new(self.pause.clone())
     }
 }
 
@@ -336,82 +279,22 @@ impl TenantRuntime {
 
 #[cfg(test)]
 impl TriggerCandidatePauseHandle {
-    pub(crate) fn arm(&self) {
-        let mut control = self
-            .state
-            .control
-            .lock()
-            .expect("trigger candidate pause lock should not be poisoned");
-        control.armed = true;
-        control.entered = false;
-        control.released = false;
+    fn new(state: Arc<TriggerCandidatePauseState>) -> Self {
+        Self {
+            inner: PauseBarrierHandle::new(state),
+        }
     }
 
-    pub(crate) fn wait_until_entered(&self, timeout: std::time::Duration) -> bool {
-        let deadline = std::time::Instant::now() + timeout;
-        let mut control = self
-            .state
-            .control
-            .lock()
-            .expect("trigger candidate pause lock should not be poisoned");
-        while control.armed && !control.entered {
-            let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
-                return false;
-            };
-            let (next_control, wait_result) = self
-                .state
-                .condvar
-                .wait_timeout(control, remaining)
-                .expect("trigger candidate pause wait should not be poisoned");
-            control = next_control;
-            if wait_result.timed_out() {
-                return control.entered;
-            }
-        }
-        control.entered
+    pub(crate) fn arm(&self) {
+        self.inner.arm();
+    }
+
+    pub(crate) fn wait_until_entered(&self, timeout: Duration) -> bool {
+        self.inner.wait_until_entered(timeout).is_some()
     }
 
     pub(crate) fn release(&self) {
-        let mut control = self
-            .state
-            .control
-            .lock()
-            .expect("trigger candidate pause lock should not be poisoned");
-        control.released = true;
-        self.state.condvar.notify_all();
-    }
-}
-
-#[cfg(test)]
-impl TriggerCandidatePauseState {
-    fn release_for_shutdown(&self) {
-        let mut control = self
-            .control
-            .lock()
-            .expect("trigger candidate pause lock should not be poisoned");
-        if control.armed && !control.released {
-            control.released = true;
-            self.condvar.notify_all();
-        }
-    }
-
-    fn wait_if_armed(&self) {
-        let mut control = self
-            .control
-            .lock()
-            .expect("trigger candidate pause lock should not be poisoned");
-        if !control.armed {
-            return;
-        }
-        control.entered = true;
-        self.condvar.notify_all();
-        while !control.released {
-            control = self
-                .condvar
-                .wait(control)
-                .expect("trigger candidate pause wait should not be poisoned");
-        }
-        *control = TriggerCandidatePauseControl::default();
+        self.inner.release();
     }
 }
 
@@ -428,7 +311,7 @@ fn run_trigger_candidate_worker(
         };
         #[cfg(test)]
         if let Some(pause) = pause.as_ref() {
-            pause.wait_if_armed();
+            pause.wait_if_armed(());
         }
         let Some(mut ready_batches) = queue.drain_ready_batches(&shutdown) else {
             return;

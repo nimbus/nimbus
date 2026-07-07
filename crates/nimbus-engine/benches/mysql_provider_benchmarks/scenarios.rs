@@ -729,7 +729,13 @@ pub(super) async fn exercise_subscription_bootstrap_catchup_sample(
     };
     let (sender, mut receiver) = mpsc::channel(8);
     let registration = engine
-        .subscribe_async(tenant_id.clone(), query, token.clone(), sender)
+        .subscribe_async(
+            tenant_id.clone(),
+            query,
+            token.clone(),
+            sender,
+            SubscribeOptions::anonymous(),
+        )
         .await?;
     let bootstrap = receiver
         .recv()
@@ -773,6 +779,7 @@ pub(super) async fn register_subscription_receivers(
                 query.clone(),
                 format!("fanout-{index}"),
                 sender,
+                SubscribeOptions::anonymous(),
             )
             .await?;
         let initial = receiver

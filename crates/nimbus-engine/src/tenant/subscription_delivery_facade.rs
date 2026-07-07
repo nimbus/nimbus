@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::subscriptions::{QueuedSubscriptionWork, SubscriptionDispatchStats};
+use crate::subscriptions::QueuedSubscriptionWork;
 
 use super::*;
 
@@ -16,21 +16,8 @@ impl TenantRuntime {
         self.subscription_delivery.enqueue(work)
     }
 
-    pub(crate) fn record_subscription_dispatch_stats(&self, stats: SubscriptionDispatchStats) {
-        self.subscription_delivery.record_dispatch_stats(stats);
-    }
-
-    pub(crate) fn record_subscription_overflow_sync_fallback(&self) {
-        self.subscription_delivery.record_overflow_sync_fallback();
-    }
-
-    pub(crate) fn record_subscription_coalesced_batch(
-        &self,
-        commit_count: u64,
-        merged_subscription_wakeup_count: u64,
-    ) {
-        self.subscription_delivery
-            .record_coalesced_batch(commit_count, merged_subscription_wakeup_count);
+    pub(crate) fn subscription_delivery_metrics(&self) -> &Arc<SubscriptionDeliveryMetrics> {
+        self.subscription_delivery.metrics()
     }
 
     pub(crate) fn shutdown_subscription_delivery(&self) {

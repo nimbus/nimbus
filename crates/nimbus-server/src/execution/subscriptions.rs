@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use nimbus_core::{PrincipalContext, Query, TenantId};
 use nimbus_engine::{
-    DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, SubscriptionCleanupHandle, SubscriptionUpdate,
+    DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, SubscribeOptions, SubscriptionCleanupHandle,
+    SubscriptionUpdate,
 };
 use tokio::sync::mpsc;
 
@@ -109,12 +110,12 @@ pub(crate) async fn subscribe_runtime_base_queries(
         let subscribe_service = service.clone();
         let subscribe_tenant_id = tenant_id.clone();
         match subscribe_service
-            .subscribe_async_with_principal(
+            .subscribe_async(
                 subscribe_tenant_id,
                 query,
-                principal.clone(),
                 request_id,
                 bridge_tx,
+                SubscribeOptions::for_principal(principal.clone()),
             )
             .await
         {

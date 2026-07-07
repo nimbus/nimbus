@@ -12,6 +12,7 @@ async fn subscription_updates_publish_only_after_journal_apply() {
             query_for("tasks"),
             "journal-sub".to_string(),
             tx,
+            SubscribeOptions::anonymous(),
         )
         .expect("subscribe should succeed");
     let subscription_id = subscription.id();
@@ -116,6 +117,7 @@ async fn async_subscription_bootstrap_catches_up_writes_committed_before_activat
                     query_for("tasks"),
                     "bootstrap-gap".to_string(),
                     tx,
+                    SubscribeOptions::anonymous(),
                 )
                 .await
         }
@@ -207,20 +209,23 @@ async fn async_subscription_bootstrap_cancellation_before_activation_returns_can
         let cancel_notify = cancel_notify.clone();
         async move {
             engine
-                .subscribe_async_cancellable(
+                .subscribe_async(
                     tenant_id,
                     query_for("tasks"),
                     "bootstrap-cancel".to_string(),
                     tx,
-                    SubscriptionBootstrapCancellation::new(
-                        async move { cancel_notify.notified().await },
-                        move || {
-                            if cancelled.load(Ordering::SeqCst) {
-                                Err(Error::Cancelled)
-                            } else {
-                                Ok(())
-                            }
-                        },
+                    SubscribeOptions::cancellable(
+                        PrincipalContext::anonymous(),
+                        SubscriptionBootstrapCancellation::new(
+                            async move { cancel_notify.notified().await },
+                            move || {
+                                if cancelled.load(Ordering::SeqCst) {
+                                    Err(Error::Cancelled)
+                                } else {
+                                    Ok(())
+                                }
+                            },
+                        ),
                     ),
                 )
                 .await
@@ -323,6 +328,7 @@ async fn sync_subscription_bootstrap_does_not_miss_lagged_applied_commit() {
             query_for("tasks"),
             "sync-lagged".to_string(),
             tx,
+            SubscribeOptions::anonymous(),
         )
         .expect("sync subscription should register");
 

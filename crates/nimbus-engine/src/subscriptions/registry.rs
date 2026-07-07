@@ -3,14 +3,14 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(test)]
-use std::sync::{Condvar, Mutex};
-#[cfg(test)]
-use std::time::Instant;
+use std::time::Duration;
 
 use nimbus_core::{DependencySet, PrincipalContext, Query, SequenceNumber};
 use tokio::sync::mpsc;
 
 use super::delivery::{SubscriptionDelivery, SubscriptionUpdate};
+#[cfg(test)]
+use crate::tenant::pause_barrier::{PauseBarrier, PauseBarrierHandle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SubscriptionPublishResult {
@@ -74,96 +74,32 @@ pub(super) struct SubscriptionRegistryState {
 }
 
 #[cfg(test)]
+pub(super) type SubscriptionDeliveryPublishPauseState = PauseBarrier<SequenceNumber>;
+
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct SubscriptionDeliveryPublishPauseHandle {
-    state: Arc<SubscriptionDeliveryPublishPauseState>,
-}
-
-#[cfg(test)]
-#[derive(Debug, Default)]
-struct SubscriptionDeliveryPublishPauseControl {
-    armed: bool,
-    entered_sequence: Option<SequenceNumber>,
-    released: bool,
-}
-
-#[cfg(test)]
-#[derive(Debug, Default)]
-pub(super) struct SubscriptionDeliveryPublishPauseState {
-    control: Mutex<SubscriptionDeliveryPublishPauseControl>,
-    condvar: Condvar,
+    inner: PauseBarrierHandle<SequenceNumber>,
 }
 
 #[cfg(test)]
 impl SubscriptionDeliveryPublishPauseHandle {
-    pub(crate) fn arm_next_publish(&self) {
-        let mut control = self
-            .state
-            .control
-            .lock()
-            .expect("subscription delivery publish pause lock should not be poisoned");
-        control.armed = true;
-        control.entered_sequence = None;
-        control.released = false;
+    fn new(state: Arc<SubscriptionDeliveryPublishPauseState>) -> Self {
+        Self {
+            inner: PauseBarrierHandle::new(state),
+        }
     }
 
-    pub(crate) fn wait_until_entered(
-        &self,
-        timeout: std::time::Duration,
-    ) -> Option<SequenceNumber> {
-        let deadline = Instant::now() + timeout;
-        let mut control = self
-            .state
-            .control
-            .lock()
-            .expect("subscription delivery publish pause lock should not be poisoned");
-        while control.armed && control.entered_sequence.is_none() {
-            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
-                return control.entered_sequence;
-            };
-            let (next_control, wait_result) = self
-                .state
-                .condvar
-                .wait_timeout(control, remaining)
-                .expect("subscription delivery publish pause wait should not be poisoned");
-            control = next_control;
-            if wait_result.timed_out() {
-                return control.entered_sequence;
-            }
-        }
-        control.entered_sequence
+    pub(crate) fn arm_next_publish(&self) {
+        self.inner.arm();
+    }
+
+    pub(crate) fn wait_until_entered(&self, timeout: Duration) -> Option<SequenceNumber> {
+        self.inner.wait_until_entered(timeout)
     }
 
     pub(crate) fn release(&self) {
-        let mut control = self
-            .state
-            .control
-            .lock()
-            .expect("subscription delivery publish pause lock should not be poisoned");
-        control.released = true;
-        self.state.condvar.notify_all();
-    }
-}
-
-#[cfg(test)]
-impl SubscriptionDeliveryPublishPauseState {
-    fn wait_if_armed(&self, sequence: SequenceNumber) {
-        let mut control = self
-            .control
-            .lock()
-            .expect("subscription delivery publish pause lock should not be poisoned");
-        if !control.armed || control.entered_sequence.is_some() {
-            return;
-        }
-        control.entered_sequence = Some(sequence);
-        self.condvar.notify_all();
-        while !control.released {
-            control = self
-                .condvar
-                .wait(control)
-                .expect("subscription delivery publish pause wait should not be poisoned");
-        }
-        *control = SubscriptionDeliveryPublishPauseControl::default();
+        self.inner.release();
     }
 }
 
@@ -304,9 +240,7 @@ impl SubscriptionRegistry {
 
     #[cfg(test)]
     pub(crate) fn delivery_publish_pause_handle(&self) -> SubscriptionDeliveryPublishPauseHandle {
-        SubscriptionDeliveryPublishPauseHandle {
-            state: self.state.delivery_publish_pause.clone(),
-        }
+        SubscriptionDeliveryPublishPauseHandle::new(self.state.delivery_publish_pause.clone())
     }
 
     #[cfg(test)]

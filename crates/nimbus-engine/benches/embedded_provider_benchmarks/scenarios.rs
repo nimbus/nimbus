@@ -129,6 +129,7 @@ pub(super) async fn register_subscription_receivers(
                 query.clone(),
                 format!("fanout-{index}"),
                 sender,
+                SubscribeOptions::anonymous(),
             )
             .await?;
         let initial = receiver

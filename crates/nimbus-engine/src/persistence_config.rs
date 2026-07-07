@@ -525,12 +525,10 @@ impl EnginePersistenceConfig {
     /// Returns an error if encryption is requested for a provider path that
     /// is not supported.
     pub fn validate_encryption(&self) -> Result<(), EncryptionValidationError> {
-        if !self.local_encryption.is_enabled() {
-            return Ok(());
-        }
-
-        // Encryption is enabled, validate the key provider config
-        let key_provider = self.local_encryption.key_provider().unwrap();
+        let key_provider = match &self.local_encryption {
+            LocalEncryptionConfig::Disabled => return Ok(()),
+            LocalEncryptionConfig::Enabled(config) => config,
+        };
         match key_provider {
             LocalKeyProviderConfig::MasterKeyFile(config) => {
                 if config.path.as_os_str().is_empty() {
@@ -806,5 +804,99 @@ mod tests {
                 replica_cache_dir: PathBuf::from("./replica-cache"),
             })
         );
+    }
+
+    fn config_with_encryption(local_encryption: LocalEncryptionConfig) -> EnginePersistenceConfig {
+        EnginePersistenceConfig {
+            tenant_provider: TenantProviderConfig::embedded(
+                PathBuf::from("./tenant-data"),
+                EmbeddedProviderKind::Sqlite,
+            ),
+            control_plane: ControlPlaneConfig::embedded_redb("./control-data"),
+            local_encryption,
+        }
+    }
+
+    #[test]
+    fn validate_encryption_skips_validation_when_disabled() {
+        let config = config_with_encryption(LocalEncryptionConfig::Disabled);
+        assert_eq!(config.validate_encryption(), Ok(()));
+    }
+
+    #[test]
+    fn validate_encryption_accepts_master_key_file_with_nonempty_path() {
+        let config = config_with_encryption(LocalEncryptionConfig::Enabled(
+            LocalKeyProviderConfig::MasterKeyFile(MasterKeyFileConfig {
+                path: PathBuf::from("./master.key"),
+            }),
+        ));
+        assert_eq!(config.validate_encryption(), Ok(()));
+    }
+
+    #[test]
+    fn validate_encryption_rejects_master_key_file_with_empty_path() {
+        let config = config_with_encryption(LocalEncryptionConfig::Enabled(
+            LocalKeyProviderConfig::MasterKeyFile(MasterKeyFileConfig {
+                path: PathBuf::new(),
+            }),
+        ));
+        assert_eq!(
+            config.validate_encryption(),
+            Err(EncryptionValidationError::EmptyKeyPath {
+                provider: "master-key-file".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_encryption_rejects_key_directory_with_empty_path() {
+        let config = config_with_encryption(LocalEncryptionConfig::Enabled(
+            LocalKeyProviderConfig::KeyDirectory(KeyDirectoryConfig {
+                path: PathBuf::new(),
+            }),
+        ));
+        assert_eq!(
+            config.validate_encryption(),
+            Err(EncryptionValidationError::EmptyKeyPath {
+                provider: "key-dir".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_encryption_accepts_key_directory_with_nonempty_path() {
+        let config = config_with_encryption(LocalEncryptionConfig::Enabled(
+            LocalKeyProviderConfig::KeyDirectory(KeyDirectoryConfig {
+                path: PathBuf::from("./keys"),
+            }),
+        ));
+        assert_eq!(config.validate_encryption(), Ok(()));
+    }
+
+    #[test]
+    fn validate_encryption_rejects_aws_kms_with_missing_key_id() {
+        let config = config_with_encryption(LocalEncryptionConfig::Enabled(
+            LocalKeyProviderConfig::AwsKms(AwsKmsConfig {
+                key_id: String::new(),
+                region: None,
+                endpoint_url: None,
+            }),
+        ));
+        assert_eq!(
+            config.validate_encryption(),
+            Err(EncryptionValidationError::MissingAwsKmsKeyId)
+        );
+    }
+
+    #[test]
+    fn validate_encryption_accepts_aws_kms_with_key_id() {
+        let config = config_with_encryption(LocalEncryptionConfig::Enabled(
+            LocalKeyProviderConfig::AwsKms(AwsKmsConfig {
+                key_id: "arn:aws:kms:us-east-1:123456789012:key/abc".to_string(),
+                region: Some("us-east-1".to_string()),
+                endpoint_url: None,
+            }),
+        ));
+        assert_eq!(config.validate_encryption(), Ok(()));
     }
 }

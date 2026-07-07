@@ -13,6 +13,7 @@ use crate::triggers::TriggerRegistry;
 use crate::triggers::execution::SharedTriggerInvocationExecutor;
 use nimbus_storage::Clock;
 
+mod background;
 mod document_cache;
 mod document_cache_facade;
 mod lifecycle;
@@ -20,6 +21,8 @@ mod materialized_reads;
 mod materialized_reads_facade;
 mod mutation;
 mod mutation_facade;
+#[cfg(test)]
+pub(crate) mod pause_barrier;
 mod query_planning;
 mod query_planning_facade;
 mod subscription_delivery;
@@ -60,6 +63,7 @@ pub use self::query_planning::QueryPlanningStats;
 pub(crate) use self::query_planning::{QueryPlanMetricKind, QueryPlanMetricOperation};
 #[cfg(test)]
 pub(crate) use self::subscription_delivery::DEFAULT_SUBSCRIPTION_WORK_QUEUE_CAPACITY;
+pub(crate) use self::subscription_delivery::SubscriptionDeliveryMetrics;
 #[cfg(test)]
 pub(crate) use self::subscription_delivery::SubscriptionDeliveryPauseHandle;
 use self::subscription_delivery::SubscriptionDeliveryQueue;

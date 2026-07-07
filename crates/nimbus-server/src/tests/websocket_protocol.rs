@@ -225,6 +225,7 @@ async fn convex_websocket_subscription_projects_live_system_subscription_state()
             },
             "system-subscriptions-watch".to_string(),
             system_tx,
+            nimbus_engine::SubscribeOptions::anonymous(),
         )
         .await
         .expect("system tenant subscriptions table should be subscribable");

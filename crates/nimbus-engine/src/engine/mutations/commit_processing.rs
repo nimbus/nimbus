@@ -115,9 +115,10 @@ impl Engine {
             Err(work) => work,
         };
 
-        runtime.record_subscription_overflow_sync_fallback();
+        let metrics = runtime.subscription_delivery_metrics();
+        metrics.record_overflow_sync_fallback();
         let stats = dispatch_subscription_work(&runtime, &work);
-        runtime.record_subscription_dispatch_stats(stats);
+        metrics.record_dispatch_stats(stats);
     }
 
     pub(crate) fn process_commit(&self, runtime: Arc<TenantRuntime>, commit: &CommitEntry) {
@@ -164,10 +165,9 @@ impl Engine {
             .affected_subscription_ids_for_batch(&batch_candidates);
         if !affected.subscription_ids.is_empty() {
             if applied.len() > 1 {
-                runtime.record_subscription_coalesced_batch(
-                    applied.len() as u64,
-                    affected.merged_wakeup_count,
-                );
+                runtime
+                    .subscription_delivery_metrics()
+                    .record_coalesced_batch(applied.len() as u64, affected.merged_wakeup_count);
             }
 
             let latest = applied

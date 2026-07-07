@@ -7,7 +7,7 @@ use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, timeout};
 
-use crate::{Engine, SubscriptionUpdate};
+use crate::{Engine, SubscribeOptions, SubscriptionUpdate};
 
 fn tasks_table() -> TableName {
     TableName::new("tasks").expect("table name should be valid")
@@ -67,7 +67,13 @@ async fn engine_mutation_returns_while_subscription_delivery_worker_is_blocked()
 
     let (tx, mut rx) = subscription_channel();
     let _subscription = engine
-        .subscribe(&tenant_id, query_for("tasks"), "async-sub".to_string(), tx)
+        .subscribe(
+            &tenant_id,
+            query_for("tasks"),
+            "async-sub".to_string(),
+            tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("subscribe should succeed");
     let _ = rx
         .recv()
@@ -159,6 +165,7 @@ async fn subscription_delivery_queue_overflow_falls_back_without_regressing_mono
             query_for("tasks"),
             "overflow-sub".to_string(),
             tx,
+            SubscribeOptions::anonymous(),
         )
         .expect("subscribe should succeed");
     let _ = rx
@@ -310,6 +317,7 @@ async fn subscription_delivery_overflow_fallback_does_not_regress_while_worker_i
             query_for("tasks"),
             "concurrent-overflow-sub".to_string(),
             tx,
+            SubscribeOptions::anonymous(),
         )
         .expect("subscribe should succeed");
     let _ = rx
@@ -430,6 +438,7 @@ async fn subscription_delivery_queue_merge_coalesces_overlapping_work_items() {
             query_for("tasks"),
             "queue-merge-sub".to_string(),
             tx,
+            SubscribeOptions::anonymous(),
         )
         .expect("subscribe should succeed");
     let _ = rx
@@ -514,7 +523,13 @@ async fn journal_batch_coalesces_subscription_delivery_into_one_update() {
 
     let (tx, mut rx) = subscription_channel();
     let _subscription = engine
-        .subscribe(&tenant_id, query_for("tasks"), "batch-sub".to_string(), tx)
+        .subscribe(
+            &tenant_id,
+            query_for("tasks"),
+            "batch-sub".to_string(),
+            tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("subscribe should succeed");
     let _ = rx
         .recv()

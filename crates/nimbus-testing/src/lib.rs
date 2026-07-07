@@ -11,7 +11,7 @@ mod websocket_fixture;
 
 pub use engine_fixture::EngineFixture;
 pub use eventual::{wait_for_condition, wait_for_value};
-pub use faults::{ArmedBlockingFaultInjector, BlockingFaultInjector};
+pub use faults::{ArmedBlockingFaultInjector, BlockingFaultInjector, CountedFaultInjector};
 pub use http_api_fixture::HttpApiFixture;
 pub use repro::DeterministicTestCase;
 pub use runtime_profiles::{

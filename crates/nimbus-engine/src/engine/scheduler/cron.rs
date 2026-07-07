@@ -78,19 +78,6 @@ impl Engine {
         .await
     }
 
-    /// Lists cron jobs for a tenant.
-    pub fn list_cron_jobs(&self, tenant_id: &TenantId) -> Result<Vec<CronJob>> {
-        self.load_cron_jobs(tenant_id)
-    }
-
-    /// Lists cron jobs for a tenant asynchronously.
-    pub async fn list_cron_jobs_async(
-        self: &Arc<Self>,
-        tenant_id: TenantId,
-    ) -> Result<Vec<CronJob>> {
-        self.load_cron_jobs_async(tenant_id).await
-    }
-
     /// Deletes a cron job definition if present.
     pub fn delete_cron_job(&self, tenant_id: &TenantId, name: &str) -> Result<()> {
         with_scheduler_runtime(self, tenant_id, move |runtime| {

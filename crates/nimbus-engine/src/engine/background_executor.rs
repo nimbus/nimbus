@@ -23,15 +23,14 @@ pub(crate) struct BackgroundExecutor {
 }
 
 impl BackgroundExecutor {
-    pub(crate) fn new(name: &'static str, worker_threads: usize) -> Self {
+    pub(crate) fn new(name: &'static str, worker_threads: usize) -> std::io::Result<Self> {
         let runtime = TokioRuntimeBuilder::new_multi_thread()
             .worker_threads(worker_threads.max(1))
             .thread_name(name)
             .enable_all()
-            .build()
-            .expect("background runtime should build");
+            .build()?;
         let handle = runtime.handle().clone();
-        Self {
+        Ok(Self {
             runtime: Some(runtime),
             handle,
             spawn_gate: RwLock::new(()),
@@ -39,7 +38,7 @@ impl BackgroundExecutor {
             shutdown: CancellationToken::new(),
             tracker: TaskTracker::new(),
             name,
-        }
+        })
     }
 
     pub(crate) fn handle(&self) -> TokioRuntimeHandle {
@@ -113,7 +112,8 @@ mod tests {
 
     #[tokio::test]
     async fn quiesce_rejects_new_work() {
-        let executor = BackgroundExecutor::new("quiesce-rejects", 1);
+        let executor =
+            BackgroundExecutor::new("quiesce-rejects", 1).expect("test runtime should build");
         executor
             .spawn(async {})
             .expect("executor should accept initial task")
@@ -130,7 +130,9 @@ mod tests {
 
     #[tokio::test]
     async fn quiesce_waits_for_tracked_tasks() {
-        let executor = Arc::new(BackgroundExecutor::new("quiesce-blocking", 1));
+        let executor = Arc::new(
+            BackgroundExecutor::new("quiesce-blocking", 1).expect("test runtime should build"),
+        );
         let entered = Arc::new(Notify::new());
         let release = Arc::new(Notify::new());
         let finished = Arc::new(AtomicBool::new(false));

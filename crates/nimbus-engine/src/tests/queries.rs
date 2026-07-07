@@ -339,6 +339,7 @@ async fn subscription_initial_evaluation_uses_indexed_query_path() {
             },
             "sub-index-1".to_string(),
             tx,
+            SubscribeOptions::anonymous(),
         )
         .expect("subscribe should succeed");
     let subscription_id = subscription.id();
@@ -381,7 +382,13 @@ fn subscription_initial_evaluation_uses_materialized_serving_path_for_full_scan_
     let query = query_for("tasks");
     let (tx, mut rx) = subscription_channel();
     let subscription = engine
-        .subscribe(&tenant_id, query, "sub-fullscan-sync".to_string(), tx)
+        .subscribe(
+            &tenant_id,
+            query,
+            "sub-fullscan-sync".to_string(),
+            tx,
+            SubscribeOptions::anonymous(),
+        )
         .expect("subscribe should succeed");
 
     let initial = rx.blocking_recv().expect("initial update should arrive");
@@ -436,6 +443,7 @@ async fn subscription_async_initial_evaluation_uses_materialized_serving_path_fo
             query_for("tasks"),
             "sub-fullscan-async".to_string(),
             tx,
+            SubscribeOptions::anonymous(),
         )
         .await
         .expect("async subscribe should succeed");
@@ -683,6 +691,7 @@ async fn subscription_re_evaluation_uses_indexed_query_path() {
             },
             "sub-index-2".to_string(),
             tx,
+            SubscribeOptions::anonymous(),
         )
         .expect("subscribe should succeed");
     let _ = rx.recv().await.expect("initial update should arrive");
@@ -758,6 +767,7 @@ async fn subscription_re_evaluation_uses_materialized_serving_path_for_full_scan
             query_for("tasks"),
             "sub-fullscan-update".to_string(),
             tx,
+            SubscribeOptions::anonymous(),
         )
         .expect("subscribe should succeed");
     let _ = rx.recv().await.expect("initial update should arrive");

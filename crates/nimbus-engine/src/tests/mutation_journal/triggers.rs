@@ -18,6 +18,8 @@ use super::support::{
 };
 use super::*;
 
+mod trigger_execution_retry;
+
 fn trigger_binding(document_id: &DocumentId) -> ResourcePathBinding {
     ResourcePathBinding::new(
         DocumentLocator::new(tasks_table(), document_id.clone()),

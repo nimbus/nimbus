@@ -10,7 +10,7 @@ use crate::ws::NegotiatedWebSocketProtocol;
 use nimbus_convex::subscriptions::{
     ConvexClientMessage, ConvexSubscriptionTransform, ConvexSubscriptionTransforms,
 };
-use nimbus_engine::{SubscriptionCleanupHandle, SubscriptionRegistration};
+use nimbus_engine::{SubscribeOptions, SubscriptionCleanupHandle, SubscriptionRegistration};
 
 mod forwarding;
 mod messages;

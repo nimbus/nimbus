@@ -69,16 +69,6 @@ pub(crate) async fn tick_async(engine: &Arc<Engine>) -> Result<()> {
     tick_at_async(engine, engine.now()).await
 }
 
-#[cfg(test)]
-pub(crate) fn tick_at(engine: &Engine, now: Timestamp) -> Result<()> {
-    for tenant_id in engine.loaded_tenant_ids() {
-        if let Err(error) = process_tenant(engine, &tenant_id, now) {
-            tracing::warn!(tenant = %tenant_id, error = %error, "scheduler failed for tenant");
-        }
-    }
-    Ok(())
-}
-
 pub(crate) async fn tick_at_async(engine: &Arc<Engine>, now: Timestamp) -> Result<()> {
     let tenant_ids = engine.loaded_tenant_ids();
     let max_concurrent_tenant_ticks = scheduler_tenant_tick_parallelism(tenant_ids.len());
@@ -103,13 +93,6 @@ fn scheduler_tenant_tick_parallelism(tenant_count: usize) -> usize {
     tenant_count.max(1).min(available_parallelism)
 }
 
-#[cfg(test)]
-fn process_tenant(engine: &Engine, tenant_id: &TenantId, now: Timestamp) -> Result<()> {
-    process_due_jobs(engine, tenant_id, now)?;
-    process_cron_jobs(engine, tenant_id, now)?;
-    Ok(())
-}
-
 async fn process_tenant_async(
     engine: &Arc<Engine>,
     tenant_id: &TenantId,
@@ -117,68 +100,6 @@ async fn process_tenant_async(
 ) -> Result<()> {
     process_due_jobs_async(engine, tenant_id, now).await?;
     process_cron_jobs_async(engine, tenant_id, now).await?;
-    Ok(())
-}
-
-#[cfg(test)]
-fn process_due_jobs(engine: &Engine, tenant_id: &TenantId, now: Timestamp) -> Result<()> {
-    let due_jobs = engine.claim_due_jobs(tenant_id, now)?;
-    for job in due_jobs {
-        let execution_id = format!("scheduled:{}", job.id);
-        let result =
-            engine.execute_scheduled_mutation(tenant_id, &execution_id, job.mutation.clone());
-        match &result {
-            Ok(true) => {
-                tracing::debug!(tenant = %tenant_id, job_id = %job.id, "scheduled job completed");
-            }
-            Ok(false) => {
-                tracing::debug!(
-                    tenant = %tenant_id,
-                    job_id = %job.id,
-                    "scheduled job replay deduplicated"
-                );
-            }
-            Err(error) => {
-                tracing::warn!(
-                    tenant = %tenant_id,
-                    job_id = %job.id,
-                    error = %error,
-                    "scheduled job failed"
-                );
-            }
-        }
-
-        let execution_result = ScheduledJobResult {
-            id: job.id.clone(),
-            run_at: job.run_at,
-            finished_at: engine.now(),
-            mutation: job.mutation,
-            outcome: if result.is_ok() {
-                ScheduledJobOutcome::Completed
-            } else {
-                ScheduledJobOutcome::Failed
-            },
-            error: result.as_ref().err().map(ToString::to_string),
-        };
-        if let Err(error) = engine.record_scheduled_job_result(tenant_id, &execution_result) {
-            tracing::warn!(
-                tenant = %tenant_id,
-                job_id = %job.id,
-                error = %error,
-                "scheduled job result bookkeeping failed"
-            );
-            continue;
-        }
-        if let Err(error) = engine.complete_scheduled_job(tenant_id, &job.id) {
-            tracing::warn!(
-                tenant = %tenant_id,
-                job_id = %job.id,
-                error = %error,
-                "scheduled job completion bookkeeping failed"
-            );
-            continue;
-        }
-    }
     Ok(())
 }
 
@@ -255,32 +176,6 @@ async fn process_due_jobs_async(
     Ok(())
 }
 
-#[cfg(test)]
-fn process_cron_jobs(engine: &Engine, tenant_id: &TenantId, now: Timestamp) -> Result<()> {
-    let cron_jobs = engine.load_cron_jobs(tenant_id)?;
-    for mut cron in cron_jobs {
-        if !cron.enabled || cron.next_run.0 > now.0 {
-            continue;
-        }
-
-        if let Err(error) = dispatch_mutation(engine, tenant_id, cron.mutation.clone()) {
-            tracing::warn!(
-                tenant = %tenant_id,
-                cron = %cron.name,
-                error = %error,
-                "cron job failed"
-            );
-        } else {
-            tracing::debug!(tenant = %tenant_id, cron = %cron.name, "cron job completed");
-        }
-
-        cron.last_run = Some(now);
-        cron.next_run = cron.schedule.next_after(now);
-        engine.update_cron_job(tenant_id, &cron)?;
-    }
-    Ok(())
-}
-
 async fn process_cron_jobs_async(
     engine: &Arc<Engine>,
     tenant_id: &TenantId,
@@ -312,25 +207,6 @@ async fn process_cron_jobs_async(
             .await?;
     }
     Ok(())
-}
-
-#[cfg(test)]
-fn dispatch_mutation(engine: &Engine, tenant_id: &TenantId, mutation: Mutation) -> Result<()> {
-    match mutation {
-        Mutation::Insert { table, id, fields } => engine
-            .insert_document_with(
-                tenant_id,
-                table,
-                id,
-                fields,
-                crate::MutationActor::anonymous(),
-            )
-            .map(|_| ()),
-        Mutation::Update { table, id, patch } => engine
-            .update_document(tenant_id, table, id, patch)
-            .map(|_| ()),
-        Mutation::Delete { table, id } => engine.delete_document(tenant_id, table, id),
-    }
 }
 
 async fn dispatch_mutation_async(
