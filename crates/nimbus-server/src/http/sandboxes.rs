@@ -10,6 +10,7 @@ use nimbus_services::SandboxResource;
 use serde::{Deserialize, Serialize};
 
 use super::authz::format_millis_rfc3339;
+use super::pagination::{CollectionMetadataResponse, paginate_by_key};
 use super::resource_control::sandboxes::{
     SandboxAction, authorize_sandbox_route, record_sandbox_authorization_audit,
 };
@@ -53,19 +54,8 @@ pub(crate) struct SandboxListQuery {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SandboxCollectionResponse {
-    metadata: SandboxCollectionMetadataResponse,
+    metadata: CollectionMetadataResponse,
     items: Vec<SandboxResourceResponse>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SandboxCollectionMetadataResponse {
-    tenant_id: String,
-    resource_version: String,
-    limit: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    next_page_token: Option<String>,
-    remaining_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -188,9 +178,6 @@ pub(crate) async fn list_sandboxes(
     let manager = service_manager(&state)?;
     let mut resources = manager.list_sandbox_resources_for_tenant(&authorization.tenant_id);
     resources.sort_by(|left, right| left.id.cmp(&right.id));
-    if let Some(token) = query.page_token.as_deref() {
-        resources.retain(|resource| resource.id.as_str() > token);
-    }
     if let Some(status) = query.status.as_deref() {
         resources.retain(|resource| sandbox_status(&resource.handle) == status);
     }
@@ -207,28 +194,23 @@ pub(crate) async fn list_sandboxes(
     if !authorization.is_operator() {
         resources.retain(|resource| authorization.allows(SandboxAction::List, Some(&resource.id)));
     }
-
-    let limit = query.limit.unwrap_or(100).clamp(1, 100);
-    let remaining_count = resources.len().saturating_sub(limit);
-    let next_page_token = if remaining_count > 0 {
-        resources
-            .get(limit.saturating_sub(1))
-            .map(|resource| resource.id.clone())
-    } else {
-        None
-    };
-    resources.truncate(limit);
+    let (resources, page) = paginate_by_key(
+        resources,
+        query.page_token.as_deref(),
+        query.limit,
+        |resource| resource.id.as_str(),
+    );
     Ok(Json(SandboxCollectionResponse {
-        metadata: SandboxCollectionMetadataResponse {
+        metadata: CollectionMetadataResponse {
             tenant_id: authorization.tenant_id.as_str().to_owned(),
             resource_version: format!(
                 "sandboxes:{}:{}",
                 authorization.tenant_id,
-                resources.len() + remaining_count
+                resources.len() + page.remaining_count
             ),
-            limit,
-            next_page_token,
-            remaining_count,
+            limit: page.limit,
+            next_page_token: page.next_page_token,
+            remaining_count: page.remaining_count,
         },
         items: resources
             .into_iter()

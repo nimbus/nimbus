@@ -28,6 +28,7 @@ mod graph;
 mod local_admin;
 mod machines;
 mod metadata;
+mod pagination;
 mod queries;
 mod resource_control;
 mod sandbox_spec;

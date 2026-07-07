@@ -10,6 +10,7 @@ use nimbus_services::{
 use serde::{Deserialize, Serialize};
 
 use super::authz::format_millis_rfc3339;
+use super::pagination::{CollectionMetadataResponse, paginate_by_key};
 use super::resource_control::services::{
     ServiceDefinitionAction, authorize_service_definition_route, authorize_service_route,
     record_service_authorization_audit, record_service_definition_authorization_audit,
@@ -62,30 +63,22 @@ pub(crate) async fn list_service_definitions(
     let manager = service_manager(&state)?;
     let mut definitions = manager.service_definitions_for_tenant(&authorized_tenant_id);
     definitions.sort_by(|left, right| left.name.cmp(&right.name));
-    if let Some(token) = query.page_token.as_deref() {
-        definitions.retain(|definition| definition.name.as_str() > token);
-    }
     if !is_operator {
         definitions.retain(|definition| {
             authorization.allows_service_definition(ServiceDefinitionAction::List, &definition.name)
         });
     }
-
-    let limit = query.limit.unwrap_or(100).clamp(1, 100);
-    let remaining_count = definitions.len().saturating_sub(limit);
-    let next_page_token = if remaining_count > 0 {
-        definitions
-            .get(limit.saturating_sub(1))
-            .map(|definition| definition.name.clone())
-    } else {
-        None
-    };
-    definitions.truncate(limit);
+    let (definitions, page) = paginate_by_key(
+        definitions,
+        query.page_token.as_deref(),
+        query.limit,
+        |definition| definition.name.as_str(),
+    );
 
     record_service_definition_authorization_audit(
         &state,
         &headers,
-        &authorized_tenant_id,
+        authorized_tenant_id.as_str(),
         authorization.principal_class,
         authorization.auth_method,
         true,
@@ -93,16 +86,16 @@ pub(crate) async fn list_service_definitions(
     );
 
     Ok(Json(ServiceDefinitionCollectionResponse {
-        metadata: ServiceDefinitionCollectionMetadataResponse {
+        metadata: CollectionMetadataResponse {
             tenant_id: authorized_tenant_id.as_str().to_owned(),
             resource_version: format!(
                 "services:{}:{}",
                 authorized_tenant_id,
-                definitions.len() + remaining_count
+                definitions.len() + page.remaining_count
             ),
-            limit,
-            next_page_token,
-            remaining_count,
+            limit: page.limit,
+            next_page_token: page.next_page_token,
+            remaining_count: page.remaining_count,
         },
         items: definitions
             .into_iter()
@@ -158,7 +151,7 @@ pub(crate) async fn create_service_definition(
     record_service_definition_authorization_audit(
         &state,
         &headers,
-        tenant_context.tenant_id(),
+        tenant_context.tenant_id().as_str(),
         authorization.principal_class,
         authorization.auth_method,
         true,
@@ -214,7 +207,7 @@ pub(crate) async fn update_service_definition(
     record_service_definition_authorization_audit(
         &state,
         &headers,
-        tenant_context.tenant_id(),
+        tenant_context.tenant_id().as_str(),
         authorization.principal_class,
         authorization.auth_method,
         true,
@@ -254,7 +247,7 @@ pub(crate) async fn delete_service_definition(
         record_service_definition_authorization_audit(
             &state,
             &headers,
-            tenant_context.tenant_id(),
+            tenant_context.tenant_id().as_str(),
             authorization.principal_class,
             authorization.auth_method,
             false,
@@ -279,7 +272,7 @@ pub(crate) async fn delete_service_definition(
     record_service_definition_authorization_audit(
         &state,
         &headers,
-        tenant_context.tenant_id(),
+        tenant_context.tenant_id().as_str(),
         authorization.principal_class,
         authorization.auth_method,
         true,
@@ -363,19 +356,8 @@ pub(crate) struct ServiceDefinitionListQuery {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ServiceDefinitionCollectionResponse {
-    metadata: ServiceDefinitionCollectionMetadataResponse,
+    metadata: CollectionMetadataResponse,
     items: Vec<ServiceDefinitionResourceResponse>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ServiceDefinitionCollectionMetadataResponse {
-    tenant_id: String,
-    resource_version: String,
-    limit: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    next_page_token: Option<String>,
-    remaining_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -479,26 +461,147 @@ pub(crate) async fn get_service(
     Path((tenant_id, service_name)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<ServiceResourceResponse>, AppError> {
-    let authorization = authorize_service_route(
-        &state,
-        &headers,
+    service_lifecycle_route(
+        state,
+        headers,
         tenant_id,
-        &service_name,
-        "native_http.service.get",
+        service_name,
+        ServiceLifecycleVerb::Get,
     )
-    .await?;
+    .await
+}
+
+pub(crate) async fn start_service(
+    State(state): State<Arc<AppState>>,
+    Path((tenant_id, service_name)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<ServiceResourceResponse>, AppError> {
+    service_lifecycle_route(
+        state,
+        headers,
+        tenant_id,
+        service_name,
+        ServiceLifecycleVerb::Start,
+    )
+    .await
+}
+
+pub(crate) async fn stop_service(
+    State(state): State<Arc<AppState>>,
+    Path((tenant_id, service_name)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<ServiceResourceResponse>, AppError> {
+    service_lifecycle_route(
+        state,
+        headers,
+        tenant_id,
+        service_name,
+        ServiceLifecycleVerb::Stop,
+    )
+    .await
+}
+
+pub(crate) async fn restart_service(
+    State(state): State<Arc<AppState>>,
+    Path((tenant_id, service_name)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<ServiceResourceResponse>, AppError> {
+    service_lifecycle_route(
+        state,
+        headers,
+        tenant_id,
+        service_name,
+        ServiceLifecycleVerb::Restart,
+    )
+    .await
+}
+
+/// Which service-lifecycle manager verb a route invokes; drives both the
+/// authorization surface string and the recorded lifecycle event action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ServiceLifecycleVerb {
+    Get,
+    Start,
+    Stop,
+    Restart,
+}
+
+impl ServiceLifecycleVerb {
+    fn surface(self) -> &'static str {
+        match self {
+            Self::Get => "native_http.service.get",
+            Self::Start => "native_http.service.start",
+            Self::Stop => "native_http.service.stop",
+            Self::Restart => "native_http.service.restart",
+        }
+    }
+
+    /// The `record_service_event` action name, or `None` for `Get`, which does
+    /// not mutate the service and so records no lifecycle event.
+    fn event_action(self) -> Option<&'static str> {
+        match self {
+            Self::Get => None,
+            Self::Start => Some("start"),
+            Self::Stop => Some("stop"),
+            Self::Restart => Some("restart"),
+        }
+    }
+}
+
+async fn service_lifecycle_route(
+    state: Arc<AppState>,
+    headers: HeaderMap,
+    tenant_id: String,
+    service_name: String,
+    verb: ServiceLifecycleVerb,
+) -> Result<Json<ServiceResourceResponse>, AppError> {
+    let authorization =
+        authorize_service_route(&state, &headers, tenant_id, &service_name, verb.surface()).await?;
     let tenant_context = authorization.tenant_context;
     let manager = service_manager(&state)?;
-    if !manager.service_declared_for_tenant(tenant_context.tenant_id(), &service_name) {
-        return Err(service_not_found(tenant_context.tenant_id(), &service_name));
+    let handle = match verb {
+        ServiceLifecycleVerb::Get => {
+            if !manager.service_declared_for_tenant(tenant_context.tenant_id(), &service_name) {
+                return Err(service_not_found(tenant_context.tenant_id(), &service_name));
+            }
+            manager
+                .inspect_service_for_context_async(&tenant_context, &service_name)
+                .await?
+        }
+        ServiceLifecycleVerb::Start => Some(
+            manager
+                .start_service_for_context_async(
+                    &tenant_context,
+                    &service_name,
+                    HostCallCancellation::default(),
+                )
+                .await?
+                .ok_or_else(|| service_not_found(tenant_context.tenant_id(), &service_name))?,
+        ),
+        ServiceLifecycleVerb::Stop => Some(
+            manager
+                .stop_service_for_context_async(&tenant_context, &service_name)
+                .await?
+                .ok_or_else(|| service_not_found(tenant_context.tenant_id(), &service_name))?,
+        ),
+        ServiceLifecycleVerb::Restart => Some(
+            manager
+                .restart_service_for_context_async(
+                    &tenant_context,
+                    &service_name,
+                    HostCallCancellation::default(),
+                )
+                .await?
+                .ok_or_else(|| service_not_found(tenant_context.tenant_id(), &service_name))?,
+        ),
+    };
+    if let (Some(action), Some(handle)) = (verb.event_action(), handle.as_ref()) {
+        record_service_event(&state, tenant_context.tenant_id(), action, handle).await?;
     }
-    let handle = manager
-        .inspect_service_for_context_async(&tenant_context, &service_name)
-        .await?;
     record_service_authorization_audit(
         &state,
         &headers,
-        tenant_context.tenant_id(),
+        tenant_context.tenant_id().as_str(),
         authorization.principal_class,
         authorization.auth_method,
         true,
@@ -514,131 +617,6 @@ pub(crate) async fn get_service(
             ServiceResourceResponse::declared_inactive(tenant_context.tenant_id(), &service_name)
         }
     }))
-}
-
-pub(crate) async fn start_service(
-    State(state): State<Arc<AppState>>,
-    Path((tenant_id, service_name)): Path<(String, String)>,
-    headers: HeaderMap,
-) -> Result<Json<ServiceResourceResponse>, AppError> {
-    let authorization = authorize_service_route(
-        &state,
-        &headers,
-        tenant_id,
-        &service_name,
-        "native_http.service.start",
-    )
-    .await?;
-    let tenant_context = authorization.tenant_context;
-    let manager = service_manager(&state)?;
-    let handle = manager
-        .start_service_for_context_async(
-            &tenant_context,
-            &service_name,
-            HostCallCancellation::default(),
-        )
-        .await?
-        .ok_or_else(|| service_not_found(tenant_context.tenant_id(), &service_name))?;
-    record_service_event(&state, tenant_context.tenant_id(), "start", &handle).await?;
-    record_service_authorization_audit(
-        &state,
-        &headers,
-        tenant_context.tenant_id(),
-        authorization.principal_class,
-        authorization.auth_method,
-        true,
-        format!(
-            "{} principal authorized with exact service grant or operator authority",
-            authorization.principal_class.as_str()
-        ),
-    );
-
-    Ok(Json(ServiceResourceResponse::from_handle(
-        tenant_context.tenant_id(),
-        &handle,
-    )))
-}
-
-pub(crate) async fn stop_service(
-    State(state): State<Arc<AppState>>,
-    Path((tenant_id, service_name)): Path<(String, String)>,
-    headers: HeaderMap,
-) -> Result<Json<ServiceResourceResponse>, AppError> {
-    let authorization = authorize_service_route(
-        &state,
-        &headers,
-        tenant_id,
-        &service_name,
-        "native_http.service.stop",
-    )
-    .await?;
-    let tenant_context = authorization.tenant_context;
-    let manager = service_manager(&state)?;
-    let handle = manager
-        .stop_service_for_context_async(&tenant_context, &service_name)
-        .await?
-        .ok_or_else(|| service_not_found(tenant_context.tenant_id(), &service_name))?;
-    record_service_event(&state, tenant_context.tenant_id(), "stop", &handle).await?;
-    record_service_authorization_audit(
-        &state,
-        &headers,
-        tenant_context.tenant_id(),
-        authorization.principal_class,
-        authorization.auth_method,
-        true,
-        format!(
-            "{} principal authorized with exact service grant or operator authority",
-            authorization.principal_class.as_str()
-        ),
-    );
-
-    Ok(Json(ServiceResourceResponse::from_handle(
-        tenant_context.tenant_id(),
-        &handle,
-    )))
-}
-
-pub(crate) async fn restart_service(
-    State(state): State<Arc<AppState>>,
-    Path((tenant_id, service_name)): Path<(String, String)>,
-    headers: HeaderMap,
-) -> Result<Json<ServiceResourceResponse>, AppError> {
-    let authorization = authorize_service_route(
-        &state,
-        &headers,
-        tenant_id,
-        &service_name,
-        "native_http.service.restart",
-    )
-    .await?;
-    let tenant_context = authorization.tenant_context;
-    let manager = service_manager(&state)?;
-    let handle = manager
-        .restart_service_for_context_async(
-            &tenant_context,
-            &service_name,
-            HostCallCancellation::default(),
-        )
-        .await?
-        .ok_or_else(|| service_not_found(tenant_context.tenant_id(), &service_name))?;
-    record_service_event(&state, tenant_context.tenant_id(), "restart", &handle).await?;
-    record_service_authorization_audit(
-        &state,
-        &headers,
-        tenant_context.tenant_id(),
-        authorization.principal_class,
-        authorization.auth_method,
-        true,
-        format!(
-            "{} principal authorized with exact service grant or operator authority",
-            authorization.principal_class.as_str()
-        ),
-    );
-
-    Ok(Json(ServiceResourceResponse::from_handle(
-        tenant_context.tenant_id(),
-        &handle,
-    )))
 }
 
 impl ServiceResourceResponse {
