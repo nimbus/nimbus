@@ -8,66 +8,40 @@
 //! listeners use the generated wire-credential store under the control
 //! data dir (D5), shared with `nimbus dev`. The same non-loopback opt-in
 //! gate as the main listener applies.
+//!
+//! Each protocol surface resolves in its own module (`cloudflare`,
+//! `convex_tenancy`, `dynamodb`, `firebase`, `mongodb`, `s3`). This module is
+//! the composition root: it owns [`AdapterEnablement`], the credential-store
+//! and bind-address helpers the port-owning resolvers share, and the
+//! dispatcher that calls each resolver once per boot.
+
+mod cloudflare;
+mod convex_tenancy;
+mod dynamodb;
+mod firebase;
+mod mongodb;
+mod s3;
+
+pub(crate) use dynamodb::DYNAMODB_CONVENTIONAL_PORT;
+pub(crate) use mongodb::MONGODB_CONVENTIONAL_PORT;
+pub(crate) use s3::S3_CONVENTIONAL_PORT;
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 
-use nimbus::{Error, ObjectStorageConfig, ObjectStorageEnv, TenantId};
+use nimbus::Error;
 use nimbus_server::{
-    CloudflareConfig, ConvexTenancyConfig, DynamoDbConfig, FirebaseConfig, MongoDbAuthConfig,
-    MongoDbConfig, MongoDbCredentialRegistry, PrincipalTeamRegistry, ProjectTenantRegistry,
-    S3AccessKeyRegistry, S3Config, SiloTeamRegistry,
+    CloudflareConfig, ConvexTenancyConfig, DynamoDbConfig, FirebaseConfig, MongoDbConfig, S3Config,
 };
 
 use crate::wire_credentials::{WireCredentials, load_or_generate};
 
 use super::StartCommand;
-use super::network_bind::ensure_host_opt_in;
-
-pub(super) const MONGODB_USERNAME_ENV: &str = "NIMBUS_MONGODB_USERNAME";
-pub(super) const MONGODB_PASSWORD_ENV: &str = "NIMBUS_MONGODB_PASSWORD";
-/// Per-tenant MongoDB credential bindings (M9a). Comma-separated
-/// `USERNAME:TENANT:PASSWORD` entries, mirroring the DynamoDB
-/// [`DYNAMODB_ACCESS_KEYS_ENV`] convention. When set with at least one binding
-/// the listener runs in bound mode (authentication decides the tenant), which a
-/// non-loopback host requires; otherwise the listener stays in today's unbound,
-/// loopback-only mode.
-pub(super) const MONGODB_CREDENTIALS_ENV: &str = "NIMBUS_MONGODB_CREDENTIALS";
-pub(super) const DYNAMODB_ACCESS_KEYS_ENV: &str = "NIMBUS_DYNAMODB_ACCESS_KEYS";
-pub(super) const S3_ACCESS_KEYS_ENV: &str = "NIMBUS_S3_ACCESS_KEYS";
-/// Per-tenant Firebase project->tenant bindings. Comma-separated
-/// `PROJECT:TENANT` entries, mirroring the MongoDB [`MONGODB_CREDENTIALS_ENV`]
-/// convention. When set the Firebase adapter resolves each request's project to
-/// its bound tenant through this registry; when unset the adapter keeps the
-/// default empty registry from [`FirebaseConfig::new`], which refuses every
-/// request because no project maps to a tenant. A malformed entry is a hard
-/// boot error, never a silent permissive default.
-pub(super) const FIREBASE_PROJECTS_ENV: &str = "NIMBUS_FIREBASE_PROJECTS";
-/// Per-silo team bindings (#41 application-Convex team-binding gate).
-/// Comma-separated `SILO_TENANT:TEAM` entries, parsed by
-/// [`SiloTeamRegistry::from_operator_spec`]. When set, the application-Convex
-/// admission funnel authorizes a request's silo selection against the
-/// principal's team. When unset the deployment keeps the empty, fail-closed
-/// [`ConvexTenancyConfig::default`], which refuses every silo selection because
-/// no silo maps to a team. A malformed spec is a hard boot error, never a
-/// silent permissive default.
-pub(super) const CONVEX_SILO_TEAMS_ENV: &str = "NIMBUS_CONVEX_SILO_TEAMS";
-/// Verified-principal team bindings (#41 application-Convex team-binding gate).
-/// Comma-separated `SUBJECT@ISSUER:TEAM` entries, parsed by
-/// [`PrincipalTeamRegistry::from_operator_spec`]. Pairs with
-/// [`CONVEX_SILO_TEAMS_ENV`]: a principal may only select a silo owned by its
-/// bound team. When unset the deployment keeps the empty, fail-closed
-/// [`ConvexTenancyConfig::default`]. A malformed spec is a hard boot error.
-pub(super) const CONVEX_PRINCIPAL_TEAMS_ENV: &str = "NIMBUS_CONVEX_PRINCIPAL_TEAMS";
-
-pub(crate) const MONGODB_CONVENTIONAL_PORT: u16 = 27017;
-pub(crate) const DYNAMODB_CONVENTIONAL_PORT: u16 = 8000;
-pub(crate) const S3_CONVENTIONAL_PORT: u16 = 9000;
 
 /// Tenant the generated wire credentials bind to when the operator provides no
 /// surface-specific bindings. `nimbus dev` overrides this with its auto-tenant
 /// by passing explicit bindings.
-pub(super) const DEFAULT_WIRE_TENANT: &str = "default";
+const DEFAULT_WIRE_TENANT: &str = "default";
 
 /// Adapter configs resolved from the start command. `None` means the
 /// surface does not serve this boot — opted out, or its conventional
@@ -180,19 +154,6 @@ impl<'a> CredentialStore<'a> {
     }
 }
 
-struct AdapterObjectStorageEnv<'a, F> {
-    lookup: &'a F,
-}
-
-impl<F> ObjectStorageEnv for AdapterObjectStorageEnv<'_, F>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    fn get(&self, key: &str) -> Option<String> {
-        (self.lookup)(key)
-    }
-}
-
 /// A malformed store is operator-fixable (the underlying error carries the
 /// "delete it to regenerate" hint), so it maps to `InvalidInput`; anything
 /// else is an environment failure.
@@ -242,431 +203,18 @@ pub(crate) fn resolve_adapter_enablement_with_env_and_app_dir(
     port_is_free: impl Fn(u16) -> bool,
 ) -> Result<AdapterEnablement, Error> {
     let mut store = CredentialStore::new(control_data_dir);
-    let mongodb = resolve_mongodb(command, &env_lookup, &port_is_free, &mut store)?;
-    let dynamodb = resolve_dynamodb(command, &env_lookup, &port_is_free, &mut store)?;
-    let s3 = resolve_s3(command, &env_lookup, &port_is_free, &mut store)?;
-    let cloudflare = resolve_cloudflare(command, app_dir, &mut store)?;
+    let mongodb = mongodb::resolve_mongodb(command, &env_lookup, &port_is_free, &mut store)?;
+    let dynamodb = dynamodb::resolve_dynamodb(command, &env_lookup, &port_is_free, &mut store)?;
+    let s3 = s3::resolve_s3(command, &env_lookup, &port_is_free, &mut store)?;
+    let cloudflare = cloudflare::resolve_cloudflare(command, app_dir, &mut store)?;
     Ok(AdapterEnablement {
-        firebase: resolve_firebase(command, &env_lookup)?,
+        firebase: firebase::resolve_firebase(command, &env_lookup)?,
         cloudflare,
-        convex_tenancy: resolve_convex_tenancy(&env_lookup)?,
+        convex_tenancy: convex_tenancy::resolve_convex_tenancy(&env_lookup)?,
         mongodb,
         dynamodb,
         s3,
     })
-}
-
-/// Resolve the application-Convex team-binding tenancy config (#41), ingesting
-/// the silo->team and principal->team registries from [`CONVEX_SILO_TEAMS_ENV`]
-/// and [`CONVEX_PRINCIPAL_TEAMS_ENV`] when present.
-///
-/// When neither env is set this returns `Ok(None)`: the deployment keeps the
-/// fail-closed [`ConvexTenancyConfig::default`] (no `convex_tenancy` plumbed),
-/// so the admission funnel refuses every application-Convex silo selection. When
-/// at least one env is set the registries are parsed by the same
-/// `from_operator_spec` the gate uses elsewhere. A malformed spec is a hard
-/// `InvalidInput` boot error, mirroring the Firebase project ingestion; an unset
-/// env never falls back to a permissive registry.
-fn resolve_convex_tenancy(
-    env_lookup: &impl Fn(&str) -> Option<String>,
-) -> Result<Option<ConvexTenancyConfig>, Error> {
-    let silo_raw = env_lookup(CONVEX_SILO_TEAMS_ENV);
-    let principal_raw = env_lookup(CONVEX_PRINCIPAL_TEAMS_ENV);
-    if silo_raw.is_none() && principal_raw.is_none() {
-        return Ok(None);
-    }
-    let mut config = ConvexTenancyConfig::new();
-    if let Some(raw) = silo_raw {
-        let registry = SiloTeamRegistry::from_operator_spec(&raw)
-            .map_err(|error| Error::InvalidInput(error.to_string()))?;
-        config = config.with_silo_teams(registry);
-    }
-    if let Some(raw) = principal_raw {
-        let registry = PrincipalTeamRegistry::from_operator_spec(&raw)
-            .map_err(|error| Error::InvalidInput(error.to_string()))?;
-        config = config.with_principal_teams(registry);
-    }
-    Ok(Some(config))
-}
-
-/// Resolve the Firebase adapter config, ingesting the project->tenant registry
-/// from [`FIREBASE_PROJECTS_ENV`] when present.
-///
-/// When the surface is opted out this returns `Ok(None)`. When enabled the
-/// adapter starts from [`FirebaseConfig::new`] (an empty, strict refuse-all
-/// registry) and installs operator bindings only when the env is set, parsed by
-/// the same [`ProjectTenantRegistry::from_operator_spec`] the registry uses
-/// elsewhere. A malformed spec is a hard `InvalidInput` boot error, mirroring
-/// the MongoDB credential ingestion; an unset env never falls back to a
-/// permissive registry.
-fn resolve_firebase(
-    command: &StartCommand,
-    env_lookup: &impl Fn(&str) -> Option<String>,
-) -> Result<Option<FirebaseConfig>, Error> {
-    if !command.firestore {
-        return Ok(None);
-    }
-    let mut config = FirebaseConfig::new();
-    if let Some(auto_tenant) = &command.auto_tenant {
-        let tenant = TenantId::new(auto_tenant)
-            .map_err(|error| Error::InvalidInput(format!("invalid auto tenant: {error}")))?;
-        config = config
-            .with_emulator_token_verification_bypass()
-            .with_project_registry(ProjectTenantRegistry::new().bind(auto_tenant, tenant));
-    } else if let Some(raw) = env_lookup(FIREBASE_PROJECTS_ENV) {
-        let registry = ProjectTenantRegistry::from_operator_spec(&raw)
-            .map_err(|error| Error::InvalidInput(error.to_string()))?;
-        config = config.with_project_registry(registry);
-    }
-    Ok(Some(config))
-}
-
-fn resolve_cloudflare(
-    command: &StartCommand,
-    app_dir: Option<&Path>,
-    store: &mut CredentialStore<'_>,
-) -> Result<Option<CloudflareConfig>, Error> {
-    if !command.cloudflare {
-        return Ok(None);
-    }
-    // Cloudflare routes share the refuse_non_loopback_bind posture enforced by `ensure_host_opt_in`.
-    ensure_host_opt_in(&command.host, command.allow_network)
-        .map_err(|error| Error::InvalidInput(format!("--host for Cloudflare routes: {error}")))?;
-    let mut config = match app_dir {
-        Some(app_dir) => CloudflareConfig::from_app_dir(app_dir)
-            .map_err(|error| Error::InvalidInput(error.to_string()))?,
-        None => CloudflareConfig::default(),
-    };
-    let credentials = store.get()?;
-    let tenant = TenantId::new(DEFAULT_WIRE_TENANT)?;
-    config = config.with_signed_access_key(
-        credentials.dynamodb_access_key_id.clone(),
-        tenant,
-        credentials.dynamodb_secret_access_key.clone(),
-    );
-    Ok(Some(config))
-}
-
-fn resolve_mongodb(
-    command: &StartCommand,
-    env_lookup: &impl Fn(&str) -> Option<String>,
-    port_is_free: &impl Fn(u16) -> bool,
-    store: &mut CredentialStore<'_>,
-) -> Result<Option<MongoDbConfig>, Error> {
-    if !command.mongodb {
-        if command.mongodb_port.is_some() || command.mongodb_username.is_some() {
-            return Err(Error::InvalidInput(
-                "--no-mongodb conflicts with --mongodb-port/--mongodb-username; \
-                 drop the configuration flags or re-enable the listener"
-                    .to_string(),
-            ));
-        }
-        return Ok(None);
-    }
-
-    // Bound mode (M9a): per-tenant credential bindings make authentication —
-    // not the wire `$db` — decide the tenant, so a bound listener may bind a
-    // non-loopback host. Built from the SAME parser the acceptance test
-    // exercises (`CredentialRegistry::from_operator_spec`), mirroring the
-    // DynamoDB access-key ingestion. The env presence is the switch: with at
-    // least one binding the listener runs bound; otherwise it falls through to
-    // today's unbound, loopback-only path unchanged.
-    if let Some(registry) = resolve_bound_mongodb_registry(command, env_lookup)? {
-        let Some(port) = resolve_mongodb_port(command, port_is_free) else {
-            return Ok(None);
-        };
-        // A bound listener may go non-loopback, gated by the same
-        // `--allow-network` opt-in as the main and DynamoDB listeners.
-        ensure_host_opt_in(&command.mongodb_host, command.allow_network)
-            .map_err(|error| Error::InvalidInput(format!("--mongodb-host: {error}")))?;
-        let bind_addr = adapter_bind_addr(&command.mongodb_host, port, "--mongodb-host")?;
-        return Ok(Some(MongoDbConfig::bound(bind_addr, registry)));
-    }
-
-    // Unbound mode: the server hard-guards the MongoDB listener to loopback
-    // (`guard_bind_address`): SCRAM runs over a plaintext channel under a single
-    // tenant-agnostic credential, so the wire endpoint never binds a
-    // network-reachable address. Validate here for a flag-shaped error instead
-    // of a late bind failure.
-    if !host_is_loopback_name(&command.mongodb_host) {
-        return Err(Error::InvalidInput(format!(
-            "--mongodb-host: the MongoDB listener is loopback-only (`{host}` refused); \
-             supply per-tenant credentials ({MONGODB_CREDENTIALS_ENV}) for a non-loopback bind, \
-             or front it with a TLS-terminating proxy for remote access",
-            host = command.mongodb_host
-        )));
-    }
-    let Some(port) = resolve_mongodb_port(command, port_is_free) else {
-        return Ok(None);
-    };
-    let (username, password) = if command.mongodb_credentials_from_store {
-        // `nimbus dev` advertises the store credentials in the app's
-        // `.env.local`; ambient operator env must not desync the listener
-        // from what that file carries.
-        let credentials = store.get()?;
-        (
-            credentials.mongodb_username.clone(),
-            credentials.mongodb_password.clone(),
-        )
-    } else {
-        let username = command
-            .mongodb_username
-            .clone()
-            .or_else(|| env_lookup(MONGODB_USERNAME_ENV));
-        let password = env_lookup(MONGODB_PASSWORD_ENV);
-        match (username, password) {
-            (Some(username), Some(password)) => (username, password),
-            (Some(_), None) => {
-                return Err(Error::InvalidInput(format!(
-                    "the MongoDB listener requires the {MONGODB_PASSWORD_ENV} environment \
-                     variable (the password is env-only so it never appears in process \
-                     listings)"
-                )));
-            }
-            (None, Some(_)) => {
-                return Err(Error::InvalidInput(format!(
-                    "{MONGODB_PASSWORD_ENV} is set without a username; pass \
-                     --mongodb-username (or set {MONGODB_USERNAME_ENV}) to use operator \
-                     credentials, or unset the password to use the generated \
-                     wire-credential store"
-                )));
-            }
-            (None, None) => {
-                let credentials = store.get()?;
-                (
-                    credentials.mongodb_username.clone(),
-                    credentials.mongodb_password.clone(),
-                )
-            }
-        }
-    };
-    let auth = MongoDbAuthConfig::try_new(username, password)
-        .map_err(|error| Error::Internal(error.to_string()))?;
-    let bind_addr = adapter_bind_addr(&command.mongodb_host, port, "--mongodb-host")?;
-    Ok(Some(MongoDbConfig::new(bind_addr, auth)))
-}
-
-/// Resolve the MongoDB listener port, shared by bound and unbound modes.
-///
-/// An explicit `--mongodb-port` is always honored. Without one the conventional
-/// port (27017) is used when free; when busy the listener is skipped (returns
-/// `None`) with a warning — the same default-port behavior as DynamoDB.
-fn resolve_mongodb_port(
-    command: &StartCommand,
-    port_is_free: &impl Fn(u16) -> bool,
-) -> Option<u16> {
-    match command.mongodb_port {
-        Some(port) => Some(port),
-        None => {
-            if port_is_free(MONGODB_CONVENTIONAL_PORT) {
-                Some(MONGODB_CONVENTIONAL_PORT)
-            } else {
-                tracing::warn!(
-                    "MongoDB conventional port {MONGODB_CONVENTIONAL_PORT} is busy; \
-                     skipping the default MongoDB listener — pass --mongodb-port to \
-                     serve on another port"
-                );
-                None
-            }
-        }
-    }
-}
-
-/// Parse the `NIMBUS_MONGODB_CREDENTIALS` env into a per-tenant credential
-/// registry (bound mode), if present and non-empty.
-///
-/// Returns `Ok(None)` when the env is unset, holds no bindings (whitespace or
-/// just separators), or the listener is in `nimbus dev` store-credential mode —
-/// each is the signal to use today's unbound, loopback-only path. Returns
-/// `Ok(Some(registry))` for one or more well-formed bindings. A malformed entry
-/// or a reserved-tenant binding is a hard `InvalidInput` error surfaced cleanly
-/// at boot, not a silent runtime auth failure. The parser is shared with the
-/// acceptance test, so ingestion and the test agree by construction.
-fn resolve_bound_mongodb_registry(
-    command: &StartCommand,
-    env_lookup: &impl Fn(&str) -> Option<String>,
-) -> Result<Option<MongoDbCredentialRegistry>, Error> {
-    // `nimbus dev` pins the listener to its generated store credentials and
-    // advertises them in `.env.local`; ambient NIMBUS_MONGODB_CREDENTIALS in the
-    // developer's shell must not desync the two, exactly as ambient
-    // NIMBUS_MONGODB_USERNAME/PASSWORD are ignored in store mode.
-    if command.mongodb_credentials_from_store {
-        return Ok(None);
-    }
-    let Some(raw) = env_lookup(MONGODB_CREDENTIALS_ENV) else {
-        return Ok(None);
-    };
-    let registry = MongoDbCredentialRegistry::from_operator_spec(&raw)
-        .map_err(|error| Error::InvalidInput(error.to_string()))?;
-    Ok((!registry.is_empty()).then_some(registry))
-}
-
-fn resolve_dynamodb(
-    command: &StartCommand,
-    env_lookup: &impl Fn(&str) -> Option<String>,
-    port_is_free: &impl Fn(u16) -> bool,
-    store: &mut CredentialStore<'_>,
-) -> Result<Option<DynamoDbConfig>, Error> {
-    if !command.dynamodb {
-        if command.dynamodb_port.is_some() || !command.dynamodb_access_key.is_empty() {
-            return Err(Error::InvalidInput(
-                "--no-dynamodb conflicts with --dynamodb-port/--dynamodb-access-key; \
-                 drop the configuration flags or re-enable the listener"
-                    .to_string(),
-            ));
-        }
-        return Ok(None);
-    }
-    ensure_host_opt_in(&command.dynamodb_host, command.allow_network)
-        .map_err(|error| Error::InvalidInput(format!("--dynamodb-host: {error}")))?;
-    let port = match command.dynamodb_port {
-        Some(port) => port,
-        None => {
-            if !port_is_free(DYNAMODB_CONVENTIONAL_PORT) {
-                tracing::warn!(
-                    "DynamoDB conventional port {DYNAMODB_CONVENTIONAL_PORT} is busy; \
-                     skipping the default DynamoDB listener — pass --dynamodb-port to \
-                     serve on another port"
-                );
-                return Ok(None);
-            }
-            DYNAMODB_CONVENTIONAL_PORT
-        }
-    };
-    let raw_bindings: Vec<String> = if command.dynamodb_access_key.is_empty() {
-        env_lookup(DYNAMODB_ACCESS_KEYS_ENV)
-            .map(|raw| {
-                raw.split(',')
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default()
-    } else {
-        command.dynamodb_access_key.clone()
-    };
-    let mut config = DynamoDbConfig::new(port).with_bind_addr(adapter_bind_addr(
-        &command.dynamodb_host,
-        port,
-        "--dynamodb-host",
-    )?);
-    if raw_bindings.is_empty() {
-        // Every request still authenticates: the generated store key binds
-        // to the `default` tenant, so an unconfigured boot serves signed
-        // requests instead of rejecting everything.
-        let credentials = store.get()?;
-        let tenant = TenantId::new(DEFAULT_WIRE_TENANT)?;
-        config = config.with_signed_access_key(
-            credentials.dynamodb_access_key_id.clone(),
-            tenant,
-            credentials.dynamodb_secret_access_key.clone(),
-        );
-    } else {
-        for binding in &raw_bindings {
-            let (key_id, secret, tenant) = parse_access_key_binding(binding)?;
-            config = config.with_signed_access_key(key_id, tenant, secret);
-        }
-    }
-    Ok(Some(config))
-}
-
-fn resolve_s3(
-    command: &StartCommand,
-    env_lookup: &impl Fn(&str) -> Option<String>,
-    port_is_free: &impl Fn(u16) -> bool,
-    store: &mut CredentialStore<'_>,
-) -> Result<Option<S3Config>, Error> {
-    if !command.s3 {
-        if command.s3_port.is_some() || !command.s3_access_key.is_empty() {
-            return Err(Error::InvalidInput(
-                "--no-s3 conflicts with --s3-port/--s3-access-key; \
-                 drop the configuration flags or re-enable the listener"
-                    .to_string(),
-            ));
-        }
-        return Ok(None);
-    }
-    ensure_host_opt_in(&command.s3_host, command.allow_network)
-        .map_err(|error| Error::InvalidInput(format!("--s3-host: {error}")))?;
-    let port = match command.s3_port {
-        Some(port) => port,
-        None => {
-            if !port_is_free(S3_CONVENTIONAL_PORT) {
-                tracing::warn!(
-                    "S3 conventional port {S3_CONVENTIONAL_PORT} is busy; \
-                     skipping the default S3 listener — pass --s3-port to \
-                     serve on another port"
-                );
-                return Ok(None);
-            }
-            S3_CONVENTIONAL_PORT
-        }
-    };
-    let raw_bindings: Vec<String> = if command.s3_access_key.is_empty() {
-        env_lookup(S3_ACCESS_KEYS_ENV)
-            .map(|raw| {
-                raw.split(',')
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default()
-    } else {
-        command.s3_access_key.clone()
-    };
-    let mut convex_download_secret = None;
-    let access_keys = if raw_bindings.is_empty() {
-        let credentials = store.get()?;
-        let tenant = TenantId::new(DEFAULT_WIRE_TENANT)?;
-        convex_download_secret = Some(credentials.s3_secret_access_key.clone().into_bytes());
-        S3AccessKeyRegistry::new().bind_signed(
-            credentials.s3_access_key_id.clone(),
-            tenant,
-            credentials.s3_secret_access_key.clone(),
-        )
-    } else {
-        S3AccessKeyRegistry::from_operator_spec(&raw_bindings.join(","))
-            .map_err(|error| Error::InvalidInput(error.to_string()))?
-    };
-    let object_storage =
-        ObjectStorageConfig::from_sources(None, &AdapterObjectStorageEnv { lookup: env_lookup })?;
-    let mut config = S3Config::new(port)
-        .with_bind_addr(adapter_bind_addr(&command.s3_host, port, "--s3-host")?)
-        .with_access_keys(access_keys)
-        .with_object_storage_config(object_storage);
-    if let Some(secret) = convex_download_secret {
-        config = config.with_convex_download_secret(secret);
-    }
-    Ok(Some(config))
-}
-
-/// Parse `ACCESS_KEY_ID:SECRET:TENANT`. AWS secret access keys use the
-/// base64 alphabet (no `:`), so a three-way split is unambiguous.
-fn parse_access_key_binding(binding: &str) -> Result<(String, String, TenantId), Error> {
-    let mut parts = binding.splitn(3, ':');
-    let (Some(key_id), Some(secret), Some(tenant)) = (parts.next(), parts.next(), parts.next())
-    else {
-        return Err(Error::InvalidInput(format!(
-            "invalid DynamoDB access-key binding `{binding}`: expected ACCESS_KEY_ID:SECRET:TENANT"
-        )));
-    };
-    if key_id.is_empty() || secret.is_empty() || tenant.is_empty() {
-        return Err(Error::InvalidInput(format!(
-            "invalid DynamoDB access-key binding `{binding}`: every segment must be non-empty"
-        )));
-    }
-    let tenant = TenantId::new(tenant)?;
-    Ok((key_id.to_string(), secret.to_string(), tenant))
-}
-
-fn host_is_loopback_name(host: &str) -> bool {
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<IpAddr>()
-            .map(|ip| ip.is_loopback())
-            .unwrap_or(false)
 }
 
 fn adapter_bind_addr(host: &str, port: u16, flag: &str) -> Result<SocketAddr, Error> {
@@ -683,6 +231,12 @@ fn adapter_bind_addr(host: &str, port: u16, flag: &str) -> Result<SocketAddr, Er
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dynamodb::DYNAMODB_ACCESS_KEYS_ENV;
+    use firebase::FIREBASE_PROJECTS_ENV;
+    use mongodb::{MONGODB_CREDENTIALS_ENV, MONGODB_PASSWORD_ENV, MONGODB_USERNAME_ENV};
+    use nimbus::TenantId;
+    use s3::S3_ACCESS_KEYS_ENV;
+
     use crate::wire_credentials::wire_credentials_path;
 
     fn base_command() -> StartCommand {

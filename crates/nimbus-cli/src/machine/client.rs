@@ -1,12 +1,13 @@
 use std::fs;
-use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use hyper::{Body, Request, StatusCode};
 use nimbus::{Error, SandboxHandle, SandboxId, SandboxRootSpec, SandboxSpec, TenantId};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::UnixStream;
 
 use nimbus_machine::api::{
     MACHINE_API_BOOTC_ROLLBACK_PATH, MACHINE_API_BOOTC_STATUS_PATH, MACHINE_API_BOOTC_SWITCH_PATH,
@@ -66,15 +67,19 @@ impl MachineApiClient {
     }
 
     pub(crate) fn capabilities(&self) -> Result<MachineApiCapabilityResponse, Error> {
-        let response = read_unix_http_request(
+        let (status, response) = machine_api_request(
             &self.socket_path,
             "GET",
             MACHINE_API_CAPABILITIES_PATH,
             None,
             self.io_timeout,
         )?;
-        let body =
-            parse_http_json_body(&response, &self.socket_path, MACHINE_API_CAPABILITIES_PATH)?;
+        let body = extract_machine_api_json_body(
+            status,
+            &response,
+            &self.socket_path,
+            MACHINE_API_CAPABILITIES_PATH,
+        )?;
         serde_json::from_slice(body)
             .map_err(|error| describe_capability_decode_error(&self.socket_path, body, error))
     }
@@ -196,9 +201,9 @@ impl MachineApiClient {
     where
         T: DeserializeOwned,
     {
-        let response =
-            read_unix_http_request(&self.socket_path, "GET", path, None, self.io_timeout)?;
-        let body = parse_http_json_body(&response, &self.socket_path, path)?;
+        let (status, response) =
+            machine_api_request(&self.socket_path, "GET", path, None, self.io_timeout)?;
+        let body = extract_machine_api_json_body(status, &response, &self.socket_path, path)?;
         serde_json::from_slice(body).map_err(|error| {
             Error::Internal(format!(
                 "failed to decode machine API response from {}{}: {error}",
@@ -220,14 +225,14 @@ impl MachineApiClient {
                 path
             ))
         })?;
-        let response = read_unix_http_request(
+        let (status, response) = machine_api_request(
             &self.socket_path,
             "POST",
             path,
             Some(&encoded),
             SOCKET_MUTATION_IO_TIMEOUT,
         )?;
-        let body = parse_http_json_body(&response, &self.socket_path, path)?;
+        let body = extract_machine_api_json_body(status, &response, &self.socket_path, path)?;
         serde_json::from_slice(body).map_err(|error| {
             Error::Internal(format!(
                 "failed to decode machine API response from {}{}: {error}",
@@ -241,14 +246,14 @@ impl MachineApiClient {
     where
         T: DeserializeOwned,
     {
-        let response = read_unix_http_request(
+        let (status, response) = machine_api_request(
             &self.socket_path,
             "POST",
             path,
             None,
             SOCKET_MUTATION_IO_TIMEOUT,
         )?;
-        let body = parse_http_json_body(&response, &self.socket_path, path)?;
+        let body = extract_machine_api_json_body(status, &response, &self.socket_path, path)?;
         serde_json::from_slice(body).map_err(|error| {
             Error::Internal(format!(
                 "failed to decode machine API response from {}{}: {error}",
@@ -318,139 +323,168 @@ fn describe_capability_decode_error(
     }
 }
 
-fn read_unix_http_request(
+/// Connect the platform transport for one machine API request. This is the
+/// only platform-specific half of the client: a future Windows named-pipe
+/// transport substitutes here (see
+/// `docs/private/plans/windows-machine-support-plan.md` WIN4) without
+/// touching `send_machine_api_request`, which only requires an
+/// `AsyncRead + AsyncWrite` byte stream.
+async fn connect_machine_api_stream(socket_path: &Path) -> Result<UnixStream, Error> {
+    UnixStream::connect(socket_path).await.map_err(|error| {
+        Error::Internal(format!(
+            "failed to connect to machine API socket {}: {error}",
+            socket_path.display()
+        ))
+    })
+}
+
+/// Send one machine API request over an already-connected transport and
+/// return its status and raw JSON body. Generic over the transport so the
+/// protocol layer stays reusable across platform-specific connect
+/// implementations (Unix socket today, a future Windows named pipe).
+async fn send_machine_api_request<T>(
+    stream: T,
     socket_path: &Path,
     method: &str,
     path: &str,
     body: Option<&[u8]>,
     io_timeout: Duration,
-) -> Result<Vec<u8>, Error> {
-    let mut stream = UnixStream::connect(socket_path).map_err(|error| {
-        Error::Internal(format!(
-            "failed to connect to machine API socket {}: {error}",
-            socket_path.display()
-        ))
-    })?;
-    stream.set_read_timeout(Some(io_timeout)).map_err(|error| {
-        Error::Internal(format!(
-            "failed to configure machine API socket timeout {}: {error}",
-            socket_path.display()
-        ))
-    })?;
-    let body = body.unwrap_or_default();
-    let mut request = format!("{method} {path} HTTP/1.0\r\nHost: localhost\r\n");
-    if !body.is_empty() {
-        request.push_str("Content-Type: application/json\r\n");
-        request.push_str(&format!("Content-Length: {}\r\n", body.len()));
-    } else if method == "POST" {
-        request.push_str("Content-Length: 0\r\n");
-    }
-    request.push_str("\r\n");
-    stream.write_all(request.as_bytes()).map_err(|error| {
-        Error::Internal(format!(
-            "failed to send machine API request to {}{}: {error}",
-            socket_path.display(),
-            path
-        ))
-    })?;
-    if !body.is_empty() {
-        stream.write_all(body).map_err(|error| {
+) -> Result<(StatusCode, Vec<u8>), Error>
+where
+    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let (mut sender, connection) = hyper::client::conn::Builder::new()
+        .handshake(stream)
+        .await
+        .map_err(|error| {
             Error::Internal(format!(
-                "failed to send machine API request body to {}{}: {error}",
+                "failed to negotiate machine API connection to {}{}: {error}",
                 socket_path.display(),
                 path
             ))
         })?;
-    }
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
 
-    let mut response = Vec::new();
-    let mut chunk = [0_u8; 4096];
-    loop {
-        match stream.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(read) => {
-                response.extend_from_slice(&chunk[..read]);
-                // A satisfied Content-Length means the message is complete
-                // — break regardless of `Connection: close`. The close
-                // directive announces the server WILL close; it does not
-                // require draining to EOF once the length is known, and
-                // waiting here deadlocks against one-shot servers that
-                // keep the stream open while accepting their next
-                // connection. EOF delimits the body only when no
-                // Content-Length was sent (the `Ok(0)` arm).
-                if let Some(expected_len) =
-                    expected_http_response_len(&response, socket_path, path)?
-                    && response.len() >= expected_len
-                {
-                    break;
-                }
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                return Err(Error::Internal(format!(
-                    "timed out reading machine API response from {}{} after {} bytes: {error}",
-                    socket_path.display(),
-                    path,
-                    response.len()
-                )));
-            }
-            Err(error) => {
-                return Err(Error::Internal(format!(
-                    "failed to read machine API response from {}{}: {error}",
-                    socket_path.display(),
-                    path
-                )));
-            }
+    let mut request_builder = Request::builder().method(method).uri(path).header(
+        "host",
+        // A `Host` header is mandatory on HTTP/1.1 requests; there is no
+        // real host behind a Unix socket, so this is a fixed placeholder.
+        "localhost",
+    );
+    let request_body = match body {
+        Some(bytes) => {
+            request_builder = request_builder
+                .header("content-type", "application/json")
+                .header("content-length", bytes.len());
+            Body::from(bytes.to_vec())
         }
-    }
-
-    if response.is_empty() {
-        return Err(Error::Internal(format!(
-            "machine API response from {}{} was empty",
-            socket_path.display(),
-            path
-        )));
-    }
-
-    if let Some(expected_len) = expected_http_response_len(&response, socket_path, path)?
-        && response.len() < expected_len
-    {
-        return Err(Error::Internal(format!(
-            "machine API response from {}{} closed after {} bytes before the declared {} byte response completed",
-            socket_path.display(),
-            path,
-            response.len(),
-            expected_len
-        )));
-    }
-
-    Ok(response)
-}
-
-fn parse_http_json_body<'a>(
-    response: &'a [u8],
-    socket_path: &Path,
-    path: &str,
-) -> Result<&'a [u8], Error> {
-    let response_text = String::from_utf8_lossy(response);
-    let status_line = response_text.lines().next().unwrap_or("<empty-response>");
-    let body_offset = http_response_body_offset(response).ok_or_else(|| {
+        None if method == "POST" => {
+            request_builder = request_builder.header("content-length", 0);
+            Body::empty()
+        }
+        None => Body::empty(),
+    };
+    let request = request_builder.body(request_body).map_err(|error| {
         Error::Internal(format!(
-            "machine API response from {}{} did not contain an HTTP body",
+            "failed to build machine API request to {}{}: {error}",
             socket_path.display(),
             path
         ))
     })?;
-    let body = &response[body_offset..];
-    let status_code = parse_http_status_code(status_line);
-    if status_code != Some(200) {
+
+    let response = tokio::time::timeout(io_timeout, sender.send_request(request))
+        .await
+        .map_err(|_| {
+            Error::Internal(format!(
+                "timed out reading machine API response from {}{}",
+                socket_path.display(),
+                path
+            ))
+        })?
+        .map_err(|error| {
+            Error::Internal(format!(
+                "failed to send machine API request to {}{}: {error}",
+                socket_path.display(),
+                path
+            ))
+        })?;
+    let status = response.status();
+
+    let body_bytes = tokio::time::timeout(io_timeout, hyper::body::to_bytes(response.into_body()))
+        .await
+        .map_err(|_| {
+            Error::Internal(format!(
+                "timed out reading machine API response from {}{}",
+                socket_path.display(),
+                path
+            ))
+        })?
+        .map_err(|error| {
+            Error::Internal(format!(
+                "machine API response from {}{} closed after the connection ended before the declared response body completed: {error}",
+                socket_path.display(),
+                path
+            ))
+        })?;
+
+    Ok((status, body_bytes.to_vec()))
+}
+
+/// Run one machine API request to completion on a dedicated current-thread
+/// runtime. `MachineApiClient`'s public API is synchronous (it is called
+/// from plain CLI command handlers, not async contexts), so each call spins
+/// a fresh OS thread rather than risk nesting a `block_on` inside a caller
+/// that might already be on a Tokio worker thread.
+fn machine_api_request(
+    socket_path: &Path,
+    method: &str,
+    path: &str,
+    body: Option<&[u8]>,
+    io_timeout: Duration,
+) -> Result<(StatusCode, Vec<u8>), Error> {
+    let socket_path = socket_path.to_path_buf();
+    let method = method.to_owned();
+    let path = path.to_owned();
+    let body = body.map(<[u8]>::to_vec);
+
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| {
+                Error::Internal(format!(
+                    "failed to build machine API client runtime: {error}"
+                ))
+            })?
+            .block_on(async move {
+                let stream = connect_machine_api_stream(&socket_path).await?;
+                send_machine_api_request(
+                    stream,
+                    &socket_path,
+                    &method,
+                    &path,
+                    body.as_deref(),
+                    io_timeout,
+                )
+                .await
+            })
+    })
+    .join()
+    .map_err(|_| Error::Internal("machine API client worker panicked".to_owned()))?
+}
+
+fn extract_machine_api_json_body<'a>(
+    status: StatusCode,
+    body: &'a [u8],
+    socket_path: &Path,
+    path: &str,
+) -> Result<&'a [u8], Error> {
+    if status.as_u16() != 200 {
         if let Ok(error_body) = serde_json::from_slice::<MachineApiErrorResponse>(body) {
             return Err(machine_api_status_error(
-                status_code,
+                Some(status.as_u16()),
                 format!(
                     "machine API request {}{} failed: {}",
                     socket_path.display(),
@@ -460,77 +494,15 @@ fn parse_http_json_body<'a>(
             ));
         }
         return Err(machine_api_status_error(
-            status_code,
+            Some(status.as_u16()),
             format!(
-                "machine API request {}{} did not return 200 OK: {status_line}",
+                "machine API request {}{} did not return 200 OK: {status}",
                 socket_path.display(),
                 path
             ),
         ));
     }
     Ok(body)
-}
-
-fn http_response_body_offset(response: &[u8]) -> Option<usize> {
-    response
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .map(|index| index + 4)
-}
-
-fn expected_http_response_len(
-    response: &[u8],
-    socket_path: &Path,
-    path: &str,
-) -> Result<Option<usize>, Error> {
-    let Some(body_offset) = http_response_body_offset(response) else {
-        return Ok(None);
-    };
-    let headers = String::from_utf8_lossy(&response[..body_offset]);
-    let mut content_length = None;
-    for line in headers.lines().skip(1) {
-        let Some((name, value)) = line.split_once(':') else {
-            continue;
-        };
-        if !name.eq_ignore_ascii_case("content-length") {
-            continue;
-        }
-        let parsed = value.trim().parse::<usize>().map_err(|error| {
-            Error::Internal(format!(
-                "machine API response from {}{} had invalid Content-Length `{}`: {error}",
-                socket_path.display(),
-                path,
-                value.trim()
-            ))
-        })?;
-        if let Some(previous) = content_length
-            && previous != parsed
-        {
-            return Err(Error::Internal(format!(
-                "machine API response from {}{} had conflicting Content-Length values {previous} and {parsed}",
-                socket_path.display(),
-                path
-            )));
-        }
-        content_length = Some(parsed);
-    }
-    content_length
-        .map(|len| {
-            body_offset.checked_add(len).ok_or_else(|| {
-                Error::Internal(format!(
-                    "machine API response from {}{} declared an oversized Content-Length",
-                    socket_path.display(),
-                    path
-                ))
-            })
-        })
-        .transpose()
-}
-
-fn parse_http_status_code(status_line: &str) -> Option<u16> {
-    let mut parts = status_line.split_ascii_whitespace();
-    let _http_version = parts.next()?;
-    parts.next()?.parse::<u16>().ok()
 }
 
 fn machine_api_status_error(status_code: Option<u16>, message: String) -> Error {
@@ -1245,12 +1217,12 @@ mod tests {
 
         let request = server.join().expect("server should join");
         assert!(
-            request.starts_with(&format!("POST {expected_path} HTTP/1.0\r\n")),
+            request.starts_with(&format!("POST {expected_path} HTTP/1.1\r\n")),
             "{request}"
         );
         assert!(
-            request.contains("Content-Length: 0\r\n"),
-            "bodyless stop request should advertise Content-Length: 0: {request}"
+            request.contains("content-length: 0\r\n"),
+            "bodyless stop request should advertise content-length: 0: {request}"
         );
         assert!(
             !request.contains("{}"),
@@ -1346,7 +1318,7 @@ mod tests {
 
         assert!(
             request.starts_with(
-                "GET /v1/machine-api/service-sandboxes/..%2F..%2Fetc%2Fpasswd HTTP/1.0\r\n"
+                "GET /v1/machine-api/service-sandboxes/..%2F..%2Fetc%2Fpasswd HTTP/1.1\r\n"
             ),
             "hostile id must collapse to one safe segment with no raw `/` or `..`: {request}"
         );
@@ -1365,7 +1337,7 @@ mod tests {
         );
         assert!(
             stop_request
-                .starts_with("POST /v1/machine-api/service-sandboxes/a%20b%25c/stop HTTP/1.0\r\n"),
+                .starts_with("POST /v1/machine-api/service-sandboxes/a%20b%25c/stop HTTP/1.1\r\n"),
             "{stop_request}"
         );
 
@@ -1381,7 +1353,7 @@ mod tests {
         );
         assert!(
             log_request.starts_with(
-                "GET /v1/machine-api/service-sandboxes/x%2Fy/logs?offset=7 HTTP/1.0\r\n"
+                "GET /v1/machine-api/service-sandboxes/x%2Fy/logs?offset=7 HTTP/1.1\r\n"
             ),
             "log path must encode the segment but keep ?offset=7 literal: {log_request}"
         );
@@ -1407,7 +1379,7 @@ mod tests {
                 .expect("process snapshot should read");
         });
         assert!(
-            ps_request.starts_with("GET /v1/machine-api/service-sandboxes/p%23q/ps HTTP/1.0\r\n"),
+            ps_request.starts_with("GET /v1/machine-api/service-sandboxes/p%23q/ps HTTP/1.1\r\n"),
             "{ps_request}"
         );
     }

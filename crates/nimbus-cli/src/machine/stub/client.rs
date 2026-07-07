@@ -9,12 +9,10 @@ use nimbus_machine::api::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) struct MachineApiClient {
     socket_path: PathBuf,
 }
 
-#[allow(dead_code)]
 impl MachineApiClient {
     pub(crate) fn new(socket_path: impl Into<PathBuf>) -> Self {
         Self {
@@ -39,6 +37,10 @@ impl MachineApiClient {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
 
+    // realized by WIN2: the unix twin (`backend.rs`) forwards through these
+    // methods; the non-unix stub backend (`stub/backend.rs`) returns a canned
+    // error without dispatching through `client`, so these stay unused here.
+    #[allow(dead_code)]
     pub(crate) fn start_service_sandbox_from_image(
         &self,
         _spec: SandboxSpec,
@@ -46,6 +48,7 @@ impl MachineApiClient {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn start_service_sandbox_from_build(
         &self,
         _spec: SandboxSpec,
@@ -53,6 +56,7 @@ impl MachineApiClient {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn inspect_service_sandbox(
         &self,
         _sandbox_id: &SandboxId,
@@ -60,6 +64,7 @@ impl MachineApiClient {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn stop_service_sandbox(&self, _sandbox_id: &SandboxId) -> Result<(), Error> {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }

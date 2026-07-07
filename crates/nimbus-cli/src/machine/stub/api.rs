@@ -26,6 +26,8 @@ pub(crate) enum MachineApiListenMode {
 }
 
 impl MachineApiListenMode {
+    // realized by WIN2: the unix twin (`api/routes.rs`) reads this for its
+    // health-response rendering; the stub has no routes module to call it.
     #[allow(dead_code)]
     fn as_str(self) -> &'static str {
         match self {
@@ -37,6 +39,8 @@ impl MachineApiListenMode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StubMachineApiListener {
+    // realized by WIN2: a real listener needs the bound path to serve on;
+    // this stub only ever returns an error, so it never reads it back.
     #[allow(dead_code)]
     socket_path: PathBuf,
 }

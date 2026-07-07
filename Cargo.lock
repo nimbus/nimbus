@@ -6705,6 +6705,7 @@ dependencies = [
  "comfy-table",
  "flate2",
  "fs2",
+ "hyper 0.14.32",
  "indicatif",
  "libc",
  "nimbus",

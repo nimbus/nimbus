@@ -11,6 +11,7 @@ pub mod index_history;
 pub mod mutation;
 pub mod mvcc;
 pub mod net;
+pub mod path_lexical;
 pub mod query;
 pub mod resource_path;
 pub mod scheduled;
@@ -56,6 +57,10 @@ pub use mvcc::{
 };
 pub use net::{
     Cidr, CidrError, NetworkId, NetworkSegment, is_valid_dns_hostname, refuse_non_loopback_bind,
+};
+pub use path_lexical::{
+    LexicalPathError, has_parent_dir_component, normalize_absolute_lexical,
+    reject_relative_traversal,
 };
 pub use query::{
     AggregationOperator, CollectionSelector, CompositeFilter, CompositeOperator, CountAggregation,
