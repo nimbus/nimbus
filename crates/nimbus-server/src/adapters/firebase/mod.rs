@@ -4,15 +4,13 @@ pub use nimbus_firebase::{FirebaseConfig, ProjectSpecError, ProjectTenantRegistr
 
 pub(crate) use nimbus_firebase::response::format_timestamp;
 pub(crate) use nimbus_firebase::{
-    batch_get_documents_for_database, batch_get_entry_json, batch_get_request_error_to_core,
-    batch_write_for_database, batch_write_request_error_to_core, batch_write_response_json,
-    begin_transaction_session_for_database, commit_batch_for_database,
-    commit_request_error_to_core, commit_response_json, list_collection_ids_for_database,
-    list_collection_ids_request_error_to_core, resolve_write_key, resource_name_error_to_core,
-    rollback_transaction_session_for_database, run_aggregation_query_for_database,
-    run_aggregation_query_request_error_to_core, run_aggregation_query_response_entries,
-    run_query_documents_for_database, run_query_request_error_to_core, run_query_response_entries,
-    serialize_json_lines, tenant_context_for_database, transaction_request_error_to_core,
+    batch_get_documents_for_database, batch_get_entry_json, batch_write_for_database,
+    batch_write_response_json, begin_transaction_session_for_database, commit_batch_for_database,
+    commit_response_json, firestore_request_error_to_core, list_collection_ids_for_database,
+    resolve_write_key, resource_name_error_to_core, rollback_transaction_session_for_database,
+    run_aggregation_query_for_database, run_aggregation_query_response_entries,
+    run_query_documents_for_database, run_query_response_entries, serialize_json_lines,
+    tenant_context_for_database,
 };
 pub(crate) use nimbus_firebase::{
     batch_get_request, batch_write_request, commit_request, list_collection_ids_request,
@@ -111,7 +109,7 @@ pub(crate) async fn commit(
     .map_err(firebase_error_to_app)?;
     let parsed_commit =
         commit_request::parse_commit_request_with_resolver(&request_json, resolve_write_key)
-            .map_err(commit_request_error_to_core)
+            .map_err(firestore_request_error_to_core)
             .map_err(firebase_error_to_app)?;
     if parsed_commit.database != route_database {
         return Ok(firebase_error_response(Error::InvalidInput(format!(
@@ -160,7 +158,7 @@ pub(crate) async fn batch_write(
     ) {
         Ok(request) => request,
         Err(error) => {
-            return Ok(firebase_error_response(batch_write_request_error_to_core(
+            return Ok(firebase_error_response(firestore_request_error_to_core(
                 error,
             )));
         }
@@ -234,7 +232,7 @@ pub(crate) async fn batch_get_documents(
             Ok(request) => request,
             Err(error) => {
                 return Ok(
-                    firebase_error_response(batch_get_request_error_to_core(error)).into_response(),
+                    firebase_error_response(firestore_request_error_to_core(error)).into_response(),
                 );
             }
         };
@@ -314,7 +312,7 @@ pub(crate) async fn begin_transaction(
     ) {
         Ok(request) => request,
         Err(error) => {
-            return Ok(firebase_error_response(transaction_request_error_to_core(
+            return Ok(firebase_error_response(firestore_request_error_to_core(
                 error,
             )));
         }
@@ -369,7 +367,7 @@ pub(crate) async fn rollback(
         match transaction_request::parse_rollback_request(&request_json, &route_database) {
             Ok(request) => request,
             Err(error) => {
-                return Ok(firebase_error_response(transaction_request_error_to_core(
+                return Ok(firebase_error_response(firestore_request_error_to_core(
                     error,
                 )));
             }
@@ -524,9 +522,9 @@ async fn list_collection_ids_for_parent_document(
         match list_collection_ids_request::parse_list_collection_ids_request(&request_json) {
             Ok(request) => request,
             Err(error) => {
-                return Ok(firebase_error_response(
-                    list_collection_ids_request_error_to_core(error),
-                ));
+                return Ok(firebase_error_response(firestore_request_error_to_core(
+                    error,
+                )));
             }
         };
     let page = match list_collection_ids_for_database(
@@ -596,7 +594,7 @@ async fn run_query_for_parent_document(
         Ok(request) => request,
         Err(error) => {
             return Ok(
-                firebase_error_response(run_query_request_error_to_core(error)).into_response(),
+                firebase_error_response(firestore_request_error_to_core(error)).into_response(),
             );
         }
     };
@@ -682,8 +680,7 @@ async fn run_aggregation_query_for_parent_document(
             Ok(request) => request,
             Err(error) => {
                 return Ok(
-                    firebase_error_response(run_aggregation_query_request_error_to_core(error))
-                        .into_response(),
+                    firebase_error_response(firestore_request_error_to_core(error)).into_response(),
                 );
             }
         };

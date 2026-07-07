@@ -6,8 +6,8 @@ use nimbus_core::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-use thiserror::Error;
 
+use super::request_error::{FirestoreRequestError, FirestoreRpc};
 use super::run_query_request::decode_structured_query_values;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -15,17 +15,9 @@ pub struct ParsedRunAggregationQueryRequest {
     pub aggregation_query: StructuredAggregationQuery,
 }
 
-#[derive(Debug, Error)]
-pub enum FirestoreRunAggregationQueryRequestError {
-    #[error("invalid Firestore RunAggregationQuery request: {0}")]
-    InvalidRequest(String),
-    #[error("unsupported Firestore RunAggregationQuery feature: {0}")]
-    Unsupported(String),
-}
-
 pub fn parse_run_aggregation_query_request(
     request: &Value,
-) -> Result<ParsedRunAggregationQueryRequest, FirestoreRunAggregationQueryRequestError> {
+) -> Result<ParsedRunAggregationQueryRequest, FirestoreRequestError> {
     let request: RunAggregationQueryRequestJson = serde_json::from_value(request.clone())
         .map_err(|error| invalid_request(format!("malformed JSON body: {error}")))?;
     let consistency_selector_count = usize::from(request.transaction.is_some())
@@ -121,7 +113,7 @@ struct FieldReferenceJson {
 
 fn lower_aggregations(
     aggregations: Vec<AggregationJson>,
-) -> Result<Vec<StructuredAggregation>, FirestoreRunAggregationQueryRequestError> {
+) -> Result<Vec<StructuredAggregation>, FirestoreRequestError> {
     if aggregations.is_empty() {
         return Err(invalid_request(
             "`structuredAggregationQuery.aggregations` must include at least one aggregation",
@@ -167,7 +159,7 @@ fn normalize_alias(
     alias: Option<String>,
     generated_aliases: &mut usize,
     seen_aliases: &mut HashSet<String>,
-) -> Result<String, FirestoreRunAggregationQueryRequestError> {
+) -> Result<String, FirestoreRequestError> {
     let alias = match alias {
         Some(alias) if alias.trim().is_empty() => {
             return Err(invalid_request("aggregation aliases must not be empty"));
@@ -189,7 +181,7 @@ fn normalize_alias(
 fn parse_optional_positive_int64(
     value: Option<Value>,
     field_name: &str,
-) -> Result<Option<u64>, FirestoreRunAggregationQueryRequestError> {
+) -> Result<Option<u64>, FirestoreRequestError> {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -221,12 +213,12 @@ fn parse_optional_positive_int64(
     Ok(Some(parsed))
 }
 
-fn invalid_request(reason: impl Into<String>) -> FirestoreRunAggregationQueryRequestError {
-    FirestoreRunAggregationQueryRequestError::InvalidRequest(reason.into())
+fn invalid_request(reason: impl Into<String>) -> FirestoreRequestError {
+    FirestoreRequestError::invalid_request(FirestoreRpc::RunAggregationQuery, reason)
 }
 
-fn unsupported_request(feature: impl Into<String>) -> FirestoreRunAggregationQueryRequestError {
-    FirestoreRunAggregationQueryRequestError::Unsupported(feature.into())
+fn unsupported_request(feature: impl Into<String>) -> FirestoreRequestError {
+    FirestoreRequestError::unsupported(FirestoreRpc::RunAggregationQuery, feature)
 }
 
 #[cfg(test)]

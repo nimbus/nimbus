@@ -1,7 +1,8 @@
 use nimbus_core::{base64_decode_url_safe_no_pad, base64_encode_url_safe_no_pad};
 use serde::Deserialize;
 use serde_json::Value;
-use thiserror::Error;
+
+use super::request_error::{FirestoreRequestError, FirestoreRpc};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedListCollectionIdsRequest {
@@ -15,17 +16,9 @@ pub struct PaginatedCollectionIds {
     pub next_page_token: String,
 }
 
-#[derive(Debug, Error)]
-pub enum FirestoreListCollectionIdsRequestError {
-    #[error("invalid Firestore ListCollectionIds request: {0}")]
-    InvalidRequest(String),
-    #[error("unsupported Firestore ListCollectionIds feature: {0}")]
-    Unsupported(String),
-}
-
 pub fn parse_list_collection_ids_request(
     request: &Value,
-) -> Result<ParsedListCollectionIdsRequest, FirestoreListCollectionIdsRequestError> {
+) -> Result<ParsedListCollectionIdsRequest, FirestoreRequestError> {
     let request: ListCollectionIdsRequestJson = serde_json::from_value(request.clone())
         .map_err(|error| invalid_request(format!("malformed JSON body: {error}")))?;
     let page_size = parse_page_size(request.page_size)?;
@@ -43,7 +36,7 @@ pub fn parse_list_collection_ids_request(
 pub fn paginate_collection_ids(
     mut collection_ids: Vec<String>,
     request: &ParsedListCollectionIdsRequest,
-) -> Result<PaginatedCollectionIds, FirestoreListCollectionIdsRequestError> {
+) -> Result<PaginatedCollectionIds, FirestoreRequestError> {
     collection_ids.sort();
     collection_ids.dedup();
 
@@ -71,13 +64,11 @@ pub fn paginate_collection_ids(
 
 pub fn parse_list_collection_ids_page_token(
     page_token: &str,
-) -> Result<usize, FirestoreListCollectionIdsRequestError> {
+) -> Result<usize, FirestoreRequestError> {
     decode_page_token(page_token)
 }
 
-fn parse_page_size(
-    page_size: Option<i32>,
-) -> Result<Option<usize>, FirestoreListCollectionIdsRequestError> {
+fn parse_page_size(page_size: Option<i32>) -> Result<Option<usize>, FirestoreRequestError> {
     let Some(page_size) = page_size else {
         return Ok(None);
     };
@@ -92,7 +83,7 @@ fn parse_page_size(
         .map_err(|_| invalid_request("`pageSize` exceeds supported range"))
 }
 
-fn decode_page_token(page_token: &str) -> Result<usize, FirestoreListCollectionIdsRequestError> {
+fn decode_page_token(page_token: &str) -> Result<usize, FirestoreRequestError> {
     if page_token.is_empty() {
         return Ok(0);
     }
@@ -117,12 +108,12 @@ struct ListCollectionIdsRequestJson {
     read_time: Option<String>,
 }
 
-fn invalid_request(reason: impl Into<String>) -> FirestoreListCollectionIdsRequestError {
-    FirestoreListCollectionIdsRequestError::InvalidRequest(reason.into())
+fn invalid_request(reason: impl Into<String>) -> FirestoreRequestError {
+    FirestoreRequestError::invalid_request(FirestoreRpc::ListCollectionIds, reason)
 }
 
-fn unsupported_request(feature: impl Into<String>) -> FirestoreListCollectionIdsRequestError {
-    FirestoreListCollectionIdsRequestError::Unsupported(feature.into())
+fn unsupported_request(feature: impl Into<String>) -> FirestoreRequestError {
+    FirestoreRequestError::unsupported(FirestoreRpc::ListCollectionIds, feature)
 }
 
 #[cfg(test)]

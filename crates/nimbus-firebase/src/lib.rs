@@ -6,6 +6,7 @@ pub mod grpc;
 pub mod list_collection_ids_request;
 pub mod operations;
 pub mod project_tenant_registry;
+pub mod request_error;
 pub mod resource_names;
 pub mod response;
 pub mod run_aggregation_query_request;
@@ -15,11 +16,8 @@ pub mod transaction_request;
 mod transaction_token;
 
 pub use errors::{
-    batch_get_request_error_to_core, batch_write_request_error_to_core,
-    commit_request_error_to_core, firebase_error_response_json, firestore_google_rpc_status_json,
-    firestore_grpc_code, list_collection_ids_request_error_to_core, resource_name_error_to_core,
-    run_aggregation_query_request_error_to_core, run_query_request_error_to_core,
-    transaction_request_error_to_core,
+    firebase_error_response_json, firestore_google_rpc_status_json, firestore_grpc_code,
+    firestore_request_error_to_core, resource_name_error_to_core,
 };
 use nimbus_core::{
     AtomicWriteResult, Document, DocumentPath, Error, StructuredAggregationResult, Timestamp,
@@ -35,6 +33,7 @@ pub use project_tenant_registry::{
     ProjectSpecError, ProjectTenantRegistry, firebase_project_from_issuer,
     firebase_project_from_verified_principal,
 };
+pub use request_error::{FirestoreRequestError, FirestoreRequestErrorKind, FirestoreRpc};
 pub use response::{
     batch_get_entry_json, batch_write_response_json, commit_response_json, firestore_document_name,
     format_timestamp, run_aggregation_query_response_entries, run_query_response_entries,

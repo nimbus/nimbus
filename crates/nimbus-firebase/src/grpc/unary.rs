@@ -48,11 +48,10 @@ use crate::batch_get_request::{
 use crate::batch_write_request;
 use crate::resource_names::{self, FirestoreDatabaseName, FirestoreParentName};
 use crate::{
-    batch_get_documents_for_database, batch_get_request_error_to_core, batch_write_for_database,
-    batch_write_request_error_to_core, begin_transaction_session_for_database,
-    commit_batch_for_database, firestore_document_name, firestore_grpc_code,
-    get_document_for_database, list_collection_ids_for_database, list_collection_ids_request,
-    list_collection_ids_request_error_to_core, resource_name_error_to_core,
+    batch_get_documents_for_database, batch_write_for_database,
+    begin_transaction_session_for_database, commit_batch_for_database, firestore_document_name,
+    firestore_grpc_code, firestore_request_error_to_core, get_document_for_database,
+    list_collection_ids_for_database, list_collection_ids_request, resource_name_error_to_core,
     rollback_transaction_session_for_database, run_aggregation_query_for_database,
     run_query_documents_for_database, tenant_context_for_database,
 };
@@ -191,7 +190,7 @@ pub async fn handle_batch_write(
             .map_err(firebase_grpc_status)?;
     let batch = lower_write_batch(&request.writes, &database)?;
     batch_write_request::reject_duplicate_write_targets(&batch.writes)
-        .map_err(batch_write_request_error_to_core)
+        .map_err(firestore_request_error_to_core)
         .map_err(firebase_grpc_status)?;
     let outcome = batch_write_for_database(
         registry,
@@ -354,7 +353,7 @@ pub async fn handle_list_collection_ids(
         page_offset: list_collection_ids_request::parse_list_collection_ids_page_token(
             &request.page_token,
         )
-        .map_err(list_collection_ids_request_error_to_core)
+        .map_err(firestore_request_error_to_core)
         .map_err(firebase_grpc_status)?,
     };
 
@@ -731,7 +730,7 @@ fn lower_optional_document_mask(
     Ok(mask
         .map(|mask| lower_document_mask_paths(mask.field_paths))
         .transpose()
-        .map_err(batch_get_request_error_to_core)
+        .map_err(firestore_request_error_to_core)
         .map_err(firebase_grpc_status)?)
 }
 
@@ -766,7 +765,7 @@ fn lower_batch_get_request(
         .mask
         .map(|mask| lower_document_mask_paths(mask.field_paths))
         .transpose()
-        .map_err(batch_get_request_error_to_core)
+        .map_err(firestore_request_error_to_core)
         .map_err(firebase_grpc_status)?;
 
     let mut seen_documents = HashSet::new();

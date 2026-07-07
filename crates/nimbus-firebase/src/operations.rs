@@ -15,9 +15,9 @@ use crate::project_tenant_registry::{
 };
 
 use super::batch_get_request;
-use super::commit_request;
-use super::errors::{list_collection_ids_request_error_to_core, resource_name_error_to_core};
+use super::errors::{firestore_request_error_to_core, resource_name_error_to_core};
 use super::list_collection_ids_request;
+use super::request_error::{FirestoreRequestError, FirestoreRpc};
 use super::resource_names;
 use super::response::firestore_parent_name;
 use super::{
@@ -27,10 +27,10 @@ use super::{
 
 pub fn resolve_write_key(
     document_path: &DocumentPath,
-) -> std::result::Result<WriteKey, commit_request::FirestoreCommitRequestError> {
+) -> std::result::Result<WriteKey, FirestoreRequestError> {
     let binding = ResourcePathBinding::new(
         locator_for_document_path(document_path).map_err(|error| {
-            commit_request::FirestoreCommitRequestError::InvalidRequest(error.to_string())
+            FirestoreRequestError::invalid_request(FirestoreRpc::Commit, error.to_string())
         })?,
         document_path.clone(),
     );
@@ -270,7 +270,7 @@ pub fn list_collection_ids_for_database(
         .map(|collection_id| collection_id.to_string())
         .collect::<Vec<_>>();
     list_collection_ids_request::paginate_collection_ids(collection_ids, request)
-        .map_err(list_collection_ids_request_error_to_core)
+        .map_err(firestore_request_error_to_core)
 }
 
 pub fn get_document_for_database(

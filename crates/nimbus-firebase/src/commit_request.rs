@@ -4,12 +4,12 @@ use nimbus_core::{
 };
 use serde::Deserialize;
 use serde_json::{Map, Value};
-use thiserror::Error;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use super::resource_names::{self, FirestoreDatabaseName, FirestoreResourceNameError};
-use super::serializer::{self, FirestoreProtoJsonError};
+use super::request_error::{FirestoreRequestError, FirestoreRpc};
+use super::resource_names::{self, FirestoreDatabaseName};
+use super::serializer;
 use super::transaction_token;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,27 +19,16 @@ pub struct ParsedCommitRequest {
     pub transaction: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Error)]
-pub enum FirestoreCommitRequestError {
-    #[error("invalid Firestore Commit request: {0}")]
-    InvalidRequest(String),
-    #[error("unsupported Firestore Commit feature: {0}")]
-    Unsupported(String),
-    #[error(transparent)]
-    InvalidResource(#[from] FirestoreResourceNameError),
-    #[error(transparent)]
-    InvalidValue(#[from] FirestoreProtoJsonError),
-}
-
 pub fn parse_commit_request_with_resolver(
     request: &Value,
     mut resolve_write_key: impl FnMut(
         &nimbus_core::DocumentPath,
-    ) -> Result<WriteKey, FirestoreCommitRequestError>,
-) -> Result<ParsedCommitRequest, FirestoreCommitRequestError> {
+    ) -> Result<WriteKey, FirestoreRequestError>,
+) -> Result<ParsedCommitRequest, FirestoreRequestError> {
     let request: CommitRequestJson = serde_json::from_value(request.clone())
         .map_err(|error| invalid_request(format!("malformed JSON body: {error}")))?;
-    let database = resource_names::parse_database_name(&request.database)?;
+    let database = resource_names::parse_database_name(&request.database)
+        .map_err(|error| FirestoreRequestError::invalid_resource(FirestoreRpc::Commit, error))?;
     let transaction = request
         .transaction
         .as_deref()
@@ -140,8 +129,8 @@ fn lower_commit_write(
     database: &FirestoreDatabaseName,
     resolve_write_key: &mut impl FnMut(
         &nimbus_core::DocumentPath,
-    ) -> Result<WriteKey, FirestoreCommitRequestError>,
-) -> Result<AtomicWrite, FirestoreCommitRequestError> {
+    ) -> Result<WriteKey, FirestoreRequestError>,
+) -> Result<AtomicWrite, FirestoreRequestError> {
     let operation_count = u8::from(write.update.is_some())
         + u8::from(write.delete.is_some())
         + u8::from(write.verify.is_some())
@@ -153,7 +142,10 @@ fn lower_commit_write(
     }
 
     if let Some(update) = write.update {
-        let parsed_document = resource_names::parse_document_name(&update.name)?;
+        let parsed_document =
+            resource_names::parse_document_name(&update.name).map_err(|error| {
+                FirestoreRequestError::invalid_resource(FirestoreRpc::Commit, error)
+            })?;
         resource_names::ensure_database_match(database, &parsed_document.database)
             .map_err(|error| write_database_mismatch("update document", error))?;
         reject_document_metadata(&update)?;
@@ -193,7 +185,10 @@ fn lower_commit_write(
     }
 
     if let Some(delete_name) = write.delete {
-        let parsed_document = resource_names::parse_document_name(&delete_name)?;
+        let parsed_document =
+            resource_names::parse_document_name(&delete_name).map_err(|error| {
+                FirestoreRequestError::invalid_resource(FirestoreRpc::Commit, error)
+            })?;
         resource_names::ensure_database_match(database, &parsed_document.database)
             .map_err(|error| write_database_mismatch("delete document", error))?;
         let key = resolve_write_key(&parsed_document.document_path)?;
@@ -207,7 +202,10 @@ fn lower_commit_write(
     }
 
     if let Some(verify_name) = write.verify {
-        let parsed_document = resource_names::parse_document_name(&verify_name)?;
+        let parsed_document =
+            resource_names::parse_document_name(&verify_name).map_err(|error| {
+                FirestoreRequestError::invalid_resource(FirestoreRpc::Commit, error)
+            })?;
         resource_names::ensure_database_match(database, &parsed_document.database)
             .map_err(|error| write_database_mismatch("verify document", error))?;
         let key = resolve_write_key(&parsed_document.document_path)?;
@@ -218,7 +216,8 @@ fn lower_commit_write(
     let transform = write
         .transform
         .ok_or_else(|| invalid_request("missing write operation"))?;
-    let parsed_document = resource_names::parse_document_name(&transform.document)?;
+    let parsed_document = resource_names::parse_document_name(&transform.document)
+        .map_err(|error| FirestoreRequestError::invalid_resource(FirestoreRpc::Commit, error))?;
     resource_names::ensure_database_match(database, &parsed_document.database)
         .map_err(|error| write_database_mismatch("transform document", error))?;
     let key = resolve_write_key(&parsed_document.document_path)?;
@@ -238,19 +237,19 @@ fn lower_commit_write(
 
 fn lower_document_fields(
     fields: Map<String, Value>,
-) -> Result<Map<String, Value>, FirestoreCommitRequestError> {
+) -> Result<Map<String, Value>, FirestoreRequestError> {
     fields
         .into_iter()
         .map(|(field, value)| {
             serializer::decode_proto_json_value(&value).map(|value| (field, value))
         })
         .collect::<Result<Map<_, _>, _>>()
-        .map_err(Into::into)
+        .map_err(|error| FirestoreRequestError::invalid_value(FirestoreRpc::Commit, error))
 }
 
 fn lower_precondition(
     precondition: Option<FirestorePreconditionJson>,
-) -> Result<WritePrecondition, FirestoreCommitRequestError> {
+) -> Result<WritePrecondition, FirestoreRequestError> {
     let Some(precondition) = precondition else {
         return Ok(WritePrecondition::default());
     };
@@ -271,7 +270,7 @@ fn lower_precondition(
 
 fn lower_field_transforms(
     transforms: Vec<FirestoreFieldTransformJson>,
-) -> Result<Vec<FieldTransform>, FirestoreCommitRequestError> {
+) -> Result<Vec<FieldTransform>, FirestoreRequestError> {
     transforms
         .into_iter()
         .map(lower_field_transform)
@@ -280,7 +279,7 @@ fn lower_field_transforms(
 
 fn lower_field_transform(
     transform: FirestoreFieldTransformJson,
-) -> Result<FieldTransform, FirestoreCommitRequestError> {
+) -> Result<FieldTransform, FirestoreRequestError> {
     if transform.field_path.is_empty() {
         return Err(invalid_request(
             "field transform `fieldPath` cannot be empty",
@@ -309,15 +308,21 @@ fn lower_field_transform(
         }
     } else if let Some(operand) = transform.increment {
         FieldTransformOperation::Increment {
-            operand: serializer::decode_proto_json_numeric_value(&operand)?,
+            operand: serializer::decode_proto_json_numeric_value(&operand).map_err(|error| {
+                FirestoreRequestError::invalid_value(FirestoreRpc::Commit, error)
+            })?,
         }
     } else if let Some(operand) = transform.maximum {
         FieldTransformOperation::Maximum {
-            operand: serializer::decode_proto_json_numeric_value(&operand)?,
+            operand: serializer::decode_proto_json_numeric_value(&operand).map_err(|error| {
+                FirestoreRequestError::invalid_value(FirestoreRpc::Commit, error)
+            })?,
         }
     } else if let Some(operand) = transform.minimum {
         FieldTransformOperation::Minimum {
-            operand: serializer::decode_proto_json_numeric_value(&operand)?,
+            operand: serializer::decode_proto_json_numeric_value(&operand).map_err(|error| {
+                FirestoreRequestError::invalid_value(FirestoreRpc::Commit, error)
+            })?,
         }
     } else if let Some(values) = transform.append_missing_elements {
         FieldTransformOperation::AppendMissingElements {
@@ -338,17 +343,15 @@ fn lower_field_transform(
     })
 }
 
-fn lower_array_transform_values(
-    values: Vec<Value>,
-) -> Result<Vec<Value>, FirestoreCommitRequestError> {
+fn lower_array_transform_values(values: Vec<Value>) -> Result<Vec<Value>, FirestoreRequestError> {
     values
         .into_iter()
         .map(|value| serializer::decode_proto_json_value(&value))
         .collect::<Result<Vec<_>, _>>()
-        .map_err(Into::into)
+        .map_err(|error| FirestoreRequestError::invalid_value(FirestoreRpc::Commit, error))
 }
 
-fn parse_timestamp(value: &str) -> Result<Timestamp, FirestoreCommitRequestError> {
+fn parse_timestamp(value: &str) -> Result<Timestamp, FirestoreRequestError> {
     let parsed = OffsetDateTime::parse(value, &Rfc3339).map_err(|error| {
         invalid_request(format!("invalid RFC3339 timestamp `{value}`: {error}"))
     })?;
@@ -361,9 +364,7 @@ fn parse_timestamp(value: &str) -> Result<Timestamp, FirestoreCommitRequestError
     Ok(Timestamp(millis))
 }
 
-fn reject_document_metadata(
-    document: &FirestoreDocumentJson,
-) -> Result<(), FirestoreCommitRequestError> {
+fn reject_document_metadata(document: &FirestoreDocumentJson) -> Result<(), FirestoreRequestError> {
     if document.create_time.is_some() || document.update_time.is_some() {
         return Err(invalid_request(
             "input document metadata fields `createTime` and `updateTime` are not supported",
@@ -372,22 +373,22 @@ fn reject_document_metadata(
     Ok(())
 }
 
-fn invalid_request(message: impl Into<String>) -> FirestoreCommitRequestError {
-    FirestoreCommitRequestError::InvalidRequest(message.into())
+fn invalid_request(message: impl Into<String>) -> FirestoreRequestError {
+    FirestoreRequestError::invalid_request(FirestoreRpc::Commit, message)
 }
 
 fn write_database_mismatch(
     kind: &'static str,
     error: resource_names::FirestoreDatabaseMatchError,
-) -> FirestoreCommitRequestError {
+) -> FirestoreRequestError {
     invalid_request(format!(
         "{kind} must be a child of database `{}`",
         error.expected()
     ))
 }
 
-fn unsupported(message: impl Into<String>) -> FirestoreCommitRequestError {
-    FirestoreCommitRequestError::Unsupported(message.into())
+fn unsupported(message: impl Into<String>) -> FirestoreRequestError {
+    FirestoreRequestError::unsupported(FirestoreRpc::Commit, message)
 }
 
 #[cfg(test)]
@@ -402,7 +403,7 @@ mod tests {
 
     fn resolve_preview_key(
         document_path: &nimbus_core::DocumentPath,
-    ) -> Result<WriteKey, FirestoreCommitRequestError> {
+    ) -> Result<WriteKey, FirestoreRequestError> {
         Ok(WriteKey::from(ResourcePathBinding::new(
             DocumentLocator::new(
                 TableName::new("firebase_preview").expect("table should parse"),

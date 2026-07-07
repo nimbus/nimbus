@@ -3,96 +3,15 @@ use nimbus_core::{Error, StorageErrorKind};
 use serde_json::{Value, json};
 use tonic::Code;
 
-use super::batch_get_request;
-use super::batch_write_request;
-use super::commit_request;
-use super::list_collection_ids_request;
+use super::request_error::FirestoreRequestError;
 use super::resource_names;
-use super::run_aggregation_query_request;
-use super::run_query_request;
-use super::transaction_request;
 
-pub fn commit_request_error_to_core(error: commit_request::FirestoreCommitRequestError) -> Error {
-    match error {
-        commit_request::FirestoreCommitRequestError::InvalidRequest(_)
-        | commit_request::FirestoreCommitRequestError::InvalidResource(_)
-        | commit_request::FirestoreCommitRequestError::InvalidValue(_)
-        | commit_request::FirestoreCommitRequestError::Unsupported(_) => {
-            Error::InvalidInput(error.to_string())
-        }
-    }
-}
-
-pub fn batch_write_request_error_to_core(
-    error: batch_write_request::FirestoreBatchWriteRequestError,
-) -> Error {
-    match error {
-        batch_write_request::FirestoreBatchWriteRequestError::InvalidRequest(_)
-        | batch_write_request::FirestoreBatchWriteRequestError::Unsupported(_)
-        | batch_write_request::FirestoreBatchWriteRequestError::InvalidResource(_)
-        | batch_write_request::FirestoreBatchWriteRequestError::InvalidValue(_) => {
-            Error::InvalidInput(error.to_string())
-        }
-    }
-}
-
-pub fn batch_get_request_error_to_core(
-    error: batch_get_request::FirestoreBatchGetRequestError,
-) -> Error {
-    match error {
-        batch_get_request::FirestoreBatchGetRequestError::InvalidRequest(_)
-        | batch_get_request::FirestoreBatchGetRequestError::InvalidResource(_)
-        | batch_get_request::FirestoreBatchGetRequestError::Unsupported(_) => {
-            Error::InvalidInput(error.to_string())
-        }
-    }
-}
-
-pub fn list_collection_ids_request_error_to_core(
-    error: list_collection_ids_request::FirestoreListCollectionIdsRequestError,
-) -> Error {
-    match error {
-        list_collection_ids_request::FirestoreListCollectionIdsRequestError::InvalidRequest(_)
-        | list_collection_ids_request::FirestoreListCollectionIdsRequestError::Unsupported(_) => {
-            Error::InvalidInput(error.to_string())
-        }
-    }
-}
-
-pub fn run_query_request_error_to_core(
-    error: run_query_request::FirestoreRunQueryRequestError,
-) -> Error {
-    match error {
-        run_query_request::FirestoreRunQueryRequestError::InvalidRequest(_)
-        | run_query_request::FirestoreRunQueryRequestError::Unsupported(_) => {
-            Error::InvalidInput(error.to_string())
-        }
-    }
-}
-
-pub fn run_aggregation_query_request_error_to_core(
-    error: run_aggregation_query_request::FirestoreRunAggregationQueryRequestError,
-) -> Error {
-    match error {
-        run_aggregation_query_request::FirestoreRunAggregationQueryRequestError::InvalidRequest(
-            _,
-        )
-        | run_aggregation_query_request::FirestoreRunAggregationQueryRequestError::Unsupported(_) => {
-            Error::InvalidInput(error.to_string())
-        }
-    }
-}
-
-pub fn transaction_request_error_to_core(
-    error: transaction_request::FirestoreTransactionRequestError,
-) -> Error {
-    match error {
-        transaction_request::FirestoreTransactionRequestError::InvalidRequest(_)
-        | transaction_request::FirestoreTransactionRequestError::InvalidResource(_)
-        | transaction_request::FirestoreTransactionRequestError::Unsupported(_) => {
-            Error::InvalidInput(error.to_string())
-        }
-    }
+/// Maps any of the nine per-RPC Firestore request-parsing failures (now
+/// unified as [`FirestoreRequestError`]) onto the shared core `Error`. All
+/// nine collapsed to the same `InvalidInput` mapping, so one function covers
+/// what used to be seven near-identical per-RPC ones.
+pub fn firestore_request_error_to_core(error: FirestoreRequestError) -> Error {
+    Error::InvalidInput(error.to_string())
 }
 
 pub fn resource_name_error_to_core(error: resource_names::FirestoreResourceNameError) -> Error {
