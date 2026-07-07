@@ -2,12 +2,73 @@ use std::sync::Arc;
 
 use nimbus_core::{Result, SequenceNumber, TenantEventRecord, TenantId};
 use nimbus_storage::{
-    ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage, DurableJournalBootstrap,
+    ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage, DurableJournal, DurableJournalBootstrap,
     DurableJournalPage, PointInTimeRestoreArchive, PointInTimeRestoreTarget, RetentionGcConfig,
 };
 
 use crate::engine::Engine;
 use crate::persistence::TenantPersistence;
+
+// Each helper below is generic over `S: DurableJournal` even though the
+// surrounding `execute_journal_read_async`/`TenantPersistenceExecutor`
+// plumbing still hands the closure a concrete `TenantPersistence` (SR7
+// owns retiring that enum-dispatch layer). Routing the actual storage
+// call through a capability-trait-bounded function proves the read
+// logic itself only relies on `DurableJournal`, not a `TenantPersistence`
+// inherent method.
+
+fn read_durable_journal_from_for_store<S>(
+    store: &S,
+    from: SequenceNumber,
+) -> Result<Vec<TenantEventRecord>>
+where
+    S: DurableJournal + ?Sized,
+{
+    store.read_durable_journal_from(from)
+}
+
+fn stream_durable_journal_for_store<S>(
+    store: &S,
+    after: SequenceNumber,
+    limit: usize,
+) -> Result<DurableJournalPage>
+where
+    S: DurableJournal + ?Sized,
+{
+    store.stream_durable_journal(after, limit)
+}
+
+fn export_durable_journal_bootstrap_for_store<S>(store: &S) -> Result<DurableJournalBootstrap>
+where
+    S: DurableJournal + ?Sized,
+{
+    store.export_durable_journal_bootstrap()
+}
+
+fn export_changefeed_bootstrap_for_store<S>(store: &S) -> Result<ChangefeedBootstrap>
+where
+    S: DurableJournal + ?Sized,
+{
+    store.export_changefeed_bootstrap()
+}
+
+fn stream_changefeed_for_store<S>(
+    store: &S,
+    cursor: &ChangefeedCursor,
+    limit: usize,
+) -> Result<ChangefeedPage>
+where
+    S: DurableJournal + ?Sized,
+{
+    store.stream_changefeed(cursor, limit)
+}
+
+fn latest_sequence_for_store<S>(store: &S) -> Result<SequenceNumber>
+where
+    S: DurableJournal + ?Sized,
+{
+    store.latest_sequence()
+}
 
 impl Engine {
     async fn execute_journal_read_async<T, F>(
@@ -51,7 +112,7 @@ impl Engine {
     ) -> Result<Vec<TenantEventRecord>> {
         self.execute_journal_read_async(tenant_id, move |store| {
             let from = SequenceNumber(after.0.saturating_add(1));
-            store.read_durable_journal_from(from)
+            read_durable_journal_from_for_store(&store, from)
         })
         .await
     }
@@ -76,7 +137,7 @@ impl Engine {
         limit: usize,
     ) -> Result<DurableJournalPage> {
         self.execute_journal_read_async(tenant_id, move |store| {
-            store.stream_durable_journal(after, limit)
+            stream_durable_journal_for_store(&store, after, limit)
         })
         .await
     }
@@ -97,7 +158,7 @@ impl Engine {
         tenant_id: TenantId,
     ) -> Result<DurableJournalBootstrap> {
         self.execute_journal_read_async(tenant_id, move |store| {
-            store.export_durable_journal_bootstrap()
+            export_durable_journal_bootstrap_for_store(&store)
         })
         .await
     }
@@ -114,8 +175,10 @@ impl Engine {
         self: &Arc<Self>,
         tenant_id: TenantId,
     ) -> Result<ChangefeedBootstrap> {
-        self.execute_journal_read_async(tenant_id, move |store| store.export_changefeed_bootstrap())
-            .await
+        self.execute_journal_read_async(tenant_id, move |store| {
+            export_changefeed_bootstrap_for_store(&store)
+        })
+        .await
     }
 
     /// Streams typed changefeed events from a retained changefeed cursor.
@@ -138,7 +201,7 @@ impl Engine {
         limit: usize,
     ) -> Result<ChangefeedPage> {
         self.execute_journal_read_async(tenant_id, move |store| {
-            store.stream_changefeed(&cursor, limit)
+            stream_changefeed_for_store(&store, &cursor, limit)
         })
         .await
     }
@@ -187,7 +250,7 @@ impl Engine {
         self: &Arc<Self>,
         tenant_id: TenantId,
     ) -> Result<SequenceNumber> {
-        self.execute_journal_read_async(tenant_id, move |store| store.latest_sequence())
+        self.execute_journal_read_async(tenant_id, move |store| latest_sequence_for_store(&store))
             .await
     }
 }

@@ -86,6 +86,7 @@ mod control;
 mod executor;
 mod provider;
 mod query;
+mod read_capabilities;
 mod runtime_hooks;
 mod snapshot;
 mod tenant;

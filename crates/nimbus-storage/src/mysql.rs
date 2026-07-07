@@ -48,6 +48,7 @@ mod table_lifecycle;
 mod trigger_delivery;
 mod trigger_invocations;
 mod write;
+mod write_schema_events;
 
 use self::backend::*;
 use self::query_helpers::*;

@@ -1,7 +1,7 @@
 use nimbus_core::{Result, SequenceNumber, TableName};
+use nimbus_storage::MaterializedRebuild;
 
 use super::*;
-use crate::persistence::TenantPersistence;
 
 impl TenantRuntime {
     #[cfg(test)]
@@ -22,13 +22,16 @@ impl TenantRuntime {
             .serving_snapshot_for_table_with_mode(table, required_sequence, true)
     }
 
-    pub(crate) fn load_materialized_serving_snapshot_cancellable(
+    pub(crate) fn load_materialized_serving_snapshot_cancellable<S>(
         &self,
-        store: &TenantPersistence,
+        store: &S,
         table: &TableName,
         required_sequence: SequenceNumber,
         check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<ServingSnapshot> {
+    ) -> Result<ServingSnapshot>
+    where
+        S: MaterializedRebuild + ?Sized,
+    {
         self.materialized_reads.load_serving_snapshot_cancellable(
             store,
             table,

@@ -740,6 +740,9 @@ impl PostgresWriteTransaction {
         if max_jobs == 0 {
             return Ok(Vec::new());
         }
+        // PG claim relies on the per-tenant advisory transaction lock to serialize
+        // claimers, so it omits the `FOR UPDATE` row lock MySQL uses. Dialect lock
+        // mode is load-bearing — not unified with the write core, see CO6.
         let query = format!(
             "SELECT data_json FROM {} WHERE run_at <= $1 ORDER BY run_at, id LIMIT $2",
             qualified_table(&self.schema_name, "scheduled_jobs")
@@ -977,212 +980,19 @@ impl PostgresWriteTransaction {
     }
 
     pub fn apply_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
-        self.check_cancel()?;
-        if records.is_empty() {
-            return Ok(());
-        }
-
-        let mut applied_head = self.applied_sequence()?.0;
-        for record in records {
-            self.check_cancel()?;
-            if record.sequence.0 <= applied_head {
-                continue;
-            }
-            if record.sequence.0 != applied_head.saturating_add(1) {
-                return Err(Error::Internal(format!(
-                    "durable journal apply expected sequence {}, got {}",
-                    applied_head.saturating_add(1),
-                    record.sequence.0
-                )));
-            }
-            self.apply_durable_record(record)?;
-            applied_head = record.sequence.0;
-        }
-
-        if applied_head >= records[0].sequence.0 {
-            self.write_applied_sequence(SequenceNumber(applied_head))?;
-        }
-        Ok(())
+        crate::sql::write_core::sql_apply_durable_records_batch(self, records)
     }
 
     pub fn apply_resolved_write(&mut self, write: &ResolvedWrite) -> Result<()> {
-        match write {
-            ResolvedWrite::Insert {
-                document,
-                resource_path_binding,
-                ..
-            } => {
-                self.check_cancel()?;
-                if self.load_document(&document.table, &document.id)?.is_some() {
-                    return Err(Error::Conflict(format!(
-                        "document {} changed before transaction commit",
-                        document.id
-                    )));
-                }
-                self.insert_document(document)?;
-                if let Some(resource_path_binding) = resource_path_binding.as_ref() {
-                    if let Some(write) = self.commit_writes.last_mut() {
-                        write.resource_path_binding = Some(resource_path_binding.clone());
-                    }
-                    self.upsert_resource_path_binding(resource_path_binding)?;
-                }
-                Ok(())
-            }
-            ResolvedWrite::Update {
-                previous,
-                current,
-                resource_path_binding,
-                ..
-            } => {
-                self.check_cancel()?;
-                let existing =
-                    self.load_document(&current.table, &current.id)?
-                        .ok_or(Error::Conflict(format!(
-                            "document {} changed before transaction commit",
-                            current.id
-                        )))?;
-                if existing != *previous {
-                    return Err(Error::Conflict(format!(
-                        "document {} changed before transaction commit",
-                        current.id
-                    )));
-                }
-                let table_id =
-                    self.load_table_id(&current.table)?
-                        .ok_or(Error::Conflict(format!(
-                            "document {} changed before transaction commit",
-                            current.id
-                        )))?;
-                let write_table_id = table_id.clone();
-
-                let query = format!(
-                    "UPDATE {} SET data_json = $3, typed_fields_json = $4, creation_time = $5, update_time = $6 WHERE table_id = $1 AND id = $2",
-                    qualified_table(&self.schema_name, "documents")
-                );
-                let document_id = current.id.to_string();
-                let data_json = serialize_document_fields(current)?;
-                let typed_fields_json = serialize_document_typed_fields(current)?;
-                let creation_time = i64_from_timestamp(current.creation_time)?;
-                let update_time = i64_from_timestamp(current.update_time)?;
-                let client = self.session()?;
-                self.block_on(async move {
-                    client
-                        .execute(
-                            query.as_str(),
-                            &[
-                                &table_id.as_str(),
-                                &document_id,
-                                &data_json,
-                                &typed_fields_json,
-                                &creation_time,
-                                &update_time,
-                            ],
-                        )
-                        .await
-                        .map_err(map_postgres_error)?;
-                    Ok(())
-                })?;
-                self.record_commit_write(WriteOp {
-                    table: current.table.clone(),
-                    table_id: write_table_id,
-                    op_type: WriteOpType::Update,
-                    doc_id: current.id.clone(),
-                    resource_path_binding: resource_path_binding.clone(),
-                    trigger_write_origin: None,
-                    previous: Some(previous.clone()),
-                    current: Some(current.clone()),
-                });
-                if let Some(resource_path_binding) = resource_path_binding.as_ref() {
-                    self.upsert_resource_path_binding(resource_path_binding)?;
-                }
-                Ok(())
-            }
-            ResolvedWrite::Delete { previous, .. } => {
-                self.check_cancel()?;
-                let existing =
-                    self.load_document(&previous.table, &previous.id)?
-                        .ok_or(Error::Conflict(format!(
-                            "document {} changed before transaction commit",
-                            previous.id
-                        )))?;
-                if existing != *previous {
-                    return Err(Error::Conflict(format!(
-                        "document {} changed before transaction commit",
-                        previous.id
-                    )));
-                }
-                let table_id =
-                    self.load_table_id(&previous.table)?
-                        .ok_or(Error::Conflict(format!(
-                            "document {} changed before transaction commit",
-                            previous.id
-                        )))?;
-                let write_table_id = table_id.clone();
-
-                let query = format!(
-                    "DELETE FROM {} WHERE table_id = $1 AND id = $2",
-                    qualified_table(&self.schema_name, "documents")
-                );
-                let document_id = previous.id.to_string();
-                let client = self.session()?;
-                self.block_on(async move {
-                    client
-                        .execute(query.as_str(), &[&table_id.as_str(), &document_id])
-                        .await
-                        .map_err(map_postgres_error)?;
-                    Ok(())
-                })?;
-                let resource_path_binding = self.remove_resource_path_binding(
-                    &nimbus_core::DocumentLocator::new(previous.table.clone(), previous.id.clone()),
-                )?;
-                self.record_commit_write(WriteOp {
-                    table: previous.table.clone(),
-                    table_id: write_table_id,
-                    op_type: WriteOpType::Delete,
-                    doc_id: previous.id.clone(),
-                    resource_path_binding,
-                    trigger_write_origin: None,
-                    previous: Some(previous.clone()),
-                    current: None,
-                });
-                Ok(())
-            }
-        }
+        crate::sql::write_core::sql_apply_resolved_write(self, write)
     }
 
-    pub fn commit(mut self) -> Result<Option<CommitEntry>> {
-        self.check_cancel()?;
-        let writes = std::mem::take(&mut self.commit_writes);
-        if !writes.is_empty() {
-            self.tenant_events.insert(
-                0,
-                TenantEventKind::DocumentWrite {
-                    writes: writes.clone(),
-                },
-            );
-        }
-        let commit = if self.tenant_events.is_empty() {
-            None
-        } else {
-            let events = std::mem::take(&mut self.tenant_events);
-            Some(self.append_commit_entry(writes, events)?)
-        };
-        self.enqueue_notification()?;
-        self.provider
-            .fault_injector
-            .check(FaultPoint::StorageCommitBeforeVisibility)?;
-        self.batch_execute("COMMIT")?;
-        if self.schema_cache_changed {
-            invalidate_schema_cache_handle(&self.schema_cache);
-        }
-        self.provider
-            .fault_injector
-            .check(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
-        Ok(commit)
+    pub fn commit(self) -> Result<Option<CommitEntry>> {
+        crate::sql::write_core::sql_commit(self)
     }
 
     pub fn rollback(&mut self) {
-        let _ = self.batch_execute("ROLLBACK");
+        crate::sql::write_core::sql_rollback(self)
     }
 
     pub(crate) fn check_cancel(&self) -> Result<()> {
@@ -1213,6 +1023,8 @@ impl PostgresWriteTransaction {
             .ok_or_else(|| Error::Internal("Postgres write transaction already closed".to_string()))
     }
 
+    // PG `pg_advisory_xact_lock` tenant-lock order — do not unify with MySQL's
+    // `SELECT ... FOR UPDATE`; lock acquisition order differs by dialect, see CO6.
     fn acquire_tenant_lock(&mut self) -> Result<()> {
         let lock_key = tenant_advisory_lock_key(&self.tenant_id);
         let client = self.session()?;
@@ -1450,17 +1262,17 @@ impl PostgresWriteTransaction {
         self.commit_timestamp = commit_timestamp;
     }
 
-    fn record_commit_write(&mut self, mut write: WriteOp) {
-        if write.trigger_write_origin.is_none() {
-            write.trigger_write_origin = self.trigger_write_origin.clone();
-        }
-        self.commit_writes.push(write);
+    fn record_commit_write(&mut self, write: WriteOp) {
+        crate::sql::write_core::sql_record_commit_write(self, write)
     }
 
     pub(super) fn record_tenant_event(&mut self, event: TenantEventKind) {
-        self.tenant_events.push(event);
+        crate::sql::write_core::sql_record_tenant_event(self, event)
     }
 
+    // PG-only `pg_notify` fan-out. MySQL has no notification channel, so this
+    // stays per-backend; the shared write core invokes it through the
+    // `enqueue_notification` seam (a no-op on MySQL), see CO6.
     fn enqueue_notification(&mut self) -> Result<()> {
         if !self.notification.has_any() {
             return Ok(());
@@ -1482,5 +1294,154 @@ impl PostgresWriteTransaction {
                 .map_err(map_postgres_error)?;
             Ok(())
         })
+    }
+}
+
+impl crate::sql::write_core::SqlWriteBackend for PostgresWriteTransaction {
+    fn check_cancel(&self) -> Result<()> {
+        PostgresWriteTransaction::check_cancel(self)
+    }
+
+    fn check_fault(&self, point: FaultPoint) -> Result<()> {
+        self.provider.fault_injector.check(point)
+    }
+
+    fn batch_execute(&mut self, sql: &str) -> Result<()> {
+        PostgresWriteTransaction::batch_execute(self, sql)
+    }
+
+    fn trigger_write_origin(&self) -> Option<TriggerWriteOrigin> {
+        self.trigger_write_origin.clone()
+    }
+
+    fn push_commit_write(&mut self, write: WriteOp) {
+        self.commit_writes.push(write);
+    }
+
+    fn last_commit_write_mut(&mut self) -> Option<&mut WriteOp> {
+        self.commit_writes.last_mut()
+    }
+
+    fn take_commit_writes(&mut self) -> Vec<WriteOp> {
+        std::mem::take(&mut self.commit_writes)
+    }
+
+    fn push_tenant_event(&mut self, event: TenantEventKind) {
+        self.tenant_events.push(event);
+    }
+
+    fn prepend_tenant_event(&mut self, event: TenantEventKind) {
+        self.tenant_events.insert(0, event);
+    }
+
+    fn tenant_events_is_empty(&self) -> bool {
+        self.tenant_events.is_empty()
+    }
+
+    fn take_tenant_events(&mut self) -> Vec<TenantEventKind> {
+        std::mem::take(&mut self.tenant_events)
+    }
+
+    fn applied_sequence(&mut self) -> Result<SequenceNumber> {
+        PostgresWriteTransaction::applied_sequence(self)
+    }
+
+    fn apply_durable_record(&mut self, record: &TenantEventRecord) -> Result<()> {
+        PostgresWriteTransaction::apply_durable_record(self, record)
+    }
+
+    fn write_applied_sequence(&mut self, sequence: SequenceNumber) -> Result<()> {
+        PostgresWriteTransaction::write_applied_sequence(self, sequence)
+    }
+
+    fn append_commit_entry(
+        &mut self,
+        writes: Vec<WriteOp>,
+        events: Vec<TenantEventKind>,
+    ) -> Result<CommitEntry> {
+        PostgresWriteTransaction::append_commit_entry(self, writes, events)
+    }
+
+    fn enqueue_notification(&mut self) -> Result<()> {
+        PostgresWriteTransaction::enqueue_notification(self)
+    }
+
+    fn schema_cache_changed(&self) -> bool {
+        self.schema_cache_changed
+    }
+
+    fn invalidate_schema_cache(&self) {
+        invalidate_schema_cache_handle(&self.schema_cache);
+    }
+
+    fn load_document(&mut self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
+        PostgresWriteTransaction::load_document(self, table, id)
+    }
+
+    fn load_table_id(&mut self, table: &TableName) -> Result<Option<TableId>> {
+        PostgresWriteTransaction::load_table_id(self, table)
+    }
+
+    fn insert_document(&mut self, document: &Document) -> Result<()> {
+        PostgresWriteTransaction::insert_document(self, document)
+    }
+
+    fn update_document_row(&mut self, table_id: &TableId, current: &Document) -> Result<()> {
+        let query = format!(
+            "UPDATE {} SET data_json = $3, typed_fields_json = $4, creation_time = $5, update_time = $6 WHERE table_id = $1 AND id = $2",
+            qualified_table(&self.schema_name, "documents")
+        );
+        let document_id = current.id.to_string();
+        let data_json = serialize_document_fields(current)?;
+        let typed_fields_json = serialize_document_typed_fields(current)?;
+        let creation_time = i64_from_timestamp(current.creation_time)?;
+        let update_time = i64_from_timestamp(current.update_time)?;
+        let table_id = table_id.as_str().to_string();
+        let client = self.session()?;
+        self.block_on(async move {
+            client
+                .execute(
+                    query.as_str(),
+                    &[
+                        &table_id,
+                        &document_id,
+                        &data_json,
+                        &typed_fields_json,
+                        &creation_time,
+                        &update_time,
+                    ],
+                )
+                .await
+                .map_err(map_postgres_error)?;
+            Ok(())
+        })
+    }
+
+    fn delete_document_row(&mut self, table_id: &TableId, id: &DocumentId) -> Result<()> {
+        let query = format!(
+            "DELETE FROM {} WHERE table_id = $1 AND id = $2",
+            qualified_table(&self.schema_name, "documents")
+        );
+        let document_id = id.to_string();
+        let table_id = table_id.as_str().to_string();
+        let client = self.session()?;
+        self.block_on(async move {
+            client
+                .execute(query.as_str(), &[&table_id, &document_id])
+                .await
+                .map_err(map_postgres_error)?;
+            Ok(())
+        })
+    }
+
+    fn upsert_resource_path_binding(&mut self, binding: &ResourcePathBinding) -> Result<()> {
+        PostgresWriteTransaction::upsert_resource_path_binding(self, binding)
+    }
+
+    fn remove_resource_path_binding(
+        &mut self,
+        locator: &nimbus_core::DocumentLocator,
+    ) -> Result<Option<ResourcePathBinding>> {
+        PostgresWriteTransaction::remove_resource_path_binding(self, locator)
     }
 }

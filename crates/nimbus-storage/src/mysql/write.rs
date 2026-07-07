@@ -4,6 +4,9 @@ use super::document_versions::{
 use super::index_versions::{
     prune_index_versions_before_in_session, record_index_versions_for_events_in_session,
 };
+use super::write_schema_events::{
+    durable_record_changes_schema_cache, record_mysql_schema_set_events,
+};
 use super::*;
 
 impl MySqlTenantStore {
@@ -423,6 +426,9 @@ impl MySqlWriteTransaction {
     where
         Check: Fn() -> Result<()> + Send + 'static,
     {
+        // MySQL-only begin-retry loop: MySQL surfaces tenant-lock contention as a
+        // retryable begin error, unlike PG's `pg_advisory_xact_lock`. Not unified
+        // with the shared write core — dialect-load-bearing, see CO6.
         let check_cancel = Arc::new(Mutex::new(check_cancel));
         let mut attempt = 0;
         loop {
@@ -750,6 +756,9 @@ impl MySqlWriteTransaction {
         let due: Vec<ScheduledJob> = {
             let conn = self.session()?;
             Self::block_on(&runtime_handle, async move {
+                // MySQL claim uses `FOR UPDATE` row locks to serialize claimers;
+                // PG relies on its advisory transaction lock instead. Dialect
+                // lock mode is load-bearing — not unified with the write core, see CO6.
                 let query = format!(
                     "SELECT data_json FROM {} WHERE run_at <= ? ORDER BY run_at, id LIMIT ? FOR UPDATE",
                     qualified_table(&database_name, "scheduled_jobs")
@@ -958,207 +967,19 @@ impl MySqlWriteTransaction {
     }
 
     pub fn apply_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
-        self.check_cancel()?;
-        if records.is_empty() {
-            return Ok(());
-        }
-
-        let mut applied_head = self.applied_sequence()?.0;
-        for record in records {
-            self.check_cancel()?;
-            if record.sequence.0 <= applied_head {
-                continue;
-            }
-            if record.sequence.0 != applied_head.saturating_add(1) {
-                return Err(Error::Internal(format!(
-                    "durable journal apply expected sequence {}, got {}",
-                    applied_head.saturating_add(1),
-                    record.sequence.0
-                )));
-            }
-            self.apply_durable_record(record)?;
-            applied_head = record.sequence.0;
-        }
-
-        if applied_head >= records[0].sequence.0 {
-            self.write_applied_sequence(SequenceNumber(applied_head))?;
-        }
-        Ok(())
+        crate::sql::write_core::sql_apply_durable_records_batch(self, records)
     }
 
     pub fn apply_resolved_write(&mut self, write: &ResolvedWrite) -> Result<()> {
-        match write {
-            ResolvedWrite::Insert {
-                document,
-                resource_path_binding,
-                ..
-            } => {
-                self.check_cancel()?;
-                if self.load_document(&document.table, &document.id)?.is_some() {
-                    return Err(Error::Conflict(format!(
-                        "document {} changed before transaction commit",
-                        document.id
-                    )));
-                }
-                self.insert_document(document)?;
-                if let Some(resource_path_binding) = resource_path_binding.as_ref() {
-                    if let Some(write) = self.commit_writes.last_mut() {
-                        write.resource_path_binding = Some(resource_path_binding.clone());
-                    }
-                    self.upsert_resource_path_binding(resource_path_binding)?;
-                }
-                Ok(())
-            }
-            ResolvedWrite::Update {
-                previous,
-                current,
-                resource_path_binding,
-                ..
-            } => {
-                self.check_cancel()?;
-                let existing =
-                    self.load_document(&current.table, &current.id)?
-                        .ok_or(Error::Conflict(format!(
-                            "document {} changed before transaction commit",
-                            current.id
-                        )))?;
-                if existing != *previous {
-                    return Err(Error::Conflict(format!(
-                        "document {} changed before transaction commit",
-                        current.id
-                    )));
-                }
-                let table_id =
-                    self.load_table_id(&current.table)?
-                        .ok_or(Error::Conflict(format!(
-                            "document {} changed before transaction commit",
-                            current.id
-                        )))?;
-                let write_table_id = table_id.clone();
-                let query = format!(
-                    "UPDATE {} SET data_json = ?, typed_fields_json = ?, creation_time = ?, update_time = ? WHERE table_id = ? AND id = ?",
-                    qualified_table(&self.database_name, "documents")
-                );
-                let data_json = serialize_document_fields(current)?;
-                let typed_fields_json = serialize_document_typed_fields(current)?;
-                let creation_time = current.creation_time.0;
-                let update_time = current.update_time.0;
-                let document_id = current.id.to_string();
-                let runtime_handle = self.provider.runtime_handle.clone();
-                let conn = self.session()?;
-                Self::block_on(&runtime_handle, async move {
-                    conn.exec_drop(
-                        query,
-                        (
-                            data_json,
-                            typed_fields_json,
-                            creation_time,
-                            update_time,
-                            table_id.to_string(),
-                            document_id,
-                        ),
-                    )
-                    .await
-                    .map_err(map_mysql_error)
-                })?;
-                self.record_commit_write(WriteOp {
-                    table: current.table.clone(),
-                    table_id: write_table_id,
-                    op_type: WriteOpType::Update,
-                    doc_id: current.id.clone(),
-                    resource_path_binding: resource_path_binding.clone(),
-                    trigger_write_origin: None,
-                    previous: Some(previous.clone()),
-                    current: Some(current.clone()),
-                });
-                if let Some(resource_path_binding) = resource_path_binding.as_ref() {
-                    self.upsert_resource_path_binding(resource_path_binding)?;
-                }
-                Ok(())
-            }
-            ResolvedWrite::Delete { previous, .. } => {
-                self.check_cancel()?;
-                let existing =
-                    self.load_document(&previous.table, &previous.id)?
-                        .ok_or(Error::Conflict(format!(
-                            "document {} changed before transaction commit",
-                            previous.id
-                        )))?;
-                if existing != *previous {
-                    return Err(Error::Conflict(format!(
-                        "document {} changed before transaction commit",
-                        previous.id
-                    )));
-                }
-                let table_id =
-                    self.load_table_id(&previous.table)?
-                        .ok_or(Error::Conflict(format!(
-                            "document {} changed before transaction commit",
-                            previous.id
-                        )))?;
-                let write_table_id = table_id.clone();
-                let query = format!(
-                    "DELETE FROM {} WHERE table_id = ? AND id = ?",
-                    qualified_table(&self.database_name, "documents")
-                );
-                let document_id = previous.id.to_string();
-                let runtime_handle = self.provider.runtime_handle.clone();
-                let conn = self.session()?;
-                Self::block_on(&runtime_handle, async move {
-                    conn.exec_drop(query, (table_id.to_string(), document_id))
-                        .await
-                        .map_err(map_mysql_error)
-                })?;
-                let resource_path_binding = self.remove_resource_path_binding(
-                    &nimbus_core::DocumentLocator::new(previous.table.clone(), previous.id.clone()),
-                )?;
-                self.record_commit_write(WriteOp {
-                    table: previous.table.clone(),
-                    table_id: write_table_id,
-                    op_type: WriteOpType::Delete,
-                    doc_id: previous.id.clone(),
-                    resource_path_binding,
-                    trigger_write_origin: None,
-                    previous: Some(previous.clone()),
-                    current: None,
-                });
-                Ok(())
-            }
-        }
+        crate::sql::write_core::sql_apply_resolved_write(self, write)
     }
 
-    pub fn commit(mut self) -> Result<Option<CommitEntry>> {
-        self.check_cancel()?;
-        let writes = std::mem::take(&mut self.commit_writes);
-        if !writes.is_empty() {
-            self.tenant_events.insert(
-                0,
-                TenantEventKind::DocumentWrite {
-                    writes: writes.clone(),
-                },
-            );
-        }
-        let commit = if self.tenant_events.is_empty() {
-            None
-        } else {
-            let events = std::mem::take(&mut self.tenant_events);
-            Some(self.append_commit_entry(writes, events)?)
-        };
-        self.provider
-            .fault_injector
-            .check(FaultPoint::StorageCommitBeforeVisibility)?;
-        self.batch_execute("COMMIT")?;
-        if self.schema_cache_changed {
-            invalidate_schema_cache_handle(&self.schema_cache);
-        }
-        self.provider
-            .fault_injector
-            .check(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
-        Ok(commit)
+    pub fn commit(self) -> Result<Option<CommitEntry>> {
+        crate::sql::write_core::sql_commit(self)
     }
 
     pub fn rollback(&mut self) {
-        let _ = self.batch_execute("ROLLBACK");
+        crate::sql::write_core::sql_rollback(self)
     }
 
     fn batch_execute(&mut self, sql: &str) -> Result<()> {
@@ -1206,6 +1027,8 @@ impl MySqlWriteTransaction {
         })
     }
 
+    // MySQL `SELECT ... FOR UPDATE` tenant-lock order — do not unify with PG's
+    // `pg_advisory_xact_lock`; the lock acquisition order differs by dialect, see CO6.
     fn acquire_tenant_lock(&mut self) -> Result<()> {
         let query = format!(
             "SELECT value_u64 FROM {} WHERE key_name = ? FOR UPDATE",
@@ -1440,55 +1263,161 @@ impl MySqlWriteTransaction {
         self.commit_timestamp = commit_timestamp;
     }
 
-    fn record_commit_write(&mut self, mut write: WriteOp) {
-        if write.trigger_write_origin.is_none() {
-            write.trigger_write_origin = self.trigger_write_origin.clone();
-        }
-        self.commit_writes.push(write);
+    fn record_commit_write(&mut self, write: WriteOp) {
+        crate::sql::write_core::sql_record_commit_write(self, write)
     }
 
     pub(super) fn record_tenant_event(&mut self, event: TenantEventKind) {
+        crate::sql::write_core::sql_record_tenant_event(self, event)
+    }
+}
+
+impl crate::sql::write_core::SqlWriteBackend for MySqlWriteTransaction {
+    fn check_cancel(&self) -> Result<()> {
+        MySqlWriteTransaction::check_cancel(self)
+    }
+
+    fn check_fault(&self, point: FaultPoint) -> Result<()> {
+        self.provider.fault_injector.check(point)
+    }
+
+    fn batch_execute(&mut self, sql: &str) -> Result<()> {
+        MySqlWriteTransaction::batch_execute(self, sql)
+    }
+
+    fn trigger_write_origin(&self) -> Option<TriggerWriteOrigin> {
+        self.trigger_write_origin.clone()
+    }
+
+    fn push_commit_write(&mut self, write: WriteOp) {
+        self.commit_writes.push(write);
+    }
+
+    fn last_commit_write_mut(&mut self) -> Option<&mut WriteOp> {
+        self.commit_writes.last_mut()
+    }
+
+    fn take_commit_writes(&mut self) -> Vec<WriteOp> {
+        std::mem::take(&mut self.commit_writes)
+    }
+
+    fn push_tenant_event(&mut self, event: TenantEventKind) {
         self.tenant_events.push(event);
     }
-}
 
-fn record_mysql_schema_set_events(
-    transaction: &mut MySqlWriteTransaction,
-    table_id: TableId,
-    previous: Option<TableSchema>,
-    table_schema: &TableSchema,
-) {
-    transaction.record_tenant_event(TenantEventKind::SchemaChange {
-        change: Box::new(SchemaChangeEvent::SetTable {
-            table: table_schema.table.clone(),
-            table_id: table_id.clone(),
-            previous,
-            current: table_schema.clone(),
-        }),
-    });
-    for index in &table_schema.indexes {
-        transaction.record_tenant_event(TenantEventKind::IndexLifecycle {
-            index: IndexLifecycleEvent {
-                table: table_schema.table.clone(),
-                table_id: table_id.clone(),
-                index_id: index.id.clone(),
-                state: index.state,
-                definition: index.clone(),
-            },
-        });
+    fn prepend_tenant_event(&mut self, event: TenantEventKind) {
+        self.tenant_events.insert(0, event);
     }
-}
 
-fn durable_record_changes_schema_cache(record: &TenantEventRecord) -> bool {
-    record.events.iter().any(|event| {
-        matches!(
-            event,
-            TenantEventKind::SchemaChange { .. }
-                | TenantEventKind::TableLifecycle {
-                    lifecycle: TableLifecycleEvent::HardDelete { .. },
-                }
-        )
-    })
+    fn tenant_events_is_empty(&self) -> bool {
+        self.tenant_events.is_empty()
+    }
+
+    fn take_tenant_events(&mut self) -> Vec<TenantEventKind> {
+        std::mem::take(&mut self.tenant_events)
+    }
+
+    fn applied_sequence(&mut self) -> Result<SequenceNumber> {
+        MySqlWriteTransaction::applied_sequence(self)
+    }
+
+    fn apply_durable_record(&mut self, record: &TenantEventRecord) -> Result<()> {
+        MySqlWriteTransaction::apply_durable_record(self, record)
+    }
+
+    fn write_applied_sequence(&mut self, sequence: SequenceNumber) -> Result<()> {
+        MySqlWriteTransaction::write_applied_sequence(self, sequence)
+    }
+
+    fn append_commit_entry(
+        &mut self,
+        writes: Vec<WriteOp>,
+        events: Vec<TenantEventKind>,
+    ) -> Result<CommitEntry> {
+        MySqlWriteTransaction::append_commit_entry(self, writes, events)
+    }
+
+    fn enqueue_notification(&mut self) -> Result<()> {
+        // MySQL has no LISTEN/NOTIFY channel; there is nothing to flush.
+        Ok(())
+    }
+
+    fn schema_cache_changed(&self) -> bool {
+        self.schema_cache_changed
+    }
+
+    fn invalidate_schema_cache(&self) {
+        invalidate_schema_cache_handle(&self.schema_cache);
+    }
+
+    fn load_document(&mut self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
+        MySqlWriteTransaction::load_document(self, table, id)
+    }
+
+    fn load_table_id(&mut self, table: &TableName) -> Result<Option<TableId>> {
+        MySqlWriteTransaction::load_table_id(self, table)
+    }
+
+    fn insert_document(&mut self, document: &Document) -> Result<()> {
+        MySqlWriteTransaction::insert_document(self, document)
+    }
+
+    fn update_document_row(&mut self, table_id: &TableId, current: &Document) -> Result<()> {
+        let query = format!(
+            "UPDATE {} SET data_json = ?, typed_fields_json = ?, creation_time = ?, update_time = ? WHERE table_id = ? AND id = ?",
+            qualified_table(&self.database_name, "documents")
+        );
+        let data_json = serialize_document_fields(current)?;
+        let typed_fields_json = serialize_document_typed_fields(current)?;
+        let creation_time = current.creation_time.0;
+        let update_time = current.update_time.0;
+        let document_id = current.id.to_string();
+        let table_id = table_id.to_string();
+        let runtime_handle = self.provider.runtime_handle.clone();
+        let conn = self.session()?;
+        Self::block_on(&runtime_handle, async move {
+            conn.exec_drop(
+                query,
+                (
+                    data_json,
+                    typed_fields_json,
+                    creation_time,
+                    update_time,
+                    table_id,
+                    document_id,
+                ),
+            )
+            .await
+            .map_err(map_mysql_error)
+        })
+    }
+
+    fn delete_document_row(&mut self, table_id: &TableId, id: &DocumentId) -> Result<()> {
+        let query = format!(
+            "DELETE FROM {} WHERE table_id = ? AND id = ?",
+            qualified_table(&self.database_name, "documents")
+        );
+        let document_id = id.to_string();
+        let table_id = table_id.to_string();
+        let runtime_handle = self.provider.runtime_handle.clone();
+        let conn = self.session()?;
+        Self::block_on(&runtime_handle, async move {
+            conn.exec_drop(query, (table_id, document_id))
+                .await
+                .map_err(map_mysql_error)
+        })
+    }
+
+    fn upsert_resource_path_binding(&mut self, binding: &ResourcePathBinding) -> Result<()> {
+        MySqlWriteTransaction::upsert_resource_path_binding(self, binding)
+    }
+
+    fn remove_resource_path_binding(
+        &mut self,
+        locator: &nimbus_core::DocumentLocator,
+    ) -> Result<Option<ResourcePathBinding>> {
+        MySqlWriteTransaction::remove_resource_path_binding(self, locator)
+    }
 }
 
 fn is_retryable_mysql_begin_error(error: &Error) -> bool {

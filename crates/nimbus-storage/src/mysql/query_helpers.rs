@@ -3,33 +3,21 @@ use std::ops::Bound;
 
 use mysql_async::Value as MySqlValue;
 use nimbus_core::{
-    Document, DocumentId, Error, FieldType, Filter, FilterOp, Result, TableName, TableSchema,
-    Timestamp,
+    Document, Error, FieldType, Filter, FilterOp, Result, TableName, TableSchema, Timestamp,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::{IndexRangeBound, store::MAX_DURABLE_JOURNAL_STREAM_LIMIT};
 
+// Dialect-independent row serialization lives once in `crate::sql::row`; the
+// MySQL module re-exports it so existing call sites stay unchanged.
+pub(super) use crate::sql::row::{
+    deserialize_json, row_to_document, serialize_document_fields, serialize_document_typed_fields,
+    serialize_json,
+};
+
 use super::backend::quote_identifier;
-
-pub(super) fn serialize_json<T>(value: &T) -> Result<String>
-where
-    T: serde::Serialize,
-{
-    serde_json::to_string(value).map_err(|error| Error::Serialization(error.to_string()))
-}
-
-pub(super) fn serialize_document_fields(document: &Document) -> Result<String> {
-    serde_json::to_string(&document.fields).map_err(|error| Error::Serialization(error.to_string()))
-}
-
-pub(super) fn deserialize_json<T>(json: &str) -> Result<T>
-where
-    T: serde::de::DeserializeOwned,
-{
-    serde_json::from_str(json).map_err(|error| Error::Serialization(error.to_string()))
-}
 
 pub(super) fn matches_filters(document: &Document, filters: &[Filter]) -> Result<bool> {
     for filter in filters {
@@ -282,31 +270,6 @@ pub(super) fn validate_durable_journal_stream_limit(limit: usize) -> Result<()> 
         )));
     }
     Ok(())
-}
-
-pub(super) fn row_to_document(
-    table: &TableName,
-    id: &DocumentId,
-    creation_time: u64,
-    update_time: u64,
-    data_json: String,
-    typed_fields_json: String,
-) -> Result<Document> {
-    Ok(Document {
-        id: id.clone(),
-        table: table.clone(),
-        creation_time: Timestamp(creation_time),
-        update_time: Timestamp(update_time),
-        fields: serde_json::from_str(&data_json)
-            .map_err(|error| Error::Serialization(error.to_string()))?,
-        typed_fields: serde_json::from_str(&typed_fields_json)
-            .map_err(|error| Error::Serialization(error.to_string()))?,
-    })
-}
-
-pub(super) fn serialize_document_typed_fields(document: &Document) -> Result<String> {
-    serde_json::to_string(&document.typed_fields)
-        .map_err(|error| Error::Serialization(error.to_string()))
 }
 
 pub(super) fn claim_due_jobs_upper_bound(timestamp: Timestamp) -> u64 {

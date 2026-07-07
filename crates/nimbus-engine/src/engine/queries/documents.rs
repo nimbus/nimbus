@@ -5,6 +5,7 @@ use futures::FutureExt;
 use nimbus_core::{
     Document, DocumentId, Error, PrincipalContext, Query, Result, TableName, TenantId,
 };
+use nimbus_storage::TenantPointRead;
 
 use super::authorization::ReadAuthorization;
 use super::materialized::wait_for_latest_applied_visibility_blocking;
@@ -17,6 +18,17 @@ fn full_table_query(table: TableName) -> Query {
         order: None,
         limit: None,
     }
+}
+
+fn get_document_for_store<S>(
+    store: &S,
+    table: &TableName,
+    document_id: &DocumentId,
+) -> Result<Option<Document>>
+where
+    S: TenantPointRead + ?Sized,
+{
+    store.get(table, document_id)
 }
 
 impl Engine {
@@ -344,7 +356,7 @@ impl Engine {
             .read_storage
             .execute_cancellable(cancel_wait, check_cancel, move |store, check_cancel| {
                 check_cancel()?;
-                store.get(&table_for_task, &document_id_for_task)
+                get_document_for_store(&store, &table_for_task, &document_id_for_task)
             })
             .await?
             .ok_or(Error::DocumentNotFound(document_id.clone()))?;

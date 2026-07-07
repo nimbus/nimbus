@@ -10,6 +10,7 @@ use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use nimbus_core::{CommitEntry, Result, SequenceNumber, TableName};
+use nimbus_storage::MaterializedRebuild;
 
 use self::backend::MaterializedServingBackend;
 #[cfg(test)]
@@ -20,7 +21,6 @@ use self::snapshot::ServingSnapshotManager;
 #[cfg(test)]
 pub(crate) use self::stats::MaterializedTablePublicationStats;
 pub use self::stats::{MaterializedReadSurfaceStats, ServingSnapshotManagerStats};
-use crate::persistence::TenantPersistence;
 
 pub(super) const DEFAULT_MATERIALIZED_SURFACE_TABLE_CAPACITY: usize = 8;
 pub(super) const DEFAULT_MATERIALIZED_SURFACE_BYTE_CAPACITY: usize = 16 * 1024 * 1024;
@@ -67,13 +67,16 @@ impl TenantMaterializedReadSurface {
         )
     }
 
-    pub(super) fn load_serving_snapshot_cancellable(
+    pub(super) fn load_serving_snapshot_cancellable<S>(
         &self,
-        store: &TenantPersistence,
+        store: &S,
         table: &TableName,
         required_sequence: SequenceNumber,
         check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<ServingSnapshot> {
+    ) -> Result<ServingSnapshot>
+    where
+        S: MaterializedRebuild + ?Sized,
+    {
         self.backend.load_serving_snapshot_cancellable(
             &self.snapshots,
             store,

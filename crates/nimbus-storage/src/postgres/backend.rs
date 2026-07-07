@@ -11,6 +11,12 @@ use crate::postgres::index_versions::{
     record_index_versions_for_events_in_session, record_index_versions_for_writes_in_session,
 };
 
+// Dialect-independent row serialization lives once in `crate::sql::row`; the
+// PostgreSQL module re-exports it so existing call sites stay unchanged.
+pub(super) use crate::sql::row::{
+    deserialize_json, serialize_document_fields, serialize_document_typed_fields, serialize_json,
+};
+
 pub(super) fn cached_schema(schema_cache: &RwLock<Option<Schema>>) -> Option<Schema> {
     schema_cache.read().ok().and_then(|guard| guard.clone())
 }
@@ -627,21 +633,20 @@ pub(super) fn row_to_document(row: tokio_postgres::Row) -> Result<Document> {
     let table = TableName::new(row.get::<_, String>(0))?;
     let id = DocumentId::from_str(row.get::<_, String>(1).as_str())
         .map_err(|error| Error::InvalidInput(error.to_string()))?;
-    let creation_time = timestamp_from_i64(row.get::<_, i64>(2))?;
-    let update_time = timestamp_from_i64(row.get::<_, i64>(3))?;
-    let fields =
-        serde_json::from_str::<serde_json::Map<String, Value>>(row.get::<_, String>(4).as_str())
-            .map_err(|error| Error::Serialization(error.to_string()))?;
-    let typed_fields = serde_json::from_str(row.get::<_, String>(5).as_str())
-        .map_err(|error| Error::Serialization(error.to_string()))?;
-    Ok(Document {
-        id,
-        table,
+    // Postgres stores timestamps as i64; validate the conversion here, then hand
+    // the primitive u64 values to the dialect-independent decoder.
+    let creation_time = timestamp_from_i64(row.get::<_, i64>(2))?.0;
+    let update_time = timestamp_from_i64(row.get::<_, i64>(3))?.0;
+    let data_json = row.get::<_, String>(4);
+    let typed_fields_json = row.get::<_, String>(5);
+    crate::sql::row::row_to_document(
+        &table,
+        &id,
         creation_time,
         update_time,
-        fields,
-        typed_fields,
-    })
+        data_json,
+        typed_fields_json,
+    )
 }
 
 pub(super) async fn begin_scheduled_execution_in_session<C>(
@@ -1131,29 +1136,6 @@ pub(super) fn expect_write_commit(
     expectation: &str,
 ) -> Result<CommitEntry> {
     commit.ok_or_else(|| Error::Internal(expectation.to_string()))
-}
-
-pub(super) fn serialize_json<T>(value: &T) -> Result<String>
-where
-    T: serde::Serialize,
-{
-    serde_json::to_string(value).map_err(|error| Error::Serialization(error.to_string()))
-}
-
-pub(super) fn deserialize_json<T>(json: &str) -> Result<T>
-where
-    T: serde::de::DeserializeOwned,
-{
-    serde_json::from_str(json).map_err(|error| Error::Serialization(error.to_string()))
-}
-
-pub(super) fn serialize_document_fields(document: &Document) -> Result<String> {
-    serde_json::to_string(&document.fields).map_err(|error| Error::Serialization(error.to_string()))
-}
-
-pub(super) fn serialize_document_typed_fields(document: &Document) -> Result<String> {
-    serde_json::to_string(&document.typed_fields)
-        .map_err(|error| Error::Serialization(error.to_string()))
 }
 
 pub(super) fn decode_u64(bytes: &[u8]) -> Result<u64> {

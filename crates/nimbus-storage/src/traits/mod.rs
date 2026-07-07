@@ -13,8 +13,9 @@ mod object_metadata;
 mod provider_impls;
 
 pub use core::{
-    ControlPlaneUsage, DurableJournal, KeyProviderSurface, SchedulerStore, StorageEngine,
-    TenantLifecycle, TenantPointRead, TenantPointWrite, TenantRangeScan,
+    ControlPlaneUsage, DurableJournal, KeyProviderSurface, MaterializedRebuild, ReadCapabilities,
+    ResourcePathScan, ResourcePathSnapshot, SchedulerStore, StorageEngine, TenantLifecycle,
+    TenantPointRead, TenantPointWrite, TenantRangeScan,
 };
 pub use kv::{
     KvBatchOp, KvBatchOutcome, KvEntry, KvMutation, KvPut, KvScanPage, KvStorageEngine,
