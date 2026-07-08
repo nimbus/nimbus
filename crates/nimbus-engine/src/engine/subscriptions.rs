@@ -144,6 +144,26 @@ impl Engine {
             return;
         }
 
+        // Something advanced the applied head between the bootstrap read and
+        // activation above -- but `applied_head` also advances through
+        // zero-write commits (e.g. the trigger-candidate feed's own
+        // delivery-cursor advance, which shares this tenant's commit log and
+        // sequence space). If nothing document-bearing landed in that gap,
+        // re-evaluating now would only reproduce the bootstrap read's own
+        // result: dispatching a catch-up would be a spurious duplicate, not
+        // a real update. This is the uncommon "something happened during
+        // bootstrap" branch, not the hot path, so a direct commit-log read
+        // is cheap here; fail open (assume a catch-up is needed) if the read
+        // itself errors.
+        let gap_has_document_bearing_commit = runtime
+            .store()
+            .read_commit_log_from(SequenceNumber(covered_sequence.0.saturating_add(1)))
+            .map(|commits| commits.iter().any(|commit| !commit.writes.is_empty()))
+            .unwrap_or(true);
+        if !gap_has_document_bearing_commit {
+            return;
+        }
+
         let work = QueuedSubscriptionWork::new_coalesced(
             vec![subscription_id],
             current_applied,
