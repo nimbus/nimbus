@@ -24,7 +24,7 @@ use crate::disk;
 use crate::hash::BlobHash;
 use crate::local::{
     self, INDEX_MAGIC, INDEX_PUT, LocalPackState, LocalPackStore, PACK_MAGIC, PackEntry,
-    RECORD_MAGIC,
+    QuarantineCheck, RECORD_MAGIC,
 };
 use crate::root_guard::{self, LocalPackStoreOptions};
 use crate::store::BlobStore;
@@ -275,7 +275,7 @@ impl LocalPackScrubber {
                 ));
                 // Location-bound: quarantine only if the hash still maps to
                 // this exact (missing-pack) record at quarantine time.
-                missing_quarantine.push((*hash, Some(*entry)));
+                missing_quarantine.push((*hash, QuarantineCheck::CorruptRecord(*entry)));
             }
         }
         self.quarantine(&mut report, missing_quarantine).await?;
@@ -385,14 +385,14 @@ impl LocalPackScrubber {
     async fn quarantine(
         &self,
         report: &mut ScrubReport,
-        requests: Vec<(BlobHash, Option<PackEntry>)>,
+        requests: Vec<(BlobHash, QuarantineCheck)>,
     ) -> Result<()> {
         if requests.is_empty() {
             return Ok(());
         }
         let unique = requests
             .into_iter()
-            .collect::<BTreeMap<BlobHash, Option<PackEntry>>>();
+            .collect::<BTreeMap<BlobHash, QuarantineCheck>>();
         let mut inserted = self
             .store
             .quarantine_hashes(unique.into_iter().collect())
@@ -466,7 +466,7 @@ impl EncryptedBlobScrubber {
                 ));
                 // Content-level corruption: identical bytes wherever the
                 // record lives (content-addressed), so no location validation.
-                quarantine.push((entry.hash, None));
+                quarantine.push((entry.hash, QuarantineCheck::Unconditional));
             }
         }
         local.quarantine(&mut report, quarantine).await?;
@@ -1165,7 +1165,7 @@ async fn merge_pack_findings(
         // pack's front matter, and the store itself would refuse this file as
         // an active pack. Fail closed: quarantine every indexed record.
         if !pack_scan.pack_header_valid {
-            quarantine.push((*hash, Some(*entry)));
+            quarantine.push((*hash, QuarantineCheck::CorruptPackHeader(*entry)));
             continue;
         }
         match valid_by_offset.get(&entry.offset) {
@@ -1183,7 +1183,7 @@ async fn merge_pack_findings(
                         entry.pack_id, entry.offset, record.hash
                     ),
                 ));
-                quarantine.push((*hash, Some(*entry)));
+                quarantine.push((*hash, QuarantineCheck::CorruptRecord(*entry)));
             }
             Some(record) if record.len != entry.len => {
                 report.corrupt_records += 1;
@@ -1199,13 +1199,13 @@ async fn merge_pack_findings(
                         entry.len, record.len
                     ),
                 ));
-                quarantine.push((*hash, Some(*entry)));
+                quarantine.push((*hash, QuarantineCheck::CorruptRecord(*entry)));
             }
             Some(_) => {
                 report.records_verified += 1;
             }
             None if pack_scan.corrupt_offsets.contains(&entry.offset) => {
-                quarantine.push((*hash, Some(*entry)));
+                quarantine.push((*hash, QuarantineCheck::CorruptRecord(*entry)));
             }
             None if entry.offset >= pack_scan.scan_boundary => {
                 // The sequential scan stopped at an earlier corrupt segment
@@ -1229,10 +1229,10 @@ async fn merge_pack_findings(
                         entry.pack_id, entry.offset
                     ),
                 ));
-                quarantine.push((*hash, Some(*entry)));
+                quarantine.push((*hash, QuarantineCheck::CorruptRecord(*entry)));
             }
             None => {
-                quarantine.push((*hash, Some(*entry)));
+                quarantine.push((*hash, QuarantineCheck::CorruptRecord(*entry)));
             }
         }
     }
@@ -1280,7 +1280,7 @@ async fn merge_pack_findings(
                             entry.pack_id, entry.offset
                         ),
                     ));
-                    quarantine.push((hash, Some(entry)));
+                    quarantine.push((hash, QuarantineCheck::CorruptRecord(entry)));
                 }
             }
         }
@@ -1309,7 +1309,7 @@ async fn merge_pack_findings(
     }
     let requests = quarantine
         .into_iter()
-        .collect::<BTreeMap<BlobHash, Option<PackEntry>>>();
+        .collect::<BTreeMap<BlobHash, QuarantineCheck>>();
     let mut inserted = store
         .quarantine_hashes(requests.into_iter().collect())
         .await?;
@@ -1329,6 +1329,7 @@ fn rebuild_index_locked(
     let mut report = ScrubReport::default();
     let mut pacing = PacingTracker::new(pacing);
     let mut rebuilt = HashMap::new();
+    let mut header_corrupt_packs = BTreeSet::new();
     let pack_ids = local::pack_ids_on_disk(&state.packs_dir)?;
 
     for pack_id in pack_ids {
@@ -1342,6 +1343,9 @@ fn rebuild_index_locked(
         report.bytes_scanned = report.bytes_scanned.saturating_add(pack_scan.bytes_scanned);
         report.corrupt_records += pack_scan.findings.len();
         report.findings.extend(pack_scan.findings);
+        if !pack_scan.pack_header_valid {
+            header_corrupt_packs.insert(pack_id);
+        }
         for record in pack_scan.valid_records {
             rebuilt.insert(
                 record.hash,
@@ -1354,6 +1358,40 @@ fn rebuild_index_locked(
             );
             report.records_verified += 1;
         }
+    }
+
+    // The sequential scan stops at the first structural corruption, but the
+    // CURRENT index still knows the offsets of records past that segment.
+    // Direct-verify each such entry and carry it forward — publishing only
+    // the scanned prefix would make healthy, currently-readable blobs
+    // NotFound and let a later compaction delete their bytes. Quarantined
+    // claims are carried unconditionally: their bytes stay claim-tracked
+    // (and pack-retained) until an explicit release/repair decision.
+    for (hash, entry) in &state.index {
+        if rebuilt.contains_key(hash) {
+            continue;
+        }
+        if state.quarantined.contains(hash) {
+            rebuilt.insert(*hash, *entry);
+            continue;
+        }
+        if header_corrupt_packs.contains(&entry.pack_id) {
+            continue;
+        }
+        let mut direct_bytes = 0u64;
+        if verify_record_paced(
+            &state.packs_dir,
+            hash,
+            *entry,
+            &mut pacing,
+            &mut direct_bytes,
+        )
+        .is_ok()
+        {
+            rebuilt.insert(*hash, *entry);
+            report.records_verified += 1;
+        }
+        report.bytes_scanned = report.bytes_scanned.saturating_add(direct_bytes);
     }
 
     let index_bytes = encode_index(&rebuilt);

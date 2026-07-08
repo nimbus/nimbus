@@ -419,18 +419,13 @@ impl LocalPackStore {
         .map_err(|err| Error::storage(StorageErrorKind::Other, format!("local pack task: {err}")))?
     }
 
-    /// Quarantines hashes, revalidating location-scoped findings against the
-    /// CURRENT index so a stale scrub snapshot can never quarantine a healthy
-    /// blob that compaction moved in the meantime.
-    ///
-    /// `expected: Some(entry)` quarantines only while the hash still maps to
-    /// exactly that record (record-level corruption is location-bound);
-    /// `None` quarantines unconditionally (content-level corruption, e.g. an
-    /// AEAD failure — content-addressed bytes are identical wherever they
-    /// live). Returns the hashes actually inserted.
+    /// Quarantines hashes, revalidating each finding against CURRENT on-disk
+    /// ground truth under the store lock (see [`QuarantineCheck`]) so a stale
+    /// scrub snapshot can never quarantine a healthy blob. Returns the hashes
+    /// actually inserted.
     pub(crate) async fn quarantine_hashes(
         &self,
-        requests: Vec<(BlobHash, Option<PackEntry>)>,
+        requests: Vec<(BlobHash, QuarantineCheck)>,
     ) -> Result<Vec<BlobHash>> {
         self.blocking(move |mut state| {
             ensure_writable(&state, "quarantine")?;
@@ -666,19 +661,60 @@ fn encode_quarantine(quarantined: &HashSet<BlobHash>) -> Vec<u8> {
     bytes
 }
 
+/// How a quarantine request is revalidated against on-disk ground truth
+/// under the store lock, immediately before insertion. Entry equality alone
+/// is not identity (empty-store compaction reuses pack id 0, and a
+/// release+compact+reupload can reproduce identical coordinates), so every
+/// location-bound arm re-checks the disk: only what is corrupt RIGHT NOW is
+/// quarantined.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum QuarantineCheck {
+    /// Content-level corruption (e.g. AEAD open failure): content-addressed
+    /// bytes are identical wherever the record lives — no location check.
+    Unconditional,
+    /// Record-level corruption: quarantine only while the hash still maps to
+    /// exactly this record AND re-reading that record still fails.
+    CorruptRecord(PackEntry),
+    /// Pack-header corruption: quarantine only while the hash still maps to
+    /// exactly this record AND the pack's header still fails to validate
+    /// (individual records behind a corrupt header may verify — the header
+    /// is the discrediting fact).
+    CorruptPackHeader(PackEntry),
+}
+
+fn pack_header_is_valid(packs_dir: &Path, pack_id: u64) -> bool {
+    let path = pack_path(packs_dir, pack_id);
+    let mut magic = vec![0u8; PACK_MAGIC.len()];
+    match File::open(&path).and_then(|mut file| file.read_exact(&mut magic)) {
+        Ok(()) => magic == PACK_MAGIC,
+        Err(_) => false,
+    }
+}
+
 fn quarantine_hashes_locked(
     state: &mut LocalPackState,
-    requests: &[(BlobHash, Option<PackEntry>)],
+    requests: &[(BlobHash, QuarantineCheck)],
 ) -> Result<Vec<BlobHash>> {
     let mut next = state.quarantined.clone();
     let mut inserted = Vec::new();
-    for (hash, expected) in requests {
-        // Location-bound findings must still describe the CURRENT record: a
-        // concurrent compaction may have rewritten the blob to a healthy
-        // record since the scrub snapshotted the index.
-        if let Some(expected) = expected {
-            if state.index.get(hash) != Some(expected) {
-                continue;
+    for (hash, check) in requests {
+        match check {
+            QuarantineCheck::Unconditional => {}
+            QuarantineCheck::CorruptRecord(expected) => {
+                if state.index.get(hash) != Some(expected) {
+                    continue;
+                }
+                if read_pack_entry(&state.packs_dir, hash, *expected).is_ok() {
+                    continue;
+                }
+            }
+            QuarantineCheck::CorruptPackHeader(expected) => {
+                if state.index.get(hash) != Some(expected) {
+                    continue;
+                }
+                if pack_header_is_valid(&state.packs_dir, expected.pack_id) {
+                    continue;
+                }
             }
         }
         if next.insert(*hash) {

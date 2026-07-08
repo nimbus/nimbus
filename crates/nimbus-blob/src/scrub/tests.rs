@@ -8,7 +8,7 @@ use nimbus_core::{StorageErrorKind, Timestamp};
 use nimbus_crypto::{DataEncryptionKey, FramedBlobKey};
 
 use super::*;
-use crate::local::{self, RECORD_MAGIC};
+use crate::local::{self, QuarantineCheck, RECORD_MAGIC};
 use crate::{
     BlobGc, BlobStore, EncryptedBlobStore, LocalPackStore, LocalPackStoreOptions, StaticBlobRoots,
 };
@@ -417,7 +417,7 @@ async fn scrub_stale_snapshot_cannot_quarantine_relocated_blob() {
     // A location-bound quarantine request from the stale snapshot must be a
     // no-op: the current record is healthy.
     let inserted = store
-        .quarantine_hashes(vec![(keep, Some(stale_entry))])
+        .quarantine_hashes(vec![(keep, QuarantineCheck::CorruptRecord(stale_entry))])
         .await
         .unwrap();
     assert!(inserted.is_empty(), "stale finding must not quarantine");
@@ -678,4 +678,74 @@ async fn interrupted_checkpoint_records_snapshot_active_pack() {
         .await
         .unwrap();
     assert_eq!(u64::from_le_bytes(raw_max), active);
+}
+
+#[tokio::test]
+async fn quarantine_reverifies_record_before_inserting() {
+    // A stale corrupt-record finding whose coordinates match a NOW-HEALTHY
+    // record (the pack-id-reuse ABA: release + empty-compact + reupload can
+    // reproduce identical entry coordinates) must not quarantine: the check
+    // is ground-truth re-verification under the lock, not entry equality.
+    let (_dir, store) = open_temp(64 * 1024);
+    let hash = store
+        .put(Bytes::from_static(b"healthy again"))
+        .await
+        .unwrap();
+    let entry = entry_for(&store, hash).await;
+
+    let inserted = store
+        .quarantine_hashes(vec![(hash, QuarantineCheck::CorruptRecord(entry))])
+        .await
+        .unwrap();
+    assert!(
+        inserted.is_empty(),
+        "a record that verifies right now is never quarantined"
+    );
+    assert_eq!(
+        store.get(&hash).await.unwrap(),
+        Bytes::from_static(b"healthy again")
+    );
+}
+
+#[tokio::test]
+async fn rebuild_preserves_healthy_records_after_corrupt_segment() {
+    let (dir, store) = open_temp(64 * 1024);
+    let before = store
+        .put(Bytes::from_static(b"before segment"))
+        .await
+        .unwrap();
+    let corrupt = store
+        .put(Bytes::from_static(b"corrupt segment"))
+        .await
+        .unwrap();
+    let after = store
+        .put(Bytes::from_static(b"after segment"))
+        .await
+        .unwrap();
+
+    // Structural corruption in the middle stops the sequential rebuild scan.
+    smash_record_magic(&dir, &store, corrupt).await;
+
+    LocalPackScrubber::new(store.clone())
+        .rebuild_index_from_packs()
+        .await
+        .unwrap();
+
+    // Healthy records on BOTH sides of the corrupt segment survive the
+    // rebuild (the later one via direct verification of its known offset);
+    // publishing only the scanned prefix would have made it NotFound and
+    // eventually deletable.
+    assert_eq!(
+        store.get(&before).await.unwrap(),
+        Bytes::from_static(b"before segment")
+    );
+    assert_eq!(
+        store.get(&after).await.unwrap(),
+        Bytes::from_static(b"after segment")
+    );
+    // The structurally corrupt record itself is dropped from the index.
+    assert!(matches!(
+        store.get(&corrupt).await.unwrap_err(),
+        nimbus_core::Error::NotFound(_)
+    ));
 }
