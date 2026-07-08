@@ -107,7 +107,6 @@ aws-sigv4 = "=1.4.3"
 base64.workspace = true
 ring.workspace = true
 nimbus-engine = { path = "../nimbus-engine", features = ["test-hooks"] }
-nimbus-firestore = { path = "../nimbus-firestore" }
 nimbus-testing = { path = "../nimbus-testing" }
 serde_yaml.workspace = true
 tempfile.workspace = true

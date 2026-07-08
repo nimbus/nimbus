@@ -2,6 +2,10 @@ pub(crate) mod grpc;
 
 pub use nimbus_firebase::{FirebaseConfig, ProjectSpecError, ProjectTenantRegistry};
 
+#[cfg(test)]
+pub(crate) use nimbus_core::locator_for_document_path;
+#[cfg(test)]
+pub(crate) use nimbus_core::storage_table_for_collection_path;
 pub(crate) use nimbus_firebase::response::format_timestamp;
 pub(crate) use nimbus_firebase::{
     batch_get_documents_for_database, batch_get_entry_json, batch_write_for_database,
@@ -16,10 +20,6 @@ pub(crate) use nimbus_firebase::{
     batch_get_request, batch_write_request, commit_request, list_collection_ids_request,
     resource_names, run_aggregation_query_request, run_query_request, transaction_request,
 };
-#[cfg(test)]
-pub(crate) use nimbus_firestore::locator_for_document_path;
-#[cfg(test)]
-pub(crate) use nimbus_firestore::storage_table_for_collection_path;
 
 use std::sync::Arc;
 

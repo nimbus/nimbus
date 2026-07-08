@@ -19,7 +19,6 @@ nimbus-auth = { path = "../nimbus-auth" }
 nimbus-bridge = { path = "../nimbus-bridge" }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-engine = { path = "../nimbus-engine" }
-nimbus-firestore = { path = "../nimbus-firestore" }
 nimbus-provenance = { path = "../nimbus-provenance" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-services = { path = "../nimbus-services" }

@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use futures::{Stream, StreamExt, stream};
+use nimbus_core::storage_table_for_collection_path;
 use nimbus_core::{
     CollectionPath, Document, DocumentPath, Filter, FilterOp, OrderBy, OrderDirection,
     PrincipalContext, Query, SequenceNumber, SubscriptionResultSnapshot, Timestamp,
@@ -15,7 +16,6 @@ use nimbus_engine::{
     DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, Engine, SubscribeOptions, SubscriptionCleanupHandle,
     SubscriptionUpdate,
 };
-use nimbus_firestore::storage_table_for_collection_path;
 use tokio::sync::mpsc;
 use tonic::Status;
 

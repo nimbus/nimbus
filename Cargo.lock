@@ -6758,7 +6758,6 @@ dependencies = [
  "nimbus-core",
  "nimbus-egress",
  "nimbus-engine",
- "nimbus-firestore",
  "nimbus-provenance",
  "nimbus-runtime",
  "nimbus-services",
@@ -6809,6 +6808,7 @@ version = "0.1.45"
 dependencies = [
  "base64 0.22.1",
  "hex",
+ "ring",
  "rmp-serde",
  "serde",
  "serde_json",
@@ -6915,7 +6915,6 @@ dependencies = [
  "http 1.4.2",
  "nimbus-core",
  "nimbus-engine",
- "nimbus-firestore",
  "nimbus-tenant",
  "nimbus-testing",
  "prost 0.13.5",
@@ -6930,16 +6929,6 @@ dependencies = [
  "tokio",
  "tonic 0.13.1",
  "tonic-build",
- "workspace-hack",
-]
-
-[[package]]
-name = "nimbus-firestore"
-version = "0.1.45"
-dependencies = [
- "base64 0.22.1",
- "nimbus-core",
- "ring",
  "workspace-hack",
 ]
 
@@ -7253,7 +7242,6 @@ dependencies = [
  "nimbus-egress",
  "nimbus-engine",
  "nimbus-firebase",
- "nimbus-firestore",
  "nimbus-fs",
  "nimbus-license",
  "nimbus-machine",

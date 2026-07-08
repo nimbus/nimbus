@@ -34,7 +34,6 @@ All Rust workspace members, per the root `Cargo.toml`.
 | `nimbus-egress` | Egress policy compilation and enforcement-plan types (rules, DLP, credential injection) shared by `nimbus-proxy` and the runtime egress gateway. |
 | `nimbus-engine` | Central coordinator (`Engine`): mutation path, query evaluation, subscriptions, scheduler, triggers. |
 | `nimbus-firebase` | Firestore protocol semantics: REST/gRPC request models, queries, transactions, serialization. |
-| `nimbus-firestore` | Firestore provider-family path, default-database, and storage-locator semantics shared by Firebase and Cloud Functions. |
 | `nimbus-fs` | In-process filesystem shell for V8 and WASI binders: mount table, `FsCaps`, and backends (Seam C). |
 | `nimbus-kv` | RESP-native Nimbus KV listener: tenant-bound authentication over the tenant-aware storage tiering seam. |
 | `nimbus-license` | License file loading and status (community / trial / enterprise). |
@@ -118,8 +117,9 @@ every route family is mounted.
 
 Protocol semantics live in standalone crates — `nimbus-convex`,
 `nimbus-firebase`, `nimbus-cloud-functions`, `nimbus-mongodb`,
-`nimbus-dynamodb` — supported by provider-family seams such as
-`nimbus-firestore` and by the shared `nimbus-bridge` and `nimbus-auth` seams.
+`nimbus-dynamodb` — supported by the shared `nimbus-bridge` and `nimbus-auth`
+seams. Provider-family Firestore path, default-database, and storage-locator
+lowering (shared by Firebase and Cloud Functions) lives in `nimbus-core::firestore`.
 `crates/nimbus-server/src/adapters/` holds only thin transport shims that mount
 those crates; MongoDB and DynamoDB additionally run their own listeners.
 → <https://nimbusdocs.com/concepts/architecture/adapters/>
