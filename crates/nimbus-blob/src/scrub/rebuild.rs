@@ -118,6 +118,7 @@ pub(super) fn rebuild_corrupt_index_under_guard(
     // even when the corrupt index prefix cannot supply their entry: recover
     // coordinates from the pack scan's corrupt records; report the ones that
     // are genuinely unlocatable instead of silently dropping the claim.
+    let mut unlocatable: Vec<BlobHash> = Vec::new();
     for hash in quarantined.keys() {
         if rebuilt.contains_key(hash) || salvaged.contains_key(hash) {
             continue;
@@ -133,19 +134,32 @@ pub(super) fn rebuild_corrupt_index_under_guard(
                 },
             );
         } else {
-            report.findings.push(finding(
-                ScrubFindingKind::MissingIndexedRecord,
-                None,
-                None,
-                Some(*hash),
-                None,
-                None,
-                format!(
-                    "quarantined claim {hash} is unlocatable during corrupt-index repair \
-                     (no salvageable index entry and no walkable pack record)"
-                ),
-            ));
+            unlocatable.push(*hash);
         }
+    }
+    // Fail CLOSED: never publish an index that silently drops a quarantined
+    // claim. If a claim cannot be relocated (its pack was destroyed and the
+    // corrupt index had no salvageable entry) the bytes are gone, but the
+    // claim is retention-tracked — turning it into NotFound would let
+    // compaction reclaim the pack and erase the audit trail. Refuse the
+    // repair and name the unrecoverable claims so an operator explicitly
+    // releases them before repair proceeds.
+    if !unlocatable.is_empty() {
+        unlocatable.sort();
+        return Err(Error::storage(
+            StorageErrorKind::Corruption,
+            format!(
+                "corrupt-index repair aborted: {} quarantined claim(s) unrecoverable \
+                 (pack destroyed + no salvageable index entry); release them explicitly to \
+                 proceed: {}",
+                unlocatable.len(),
+                unlocatable
+                    .iter()
+                    .map(BlobHash::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ));
     }
     for (hash, entry) in salvaged {
         if rebuilt.contains_key(&hash) {
