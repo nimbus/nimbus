@@ -9,7 +9,8 @@ use nimbus_core::Result;
 use nimbus_core::TenantId;
 #[cfg(test)]
 use nimbus_core::{
-    ResourcePathBinding, SequenceNumber, TableName, TriggerDeliveryCursor, TriggerInvocationRecord,
+    CommitEntry, ResourcePathBinding, SequenceNumber, TableName, TriggerDeliveryCursor,
+    TriggerInvocationRecord,
 };
 
 #[cfg(test)]
@@ -386,5 +387,24 @@ impl Engine {
         self.with_runtime_for_testing(tenant_id, |runtime| {
             runtime.store.save_trigger_invocation(record)
         })?
+    }
+
+    /// Drives `process_applied_commit_batch` directly with a caller-supplied
+    /// `applied` slice, bypassing the mutation queue and provider catch-up
+    /// paths that normally assemble it. This lets tests reconstruct the one
+    /// real, storage-backed scenario where a coalesced batch legitimately
+    /// mixes a document-bearing commit with a zero-write one -- the
+    /// Postgres-provider catch-up path re-reading a raw journal tail that
+    /// spans both -- without standing up an external provider fixture.
+    #[cfg(test)]
+    pub(crate) fn process_applied_commit_batch_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        applied: &[CommitEntry],
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        self.process_applied_commit_batch(runtime, applied, false);
+        Ok(())
     }
 }

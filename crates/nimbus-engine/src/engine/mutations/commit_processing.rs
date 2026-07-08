@@ -29,6 +29,21 @@ fn deleted_documents_for_commit(commit: &CommitEntry) -> Vec<Document> {
         .collect()
 }
 
+/// Returns the identity of the batch's sole document-bearing commit, if
+/// exactly one exists. Zero-write commits (e.g. a trigger-candidate delivery
+/// cursor advance) share the same commit log and sequence space as real
+/// document commits and can land in the same coalesced batch, but they never
+/// carry a document write and so can never themselves be the subject of a
+/// subscription update -- they must not count toward "more than one commit"
+/// when deciding whether to preserve exact commit metadata.
+fn document_bearing_commit_identity(applied: &[CommitEntry]) -> Option<CommitEntry> {
+    let mut document_bearing = applied.iter().filter(|commit| !commit.writes.is_empty());
+    match (document_bearing.next(), document_bearing.next()) {
+        (Some(only), None) => Some(only.clone()),
+        _ => None,
+    }
+}
+
 fn merge_deleted_documents_for_batch(applied: &[CommitEntry]) -> Vec<Document> {
     let mut seen = HashSet::<(TableName, DocumentId)>::new();
     let mut deleted_documents = Vec::new();
@@ -173,13 +188,20 @@ impl Engine {
             let latest = applied
                 .last()
                 .expect("non-empty applied batch should have a latest commit");
+            let commit_identity = document_bearing_commit_identity(applied);
             let work = QueuedSubscriptionWork::new_coalesced(
                 affected.subscription_ids,
                 latest.sequence,
-                // Coalesced batches intentionally omit per-commit identity; only a
-                // single applied commit can safely preserve exact commit metadata
-                // for downstream consumers.
-                (applied.len() == 1).then(|| latest.clone()),
+                // Coalesced batches intentionally omit per-commit identity unless
+                // exactly one commit in the batch actually carries writes. A
+                // zero-write commit (e.g. the trigger-candidate feed's own
+                // delivery-cursor advance) shares this same commit log and
+                // sequence space with real document commits, so it can land in
+                // `applied` alongside a single real commit; counting it toward
+                // "more than one commit" would erase that lone real commit's
+                // identity even though nothing else in the batch could ever be
+                // the subject of a subscription update.
+                commit_identity,
                 merge_deleted_documents_for_batch(applied),
             );
             self.dispatch_or_enqueue_subscription_work(runtime.clone(), work);

@@ -526,6 +526,106 @@ async fn subscription_delivery_queue_merge_coalesces_overlapping_work_items() {
 }
 
 #[tokio::test]
+async fn mixed_batch_with_lone_document_bearing_commit_preserves_its_identity() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+
+    let (tx, mut rx) = subscription_channel();
+    let _subscription = engine
+        .subscribe(
+            &tenant_id,
+            query_for("tasks"),
+            "mixed-batch-sub".to_string(),
+            tx,
+            SubscribeOptions::anonymous(),
+        )
+        .expect("subscribe should succeed");
+    let _ = rx
+        .recv()
+        .await
+        .expect("initial subscription update should arrive");
+
+    let _document_id = engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("seed"))]),
+        )
+        .expect("seed insert should succeed");
+    let inserted_update = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("seed insert should reactively notify the subscription")
+        .expect("subscription channel should stay open");
+    let SubscriptionUpdate::Result { .. } = inserted_update else {
+        panic!("unexpected seed-insert subscription update: {inserted_update:?}");
+    };
+
+    // Settle the tenant's background trigger-candidate feed so its zero-write
+    // delivery-cursor-advance commit for the seed insert above is durably
+    // appended right after it, in the same commit log and sequence space.
+    // This is exactly what the Postgres-provider catch-up path
+    // (`catch_up_loaded_provider_tenant_async`) re-reads verbatim from
+    // storage when it recovers a raw journal tail: it does not filter out
+    // zero-write commits, so its `applied` batch can legitimately mix one
+    // document-bearing commit with one that carries no writes at all.
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
+
+    let durable_records = engine
+        .read_durable_journal(&tenant_id, nimbus_core::SequenceNumber(0))
+        .expect("durable journal should read")
+        .into_iter()
+        .map(|record| record.as_commit_entry())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        durable_records.len(),
+        2,
+        "expected the seed's document commit plus its own cursor-advance commit"
+    );
+    let seed_commit = durable_records[0].clone();
+    assert!(
+        !seed_commit.writes.is_empty(),
+        "the first durable record should be the document-bearing seed insert"
+    );
+    let cursor_commit = durable_records[1].clone();
+    assert!(
+        cursor_commit.writes.is_empty(),
+        "the second durable record should be the zero-write cursor-advance commit"
+    );
+
+    // Replay both commits together as a single coalesced batch, exactly as
+    // the Postgres catch-up path would hand them to
+    // `process_applied_commit_batch`. The subscription's `last_delivered_sequence`
+    // is currently pinned to the seed commit's own sequence (from the
+    // reactive delivery drained above), and the cursor commit's sequence is
+    // strictly newer, so this replay is not stale and must produce a second,
+    // distinct delivery -- one whose only document-bearing commit is the
+    // seed insert.
+    engine
+        .process_applied_commit_batch_for_testing(&tenant_id, &[seed_commit.clone(), cursor_commit])
+        .expect("replaying the mixed batch should succeed");
+
+    let update = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("mixed-batch subscription update should arrive")
+        .expect("subscription channel should stay open");
+    match update {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            let commit = snapshot.commit.expect(
+                "a batch with exactly one document-bearing commit should retain its identity \
+                 even when a zero-write commit rides along in the same batch",
+            );
+            assert_eq!(commit.sequence, seed_commit.sequence);
+            assert_eq!(commit.timestamp, seed_commit.timestamp);
+            let data = snapshot.to_json_documents();
+            assert_eq!(data.len(), 1);
+            assert_eq!(data[0]["title"], json!("seed"));
+        }
+        other => panic!("unexpected mixed-batch subscription update: {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn journal_batch_coalesces_subscription_delivery_into_one_update() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
