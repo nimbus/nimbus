@@ -1183,3 +1183,86 @@ async fn unconditional_quarantine_skips_released_hash() {
         Bytes::from_static(b"released racer")
     );
 }
+
+#[tokio::test]
+async fn corrupt_index_repair_retains_truncated_quarantined_claim() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store.put(Bytes::from(vec![7u8; 2048])).await.unwrap();
+    let entry = entry_for(&store, victim).await;
+
+    // Truncate the pack so the victim's body extends past EOF; scrub
+    // quarantines it (TruncatedRecord with fully known coordinates).
+    let path = local::pack_path(&dir.path().join("packs"), entry.pack_id);
+    {
+        let file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_len(entry.offset + 4 + 32 + 8 + 100).unwrap();
+        file.sync_data().unwrap();
+    }
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(report.quarantined_hashes.contains(&victim));
+    drop(store);
+
+    // Corrupt the index at its first record: no salvageable prefix. The
+    // claim must survive via the truncated record's recorded coordinates.
+    let index_path = dir.path().join("index.log");
+    let mut file = OpenOptions::new().write(true).open(&index_path).unwrap();
+    file.seek(SeekFrom::Start(8)).unwrap();
+    file.write_all(&[9u8]).unwrap();
+    file.sync_data().unwrap();
+
+    LocalPackScrubber::rebuild_index_in_root(dir.path(), LocalPackStoreOptions::default())
+        .await
+        .unwrap();
+
+    let store = LocalPackStore::open(dir.path()).unwrap();
+    assert!(
+        store.has(&victim).await.unwrap(),
+        "truncated quarantined claim survives repair"
+    );
+    assert!(store.get(&victim).await.is_err(), "still fails closed");
+}
+
+#[tokio::test]
+async fn open_retires_corrupt_pack_referenced_only_by_quarantined_claims() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store
+        .put(Bytes::from_static(b"only quarantined"))
+        .await
+        .unwrap();
+    let old_entry = entry_for(&store, victim).await;
+
+    // Corrupt the active pack header; scrub quarantines + retires (creates
+    // a fresh pack). Simulate a crash BEFORE the retirement roll landed by
+    // deleting the fresh empty pack, leaving the corrupt pack as disk-max,
+    // referenced only by the quarantined claim.
+    let corrupt_path = local::pack_path(&dir.path().join("packs"), old_entry.pack_id);
+    {
+        let mut file = OpenOptions::new().write(true).open(&corrupt_path).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.write_all(b"BAD").unwrap();
+        file.sync_data().unwrap();
+    }
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(report.quarantined_hashes.contains(&victim));
+    drop(store);
+    let fresh_path = local::pack_path(&dir.path().join("packs"), old_entry.pack_id + 1);
+    if fresh_path.exists() {
+        fs::remove_file(&fresh_path).unwrap();
+    }
+
+    // Reopen must not brick: the corrupt disk-max pack is referenced only by
+    // a quarantined claim (which reads fail-closed regardless), so open
+    // rolls past it.
+    let reopened = LocalPackStore::open(dir.path()).unwrap();
+    assert!(reopened.has(&victim).await.unwrap(), "claim retained");
+    let err = reopened.get(&victim).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    let fresh = reopened
+        .put(Bytes::from_static(b"post-crash write"))
+        .await
+        .unwrap();
+    assert_eq!(
+        reopened.get(&fresh).await.unwrap(),
+        Bytes::from_static(b"post-crash write")
+    );
+}

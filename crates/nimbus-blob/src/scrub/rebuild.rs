@@ -163,16 +163,11 @@ pub(super) fn rebuild_corrupt_index_under_guard(
         }
         report.bytes_scanned = report.bytes_scanned.saturating_add(direct_bytes);
     }
-    disk::write_replace_durable(&index_path, &encode_index(&rebuilt), &observer).map_err(
-        |err| {
-            local::io_error(
-                err,
-                format!("publish rebuilt index {}", index_path.display()),
-            )
-        },
-    )?;
-    // A rebuilt index invalidates any resume checkpoint: its evidence was
-    // gathered against the pre-rebuild index/scan state.
+    // Invalidate any resume checkpoint BEFORE publishing the rebuilt index:
+    // its evidence was gathered against the pre-rebuild index/scan state, and
+    // a crash between the two must never leave a stale checkpoint alongside a
+    // rebuilt index. (Checkpoint gone + still-corrupt index is safe: the next
+    // open refuses and repair reruns.)
     let checkpoint_path = canonical.join(crate::scrub::SCRUB_CHECKPOINT_FILE);
     match std::fs::remove_file(&checkpoint_path) {
         Ok(()) => {
@@ -191,6 +186,14 @@ pub(super) fn rebuild_corrupt_index_under_guard(
             ));
         }
     }
+    disk::write_replace_durable(&index_path, &encode_index(&rebuilt), &observer).map_err(
+        |err| {
+            local::io_error(
+                err,
+                format!("publish rebuilt index {}", index_path.display()),
+            )
+        },
+    )?;
     report.completed = true;
     report.pacing = pacing.finish();
     Ok(report)
@@ -271,13 +274,15 @@ pub(super) fn rebuild_index_locked(
 
     let index_bytes = encode_index(&rebuilt);
     let observer = Arc::clone(&state.observer);
+    // Invalidate any resume checkpoint BEFORE publishing the rebuilt index:
+    // its evidence was gathered against the pre-rebuild index/scan state,
+    // and a crash between the two must never leave a stale checkpoint
+    // alongside a rebuilt index. (Checkpoint gone + old index is safe: the
+    // next scrub simply full-scans.)
+    local::invalidate_scrub_checkpoint(state, &*observer)?;
     disk::write_replace_durable(&state.index_path, &index_bytes, &*observer).map_err(|err| {
         local::io_error(err, format!("rebuild index {}", state.index_path.display()))
     })?;
-    // A rebuilt index invalidates any resume checkpoint: its evidence was
-    // gathered against the pre-rebuild index/scan state, and findings for
-    // unindexed corrupt bytes are not durable anywhere else.
-    local::invalidate_scrub_checkpoint(state, &*observer)?;
     state.index = rebuilt;
     // Never select a header-corrupt pack (its records were quarantine-
     // carried) as the active append target: roll to a fresh id past

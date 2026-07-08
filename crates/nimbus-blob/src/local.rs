@@ -309,7 +309,13 @@ impl LocalPackStore {
         // depends on, and appending behind the bad header is worse. A
         // REFERENCED corrupt pack still fails closed below; scrub owns its
         // quarantine + retirement.
-        let disk_max_referenced = index.values().any(|entry| entry.pack_id == disk_max);
+        // "Referenced" means referenced by a NON-quarantined live claim:
+        // quarantined claims read fail-closed regardless, so a corrupt pack
+        // holding only quarantined records (e.g. a crash landed between the
+        // quarantine write and the retirement roll) must not brick reopen.
+        let disk_max_referenced = index
+            .iter()
+            .any(|(hash, entry)| entry.pack_id == disk_max && !quarantined.contains_key(hash));
         if active_pack_id == disk_max
             && !disk_max_referenced
             && pack_path(&packs_dir, disk_max).exists()

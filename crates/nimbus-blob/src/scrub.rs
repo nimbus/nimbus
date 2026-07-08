@@ -977,6 +977,18 @@ fn scan_pack(
         if len > file_len.saturating_sub(body_start) {
             scan.scan_boundary = record_offset;
             scan.corrupt_offsets.insert(record_offset);
+            // Coordinates are fully known here: record them so repair can
+            // keep a quarantined claim for this record locatable even when
+            // the index cannot supply the entry.
+            scan.corrupt_records.push((
+                ScannedRecord {
+                    pack_id,
+                    offset: record_offset,
+                    hash: stored_hash,
+                    len,
+                },
+                stored_hash,
+            ));
             scan.findings.push(finding(
                 ScrubFindingKind::TruncatedRecord,
                 Some(pack_id),
