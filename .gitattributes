@@ -6,3 +6,16 @@ crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node*/test/fixtures
 # Nimbus-authored source for GitHub language percentages.
 crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node*/** linguist-vendored
 crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/test/** linguist-vendored
+
+# Local crates.io patch copies maintained until upstream releases include the
+# required fixes.
+third_party/** linguist-vendored
+
+# Vendored browser accessibility checker served by the embedded UI.
+packages/nimbus-ui/public/assets/axe.min.js linguist-vendored
+
+# Checked-in generated artifacts.
+demos/convex/*/.neovex/** linguist-generated
+demos/convex/*/convex/_generated/** linguist-generated
+packages/nimbus-ui/convex/_generated/** linguist-generated
+packages/nimbus-ui/src/route-tree.gen.ts linguist-generated
