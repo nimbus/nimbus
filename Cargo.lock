@@ -6785,11 +6785,19 @@ name = "nimbus-compute"
 version = "0.1.45"
 dependencies = [
  "nimbus-artifacts",
+ "nimbus-auth",
  "nimbus-bridge",
+ "nimbus-cloud-functions",
+ "nimbus-convex",
  "nimbus-core",
+ "nimbus-dynamodb",
  "nimbus-engine",
+ "nimbus-firebase",
  "nimbus-fs",
+ "nimbus-license",
  "nimbus-machine",
+ "nimbus-node",
+ "nimbus-operator",
  "nimbus-provenance",
  "nimbus-runtime",
  "nimbus-sandbox",
@@ -6799,7 +6807,10 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
+ "toml",
+ "tracing",
  "workspace-hack",
 ]
 

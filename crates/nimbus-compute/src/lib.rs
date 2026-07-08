@@ -1,10 +1,15 @@
-//! Transport-free compute surface extracted from `nimbus-server` (CP1):
+//! Transport-free compute surface extracted from `nimbus-server` (CP1/CP2):
 //! runtime bundle execution, artifact/provenance admission, machine
-//! lifecycle, and service manager wiring. This crate carries no HTTP/
-//! WebSocket transport framework on its own surface — the server crate
-//! mounts it and re-exports the pieces its adapters still need.
+//! lifecycle, service manager wiring, and the compute half of `AppState`
+//! (`ComputeState`, config composition types, `ComputeError`). This crate
+//! carries no HTTP/WebSocket transport framework on its own surface — the
+//! server crate wraps `ComputeState` in a thin transport-owning `AppState`
+//! and re-exports the pieces its adapters still need.
 
 pub mod artifact_verifier_effects;
+pub mod cloudflare_config;
+pub mod config;
 pub mod execution;
 pub mod machine_lifecycle;
 pub mod service_manager;
+pub mod state;

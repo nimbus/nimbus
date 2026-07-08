@@ -30,12 +30,6 @@ impl TransportConfig {
         self
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_version_check(mut self, version_check: Arc<VersionCheck>) -> Self {
-        self.version_check = Some(version_check);
-        self
-    }
-
     pub(crate) fn ensure_version_check(mut self) -> Self {
         if self.version_check.is_none() {
             self.version_check = Some(build_version_check());

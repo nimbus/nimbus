@@ -28,8 +28,10 @@ mod ws;
 // crate unchanged. (`artifact_verifier_effects` has no consumers left in this
 // crate — its only caller, `execution::invocations::provenance`, moved with
 // it — so it is not re-imported here.)
+use nimbus_compute::execution;
 pub use nimbus_compute::machine_lifecycle;
-use nimbus_compute::{execution, service_manager};
+#[cfg(test)]
+use nimbus_compute::service_manager;
 
 pub use adapters::cloud_functions::CloudFunctionsRegistry;
 pub use adapters::cloudflare::{

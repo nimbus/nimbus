@@ -174,15 +174,15 @@ impl HttpProtocolAdapter for CloudFunctionsHttpAdapter {
 mod tests {
     use axum::body::{Body, Bytes, to_bytes};
     use axum::http::{Request, StatusCode};
+    use nimbus_compute::config::control_plane::ControlPlaneConfig;
+    use nimbus_compute::config::deployment::DeploymentConfig;
+    use nimbus_compute::config::node_services::NodeServicesConfig;
+    use nimbus_compute::config::runtime::RuntimeGovernorConfig;
     use nimbus_engine::Engine;
     use nimbus_testing::EngineFixture;
     use tower::ServiceExt;
 
     use super::*;
-    use crate::config::control_plane::ControlPlaneConfig;
-    use crate::config::deployment::DeploymentConfig;
-    use crate::config::node_services::NodeServicesConfig;
-    use crate::config::runtime::RuntimeGovernorConfig;
     use crate::config::transport::TransportConfig;
     use crate::state::AppStateConfig;
 

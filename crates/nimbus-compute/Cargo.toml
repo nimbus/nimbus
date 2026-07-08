@@ -22,21 +22,32 @@ test-hooks = []
 
 [dependencies]
 nimbus-artifacts = { path = "../nimbus-artifacts" }
+nimbus-auth = { path = "../nimbus-auth" }
 nimbus-bridge = { path = "../nimbus-bridge" }
+nimbus-cloud-functions = { path = "../nimbus-cloud-functions" }
+nimbus-convex = { path = "../nimbus-convex" }
 nimbus-core = { path = "../nimbus-core" }
+nimbus-dynamodb = { path = "../nimbus-dynamodb" }
 nimbus-engine = { path = "../nimbus-engine" }
+nimbus-firebase = { path = "../nimbus-firebase" }
 nimbus-fs = { path = "../nimbus-fs" }
+nimbus-license = { path = "../nimbus-license" }
 nimbus-machine = { path = "../nimbus-machine" }
+nimbus-node = { path = "../nimbus-node" }
+nimbus-operator = { path = "../nimbus-operator" }
 nimbus-provenance = { path = "../nimbus-provenance" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-services = { path = "../nimbus-services" }
 nimbus-system = { path = "../nimbus-system" }
+nimbus-tenant = { path = "../nimbus-tenant" }
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
-nimbus-tenant = { path = "../nimbus-tenant" }
 tempfile.workspace = true
