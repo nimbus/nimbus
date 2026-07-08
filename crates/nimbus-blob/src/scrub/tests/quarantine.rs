@@ -921,7 +921,8 @@ async fn put_rolls_off_corrupt_active_header_before_appending() {
     }
 
     // The very next put must NOT land behind the bad header: the put path
-    // validates the active header under the lock and rolls to a fresh pack.
+    // validates the active header under the lock, QUARANTINES the corrupt
+    // pack's live claim, and rolls to a fresh pack.
     let second = store.put(Bytes::from_static(b"second")).await.unwrap();
     let second_entry = entry_for(&store, second).await;
     assert_ne!(
@@ -932,14 +933,21 @@ async fn put_rolls_off_corrupt_active_header_before_appending() {
         store.get(&second).await.unwrap(),
         Bytes::from_static(b"second")
     );
+    // The first blob (a live claim in the corrupt pack) now fails closed.
+    let err = store.get(&first).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
 
-    // And reopen selects the fresh pack (no brick).
+    // Reopen selects the fresh pack (no brick), the new blob reads, and the
+    // quarantined claim STAYS fail-closed.
     drop(store);
     let reopened = LocalPackStore::open(dir.path()).unwrap();
     assert_eq!(
         reopened.get(&second).await.unwrap(),
         Bytes::from_static(b"second")
     );
+    assert_eq!(reopened.open_report().unwrap().quarantine_entries_loaded, 1);
+    let err = reopened.get(&first).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
 }
 
 #[tokio::test]

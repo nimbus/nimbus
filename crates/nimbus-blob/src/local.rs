@@ -980,11 +980,29 @@ fn append_pack_record(
     // runs off a lock-free snapshot, so a writer holding the mutex here could
     // otherwise land a record in an active pack whose header went corrupt
     // (externally, or a scrub found it but has not retired it yet). Validate
-    // under the lock and roll to a fresh pack first — the definitive fence.
-    if !quarantine::pack_header_is_valid(&state.packs_dir, state.active_pack_id) {
-        state.active_pack_id = state.active_pack_id.saturating_add(1);
-        state.active_pack_bytes =
-            ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
+    // under the lock; if the header is bad, QUARANTINE every live claim in
+    // that pack (a corrupt header discredits the whole file — those blocks
+    // must fail closed on read and stay fail-closed across reopen) and roll
+    // to a fresh pack. Routing through the CorruptPackHeader quarantine check
+    // reuses the same ground-truth revalidation + retirement as scrub.
+    let active_pack_id = state.active_pack_id;
+    if !quarantine::pack_header_is_valid(&state.packs_dir, active_pack_id) {
+        let requests: Vec<(BlobHash, QuarantineCheck)> = state
+            .index
+            .iter()
+            .filter(|(_, entry)| entry.pack_id == active_pack_id)
+            .map(|(hash, entry)| (*hash, QuarantineCheck::CorruptPackHeader(*entry)))
+            .collect();
+        // Quarantines the live claims AND retires (rolls off) the corrupt
+        // active pack, all durably under the lock.
+        quarantine::quarantine_hashes_locked(state, &requests)?;
+        // If the pack had no live claims, the quarantine batch did not retire
+        // it (no CorruptPackHeader request was produced) — roll here.
+        if state.active_pack_id == active_pack_id {
+            state.active_pack_id = state.active_pack_id.saturating_add(1);
+            state.active_pack_bytes =
+                ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
+        }
     }
     if state.active_pack_bytes > PACK_MAGIC.len() as u64
         && state.active_pack_bytes.saturating_add(record_len) > state.pack_target_bytes
