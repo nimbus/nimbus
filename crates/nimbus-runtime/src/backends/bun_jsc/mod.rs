@@ -457,7 +457,7 @@ mod tests {
                 .as_ref()
                 .expect("expected Bun/JSC artifact contract should be present")
                 .source_ref,
-            "nimbus-bun-jsc-proof-main-20260525"
+            "nimbus-bun-jsc-proof-main-20260708"
         );
         assert!(diagnostics.manifest.is_none());
     }
@@ -709,10 +709,10 @@ mod tests {
     fn bun_jsc_linked_adapter_feature_names_reproducible_bun_source() {
         let contract = linked::BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT;
         assert_eq!(contract.repository, "https://github.com/nimbus/bun");
-        assert_eq!(contract.source_ref, "nimbus-bun-jsc-proof-main-20260525");
+        assert_eq!(contract.source_ref, "nimbus-bun-jsc-proof-main-20260708");
         assert_eq!(
             contract.git_revision,
-            "ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57"
+            "9c9ed55fd8859b1e27fed2afaae770a4b7527574"
         );
         assert_eq!(contract.proof_target, "check-bun-embed-shared");
         assert_eq!(contract.simdutf_namespace, "nimbus_bun_simdutf");

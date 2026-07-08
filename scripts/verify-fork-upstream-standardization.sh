@@ -39,7 +39,7 @@ done
 forks_tsv=$(cat <<EOF
 nimbus/deno	${HOME}/src/github.com/nimbus/deno	full_source	nimbus/v2.8.0	git@github.com:nimbus/deno.git	git@github.com:denoland/deno.git	v2.8.0	v2.8.0-nimbus.2	v[0-9]*	yes	v2.7.14
 nimbus/rusty_v8	${HOME}/src/github.com/nimbus/rusty_v8	full_source	nimbus/v149.0.0	git@github.com:nimbus/rusty_v8.git	git@github.com:denoland/rusty_v8.git	v149.0.0	v149.0.0-nimbus.1	v[0-9]*	no	v147.4.0
-nimbus/bun	${HOME}/src/github.com/nimbus/bun	full_source	nimbus/bun-main-20260525	git@github.com:nimbus/bun.git	git@github.com:oven-sh/bun.git	bun-v1.3.14	nimbus-bun-jsc-proof-main-20260525	bun-v[0-9]*	yes	f161e0311d56
+nimbus/bun	${HOME}/src/github.com/nimbus/bun	full_source	nimbus/bun-main-20260708	git@github.com:nimbus/bun.git	git@github.com:oven-sh/bun.git	bun-v1.3.14	nimbus-bun-jsc-proof-main-20260708	bun-v[0-9]*	yes	332f7444f9
 nimbus/nimbus-crun	${HOME}/src/github.com/nimbus/nimbus-crun	patch_carrier	nimbus/1.27.1	git@github.com:nimbus/nimbus-crun.git	git@github.com:containers/crun.git	1.27.1	v1.27.1-nimbus.2	[0-9]*	yes	1.27.1
 nimbus/nimbus-libkrun	${HOME}/src/github.com/nimbus/nimbus-libkrun	full_source	nimbus/v1.18.1	git@github.com:nimbus/nimbus-libkrun.git	git@github.com:containers/libkrun.git	v1.18.1	v1.18.1-nimbus.1	v[0-9]*	yes	v1.18.1
 EOF

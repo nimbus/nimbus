@@ -4,7 +4,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUN_REPO="${NIMBUS_BUN_REPO:-${HOME}/src/github.com/oven-sh/bun}"
+BUN_REPO="${NIMBUS_BUN_REPO:-${HOME}/src/github.com/nimbus/bun}"
 BUN_BUILD_DIR="${NIMBUS_BUN_BUILD_DIR:-/private/tmp/nimbus-bun-embed-native}"
 BUN_CACHE_DIR="${NIMBUS_BUN_CACHE_DIR:-/private/tmp/nimbus-bun-cache}"
 BUN_RUST_ONLY_BUILD_DIR="${NIMBUS_BUN_RUST_ONLY_BUILD_DIR:-/private/tmp/nimbus-bun-rust-only}"

@@ -66,7 +66,7 @@ describe("ConfigurationSection runtime diagnostics", () => {
     );
     expect(within(bunLane).getByText("build_feature_disabled"))
       .toBeInTheDocument();
-    expect(within(bunLane).getByText("bun-v1.4.0-nimbus.5"))
+    expect(within(bunLane).getByText("nimbus-bun-jsc-proof-main-20260708"))
       .toBeInTheDocument();
     expect(within(bunLane).getByText("lazy")).toBeInTheDocument();
     expect(within(bunLane).getByText("outer_quota_required"))
