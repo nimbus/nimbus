@@ -346,7 +346,17 @@ impl LocalPackScrubber {
                 max_pack_seen,
                 complete: false,
             };
-            self.write_checkpoint(checkpoint).await?;
+            if !self
+                .write_checkpoint(checkpoint, snapshot.compaction_epoch)
+                .await?
+            {
+                // Compaction restructured the packs mid-scrub: keep scanning
+                // (findings and ground-truth-validated quarantines stay
+                // correct), but publish no checkpoints for the dead layout.
+                report.checkpoint.path = None;
+                report.checkpoint.last_completed_pack_id = None;
+                continue;
+            }
             last_checkpoint = Some(pack_id);
             report.checkpoint.last_completed_pack_id = Some(pack_id);
         }
@@ -356,9 +366,16 @@ impl LocalPackScrubber {
             max_pack_seen,
             complete: true,
         };
-        self.write_checkpoint(complete_checkpoint).await?;
-        report.checkpoint.last_completed_pack_id = last_checkpoint;
-        report.checkpoint.complete = true;
+        if self
+            .write_checkpoint(complete_checkpoint, snapshot.compaction_epoch)
+            .await?
+        {
+            report.checkpoint.last_completed_pack_id = last_checkpoint;
+            report.checkpoint.complete = true;
+        } else {
+            report.checkpoint.path = None;
+            report.checkpoint.last_completed_pack_id = None;
+        }
         report.completed = true;
         report.pacing = pacing.finish();
         Ok(report)
@@ -377,6 +394,7 @@ impl LocalPackScrubber {
                     active_pack_id: state.active_pack_id,
                     active_pack_bytes: state.active_pack_bytes,
                     pack_ids,
+                    compaction_epoch: state.compaction_epoch,
                 })
             })
             .await
@@ -405,11 +423,24 @@ impl LocalPackScrubber {
         Ok(())
     }
 
-    async fn write_checkpoint(&self, checkpoint: ScrubCheckpoint) -> Result<()> {
+    /// Publishes a checkpoint iff the pack layout this scrub scanned still
+    /// exists (compaction epoch unchanged under the lock). Returns whether
+    /// the checkpoint landed; a `false` means a concurrent compaction
+    /// restructured the packs — the on-disk checkpoint was already
+    /// invalidated by that compaction, and publishing ours would resurrect a
+    /// stale sealed-boundary over reused pack ids.
+    async fn write_checkpoint(
+        &self,
+        checkpoint: ScrubCheckpoint,
+        snapshot_epoch: u64,
+    ) -> Result<bool> {
         self.store
             .blocking(move |mut state| {
                 local::ensure_writable(&state, "write scrub checkpoint")?;
-                let result = write_checkpoint_locked(&state, checkpoint);
+                if state.compaction_epoch != snapshot_epoch {
+                    return Ok(false);
+                }
+                let result = write_checkpoint_locked(&state, checkpoint).map(|()| true);
                 local::poison_on_write_failure(&mut state, &result);
                 result
             })
@@ -489,6 +520,9 @@ struct ScrubSnapshot {
     /// facts. Deriving them later (unlocked) would let a concurrent rollover
     /// desynchronize the checkpoint's sealed-boundary from the scanned caps.
     pack_ids: BTreeSet<u64>,
+    /// Compaction epoch at snapshot time; checkpoint publication is refused
+    /// once it moves (the pack layout this scrub scanned no longer exists).
+    compaction_epoch: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -620,6 +654,11 @@ struct PackScan {
     bytes_scanned: u64,
     findings: Vec<ScrubFinding>,
     valid_records: Vec<ScannedRecord>,
+    /// Structurally walked records whose body failed verification, with
+    /// full coordinates (stored hash + offset + len). Repair uses these to
+    /// keep quarantined claims locatable when the index cannot supply the
+    /// entry.
+    corrupt_records: Vec<ScannedRecord>,
     corrupt_offsets: BTreeSet<u64>,
     /// Offset up to which the sequential scan verified the pack. The scanner
     /// stops at the first structurally corrupt record, but records at or past
@@ -677,6 +716,7 @@ fn rebuild_corrupt_index_under_guard(
     let mut pacing = PacingTracker::new(pacing);
     let mut rebuilt = HashMap::new();
     let mut header_corrupt_packs = BTreeSet::new();
+    let mut corrupt_record_index: HashMap<BlobHash, ScannedRecord> = HashMap::new();
     let written_at_millis = SystemClock.now_millis();
     for pack_id in local::pack_ids_on_disk(&packs_dir)? {
         let pack_scan = scan_pack(&packs_dir, pack_id, None, &mut pacing)?;
@@ -691,6 +731,9 @@ fn rebuild_corrupt_index_under_guard(
         report.findings.extend(pack_scan.findings);
         if !pack_scan.pack_header_valid {
             header_corrupt_packs.insert(pack_id);
+        }
+        for record in &pack_scan.corrupt_records {
+            corrupt_record_index.insert(record.hash, record.clone());
         }
         for record in pack_scan.valid_records {
             rebuilt.insert(
@@ -717,6 +760,39 @@ fn rebuild_corrupt_index_under_guard(
     // silently drops live, readable blobs the normal rebuild preserves.
     let salvaged = local::salvage_index_prefix(&index_path);
     let quarantined = local::load_quarantine(&canonical.join(local::QUARANTINE_FILE))?;
+    // Quarantined claims must stay locatable (claim-tracked, pack-retained)
+    // even when the corrupt index prefix cannot supply their entry: recover
+    // coordinates from the pack scan's corrupt records; report the ones that
+    // are genuinely unlocatable instead of silently dropping the claim.
+    for hash in &quarantined {
+        if rebuilt.contains_key(hash) || salvaged.contains_key(hash) {
+            continue;
+        }
+        if let Some(record) = corrupt_record_index.get(hash) {
+            rebuilt.insert(
+                *hash,
+                PackEntry {
+                    pack_id: record.pack_id,
+                    offset: record.offset,
+                    len: record.len,
+                    written_at_millis,
+                },
+            );
+        } else {
+            report.findings.push(finding(
+                ScrubFindingKind::MissingIndexedRecord,
+                None,
+                None,
+                Some(*hash),
+                None,
+                None,
+                format!(
+                    "quarantined claim {hash} is unlocatable during corrupt-index repair \
+                     (no salvageable index entry and no walkable pack record)"
+                ),
+            ));
+        }
+    }
     for (hash, entry) in salvaged {
         if rebuilt.contains_key(&hash) {
             continue;
@@ -1026,6 +1102,12 @@ fn scan_pack(
                     path.display()
                 ),
             ));
+            scan.corrupt_records.push(ScannedRecord {
+                pack_id,
+                offset: record_offset,
+                hash: stored_hash,
+                len,
+            });
             // The record's structure was walked even though its content is
             // corrupt: the sequential scan boundary advances past it.
             scan.scan_boundary = offset;

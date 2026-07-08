@@ -110,6 +110,12 @@ pub(crate) struct LocalPackState {
     pub(crate) active_pack_bytes: u64,
     pub(crate) index: HashMap<BlobHash, PackEntry>,
     pub(crate) quarantined: HashSet<BlobHash>,
+    /// Bumped by every compaction. Scrub checkpoints capture it at snapshot
+    /// and refuse publication when it moved: a checkpoint derived from a
+    /// pre-compaction pack layout must never land after compaction reused
+    /// pack ids (cross-process is excluded by the root flock; this guards
+    /// the in-process shared state).
+    pub(crate) compaction_epoch: u64,
     /// Read-only inspection handle: refuses every mutation.
     pub(crate) read_only: bool,
     /// Set on any write-path I/O/corruption failure; all further mutations
@@ -289,6 +295,7 @@ impl LocalPackStore {
             active_pack_bytes,
             index,
             quarantined,
+            compaction_epoch: 0,
             read_only: false,
             poisoned: false,
             report,
@@ -343,6 +350,7 @@ impl LocalPackStore {
                 active_pack_bytes: 0,
                 index,
                 quarantined,
+                compaction_epoch: 0,
                 read_only: true,
                 poisoned: false,
                 report,
@@ -1280,6 +1288,7 @@ fn read_pack_entry_range(
 
 fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
     let observer = Arc::clone(&state.observer);
+    state.compaction_epoch = state.compaction_epoch.saturating_add(1);
     // Compaction restructures pack ids wholesale (and the empty-store branch
     // even reuses pack id 0), so any scrub checkpoint taken against the old
     // pack layout is meaningless — and dangerously so on resume, where a

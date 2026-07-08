@@ -805,3 +805,94 @@ async fn corrupt_index_rebuild_salvages_prefix_offsets() {
         nimbus_core::Error::NotFound(_)
     ));
 }
+
+#[tokio::test]
+async fn corrupt_index_rebuild_retains_quarantined_claim() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store
+        .put(Bytes::from_static(b"claimed corrupt"))
+        .await
+        .unwrap();
+    let healthy = store
+        .put(Bytes::from_static(b"healthy sibling"))
+        .await
+        .unwrap();
+
+    // Corrupt the victim's body and quarantine it via scrub.
+    flip_first_body_byte(&dir, &store, victim).await;
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(report.quarantined_hashes.contains(&victim));
+    drop(store);
+
+    // Corrupt the index at its FIRST record: the salvageable prefix is empty,
+    // so the quarantined claim's entry can only be recovered from the pack
+    // scan's corrupt-record coordinates.
+    let index_path = dir.path().join("index.log");
+    let mut file = OpenOptions::new().write(true).open(&index_path).unwrap();
+    file.seek(SeekFrom::Start(8)).unwrap();
+    file.write_all(&[9u8]).unwrap();
+    file.sync_data().unwrap();
+    assert!(LocalPackStore::open(dir.path()).is_err(), "open refuses");
+
+    LocalPackScrubber::rebuild_index_in_root(dir.path(), LocalPackStoreOptions::default())
+        .await
+        .unwrap();
+
+    // The quarantined claim survived the repair: still indexed (claim
+    // tracked, pack retained), still failing closed on read.
+    let store = LocalPackStore::open(dir.path()).unwrap();
+    assert!(store.has(&victim).await.unwrap(), "claim survives repair");
+    let err = store.get(&victim).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    assert_eq!(
+        store.get(&healthy).await.unwrap(),
+        Bytes::from_static(b"healthy sibling")
+    );
+    // And compaction still retains its pack instead of deleting the bytes.
+    store.compact().await.unwrap();
+    assert!(store.has(&victim).await.unwrap());
+}
+
+#[tokio::test]
+async fn checkpoint_publication_refused_after_compaction_epoch_moves() {
+    let (dir, store) = open_temp(64 * 1024);
+    let keep = store.put(Bytes::from_static(b"keep")).await.unwrap();
+    let junk = store.put(Bytes::from_static(b"junk")).await.unwrap();
+    store.release(&junk).await.unwrap();
+
+    let scrubber = LocalPackScrubber::new(store.clone());
+    let snapshot_epoch = store
+        .blocking(|state| Ok(state.compaction_epoch))
+        .await
+        .unwrap();
+
+    // A compaction lands between the scrub snapshot and its checkpoint write
+    // (and invalidates any on-disk checkpoint as it restructures packs).
+    store.compact().await.unwrap();
+
+    // Publishing a checkpoint derived from the dead layout is refused...
+    let stale = ScrubCheckpoint {
+        last_completed_pack_id: Some(0),
+        max_pack_seen: Some(0),
+        complete: false,
+    };
+    let wrote = scrubber
+        .write_checkpoint(stale, snapshot_epoch)
+        .await
+        .unwrap();
+    assert!(!wrote, "stale-layout checkpoint publication is refused");
+    assert!(!dir.path().join("scrub-checkpoint.nbls").exists());
+
+    // ...while a checkpoint carrying the CURRENT epoch lands normally.
+    let current_epoch = store
+        .blocking(|state| Ok(state.compaction_epoch))
+        .await
+        .unwrap();
+    let wrote = scrubber
+        .write_checkpoint(stale, current_epoch)
+        .await
+        .unwrap();
+    assert!(wrote);
+    assert!(dir.path().join("scrub-checkpoint.nbls").exists());
+    assert!(store.has(&keep).await.unwrap());
+}
