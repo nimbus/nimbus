@@ -375,3 +375,52 @@ async fn quarantine_revalidation_streams_large_corrupt_record() {
     let err = store.get(&victim).await.unwrap_err();
     assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
 }
+
+#[tokio::test]
+async fn scrub_does_not_falsely_report_records_swallowed_by_bogus_length() {
+    let (dir, store) = open_temp(64 * 1024);
+    let first = store
+        .put(Bytes::from_static(b"first record here"))
+        .await
+        .unwrap();
+    let healthy = store
+        .put(Bytes::from_static(b"second healthy record"))
+        .await
+        .unwrap();
+    let first_entry = entry_for(&store, first).await;
+    let healthy_entry = entry_for(&store, healthy).await;
+    assert_eq!(first_entry.pack_id, healthy_entry.pack_id);
+
+    // Inflate the FIRST record's on-disk length field (still within EOF) so a
+    // sequential scan steps OVER the healthy second record. The healthy
+    // record is still readable by its own index offset.
+    let path = local::pack_path(&dir.path().join("packs"), first_entry.pack_id);
+    let len_offset = first_entry.offset + RECORD_MAGIC.len() as u64 + crate::BLAKE3_HASH_LEN as u64;
+    {
+        let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.seek(SeekFrom::Start(len_offset)).unwrap();
+        // A larger-but-in-bounds length.
+        file.write_all(&(first_entry.len + 20).to_le_bytes())
+            .unwrap();
+        file.sync_data().unwrap();
+    }
+
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+
+    // The first record is genuinely corrupt (its length no longer matches).
+    assert!(report.quarantined_hashes.contains(&first));
+    // The healthy record swallowed by the bogus length must NOT be reported
+    // as corrupt or quarantined — direct verification proves it good.
+    assert!(
+        !report.quarantined_hashes.contains(&healthy),
+        "healthy swallowed record must not be quarantined: {report:?}"
+    );
+    assert!(
+        !report.findings.iter().any(|f| f.hash == Some(healthy)),
+        "no false finding for the healthy swallowed record: {report:?}"
+    );
+    assert_eq!(
+        store.get(&healthy).await.unwrap(),
+        Bytes::from_static(b"second healthy record")
+    );
+}

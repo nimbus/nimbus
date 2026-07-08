@@ -789,11 +789,6 @@ struct PackScan {
     /// cannot supply the entry.
     corrupt_records: Vec<(ScannedRecord, BlobHash)>,
     corrupt_offsets: BTreeSet<u64>,
-    /// Offset up to which the sequential scan verified the pack. The scanner
-    /// stops at the first structurally corrupt record, but records at or past
-    /// this boundary may still be healthy and readable by direct index
-    /// offset — they get direct verification instead of blanket quarantine.
-    scan_boundary: u64,
 }
 
 fn root_from_index_path(index_path: &Path) -> Result<PathBuf> {
@@ -954,7 +949,6 @@ fn scan_pack(
     scan.pack_header_valid = true;
 
     let mut offset = PACK_MAGIC.len() as u64;
-    scan.scan_boundary = offset;
     while offset < file_len {
         let record_offset = offset;
         let mut magic = [0u8; 4];
@@ -967,7 +961,6 @@ fn scan_pack(
         )?;
         offset = offset.saturating_add(read as u64);
         if read < magic.len() {
-            scan.scan_boundary = record_offset;
             scan.corrupt_offsets.insert(record_offset);
             scan.findings.push(finding(
                 ScrubFindingKind::TruncatedRecord,
@@ -984,7 +977,6 @@ fn scan_pack(
             break;
         }
         if magic != RECORD_MAGIC {
-            scan.scan_boundary = record_offset;
             scan.corrupt_offsets.insert(record_offset);
             scan.findings.push(finding(
                 ScrubFindingKind::InvalidRecordMagic,
@@ -1011,7 +1003,6 @@ fn scan_pack(
         )?;
         offset = offset.saturating_add(read as u64);
         if read < stored_hash.len() {
-            scan.scan_boundary = record_offset;
             scan.corrupt_offsets.insert(record_offset);
             scan.findings.push(finding(
                 ScrubFindingKind::TruncatedRecord,
@@ -1034,7 +1025,6 @@ fn scan_pack(
             read_fully_or_short(&mut file, &path, &mut len, pacing, &mut scan.bytes_scanned)?;
         offset = offset.saturating_add(read as u64);
         if read < len.len() {
-            scan.scan_boundary = record_offset;
             scan.corrupt_offsets.insert(record_offset);
             scan.findings.push(finding(
                 ScrubFindingKind::TruncatedRecord,
@@ -1053,7 +1043,6 @@ fn scan_pack(
         let len = u64::from_le_bytes(len);
         let body_start = record_offset.saturating_add(RECORD_HEADER_LEN);
         if len > file_len.saturating_sub(body_start) {
-            scan.scan_boundary = record_offset;
             scan.corrupt_offsets.insert(record_offset);
             // Coordinates are fully known here: record them so repair can
             // keep a quarantined claim for this record locatable even when
@@ -1110,7 +1099,6 @@ fn scan_pack(
             ));
             // The record's structure was walked even though its content is
             // corrupt: the sequential scan boundary advances past it.
-            scan.scan_boundary = offset;
             continue;
         }
 
@@ -1120,7 +1108,6 @@ fn scan_pack(
             hash: stored_hash,
             len,
         });
-        scan.scan_boundary = offset;
     }
     Ok(scan)
 }
@@ -1319,34 +1306,23 @@ async fn merge_pack_findings(
                 report.records_verified += 1;
             }
             None if pack_scan.corrupt_offsets.contains(&entry.offset) => {
-                quarantine.push((*hash, QuarantineCheck::CorruptRecord(*entry)));
-            }
-            None if entry.offset >= pack_scan.scan_boundary => {
-                // The sequential scan stopped at an earlier corrupt segment
-                // and never reached this offset. Records past a corrupt
-                // segment are still readable by direct index offset, so
-                // verify this one directly instead of blanket-quarantining
-                // healthy data (data-availability rule).
-                direct_verify.push((*hash, *entry));
-            }
-            None if pack_scan.pack_header_valid => {
-                report.corrupt_records += 1;
-                report.findings.push(finding(
-                    ScrubFindingKind::MissingIndexedRecord,
-                    Some(entry.pack_id),
-                    Some(entry.offset),
-                    Some(*hash),
-                    Some(*hash),
-                    None,
-                    format!(
-                        "index maps {hash} to pack {} offset {}, but no record starts there",
-                        entry.pack_id, entry.offset
-                    ),
-                ));
+                // A record started at this offset but failed structurally.
                 quarantine.push((*hash, QuarantineCheck::CorruptRecord(*entry)));
             }
             None => {
-                quarantine.push((*hash, QuarantineCheck::CorruptRecord(*entry)));
+                // The sequential scan did not land a record at this offset —
+                // either it stopped at an earlier corrupt segment before
+                // reaching it, or a prior record's inflated (but in-bounds)
+                // length field made the scan step OVER this offset. Either
+                // way the record here may be perfectly readable by direct
+                // index offset, so DIRECT-VERIFY it as ground truth rather
+                // than blanket-reporting MissingIndexedRecord (which would be
+                // a false corruption report + checkpoint freeze for healthy
+                // data). Direct verification emits a finding + quarantine
+                // only if the record genuinely fails. (Header-corrupt packs
+                // are handled and `continue`d above, so the header is valid
+                // here.)
+                direct_verify.push((*hash, *entry));
             }
         }
     }
