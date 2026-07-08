@@ -52,7 +52,7 @@ pub use hash::{BlobTicket, PeerAddr};
 pub use local::{CompactionStats, LocalBlobEntry, LocalPackStore};
 pub use memory::MemoryBlobStore;
 pub use nimbus_crypto::{FRAME_PLAINTEXT_LEN, FramedBlobKey, KEY_SEED_LEN, NONCE_LEN};
-pub use object_store::ObjectStoreBlobStore;
+pub use object_store::{BlobCloudConfig, BlobS3Credentials, ObjectStoreBlobStore};
 pub use placement::{PlacementBlobStore, PlacementMode};
 #[cfg(feature = "cluster")]
 pub use store::ReplicatingBlobStore;
@@ -83,9 +83,8 @@ mod object_safety_tests {
         let placement: Arc<dyn BlobStore> = Arc::new(PlacementBlobStore::local_only(Arc::new(
             MemoryBlobStore::new(),
         )));
-        let object_store: Arc<dyn BlobStore> = Arc::new(ObjectStoreBlobStore::at_root(Arc::new(
-            ::object_store::memory::InMemory::new(),
-        )));
+        let object_store: Arc<dyn BlobStore> =
+            Arc::new(ObjectStoreBlobStore::from_cloud_config(BlobCloudConfig::Memory, "").unwrap());
 
         for store in [local, encrypted, placement, object_store] {
             let hash = store.put(Bytes::from_static(b"object-safe")).await.unwrap();

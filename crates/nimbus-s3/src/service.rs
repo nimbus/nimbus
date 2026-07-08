@@ -24,7 +24,7 @@ use s3s::{Body, S3Error, S3ErrorCode, S3Request, S3Response, S3Result, TrailingH
 use serde_json::{Map, Value};
 
 use crate::auth::AccessKeyRegistry;
-use crate::backend::S3ObjectBackend;
+use crate::backend::{S3TenantObjects, S3TenantResolver};
 use crate::checksum::{ComputedChecksums, decode_md5_base64, multipart_etag};
 use crate::object_io;
 
@@ -34,15 +34,15 @@ const CRC64NVME_HEADER: &str = "x-amz-checksum-crc64nvme";
 
 #[derive(Clone)]
 pub struct NimbusS3 {
-    backend: Arc<dyn S3ObjectBackend>,
+    resolver: Arc<dyn S3TenantResolver>,
     access_keys: Arc<AccessKeyRegistry>,
 }
 
 impl NimbusS3 {
     #[must_use]
-    pub fn new(backend: Arc<dyn S3ObjectBackend>, access_keys: AccessKeyRegistry) -> Self {
+    pub fn new(resolver: Arc<dyn S3TenantResolver>, access_keys: AccessKeyRegistry) -> Self {
         Self {
-            backend,
+            resolver,
             access_keys: Arc::new(access_keys),
         }
     }
@@ -61,10 +61,14 @@ impl NimbusS3 {
     }
 
     async fn ensure_tenant(&self, tenant: &TenantId) -> S3Result<()> {
-        self.backend
+        self.resolver
             .ensure_tenant(tenant)
             .await
             .map_err(map_core_error)
+    }
+
+    async fn resolve(&self, tenant: &TenantId) -> S3Result<S3TenantObjects> {
+        self.resolver.resolve(tenant).await.map_err(map_core_error)
     }
 }
 
@@ -76,6 +80,7 @@ impl s3s::S3 for NimbusS3 {
     ) -> S3Result<S3Response<PutObjectOutput>> {
         let tenant = self.tenant(&req)?;
         self.ensure_tenant(&tenant).await?;
+        let ctx = self.resolve(&tenant).await?;
         let trailing_headers = req.trailing_headers.clone();
         let input = req.input;
         reject_unsupported_checksum_headers(
@@ -102,9 +107,9 @@ impl s3s::S3 for NimbusS3 {
         computed.verify_content_md5(input.content_md5.as_deref())?;
         computed.verify_crc64nvme(checksum_crc64nvme.as_deref())?;
 
-        let previous = self
-            .backend
-            .get_manifest(&tenant, &input.bucket, &input.key)
+        let previous = ctx
+            .meta
+            .get_manifest(&input.bucket, &input.key)
             .await
             .map_err(map_core_error)?;
         verify_write_preconditions(
@@ -112,11 +117,8 @@ impl s3s::S3 for NimbusS3 {
             input.if_match.as_ref(),
             input.if_none_match.as_ref(),
         )?;
-        let hash = self
-            .backend
-            .put_blob(&tenant, bytes)
-            .await
-            .map_err(map_core_error)?;
+        let blobs = ctx.blobs().await.map_err(map_core_error)?;
+        let hash = blobs.put(bytes).await.map_err(map_core_error)?;
         let manifest = match ObjectManifest::whole(
             input.bucket.clone(),
             input.key.clone(),
@@ -131,20 +133,20 @@ impl s3s::S3 for NimbusS3 {
         ) {
             Ok(manifest) => manifest,
             Err(error) => {
-                self.release_blob_unless_manifest_retains(&tenant, &hash, previous.as_ref())
+                self.release_blob_unless_manifest_retains(&ctx, &hash, previous.as_ref())
                     .await?;
                 return Err(map_core_error(error));
             }
         };
         let size = manifest.size;
         let retained = manifest.clone();
-        if let Err(error) = self.backend.put_manifest(&tenant, manifest).await {
-            self.release_blob_unless_manifest_retains(&tenant, &hash, previous.as_ref())
+        if let Err(error) = ctx.meta.put_manifest(manifest).await {
+            self.release_blob_unless_manifest_retains(&ctx, &hash, previous.as_ref())
                 .await?;
             return Err(map_core_error(error));
         }
         if let Some(previous) = previous {
-            self.release_manifest_blobs_except(&tenant, &previous, Some(&retained))
+            self.release_manifest_blobs_except(&ctx, &previous, Some(&retained))
                 .await?;
         }
 
@@ -161,10 +163,11 @@ impl s3s::S3 for NimbusS3 {
         req: S3Request<GetObjectInput>,
     ) -> S3Result<S3Response<GetObjectOutput>> {
         let tenant = self.tenant(&req)?;
+        let ctx = self.resolve(&tenant).await?;
         let input = req.input;
-        let manifest = self
-            .backend
-            .get_manifest(&tenant, &input.bucket, &input.key)
+        let manifest = ctx
+            .meta
+            .get_manifest(&input.bucket, &input.key)
             .await
             .map_err(map_core_error)?
             .ok_or_else(|| s3_error!(NoSuchKey))?;
@@ -175,7 +178,7 @@ impl s3s::S3 for NimbusS3 {
             input.if_modified_since.as_ref(),
             input.if_unmodified_since.as_ref(),
         )?;
-        let mut bytes = self.read_manifest_bytes(&tenant, &manifest).await?;
+        let mut bytes = self.read_manifest_bytes(&ctx, &manifest).await?;
         let mut status = None;
         let mut content_range = None;
         if let Some(range) = input.range {
@@ -214,10 +217,11 @@ impl s3s::S3 for NimbusS3 {
         req: S3Request<HeadObjectInput>,
     ) -> S3Result<S3Response<HeadObjectOutput>> {
         let tenant = self.tenant(&req)?;
+        let ctx = self.resolve(&tenant).await?;
         let input = req.input;
-        let manifest = self
-            .backend
-            .get_manifest(&tenant, &input.bucket, &input.key)
+        let manifest = ctx
+            .meta
+            .get_manifest(&input.bucket, &input.key)
             .await
             .map_err(map_core_error)?
             .ok_or_else(|| s3_error!(NoSuchKey))?;
@@ -258,14 +262,15 @@ impl s3s::S3 for NimbusS3 {
         req: S3Request<DeleteObjectInput>,
     ) -> S3Result<S3Response<DeleteObjectOutput>> {
         let tenant = self.tenant(&req)?;
+        let ctx = self.resolve(&tenant).await?;
         let input = req.input;
-        if let Some((_, manifest)) = self
-            .backend
-            .delete_manifest(&tenant, &input.bucket, &input.key)
+        if let Some((_, manifest)) = ctx
+            .meta
+            .delete_manifest(&input.bucket, &input.key)
             .await
             .map_err(map_core_error)?
         {
-            self.release_manifest_blobs(&tenant, &manifest).await?;
+            self.release_manifest_blobs(&ctx, &manifest).await?;
         }
         Ok(S3Response::new(DeleteObjectOutput::default()))
     }
@@ -275,6 +280,7 @@ impl s3s::S3 for NimbusS3 {
         req: S3Request<ListObjectsV2Input>,
     ) -> S3Result<S3Response<ListObjectsV2Output>> {
         let tenant = self.tenant(&req)?;
+        let ctx = self.resolve(&tenant).await?;
         let input = req.input;
         let prefix = input.prefix.clone().unwrap_or_default();
         let max_keys = input
@@ -286,9 +292,9 @@ impl s3s::S3 for NimbusS3 {
             .clone()
             .or(input.start_after.clone());
         let delimiter = input.delimiter.clone();
-        let manifests = self
-            .backend
-            .list_manifests(&tenant, &input.bucket, &prefix, usize::MAX)
+        let manifests = ctx
+            .meta
+            .list_manifests(&input.bucket, &prefix, usize::MAX)
             .await
             .map_err(map_core_error)?;
 
@@ -346,6 +352,7 @@ impl s3s::S3 for NimbusS3 {
     ) -> S3Result<S3Response<CreateMultipartUploadOutput>> {
         let tenant = self.tenant(&req)?;
         self.ensure_tenant(&tenant).await?;
+        let ctx = self.resolve(&tenant).await?;
         let input = req.input;
         let upload_id = ulid::Ulid::new().to_string();
         let upload = ObjectMultipartUpload::new(
@@ -357,8 +364,8 @@ impl s3s::S3 for NimbusS3 {
             current_millis(),
         )
         .map_err(map_core_error)?;
-        self.backend
-            .put_multipart_upload(&tenant, upload)
+        ctx.meta
+            .put_multipart_upload(upload)
             .await
             .map_err(map_core_error)?;
         Ok(S3Response::new(CreateMultipartUploadOutput {
@@ -374,11 +381,12 @@ impl s3s::S3 for NimbusS3 {
         req: S3Request<UploadPartInput>,
     ) -> S3Result<S3Response<UploadPartOutput>> {
         let tenant = self.tenant(&req)?;
+        let ctx = self.resolve(&tenant).await?;
         let trailing_headers = req.trailing_headers.clone();
         let input = req.input;
-        let mut upload = self
-            .backend
-            .get_multipart_upload(&tenant, &input.upload_id)
+        let mut upload = ctx
+            .meta
+            .get_multipart_upload(&input.upload_id)
             .await
             .map_err(map_core_error)?
             .ok_or_else(|| s3_error!(NoSuchUpload))?;
@@ -414,11 +422,8 @@ impl s3s::S3 for NimbusS3 {
         let computed = ComputedChecksums::for_bytes(&bytes);
         computed.verify_content_md5(input.content_md5.as_deref())?;
         computed.verify_crc64nvme(checksum_crc64nvme.as_deref())?;
-        let hash = self
-            .backend
-            .put_blob(&tenant, bytes)
-            .await
-            .map_err(map_core_error)?;
+        let blobs = ctx.blobs().await.map_err(map_core_error)?;
+        let hash = blobs.put(bytes).await.map_err(map_core_error)?;
         let hash_hex = hash.to_hex();
         let original_upload_retains_hash =
             object_io::multipart_upload_contains_blob(&upload, &hash).map_err(map_core_error)?;
@@ -432,12 +437,8 @@ impl s3s::S3 for NimbusS3 {
         }) {
             Ok(replaced) => replaced,
             Err(error) => {
-                self.release_blob_unless_upload_retains(
-                    &tenant,
-                    &hash,
-                    original_upload_retains_hash,
-                )
-                .await?;
+                self.release_blob_unless_upload_retains(&ctx, &hash, original_upload_retains_hash)
+                    .await?;
                 return Err(map_core_error(error));
             }
         };
@@ -452,14 +453,14 @@ impl s3s::S3 for NimbusS3 {
         } else {
             None
         };
-        if let Err(error) = self.backend.put_multipart_upload(&tenant, upload).await {
-            self.release_blob_unless_upload_retains(&tenant, &hash, original_upload_retains_hash)
+        if let Err(error) = ctx.meta.put_multipart_upload(upload).await {
+            self.release_blob_unless_upload_retains(&ctx, &hash, original_upload_retains_hash)
                 .await?;
             return Err(map_core_error(error));
         }
         if let Some(replaced_hash) = replaced_release_hash {
-            self.backend
-                .release_blob(&tenant, &replaced_hash)
+            blobs
+                .release(&replaced_hash)
                 .await
                 .map_err(map_core_error)?;
         }
@@ -475,10 +476,11 @@ impl s3s::S3 for NimbusS3 {
         req: S3Request<CompleteMultipartUploadInput>,
     ) -> S3Result<S3Response<CompleteMultipartUploadOutput>> {
         let tenant = self.tenant(&req)?;
+        let ctx = self.resolve(&tenant).await?;
         let input = req.input;
-        let upload = self
-            .backend
-            .get_multipart_upload(&tenant, &input.upload_id)
+        let upload = ctx
+            .meta
+            .get_multipart_upload(&input.upload_id)
             .await
             .map_err(map_core_error)?
             .ok_or_else(|| s3_error!(NoSuchUpload))?;
@@ -548,21 +550,21 @@ impl s3s::S3 for NimbusS3 {
         )
         .map_err(map_core_error)?;
         let retained = manifest.clone();
-        let previous = self
-            .backend
-            .get_manifest(&tenant, &input.bucket, &input.key)
+        let previous = ctx
+            .meta
+            .get_manifest(&input.bucket, &input.key)
             .await
             .map_err(map_core_error)?;
-        self.backend
-            .put_manifest(&tenant, manifest)
+        ctx.meta
+            .put_manifest(manifest)
             .await
             .map_err(map_core_error)?;
-        self.backend
-            .delete_multipart_upload(&tenant, &input.upload_id)
+        ctx.meta
+            .delete_multipart_upload(&input.upload_id)
             .await
             .map_err(map_core_error)?;
         if let Some(previous) = previous {
-            self.release_manifest_blobs_except(&tenant, &previous, Some(&retained))
+            self.release_manifest_blobs_except(&ctx, &previous, Some(&retained))
                 .await?;
         }
         Ok(S3Response::new(CompleteMultipartUploadOutput {
@@ -580,19 +582,19 @@ impl s3s::S3 for NimbusS3 {
         req: S3Request<AbortMultipartUploadInput>,
     ) -> S3Result<S3Response<AbortMultipartUploadOutput>> {
         let tenant = self.tenant(&req)?;
+        let ctx = self.resolve(&tenant).await?;
         let input = req.input;
-        if let Some((_, upload)) = self
-            .backend
-            .delete_multipart_upload(&tenant, &input.upload_id)
+        if let Some((_, upload)) = ctx
+            .meta
+            .delete_multipart_upload(&input.upload_id)
             .await
             .map_err(map_core_error)?
+            && !upload.parts.is_empty()
         {
+            let blobs = ctx.blobs().await.map_err(map_core_error)?;
             for part in upload.parts {
-                self.backend
-                    .release_blob(
-                        &tenant,
-                        &object_io::parse_blob_hash(&part.blob_hash).map_err(map_core_error)?,
-                    )
+                blobs
+                    .release(&object_io::parse_blob_hash(&part.blob_hash).map_err(map_core_error)?)
                     .await
                     .map_err(map_core_error)?;
             }
@@ -604,37 +606,39 @@ impl s3s::S3 for NimbusS3 {
 impl NimbusS3 {
     async fn read_manifest_bytes(
         &self,
-        tenant: &TenantId,
+        ctx: &S3TenantObjects,
         manifest: &ObjectManifest,
     ) -> S3Result<Bytes> {
-        object_io::read_manifest_bytes(self.backend.as_ref(), tenant, manifest)
+        let blobs = ctx.blobs().await.map_err(map_core_error)?;
+        object_io::read_manifest_bytes(blobs.as_ref(), manifest)
             .await
             .map_err(map_core_error)
     }
 
     async fn release_manifest_blobs(
         &self,
-        tenant: &TenantId,
+        ctx: &S3TenantObjects,
         manifest: &ObjectManifest,
     ) -> S3Result<()> {
-        self.release_manifest_blobs_except(tenant, manifest, None)
+        self.release_manifest_blobs_except(ctx, manifest, None)
             .await
     }
 
     async fn release_manifest_blobs_except(
         &self,
-        tenant: &TenantId,
+        ctx: &S3TenantObjects,
         manifest: &ObjectManifest,
         retained: Option<&ObjectManifest>,
     ) -> S3Result<()> {
-        object_io::release_manifest_blobs_except(self.backend.as_ref(), tenant, manifest, retained)
+        let blobs = ctx.blobs().await.map_err(map_core_error)?;
+        object_io::release_manifest_blobs_except(blobs.as_ref(), manifest, retained)
             .await
             .map_err(map_core_error)
     }
 
     async fn release_blob_unless_manifest_retains(
         &self,
-        tenant: &TenantId,
+        ctx: &S3TenantObjects,
         hash: &BlobHash,
         retained: Option<&ObjectManifest>,
     ) -> S3Result<()> {
@@ -643,23 +647,27 @@ impl NimbusS3 {
         {
             return Ok(());
         }
-        self.backend
-            .release_blob(tenant, hash)
+        ctx.blobs()
+            .await
+            .map_err(map_core_error)?
+            .release(hash)
             .await
             .map_err(map_core_error)
     }
 
     async fn release_blob_unless_upload_retains(
         &self,
-        tenant: &TenantId,
+        ctx: &S3TenantObjects,
         hash: &BlobHash,
         retained_by_upload: bool,
     ) -> S3Result<()> {
         if retained_by_upload {
             return Ok(());
         }
-        self.backend
-            .release_blob(tenant, hash)
+        ctx.blobs()
+            .await
+            .map_err(map_core_error)?
+            .release(hash)
             .await
             .map_err(map_core_error)
     }

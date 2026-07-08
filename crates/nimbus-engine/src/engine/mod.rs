@@ -48,6 +48,7 @@ pub use committed_mutations::{TableSchemaChangeEvent, TableSchemaChangeObserver}
 pub use encryption::{EncryptionStatus, InitializedKeyProvider};
 pub use execution_units::MutationExecutionUnit;
 pub use mutations::{AsyncMutationContext, MutationActor};
+pub use objects::TenantObjectMeta;
 pub(crate) use provider_hints::ProviderPollWorker;
 pub(crate) use queries::{
     evaluate_with_index_cancellable_for_principal, paginate_documents_for_store_with_principal,

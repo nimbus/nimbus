@@ -14,30 +14,33 @@ use axum::error_handling::HandleError;
 use axum::extract::{Path, State};
 use axum::http::{Response, StatusCode, header};
 use axum::routing::get;
-use bytes::Bytes;
-use nimbus_blob::BlobHash;
+use nimbus_blob::BlobStore;
 use nimbus_core::{CommitEntry, Error, Result, TenantId};
-use nimbus_engine::Engine;
+use nimbus_engine::{Engine, TenantObjectMeta};
 use nimbus_object_storage::{ObjectStorageConfig, ObjectStorageResolver};
 use nimbus_s3::convex::{
     CONVEX_DOWNLOAD_PATH_PREFIX, ConvexObjectStorage, ConvexStorageError, DownloadTokenSigner,
 };
-use nimbus_s3::{NimbusS3, S3ObjectBackend};
+use nimbus_s3::{NimbusS3, S3ObjectMeta, S3TenantBlobs, S3TenantObjects, S3TenantResolver};
 use nimbus_storage::{ObjectManifest, ObjectMultipartUpload};
 use s3s::service::S3ServiceBuilder;
 use s3s::{Body, HttpError};
 use tokio::net::TcpListener;
+use tokio::sync::OnceCell;
 use tracing::{error, info};
 
 use super::S3Config;
 
+/// Resolves a tenant into its byte/metadata planes once per S3 or Convex
+/// storage request, backed by the Engine's object metadata seam and the
+/// native object-storage byte-plane resolver.
 #[derive(Clone)]
-struct EngineS3Backend {
+struct EngineS3Resolver {
     engine: Arc<Engine>,
     objects: ObjectStorageResolver,
 }
 
-impl EngineS3Backend {
+impl EngineS3Resolver {
     fn new(engine: Arc<Engine>, object_storage: ObjectStorageConfig) -> Self {
         Self {
             objects: ObjectStorageResolver::with_config(engine.clone(), object_storage),
@@ -47,99 +50,126 @@ impl EngineS3Backend {
 }
 
 #[async_trait]
-impl S3ObjectBackend for EngineS3Backend {
+impl S3TenantResolver for EngineS3Resolver {
+    async fn resolve(&self, tenant: &TenantId) -> Result<S3TenantObjects> {
+        let meta = self.engine.tenant_object_meta(tenant.clone()).await?;
+        let blobs = Arc::new(EngineBlobResolver {
+            engine: self.engine.clone(),
+            objects: self.objects.clone(),
+            tenant: tenant.clone(),
+            resolved: OnceCell::new(),
+        });
+        Ok(S3TenantObjects::new(
+            blobs,
+            Arc::new(EngineObjectMeta(meta)),
+        ))
+    }
+
     async fn ensure_tenant(&self, tenant: &TenantId) -> Result<()> {
         self.engine.ensure_object_tenant_async(tenant.clone()).await
     }
+}
 
-    async fn put_blob(&self, tenant: &TenantId, bytes: Bytes) -> Result<BlobHash> {
-        self.objects.blob_store(tenant)?.put(bytes).await
-    }
+/// Lazily resolves and memoizes one tenant's byte-plane [`BlobStore`].
+///
+/// The tenant's object-metadata handle (`tenant_object_meta`) already exists
+/// by the time [`EngineS3Resolver::resolve`] builds one of these, so
+/// `resolve` here only fires for requests that actually perform a byte
+/// operation (put/get/release) — metadata-only requests (HeadObject,
+/// ListObjectsV2, CreateMultipartUpload, the Convex metadata path) never
+/// construct a [`BlobStore`] or touch the underlying object-store
+/// credentials/local pack files.
+///
+/// [`Engine::enter_object_blob_operation`] is entered around the resolution
+/// so a tenant mid-deletion is rejected with the same
+/// [`Error::TenantNotFound`] the metadata plane produces, instead of racing
+/// [`ObjectStorageResolver::blob_store`] (which has no guard of its own)
+/// into opening byte-plane state for a tenant that is being torn down.
+struct EngineBlobResolver {
+    engine: Arc<Engine>,
+    objects: ObjectStorageResolver,
+    tenant: TenantId,
+    resolved: OnceCell<Arc<dyn BlobStore>>,
+}
 
-    async fn get_blob(&self, tenant: &TenantId, hash: &BlobHash) -> Result<Bytes> {
-        self.objects.blob_store(tenant)?.get(hash).await
-    }
-
-    async fn release_blob(&self, tenant: &TenantId, hash: &BlobHash) -> Result<()> {
-        self.objects.blob_store(tenant)?.release(hash).await
-    }
-
-    async fn put_manifest(
-        &self,
-        tenant: &TenantId,
-        manifest: ObjectManifest,
-    ) -> Result<CommitEntry> {
-        self.engine
-            .put_object_manifest_async(tenant.clone(), manifest)
+#[async_trait]
+impl S3TenantBlobs for EngineBlobResolver {
+    async fn resolve(&self) -> Result<Arc<dyn BlobStore>> {
+        self.resolved
+            .get_or_try_init(|| async {
+                let _guard = self
+                    .engine
+                    .enter_object_blob_operation(&self.tenant)
+                    .await?;
+                self.objects.blob_store(&self.tenant)
+            })
             .await
+            .map(Arc::clone)
+    }
+}
+
+/// Newtype satisfying Rust's orphan rule: `nimbus-engine`'s [`TenantObjectMeta`]
+/// and `nimbus-s3`'s [`S3ObjectMeta`] are each owned by their own crate, so
+/// only a locally-owned wrapper type in this crate (which depends on both)
+/// can implement the trait for the struct.
+struct EngineObjectMeta(TenantObjectMeta);
+
+#[async_trait]
+impl S3ObjectMeta for EngineObjectMeta {
+    async fn put_manifest(&self, manifest: ObjectManifest) -> Result<CommitEntry> {
+        self.0.put_manifest(manifest).await
     }
 
-    async fn get_manifest(
-        &self,
-        tenant: &TenantId,
-        bucket: &str,
-        key: &str,
-    ) -> Result<Option<ObjectManifest>> {
-        self.engine
-            .get_object_manifest_async(tenant.clone(), bucket.to_string(), key.to_string())
+    async fn get_manifest(&self, bucket: &str, key: &str) -> Result<Option<ObjectManifest>> {
+        self.0
+            .get_manifest(bucket.to_string(), key.to_string())
             .await
     }
 
     async fn delete_manifest(
         &self,
-        tenant: &TenantId,
         bucket: &str,
         key: &str,
     ) -> Result<Option<(CommitEntry, ObjectManifest)>> {
-        self.engine
-            .delete_object_manifest_async(tenant.clone(), bucket.to_string(), key.to_string())
+        self.0
+            .delete_manifest(bucket.to_string(), key.to_string())
             .await
     }
 
     async fn list_manifests(
         &self,
-        tenant: &TenantId,
         bucket: &str,
         prefix: &str,
         limit: usize,
     ) -> Result<Vec<ObjectManifest>> {
-        self.engine
-            .list_object_manifests_async(
-                tenant.clone(),
-                bucket.to_string(),
-                prefix.to_string(),
-                limit,
-            )
+        self.0
+            .list_manifests(bucket.to_string(), prefix.to_string(), limit)
             .await
     }
 
-    async fn put_multipart_upload(
-        &self,
-        tenant: &TenantId,
-        upload: ObjectMultipartUpload,
-    ) -> Result<CommitEntry> {
-        self.engine
-            .put_multipart_upload_async(tenant.clone(), upload)
-            .await
+    async fn put_multipart_upload(&self, upload: ObjectMultipartUpload) -> Result<CommitEntry> {
+        self.0.put_multipart_upload(upload).await
     }
 
-    async fn get_multipart_upload(
-        &self,
-        tenant: &TenantId,
-        upload_id: &str,
-    ) -> Result<Option<ObjectMultipartUpload>> {
-        self.engine
-            .get_multipart_upload_async(tenant.clone(), upload_id.to_string())
-            .await
+    async fn get_multipart_upload(&self, upload_id: &str) -> Result<Option<ObjectMultipartUpload>> {
+        self.0.get_multipart_upload(upload_id.to_string()).await
     }
 
     async fn delete_multipart_upload(
         &self,
-        tenant: &TenantId,
         upload_id: &str,
     ) -> Result<Option<(CommitEntry, ObjectMultipartUpload)>> {
-        self.engine
-            .delete_multipart_upload_async(tenant.clone(), upload_id.to_string())
+        self.0.delete_multipart_upload(upload_id.to_string()).await
+    }
+
+    async fn list_multipart_uploads(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<ObjectMultipartUpload>> {
+        self.0
+            .list_multipart_uploads(bucket.to_string(), prefix.to_string(), limit)
             .await
     }
 }
@@ -177,8 +207,8 @@ pub fn router(engine: Arc<Engine>, config: S3Config) -> Router {
         object_storage,
         ..
     } = config;
-    let backend = Arc::new(EngineS3Backend::new(engine, object_storage));
-    let s3 = NimbusS3::new(backend.clone(), access_keys.clone());
+    let resolver = Arc::new(EngineS3Resolver::new(engine, object_storage));
+    let s3 = NimbusS3::new(resolver.clone(), access_keys.clone());
     let mut builder = S3ServiceBuilder::new(s3);
     builder.set_auth(access_keys);
     let s3_service = HandleError::new(builder.build(), handle_s3_error);
@@ -186,7 +216,7 @@ pub fn router(engine: Arc<Engine>, config: S3Config) -> Router {
     match convex_download_secret {
         Some(secret) => {
             let state = ConvexDownloadState {
-                storage: ConvexObjectStorage::new(backend),
+                storage: ConvexObjectStorage::new(resolver),
                 signer: DownloadTokenSigner::new(secret)
                     .expect("S3Config guard rejects empty Convex download secrets"),
             };
@@ -308,10 +338,10 @@ mod tests {
             target,
             require_ack: true,
         };
-        let backend = EngineS3Backend::new(engine, ObjectStorageConfig::new(policy.clone()));
+        let resolver = EngineS3Resolver::new(engine, ObjectStorageConfig::new(policy.clone()));
 
         assert_eq!(
-            backend
+            resolver
                 .objects
                 .effective_policy(&tenant)
                 .expect("policy should resolve"),
@@ -405,7 +435,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir should create");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
         let tenant = TenantId::new("tenant-s3").expect("tenant id");
-        let storage = ConvexObjectStorage::new(Arc::new(EngineS3Backend::new(
+        let storage = ConvexObjectStorage::new(Arc::new(EngineS3Resolver::new(
             engine.clone(),
             ObjectStorageConfig::default(),
         )));
@@ -452,17 +482,23 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir should create");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
         let tenant = TenantId::new("tenant-s3").expect("tenant id");
-        let backend = EngineS3Backend::new(engine.clone(), ObjectStorageConfig::default());
-        backend.ensure_tenant(&tenant).await.expect("tenant exists");
-        let hash = backend
-            .put_blob(&tenant, Bytes::from_static(b"presigned bytes"))
+        let resolver = EngineS3Resolver::new(engine.clone(), ObjectStorageConfig::default());
+        resolver
+            .ensure_tenant(&tenant)
+            .await
+            .expect("tenant exists");
+        let ctx = resolver.resolve(&tenant).await.expect("tenant resolves");
+        let hash = ctx
+            .blobs()
+            .await
+            .expect("blob accessor should resolve")
+            .put(Bytes::from_static(b"presigned bytes"))
             .await
             .expect("blob should store");
         let mut attributes = ObjectManifestAttributes::new("presigned-etag", current_millis());
         attributes.content_type = Some("text/plain".to_string());
-        backend
+        ctx.meta
             .put_manifest(
-                &tenant,
                 ObjectManifest::whole("bucket", "presigned.txt", 15, hash.to_hex(), attributes)
                     .expect("manifest should build"),
             )
@@ -483,5 +519,25 @@ mod tests {
             .await
             .expect("body should read");
         assert_eq!(bytes, Bytes::from_static(b"presigned bytes"));
+    }
+
+    /// A tenant that was never created (no `ensure_tenant` call, e.g. no S3
+    /// `PutObject`/`CreateMultipartUpload` or Convex store ever ran for it)
+    /// must fail `resolve` with the same [`Error::TenantNotFound`] the old
+    /// per-call `Engine::get_existing_tenant_async` check produced on the
+    /// first manifest/multipart call. Moving tenant resolution to once per
+    /// request must not change which requests succeed.
+    #[tokio::test]
+    async fn resolve_fails_for_a_tenant_the_engine_never_created() {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
+        let tenant = TenantId::new("tenant-never-created").expect("tenant id");
+        let resolver = EngineS3Resolver::new(engine, ObjectStorageConfig::default());
+
+        let error = match resolver.resolve(&tenant).await {
+            Ok(_) => panic!("resolve must not implicitly create an unensured tenant"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, Error::TenantNotFound(missing) if missing == tenant));
     }
 }
