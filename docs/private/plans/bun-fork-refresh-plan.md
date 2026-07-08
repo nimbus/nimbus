@@ -66,10 +66,21 @@ reviews, BFR5 (PR), and BFR6 (evidence) stay with the orchestrator.
   used) after the hours-long fork builds, and macOS jetsam repeatedly kills
   the multi-GiB nimbus-runtime linked-test link. The only large memory
   consumers are the user's own apps (not safe to kill). This is an
-  environmental limit, not a code fault. The behavior half is routed to the
-  hosted `bun-jsc-adapter.yml` dispatch (run 28963909313, linux-x86_64 +
-  darwin-arm64), which builds from the pushed branch and runs the identical
-  probe suite on clean-memory runners. Local logs: scratchpad `bfr1-*.log`.
+  environmental limit, not a code fault.
+- Behavior proof OBTAINED locally via the fork's own `check-bun-embed-probe`
+  target (probe exe, statically linked, no nimbus-runtime/dlopen): RC=0, full
+  11-probe suite green, including the new `node_vm_module_import:
+  denied_by_resolver_policy`. This directly satisfies the stop-hook "node:vm
+  behavior proof" requirement without the memory-blocked build.
+- Remaining coverage (nimbus-side dlopen + same-process V8+Bun/JSC
+  coexistence, verifier steps 8-9) routed to the hosted `bun-jsc-adapter.yml`
+  dispatch. First dispatch (run 28963909313) FAILED on a pre-existing gap: the
+  workflow never provisioned LLVM 21 (both bases need clang 21.1.8; the old
+  proof was only ever validated locally). Fixed on the feature branch
+  (`ci(bun-jsc-adapter): provision LLVM 21`); re-dispatch run 28966275125
+  (--ref bun-fork-refresh-20260708) — LLVM-21 install step green on both
+  platforms; build in progress. Local logs: scratchpad `probe-exe.log`,
+  `bfr1-*.log`, `hosted-fail.log`.
 
 ## BFR2 — Publish fork state — `in_progress (branch pushed; tag/default held for hosted proof)`
 
@@ -87,7 +98,7 @@ reviews, BFR5 (PR), and BFR6 (evidence) stay with the orchestrator.
   spec rule "tag only after the proof suite passes" — the tag is the claim.
 - Evidence: (fill tag SHA + default-branch flip at completion.)
 
-## BFR3 — Repoint Nimbus pins — `pending`
+## BFR3 — Repoint Nimbus pins — `done (2026-07-08)`
 
 - On a nimbus feature branch, update every pin site enumerated in the spec's
   pin-site table to the new ref/revision pair.
@@ -96,7 +107,15 @@ reviews, BFR5 (PR), and BFR6 (evidence) stay with the orchestrator.
 - Completion gate: `make verify-bun-jsc-runtime-contract` passes;
   `scripts/verify-fork-upstream-standardization.sh` passes against the live
   fork.
-- Evidence: (fill at completion.)
+- Evidence: branch `bun-fork-refresh-20260708`. All 14 pin sites moved to
+  `nimbus-bun-jsc-proof-main-20260708` @ `9c9ed55fd88` (commit `6de56fd23`),
+  plus the CI LLVM-21 fix (`b32c216f6`). Completeness grep clean (only the
+  upstream remote URL remains). contract.rs source-of-truth + UI fixtures
+  consistent; 5/5 affected nimbus-ui specs pass; all 5 touched shell scripts
+  `bash -n` clean; fork-standardization registry row updated (branch + base
+  `332f7444f9`). NOTE: `make verify-bun-jsc-runtime-contract` +
+  `verify-fork-upstream-standardization.sh` full local runs deferred — same
+  host swap exhaustion; they run in `make ci` on the PR (BFR5) on hosted CI.
 
 ## BFR4 — Linked-adapter verification — `pending`
 
