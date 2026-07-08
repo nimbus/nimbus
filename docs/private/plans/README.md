@@ -87,11 +87,21 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Sandbox And Machine Execution
 
-- `nimbus-sandbox-plan.md` - `proposed`. Owns the unified sandbox roadmap on the
-  `nimbus-libkrun` family: shared backend skeleton, Linux snapshot/fork,
-  desktop profile, and GPU profile. Band B should precede work that needs a
-  stable libkrun-backed execution backend; Band S precedes density work that
-  assumes snapshot/fork scale.
+- `nimbus-sandbox-plan.md` - `proposed`. Owns the multi-backend sandbox
+  architecture (`ADOPT_MULTI_BACKEND_SANDBOX_ARCHITECTURE`, 2026-07-08): the
+  `SandboxBackend` router/dispatch seam with backend families
+  (container/krun landed; firecracker, isolate, wasm, gvisor,
+  cloud_hypervisor, qemu named), the family/profile/capability vocabulary,
+  and the libkrun-family session bands (shared backend skeleton, desktop
+  profile, GPU profile). Band R (router) precedes any new backend family;
+  Band B precedes the desktop/GPU bands.
+- `firecracker-fast-invocation-backend-plan.md` - `proposed`. Owns the
+  `firecracker` backend family: snapshot-backed fast invocation on stock
+  Firecracker (sidecar + jailer, snapshot/restore, template fork) behind the
+  Band R dispatch seam. Replaces the removed in-fork snapshot port (former
+  sandbox-plan Band S) and precedes density work that assumes snapshot/fork
+  scale. Promote when the `fast_invocation` product surface is scheduled and
+  Band R is landed.
 - `sandbox-disk-limit-enforcement-plan.md` - `proposed`. Owns host-layer
   project-quota detection and enforce-or-refuse startup semantics for per-service
   disk caps. Promote when a concrete service needs production disk limits.
