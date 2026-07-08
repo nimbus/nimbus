@@ -148,9 +148,7 @@ async fn engine_update_and_delete_drive_subscription_updates() {
             serde_json::Map::from_iter([("title".to_string(), json!("After"))]),
         )
         .expect("update should succeed");
-    let update_sequence = engine
-        .latest_sequence(&tenant_id)
-        .expect("latest sequence should load after update");
+    let update_sequence = settled_latest_document_sequence(&engine, &tenant_id).await;
 
     let (actual_id, request_id, snapshot) =
         recv_result_covering(&mut rx, update_sequence, "update should arrive").await;
@@ -166,9 +164,7 @@ async fn engine_update_and_delete_drive_subscription_updates() {
             document_id.clone(),
         )
         .expect("delete should succeed");
-    let delete_sequence = engine
-        .latest_sequence(&tenant_id)
-        .expect("latest sequence should load after delete");
+    let delete_sequence = settled_latest_document_sequence(&engine, &tenant_id).await;
 
     let (actual_id, request_id, snapshot) =
         recv_result_covering(&mut rx, delete_sequence, "delete should arrive").await;
@@ -259,9 +255,7 @@ async fn subscription_snapshots_expose_covered_sequence_and_commit_timestamp_met
             serde_json::Map::from_iter([("title".to_string(), json!("Before"))]),
         )
         .expect("seed insert should succeed");
-    let bootstrap_sequence = engine
-        .latest_sequence(&tenant_id)
-        .expect("latest sequence should load after seed insert");
+    let bootstrap_sequence = settled_latest_sequence(&engine, &tenant_id).await;
 
     let (tx, mut rx) = subscription_channel();
     let _subscription = engine
