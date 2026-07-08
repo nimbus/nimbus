@@ -151,6 +151,20 @@ impl std::fmt::Debug for LocalPackStore {
     }
 }
 
+/// Process-wide registry of live writable roots (canonical path -> state).
+///
+/// Exists so same-process opens of one root alias a single state instead of
+/// fighting over the flock: the flock guards against a *second process*, the
+/// shared mutex serializes writers *within* this process. Entries are weak;
+/// dead ones are purged on the next open. This is deliberately the crate's
+/// only global — it carries no configuration, only liveness.
+fn open_roots() -> &'static Mutex<HashMap<PathBuf, std::sync::Weak<Mutex<LocalPackState>>>> {
+    static OPEN_ROOTS: std::sync::OnceLock<
+        Mutex<HashMap<PathBuf, std::sync::Weak<Mutex<LocalPackState>>>>,
+    > = std::sync::OnceLock::new();
+    OPEN_ROOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 impl LocalPackStore {
     /// Opens or creates a local pack store rooted at `root`.
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
@@ -173,10 +187,18 @@ impl LocalPackStore {
 
     /// Opens or creates a local pack store with full [`LocalPackStoreOptions`].
     ///
-    /// Takes the exclusive root lock ([`StorageErrorKind::Busy`] if another
-    /// live handle or process owns the root), validates or stamps the format
-    /// marker, sweeps crash-leftover temp files, and self-heals a torn
-    /// trailing index record. See [`LocalPackStore::open_report`].
+    /// **Same-process opens of one root share one live store state** (the
+    /// state, its mutex, and the advisory flock), so independent components
+    /// composing over the same tenant root — a server resolver plus an
+    /// in-process backup task, two resolvers over one engine — alias safely
+    /// instead of failing. The format marker (and any identity binding) is
+    /// still validated on every open, and a **second process** is still
+    /// excluded by the flock with [`StorageErrorKind::Busy`]. The first open
+    /// fixes `pack_target_bytes` for the shared state's lifetime.
+    ///
+    /// A fresh (non-shared) open validates or stamps the format marker,
+    /// sweeps crash-leftover temp files, and self-heals a torn trailing index
+    /// record. See [`LocalPackStore::open_report`].
     pub fn open_with_options(
         root: impl AsRef<Path>,
         options: LocalPackStoreOptions,
@@ -189,13 +211,38 @@ impl LocalPackStore {
         }
 
         let root = root.as_ref().to_path_buf();
-        let packs_dir = root.join("packs");
-        let index_path = root.join("index.log");
         let observer: Arc<dyn SyncObserver> = Arc::new(disk::NoopSyncObserver);
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
 
+        // Serialize opens through the process-wide registry so two concurrent
+        // first-opens of one root cannot race the flock (one would spuriously
+        // fail Busy against its own process).
+        let mut registry = open_roots()
+            .lock()
+            .map_err(|_| Error::storage(StorageErrorKind::Other, "open-root registry poisoned"))?;
+        registry.retain(|_, weak| weak.strong_count() > 0);
+
+        // Shape check + root creation happen before canonicalization (which
+        // requires the directory to exist).
+        root_guard::check_writable_root_shape(&root, &options)?;
+        let canonical = root
+            .canonicalize()
+            .map_err(|err| io_error(err, format!("canonicalize blob root {}", root.display())))?;
+
+        if let Some(existing) = registry.get(&canonical).and_then(std::sync::Weak::upgrade) {
+            // Alias the live state; still enforce marker/identity binding so
+            // a foreign-tenant open is refused even while shared.
+            root_guard::validate_marker_for_shared_open(&canonical, &options, &*observer)?;
+            return Ok(Self {
+                state: existing,
+                clock,
+            });
+        }
+
+        let packs_dir = canonical.join("packs");
+        let index_path = canonical.join("index.log");
         let guard = root_guard::guard_writable_root(
-            &root,
+            &canonical,
             &packs_dir,
             &options,
             clock.now_millis(),
@@ -209,7 +256,7 @@ impl LocalPackStore {
                 format!("create local pack directory {}", packs_dir.display()),
             )
         })?;
-        ensure_index_file(&index_path, &root, &*observer)?;
+        ensure_index_file(&index_path, &canonical, &*observer)?;
 
         let index = load_index(
             &index_path,
@@ -226,24 +273,23 @@ impl LocalPackStore {
             active_pack_bytes = ensure_pack_file(&packs_dir, active_pack_id, &*observer)?;
         }
 
-        Ok(Self {
-            state: Arc::new(Mutex::new(LocalPackState {
-                packs_dir,
-                index_path,
-                pack_target_bytes: options.pack_target_bytes,
-                active_pack_id,
-                active_pack_bytes,
-                index,
-                read_only: false,
-                poisoned: false,
-                report,
-                observer,
-                _lock: guard.lock,
-                #[cfg(test)]
-                body_bytes_read: 0,
-            })),
-            clock,
-        })
+        let state = Arc::new(Mutex::new(LocalPackState {
+            packs_dir,
+            index_path,
+            pack_target_bytes: options.pack_target_bytes,
+            active_pack_id,
+            active_pack_bytes,
+            index,
+            read_only: false,
+            poisoned: false,
+            report,
+            observer,
+            _lock: guard.lock,
+            #[cfg(test)]
+            body_bytes_read: 0,
+        }));
+        registry.insert(canonical, Arc::downgrade(&state));
+        Ok(Self { state, clock })
     }
 
     /// Opens a lock-free, read-only inspection handle over `root`.
@@ -471,13 +517,15 @@ fn ensure_writable(state: &LocalPackState, operation: &str) -> Result<()> {
 /// sync may falsely succeed against a clean-but-lost page cache (fsyncgate),
 /// so the store stops accepting mutations until it is reopened.
 fn poison_on_write_failure<T>(state: &mut LocalPackState, result: &Result<T>) {
-    if let Err(err) = result
-        && matches!(
+    // Nested `if` rather than a let-chain: nimbus-blob's MSRV is 1.86 and
+    // let-chains need 1.88.
+    if let Err(err) = result {
+        if matches!(
             err.storage_kind(),
             Some(StorageErrorKind::Io) | Some(StorageErrorKind::Corruption)
-        )
-    {
-        state.poisoned = true;
+        ) {
+            state.poisoned = true;
+        }
     }
 }
 
@@ -510,18 +558,12 @@ fn ensure_index_file(index_path: &Path, root: &Path, observer: &dyn SyncObserver
         fs::create_dir_all(parent)
             .map_err(|err| io_error(err, format!("create index parent {}", parent.display())))?;
     }
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(index_path)
+    // Atomic first-create: the durable-replace recipe means a crash leaves
+    // either the complete header file or nothing (a swept temp) — never a
+    // torn header that would brick the root as "corruption" on reopen.
+    let _ = root;
+    disk::write_replace_durable(index_path, INDEX_MAGIC, observer)
         .map_err(|err| io_error(err, format!("create index {}", index_path.display())))?;
-    file.write_all(INDEX_MAGIC)
-        .map_err(|err| io_error(err, format!("write index header {}", index_path.display())))?;
-    disk::sync_file_data(&file, index_path, observer)
-        .map_err(|err| io_error(err, format!("sync index {}", index_path.display())))?;
-    // The index stays where it is created: persist its directory entry too.
-    disk::fsync_dir(root, observer)
-        .map_err(|err| io_error(err, format!("sync root dir {}", root.display())))?;
     Ok(())
 }
 
@@ -530,18 +572,10 @@ fn ensure_pack_file(packs_dir: &Path, pack_id: u64, observer: &dyn SyncObserver)
         .map_err(|err| io_error(err, format!("create packs dir {}", packs_dir.display())))?;
     let path = pack_path(packs_dir, pack_id);
     if !path.exists() {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&path)
+        // Atomic first-create (see ensure_index_file): complete header or
+        // nothing, never a torn header misread as corruption.
+        disk::write_replace_durable(&path, PACK_MAGIC, observer)
             .map_err(|err| io_error(err, format!("create pack {}", path.display())))?;
-        file.write_all(PACK_MAGIC)
-            .map_err(|err| io_error(err, format!("write pack header {}", path.display())))?;
-        disk::sync_file_data(&file, &path, observer)
-            .map_err(|err| io_error(err, format!("sync pack {}", path.display())))?;
-        // Pack files stay where they are created: persist the directory entry.
-        disk::fsync_dir(packs_dir, observer)
-            .map_err(|err| io_error(err, format!("sync packs dir {}", packs_dir.display())))?;
     }
     let len = fs::metadata(&path)
         .map_err(|err| io_error(err, format!("stat pack {}", path.display())))?
@@ -1239,19 +1273,49 @@ mod tests {
     // ---- RFS2: root ownership and format guard ----
 
     #[tokio::test]
-    async fn local_pack_second_open_same_root_fails() {
+    async fn local_pack_second_open_shares_live_state() {
+        let (dir, store) = open_temp(256);
+        let hash = store.put(Bytes::from_static(b"shared")).await.unwrap();
+
+        // A second same-process writable open aliases the SAME live state:
+        // no Busy, immediate visibility, one flock, one writer mutex.
+        let second = LocalPackStore::open_with_pack_target(dir.path(), 256)
+            .expect("same-process open shares the live root state");
+        assert_eq!(
+            second.get(&hash).await.unwrap(),
+            Bytes::from_static(b"shared")
+        );
+        let via_second = second.put(Bytes::from_static(b"both ways")).await.unwrap();
+        assert!(store.has(&via_second).await.unwrap());
+
+        // Dropping every handle releases the state; a fresh open re-reads disk.
+        drop(store);
+        drop(second);
+        let reopened = LocalPackStore::open_with_pack_target(dir.path(), 256).unwrap();
+        assert!(reopened.has(&hash).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn root_lock_excludes_second_process() {
+        use fs2::FileExt;
+
         let (dir, store) = open_temp(256);
 
-        let err = LocalPackStore::open_with_pack_target(dir.path(), 256).unwrap_err();
-        assert_eq!(
-            err.storage_kind(),
-            Some(StorageErrorKind::Busy),
-            "a second writable open of a live root must be refused"
+        // Probe the flock the way another process would: a separate file
+        // description on root/lock. flock conflicts across descriptions, so
+        // this is exactly the cross-process exclusion contract.
+        let lock_path = dir.path().canonicalize().unwrap().join("lock");
+        let probe = OpenOptions::new().write(true).open(&lock_path).unwrap();
+        assert!(
+            probe.try_lock_exclusive().is_err(),
+            "a live store holds the exclusive root flock"
         );
 
         drop(store);
-        LocalPackStore::open_with_pack_target(dir.path(), 256)
-            .expect("dropping the owner releases the root lock");
+        probe
+            .try_lock_exclusive()
+            .expect("dropping the last handle releases the flock");
+        fs2::FileExt::unlock(&probe).unwrap();
     }
 
     #[test]
@@ -1364,6 +1428,27 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn shared_open_still_refuses_foreign_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let bound = LocalPackStoreOptions {
+            pack_target_bytes: 256,
+            identity: Some([7u8; 32]),
+            ..LocalPackStoreOptions::default()
+        };
+        let _owner = LocalPackStore::open_with_options(dir.path(), bound).unwrap();
+
+        // Root is live and bound to identity 7; a same-process open claiming a
+        // different identity must NOT silently alias it.
+        let foreign = LocalPackStoreOptions {
+            pack_target_bytes: 256,
+            identity: Some([8u8; 32]),
+            ..LocalPackStoreOptions::default()
+        };
+        let err = LocalPackStore::open_with_options(dir.path(), foreign).unwrap_err();
+        assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    }
+
     // ---- RFS3: durable commit-point writes and crash windows ----
 
     #[tokio::test]
@@ -1377,8 +1462,11 @@ mod tests {
             .await
             .unwrap();
 
-        let packs_dir = dir.path().join("packs");
-        let index_path = dir.path().join("index.log");
+        // The store canonicalizes its root (macOS /var -> /private/var), so
+        // compare against canonical paths.
+        let canonical = dir.path().canonicalize().unwrap();
+        let packs_dir = canonical.join("packs");
+        let index_path = canonical.join("index.log");
         let pack_sync = recorder.index_where(
             |e| matches!(e, SyncEvent::FileSync(path) if path.starts_with(&packs_dir)),
         );

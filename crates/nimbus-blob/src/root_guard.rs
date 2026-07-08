@@ -290,6 +290,29 @@ fn sweep_stale_temps(dir: &Path) -> Result<usize> {
     Ok(removed)
 }
 
+/// Shape-checks and creates a writable root directory so the caller can
+/// canonicalize it (the open-root registry keys on the canonical path).
+pub(crate) fn check_writable_root_shape(
+    root: &Path,
+    options: &LocalPackStoreOptions,
+) -> Result<()> {
+    check_root_shape(root, options.allow_symlinked_root)?;
+    fs::create_dir_all(root)
+        .map_err(|err| guard_error(err, format!("create blob root {}", root.display())))
+}
+
+/// Marker/identity validation for an open that aliases an already-live
+/// same-process state: no lock is taken (the shared state holds it) and no
+/// cleanup runs, but a foreign-identity open is still refused and an unbound
+/// marker is still bound when an identity is declared.
+pub(crate) fn validate_marker_for_shared_open(
+    root: &Path,
+    options: &LocalPackStoreOptions,
+    observer: &dyn SyncObserver,
+) -> Result<()> {
+    establish_marker(root, options.identity, 0, true, observer)
+}
+
 /// Establishes ownership of a writable root: shape check → lock → marker →
 /// stale-temp cleanup. `packs_dir` is swept too (it holds no temps today, but
 /// future compaction/scrub work writes there through the same recipe).

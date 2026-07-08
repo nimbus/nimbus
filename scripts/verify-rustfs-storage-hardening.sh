@@ -127,7 +127,9 @@ fi
 
 printf '[6] band acceptance tests\n'
 required_tests=(
-  local_pack_second_open_same_root_fails
+  local_pack_second_open_shares_live_state
+  root_lock_excludes_second_process
+  shared_open_still_refuses_foreign_identity
   local_pack_format_marker_roundtrip
   local_pack_rejects_foreign_or_future_marker
   local_pack_startup_cleanup_removes_stale_temp

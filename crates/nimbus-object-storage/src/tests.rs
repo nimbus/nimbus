@@ -263,18 +263,22 @@ async fn resolver_tier_policy_rehydrates_encrypted_local_cache() {
 }
 
 #[tokio::test]
-async fn resolver_root_lock_refuses_second_writable_open() {
+async fn resolver_live_root_is_shared_with_same_process_side_open() {
     let temp = tempdir().unwrap();
     let engine = Arc::new(Engine::new(temp.path()).unwrap());
     let resolver = ObjectStorageResolver::new(engine);
     let tenant = tenant();
-    let _store = resolver.blob_store(&tenant).unwrap();
+    let store = resolver.blob_store(&tenant).unwrap();
+    let hash = store.put(Bytes::from_static(b"live bytes")).await.unwrap();
 
-    let err = LocalPackStore::open(resolver.object_blob_root(&tenant)).unwrap_err();
-    assert_eq!(
-        err.storage_kind(),
-        Some(nimbus_core::StorageErrorKind::Busy),
-        "a second writable handle on a live tenant root is refused"
+    // A same-process writable side-open (e.g. an in-process backup task, or a
+    // second resolver over the same engine) aliases the SAME live pack state:
+    // no Busy, immediate visibility. Cross-process exclusion stays on the
+    // flock (`root_lock_excludes_second_process` in nimbus-blob).
+    let raw_local = LocalPackStore::open(resolver.object_blob_root(&tenant)).unwrap();
+    assert!(
+        raw_local.has(&hash).await.unwrap(),
+        "side-open shares the live root state"
     );
 }
 
