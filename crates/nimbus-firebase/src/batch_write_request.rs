@@ -3,10 +3,10 @@ use std::collections::HashSet;
 use nimbus_core::AtomicWrite;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use thiserror::Error;
 
-use super::commit_request::{self, FirestoreCommitRequestError};
-use super::resource_names::{FirestoreDatabaseName, FirestoreResourceNameError};
+use super::commit_request;
+use super::request_error::{FirestoreRequestError, FirestoreRpc};
+use super::resource_names::FirestoreDatabaseName;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedBatchWriteRequest {
@@ -14,24 +14,12 @@ pub struct ParsedBatchWriteRequest {
     pub writes: Vec<AtomicWrite>,
 }
 
-#[derive(Debug, Error)]
-pub enum FirestoreBatchWriteRequestError {
-    #[error("invalid Firestore BatchWrite request: {0}")]
-    InvalidRequest(String),
-    #[error("unsupported Firestore BatchWrite feature: {0}")]
-    Unsupported(String),
-    #[error(transparent)]
-    InvalidResource(#[from] FirestoreResourceNameError),
-    #[error(transparent)]
-    InvalidValue(#[from] commit_request::FirestoreCommitRequestError),
-}
-
 pub fn parse_batch_write_request_with_resolver(
     request: &Value,
     resolve_write_key: impl FnMut(
         &nimbus_core::DocumentPath,
-    ) -> Result<nimbus_core::WriteKey, FirestoreCommitRequestError>,
-) -> Result<ParsedBatchWriteRequest, FirestoreBatchWriteRequestError> {
+    ) -> Result<nimbus_core::WriteKey, FirestoreRequestError>,
+) -> Result<ParsedBatchWriteRequest, FirestoreRequestError> {
     let request: BatchWriteRequestJson = serde_json::from_value(request.clone())
         .map_err(|error| invalid_request(format!("malformed JSON body: {error}")))?;
     let parsed_commit = commit_request::parse_commit_request_with_resolver(
@@ -49,9 +37,7 @@ pub fn parse_batch_write_request_with_resolver(
     })
 }
 
-pub fn reject_duplicate_write_targets(
-    writes: &[AtomicWrite],
-) -> Result<(), FirestoreBatchWriteRequestError> {
+pub fn reject_duplicate_write_targets(writes: &[AtomicWrite]) -> Result<(), FirestoreRequestError> {
     let mut seen = HashSet::new();
     for write in writes {
         let locator = write.key().locator();
@@ -75,13 +61,13 @@ struct BatchWriteRequestJson {
     writes: Vec<Value>,
 }
 
-fn invalid_request(message: impl Into<String>) -> FirestoreBatchWriteRequestError {
-    FirestoreBatchWriteRequestError::InvalidRequest(message.into())
+fn invalid_request(message: impl Into<String>) -> FirestoreRequestError {
+    FirestoreRequestError::invalid_request(FirestoreRpc::BatchWrite, message)
 }
 
 #[allow(dead_code)]
-fn unsupported(message: impl Into<String>) -> FirestoreBatchWriteRequestError {
-    FirestoreBatchWriteRequestError::Unsupported(message.into())
+fn unsupported(message: impl Into<String>) -> FirestoreRequestError {
+    FirestoreRequestError::unsupported(FirestoreRpc::BatchWrite, message)
 }
 
 #[cfg(test)]
@@ -138,8 +124,8 @@ mod tests {
             .expect_err("duplicate document targets should fail");
 
         assert!(matches!(
-            error,
-            super::FirestoreBatchWriteRequestError::InvalidRequest(_)
+            error.kind,
+            crate::request_error::FirestoreRequestErrorKind::InvalidRequest(_)
         ));
     }
 }

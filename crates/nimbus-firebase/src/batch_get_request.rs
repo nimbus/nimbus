@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use nimbus_core::DocumentPath;
 use serde::Deserialize;
 use serde_json::Value;
-use thiserror::Error;
 
-use super::resource_names::{self, FirestoreDatabaseName, FirestoreResourceNameError};
+use super::request_error::{FirestoreRequestError, FirestoreRpc};
+use super::resource_names::{self, FirestoreDatabaseName};
 use super::response::firestore_document_name;
 use super::transaction_token;
 
@@ -22,20 +22,10 @@ pub struct ParsedBatchGetDocument {
     pub document_name: String,
 }
 
-#[derive(Debug, Error)]
-pub enum FirestoreBatchGetRequestError {
-    #[error("invalid Firestore BatchGetDocuments request: {0}")]
-    InvalidRequest(String),
-    #[error("unsupported Firestore BatchGetDocuments feature: {0}")]
-    Unsupported(String),
-    #[error(transparent)]
-    InvalidResource(#[from] FirestoreResourceNameError),
-}
-
 pub fn parse_batch_get_request(
     request: &Value,
     database: &FirestoreDatabaseName,
-) -> Result<ParsedBatchGetRequest, FirestoreBatchGetRequestError> {
+) -> Result<ParsedBatchGetRequest, FirestoreRequestError> {
     let request: BatchGetDocumentsRequestJson = serde_json::from_value(request.clone())
         .map_err(|error| invalid_request(format!("malformed JSON body: {error}")))?;
     if request.documents.is_empty() {
@@ -70,7 +60,10 @@ pub fn parse_batch_get_request(
     let mut seen_documents = HashSet::new();
     let mut documents = Vec::new();
     for document_name in request.documents {
-        let parsed_document = resource_names::parse_document_name(&document_name)?;
+        let parsed_document =
+            resource_names::parse_document_name(&document_name).map_err(|error| {
+                FirestoreRequestError::invalid_resource(FirestoreRpc::BatchGetDocuments, error)
+            })?;
         resource_names::ensure_database_match(database, &parsed_document.database).map_err(
             |error| {
                 invalid_request(format!(
@@ -117,13 +110,11 @@ struct FirestoreDocumentMaskJson {
 
 fn lower_document_mask(
     mask: FirestoreDocumentMaskJson,
-) -> Result<Vec<String>, FirestoreBatchGetRequestError> {
+) -> Result<Vec<String>, FirestoreRequestError> {
     lower_document_mask_paths(mask.field_paths)
 }
 
-pub fn lower_document_mask_paths<I>(
-    field_paths: I,
-) -> Result<Vec<String>, FirestoreBatchGetRequestError>
+pub fn lower_document_mask_paths<I>(field_paths: I) -> Result<Vec<String>, FirestoreRequestError>
 where
     I: IntoIterator<Item = String>,
 {
@@ -145,12 +136,12 @@ where
     Ok(deduped)
 }
 
-fn invalid_request(reason: impl Into<String>) -> FirestoreBatchGetRequestError {
-    FirestoreBatchGetRequestError::InvalidRequest(reason.into())
+fn invalid_request(reason: impl Into<String>) -> FirestoreRequestError {
+    FirestoreRequestError::invalid_request(FirestoreRpc::BatchGetDocuments, reason)
 }
 
-fn unsupported_request(feature: impl Into<String>) -> FirestoreBatchGetRequestError {
-    FirestoreBatchGetRequestError::Unsupported(feature.into())
+fn unsupported_request(feature: impl Into<String>) -> FirestoreRequestError {
+    FirestoreRequestError::unsupported(FirestoreRpc::BatchGetDocuments, feature)
 }
 
 #[cfg(test)]

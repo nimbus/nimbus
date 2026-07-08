@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::backends::conmon::lifecycle::read_exit_code;
+use crate::backends::poll::poll_until_deadline;
 use crate::error::{Result, SandboxError};
 
 use super::ContainerSandboxBackend;
@@ -48,9 +49,13 @@ pub fn run_prepared_container_service_workload(bundle_dir: impl AsRef<Path>) -> 
 }
 
 fn wait_for_container_runner_exit(manifest: &ContainerSandboxManifest) -> Result<i32> {
-    while !manifest.conmon_layout.exit_status_file.exists() {
-        std::thread::sleep(Duration::from_millis(200));
-    }
+    poll_until_deadline(None, Duration::from_millis(200), || {
+        Ok(manifest
+            .conmon_layout
+            .exit_status_file
+            .exists()
+            .then_some(()))
+    })?;
     read_exit_code(&manifest.conmon_layout.exit_status_file)
 }
 

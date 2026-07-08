@@ -1,9 +1,6 @@
-use base64::{
-    Engine,
-    engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD as NONCE_BASE64},
-};
 use hmac::{Hmac, Mac};
 use nimbus_core::TenantId;
+use nimbus_core::{base64_decode_standard, base64_encode_standard, base64_encode_url_safe_no_pad};
 use ring::rand::{SecureRandom, SystemRandom};
 use sha2::Sha256;
 
@@ -105,8 +102,11 @@ pub fn sasl_start(
 
     let mut server_nonce_suffix = [0u8; 18];
     fill_secure_random(&mut server_nonce_suffix)?;
-    let server_nonce = format!("{client_nonce}{}", NONCE_BASE64.encode(server_nonce_suffix));
-    let salt_b64 = BASE64.encode(&credential.salt);
+    let server_nonce = format!(
+        "{client_nonce}{}",
+        base64_encode_url_safe_no_pad(server_nonce_suffix)
+    );
+    let salt_b64 = base64_encode_standard(&credential.salt);
 
     let server_first = format!("r={server_nonce},s={salt_b64},i={}", credential.iterations);
 
@@ -205,19 +205,17 @@ pub fn sasl_continue(
         client_proof[i] ^= b;
     }
 
-    let proof = BASE64
-        .decode(proof_b64.as_bytes())
-        .map_err(|_| MongoError::Command {
-            code: BAD_VALUE.code,
-            code_name: BAD_VALUE.code_name.into(),
-            message: "invalid base64 proof in client-final-message".into(),
-        })?;
+    let proof = base64_decode_standard(proof_b64.as_bytes()).map_err(|_| MongoError::Command {
+        code: BAD_VALUE.code,
+        code_name: BAD_VALUE.code_name.into(),
+        message: "invalid base64 proof in client-final-message".into(),
+    })?;
     if !constant_time_eq(&proof, &client_proof) {
         return Err(authentication_failed("authentication failed"));
     }
 
     let server_signature = compute_hmac(&scram.server_key, full_auth_message.as_bytes());
-    let server_final = format!("v={}", BASE64.encode(&server_signature));
+    let server_final = format!("v={}", base64_encode_standard(&server_signature));
 
     conn.authenticated = true;
     conn.auth_user = Some(credential.username.clone());
@@ -414,13 +412,13 @@ mod tests {
             }
         }
 
-        let salt = BASE64.decode(&salt_b64).unwrap();
+        let salt = base64_decode_standard(&salt_b64).unwrap();
         let salted_password = derive_salted_password(password, &salt, iterations);
         let client_key = compute_hmac(&salted_password, b"Client Key");
         let stored_key = sha256_hash(&client_key);
 
         let client_first_bare = format!("n={username},r={client_nonce}");
-        let channel_binding = BASE64.encode(b"n,,");
+        let channel_binding = base64_encode_standard(b"n,,");
         let client_final_without_proof = format!("c={channel_binding},r={server_nonce}");
         let auth_message =
             format!("{client_first_bare},{server_first},{client_final_without_proof}");
@@ -429,7 +427,7 @@ mod tests {
         for (i, b) in client_signature.iter().enumerate() {
             proof[i] ^= b;
         }
-        let proof_b64 = BASE64.encode(&proof);
+        let proof_b64 = base64_encode_standard(&proof);
         let client_final = format!("{client_final_without_proof},p={proof_b64}");
 
         let conversation_id = conn.scram_state.as_ref().unwrap().conversation_id;
@@ -564,8 +562,8 @@ mod tests {
             }
         }
 
-        let bad_proof = BASE64.encode(b"this-is-wrong-proof-data-xxxxx!");
-        let channel_binding = BASE64.encode(b"n,,");
+        let bad_proof = base64_encode_standard(b"this-is-wrong-proof-data-xxxxx!");
+        let channel_binding = base64_encode_standard(b"n,,");
         let client_final = format!("c={channel_binding},r={server_nonce},p={bad_proof}");
 
         let body2 = bson::doc! {

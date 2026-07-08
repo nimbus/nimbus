@@ -1,8 +1,8 @@
 use nimbus_core::StructuredQuery;
 use serde::Deserialize;
 use serde_json::Value;
-use thiserror::Error;
 
+use super::request_error::{FirestoreRequestError, FirestoreRpc};
 use super::serializer;
 use super::transaction_token;
 
@@ -12,17 +12,9 @@ pub struct ParsedRunQueryRequest {
     pub transaction: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Error)]
-pub enum FirestoreRunQueryRequestError {
-    #[error("invalid Firestore RunQuery request: {0}")]
-    InvalidRequest(String),
-    #[error("unsupported Firestore RunQuery feature: {0}")]
-    Unsupported(String),
-}
-
 pub fn parse_run_query_request(
     request: &Value,
-) -> Result<ParsedRunQueryRequest, FirestoreRunQueryRequestError> {
+) -> Result<ParsedRunQueryRequest, FirestoreRequestError> {
     let request: RunQueryRequestJson = serde_json::from_value(request.clone())
         .map_err(|error| invalid_request(format!("malformed JSON body: {error}")))?;
     let consistency_selector_count = usize::from(request.transaction.is_some())
@@ -76,7 +68,7 @@ struct RunQueryRequestJson {
 
 pub fn decode_structured_query_values(
     structured_query: &mut Value,
-) -> Result<(), FirestoreRunQueryRequestError> {
+) -> Result<(), FirestoreRequestError> {
     let Value::Object(query) = structured_query else {
         return Err(invalid_request("`structuredQuery` must be an object"));
     };
@@ -92,7 +84,7 @@ pub fn decode_structured_query_values(
     Ok(())
 }
 
-fn decode_query_value(value: &Value) -> Result<Value, FirestoreRunQueryRequestError> {
+fn decode_query_value(value: &Value) -> Result<Value, FirestoreRequestError> {
     if let Some(value) = value.as_object() {
         if let Some(reference) = value.get("referenceValue").and_then(Value::as_str) {
             return Ok(Value::String(reference.to_string()));
@@ -132,7 +124,7 @@ fn decode_query_value(value: &Value) -> Result<Value, FirestoreRunQueryRequestEr
         .map_err(|error| invalid_request(format!("invalid query value: {error}")))
 }
 
-fn decode_query_filter_values(filter: &mut Value) -> Result<(), FirestoreRunQueryRequestError> {
+fn decode_query_filter_values(filter: &mut Value) -> Result<(), FirestoreRequestError> {
     let Value::Object(filter) = filter else {
         return Err(invalid_request("query filters must be objects"));
     };
@@ -165,7 +157,7 @@ fn decode_query_filter_values(filter: &mut Value) -> Result<(), FirestoreRunQuer
     Ok(())
 }
 
-fn decode_cursor_values(cursor: &mut Value) -> Result<(), FirestoreRunQueryRequestError> {
+fn decode_cursor_values(cursor: &mut Value) -> Result<(), FirestoreRequestError> {
     let Value::Object(cursor) = cursor else {
         return Err(invalid_request("query cursors must be objects"));
     };
@@ -181,12 +173,12 @@ fn decode_cursor_values(cursor: &mut Value) -> Result<(), FirestoreRunQueryReque
     Ok(())
 }
 
-fn invalid_request(reason: impl Into<String>) -> FirestoreRunQueryRequestError {
-    FirestoreRunQueryRequestError::InvalidRequest(reason.into())
+fn invalid_request(reason: impl Into<String>) -> FirestoreRequestError {
+    FirestoreRequestError::invalid_request(FirestoreRpc::RunQuery, reason)
 }
 
-fn unsupported_request(feature: impl Into<String>) -> FirestoreRunQueryRequestError {
-    FirestoreRunQueryRequestError::Unsupported(feature.into())
+fn unsupported_request(feature: impl Into<String>) -> FirestoreRequestError {
+    FirestoreRequestError::unsupported(FirestoreRpc::RunQuery, feature)
 }
 
 #[cfg(test)]

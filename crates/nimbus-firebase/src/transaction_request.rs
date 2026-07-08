@@ -1,13 +1,10 @@
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use nimbus_core::TransactionSessionMode;
 use serde::Deserialize;
 use serde_json::Value;
-use thiserror::Error;
 
-use super::resource_names::{
-    FirestoreDatabaseName, FirestoreResourceNameError, parse_database_name,
-};
+use super::request_error::{FirestoreRequestError, FirestoreRpc};
+use super::resource_names::{FirestoreDatabaseName, parse_database_name};
+use super::transaction_token;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedBeginTransactionRequest {
@@ -21,20 +18,10 @@ pub struct ParsedRollbackRequest {
     pub transaction: Vec<u8>,
 }
 
-#[derive(Debug, Error)]
-pub enum FirestoreTransactionRequestError {
-    #[error("invalid Firestore transaction request: {0}")]
-    InvalidRequest(String),
-    #[error("unsupported Firestore transaction request feature: {0}")]
-    Unsupported(String),
-    #[error(transparent)]
-    InvalidResource(#[from] FirestoreResourceNameError),
-}
-
 pub fn parse_begin_transaction_request(
     request: &Value,
     route_database: &FirestoreDatabaseName,
-) -> Result<ParsedBeginTransactionRequest, FirestoreTransactionRequestError> {
+) -> Result<ParsedBeginTransactionRequest, FirestoreRequestError> {
     let request: BeginTransactionRequestJson = serde_json::from_value(request.clone())
         .map_err(|error| invalid_request(format!("malformed JSON body: {error}")))?;
     let database = resolve_database(request.database.as_deref(), route_database)?;
@@ -46,13 +33,12 @@ pub fn parse_begin_transaction_request(
 pub fn parse_rollback_request(
     request: &Value,
     route_database: &FirestoreDatabaseName,
-) -> Result<ParsedRollbackRequest, FirestoreTransactionRequestError> {
+) -> Result<ParsedRollbackRequest, FirestoreRequestError> {
     let request: RollbackRequestJson = serde_json::from_value(request.clone())
         .map_err(|error| invalid_request(format!("malformed JSON body: {error}")))?;
     let database = resolve_database(request.database.as_deref(), route_database)?;
-    let transaction = BASE64_STANDARD
-        .decode(request.transaction)
-        .map_err(|error| invalid_request(format!("invalid base64 transaction bytes: {error}")))?;
+    let transaction = transaction_token::decode(&request.transaction)
+        .map_err(|error| invalid_request(error.to_string()))?;
 
     Ok(ParsedRollbackRequest {
         database,
@@ -96,11 +82,13 @@ struct ReadWriteTransactionOptionsJson {
 fn resolve_database(
     request_database: Option<&str>,
     route_database: &FirestoreDatabaseName,
-) -> Result<FirestoreDatabaseName, FirestoreTransactionRequestError> {
+) -> Result<FirestoreDatabaseName, FirestoreRequestError> {
     let Some(request_database) = request_database else {
         return Ok(route_database.clone());
     };
-    let database = parse_database_name(request_database)?;
+    let database = parse_database_name(request_database).map_err(|error| {
+        FirestoreRequestError::invalid_resource(FirestoreRpc::Transaction, error)
+    })?;
     if &database == route_database {
         return Ok(database);
     }
@@ -113,7 +101,7 @@ fn resolve_database(
 
 fn lower_transaction_mode(
     options: Option<TransactionOptionsJson>,
-) -> Result<TransactionSessionMode, FirestoreTransactionRequestError> {
+) -> Result<TransactionSessionMode, FirestoreRequestError> {
     let Some(options) = options else {
         return Ok(TransactionSessionMode::ReadWrite);
     };
@@ -141,12 +129,12 @@ fn lower_transaction_mode(
     }
 }
 
-fn invalid_request(reason: impl Into<String>) -> FirestoreTransactionRequestError {
-    FirestoreTransactionRequestError::InvalidRequest(reason.into())
+fn invalid_request(reason: impl Into<String>) -> FirestoreRequestError {
+    FirestoreRequestError::invalid_request(FirestoreRpc::Transaction, reason)
 }
 
-fn unsupported(feature: impl Into<String>) -> FirestoreTransactionRequestError {
-    FirestoreTransactionRequestError::Unsupported(feature.into())
+fn unsupported(feature: impl Into<String>) -> FirestoreRequestError {
+    FirestoreRequestError::unsupported(FirestoreRpc::Transaction, feature)
 }
 
 #[cfg(test)]

@@ -1,5 +1,4 @@
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use nimbus_core::base64_decode_standard;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -10,9 +9,7 @@ pub struct FirestoreTransactionTokenError {
 }
 
 pub(crate) fn decode(value: &str) -> Result<Vec<u8>, FirestoreTransactionTokenError> {
-    BASE64_STANDARD
-        .decode(value)
-        .map_err(|source| FirestoreTransactionTokenError { source })
+    base64_decode_standard(value).map_err(|source| FirestoreTransactionTokenError { source })
 }
 
 #[cfg(test)]

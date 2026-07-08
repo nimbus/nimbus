@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use nimbus_core::base64_encode_standard;
 use nimbus_egress::canonicalize_authority_host;
 use rcgen::{
     BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
@@ -274,7 +274,7 @@ fn operation_failed(message: String) -> EgressProxyError {
 }
 
 fn der_to_pem(label: &str, der: &[u8]) -> String {
-    let encoded = BASE64.encode(der);
+    let encoded = base64_encode_standard(der);
     let mut pem = format!("-----BEGIN {label}-----\n");
     for chunk in encoded.as_bytes().chunks(64) {
         pem.push_str(std::str::from_utf8(chunk).expect("base64 output must be ASCII"));

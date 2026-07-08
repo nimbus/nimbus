@@ -107,7 +107,7 @@ impl ConvexAuthVerifier {
 
 #[cfg(test)]
 mod tests {
-    use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+    use nimbus_core::base64_encode_standard;
     use serde_json::json;
 
     use super::*;
@@ -150,7 +150,7 @@ mod tests {
     fn data_url(value: serde_json::Value) -> String {
         format!(
             "data:application/json;base64,{}",
-            BASE64.encode(serde_json::to_vec(&value).expect("metadata should serialize"))
+            base64_encode_standard(serde_json::to_vec(&value).expect("metadata should serialize"))
         )
     }
 }
