@@ -380,11 +380,24 @@ impl LocalPackScrubber {
             report.last_scanned_pack_id = Some(pack_id);
             report.records_scanned += pack_scan.records_scanned;
             report.bytes_scanned = report.bytes_scanned.saturating_add(pack_scan.bytes_scanned);
-            // Retire a header-discredited ACTIVE pack even when it has zero
-            // indexed hashes to quarantine: otherwise new puts append behind
-            // the bad header and the root fails closed on reopen. A retire
-            // request with no hashes still rolls the active pack.
-            if !pack_scan.pack_header_valid && pack_id == snapshot.active_pack_id {
+            // Retire a header-discredited ACTIVE pack that has NO indexed
+            // hashes here: merge_pack_findings' quarantine path (which retires
+            // AFTER durably writing the quarantine) never runs for it, so
+            // without this the corrupt empty pack keeps accepting appends.
+            // A pack WITH indexed hashes is retired inside
+            // quarantine_hashes_locked, ordered after the quarantine write —
+            // retiring it early here would open a crash window where reopen
+            // picks the fresh pack, loads no quarantine, and serves the
+            // corrupt pack's still-indexed records (reads don't revalidate
+            // headers).
+            let pack_has_indexed = snapshot
+                .index
+                .values()
+                .any(|entry| entry.pack_id == pack_id);
+            if !pack_scan.pack_header_valid
+                && pack_id == snapshot.active_pack_id
+                && !pack_has_indexed
+            {
                 self.store.retire_pack_if_active(pack_id).await?;
             }
             let findings_before = report.findings.len();
