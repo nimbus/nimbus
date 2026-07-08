@@ -48,7 +48,7 @@
 //! Network and overlay filesystems (NFS, 9p, overlayfs) are outside the
 //! contract; do not place tenant byte roots on them.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::ops::Range;
@@ -73,7 +73,7 @@ pub(crate) const INDEX_RELEASE: u8 = 2;
 pub(crate) const DEFAULT_PACK_TARGET_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_PACK_TARGET_BYTES: u64 = 512 * 1024 * 1024;
 pub(crate) const QUARANTINE_FILE: &str = "quarantine.nblq";
-const QUARANTINE_MAGIC: &[u8] = b"NBLQ1\n";
+const QUARANTINE_MAGIC: &[u8] = b"NBLQ2\n";
 
 /// Result of a local pack compaction run.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -109,7 +109,7 @@ pub(crate) struct LocalPackState {
     pub(crate) active_pack_id: u64,
     pub(crate) active_pack_bytes: u64,
     pub(crate) index: HashMap<BlobHash, PackEntry>,
-    pub(crate) quarantined: HashSet<BlobHash>,
+    pub(crate) quarantined: HashMap<BlobHash, QuarantineReason>,
     /// Bumped by every compaction. Scrub checkpoints capture it at snapshot
     /// and refuse publication when it moved: a checkpoint derived from a
     /// pre-compaction pack layout must never land after compaction reused
@@ -530,7 +530,7 @@ impl BlobStore for LocalPackStore {
                     state.index.remove(&hash);
                     // A released claim's quarantine entry is meaningless (and
                     // would otherwise pin absent hashes forever): lift it.
-                    if state.quarantined.contains(&hash) {
+                    if state.quarantined.contains_key(&hash) {
                         let mut next = state.quarantined.clone();
                         next.remove(&hash);
                         write_quarantine_locked(state, &next, &*observer)?;
@@ -623,10 +623,12 @@ pub(crate) fn ensure_index_file(
     Ok(())
 }
 
-pub(crate) fn load_quarantine(path: &Path) -> Result<HashSet<BlobHash>> {
+const QUARANTINE_ENTRY_LEN: usize = crate::BLAKE3_HASH_LEN + 1;
+
+pub(crate) fn load_quarantine(path: &Path) -> Result<HashMap<BlobHash, QuarantineReason>> {
     let mut file = match File::open(path) {
         Ok(file) => file,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(HashSet::new()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
         Err(err) => return Err(io_error(err, format!("open quarantine {}", path.display()))),
     };
     let mut bytes = Vec::new();
@@ -639,32 +641,40 @@ pub(crate) fn load_quarantine(path: &Path) -> Result<HashSet<BlobHash>> {
         )));
     }
     let payload_len = bytes.len() - QUARANTINE_MAGIC.len();
-    if payload_len % crate::BLAKE3_HASH_LEN != 0 {
+    if payload_len % QUARANTINE_ENTRY_LEN != 0 {
         return Err(corruption(format!(
-            "quarantine {} has truncated hash entry",
+            "quarantine {} has truncated entry",
             path.display()
         )));
     }
 
-    let mut quarantined = HashSet::new();
+    let mut quarantined = HashMap::new();
     let mut cursor = QUARANTINE_MAGIC.len();
     while cursor < bytes.len() {
         let mut raw = [0u8; crate::BLAKE3_HASH_LEN];
         raw.copy_from_slice(&bytes[cursor..cursor + crate::BLAKE3_HASH_LEN]);
-        quarantined.insert(BlobHash::from_bytes(raw));
-        cursor += crate::BLAKE3_HASH_LEN;
+        let reason_byte = bytes[cursor + crate::BLAKE3_HASH_LEN];
+        let reason = QuarantineReason::from_byte(reason_byte).ok_or_else(|| {
+            corruption(format!(
+                "quarantine {} has invalid reason byte {reason_byte}",
+                path.display()
+            ))
+        })?;
+        quarantined.insert(BlobHash::from_bytes(raw), reason);
+        cursor += QUARANTINE_ENTRY_LEN;
     }
     Ok(quarantined)
 }
 
-fn encode_quarantine(quarantined: &HashSet<BlobHash>) -> Vec<u8> {
-    let mut hashes = quarantined.iter().copied().collect::<Vec<_>>();
-    hashes.sort();
+fn encode_quarantine(quarantined: &HashMap<BlobHash, QuarantineReason>) -> Vec<u8> {
+    let mut entries = quarantined.iter().collect::<Vec<_>>();
+    entries.sort_by_key(|(hash, _)| **hash);
     let mut bytes =
-        Vec::with_capacity(QUARANTINE_MAGIC.len() + hashes.len() * crate::BLAKE3_HASH_LEN);
+        Vec::with_capacity(QUARANTINE_MAGIC.len() + entries.len() * QUARANTINE_ENTRY_LEN);
     bytes.extend_from_slice(QUARANTINE_MAGIC);
-    for hash in hashes {
+    for (hash, reason) in entries {
         bytes.extend_from_slice(hash.as_bytes());
+        bytes.push(*reason as u8);
     }
     bytes
 }
@@ -697,6 +707,28 @@ pub(crate) fn salvage_index_prefix(index_path: &Path) -> HashMap<BlobHash, PackE
         }
     }
     salvaged
+}
+
+/// Why a hash is quarantined — determines what may lift the quarantine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum QuarantineReason {
+    /// The on-disk RECORD is corrupt. A re-upload of the content-addressed
+    /// bytes publishes a fresh verified record and lifts the quarantine.
+    Record = 1,
+    /// The CONTENT itself is bad (e.g. framed ciphertext failing AEAD): a
+    /// raw re-upload of the identical bytes reproduces the identical
+    /// failure, so only release/repair lifts it — never a local put.
+    Content = 2,
+}
+
+impl QuarantineReason {
+    fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            1 => Some(Self::Record),
+            2 => Some(Self::Content),
+            _ => None,
+        }
+    }
 }
 
 /// How a quarantine request is revalidated against on-disk ground truth
@@ -755,7 +787,13 @@ fn quarantine_hashes_locked(
                 }
             }
         }
-        if next.insert(*hash) {
+        let reason = match check {
+            QuarantineCheck::Unconditional => QuarantineReason::Content,
+            QuarantineCheck::CorruptRecord(_) | QuarantineCheck::CorruptPackHeader(_) => {
+                QuarantineReason::Record
+            }
+        };
+        if next.insert(*hash, reason).is_none() {
             inserted.push(*hash);
         }
     }
@@ -771,7 +809,7 @@ fn quarantine_hashes_locked(
 
 fn write_quarantine_locked(
     state: &LocalPackState,
-    next: &HashSet<BlobHash>,
+    next: &HashMap<BlobHash, QuarantineReason>,
     observer: &dyn SyncObserver,
 ) -> Result<()> {
     disk::write_replace_durable(&state.quarantine_path, &encode_quarantine(next), observer).map_err(
@@ -980,7 +1018,11 @@ fn put_locked(
     written_at_millis: u64,
 ) -> Result<BlobHash> {
     let hash = BlobHash::of(&bytes);
-    let quarantined = state.quarantined.contains(&hash);
+    // Only a RECORD-level quarantine is repairable by re-upload: the fresh
+    // bytes produce a fresh verified record. A CONTENT-level quarantine
+    // (AEAD failure) would reproduce the identical failure from identical
+    // bytes, so it never lifts here.
+    let quarantined = state.quarantined.get(&hash) == Some(&QuarantineReason::Record);
     if state.index.contains_key(&hash) && !quarantined {
         return Ok(hash);
     }
@@ -1117,7 +1159,7 @@ fn read_blob_locked(state: &LocalPackState, hash: &BlobHash) -> Result<Bytes> {
         .get(hash)
         .copied()
         .ok_or_else(|| Error::NotFound(format!("blob {hash}")))?;
-    if state.quarantined.contains(hash) {
+    if state.quarantined.contains_key(hash) {
         return Err(corruption(format!("blob {hash} is quarantined by scrub")));
     }
     read_pack_entry(&state.packs_dir, hash, entry)
@@ -1147,7 +1189,7 @@ fn read_blob_range_locked(
         .get(hash)
         .copied()
         .ok_or_else(|| Error::NotFound(format!("blob {hash}")))?;
-    if state.quarantined.contains(hash) {
+    if state.quarantined.contains_key(hash) {
         return Err(corruption(format!("blob {hash} is quarantined by scrub")));
     }
     if range.end > entry.len {
@@ -1321,7 +1363,7 @@ fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
     let live: Vec<(BlobHash, PackEntry, Bytes)> = state
         .index
         .iter()
-        .filter(|(hash, _)| !state.quarantined.contains(hash))
+        .filter(|(hash, _)| !state.quarantined.contains_key(hash))
         .map(|(hash, entry)| {
             read_pack_entry(&state.packs_dir, hash, *entry).map(|bytes| (*hash, *entry, bytes))
         })
@@ -1365,7 +1407,10 @@ fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
 }
 
 /// Removes the scrub checkpoint (if any) and persists the removal.
-fn invalidate_scrub_checkpoint(state: &LocalPackState, observer: &dyn SyncObserver) -> Result<()> {
+pub(crate) fn invalidate_scrub_checkpoint(
+    state: &LocalPackState,
+    observer: &dyn SyncObserver,
+) -> Result<()> {
     let Some(root) = state.index_path.parent() else {
         return Ok(());
     };

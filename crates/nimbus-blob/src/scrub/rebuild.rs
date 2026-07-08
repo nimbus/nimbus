@@ -112,7 +112,7 @@ pub(super) fn rebuild_corrupt_index_under_guard(
     // even when the corrupt index prefix cannot supply their entry: recover
     // coordinates from the pack scan's corrupt records; report the ones that
     // are genuinely unlocatable instead of silently dropping the claim.
-    for hash in &quarantined {
+    for hash in quarantined.keys() {
         if rebuilt.contains_key(hash) || salvaged.contains_key(hash) {
             continue;
         }
@@ -145,7 +145,7 @@ pub(super) fn rebuild_corrupt_index_under_guard(
         if rebuilt.contains_key(&hash) {
             continue;
         }
-        if quarantined.contains(&hash) {
+        if quarantined.contains_key(&hash) {
             rebuilt.insert(hash, entry);
             continue;
         }
@@ -167,6 +167,26 @@ pub(super) fn rebuild_corrupt_index_under_guard(
             )
         },
     )?;
+    // A rebuilt index invalidates any resume checkpoint: its evidence was
+    // gathered against the pre-rebuild index/scan state.
+    let checkpoint_path = canonical.join(crate::scrub::SCRUB_CHECKPOINT_FILE);
+    match std::fs::remove_file(&checkpoint_path) {
+        Ok(()) => {
+            disk::fsync_dir(&canonical, &observer).map_err(|err| {
+                local::io_error(err, format!("sync root dir {}", canonical.display()))
+            })?;
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(local::io_error(
+                err,
+                format!(
+                    "remove stale scrub checkpoint {}",
+                    checkpoint_path.display()
+                ),
+            ));
+        }
+    }
     report.completed = true;
     report.pacing = pacing.finish();
     Ok(report)
@@ -222,7 +242,7 @@ pub(super) fn rebuild_index_locked(
         if rebuilt.contains_key(hash) {
             continue;
         }
-        if state.quarantined.contains(hash) {
+        if state.quarantined.contains_key(hash) {
             rebuilt.insert(*hash, *entry);
             continue;
         }
@@ -250,6 +270,10 @@ pub(super) fn rebuild_index_locked(
     disk::write_replace_durable(&state.index_path, &index_bytes, &*observer).map_err(|err| {
         local::io_error(err, format!("rebuild index {}", state.index_path.display()))
     })?;
+    // A rebuilt index invalidates any resume checkpoint: its evidence was
+    // gathered against the pre-rebuild index/scan state, and findings for
+    // unindexed corrupt bytes are not durable anywhere else.
+    local::invalidate_scrub_checkpoint(state, &*observer)?;
     state.index = rebuilt;
     state.active_pack_id = state
         .index

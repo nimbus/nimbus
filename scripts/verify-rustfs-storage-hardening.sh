@@ -180,6 +180,8 @@ required_tests=(
   checkpoint_publication_refused_after_compaction_epoch_moves
   resume_rescans_packs_with_findings
   repeat_scrub_reports_previously_quarantined
+  raw_reupload_does_not_clear_aead_quarantine
+  rebuild_invalidates_stale_scrub_checkpoint
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then

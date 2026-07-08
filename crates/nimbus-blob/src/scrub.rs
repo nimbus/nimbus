@@ -251,14 +251,17 @@ impl LocalPackScrubber {
         // the active pack itself (and anything that rolls over later) is
         // never checkpoint-skippable.
         let max_pack_seen = Some(snapshot.active_pack_id);
-        let mut report = ScrubReport::default();
-        report.previously_quarantined = snapshot
+        let mut previously_quarantined: Vec<BlobHash> = snapshot
             .index
             .keys()
-            .filter(|hash| snapshot.quarantined.contains(hash))
+            .filter(|hash| snapshot.quarantined.contains_key(hash))
             .copied()
             .collect();
-        report.previously_quarantined.sort();
+        previously_quarantined.sort();
+        let mut report = ScrubReport {
+            previously_quarantined,
+            ..ScrubReport::default()
+        };
         report.checkpoint.path = Some(checkpoint_path.clone());
         report.checkpoint.resumed_after_pack_id =
             resume.and_then(|checkpoint| checkpoint.last_completed_pack_id);
@@ -573,7 +576,7 @@ struct ScrubSnapshot {
     /// Compaction epoch at snapshot time; checkpoint publication is refused
     /// once it moves (the pack layout this scrub scanned no longer exists).
     compaction_epoch: u64,
-    quarantined: HashSet<BlobHash>,
+    quarantined: HashMap<BlobHash, local::QuarantineReason>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

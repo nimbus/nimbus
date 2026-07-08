@@ -966,3 +966,61 @@ async fn repeat_scrub_reports_previously_quarantined() {
         .unwrap();
     assert!(encrypted.previously_quarantined.contains(&victim));
 }
+
+#[tokio::test]
+async fn raw_reupload_does_not_clear_aead_quarantine() {
+    let (_dir, store) = open_temp(4096);
+    let encrypted = EncryptedBlobStore::new(store.clone(), key("tenant-a"));
+    let original = encrypted
+        .put(Bytes::from_static(b"authenticated plaintext"))
+        .await
+        .unwrap();
+    let mut framed = store.get(&original).await.unwrap().to_vec();
+    framed[nimbus_crypto::FRAMED_HEADER_LEN] ^= 0xff;
+    let tampered_bytes = Bytes::from(framed);
+    let tampered = store.put(tampered_bytes.clone()).await.unwrap();
+
+    let report = EncryptedBlobScrubber::new(store.clone(), key("tenant-a"))
+        .scrub()
+        .await
+        .unwrap();
+    assert!(report.quarantined_hashes.contains(&tampered));
+
+    // A raw local re-upload of the IDENTICAL bytes reproduces the identical
+    // AEAD failure — it must NOT lift a content-level quarantine the way a
+    // re-upload lifts a record-level one.
+    let again = store.put(tampered_bytes).await.unwrap();
+    assert_eq!(again, tampered);
+    let err = store.get(&tampered).await.unwrap_err();
+    assert_eq!(
+        err.storage_kind(),
+        Some(StorageErrorKind::Corruption),
+        "AEAD quarantine survives a raw re-upload of the same bad bytes"
+    );
+}
+
+#[tokio::test]
+async fn rebuild_invalidates_stale_scrub_checkpoint() {
+    let (dir, store) = open_temp(64 * 1024);
+    store.put(Bytes::from_static(b"some record")).await.unwrap();
+
+    // A stale incomplete checkpoint from an interrupted scrub...
+    let checkpoint_path = dir.path().join("scrub-checkpoint.nbls");
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"NBLSCP1\n");
+    bytes.extend_from_slice(&0u64.to_le_bytes());
+    bytes.extend_from_slice(&0u64.to_le_bytes());
+    bytes.push(0u8);
+    fs::write(&checkpoint_path, &bytes).unwrap();
+
+    // ...must not survive an index rebuild: its evidence describes the
+    // pre-rebuild index/scan state.
+    LocalPackScrubber::new(store.clone())
+        .rebuild_index_from_packs()
+        .await
+        .unwrap();
+    assert!(
+        !checkpoint_path.exists(),
+        "rebuild durably invalidates the resume checkpoint"
+    );
+}
