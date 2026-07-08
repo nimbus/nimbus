@@ -33,8 +33,8 @@ pub(crate) fn invoke_runtime_bundle_blocking_with_cancellation(
     )
 }
 
-#[cfg(test)]
-pub(crate) fn invoke_runtime_bundle_blocking_with_host_state<H, S>(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn invoke_runtime_bundle_blocking_with_host_state<H, S>(
     runtime_executor: &RuntimeExecutor,
     runtime_policy: Arc<RuntimePolicy>,
     host_bridge: Arc<H>,
@@ -57,7 +57,7 @@ where
     Ok((response, snapshot(host_bridge.as_ref())))
 }
 
-pub(crate) fn invoke_runtime_bundle_blocking_with_egress_gateway<H>(
+pub fn invoke_runtime_bundle_blocking_with_egress_gateway<H>(
     runtime_executor: &RuntimeExecutor,
     runtime_policy: Arc<RuntimePolicy>,
     host_bridge: Arc<H>,

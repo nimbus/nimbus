@@ -24,15 +24,19 @@ use nimbus_services::{
 use nimbus_testing::ServerFixture;
 use serde_json::{Map, Value, json};
 
-use super::attach_system_state_engine;
 use crate::local_server::{
     LocalServerAuditRecord, LocalServerPaths, LocalServerSecurityState,
     load_or_create_local_admin_token,
 };
+use crate::service_manager::attach_system_state_engine;
 
+#[path = "service_manager/definitions.rs"]
 mod definitions;
+#[path = "service_manager/redaction.rs"]
 mod redaction;
+#[path = "service_manager/sandboxes.rs"]
 mod sandboxes;
+#[path = "service_manager/sessions.rs"]
 mod sessions;
 
 struct StubServiceDefinitionCatalog {
