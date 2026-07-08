@@ -1219,6 +1219,26 @@ fn read_pack_entry_range(
 }
 
 fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
+    // Refuse to compact while quarantine claims survive only in the side
+    // file with no index entry (the index-loss state a provisional open
+    // leaves until rebuild): those claims' bytes live in packs this function
+    // would delete. Fail closed until rebuild re-establishes their index
+    // entries (or they are explicitly released).
+    if state.index_provisional
+        && state
+            .quarantined
+            .keys()
+            .any(|hash| !state.index.contains_key(hash))
+    {
+        // Busy, not Corruption: this is a precondition refusal, not a disk
+        // fault, so it must NOT poison the store (the caller resolves the
+        // condition — rebuild or release — then retries).
+        return Err(Error::storage(
+            StorageErrorKind::Busy,
+            "refusing to compact: quarantine claims exist with no index entry \
+             (index-loss state); rebuild or release them first",
+        ));
+    }
     let observer = Arc::clone(&state.observer);
     state.compaction_epoch = state.compaction_epoch.saturating_add(1);
     // Compaction restructures pack ids wholesale (and the empty-store branch

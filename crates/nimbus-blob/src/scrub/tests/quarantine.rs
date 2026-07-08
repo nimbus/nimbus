@@ -766,3 +766,41 @@ async fn missing_index_open_does_not_prune_quarantine_before_rebuild() {
     let err = store.get(&victim).await.unwrap_err();
     assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
 }
+
+#[tokio::test]
+async fn compaction_refused_while_quarantine_orphaned_after_index_loss() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store
+        .put(Bytes::from_static(b"claim only in side file"))
+        .await
+        .unwrap();
+    flip_first_body_byte(&dir, &store, victim).await;
+    LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(store.get(&victim).await.is_err());
+    drop(store);
+
+    // Lose the index entirely: the quarantine claim now lives only in the
+    // side file, its bytes only in the pack.
+    fs::remove_file(dir.path().join("index.log")).unwrap();
+
+    // Open (provisional empty index, no prune). Compaction MUST refuse rather
+    // than delete the pack holding the orphaned quarantine claim's bytes.
+    let store = LocalPackStore::open(dir.path()).unwrap();
+    let err = store.compact().await.unwrap_err();
+    assert_eq!(
+        err.storage_kind(),
+        Some(StorageErrorKind::Busy),
+        "a precondition refusal (not a disk fault) must not poison the store"
+    );
+    // The refusal did not poison the store: rebuild proceeds on the same
+    // handle, and the pack survived so the claim is recoverable.
+    let report = LocalPackScrubber::new(store.clone())
+        .rebuild_index_from_packs()
+        .await
+        .unwrap();
+    assert!(report.completed);
+    assert!(
+        store.has(&victim).await.unwrap(),
+        "claim recovered by rebuild"
+    );
+}
