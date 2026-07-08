@@ -206,14 +206,22 @@ impl LocalPackScrubber {
         options: LocalPackStoreOptions,
     ) -> Result<ScrubReport> {
         let root = root.as_ref().to_path_buf();
-        match LocalPackStore::open_with_options(&root, options.clone()) {
-            Ok(store) => {
-                return LocalPackScrubber::new(store)
-                    .rebuild_index_from_packs()
-                    .await;
+        // A MISSING index routes straight to the guard path — never through
+        // `open_with_options`, which would create a provisional empty
+        // `index.log` that a fail-closed rebuild (unrecoverable quarantined
+        // claim) would leave behind for the next open to treat as
+        // authoritative and prune quarantine against. The guard path
+        // publishes the rebuilt index atomically or not at all.
+        if root.join("index.log").exists() {
+            match LocalPackStore::open_with_options(&root, options.clone()) {
+                Ok(store) => {
+                    return LocalPackScrubber::new(store)
+                        .rebuild_index_from_packs()
+                        .await;
+                }
+                Err(err) if rebuild::is_index_corruption(&err) => {}
+                Err(err) => return Err(err),
             }
-            Err(err) if rebuild::is_index_corruption(&err) => {}
-            Err(err) => return Err(err),
         }
 
         let repair_root = root.clone();

@@ -430,3 +430,48 @@ async fn corrupt_index_repair_fails_closed_on_unrecoverable_claim() {
         "the error names the unrecoverable claim: {err}"
     );
 }
+
+#[tokio::test]
+async fn failed_missing_index_rebuild_leaves_no_provisional_index() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store
+        .put(Bytes::from_static(b"unrecoverable claim"))
+        .await
+        .unwrap();
+    let entry = entry_for(&store, victim).await;
+    flip_first_body_byte(&dir, &store, victim).await;
+    LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(store.get(&victim).await.is_err(), "quarantined");
+    drop(store);
+
+    // Destroy the record framing so the claim is unrecoverable, AND remove
+    // the index entirely (the missing-index path).
+    let path = local::pack_path(&dir.path().join("packs"), entry.pack_id);
+    {
+        let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.seek(SeekFrom::Start(entry.offset)).unwrap();
+        file.write_all(b"XXXX").unwrap();
+        file.sync_data().unwrap();
+    }
+    fs::remove_file(dir.path().join("index.log")).unwrap();
+
+    // The rebuild must FAIL CLOSED and leave NO provisional empty index
+    // behind — otherwise the next open would treat it as authoritative and
+    // prune the quarantine claim.
+    let err =
+        LocalPackScrubber::rebuild_index_in_root(dir.path(), LocalPackStoreOptions::default())
+            .await
+            .unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    assert!(
+        !dir.path().join("index.log").exists(),
+        "no provisional empty index is left after a failed rebuild"
+    );
+
+    // The quarantine side file still names the claim (evidence preserved).
+    let quarantine = fs::read(dir.path().join("quarantine.nblq")).unwrap();
+    assert!(
+        quarantine.len() > b"NBLQ2\n".len(),
+        "quarantine evidence retained"
+    );
+}
