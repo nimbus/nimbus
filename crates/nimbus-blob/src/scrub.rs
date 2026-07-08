@@ -241,7 +241,17 @@ impl LocalPackScrubber {
         let checkpoint_path = snapshot.root.join(SCRUB_CHECKPOINT_FILE);
         let checkpoint = load_checkpoint(&checkpoint_path)?;
         let resume = match checkpoint {
-            Some(checkpoint) if !checkpoint.complete => Some(checkpoint),
+            // Also bound against the CURRENT layout: within one layout pack
+            // ids grow monotonically (compaction invalidates checkpoints),
+            // so a max_pack_seen beyond the current active pack is damaged
+            // or foreign metadata — ignore and full-scan.
+            Some(checkpoint)
+                if !checkpoint.complete
+                    && checkpoint.max_pack_seen.is_some()
+                    && checkpoint.max_pack_seen <= Some(snapshot.active_pack_id) =>
+            {
+                Some(checkpoint)
+            }
             _ => None,
         };
 
@@ -600,7 +610,7 @@ impl ScrubCheckpoint {
     }
 
     fn encode(self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(SCRUB_CHECKPOINT_MAGIC.len() + 8 + 8 + 1);
+        let mut bytes = Vec::with_capacity(SCRUB_CHECKPOINT_MAGIC.len() + 8 + 8 + 1 + 32);
         bytes.extend_from_slice(SCRUB_CHECKPOINT_MAGIC);
         bytes.extend_from_slice(
             &self
@@ -610,6 +620,11 @@ impl ScrubCheckpoint {
         );
         bytes.extend_from_slice(&self.max_pack_seen.unwrap_or(u64::MAX).to_le_bytes());
         bytes.push(u8::from(self.complete));
+        // Integrity trailer: the checkpoint's counters authorize SKIPPING
+        // verification work, so they must not be trusted off unverified
+        // bytes in the same corruption domain as the packs.
+        let digest = blake3::hash(&bytes);
+        bytes.extend_from_slice(digest.as_bytes());
         bytes
     }
 }
@@ -749,17 +764,16 @@ fn load_checkpoint(path: &Path) -> Result<Option<ScrubCheckpoint>> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|err| local::io_error(err, format!("read checkpoint {}", path.display())))?;
-    if bytes.len() != SCRUB_CHECKPOINT_MAGIC.len() + 8 + 8 + 1 {
-        return Err(local::corruption(format!(
-            "checkpoint {} has invalid length",
-            path.display()
-        )));
+    // A checkpoint authorizes SKIPPING verification, so an unverifiable one
+    // fails SAFE: ignore it and full-scan (Ok(None)), never trust its
+    // counters and never brick the scrub over its own metadata.
+    let expected_len = SCRUB_CHECKPOINT_MAGIC.len() + 8 + 8 + 1 + 32;
+    if bytes.len() != expected_len || !bytes.starts_with(SCRUB_CHECKPOINT_MAGIC) {
+        return Ok(None);
     }
-    if !bytes.starts_with(SCRUB_CHECKPOINT_MAGIC) {
-        return Err(local::corruption(format!(
-            "checkpoint {} has invalid magic",
-            path.display()
-        )));
+    let (payload, trailer) = bytes.split_at(expected_len - 32);
+    if blake3::hash(payload).as_bytes() != trailer {
+        return Ok(None);
     }
     let cursor = SCRUB_CHECKPOINT_MAGIC.len();
     let mut raw_pack = [0u8; 8];
@@ -771,14 +785,9 @@ fn load_checkpoint(path: &Path) -> Result<Option<ScrubCheckpoint>> {
     let complete = match bytes[cursor + 16] {
         0 => false,
         1 => true,
-        other => {
-            return Err(local::corruption(format!(
-                "checkpoint {} has invalid complete flag {other}",
-                path.display()
-            )));
-        }
+        _ => return Ok(None),
     };
-    Ok(Some(ScrubCheckpoint {
+    let checkpoint = ScrubCheckpoint {
         last_completed_pack_id: if raw_pack == u64::MAX {
             None
         } else {
@@ -790,7 +799,17 @@ fn load_checkpoint(path: &Path) -> Result<Option<ScrubCheckpoint>> {
             Some(raw_max)
         },
         complete,
-    }))
+    };
+    // Semantic bounds our writer always satisfies; anything else is not
+    // ours or is damaged.
+    if let (Some(last), Some(max_seen)) =
+        (checkpoint.last_completed_pack_id, checkpoint.max_pack_seen)
+    {
+        if last > max_seen {
+            return Ok(None);
+        }
+    }
+    Ok(Some(checkpoint))
 }
 
 fn write_checkpoint_locked(state: &LocalPackState, checkpoint: ScrubCheckpoint) -> Result<()> {

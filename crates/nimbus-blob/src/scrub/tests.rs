@@ -13,6 +13,17 @@ use crate::{
     BlobGc, BlobStore, EncryptedBlobStore, LocalPackStore, LocalPackStoreOptions, StaticBlobRoots,
 };
 
+fn craft_checkpoint(last: u64, max_seen: u64, complete: bool) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"NBLSCP1\n");
+    bytes.extend_from_slice(&last.to_le_bytes());
+    bytes.extend_from_slice(&max_seen.to_le_bytes());
+    bytes.push(u8::from(complete));
+    let digest = blake3::hash(&bytes);
+    bytes.extend_from_slice(digest.as_bytes());
+    bytes
+}
+
 fn open_temp(target: u64) -> (tempfile::TempDir, LocalPackStore) {
     let dir = tempfile::tempdir().expect("tempdir should create");
     let store =
@@ -441,12 +452,7 @@ async fn scrub_resume_rescans_growable_pack() {
     // never produce this shape — it always stops BEFORE a further pack — so
     // this is a crash-window state, hand-crafted like the other crash tests.)
     let checkpoint_path = dir.path().join("scrub-checkpoint.nbls");
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"NBLSCP1\n");
-    bytes.extend_from_slice(&0u64.to_le_bytes());
-    bytes.extend_from_slice(&0u64.to_le_bytes());
-    bytes.push(0u8);
-    fs::write(&checkpoint_path, &bytes).unwrap();
+    fs::write(&checkpoint_path, craft_checkpoint(0, 0, false)).unwrap();
 
     // The pack grows after the checkpoint, and the new record is corrupted.
     let grown = store
@@ -1006,12 +1012,7 @@ async fn rebuild_invalidates_stale_scrub_checkpoint() {
 
     // A stale incomplete checkpoint from an interrupted scrub...
     let checkpoint_path = dir.path().join("scrub-checkpoint.nbls");
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"NBLSCP1\n");
-    bytes.extend_from_slice(&0u64.to_le_bytes());
-    bytes.extend_from_slice(&0u64.to_le_bytes());
-    bytes.push(0u8);
-    fs::write(&checkpoint_path, &bytes).unwrap();
+    fs::write(&checkpoint_path, craft_checkpoint(0, 0, false)).unwrap();
 
     // ...must not survive an index rebuild: its evidence describes the
     // pre-rebuild index/scan state.
@@ -1265,4 +1266,82 @@ async fn open_retires_corrupt_pack_referenced_only_by_quarantined_claims() {
         reopened.get(&fresh).await.unwrap(),
         Bytes::from_static(b"post-crash write")
     );
+}
+
+#[tokio::test]
+async fn corrupt_checkpoint_is_ignored_and_full_scan_runs() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store
+        .put(Bytes::from_static(b"must be scanned"))
+        .await
+        .unwrap();
+    flip_first_body_byte(&dir, &store, victim).await;
+
+    // A syntactically plausible checkpoint whose counters claim everything is
+    // verified — with a bogus integrity trailer. Trusting it would skip the
+    // whole root; it must be ignored (fail-safe full scan).
+    let checkpoint_path = dir.path().join("scrub-checkpoint.nbls");
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"NBLSCP1\n");
+    bytes.extend_from_slice(&u64::MAX.to_le_bytes());
+    bytes.extend_from_slice(&u64::MAX.to_le_bytes());
+    bytes.push(0u8);
+    bytes.extend_from_slice(&[0u8; 32]);
+    fs::write(&checkpoint_path, &bytes).unwrap();
+
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(report.completed);
+    assert_eq!(report.packs_skipped_via_checkpoint, 0, "nothing skipped");
+    assert!(
+        report.quarantined_hashes.contains(&victim),
+        "the corruption is found despite the damaged checkpoint: {report:?}"
+    );
+}
+
+#[tokio::test]
+async fn repeat_scrub_of_corrupt_header_still_retires_active_pack() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store
+        .put(Bytes::from_static(b"stuck behind header"))
+        .await
+        .unwrap();
+    let old_entry = entry_for(&store, victim).await;
+
+    let path = local::pack_path(&dir.path().join("packs"), old_entry.pack_id);
+    {
+        let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.write_all(b"BAD").unwrap();
+        file.sync_data().unwrap();
+    }
+    LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+
+    // Simulate losing the retirement roll (crash shape): delete the fresh
+    // pack and force the active id back onto the corrupt pack.
+    let fresh_path = local::pack_path(&dir.path().join("packs"), old_entry.pack_id + 1);
+    if fresh_path.exists() {
+        fs::remove_file(&fresh_path).unwrap();
+    }
+    store
+        .blocking(move |mut state| {
+            state.active_pack_id = old_entry.pack_id;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    // A REPEAT scrub re-confirms the same (already-quarantined) hashes. Even
+    // with zero new insertions it must retire the corrupt active pack.
+    LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    let active = store
+        .blocking(|state| Ok(state.active_pack_id))
+        .await
+        .unwrap();
+    assert_ne!(
+        active, old_entry.pack_id,
+        "repeat scrub retires the corrupt active pack even with no new quarantines"
+    );
+    let fresh = store.put(Bytes::from_static(b"fresh write")).await.unwrap();
+    let fresh_entry = entry_for(&store, fresh).await;
+    assert_ne!(fresh_entry.pack_id, old_entry.pack_id);
 }
