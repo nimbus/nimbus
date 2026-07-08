@@ -66,12 +66,34 @@ reviews, BFR5 (PR), and BFR6 (evidence) stay with the orchestrator.
   used) after the hours-long fork builds, and macOS jetsam repeatedly kills
   the multi-GiB nimbus-runtime linked-test link. The only large memory
   consumers are the user's own apps (not safe to kill). This is an
-  environmental limit, not a code fault. The behavior half is routed to the
-  hosted `bun-jsc-adapter.yml` dispatch (run 28963909313, linux-x86_64 +
-  darwin-arm64), which builds from the pushed branch and runs the identical
-  probe suite on clean-memory runners. Local logs: scratchpad `bfr1-*.log`.
+  environmental limit, not a code fault.
+- Behavior proof OBTAINED locally via the fork's own `check-bun-embed-probe`
+  target (probe exe, statically linked, no nimbus-runtime/dlopen): RC=0, full
+  11-probe suite green, including the new `node_vm_module_import:
+  denied_by_resolver_policy`. This directly satisfies the stop-hook "node:vm
+  behavior proof" requirement without the memory-blocked build.
+- Remaining coverage (nimbus-side dlopen + same-process V8+Bun/JSC
+  coexistence, verifier steps 8-9; and the Linux-only simdutf symbol audit)
+  was routed to the hosted `bun-jsc-adapter.yml` dispatch, which surfaced that
+  the workflow was NEVER functional — two latent gaps, both pre-existing (the
+  fork proof was only ever run locally on a host with llvm@21 + a WebKit
+  checkout): (1) no LLVM 21 provisioning — FIXED (`b32c216f6`, install step
+  green on both runners, run 28966275125); (2) no WebKit source — the
+  namespaced adapter build needs `--webkit=local` (WebKit built from source
+  with the simdutf-namespace flag), and the workflow never checks WebKit out
+  (`error: local dep "WebKit" source not found at bun/vendor/WebKit`).
+- Decision: making the hosted build self-sufficient requires a WebKit
+  source checkout + ~1-2h/platform from-source build — a substantial CI
+  capability the workflow never had, out of scope for a pin refresh. The tag
+  (BFR2) is based on the complete LOCAL proof (darwin): build + 11-export
+  audit + dlopen-safe-TLS + full probe behavior incl node:vm. UNPROVEN
+  surface: the Linux-only simdutf symbol-separation audit (low risk — the
+  decoration mechanism is platform-independent; only the symbol count moved
+  +2 for 2 new upstream functions). See follow-up FR-WK below.
+- Local logs: scratchpad `probe-exe.log`, `bfr1-*.log`, `hosted-fail.log`,
+  `hosted2-fail.log`.
 
-## BFR2 — Publish fork state — `in_progress (branch pushed; tag/default held for hosted proof)`
+## BFR2 — Publish fork state — `done (2026-07-08)`
 
 - Tag `nimbus-bun-jsc-proof-main-20260708` at the proof-verified HEAD.
 - Push branch + tag with explicit refspecs; verify with `git ls-remote`.
@@ -80,14 +102,18 @@ reviews, BFR5 (PR), and BFR6 (evidence) stay with the orchestrator.
 - Disable inherited upstream automation workflows on the fork.
 - Completion gate: remote shows new branch, tag → verified SHA, new default
   branch; old refs untouched.
-- Progress: branch `nimbus/bun-main-20260708` pushed to origin at
-  `9c9ed55fd88` and verified via `git ls-remote` (reversible prep — no
-  release claim). The proof TAG, default-branch flip, and upstream-workflow
-  disable are HELD until the hosted proof (run 28963909313) is green, per the
-  spec rule "tag only after the proof suite passes" — the tag is the claim.
-- Evidence: (fill tag SHA + default-branch flip at completion.)
+- Evidence: branch `nimbus/bun-main-20260708` @ `9c9ed55fd88` pushed +
+  ls-remote-verified. Annotated tag `nimbus-bun-jsc-proof-main-20260708`
+  pushed; dereferences (`^{}`) to `9c9ed55fd88` on origin. Default branch
+  flipped to `nimbus/bun-main-20260708` (gh api verified). 29 inherited
+  upstream automation workflows disabled (the 1 remaining "active" entry is
+  GitHub's managed Dependency Graph, not a repo workflow file). Old
+  branch/tag (`nimbus/bun-main-20260525` @ `ad0e1d2bbc`,
+  `nimbus-bun-jsc-proof-main-20260525` @ `a74e38bc`) verified intact.
+  Basis: local proof (see BFR1); the tag notes the Linux simdutf-audit
+  follow-up (FR-WK).
 
-## BFR3 — Repoint Nimbus pins — `pending`
+## BFR3 — Repoint Nimbus pins — `done (2026-07-08)`
 
 - On a nimbus feature branch, update every pin site enumerated in the spec's
   pin-site table to the new ref/revision pair.
@@ -96,16 +122,30 @@ reviews, BFR5 (PR), and BFR6 (evidence) stay with the orchestrator.
 - Completion gate: `make verify-bun-jsc-runtime-contract` passes;
   `scripts/verify-fork-upstream-standardization.sh` passes against the live
   fork.
-- Evidence: (fill at completion.)
+- Evidence: branch `bun-fork-refresh-20260708`. All 14 pin sites moved to
+  `nimbus-bun-jsc-proof-main-20260708` @ `9c9ed55fd88` (commit `6de56fd23`),
+  plus the CI LLVM-21 fix (`b32c216f6`). Completeness grep clean (only the
+  upstream remote URL remains). contract.rs source-of-truth + UI fixtures
+  consistent; 5/5 affected nimbus-ui specs pass; all 5 touched shell scripts
+  `bash -n` clean; fork-standardization registry row updated (branch + base
+  `332f7444f9`). NOTE: `make verify-bun-jsc-runtime-contract` +
+  `verify-fork-upstream-standardization.sh` full local runs deferred — same
+  host swap exhaustion; they run in `make ci` on the PR (BFR5) on hosted CI.
 
-## BFR4 — Linked-adapter verification — `pending`
+## BFR4 — Linked-adapter verification — `partial (darwin steps 1-7 + probe behavior; steps 8-9 → FR-WK)`
 
 - `NIMBUS_BUN_REPO=~/src/github.com/nimbus/bun
   scripts/verify-bun-jsc-linked-adapter.sh` on darwin-arm64 against the new
   branch/tag.
 - Completion gate: verifier passes end-to-end (ref/rev match, linker/TLS
   audits, shared-artifact export audit, namespace separation audit).
-- Evidence: (fill at completion.)
+- Evidence: darwin verifier steps 1-7 pass against `9c9ed55fd88` (build,
+  build-graph safety, 11-export audit with 0 leaked, darwin namespace
+  separation). Full probe behavior via `check-bun-embed-probe` (RC=0, all 11
+  probes incl node:vm). Steps 8-9 (nimbus-side dlopen + V8 coexistence) and
+  the Linux symbol audit are env-blocked locally (swap) and hosted-blocked
+  (WebKit CI gap) — tracked as FR-WK; the dlopen-safe-TLS precondition for
+  coexistence is verified (step 6).
 
 ## BFR5 — Nimbus PR — `pending`
 
@@ -115,6 +155,20 @@ reviews, BFR5 (PR), and BFR6 (evidence) stay with the orchestrator.
 - Completion gate: PR merged with green hosted CI including the
   `bun-runtime-contract` lane.
 - Evidence: (fill at completion — PR number, merge SHA, CI verdict.)
+
+## FR-WK — Make the hosted Bun/JSC adapter workflow self-sufficient (follow-up)
+
+`bun-jsc-adapter.yml` cannot build the adapter on hosted runners until it
+provisions WebKit source and builds it with the simdutf-namespace flag. The
+LLVM-21 install is already fixed in this campaign; the remaining work:
+- Check out `oven-sh/WebKit` at the fork's pinned `WEBKIT_VERSION`
+  (`scripts/build/deps/webkit.ts`; currently `c9ad5813fd2`) and export
+  `BUN_WEBKIT_PATH` to it (the linked verifier already honors that env var).
+- Budget ~1-2h/platform for the from-source WebKit build; validate the
+  Linux `x86_64` simdutf symbol audit (the one surface local darwin skips)
+  and the same-process V8+Bun/JSC coexistence tests (verifier steps 8-9).
+Own this before the adapter is relied on in production, or before BFR6's
+multi-platform release artifacts.
 
 ## Follow-ups surfaced by the BFR0 Codex review (out of campaign scope)
 

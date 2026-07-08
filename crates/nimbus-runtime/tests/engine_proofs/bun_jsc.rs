@@ -58,7 +58,7 @@ fn bun_repo() -> PathBuf {
     }
 
     let home = env::var_os("HOME").expect("HOME must be set or NIMBUS_BUN_REPO must be provided");
-    PathBuf::from(home).join("src/github.com/oven-sh/bun")
+    PathBuf::from(home).join("src/github.com/nimbus/bun")
 }
 
 fn proof_path(env_key: &str, leaf: &str) -> PathBuf {
