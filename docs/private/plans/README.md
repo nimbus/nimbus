@@ -90,8 +90,9 @@ extension-registry seam before the second concern edits `extensions.rs`.
 - `nimbus-sandbox-plan.md` - `proposed`. Owns the multi-backend sandbox
   architecture (`ADOPT_MULTI_BACKEND_SANDBOX_ARCHITECTURE`, 2026-07-08): the
   `SandboxBackend` router/dispatch seam with backend families
-  (container/krun landed; firecracker, isolate, wasm, gvisor,
-  cloud_hypervisor, qemu named), the family/profile/capability vocabulary,
+  (container/krun landed; libkrun_session, firecracker, isolate, wasm,
+  gvisor, cloud_hypervisor, qemu named), the family/profile/capability
+  vocabulary,
   and the libkrun-family session bands (shared backend skeleton, desktop
   profile, GPU profile). Band R (router) precedes any new backend family;
   Band B precedes the desktop/GPU bands.
