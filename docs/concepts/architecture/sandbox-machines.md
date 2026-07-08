@@ -109,7 +109,7 @@ spec validator rejects any attempt by a launch spec to set those keys itself.
 
 ## Launch inputs are redacted at the API boundary
 
-The HTTP surface in `crates/nimbus-server/src/http/sandbox_spec.rs` separates
+The HTTP surface in `crates/nimbus-compute/src/sandbox_spec.rs` separates
 what callers may send from what responses may echo. Public launch input
 rejects `Rootfs` roots and OCI `Build` sources as operator-only internal
 inputs. Responses never echo sensitive launch material: rootfs and build roots
