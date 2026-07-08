@@ -155,6 +155,16 @@ required_tests=(
   compaction_crash_replay_prefers_rewritten_records
   local_pack_concurrent_same_hash_dedups_under_mutex
   gc_grace_retains_when_clock_regresses
+  scrub_detects_flipped_byte
+  scrub_quarantines_corrupt_record
+  scrub_rebuilds_index_from_packs
+  scrub_rebuilds_corrupt_index_from_packs
+  scrub_resumes_from_checkpoint
+  scrub_pacing_bounds_io
+  scrub_detects_truncated_record
+  scrub_encrypted_layer_detects_aead_failure
+  scrub_quarantine_survives_compaction_without_poisoning
+  scrub_reupload_clears_quarantine
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then

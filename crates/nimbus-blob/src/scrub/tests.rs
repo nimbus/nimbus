@@ -1,0 +1,394 @@
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::sync::Arc;
+use std::time::Duration;
+
+use bytes::Bytes;
+use nimbus_core::{StorageErrorKind, Timestamp};
+use nimbus_crypto::{DataEncryptionKey, FramedBlobKey};
+
+use super::*;
+use crate::local::{self, RECORD_MAGIC};
+use crate::{
+    BlobGc, BlobStore, EncryptedBlobStore, LocalPackStore, LocalPackStoreOptions, StaticBlobRoots,
+};
+
+fn open_temp(target: u64) -> (tempfile::TempDir, LocalPackStore) {
+    let dir = tempfile::tempdir().expect("tempdir should create");
+    let store =
+        LocalPackStore::open_with_pack_target(dir.path(), target).expect("store should open");
+    (dir, store)
+}
+
+async fn entry_for(store: &LocalPackStore, hash: BlobHash) -> PackEntry {
+    store
+        .blocking(move |state| Ok(state.index.get(&hash).copied().expect("hash is indexed")))
+        .await
+        .expect("entry lookup succeeds")
+}
+
+async fn flip_first_body_byte(
+    dir: &tempfile::TempDir,
+    store: &LocalPackStore,
+    hash: BlobHash,
+) -> PackEntry {
+    let entry = entry_for(store, hash).await;
+    let path = local::pack_path(&dir.path().join("packs"), entry.pack_id);
+    let body_offset = entry.offset + RECORD_MAGIC.len() as u64 + crate::BLAKE3_HASH_LEN as u64 + 8;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .expect("pack opens for corruption");
+    file.seek(SeekFrom::Start(body_offset))
+        .expect("seek to body byte");
+    let mut byte = [0u8; 1];
+    file.read_exact(&mut byte).expect("read body byte");
+    byte[0] ^= 0xff;
+    file.seek(SeekFrom::Start(body_offset))
+        .expect("seek back to body byte");
+    file.write_all(&byte).expect("write flipped body byte");
+    file.sync_data().expect("corruption lands on disk");
+    entry
+}
+
+fn key(seed: &str) -> FramedBlobKey {
+    FramedBlobKey::new(DataEncryptionKey::new(
+        *blake3::hash(seed.as_bytes()).as_bytes(),
+    ))
+}
+
+#[tokio::test]
+async fn scrub_detects_flipped_byte() {
+    let (dir, store) = open_temp(4096);
+    let hash = store
+        .put(Bytes::from_static(b"authentic scrub payload"))
+        .await
+        .unwrap();
+    let entry = flip_first_body_byte(&dir, &store, hash).await;
+
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+
+    assert!(
+        report.findings.iter().any(|finding| {
+            finding.kind == ScrubFindingKind::HashMismatch
+                && finding.pack_id == Some(entry.pack_id)
+                && finding.offset == Some(entry.offset)
+                && finding.expected_hash == Some(hash)
+        }),
+        "hash mismatch finding should name the corrupt pack record: {report:?}"
+    );
+    assert_eq!(report.quarantined_hashes, vec![hash]);
+    let err = store.get(&hash).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+}
+
+#[tokio::test]
+async fn scrub_quarantines_corrupt_record() {
+    let (dir, store) = open_temp(4096);
+    let bad = store.put(Bytes::from_static(b"bad record")).await.unwrap();
+    let healthy = store
+        .put(Bytes::from_static(b"healthy record"))
+        .await
+        .unwrap();
+    let bad_entry = flip_first_body_byte(&dir, &store, bad).await;
+    let healthy_entry = entry_for(&store, healthy).await;
+    assert_eq!(
+        bad_entry.pack_id, healthy_entry.pack_id,
+        "test needs two records in the same pack"
+    );
+
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+
+    assert_eq!(report.quarantined_hashes, vec![bad]);
+    let err = store.get(&bad).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    assert_eq!(
+        store.get(&healthy).await.unwrap(),
+        Bytes::from_static(b"healthy record"),
+        "healthy record in the same pack remains readable"
+    );
+}
+
+#[tokio::test]
+async fn scrub_rebuilds_index_from_packs() {
+    let (dir, store) = open_temp(4096);
+    let keep = store.put(Bytes::from_static(b"rooted")).await.unwrap();
+    let released = store
+        .put(Bytes::from_static(b"released but not compacted"))
+        .await
+        .unwrap();
+    store.release(&released).await.unwrap();
+    assert!(!store.has(&released).await.unwrap());
+    drop(store);
+
+    fs::remove_file(dir.path().join("index.log")).unwrap();
+    let reopened = LocalPackStore::open_with_pack_target(dir.path(), 4096).unwrap();
+    assert_eq!(
+        reopened.len().unwrap(),
+        0,
+        "missing index reopens as an empty claim set before rebuild"
+    );
+
+    let report = LocalPackScrubber::new(reopened.clone())
+        .with_clock(Arc::new(nimbus_core::ManualClock::new(Timestamp(10_000))))
+        .rebuild_index_from_packs()
+        .await
+        .unwrap();
+
+    assert!(report.completed);
+    assert!(reopened.has(&keep).await.unwrap());
+    assert!(reopened.has(&released).await.unwrap());
+    assert_eq!(
+        reopened.get(&keep).await.unwrap(),
+        Bytes::from_static(b"rooted")
+    );
+    assert_eq!(
+        reopened.get(&released).await.unwrap(),
+        Bytes::from_static(b"released but not compacted")
+    );
+
+    // Rebuild intentionally resurrects released-but-uncompacted pack bytes as
+    // live claims because release tombstones live only in the index log. A GC
+    // sweep with `keep` rooted re-reclaims the unrooted resurrected claim.
+    let gc = BlobGc::new(
+        reopened.clone(),
+        StaticBlobRoots::new([keep]),
+        Duration::ZERO,
+    );
+    let gc_report = gc.sweep().await.unwrap();
+    assert_eq!(gc_report.swept, 1);
+    assert!(reopened.has(&keep).await.unwrap());
+    assert!(!reopened.has(&released).await.unwrap());
+}
+
+#[tokio::test]
+async fn scrub_rebuilds_corrupt_index_from_packs() {
+    let (dir, store) = open_temp(4096);
+    let first = store.put(Bytes::from_static(b"first")).await.unwrap();
+    let second = store.put(Bytes::from_static(b"second")).await.unwrap();
+    drop(store);
+
+    let index_path = dir.path().join("index.log");
+    let mut file = OpenOptions::new().append(true).open(&index_path).unwrap();
+    file.write_all(&[9u8]).unwrap();
+    file.write_all(&[0u8; crate::BLAKE3_HASH_LEN]).unwrap();
+    file.sync_data().unwrap();
+
+    let err = LocalPackStore::open_with_pack_target(dir.path(), 4096).unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+
+    let report = LocalPackScrubber::rebuild_index_in_root(
+        dir.path(),
+        LocalPackStoreOptions {
+            pack_target_bytes: 4096,
+            ..LocalPackStoreOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(report.completed);
+
+    let reopened = LocalPackStore::open_with_pack_target(dir.path(), 4096).unwrap();
+    assert_eq!(
+        reopened.get(&first).await.unwrap(),
+        Bytes::from_static(b"first")
+    );
+    assert_eq!(
+        reopened.get(&second).await.unwrap(),
+        Bytes::from_static(b"second")
+    );
+}
+
+#[tokio::test]
+async fn scrub_resumes_from_checkpoint() {
+    let (_dir, store) = open_temp(72);
+    let h0 = store.put(Bytes::from_static(b"first pack")).await.unwrap();
+    let h1 = store.put(Bytes::from_static(b"second pack")).await.unwrap();
+    let h2 = store.put(Bytes::from_static(b"third pack")).await.unwrap();
+    let e0 = entry_for(&store, h0).await;
+    let e1 = entry_for(&store, h1).await;
+    let e2 = entry_for(&store, h2).await;
+    assert!(e0.pack_id < e1.pack_id && e1.pack_id < e2.pack_id);
+
+    let first = LocalPackScrubber::new(store.clone())
+        .scrub_with_pack_limit(1)
+        .await
+        .unwrap();
+    assert!(!first.completed);
+    assert_eq!(first.packs_scanned, 1);
+    assert_eq!(first.checkpoint.last_completed_pack_id, Some(e0.pack_id));
+
+    let resumed = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(resumed.completed);
+    assert_eq!(resumed.checkpoint.resumed_after_pack_id, Some(e0.pack_id));
+    assert_eq!(resumed.packs_skipped_via_checkpoint, 1);
+    assert_eq!(resumed.first_scanned_pack_id, Some(e1.pack_id));
+}
+
+#[tokio::test]
+async fn scrub_pacing_bounds_io() {
+    let (_dir, store) = open_temp(4096);
+    let payload: Vec<u8> = (0..512usize).map(|i| (i % 251) as u8).collect();
+    store.put(Bytes::from(payload)).await.unwrap();
+    let pacing = ScrubPacing::bytes_per_tick(64).unwrap();
+
+    let report = LocalPackScrubber::new(store)
+        .with_pacing(pacing)
+        .scrub()
+        .await
+        .unwrap();
+
+    assert_eq!(report.pacing.bytes_per_tick_budget, Some(64));
+    assert!(
+        !report.pacing.bytes_per_tick.is_empty(),
+        "scrub should report deterministic pacing ticks"
+    );
+    assert!(
+        report
+            .pacing
+            .bytes_per_tick
+            .iter()
+            .all(|bytes| *bytes <= 64),
+        "every tick must stay under the configured budget: {:?}",
+        report.pacing.bytes_per_tick
+    );
+}
+
+#[tokio::test]
+async fn scrub_detects_truncated_record() {
+    let (dir, store) = open_temp(4096);
+    let hash = store
+        .put(Bytes::from_static(b"truncate me during scrub"))
+        .await
+        .unwrap();
+    let entry = entry_for(&store, hash).await;
+    let path = local::pack_path(&dir.path().join("packs"), entry.pack_id);
+    let full_len = fs::metadata(&path).unwrap().len();
+    let file = OpenOptions::new().write(true).open(&path).unwrap();
+    file.set_len(full_len - 2).unwrap();
+    file.sync_data().unwrap();
+
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+
+    assert!(
+        report.findings.iter().any(|finding| {
+            finding.kind == ScrubFindingKind::TruncatedRecord
+                && finding.pack_id == Some(entry.pack_id)
+                && finding.offset == Some(entry.offset)
+        }),
+        "truncated record should be reported with pack id and offset: {report:?}"
+    );
+    assert_eq!(report.quarantined_hashes, vec![hash]);
+    let err = store.get(&hash).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+}
+
+#[tokio::test]
+async fn scrub_encrypted_layer_detects_aead_failure() {
+    let (_dir, store) = open_temp(4096);
+    let encrypted = EncryptedBlobStore::new(store.clone(), key("tenant-a"));
+    let original = encrypted
+        .put(Bytes::from_static(b"authenticated plaintext"))
+        .await
+        .unwrap();
+    let mut framed = store.get(&original).await.unwrap().to_vec();
+    framed[nimbus_crypto::FRAMED_HEADER_LEN] ^= 0xff;
+    let tampered = store.put(Bytes::from(framed)).await.unwrap();
+
+    let report = EncryptedBlobScrubber::new(store.clone(), key("tenant-a"))
+        .scrub()
+        .await
+        .unwrap();
+
+    assert!(
+        report.findings.iter().any(|finding| {
+            finding.kind == ScrubFindingKind::AeadOpenFailed && finding.hash == Some(tampered)
+        }),
+        "AEAD failure should be reported by the encrypted scrubber: {report:?}"
+    );
+    assert_eq!(report.quarantined_hashes, vec![tampered]);
+    let err = store.get(&tampered).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    assert_eq!(
+        encrypted.get(&original).await.unwrap(),
+        Bytes::from_static(b"authenticated plaintext")
+    );
+}
+
+#[tokio::test]
+async fn scrub_quarantine_survives_compaction_without_poisoning() {
+    let (dir, store) = open_temp(64 * 1024);
+    let healthy = store
+        .put(Bytes::from_static(b"healthy bytes"))
+        .await
+        .unwrap();
+    let victim = store
+        .put(Bytes::from_static(b"victim bytes"))
+        .await
+        .unwrap();
+    let released = store
+        .put(Bytes::from_static(b"released bytes"))
+        .await
+        .unwrap();
+    store.release(&released).await.unwrap();
+
+    flip_first_body_byte(&dir, &store, victim).await;
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(report.quarantined_hashes.contains(&victim));
+
+    // Compaction must succeed (not poison the store), keep healthy bytes
+    // readable, keep the quarantined hash refusing, and RETAIN the pack that
+    // still holds the corrupt bytes (RFS6: no deletion before repair).
+    let stats = store.compact().await.unwrap();
+    assert!(stats.blobs_rewritten >= 1);
+    assert_eq!(
+        store.get(&healthy).await.unwrap(),
+        Bytes::from_static(b"healthy bytes")
+    );
+    let err = store.get(&victim).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    // The store is NOT poisoned: writes still work.
+    let after = store
+        .put(Bytes::from_static(b"post-compact write"))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get(&after).await.unwrap(),
+        Bytes::from_static(b"post-compact write")
+    );
+    // The quarantined entry's pack survived compaction.
+    let entry = entry_for(&store, victim).await;
+    assert!(
+        local::pack_path(&dir.path().join("packs"), entry.pack_id).exists(),
+        "the pack holding quarantined bytes is retained"
+    );
+}
+
+#[tokio::test]
+async fn scrub_reupload_clears_quarantine() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim_bytes = Bytes::from_static(b"repairable bytes");
+    let victim = store.put(victim_bytes.clone()).await.unwrap();
+
+    flip_first_body_byte(&dir, &store, victim).await;
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(report.quarantined_hashes.contains(&victim));
+    assert!(
+        store.get(&victim).await.is_err(),
+        "quarantined read refuses"
+    );
+
+    // Content-addressed self-repair: re-uploading the exact bytes writes a
+    // fresh record and lifts the quarantine.
+    let again = store.put(victim_bytes.clone()).await.unwrap();
+    assert_eq!(again, victim);
+    assert_eq!(store.get(&victim).await.unwrap(), victim_bytes);
+
+    // The heal is durable: a fresh open serves the blob and loads no
+    // quarantine entry for it.
+    drop(store);
+    let reopened = LocalPackStore::open(dir.path()).unwrap();
+    assert_eq!(reopened.get(&victim).await.unwrap(), victim_bytes);
+    assert_eq!(reopened.open_report().unwrap().quarantine_entries_loaded, 0);
+}

@@ -1,0 +1,1134 @@
+//! Operator-visible integrity scrubbers for local pack roots.
+//!
+//! [`LocalPackScrubber`] verifies the local content-addressed byte plane
+//! without tenant keys: pack headers, record framing, and BLAKE3 over the
+//! stored bytes. It keeps findings structured so an operator surface can
+//! report the exact pack id and byte offset that failed, and it persists
+//! per-hash quarantine so subsequent reads fail closed before touching pack
+//! bytes.
+//!
+//! [`EncryptedBlobScrubber`] is the key-holding layer. It composes over the
+//! local scrubber, then AEAD-opens every live framed ciphertext with the tenant
+//! key to catch authentication failures that a hash over ciphertext cannot.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fs::{self, File};
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use nimbus_core::{Clock, Error, Result, StorageErrorKind, SystemClock};
+use nimbus_crypto::{FramedBlobKey, open_framed_blob};
+
+use crate::disk;
+use crate::hash::BlobHash;
+use crate::local::{
+    self, INDEX_MAGIC, INDEX_PUT, LocalPackState, LocalPackStore, PACK_MAGIC, PackEntry,
+    RECORD_MAGIC,
+};
+use crate::root_guard::{self, LocalPackStoreOptions};
+use crate::store::BlobStore;
+
+const SCRUB_CHECKPOINT_FILE: &str = "scrub-checkpoint.nbls";
+const SCRUB_CHECKPOINT_MAGIC: &[u8] = b"NBLSCP1\n";
+const DEFAULT_SCAN_CHUNK: usize = 64 * 1024;
+const RECORD_HEADER_LEN: u64 = RECORD_MAGIC.len() as u64 + crate::BLAKE3_HASH_LEN as u64 + 8;
+
+/// Pacing budget for a scrub pass.
+///
+/// The scrubber accounts actual bytes read into deterministic "ticks" rather
+/// than sleeping. A caller can drive one scrub per scheduler tick later; tests
+/// can assert that each reported tick stayed within the configured budget
+/// without relying on wall-clock time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScrubPacing {
+    bytes_per_tick: u64,
+}
+
+impl ScrubPacing {
+    pub fn unlimited() -> Self {
+        Self {
+            bytes_per_tick: u64::MAX,
+        }
+    }
+
+    pub fn bytes_per_tick(bytes: u64) -> Result<Self> {
+        if bytes == 0 {
+            return Err(Error::InvalidInput(
+                "scrub bytes_per_tick must be greater than zero".to_string(),
+            ));
+        }
+        Ok(Self {
+            bytes_per_tick: bytes,
+        })
+    }
+
+    pub fn budget(&self) -> u64 {
+        self.bytes_per_tick
+    }
+}
+
+impl Default for ScrubPacing {
+    fn default() -> Self {
+        Self::unlimited()
+    }
+}
+
+/// Deterministic pacing evidence for a scrub run.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScrubPacingStatus {
+    pub bytes_per_tick_budget: Option<u64>,
+    pub bytes_per_tick: Vec<u64>,
+}
+
+/// Progress checkpoint evidence for a scrub run.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScrubCheckpointStatus {
+    pub path: Option<PathBuf>,
+    pub resumed_after_pack_id: Option<u64>,
+    pub last_completed_pack_id: Option<u64>,
+    pub complete: bool,
+}
+
+/// Structured corruption and repair event kinds reported by scrubbers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrubFindingKind {
+    MissingPack,
+    TruncatedPackHeader,
+    InvalidPackHeader,
+    TruncatedRecord,
+    InvalidRecordMagic,
+    HashMismatch,
+    IndexHashMismatch,
+    IndexLengthMismatch,
+    MissingIndexedRecord,
+    OrphanRecord,
+    AeadOpenFailed,
+}
+
+/// A single scrub finding with enough location data for operator reporting.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScrubFinding {
+    pub kind: ScrubFindingKind,
+    pub pack_id: Option<u64>,
+    pub offset: Option<u64>,
+    pub hash: Option<BlobHash>,
+    pub expected_hash: Option<BlobHash>,
+    pub actual_hash: Option<BlobHash>,
+    pub message: String,
+}
+
+/// Full scrub result.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScrubReport {
+    pub packs_scanned: usize,
+    pub packs_skipped_via_checkpoint: usize,
+    pub first_scanned_pack_id: Option<u64>,
+    pub last_scanned_pack_id: Option<u64>,
+    pub records_scanned: usize,
+    pub records_verified: usize,
+    pub bytes_scanned: u64,
+    pub corrupt_records: usize,
+    pub orphan_records: usize,
+    pub missing_packs: usize,
+    pub quarantined_hashes: Vec<BlobHash>,
+    pub findings: Vec<ScrubFinding>,
+    pub checkpoint: ScrubCheckpointStatus,
+    pub pacing: ScrubPacingStatus,
+    pub completed: bool,
+}
+
+/// No-key local pack scrubber.
+pub struct LocalPackScrubber {
+    store: LocalPackStore,
+    pacing: ScrubPacing,
+    clock: Arc<dyn Clock>,
+}
+
+impl LocalPackScrubber {
+    pub fn new(store: LocalPackStore) -> Self {
+        Self {
+            store,
+            pacing: ScrubPacing::default(),
+            clock: Arc::new(SystemClock),
+        }
+    }
+
+    pub fn with_pacing(mut self, pacing: ScrubPacing) -> Self {
+        self.pacing = pacing;
+        self
+    }
+
+    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// Scans every pack not covered by an incomplete checkpoint.
+    pub async fn scrub(&self) -> Result<ScrubReport> {
+        self.scrub_inner(None).await
+    }
+
+    /// Test/operator seam for an interrupted scrub pass.
+    ///
+    /// The scrubber persists the last fully verified pack before returning
+    /// `completed = false`, so a subsequent [`Self::scrub`] call resumes past
+    /// the already scanned pack ids.
+    pub async fn scrub_with_pack_limit(&self, max_packs: usize) -> Result<ScrubReport> {
+        self.scrub_inner(Some(max_packs)).await
+    }
+
+    /// Rebuilds the live index from valid pack records.
+    ///
+    /// Pack records carry no release tombstones, so released-but-uncompacted
+    /// blobs reappear as live claims. That is a conservative repair: the data
+    /// is not lost, and the next GC sweep can re-reclaim anything with no root.
+    pub async fn rebuild_index_from_packs(&self) -> Result<ScrubReport> {
+        let pacing = self.pacing;
+        let now = self.clock.now_millis();
+        self.store
+            .blocking(move |mut state| {
+                local::ensure_writable(&state, "rebuild_index_from_packs")?;
+                let result = rebuild_index_locked(&mut state, pacing, now);
+                local::poison_on_write_failure(&mut state, &result);
+                result
+            })
+            .await
+    }
+
+    /// Opens `root` for local index repair and rebuilds `index.log` from pack
+    /// records, even when a normal open fails on index-log corruption.
+    pub async fn rebuild_index_in_root(
+        root: impl AsRef<Path>,
+        options: LocalPackStoreOptions,
+    ) -> Result<ScrubReport> {
+        let root = root.as_ref().to_path_buf();
+        match LocalPackStore::open_with_options(&root, options.clone()) {
+            Ok(store) => {
+                return LocalPackScrubber::new(store)
+                    .rebuild_index_from_packs()
+                    .await;
+            }
+            Err(err) if is_index_corruption(&err) => {}
+            Err(err) => return Err(err),
+        }
+
+        let repair_root = root.clone();
+        let open_options = options.clone();
+        tokio::task::spawn_blocking(move || repair_corrupt_index_for_rebuild(repair_root, options))
+            .await
+            .map_err(|err| {
+                Error::storage(
+                    StorageErrorKind::Other,
+                    format!("local index repair task: {err}"),
+                )
+            })??;
+
+        let store = LocalPackStore::open_with_options(&root, open_options)?;
+        LocalPackScrubber::new(store)
+            .rebuild_index_from_packs()
+            .await
+    }
+
+    async fn scrub_inner(&self, max_packs: Option<usize>) -> Result<ScrubReport> {
+        let snapshot = self.snapshot().await?;
+        let checkpoint_path = snapshot.root.join(SCRUB_CHECKPOINT_FILE);
+        let checkpoint = load_checkpoint(&checkpoint_path)?;
+        let resume_after = match checkpoint {
+            Some(checkpoint) if !checkpoint.complete => checkpoint.last_completed_pack_id,
+            _ => None,
+        };
+
+        let pack_ids = local::pack_ids_on_disk(&snapshot.packs_dir)?;
+        let mut report = ScrubReport::default();
+        report.checkpoint.path = Some(checkpoint_path.clone());
+        report.checkpoint.resumed_after_pack_id = resume_after;
+
+        let index_offsets = snapshot
+            .index
+            .values()
+            .map(|entry| (entry.pack_id, entry.offset))
+            .collect::<HashSet<_>>();
+
+        let mut missing_quarantine = Vec::new();
+        for (hash, entry) in &snapshot.index {
+            if !pack_ids.contains(&entry.pack_id) {
+                report.missing_packs += 1;
+                report.corrupt_records += 1;
+                report.findings.push(finding(
+                    ScrubFindingKind::MissingPack,
+                    Some(entry.pack_id),
+                    Some(entry.offset),
+                    Some(*hash),
+                    None,
+                    None,
+                    format!("index references missing pack {}", entry.pack_id),
+                ));
+                missing_quarantine.push(*hash);
+            }
+        }
+        self.quarantine(&mut report, missing_quarantine).await?;
+
+        let mut pacing = PacingTracker::new(self.pacing);
+        let mut scanned = 0usize;
+        let mut last_checkpoint = resume_after;
+        for pack_id in pack_ids {
+            if let Some(last) = resume_after {
+                if pack_id <= last {
+                    report.packs_skipped_via_checkpoint += 1;
+                    continue;
+                }
+            }
+            if let Some(limit) = max_packs {
+                if scanned >= limit {
+                    report.checkpoint.last_completed_pack_id = last_checkpoint;
+                    report.completed = false;
+                    report.pacing = pacing.finish();
+                    return Ok(report);
+                }
+            }
+
+            let packs_dir = snapshot.packs_dir.clone();
+            let state_index = snapshot.index.clone();
+            let index_offsets = index_offsets.clone();
+            let current_pacing = pacing;
+            let (pack_scan, next_pacing) = tokio::task::spawn_blocking(move || {
+                let mut pacing = current_pacing;
+                let scan = scan_pack(&packs_dir, pack_id, &mut pacing)?;
+                Ok::<_, Error>((scan, pacing))
+            })
+            .await
+            .map_err(|err| {
+                Error::storage(StorageErrorKind::Other, format!("local scrub task: {err}"))
+            })??;
+            pacing = next_pacing;
+
+            scanned += 1;
+            report.packs_scanned += 1;
+            if report.first_scanned_pack_id.is_none() {
+                report.first_scanned_pack_id = Some(pack_id);
+            }
+            report.last_scanned_pack_id = Some(pack_id);
+            report.records_scanned += pack_scan.records_scanned;
+            report.bytes_scanned = report.bytes_scanned.saturating_add(pack_scan.bytes_scanned);
+            merge_pack_findings(
+                &mut report,
+                &pack_scan,
+                &state_index,
+                &index_offsets,
+                &self.store,
+            )
+            .await?;
+
+            let checkpoint = ScrubCheckpoint {
+                last_completed_pack_id: Some(pack_id),
+                complete: false,
+            };
+            self.write_checkpoint(checkpoint).await?;
+            last_checkpoint = Some(pack_id);
+            report.checkpoint.last_completed_pack_id = Some(pack_id);
+        }
+
+        let complete_checkpoint = ScrubCheckpoint {
+            last_completed_pack_id: last_checkpoint,
+            complete: true,
+        };
+        self.write_checkpoint(complete_checkpoint).await?;
+        report.checkpoint.last_completed_pack_id = last_checkpoint;
+        report.checkpoint.complete = true;
+        report.completed = true;
+        report.pacing = pacing.finish();
+        Ok(report)
+    }
+
+    async fn snapshot(&self) -> Result<ScrubSnapshot> {
+        self.store
+            .blocking(|state| {
+                local::ensure_writable(&state, "scrub")?;
+                let root = root_from_index_path(&state.index_path)?;
+                Ok(ScrubSnapshot {
+                    root,
+                    packs_dir: state.packs_dir.clone(),
+                    index: state.index.clone(),
+                })
+            })
+            .await
+    }
+
+    async fn quarantine(&self, report: &mut ScrubReport, hashes: Vec<BlobHash>) -> Result<()> {
+        if hashes.is_empty() {
+            return Ok(());
+        }
+        let unique = hashes.into_iter().collect::<BTreeSet<_>>();
+        let hashes = unique.iter().copied().collect::<Vec<_>>();
+        let inserted = self.store.quarantine_hashes(hashes).await?;
+        if inserted > 0 {
+            let mut inserted_hashes = unique.into_iter().collect::<Vec<_>>();
+            report.quarantined_hashes.append(&mut inserted_hashes);
+            report.quarantined_hashes.sort();
+            report.quarantined_hashes.dedup();
+        }
+        Ok(())
+    }
+
+    async fn write_checkpoint(&self, checkpoint: ScrubCheckpoint) -> Result<()> {
+        self.store
+            .blocking(move |mut state| {
+                local::ensure_writable(&state, "write scrub checkpoint")?;
+                let result = write_checkpoint_locked(&state, checkpoint);
+                local::poison_on_write_failure(&mut state, &result);
+                result
+            })
+            .await
+    }
+}
+
+/// Key-holding scrubber for framed ciphertext stored in local packs.
+pub struct EncryptedBlobScrubber {
+    store: LocalPackStore,
+    key: FramedBlobKey,
+    local_pacing: ScrubPacing,
+}
+
+impl EncryptedBlobScrubber {
+    pub fn new(store: LocalPackStore, key: FramedBlobKey) -> Self {
+        Self {
+            store,
+            key,
+            local_pacing: ScrubPacing::default(),
+        }
+    }
+
+    pub fn with_local_pacing(mut self, pacing: ScrubPacing) -> Self {
+        self.local_pacing = pacing;
+        self
+    }
+
+    pub async fn scrub(&self) -> Result<ScrubReport> {
+        let local = LocalPackScrubber::new(self.store.clone()).with_pacing(self.local_pacing);
+        let mut report = local.scrub().await?;
+        let entries = self.store.live_entries()?;
+        let mut quarantine = Vec::new();
+
+        for entry in entries {
+            let framed = match self.store.get(&entry.hash).await {
+                Ok(bytes) => bytes,
+                Err(err) if err.storage_kind() == Some(StorageErrorKind::Corruption) => continue,
+                Err(err) => return Err(err),
+            };
+            if let Err(err) = open_framed_blob(&self.key, &framed) {
+                report.corrupt_records += 1;
+                report.findings.push(finding(
+                    ScrubFindingKind::AeadOpenFailed,
+                    None,
+                    None,
+                    Some(entry.hash),
+                    None,
+                    None,
+                    format!(
+                        "encrypted blob {hash} failed AEAD open: {err}",
+                        hash = entry.hash
+                    ),
+                ));
+                quarantine.push(entry.hash);
+            }
+        }
+        local.quarantine(&mut report, quarantine).await?;
+        Ok(report)
+    }
+}
+
+#[derive(Clone)]
+struct ScrubSnapshot {
+    root: PathBuf,
+    packs_dir: PathBuf,
+    index: HashMap<BlobHash, PackEntry>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ScrubCheckpoint {
+    last_completed_pack_id: Option<u64>,
+    complete: bool,
+}
+
+impl ScrubCheckpoint {
+    fn encode(self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(SCRUB_CHECKPOINT_MAGIC.len() + 8 + 1);
+        bytes.extend_from_slice(SCRUB_CHECKPOINT_MAGIC);
+        bytes.extend_from_slice(
+            &self
+                .last_completed_pack_id
+                .unwrap_or(u64::MAX)
+                .to_le_bytes(),
+        );
+        bytes.push(u8::from(self.complete));
+        bytes
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PacingTracker {
+    config: ScrubPacing,
+    current_tick_bytes: u64,
+    bytes_per_tick: Vec<u64>,
+}
+
+impl PacingTracker {
+    fn new(config: ScrubPacing) -> Self {
+        Self {
+            config,
+            current_tick_bytes: 0,
+            bytes_per_tick: Vec::new(),
+        }
+    }
+
+    fn next_read_len(&mut self, requested: usize) -> usize {
+        if requested == 0 {
+            return 0;
+        }
+        if self.config.bytes_per_tick == u64::MAX {
+            return requested.min(DEFAULT_SCAN_CHUNK);
+        }
+        if self.current_tick_bytes >= self.config.bytes_per_tick {
+            self.finish_tick();
+        }
+        let remaining = self.config.bytes_per_tick - self.current_tick_bytes;
+        let capped = (requested as u64)
+            .min(DEFAULT_SCAN_CHUNK as u64)
+            .min(remaining)
+            .max(1);
+        capped as usize
+    }
+
+    fn account(&mut self, bytes: u64) {
+        if bytes == 0 {
+            return;
+        }
+        if self.config.bytes_per_tick == u64::MAX {
+            self.current_tick_bytes = self.current_tick_bytes.saturating_add(bytes);
+            return;
+        }
+
+        let mut remaining_bytes = bytes;
+        while remaining_bytes > 0 {
+            if self.current_tick_bytes >= self.config.bytes_per_tick {
+                self.finish_tick();
+            }
+            let available = self.config.bytes_per_tick - self.current_tick_bytes;
+            let take = remaining_bytes.min(available);
+            self.current_tick_bytes += take;
+            remaining_bytes -= take;
+            if self.current_tick_bytes >= self.config.bytes_per_tick && remaining_bytes > 0 {
+                self.finish_tick();
+            }
+        }
+    }
+
+    fn finish_tick(&mut self) {
+        if self.current_tick_bytes > 0 {
+            self.bytes_per_tick.push(self.current_tick_bytes);
+            self.current_tick_bytes = 0;
+        }
+    }
+
+    fn finish(mut self) -> ScrubPacingStatus {
+        self.finish_tick();
+        ScrubPacingStatus {
+            bytes_per_tick_budget: if self.config.bytes_per_tick == u64::MAX {
+                None
+            } else {
+                Some(self.config.bytes_per_tick)
+            },
+            bytes_per_tick: self.bytes_per_tick,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ScannedRecord {
+    pack_id: u64,
+    offset: u64,
+    hash: BlobHash,
+    len: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct PackScan {
+    pack_id: u64,
+    pack_header_valid: bool,
+    records_scanned: usize,
+    bytes_scanned: u64,
+    findings: Vec<ScrubFinding>,
+    valid_records: Vec<ScannedRecord>,
+    corrupt_offsets: BTreeSet<u64>,
+}
+
+fn root_from_index_path(index_path: &Path) -> Result<PathBuf> {
+    index_path.parent().map(Path::to_path_buf).ok_or_else(|| {
+        Error::storage(
+            StorageErrorKind::Other,
+            format!("index path {} has no parent", index_path.display()),
+        )
+    })
+}
+
+fn is_index_corruption(err: &Error) -> bool {
+    if err.storage_kind() != Some(StorageErrorKind::Corruption) {
+        return false;
+    }
+    match err.storage_message() {
+        Some(message) => message.starts_with("index "),
+        None => false,
+    }
+}
+
+fn repair_corrupt_index_for_rebuild(root: PathBuf, options: LocalPackStoreOptions) -> Result<()> {
+    root_guard::check_writable_root_shape(&root, &options)?;
+    let canonical = root.canonicalize().map_err(|err| {
+        local::io_error(err, format!("canonicalize blob root {}", root.display()))
+    })?;
+    let packs_dir = canonical.join("packs");
+    let observer = disk::NoopSyncObserver;
+    let _guard = root_guard::guard_writable_root(
+        &canonical,
+        &packs_dir,
+        &options,
+        SystemClock.now_millis(),
+        &observer,
+    )?;
+    let index_path = canonical.join("index.log");
+    disk::write_replace_durable(&index_path, INDEX_MAGIC, &observer).map_err(|err| {
+        local::io_error(
+            err,
+            format!("replace corrupt index {}", index_path.display()),
+        )
+    })
+}
+
+fn checkpoint_path(state: &LocalPackState) -> Result<PathBuf> {
+    Ok(root_from_index_path(&state.index_path)?.join(SCRUB_CHECKPOINT_FILE))
+}
+
+fn load_checkpoint(path: &Path) -> Result<Option<ScrubCheckpoint>> {
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(local::io_error(
+                err,
+                format!("open checkpoint {}", path.display()),
+            ));
+        }
+    };
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|err| local::io_error(err, format!("read checkpoint {}", path.display())))?;
+    if bytes.len() != SCRUB_CHECKPOINT_MAGIC.len() + 8 + 1 {
+        return Err(local::corruption(format!(
+            "checkpoint {} has invalid length",
+            path.display()
+        )));
+    }
+    if !bytes.starts_with(SCRUB_CHECKPOINT_MAGIC) {
+        return Err(local::corruption(format!(
+            "checkpoint {} has invalid magic",
+            path.display()
+        )));
+    }
+    let cursor = SCRUB_CHECKPOINT_MAGIC.len();
+    let mut raw_pack = [0u8; 8];
+    raw_pack.copy_from_slice(&bytes[cursor..cursor + 8]);
+    let raw_pack = u64::from_le_bytes(raw_pack);
+    let complete = match bytes[cursor + 8] {
+        0 => false,
+        1 => true,
+        other => {
+            return Err(local::corruption(format!(
+                "checkpoint {} has invalid complete flag {other}",
+                path.display()
+            )));
+        }
+    };
+    Ok(Some(ScrubCheckpoint {
+        last_completed_pack_id: if raw_pack == u64::MAX {
+            None
+        } else {
+            Some(raw_pack)
+        },
+        complete,
+    }))
+}
+
+fn write_checkpoint_locked(state: &LocalPackState, checkpoint: ScrubCheckpoint) -> Result<()> {
+    let path = checkpoint_path(state)?;
+    let observer = Arc::clone(&state.observer);
+    disk::write_replace_durable(&path, &checkpoint.encode(), &*observer)
+        .map_err(|err| local::io_error(err, format!("write checkpoint {}", path.display())))
+}
+
+fn finding(
+    kind: ScrubFindingKind,
+    pack_id: Option<u64>,
+    offset: Option<u64>,
+    hash: Option<BlobHash>,
+    expected_hash: Option<BlobHash>,
+    actual_hash: Option<BlobHash>,
+    message: String,
+) -> ScrubFinding {
+    ScrubFinding {
+        kind,
+        pack_id,
+        offset,
+        hash,
+        expected_hash,
+        actual_hash,
+        message,
+    }
+}
+
+fn scan_pack(packs_dir: &Path, pack_id: u64, pacing: &mut PacingTracker) -> Result<PackScan> {
+    let path = local::pack_path(packs_dir, pack_id);
+    let mut scan = PackScan {
+        pack_id,
+        ..PackScan::default()
+    };
+    let metadata = fs::metadata(&path)
+        .map_err(|err| local::io_error(err, format!("stat pack {}", path.display())))?;
+    let file_len = metadata.len();
+    let mut file = File::open(&path)
+        .map_err(|err| local::io_error(err, format!("open pack {}", path.display())))?;
+    let mut header = vec![0u8; PACK_MAGIC.len()];
+    let read = read_fully_or_short(
+        &mut file,
+        &path,
+        &mut header,
+        pacing,
+        &mut scan.bytes_scanned,
+    )?;
+    if read < PACK_MAGIC.len() {
+        scan.findings.push(finding(
+            ScrubFindingKind::TruncatedPackHeader,
+            Some(pack_id),
+            Some(0),
+            None,
+            None,
+            None,
+            format!("pack {} ended inside its header", path.display()),
+        ));
+        return Ok(scan);
+    }
+    if header != PACK_MAGIC {
+        scan.findings.push(finding(
+            ScrubFindingKind::InvalidPackHeader,
+            Some(pack_id),
+            Some(0),
+            None,
+            None,
+            None,
+            format!("pack {} has invalid header", path.display()),
+        ));
+        return Ok(scan);
+    }
+    scan.pack_header_valid = true;
+
+    let mut offset = PACK_MAGIC.len() as u64;
+    while offset < file_len {
+        let record_offset = offset;
+        let mut magic = [0u8; 4];
+        let read = read_fully_or_short(
+            &mut file,
+            &path,
+            &mut magic,
+            pacing,
+            &mut scan.bytes_scanned,
+        )?;
+        offset = offset.saturating_add(read as u64);
+        if read < magic.len() {
+            scan.corrupt_offsets.insert(record_offset);
+            scan.findings.push(finding(
+                ScrubFindingKind::TruncatedRecord,
+                Some(pack_id),
+                Some(record_offset),
+                None,
+                None,
+                None,
+                format!(
+                    "pack {} offset {record_offset} ended inside record magic",
+                    path.display()
+                ),
+            ));
+            break;
+        }
+        if magic != RECORD_MAGIC {
+            scan.corrupt_offsets.insert(record_offset);
+            scan.findings.push(finding(
+                ScrubFindingKind::InvalidRecordMagic,
+                Some(pack_id),
+                Some(record_offset),
+                None,
+                None,
+                None,
+                format!(
+                    "pack {} offset {record_offset} has invalid record magic",
+                    path.display()
+                ),
+            ));
+            break;
+        }
+
+        let mut stored_hash = [0u8; crate::BLAKE3_HASH_LEN];
+        let read = read_fully_or_short(
+            &mut file,
+            &path,
+            &mut stored_hash,
+            pacing,
+            &mut scan.bytes_scanned,
+        )?;
+        offset = offset.saturating_add(read as u64);
+        if read < stored_hash.len() {
+            scan.corrupt_offsets.insert(record_offset);
+            scan.findings.push(finding(
+                ScrubFindingKind::TruncatedRecord,
+                Some(pack_id),
+                Some(record_offset),
+                None,
+                None,
+                None,
+                format!(
+                    "pack {} offset {record_offset} ended inside record hash",
+                    path.display()
+                ),
+            ));
+            break;
+        }
+        let stored_hash = BlobHash::from_bytes(stored_hash);
+
+        let mut len = [0u8; 8];
+        let read =
+            read_fully_or_short(&mut file, &path, &mut len, pacing, &mut scan.bytes_scanned)?;
+        offset = offset.saturating_add(read as u64);
+        if read < len.len() {
+            scan.corrupt_offsets.insert(record_offset);
+            scan.findings.push(finding(
+                ScrubFindingKind::TruncatedRecord,
+                Some(pack_id),
+                Some(record_offset),
+                Some(stored_hash),
+                None,
+                None,
+                format!(
+                    "pack {} offset {record_offset} ended inside record length",
+                    path.display()
+                ),
+            ));
+            break;
+        }
+        let len = u64::from_le_bytes(len);
+        let body_start = record_offset.saturating_add(RECORD_HEADER_LEN);
+        if len > file_len.saturating_sub(body_start) {
+            scan.corrupt_offsets.insert(record_offset);
+            scan.findings.push(finding(
+                ScrubFindingKind::TruncatedRecord,
+                Some(pack_id),
+                Some(record_offset),
+                Some(stored_hash),
+                None,
+                None,
+                format!(
+                    "pack {} offset {record_offset} body length {len} extends past EOF",
+                    path.display()
+                ),
+            ));
+            break;
+        }
+
+        scan.records_scanned += 1;
+        let actual = read_body_hash(&mut file, &path, len, pacing, &mut scan.bytes_scanned)?;
+        offset = offset.saturating_add(len);
+        if actual != stored_hash {
+            scan.corrupt_offsets.insert(record_offset);
+            scan.findings.push(finding(
+                ScrubFindingKind::HashMismatch,
+                Some(pack_id),
+                Some(record_offset),
+                Some(stored_hash),
+                Some(stored_hash),
+                Some(actual),
+                format!(
+                    "pack {} offset {record_offset} bytes hash to {actual}, not {stored_hash}",
+                    path.display()
+                ),
+            ));
+            continue;
+        }
+
+        scan.valid_records.push(ScannedRecord {
+            pack_id,
+            offset: record_offset,
+            hash: stored_hash,
+            len,
+        });
+    }
+    Ok(scan)
+}
+
+fn read_fully_or_short(
+    file: &mut File,
+    path: &Path,
+    buf: &mut [u8],
+    pacing: &mut PacingTracker,
+    bytes_scanned: &mut u64,
+) -> Result<usize> {
+    let mut filled = 0usize;
+    while filled < buf.len() {
+        let read_len = pacing.next_read_len(buf.len() - filled);
+        match file.read(&mut buf[filled..filled + read_len]) {
+            Ok(0) => break,
+            Ok(n) => {
+                pacing.account(n as u64);
+                *bytes_scanned = bytes_scanned.saturating_add(n as u64);
+                filled += n;
+            }
+            Err(err) => {
+                return Err(local::io_error(
+                    err,
+                    format!("read pack {}", path.display()),
+                ));
+            }
+        }
+    }
+    Ok(filled)
+}
+
+fn read_body_hash(
+    file: &mut File,
+    path: &Path,
+    len: u64,
+    pacing: &mut PacingTracker,
+    bytes_scanned: &mut u64,
+) -> Result<BlobHash> {
+    let mut hasher = blake3::Hasher::new();
+    let mut remaining = len;
+    let mut buf = vec![0u8; DEFAULT_SCAN_CHUNK];
+    while remaining > 0 {
+        let requested = remaining.min(DEFAULT_SCAN_CHUNK as u64) as usize;
+        let read_len = pacing.next_read_len(requested);
+        match file.read(&mut buf[..read_len]) {
+            Ok(0) => {
+                return Err(local::corruption(format!(
+                    "pack {} ended while hashing record body",
+                    path.display()
+                )));
+            }
+            Ok(n) => {
+                pacing.account(n as u64);
+                *bytes_scanned = bytes_scanned.saturating_add(n as u64);
+                hasher.update(&buf[..n]);
+                remaining -= n as u64;
+            }
+            Err(err) => {
+                return Err(local::io_error(
+                    err,
+                    format!("read pack body {}", path.display()),
+                ));
+            }
+        }
+    }
+    Ok(BlobHash::from_bytes(*hasher.finalize().as_bytes()))
+}
+
+async fn merge_pack_findings(
+    report: &mut ScrubReport,
+    pack_scan: &PackScan,
+    index: &HashMap<BlobHash, PackEntry>,
+    index_offsets: &HashSet<(u64, u64)>,
+    store: &LocalPackStore,
+) -> Result<()> {
+    report.corrupt_records += pack_scan.findings.len();
+    report.findings.extend(pack_scan.findings.clone());
+
+    let valid_by_offset = pack_scan
+        .valid_records
+        .iter()
+        .map(|record| (record.offset, record))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut quarantine = Vec::new();
+    for (hash, entry) in index {
+        if entry.pack_id != pack_scan.pack_id {
+            continue;
+        }
+        match valid_by_offset.get(&entry.offset) {
+            Some(record) if record.hash != *hash => {
+                report.corrupt_records += 1;
+                report.findings.push(finding(
+                    ScrubFindingKind::IndexHashMismatch,
+                    Some(entry.pack_id),
+                    Some(entry.offset),
+                    Some(*hash),
+                    Some(*hash),
+                    Some(record.hash),
+                    format!(
+                        "index maps {hash} to pack {} offset {}, but record stores {}",
+                        entry.pack_id, entry.offset, record.hash
+                    ),
+                ));
+                quarantine.push(*hash);
+            }
+            Some(record) if record.len != entry.len => {
+                report.corrupt_records += 1;
+                report.findings.push(finding(
+                    ScrubFindingKind::IndexLengthMismatch,
+                    Some(entry.pack_id),
+                    Some(entry.offset),
+                    Some(*hash),
+                    Some(*hash),
+                    None,
+                    format!(
+                        "index maps {hash} to len {}, but record len is {}",
+                        entry.len, record.len
+                    ),
+                ));
+                quarantine.push(*hash);
+            }
+            Some(_) => {
+                report.records_verified += 1;
+            }
+            None if pack_scan.corrupt_offsets.contains(&entry.offset) => {
+                quarantine.push(*hash);
+            }
+            None if pack_scan.pack_header_valid => {
+                report.corrupt_records += 1;
+                report.findings.push(finding(
+                    ScrubFindingKind::MissingIndexedRecord,
+                    Some(entry.pack_id),
+                    Some(entry.offset),
+                    Some(*hash),
+                    Some(*hash),
+                    None,
+                    format!(
+                        "index maps {hash} to pack {} offset {}, but no record starts there",
+                        entry.pack_id, entry.offset
+                    ),
+                ));
+                quarantine.push(*hash);
+            }
+            None => {
+                quarantine.push(*hash);
+            }
+        }
+    }
+
+    for record in &pack_scan.valid_records {
+        if !index_offsets.contains(&(record.pack_id, record.offset)) {
+            report.orphan_records += 1;
+            report.findings.push(finding(
+                ScrubFindingKind::OrphanRecord,
+                Some(record.pack_id),
+                Some(record.offset),
+                Some(record.hash),
+                None,
+                None,
+                format!(
+                    "pack {} offset {} contains hash {} with no live index entry",
+                    record.pack_id, record.offset, record.hash
+                ),
+            ));
+        }
+    }
+
+    if quarantine.is_empty() {
+        return Ok(());
+    }
+    let hashes = quarantine.into_iter().collect::<BTreeSet<_>>();
+    let inserted = store
+        .quarantine_hashes(hashes.iter().copied().collect::<Vec<_>>())
+        .await?;
+    if inserted > 0 {
+        let mut inserted_hashes = hashes.into_iter().collect::<Vec<_>>();
+        report.quarantined_hashes.append(&mut inserted_hashes);
+        report.quarantined_hashes.sort();
+        report.quarantined_hashes.dedup();
+    }
+    Ok(())
+}
+
+fn rebuild_index_locked(
+    state: &mut LocalPackState,
+    pacing: ScrubPacing,
+    written_at_millis: u64,
+) -> Result<ScrubReport> {
+    let mut report = ScrubReport::default();
+    let mut pacing = PacingTracker::new(pacing);
+    let mut rebuilt = HashMap::new();
+    let pack_ids = local::pack_ids_on_disk(&state.packs_dir)?;
+
+    for pack_id in pack_ids {
+        let pack_scan = scan_pack(&state.packs_dir, pack_id, &mut pacing)?;
+        report.packs_scanned += 1;
+        if report.first_scanned_pack_id.is_none() {
+            report.first_scanned_pack_id = Some(pack_id);
+        }
+        report.last_scanned_pack_id = Some(pack_id);
+        report.records_scanned += pack_scan.records_scanned;
+        report.bytes_scanned = report.bytes_scanned.saturating_add(pack_scan.bytes_scanned);
+        report.corrupt_records += pack_scan.findings.len();
+        report.findings.extend(pack_scan.findings);
+        for record in pack_scan.valid_records {
+            rebuilt.insert(
+                record.hash,
+                PackEntry {
+                    pack_id: record.pack_id,
+                    offset: record.offset,
+                    len: record.len,
+                    written_at_millis,
+                },
+            );
+            report.records_verified += 1;
+        }
+    }
+
+    let index_bytes = encode_index(&rebuilt);
+    let observer = Arc::clone(&state.observer);
+    disk::write_replace_durable(&state.index_path, &index_bytes, &*observer).map_err(|err| {
+        local::io_error(err, format!("rebuild index {}", state.index_path.display()))
+    })?;
+    state.index = rebuilt;
+    state.active_pack_id = state
+        .index
+        .values()
+        .map(|entry| entry.pack_id)
+        .max()
+        .unwrap_or(0);
+    state.active_pack_bytes =
+        local::ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
+    if state.active_pack_bytes >= state.pack_target_bytes
+        && state.active_pack_bytes > PACK_MAGIC.len() as u64
+    {
+        state.active_pack_id = state.active_pack_id.saturating_add(1);
+        state.active_pack_bytes =
+            local::ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
+    }
+    report.completed = true;
+    report.pacing = pacing.finish();
+    Ok(report)
+}
+
+fn encode_index(index: &HashMap<BlobHash, PackEntry>) -> Vec<u8> {
+    let mut entries = index.iter().collect::<Vec<_>>();
+    entries.sort_by_key(|(_, entry)| (entry.pack_id, entry.offset));
+    let mut bytes = Vec::with_capacity(INDEX_MAGIC.len() + entries.len() * 65);
+    bytes.extend_from_slice(INDEX_MAGIC);
+    for (hash, entry) in entries {
+        bytes.push(INDEX_PUT);
+        bytes.extend_from_slice(hash.as_bytes());
+        bytes.extend_from_slice(&entry.pack_id.to_le_bytes());
+        bytes.extend_from_slice(&entry.offset.to_le_bytes());
+        bytes.extend_from_slice(&entry.len.to_le_bytes());
+        bytes.extend_from_slice(&entry.written_at_millis.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(test)]
+mod tests;

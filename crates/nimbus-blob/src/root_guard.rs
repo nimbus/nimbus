@@ -77,6 +77,8 @@ pub struct OpenReport {
     /// Bytes of a torn (crash-truncated) trailing index record dropped and
     /// truncated away at open.
     pub torn_index_bytes_truncated: u64,
+    /// Quarantined blob hashes loaded from the scrub quarantine side file.
+    pub quarantine_entries_loaded: usize,
 }
 
 /// The root format marker.
