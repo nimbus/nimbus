@@ -134,10 +134,8 @@ pub fn validate_timestamp(headers: &HeaderMap) -> Result<(), DynamoDbError> {
     let timestamp = extract_timestamp(headers)?;
 
     // Parse X-Amz-Date: YYYYMMDDTHHMMSSZ
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let now = i64::try_from(nimbus_core::clock::system_now_secs())
         .ok()
-        .and_then(|d| i64::try_from(d.as_secs()).ok())
         .ok_or_else(|| DynamoDbError::InternalServerError("server clock error".to_owned()))?;
 
     let request_epoch = parse_iso8601_basic(&timestamp).ok_or_else(|| {

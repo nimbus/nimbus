@@ -1,6 +1,5 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use nimbus_core::{
     Document, DocumentId, Error, Filter, FilterOp, Query, Result, TableName, TenantId,
@@ -448,10 +447,7 @@ async fn seed_system_documents_async(
 }
 
 fn unix_time_millis() -> Result<u64> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| Error::Internal(format!("system clock is before Unix epoch: {error}")))?
-        .as_millis() as u64)
+    Ok(nimbus_core::clock::system_now_millis())
 }
 
 async fn upsert_system_document_async(

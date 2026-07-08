@@ -11,11 +11,10 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use nimbus_core::{Error, Result, StorageErrorKind};
+use nimbus_core::{Clock, Error, Result, StorageErrorKind, SystemClock};
 use tokio::io::AsyncReadExt;
 
 use crate::hash::BlobHash;
@@ -78,6 +77,7 @@ struct LocalPackState {
 #[derive(Clone)]
 pub struct LocalPackStore {
     state: Arc<Mutex<LocalPackState>>,
+    clock: Arc<dyn Clock>,
 }
 
 impl LocalPackStore {
@@ -125,6 +125,7 @@ impl LocalPackStore {
                     #[cfg(test)]
                     body_bytes_read: 0,
                 })),
+                clock: Arc::new(SystemClock),
             });
         }
 
@@ -139,7 +140,15 @@ impl LocalPackStore {
                 #[cfg(test)]
                 body_bytes_read: 0,
             })),
+            clock: Arc::new(SystemClock),
         })
+    }
+
+    /// Overrides the write-timestamp clock (e.g. `ManualClock` for
+    /// deterministic GC tests). Defaults to the real system clock.
+    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+        self.clock = clock;
+        self
     }
 
     /// Number of live blobs in the local index.
@@ -206,7 +215,8 @@ impl LocalPackStore {
 #[async_trait]
 impl BlobStore for LocalPackStore {
     async fn put(&self, bytes: Bytes) -> Result<BlobHash> {
-        self.blocking(move |mut state| put_locked(&mut state, bytes))
+        let clock = Arc::clone(&self.clock);
+        self.blocking(move |mut state| put_locked(&mut state, bytes, clock.now_millis()))
             .await
     }
 
@@ -411,13 +421,17 @@ fn read_u64(path: &Path, bytes: &[u8], cursor: &mut usize) -> Result<u64> {
     Ok(u64::from_le_bytes(raw))
 }
 
-fn put_locked(state: &mut LocalPackState, bytes: Bytes) -> Result<BlobHash> {
+fn put_locked(
+    state: &mut LocalPackState,
+    bytes: Bytes,
+    written_at_millis: u64,
+) -> Result<BlobHash> {
     let hash = BlobHash::of(&bytes);
     if state.index.contains_key(&hash) {
         return Ok(hash);
     }
 
-    let entry = append_pack_record(state, &hash, &bytes, now_millis())?;
+    let entry = append_pack_record(state, &hash, &bytes, written_at_millis)?;
     append_put_index_record(&state.index_path, &hash, entry)?;
     state.index.insert(hash, entry);
     Ok(hash)
@@ -743,13 +757,6 @@ fn pack_ids_on_disk(packs_dir: &Path) -> Result<BTreeSet<u64>> {
         pack_ids.insert(pack_id);
     }
     Ok(pack_ids)
-}
-
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

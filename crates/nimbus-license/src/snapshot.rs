@@ -102,11 +102,7 @@ impl LicenseState {
 }
 
 pub(super) fn current_time_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .min(u128::from(u64::MAX)) as u64
+    nimbus_core::clock::system_now_millis()
 }
 
 fn maybe_warn_about_window(

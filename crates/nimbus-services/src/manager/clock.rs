@@ -1,7 +1,9 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
+/// Wall-clock millis for resource stamping. Pure plumbing (no struct here
+/// holds test-observable state), so this routes through the one canonical
+/// `SystemClock` implementation (CO7) rather than injecting a per-call
+/// clock.
 pub(super) fn now_millis() -> u64 {
-    millis_since_epoch(SystemTime::now())
+    nimbus_core::clock::system_now_millis()
 }
 
 pub(super) fn next_version(next: &mut u64, prefix: &str) -> String {
@@ -9,22 +11,9 @@ pub(super) fn next_version(next: &mut u64, prefix: &str) -> String {
     format!("{prefix}-v{}", *next)
 }
 
-fn millis_since_epoch(time: SystemTime) -> u64 {
-    time.duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().try_into().unwrap_or(u64::MAX))
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
-
-    #[test]
-    fn millis_since_epoch_saturates_pre_epoch_to_zero() {
-        assert_eq!(millis_since_epoch(UNIX_EPOCH - Duration::from_millis(1)), 0);
-    }
 
     #[test]
     fn next_resource_version_starts_at_one_and_saturates() {

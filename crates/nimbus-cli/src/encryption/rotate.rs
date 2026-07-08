@@ -207,10 +207,7 @@ fn rotate_manifest(
     let subject = subject_from_descriptor(&manifest.header.subject_descriptor)?;
 
     let mut new_header = manifest.header.clone();
-    new_header.rotated_at = std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    new_header.rotated_at = nimbus_core::clock::system_now_secs();
     new_header.key_provider = new_provider.kind();
 
     let new_wrapped = match new_provider
@@ -559,10 +556,7 @@ fn build_rotated_manifest(
     new_dek: &[u8; 32],
 ) -> Result<KeyManifest> {
     let mut new_header = manifest.header.clone();
-    new_header.rotated_at = std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    new_header.rotated_at = nimbus_core::clock::system_now_secs();
     new_header.key_provider = provider.kind();
 
     let new_wrapped = provider

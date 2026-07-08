@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde_json::{Map, Value};
 
 use nimbus_auth::ApplicationAuthError;
@@ -8,10 +6,7 @@ use super::super::CLOCK_SKEW;
 use super::models::ParsedClaims;
 
 pub fn validate_temporal_claims(claims: &ParsedClaims) -> Result<(), ApplicationAuthError> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock should be after unix epoch")
-        .as_secs();
+    let now = nimbus_core::clock::system_now_secs();
     let now_with_skew = now.saturating_add(CLOCK_SKEW.as_secs());
     let now_without_skew = now.saturating_sub(CLOCK_SKEW.as_secs());
     if let Some(not_before) = claims.not_before

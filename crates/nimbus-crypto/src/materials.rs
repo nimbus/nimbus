@@ -10,7 +10,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use nimbus_core::{Error, Result};
 use sha2::{Digest, Sha256};
@@ -741,10 +740,7 @@ fn key_manifest_header(
     key_provider: KeyProviderKind,
     cipher: ManifestCipher,
 ) -> KeyManifestHeader {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
+    let now = nimbus_core::clock::system_now_secs();
     KeyManifestHeader {
         version: MANIFEST_VERSION,
         cipher,

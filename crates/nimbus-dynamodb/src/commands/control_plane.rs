@@ -11,7 +11,6 @@
 //! merges with D0.8.
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use extenddb_core::error::DynamoDbError;
 use extenddb_core::types::{
@@ -724,10 +723,9 @@ fn build_table_description(input: &CreateTableInput) -> TableDescription {
 }
 
 fn now_epoch_seconds() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0)
+    // Millis precision (not whole-seconds `Clock::now_secs`) to preserve the
+    // sub-second fraction DynamoDB's float timestamps carry.
+    nimbus_core::clock::system_now_millis() as f64 / 1000.0
 }
 
 fn description_to_fields(

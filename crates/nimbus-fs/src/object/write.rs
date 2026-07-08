@@ -10,7 +10,6 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use deno_fs::OpenOptions;
@@ -368,11 +367,7 @@ fn insert_parent_dirs(dirs: &mut BTreeSet<PathBuf>, path: &Path) {
 }
 
 fn now_millis() -> FsResult<u64> {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| io::Error::other(format!("system clock before epoch: {error}")))?;
-    u64::try_from(duration.as_millis())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "timestamp overflows u64").into())
+    Ok(nimbus_core::clock::system_now_millis())
 }
 
 fn reject_unsupported_value<T>(operation: ObjectUnsupportedOperation) -> FsResult<T> {
