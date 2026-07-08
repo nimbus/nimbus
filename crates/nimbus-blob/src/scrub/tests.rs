@@ -936,3 +936,33 @@ async fn resume_rescans_packs_with_findings() {
         "the dirty pack's finding re-surfaces on resume: {resumed:?}"
     );
 }
+
+#[tokio::test]
+async fn repeat_scrub_reports_previously_quarantined() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store
+        .put(Bytes::from_static(b"persistent corrupt"))
+        .await
+        .unwrap();
+    flip_first_body_byte(&dir, &store, victim).await;
+
+    // First run quarantines.
+    let first = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(first.quarantined_hashes.contains(&victim));
+
+    // Every subsequent run keeps the live quarantined claim operator-visible
+    // instead of reporting a clean store while a blob is unreadable.
+    let second = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(
+        second.previously_quarantined.contains(&victim),
+        "persistent corruption stays visible: {second:?}"
+    );
+
+    // The encrypted-layer scrub composes the local pass, so it inherits the
+    // same persistent visibility.
+    let encrypted = EncryptedBlobScrubber::new(store.clone(), key("tenant-visibility"))
+        .scrub()
+        .await
+        .unwrap();
+    assert!(encrypted.previously_quarantined.contains(&victim));
+}

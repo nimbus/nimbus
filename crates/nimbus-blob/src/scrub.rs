@@ -131,6 +131,10 @@ pub struct ScrubReport {
     pub orphan_records: usize,
     pub missing_packs: usize,
     pub quarantined_hashes: Vec<BlobHash>,
+    /// Live claims that were ALREADY quarantined before this run. Persistent
+    /// corruption stays operator-visible on every scrub, not only the run
+    /// that first quarantined it.
+    pub previously_quarantined: Vec<BlobHash>,
     pub findings: Vec<ScrubFinding>,
     pub checkpoint: ScrubCheckpointStatus,
     pub pacing: ScrubPacingStatus,
@@ -248,6 +252,13 @@ impl LocalPackScrubber {
         // never checkpoint-skippable.
         let max_pack_seen = Some(snapshot.active_pack_id);
         let mut report = ScrubReport::default();
+        report.previously_quarantined = snapshot
+            .index
+            .keys()
+            .filter(|hash| snapshot.quarantined.contains(hash))
+            .copied()
+            .collect();
+        report.previously_quarantined.sort();
         report.checkpoint.path = Some(checkpoint_path.clone());
         report.checkpoint.resumed_after_pack_id =
             resume.and_then(|checkpoint| checkpoint.last_completed_pack_id);
@@ -310,13 +321,13 @@ impl LocalPackScrubber {
             let packs_dir = snapshot.packs_dir.clone();
             let state_index = snapshot.index.clone();
             let index_offsets = index_offsets.clone();
-            let current_pacing = pacing;
+            let current_pacing = pacing.clone();
             let len_cap = if pack_id == snapshot.active_pack_id {
                 Some(snapshot.active_pack_bytes)
             } else {
                 None
             };
-            let (pack_scan, next_pacing) = tokio::task::spawn_blocking(move || {
+            let scan_result = tokio::task::spawn_blocking(move || {
                 let mut pacing = current_pacing;
                 let scan = scan_pack(&packs_dir, pack_id, len_cap, &mut pacing)?;
                 Ok::<_, Error>((scan, pacing))
@@ -324,7 +335,28 @@ impl LocalPackScrubber {
             .await
             .map_err(|err| {
                 Error::storage(StorageErrorKind::Other, format!("local scrub task: {err}"))
-            })??;
+            })?;
+            let (pack_scan, next_pacing) = match scan_result {
+                Ok(scanned) => scanned,
+                Err(err) => {
+                    // A snapshotted pack can legitimately disappear when a
+                    // same-process compaction rewrote the layout mid-scrub:
+                    // skip it (its live blobs were rewritten into new packs)
+                    // and freeze checkpointing for the dead layout. A pack
+                    // that vanished WITHOUT compaction is external
+                    // interference — fail closed.
+                    let pack_gone = !local::pack_path(&snapshot.packs_dir, pack_id).exists();
+                    let epoch_now = self
+                        .store
+                        .blocking(|state| Ok(state.compaction_epoch))
+                        .await?;
+                    if pack_gone && epoch_now != snapshot.compaction_epoch {
+                        checkpoint_frozen = true;
+                        continue;
+                    }
+                    return Err(err);
+                }
+            };
             pacing = next_pacing;
 
             scanned += 1;
@@ -408,6 +440,7 @@ impl LocalPackScrubber {
                     active_pack_bytes: state.active_pack_bytes,
                     pack_ids,
                     compaction_epoch: state.compaction_epoch,
+                    quarantined: state.quarantined.clone(),
                 })
             })
             .await
@@ -491,6 +524,10 @@ impl EncryptedBlobScrubber {
         for entry in entries {
             let framed = match self.store.get(&entry.hash).await {
                 Ok(bytes) => bytes,
+                // Already quarantined (local pass or a previous run): its
+                // persistent visibility rides `report.previously_quarantined`
+                // and `report.quarantined_hashes`, so skipping the AEAD open
+                // here loses nothing.
                 Err(err) if err.storage_kind() == Some(StorageErrorKind::Corruption) => continue,
                 Err(err) => return Err(err),
             };
@@ -536,6 +573,7 @@ struct ScrubSnapshot {
     /// Compaction epoch at snapshot time; checkpoint publication is refused
     /// once it moves (the pack layout this scrub scanned no longer exists).
     compaction_epoch: u64,
+    quarantined: HashSet<BlobHash>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
