@@ -106,6 +106,15 @@ pub(crate) fn fsync_dir(dir: &Path, observer: &dyn SyncObserver) -> io::Result<(
 /// new entries survive power loss. Without this, an acknowledged first write
 /// into a brand-new root could lose the entire root directory on crash.
 pub(crate) fn create_dir_all_durable(path: &Path, observer: &dyn SyncObserver) -> io::Result<()> {
+    // Absolutize first: a relative path's top component has an empty
+    // `parent()`, which would silently skip the fsync of the directory entry
+    // that names the new root.
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let path = path.as_path();
     // Find the deepest ancestor that already exists.
     let mut missing: Vec<PathBuf> = Vec::new();
     let mut probe = path.to_path_buf();

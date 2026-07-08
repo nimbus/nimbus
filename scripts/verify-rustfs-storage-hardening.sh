@@ -43,7 +43,9 @@ check_provenance_file() {
   head -n 20 "${file}" | grep -q 'Copyright 2024 RustFS Team' || return 1
   [ -f "${crate_dir}/THIRD_PARTY.md" ] || return 1
   local rel="${file#"${crate_dir}"/}"
-  grep -q "\`${rel}\`" "${crate_dir}/THIRD_PARTY.md" || return 1
+  # Literal backtick-wrapped path: single-quote the backticks so the shell
+  # cannot command-substitute them, and -F so grep matches literally.
+  grep -qF '`'"${rel}"'`' "${crate_dir}/THIRD_PARTY.md" || return 1
   return 0
 }
 
