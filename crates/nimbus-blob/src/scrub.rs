@@ -380,6 +380,13 @@ impl LocalPackScrubber {
             report.last_scanned_pack_id = Some(pack_id);
             report.records_scanned += pack_scan.records_scanned;
             report.bytes_scanned = report.bytes_scanned.saturating_add(pack_scan.bytes_scanned);
+            // Retire a header-discredited ACTIVE pack even when it has zero
+            // indexed hashes to quarantine: otherwise new puts append behind
+            // the bad header and the root fails closed on reopen. A retire
+            // request with no hashes still rolls the active pack.
+            if !pack_scan.pack_header_valid && pack_id == snapshot.active_pack_id {
+                self.store.retire_pack_if_active(pack_id).await?;
+            }
             let findings_before = report.findings.len();
             let pack_had_scan_findings = !pack_scan.findings.is_empty();
             merge_pack_findings(

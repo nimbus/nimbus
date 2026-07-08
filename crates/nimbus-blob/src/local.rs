@@ -475,6 +475,31 @@ impl LocalPackStore {
     /// ground truth under the store lock (see [`QuarantineCheck`]) so a stale
     /// scrub snapshot can never quarantine a healthy blob. Returns the hashes
     /// actually inserted.
+    /// Retires `pack_id` iff it is the current active pack and its header no
+    /// longer validates: rolls to a fresh validated active pack so new puts
+    /// never land behind the bad header and reopen selects the fresh pack.
+    /// Idempotent and finding-free (used by scrub for an unreferenced corrupt
+    /// active pack that has no hashes to quarantine).
+    pub(crate) async fn retire_pack_if_active(&self, pack_id: u64) -> Result<()> {
+        self.blocking(move |mut state| {
+            ensure_writable(&state, "retire pack")?;
+            let result = (|state: &mut LocalPackState| {
+                if state.active_pack_id == pack_id
+                    && !quarantine::pack_header_is_valid(&state.packs_dir, pack_id)
+                {
+                    let observer = Arc::clone(&state.observer);
+                    state.active_pack_id = state.active_pack_id.saturating_add(1);
+                    state.active_pack_bytes =
+                        ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
+                }
+                Ok(())
+            })(&mut state);
+            poison_on_write_failure(&mut state, &result);
+            result
+        })
+        .await
+    }
+
     pub(crate) async fn quarantine_hashes(
         &self,
         requests: Vec<(BlobHash, QuarantineCheck)>,

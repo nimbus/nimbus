@@ -1377,3 +1377,84 @@ async fn quarantine_revalidation_bytes_are_accounted() {
         pack_len
     );
 }
+
+#[tokio::test]
+async fn scrub_retires_empty_corrupt_active_pack() {
+    let (dir, store) = open_temp(64 * 1024);
+    // Active pack 0 exists but has NO indexed records; corrupt its header.
+    let path = local::pack_path(&dir.path().join("packs"), 0);
+    {
+        let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.write_all(b"BAD").unwrap();
+        file.sync_data().unwrap();
+    }
+
+    // Scrub reports the finding AND retires the active pack even though there
+    // are zero hashes to quarantine.
+    LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    let active = store
+        .blocking(|state| Ok(state.active_pack_id))
+        .await
+        .unwrap();
+    assert_ne!(active, 0, "corrupt empty active pack is retired");
+
+    // New puts land in the fresh pack and survive reopen.
+    let hash = store
+        .put(Bytes::from_static(b"after retire"))
+        .await
+        .unwrap();
+    let entry = entry_for(&store, hash).await;
+    assert_ne!(entry.pack_id, 0);
+    drop(store);
+    let reopened = LocalPackStore::open(dir.path()).unwrap();
+    assert_eq!(
+        reopened.get(&hash).await.unwrap(),
+        Bytes::from_static(b"after retire")
+    );
+}
+
+#[tokio::test]
+async fn rebuild_retains_live_claim_behind_corrupt_pack_header() {
+    let (dir, store) = open_temp(64 * 1024);
+    let a = store.put(Bytes::from_static(b"claim a")).await.unwrap();
+    let b = store.put(Bytes::from_static(b"claim b")).await.unwrap();
+    drop(store);
+
+    // Corrupt pack 0's header (both claims live behind it), then corrupt the
+    // index so rebuild_index_in_root runs.
+    {
+        let store = LocalPackStore::open(dir.path()).unwrap();
+        let entry = entry_for(&store, a).await;
+        let path = local::pack_path(&dir.path().join("packs"), entry.pack_id);
+        let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.write_all(b"BAD").unwrap();
+        file.sync_data().unwrap();
+        drop(store);
+    }
+    // Corrupt the index by APPENDING an unknown-tag record: the parseable
+    // prefix (both a and b entries) still salvages, but a normal open
+    // refuses, so rebuild_index_in_root runs. The salvaged entries point at
+    // the header-corrupt pack — they must be retained + quarantined, not
+    // skipped.
+    let index_path = dir.path().join("index.log");
+    let mut file = OpenOptions::new().append(true).open(&index_path).unwrap();
+    file.write_all(&[9u8]).unwrap();
+    file.write_all(&[0u8; crate::BLAKE3_HASH_LEN]).unwrap();
+    file.sync_data().unwrap();
+    assert!(LocalPackStore::open(dir.path()).is_err(), "open refuses");
+
+    LocalPackScrubber::rebuild_index_in_root(dir.path(), LocalPackStoreOptions::default())
+        .await
+        .unwrap();
+
+    // Both live claims survive repair as quarantined (fail-closed), never
+    // dropped to NotFound where compaction could delete the bytes.
+    let store = LocalPackStore::open(dir.path()).unwrap();
+    for hash in [a, b] {
+        assert!(store.has(&hash).await.unwrap(), "claim retained: {hash}");
+        let err = store.get(&hash).await.unwrap_err();
+        assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    }
+}

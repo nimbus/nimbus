@@ -156,6 +156,11 @@ pub(super) fn rebuild_corrupt_index_under_guard(
             continue;
         }
         if header_corrupt_packs.contains(&entry.pack_id) {
+            // The pack is discredited wholesale, but the claim is live:
+            // retain it quarantined (fail-closed) rather than drop it to
+            // NotFound and let compaction delete the bytes.
+            rebuilt.insert(hash, entry);
+            new_quarantines.insert(hash, local::QuarantineReason::Record);
             continue;
         }
         let mut direct_bytes = 0u64;
@@ -301,6 +306,9 @@ pub(super) fn rebuild_index_locked(
             continue;
         }
         if header_corrupt_packs.contains(&entry.pack_id) {
+            // Live claim behind a discredited pack: retain quarantined.
+            rebuilt.insert(*hash, *entry);
+            new_quarantines.insert(*hash, local::QuarantineReason::Record);
             continue;
         }
         let mut direct_bytes = 0u64;
