@@ -609,9 +609,21 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
         direct_json
     );
 
-    let sequence_before = engine
-        .latest_sequence(&tenant_id)
-        .expect("latest sequence should load");
+    // Count document-bearing commits rather than comparing raw
+    // `latest_sequence`: the tenant's background trigger-candidate feed
+    // appends zero-write cursor-advance commits to the same sequence space
+    // at its own pace, so a raw-sequence equality races it (observed
+    // flake). A denied insert must add no DOCUMENT commit; cursor commits
+    // carry no writes and cannot mask one.
+    let document_commits = |engine: &nimbus_engine::Engine| {
+        engine
+            .read_durable_journal(&tenant_id, nimbus_core::SequenceNumber(0))
+            .expect("durable journal should read")
+            .into_iter()
+            .filter(|record| !record.as_commit_entry().writes.is_empty())
+            .count()
+    };
+    let document_commits_before = document_commits(&engine);
     let insert_result = bridge
         .invoke_ctx_mutation(json!({
             "mutation": {
@@ -629,10 +641,9 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
         Err(Error::PermissionDenied(_))
     ));
     assert_eq!(
-        engine
-            .latest_sequence(&tenant_id)
-            .expect("latest sequence should remain unchanged"),
-        sequence_before
+        document_commits(&engine),
+        document_commits_before,
+        "denied insert must not add a document commit"
     );
 }
 
