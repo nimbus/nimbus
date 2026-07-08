@@ -29,7 +29,7 @@ use crate::local::{
 use crate::root_guard::{self, LocalPackStoreOptions};
 use crate::store::BlobStore;
 
-const SCRUB_CHECKPOINT_FILE: &str = "scrub-checkpoint.nbls";
+pub(crate) const SCRUB_CHECKPOINT_FILE: &str = "scrub-checkpoint.nbls";
 const SCRUB_CHECKPOINT_MAGIC: &[u8] = b"NBLSCP1\n";
 const DEFAULT_SCAN_CHUNK: usize = 64 * 1024;
 const RECORD_HEADER_LEN: u64 = RECORD_MAGIC.len() as u64 + crate::BLAKE3_HASH_LEN as u64 + 8;
@@ -302,9 +302,14 @@ impl LocalPackScrubber {
             let state_index = snapshot.index.clone();
             let index_offsets = index_offsets.clone();
             let current_pacing = pacing;
+            let len_cap = if pack_id == snapshot.active_pack_id {
+                Some(snapshot.active_pack_bytes)
+            } else {
+                None
+            };
             let (pack_scan, next_pacing) = tokio::task::spawn_blocking(move || {
                 let mut pacing = current_pacing;
-                let scan = scan_pack(&packs_dir, pack_id, &mut pacing)?;
+                let scan = scan_pack(&packs_dir, pack_id, len_cap, &mut pacing)?;
                 Ok::<_, Error>((scan, pacing))
             })
             .await
@@ -328,6 +333,7 @@ impl LocalPackScrubber {
                 &index_offsets,
                 &self.store,
                 &snapshot.packs_dir,
+                &mut pacing,
             )
             .await?;
 
@@ -363,6 +369,8 @@ impl LocalPackScrubber {
                     root,
                     packs_dir: state.packs_dir.clone(),
                     index: state.index.clone(),
+                    active_pack_id: state.active_pack_id,
+                    active_pack_bytes: state.active_pack_bytes,
                 })
             })
             .await
@@ -465,6 +473,12 @@ struct ScrubSnapshot {
     root: PathBuf,
     packs_dir: PathBuf,
     index: HashMap<BlobHash, PackEntry>,
+    /// Active pack and its length at snapshot time: scanning the active pack
+    /// stops here so records appended after the snapshot (possibly still
+    /// in flight) are never misreported as corruption. They are covered by
+    /// the next scrub.
+    active_pack_id: u64,
+    active_pack_bytes: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -654,7 +668,7 @@ fn rebuild_corrupt_index_under_guard(
     let mut rebuilt = HashMap::new();
     let written_at_millis = SystemClock.now_millis();
     for pack_id in local::pack_ids_on_disk(&packs_dir)? {
-        let pack_scan = scan_pack(&packs_dir, pack_id, &mut pacing)?;
+        let pack_scan = scan_pack(&packs_dir, pack_id, None, &mut pacing)?;
         report.packs_scanned += 1;
         if report.first_scanned_pack_id.is_none() {
             report.first_scanned_pack_id = Some(pack_id);
@@ -781,7 +795,12 @@ fn finding(
     }
 }
 
-fn scan_pack(packs_dir: &Path, pack_id: u64, pacing: &mut PacingTracker) -> Result<PackScan> {
+fn scan_pack(
+    packs_dir: &Path,
+    pack_id: u64,
+    len_cap: Option<u64>,
+    pacing: &mut PacingTracker,
+) -> Result<PackScan> {
     let path = local::pack_path(packs_dir, pack_id);
     let mut scan = PackScan {
         pack_id,
@@ -789,7 +808,12 @@ fn scan_pack(packs_dir: &Path, pack_id: u64, pacing: &mut PacingTracker) -> Resu
     };
     let metadata = fs::metadata(&path)
         .map_err(|err| local::io_error(err, format!("stat pack {}", path.display())))?;
-    let file_len = metadata.len();
+    let mut file_len = metadata.len();
+    if let Some(cap) = len_cap {
+        // Bytes past the snapshot length belong to writes that raced the
+        // scrub; ignore them rather than misreport an in-flight append.
+        file_len = file_len.min(cap);
+    }
     let mut file = File::open(&path)
         .map_err(|err| local::io_error(err, format!("open pack {}", path.display())))?;
     let mut header = vec![0u8; PACK_MAGIC.len()];
@@ -1042,6 +1066,65 @@ fn read_body_hash(
     Ok(BlobHash::from_bytes(*hasher.finalize().as_bytes()))
 }
 
+/// Direct, paced verification of one indexed record: framing fields must
+/// match the index entry and the body must hash to the expected address.
+/// Reads through the same [`PacingTracker`] as sequential scanning so
+/// direct verification honors the scrub I/O budget.
+fn verify_record_paced(
+    packs_dir: &Path,
+    expected_hash: &BlobHash,
+    entry: PackEntry,
+    pacing: &mut PacingTracker,
+    bytes_scanned: &mut u64,
+) -> Result<()> {
+    use std::io::{Seek, SeekFrom};
+
+    let path = local::pack_path(packs_dir, entry.pack_id);
+    let mut file = File::open(&path)
+        .map_err(|err| local::io_error(err, format!("open pack {}", path.display())))?;
+    file.seek(SeekFrom::Start(entry.offset))
+        .map_err(|err| local::io_error(err, format!("seek pack {}", path.display())))?;
+
+    let mut magic = [0u8; 4];
+    let read = read_fully_or_short(&mut file, &path, &mut magic, pacing, bytes_scanned)?;
+    if read < magic.len() || magic != RECORD_MAGIC {
+        return Err(local::corruption(format!(
+            "pack {} offset {} has invalid record magic",
+            path.display(),
+            entry.offset
+        )));
+    }
+    let mut stored_hash = [0u8; crate::BLAKE3_HASH_LEN];
+    let read = read_fully_or_short(&mut file, &path, &mut stored_hash, pacing, bytes_scanned)?;
+    if read < stored_hash.len() || BlobHash::from_bytes(stored_hash) != *expected_hash {
+        return Err(local::corruption(format!(
+            "pack {} offset {} stores a different hash",
+            path.display(),
+            entry.offset
+        )));
+    }
+    let mut len = [0u8; 8];
+    let read = read_fully_or_short(&mut file, &path, &mut len, pacing, bytes_scanned)?;
+    let len = u64::from_le_bytes(len);
+    if read < 8 || len != entry.len {
+        return Err(local::corruption(format!(
+            "pack {} offset {} record length {len} does not match index len {}",
+            path.display(),
+            entry.offset,
+            entry.len
+        )));
+    }
+    let actual = read_body_hash(&mut file, &path, len, pacing, bytes_scanned)?;
+    if actual != *expected_hash {
+        return Err(local::corruption(format!(
+            "pack {} offset {} bytes hash to {actual}, not {expected_hash}",
+            path.display(),
+            entry.offset
+        )));
+    }
+    Ok(())
+}
+
 async fn merge_pack_findings(
     report: &mut ScrubReport,
     pack_scan: &PackScan,
@@ -1049,6 +1132,7 @@ async fn merge_pack_findings(
     index_offsets: &HashSet<(u64, u64)>,
     store: &LocalPackStore,
     packs_dir: &Path,
+    pacing: &mut PacingTracker,
 ) -> Result<()> {
     report.corrupt_records += pack_scan.findings.len();
     report.findings.extend(pack_scan.findings.clone());
@@ -1137,14 +1221,19 @@ async fn merge_pack_findings(
     if !direct_verify.is_empty() {
         let packs_dir = packs_dir.to_path_buf();
         let batch = direct_verify.clone();
-        let verdicts = tokio::task::spawn_blocking(move || {
-            batch
+        let current_pacing = pacing.clone();
+        let (verdicts, next_pacing, direct_bytes) = tokio::task::spawn_blocking(move || {
+            let mut pacing = current_pacing;
+            let mut bytes = 0u64;
+            let verdicts = batch
                 .into_iter()
                 .map(|(hash, entry)| {
-                    let verdict = local::read_pack_entry(&packs_dir, &hash, entry);
-                    (hash, entry, verdict.map(|_| ()))
+                    let verdict =
+                        verify_record_paced(&packs_dir, &hash, entry, &mut pacing, &mut bytes);
+                    (hash, entry, verdict)
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            Ok::<_, Error>((verdicts, pacing, bytes))
         })
         .await
         .map_err(|err| {
@@ -1152,7 +1241,9 @@ async fn merge_pack_findings(
                 StorageErrorKind::Other,
                 format!("local scrub direct-verify task: {err}"),
             )
-        })?;
+        })??;
+        *pacing = next_pacing;
+        report.bytes_scanned = report.bytes_scanned.saturating_add(direct_bytes);
         for (hash, entry, verdict) in verdicts {
             match verdict {
                 Ok(()) => report.records_verified += 1,
@@ -1222,7 +1313,7 @@ fn rebuild_index_locked(
     let pack_ids = local::pack_ids_on_disk(&state.packs_dir)?;
 
     for pack_id in pack_ids {
-        let pack_scan = scan_pack(&state.packs_dir, pack_id, &mut pacing)?;
+        let pack_scan = scan_pack(&state.packs_dir, pack_id, None, &mut pacing)?;
         report.packs_scanned += 1;
         if report.first_scanned_pack_id.is_none() {
             report.first_scanned_pack_id = Some(pack_id);

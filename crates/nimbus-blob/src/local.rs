@@ -1214,6 +1214,11 @@ fn read_pack_entry_range(
 
 fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
     let observer = Arc::clone(&state.observer);
+    // Compaction restructures pack ids wholesale (and the empty-store branch
+    // even reuses pack id 0), so any scrub checkpoint taken against the old
+    // pack layout is meaningless — and dangerously so on resume, where a
+    // reused pack id would be skipped as "already verified". Invalidate it.
+    invalidate_scrub_checkpoint(state, &*observer)?;
     let original_packs = pack_ids_on_disk(&state.packs_dir)?;
     if state.index.is_empty() {
         let mut stats = CompactionStats::default();
@@ -1282,6 +1287,23 @@ fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
         })?;
     }
     Ok(stats)
+}
+
+/// Removes the scrub checkpoint (if any) and persists the removal.
+fn invalidate_scrub_checkpoint(state: &LocalPackState, observer: &dyn SyncObserver) -> Result<()> {
+    let Some(root) = state.index_path.parent() else {
+        return Ok(());
+    };
+    let path = root.join(crate::scrub::SCRUB_CHECKPOINT_FILE);
+    match fs::remove_file(&path) {
+        Ok(()) => disk::fsync_dir(root, observer)
+            .map_err(|err| io_error(err, format!("sync root dir {}", root.display()))),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(io_error(
+            err,
+            format!("remove stale scrub checkpoint {}", path.display()),
+        )),
+    }
 }
 
 pub(crate) fn pack_ids_on_disk(packs_dir: &Path) -> Result<BTreeSet<u64>> {

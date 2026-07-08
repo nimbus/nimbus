@@ -525,12 +525,22 @@ async fn scrub_does_not_quarantine_healthy_records_after_corrupt_segment() {
     // it, but the record after it is still readable by direct index offset.
     smash_record_magic(&dir, &store, corrupt).await;
 
-    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    let report = LocalPackScrubber::new(store.clone())
+        .with_pacing(ScrubPacing::bytes_per_tick(64).unwrap())
+        .scrub()
+        .await
+        .unwrap();
 
     assert!(report.quarantined_hashes.contains(&corrupt));
     assert!(
         !report.quarantined_hashes.contains(&after),
         "a healthy record past the corrupt segment must not be quarantined: {report:?}"
+    );
+    // Direct verification honors the same pacing budget and byte accounting
+    // as sequential scanning.
+    assert!(
+        report.pacing.bytes_per_tick.iter().all(|tick| *tick <= 64),
+        "every tick (including direct verification) stays under budget: {report:?}"
     );
     assert!(
         !report.quarantined_hashes.contains(&before),
@@ -549,4 +559,61 @@ async fn scrub_does_not_quarantine_healthy_records_after_corrupt_segment() {
     assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
     // Both healthy records were verified (one sequentially, one directly).
     assert!(report.records_verified >= 2, "{report:?}");
+}
+
+#[tokio::test]
+async fn compaction_invalidates_stale_scrub_checkpoint() {
+    let (dir, store) = open_temp(64 * 1024);
+    let keep = store.put(Bytes::from_static(b"keep me")).await.unwrap();
+    let junk = store.put(Bytes::from_static(b"junk")).await.unwrap();
+    store.release(&junk).await.unwrap();
+
+    // A completed scrub leaves a checkpoint on disk.
+    LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    let checkpoint = dir.path().join("scrub-checkpoint.nbls");
+    assert!(checkpoint.exists());
+
+    // Compaction restructures pack ids (the empty branch even reuses id 0),
+    // so it must invalidate the checkpoint — a stale one could let a resumed
+    // scrub skip a REUSED pack id as "already verified".
+    store.compact().await.unwrap();
+    assert!(
+        !checkpoint.exists(),
+        "compaction removes the stale scrub checkpoint"
+    );
+    assert_eq!(
+        store.get(&keep).await.unwrap(),
+        Bytes::from_static(b"keep me")
+    );
+}
+
+#[tokio::test]
+async fn scrub_ignores_bytes_past_snapshot_active_length() {
+    let (dir, store) = open_temp(64 * 1024);
+    let hash = store
+        .put(Bytes::from_static(b"settled record"))
+        .await
+        .unwrap();
+
+    // Simulate an in-flight append racing the scrub: raw bytes land in the
+    // active pack past the snapshot's recorded length (a torn record, were
+    // the scanner to walk into it).
+    let entry = entry_for(&store, hash).await;
+    let path = local::pack_path(&dir.path().join("packs"), entry.pack_id);
+    let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+    file.write_all(RECORD_MAGIC).unwrap();
+    file.write_all(&[0u8; 7]).unwrap();
+    file.sync_data().unwrap();
+
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(report.completed);
+    assert!(
+        report.findings.is_empty(),
+        "bytes past the snapshot active length are not misreported: {report:?}"
+    );
+    assert!(report.quarantined_hashes.is_empty());
+    assert_eq!(
+        store.get(&hash).await.unwrap(),
+        Bytes::from_static(b"settled record")
+    );
 }
