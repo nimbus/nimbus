@@ -10,12 +10,21 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/private/plans/nimbus-sdk-resource-model-plan.md"
+PLAN="docs/private/plans/archive/nimbus-sdk-resource-model-plan.md"
 MODEL_DOC="docs/private/architecture/sandbox/service-sandbox-session-model.md"
-PLANS_README="docs/private/plans/README.md"
-AGENTS_MD="AGENTS.md"
 SDK_PACKAGE="packages/nimbus/package.json"
-SDK_ROOT="packages/nimbus/src/index.ts"
+# packages/nimbus/src/index.ts is now a thin re-export shell (the SDK package
+# reorg moved the Nimbus class/methods into control-plane/client.ts and the
+# request/response types into control-plane/types.ts). Root-surface checks
+# must span all of these files, since no single file carries the full
+# canonical surface any more.
+SDK_ROOT_FILES=(
+  "packages/nimbus/src/index.ts"
+  "packages/nimbus/src/control-plane/client.ts"
+  "packages/nimbus/src/control-plane/types.ts"
+  "packages/nimbus/src/control-plane/discovery.ts"
+  "packages/nimbus/src/control-plane/index.ts"
+)
 SDK_CONTROL_ROUTES="packages/nimbus/src/control_plane_routes.ts"
 SDK_SELFTEST="packages/nimbus/src/selftest.mjs"
 SDK_SURFACE_CONTRACT="packages/nimbus/src/capability_surface_contract.mjs"
@@ -31,18 +40,21 @@ SERVICES_MANAGER_TENANT_TEARDOWN_TESTS="crates/nimbus-services/src/manager/tests
 SERVER_ROUTER="crates/nimbus-server/src/router.rs"
 SERVER_SERVICE_GRANTS="crates/nimbus-server/src/http/service_grants.rs"
 SERVER_SERVICES="crates/nimbus-server/src/http/services.rs"
+COMPUTE_SERVICES="crates/nimbus-compute/src/services.rs"
+COMPUTE_SANDBOXES="crates/nimbus-compute/src/sandboxes.rs"
 SERVER_RESOURCE_CONTROL_SANDBOXES="crates/nimbus-server/src/http/resource_control/sandboxes.rs"
 SERVER_RESOURCE_CONTROL_SERVICES="crates/nimbus-server/src/http/resource_control/services.rs"
 SERVER_RESOURCE_CONTROL_SESSIONS="crates/nimbus-server/src/http/resource_control/sessions.rs"
 SERVER_SANDBOXES="crates/nimbus-server/src/http/sandboxes.rs"
 SERVER_SANDBOX_SPEC="crates/nimbus-compute/src/sandbox_spec.rs"
 SERVER_SESSIONS="crates/nimbus-server/src/http/sessions.rs"
-SERVER_SERVICE_MANAGER="crates/nimbus-server/src/service_manager.rs"
-SERVER_SERVICE_MANAGER_TESTS="crates/nimbus-server/src/service_manager/tests.rs"
-SERVER_SERVICE_MANAGER_DEFINITION_TESTS="crates/nimbus-server/src/service_manager/tests/definitions.rs"
-SERVER_SERVICE_MANAGER_REDACTION_TESTS="crates/nimbus-server/src/service_manager/tests/redaction.rs"
-SERVER_SERVICE_MANAGER_SANDBOX_TESTS="crates/nimbus-server/src/service_manager/tests/sandboxes.rs"
-SERVER_SERVICE_MANAGER_SESSION_TESTS="crates/nimbus-server/src/service_manager/tests/sessions.rs"
+SERVER_SERVICE_MANAGER="crates/nimbus-compute/src/service_manager.rs"
+SERVER_TESTS_ROOT="crates/nimbus-server/src/tests.rs"
+SERVER_SERVICE_MANAGER_TESTS="crates/nimbus-server/src/tests/service_manager.rs"
+SERVER_SERVICE_MANAGER_DEFINITION_TESTS="crates/nimbus-server/src/tests/service_manager/definitions.rs"
+SERVER_SERVICE_MANAGER_REDACTION_TESTS="crates/nimbus-server/src/tests/service_manager/redaction.rs"
+SERVER_SERVICE_MANAGER_SANDBOX_TESTS="crates/nimbus-server/src/tests/service_manager/sandboxes.rs"
+SERVER_SERVICE_MANAGER_SESSION_TESTS="crates/nimbus-server/src/tests/service_manager/sessions.rs"
 
 PASS=0
 FAIL=0
@@ -118,10 +130,13 @@ require_command_passes() {
 }
 
 condition_srm0_registration() {
+  # This plan is done and archived; repo policy removes archived plans from
+  # docs/private/plans/README.md and AGENTS.md (they are deliberately
+  # unlisted once folded into their successor/history), so registration is
+  # checked against the archived plan file and the architecture model doc
+  # content only, not README/AGENTS.md listings.
   [ -f "${PLAN}" ] &&
     [ -f "${MODEL_DOC}" ] &&
-    grep -q 'nimbus-sdk-resource-model-plan.md' "${PLANS_README}" &&
-    grep -q 'nimbus-sdk-resource-model-plan.md' "${AGENTS_MD}" &&
     grep -q 'Service:' "${PLAN}" &&
     grep -q 'Sandbox:' "${PLAN}" &&
     grep -q 'Session:' "${PLAN}" &&
@@ -136,7 +151,17 @@ condition_srm1_package_surface() {
 import fs from "node:fs";
 
 const pkg = JSON.parse(fs.readFileSync("packages/nimbus/package.json", "utf8"));
-const sdk = fs.readFileSync("packages/nimbus/src/index.ts", "utf8");
+// index.ts is a thin re-export shell; the class/methods live in
+// control-plane/client.ts and the request/response types in
+// control-plane/types.ts. Concatenate the root surface so fragment checks
+// below see the full canonical surface regardless of which file carries it.
+const sdk = [
+  "packages/nimbus/src/index.ts",
+  "packages/nimbus/src/control-plane/client.ts",
+  "packages/nimbus/src/control-plane/types.ts",
+  "packages/nimbus/src/control-plane/discovery.ts",
+  "packages/nimbus/src/control-plane/index.ts",
+].map((file) => fs.readFileSync(file, "utf8")).join("\n");
 const routes = fs.readFileSync("packages/nimbus/src/control_plane_routes.ts", "utf8");
 
 const hasCanonicalManifest =
@@ -203,10 +228,10 @@ NODE
 }
 
 condition_srm1_lifecycle_wait_contract() {
-  grep -q 'NimbusServiceActivationWaitCondition' "${SDK_ROOT}" &&
-    grep -q 'NimbusServiceStopWaitCondition' "${SDK_ROOT}" &&
-    grep -q 'assertLifecycleWaitUntil("start", input.waitUntil, \["ready", "healthy"\])' "${SDK_ROOT}" &&
-    grep -q 'assertLifecycleWaitUntil("stop", input.waitUntil, \["stopped"\])' "${SDK_ROOT}" &&
+  grep -q 'NimbusServiceActivationWaitCondition' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'NimbusServiceStopWaitCondition' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'assertLifecycleWaitUntil("start", input.waitUntil, \["ready", "healthy"\])' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'assertLifecycleWaitUntil("stop", input.waitUntil, \["stopped"\])' "${SDK_ROOT_FILES[@]}" &&
     grep -q 'assertLifecycleWaitValidation' "${SDK_SELFTEST}" &&
     grep -q 'service stop waits for stopped, not readiness' "${SDK_SELFTEST}" &&
     grep -q 'service start waits for activation conditions, not stopped' "${SDK_SELFTEST}"
@@ -248,27 +273,27 @@ condition_srm1_adapter_surfaces_stay_clean() {
 }
 
 condition_srm2_sdk_definition_surface() {
-  grep -q 'create(input: NimbusServiceCreateRequest)' "${SDK_ROOT}" &&
-    grep -q 'update(input: NimbusServiceUpdateRequest)' "${SDK_ROOT}" &&
-    grep -q 'delete(input: NimbusServiceDeleteRequest)' "${SDK_ROOT}" &&
-    grep -q 'list(input: NimbusServiceListRequest' "${SDK_ROOT}" &&
-    grep -q 'kind: "builtIn"' "${SDK_ROOT}" &&
-    grep -q 'kind: "external"' "${SDK_ROOT}" &&
-    grep -q 'ifMatchGeneration' "${SDK_ROOT}" &&
-    grep -q 'NimbusServiceDefinitionCollection' "${SDK_ROOT}" &&
-    grep -q 'NimbusSandboxOwnerSpec' "${SDK_ROOT}" &&
-    grep -q 'NimbusSandboxRootSpec' "${SDK_ROOT}" &&
-    grep -q 'NimbusSandboxRootResponse' "${SDK_ROOT}" &&
-    grep -q 'NimbusSandboxOciImageReferenceSource' "${SDK_ROOT}" &&
-    ! grep -q 'kind: "rootfs"' "${SDK_ROOT}" &&
-    ! grep -q 'dockerfilePath' "${SDK_ROOT}" &&
-    grep -q 'NimbusSandboxProcessSpec' "${SDK_ROOT}" &&
-    grep -q 'NimbusSandboxProcessResponse' "${SDK_ROOT}" &&
-    grep -q 'NimbusRedactedValues' "${SDK_ROOT}" &&
-    grep -q 'export interface NimbusSandboxSpec' "${SDK_ROOT}" &&
-    grep -q 'export interface NimbusSandboxSpecResponse' "${SDK_ROOT}" &&
-    grep -q 'NimbusServiceBackendResponse' "${SDK_ROOT}" &&
-    grep -q 'tenantId?: string' "${SDK_ROOT}" &&
+  grep -q 'create(input: NimbusServiceCreateRequest)' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'update(input: NimbusServiceUpdateRequest)' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'delete(input: NimbusServiceDeleteRequest)' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'list(input: NimbusServiceListRequest' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'kind: "builtIn"' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'kind: "external"' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'ifMatchGeneration' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'NimbusServiceDefinitionCollection' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'NimbusSandboxOwnerSpec' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'NimbusSandboxRootSpec' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'NimbusSandboxRootResponse' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'NimbusSandboxOciImageReferenceSource' "${SDK_ROOT_FILES[@]}" &&
+    ! grep -q 'kind: "rootfs"' "${SDK_ROOT_FILES[@]}" &&
+    ! grep -q 'dockerfilePath' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'NimbusSandboxProcessSpec' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'NimbusSandboxProcessResponse' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'NimbusRedactedValues' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'export interface NimbusSandboxSpec' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'export interface NimbusSandboxSpecResponse' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'NimbusServiceBackendResponse' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'tenantId?: string' "${SDK_ROOT_FILES[@]}" &&
     grep -q '_sdk.services.create' "${SDK_SELFTEST}" &&
     grep -q '_sdk.services.update' "${SDK_SELFTEST}" &&
     grep -q '_sdk.services.delete' "${SDK_SELFTEST}" &&
@@ -276,29 +301,33 @@ condition_srm2_sdk_definition_surface() {
 }
 
 condition_srm2_server_definition_routes() {
+  # CP3 (crates/nimbus-compute/src/services.rs) moved the response DTOs and
+  # backend-projection business logic into nimbus-compute; nimbus-server's
+  # http/services.rs kept the route-level parsing/validation that depends on
+  # the request TenantId/HeaderMap.
   grep -q '/api/tenants/{tenant_id}/services' "${SERVER_ROUTER}" &&
     grep -q 'get(http::list_service_definitions).post(http::create_service_definition)' "${SERVER_ROUTER}" &&
     grep -q 'put(http::update_service_definition)' "${SERVER_ROUTER}" &&
     grep -q 'delete(http::delete_service_definition)' "${SERVER_ROUTER}" &&
     grep -q 'ServiceDefinitionResourceResponse' "${SERVER_SERVICES}" &&
     grep -q 'ServiceDefinitionCollectionResponse' "${SERVER_SERVICES}" &&
-    grep -q 'ServiceBackendInput::Sandbox' "${SERVER_SERVICES}" &&
-    grep -q 'into_spec(tenant_id, Some(service_name))' "${SERVER_SERVICES}" &&
-    grep -q 'SandboxSpecResponse::from_spec' "${SERVER_SERVICES}" &&
-    grep -q 'pub(crate) struct SandboxSpecInput' "${SERVER_SANDBOX_SPEC}" &&
+    grep -q 'ServiceBackendInput::Sandbox' "${COMPUTE_SERVICES}" &&
+    grep -q 'into_spec(tenant_id, Some(service_name))' "${COMPUTE_SERVICES}" &&
+    grep -q 'SandboxSpecResponse::from_spec' "${COMPUTE_SERVICES}" &&
+    grep -q 'pub struct SandboxSpecInput' "${SERVER_SANDBOX_SPEC}" &&
     grep -q 'RedactedValuesResponse' "${SERVER_SANDBOX_SPEC}" &&
     grep -q 'operatorOnlyLaunchInput' "${SERVER_SANDBOX_SPEC}" &&
     ! grep -q 'env: process.env' "${SERVER_SANDBOX_SPEC}" &&
     grep -q 'sandbox spec tenantId.*must match route tenant' "${SERVER_SANDBOX_SPEC}" &&
     grep -q 'host rootfs path.*operator-only internal input' "${SERVER_SANDBOX_SPEC}" &&
     grep -q 'local build context paths.*operator-only internal inputs' "${SERVER_SANDBOX_SPEC}" &&
-    grep -q 'ExternalEndpointPolicyResponse' "${SERVER_SERVICES}" &&
-    grep -q 'ExternalAuthPolicyResponse' "${SERVER_SERVICES}" &&
-    grep -q 'HealthCheckPolicyResponse' "${SERVER_SERVICES}" &&
-    grep -q 'ServiceDefinitionProjection::List' "${SERVER_SERVICES}" &&
-    grep -q 'ServiceDefinitionProjection::Inspect' "${SERVER_SERVICES}" &&
-    grep -q 'requiresInspectPermission' "${SERVER_SERVICES}" &&
-    grep -q 'rename = "builtIn"' "${SERVER_SERVICES}" &&
+    grep -q 'ExternalEndpointPolicyResponse' "${COMPUTE_SERVICES}" &&
+    grep -q 'ExternalAuthPolicyResponse' "${COMPUTE_SERVICES}" &&
+    grep -q 'HealthCheckPolicyResponse' "${COMPUTE_SERVICES}" &&
+    grep -q 'ServiceDefinitionProjection::List' "${COMPUTE_SERVICES}" &&
+    grep -q 'ServiceDefinitionProjection::Inspect' "${COMPUTE_SERVICES}" &&
+    grep -q 'requiresInspectPermission' "${COMPUTE_SERVICES}" &&
+    grep -q 'rename = "builtIn"' "${COMPUTE_SERVICES}" &&
     grep -q 'ifMatchGeneration query precondition' "${SERVER_SERVICES}" &&
     grep -q 'validate_body_tenant' "${SERVER_SERVICES}" &&
     grep -q 'validate_body_service_name' "${SERVER_SERVICES}"
@@ -314,9 +343,9 @@ condition_srm2_manager_definition_state() {
     grep -q 'update_service_definition' crates/nimbus-services/src/manager/definitions.rs &&
     grep -q 'delete_service_definition_async' crates/nimbus-services/src/manager/definitions.rs &&
     grep -q 'service_volume_policy_for_tenant' crates/nimbus-services/src/catalog.rs &&
-    grep -q 'service_launch_for_tenant' crates/nimbus-services/src/manager/definitions.rs &&
-    grep -q 'volume_policy' crates/nimbus-services/src/manager/launch.rs &&
-    grep -q 'ensure_sandbox_mounts_match' crates/nimbus-services/src/manager/launch.rs &&
+    grep -q 'service_activation_for_tenant' crates/nimbus-services/src/manager/definitions.rs &&
+    grep -q 'volume_policy' crates/nimbus-services/src/manager/service_start.rs &&
+    grep -q 'ensure_sandbox_mounts_match' crates/nimbus-services/src/manager/service_start.rs &&
     grep -q 'Url::parse' crates/nimbus-services/src/manager/definitions.rs &&
     grep -q 'SUPPORTED_BUILT_IN_PROVIDERS' crates/nimbus-services/src/manager/definitions.rs &&
     grep -q 'endpoint must not embed credentials' crates/nimbus-services/src/manager/definitions.rs &&
@@ -357,27 +386,30 @@ condition_srm2_authorization_split_tests() {
 }
 
 condition_srm3_sdk_sandbox_surface() {
-  grep -q 'readonly sandboxes: NimbusSandboxes' "${SDK_ROOT}" &&
-    grep -q 'class NimbusSandboxes' "${SDK_ROOT}" &&
-    grep -q 'create(input: NimbusSandboxCreateRequest)' "${SDK_ROOT}" &&
-    grep -q 'get(input: NimbusSandboxSelector)' "${SDK_ROOT}" &&
-    grep -q 'list(input: NimbusSandboxListRequest' "${SDK_ROOT}" &&
-    grep -q 'stop(input: NimbusSandboxSelector)' "${SDK_ROOT}" &&
+  grep -q 'readonly sandboxes: NimbusSandboxes' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'class NimbusSandboxes' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'create(input: NimbusSandboxCreateRequest)' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'get(input: NimbusSandboxSelector)' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'list(input: NimbusSandboxListRequest' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'stop(input: NimbusSandboxSelector)' "${SDK_ROOT_FILES[@]}" &&
     grep -q '/api/tenants/{tenant_id}/sandboxes' "${SDK_CONTROL_ROUTES}" &&
     grep -q '/api/tenants/{tenant_id}/sandboxes/{sandbox_id}' "${SDK_CONTROL_ROUTES}" &&
     grep -q 'sandbox resources are id-addressed, not name-addressed' "${SDK_SELFTEST}" &&
-    ! grep -q 'resolveSandboxByName' "${SDK_ROOT}"
+    ! grep -q 'resolveSandboxByName' "${SDK_ROOT_FILES[@]}"
 }
 
 condition_srm3_server_sandbox_routes() {
+  # CP3 moved the SandboxSpecInput/SandboxSpecResponse request handling into
+  # nimbus-compute/src/sandboxes.rs; the route mounting and response DTOs
+  # stayed in nimbus-server/src/http/sandboxes.rs.
   grep -q '/api/tenants/{tenant_id}/sandboxes' "${SERVER_ROUTER}" &&
     grep -q 'get(http::list_sandboxes).post(http::create_sandbox)' "${SERVER_ROUTER}" &&
     grep -q '/api/tenants/{tenant_id}/sandboxes/{sandbox_id}' "${SERVER_ROUTER}" &&
     grep -q '/api/tenants/{tenant_id}/sandboxes/{sandbox_id}/stop' "${SERVER_ROUTER}" &&
     grep -q 'SandboxResourceResponse' "${SERVER_SANDBOXES}" &&
     grep -q 'SandboxCollectionResponse' "${SERVER_SANDBOXES}" &&
-    grep -q 'spec: SandboxSpecInput' "${SERVER_SANDBOXES}" &&
-    grep -q 'SandboxSpecResponse::from_spec' "${SERVER_SANDBOXES}" &&
+    grep -q 'spec: SandboxSpecInput' "${COMPUTE_SANDBOXES}" &&
+    grep -q 'SandboxSpecResponse::from_spec' "${COMPUTE_SANDBOXES}" &&
     grep -q 'principal_has_sandbox_permission' "${SERVER_RESOURCE_CONTROL_SANDBOXES}" &&
     grep -q 'principal_has_sandbox_list_permission' "${SERVER_RESOURCE_CONTROL_SANDBOXES}" &&
     grep -q 'sandbox_permission_scope_is_listable' "${SERVER_RESOURCE_CONTROL_SANDBOXES}" &&
@@ -385,9 +417,13 @@ condition_srm3_server_sandbox_routes() {
 }
 
 condition_srm3_manager_sandbox_state() {
+  # PR #144 (CO2/SR3/SR4) deleted the create_sandbox_resource_async system-
+  # context convenience wrapper once every call site started passing an
+  # explicit TenantIsolationContext; creation is still evidenced by the two
+  # functions below (context-facing entry point + decision-based impl).
   grep -q 'pub struct SandboxResource' crates/nimbus-services/src/catalog.rs &&
     grep -q 'sandbox_resources: BTreeMap<String, SandboxResource>' crates/nimbus-services/src/manager/types.rs &&
-    grep -q 'create_sandbox_resource_async' crates/nimbus-services/src/manager/sandboxes.rs &&
+    grep -q 'create_sandbox_resource_for_decision_async' crates/nimbus-services/src/manager/sandboxes.rs &&
     grep -q 'create_sandbox_resource_for_context_async' crates/nimbus-services/src/manager/sandboxes.rs &&
     grep -q 'WorkloadAttributes::sandbox' crates/nimbus-services/src/manager/sandboxes.rs &&
     grep -q 'ensure_sandbox_spec_matches' crates/nimbus-services/src/manager/sandboxes.rs &&
@@ -416,19 +452,19 @@ condition_srm3_sandbox_boundary_tests() {
 }
 
 condition_srm4_sdk_session_surface() {
-  grep -q 'readonly sessions: NimbusSessions' "${SDK_ROOT}" &&
-    grep -q 'class NimbusSessions' "${SDK_ROOT}" &&
-    grep -q 'open(input: NimbusSessionOpenRequest)' "${SDK_ROOT}" &&
-    grep -q 'get(input: NimbusSessionSelector)' "${SDK_ROOT}" &&
-    grep -q 'list(input: NimbusSessionListRequest' "${SDK_ROOT}" &&
-    grep -q 'close(input: NimbusSessionCloseRequest)' "${SDK_ROOT}" &&
+  grep -q 'readonly sessions: NimbusSessions' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'class NimbusSessions' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'open(input: NimbusSessionOpenRequest)' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'get(input: NimbusSessionSelector)' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'list(input: NimbusSessionListRequest' "${SDK_ROOT_FILES[@]}" &&
+    grep -q 'close(input: NimbusSessionCloseRequest)' "${SDK_ROOT_FILES[@]}" &&
     grep -q '/api/sessions' "${SDK_CONTROL_ROUTES}" &&
     grep -q 'sessions use open, not create' "${SDK_SELFTEST}" &&
     grep -q 'client-managed renewal is not part of the session lifecycle' "${SDK_SELFTEST}" &&
     grep -q 'unsupported channels are not part of the public session channel set' "${SDK_SELFTEST}" &&
-    ! grep -q 'sessions.create' "${SDK_ROOT}" &&
-    ! grep -q 'sessions.renew' "${SDK_ROOT}" &&
-    ! grep -q 'sessions.extend' "${SDK_ROOT}"
+    ! grep -q 'sessions.create' "${SDK_ROOT_FILES[@]}" &&
+    ! grep -q 'sessions.renew' "${SDK_ROOT_FILES[@]}" &&
+    ! grep -q 'sessions.extend' "${SDK_ROOT_FILES[@]}"
 }
 
 condition_srm4_server_session_routes() {
@@ -534,7 +570,11 @@ condition_srm6_closeout_recorded() {
     grep -q 'mod definitions;' "${SERVICES_MANAGER}" &&
     [ "$(wc -l < "${SERVICES_MANAGER}")" -lt 1500 ] &&
     [ "$(wc -l < "${SERVICES_MANAGER_DEFINITION_TESTS}")" -lt 2000 ] &&
-    grep -q 'mod tests;' "${SERVER_SERVICE_MANAGER}" &&
+    # CP1 moved the service_manager.rs body into nimbus-compute (33 lines,
+    # no tests of its own) and kept its test tree server-side, wired in via
+    # `tests.rs`'s `mod service_manager;` -- that wiring point is the
+    # successor of the old file's own `mod tests;` declaration.
+    grep -q 'mod service_manager;' "${SERVER_TESTS_ROOT}" &&
     [ "$(wc -l < "${SERVER_SERVICE_MANAGER}")" -lt 2000 ] &&
     grep -q 'mod definitions;' "${SERVER_SERVICE_MANAGER_TESTS}" &&
     grep -q 'mod redaction;' "${SERVER_SERVICE_MANAGER_TESTS}" &&
