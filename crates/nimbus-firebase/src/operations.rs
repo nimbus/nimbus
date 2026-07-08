@@ -6,8 +6,8 @@ use nimbus_core::{
     TenantId, Timestamp, TransactionSession, TransactionSessionMode, TransactionSessionToken,
     WriteKey,
 };
+use nimbus_core::{locator_for_document_path, storage_table_for_collection_path};
 use nimbus_engine::Engine;
-use nimbus_firestore::{locator_for_document_path, storage_table_for_collection_path};
 use nimbus_tenant::TenantIsolationContext;
 
 use crate::project_tenant_registry::{
@@ -491,7 +491,7 @@ pub fn run_aggregation_query_for_database(
 mod tests {
     use super::*;
     use crate::project_tenant_registry::ProjectTenantRegistry;
-    use nimbus_firestore::parse_document_path;
+    use nimbus_core::parse_document_path;
     use serde_json::json;
 
     fn database(project_id: &str) -> resource_names::FirestoreDatabaseName {

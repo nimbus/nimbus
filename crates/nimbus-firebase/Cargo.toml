@@ -18,7 +18,6 @@ futures.workspace = true
 http.workspace = true
 nimbus-core = { path = "../nimbus-core" }
 nimbus-engine = { path = "../nimbus-engine" }
-nimbus-firestore = { path = "../nimbus-firestore" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 prost = "0.13.1"
 prost-types = "0.13.1"

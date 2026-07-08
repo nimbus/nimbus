@@ -6,6 +6,7 @@ pub mod document;
 pub mod document_history;
 pub mod encoding;
 pub mod error;
+pub mod firestore;
 pub mod identity;
 pub mod index_history;
 pub mod mutation;
@@ -41,6 +42,10 @@ pub use encoding::{
     base64_encode_url_safe_no_pad, hex_encode,
 };
 pub use error::{Error, HistoricalReadErrorKind, Result, StorageErrorKind, non_empty};
+pub use firestore::{
+    DEFAULT_FIRESTORE_DATABASE_ID, locator_for_document_path, parse_document_path,
+    storage_table_for_collection_path, validate_default_database_id,
+};
 pub use identity::{
     InvocationAuth, RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
 };

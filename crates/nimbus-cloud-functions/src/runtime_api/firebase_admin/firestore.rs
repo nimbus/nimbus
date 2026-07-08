@@ -11,9 +11,7 @@ use nimbus_bridge::capabilities::{
     get_document, get_document_async, validate_runtime_capability_access,
 };
 use nimbus_bridge::responses::encode_runtime_core_result;
-use nimbus_firestore::{
-    locator_for_document_path, parse_document_path, validate_default_database_id,
-};
+use nimbus_core::{locator_for_document_path, parse_document_path, validate_default_database_id};
 
 const FIRESTORE_ADMIN_GET_DOCUMENT_OPERATION: &str = "firebase_admin.firestore.get_document";
 const FIRESTORE_ADMIN_SET_DOCUMENT_OPERATION: &str = "firebase_admin.firestore.set_document";

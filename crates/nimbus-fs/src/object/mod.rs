@@ -1,24 +1,36 @@
+//! Object-storage-backed `FileSystem`: the composition root.
+//!
+//! `ObjectRwBackend` maps a POSIX-shaped filesystem onto the object byte plane
+//! (`BlobStore`) and manifest plane (`ObjectMetaStore`). This module owns the
+//! shared vocabulary — the type definitions, the path algebra, and the trait
+//! dispatch — and routes the actual work to concept-owned children:
+//!
+//! - [`read`]: whole-object reads, `stat`, directory listing, the reader path.
+//! - [`write`]: commits, directory mutation, copy, write sessions, the writer.
+//! - [`range`]: bounded `get_range` windows shared by both faces.
+
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::io;
-use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use deno_core::{BufMutView, BufView, ResourceHandleFd, WriteOutcome};
 use deno_fs::sync::MaybeArc;
-use deno_fs::{FileSystem, FsDirEntry, FsFileType, FsReadDir, FsReadDirRc, OpenOptions};
+use deno_fs::{FileSystem, FsDirEntry, FsFileType, FsReadDirRc, OpenOptions};
 use deno_io::fs::{File, FsError, FsResult, FsStat, FsStatFs};
 use deno_permissions::{CheckedPath, CheckedPathBuf};
 use nimbus_blob::{BlobHash, BlobStore};
-use nimbus_storage::{ObjectBlobLayout, ObjectManifest, ObjectManifestAttributes, ObjectMetaStore};
+use nimbus_storage::{ObjectManifest, ObjectManifestAttributes, ObjectMetaStore};
 
 use crate::ObjectUnsupportedOperation;
 use crate::PlatformStdio;
-use crate::bridge::block_on_byte_plane;
+
+mod range;
+mod read;
+mod write;
 
 const OBJECT_FS_LIST_LIMIT: usize = 10_000;
 
@@ -119,347 +131,6 @@ impl ObjectRwBackend {
         .into())
     }
 
-    pub fn begin_agent_write(&self, path: impl AsRef<Path>) -> FsResult<ObjectWriteSession> {
-        let path = normalize_path(path.as_ref())?;
-        let key = key_for_path(&path)?;
-        Ok(ObjectWriteSession {
-            backend: self.clone(),
-            key,
-            data: Vec::new(),
-        })
-    }
-
-    pub fn read_path(&self, path: impl AsRef<Path>) -> FsResult<Bytes> {
-        let path = normalize_path(path.as_ref())?;
-        self.read_key(&key_for_path(&path)?)
-    }
-
-    pub(crate) fn commit_path(&self, path: &Path, bytes: Bytes) -> FsResult<ObjectManifest> {
-        let path = normalize_path(path)?;
-        let key = key_for_path(&path)?;
-        self.commit_key(&key, bytes)
-    }
-
-    fn commit_key(&self, key: &str, bytes: Bytes) -> FsResult<ObjectManifest> {
-        validate_key(key)?;
-        let size = bytes.len() as u64;
-        let hash = self.put_blob(bytes)?;
-        let hash_hex = hash.to_hex();
-        let attrs = ObjectManifestAttributes::new(format!("\"{hash_hex}\""), now_millis()?);
-        let manifest =
-            ObjectManifest::whole(&self.bucket, key, size, hash_hex, attrs).map_err(core_error)?;
-        self.manifests
-            .put_object_manifest(&manifest)
-            .map_err(core_error)?;
-        self.record_parent_dirs_for_key(key)?;
-        Ok(manifest)
-    }
-
-    fn read_key(&self, key: &str) -> FsResult<Bytes> {
-        let manifest = self
-            .manifests
-            .get_object_manifest(&self.bucket, key)
-            .map_err(core_error)?
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("object {key}")))?;
-        self.read_manifest(&manifest)
-    }
-
-    fn read_manifest(&self, manifest: &ObjectManifest) -> FsResult<Bytes> {
-        match &manifest.blob_layout {
-            ObjectBlobLayout::Whole { blob_hash } => {
-                let hash = BlobHash::from_hex(blob_hash).map_err(core_error)?;
-                self.get_blob(&hash)
-            }
-            ObjectBlobLayout::Chunked { chunks } => {
-                let mut bytes = Vec::with_capacity(manifest.size as usize);
-                for chunk in chunks {
-                    let hash = BlobHash::from_hex(&chunk.blob_hash).map_err(core_error)?;
-                    let chunk_bytes = self.get_blob(&hash)?;
-                    if chunk_bytes.len() as u64 != chunk.len {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "object chunk {} length mismatch: manifest={} actual={}",
-                                chunk.blob_hash,
-                                chunk.len,
-                                chunk_bytes.len()
-                            ),
-                        )
-                        .into());
-                    }
-                    bytes.extend_from_slice(&chunk_bytes);
-                }
-                Ok(Bytes::from(bytes))
-            }
-        }
-    }
-
-    fn put_blob(&self, bytes: Bytes) -> FsResult<BlobHash> {
-        let blobs = self.blobs.clone();
-        block_on_byte_plane(async move {
-            let hash = blobs.put(bytes).await.map_err(core_error)?;
-            Ok(hash)
-        })
-    }
-
-    fn get_blob(&self, hash: &BlobHash) -> FsResult<Bytes> {
-        let blobs = self.blobs.clone();
-        let hash = *hash;
-        block_on_byte_plane(async move {
-            let bytes = blobs.get(&hash).await.map_err(core_error)?;
-            Ok(bytes)
-        })
-    }
-
-    /// Reads a bounded byte `range` of the blob addressed by `hash` through
-    /// `BlobStore::get_range`, instead of materializing the whole blob and
-    /// slicing in memory.
-    fn get_blob_range(&self, hash: &BlobHash, range: Range<u64>) -> FsResult<Bytes> {
-        let blobs = self.blobs.clone();
-        let hash = *hash;
-        block_on_byte_plane(async move {
-            blobs
-                .get_range(&hash, range)
-                .await
-                .map_err(|error| core_error(error).into())
-        })
-    }
-
-    /// Reads a bounded byte `range` of the object at `path` (used by the
-    /// external FUSE face, which previously materialized the entire object
-    /// and sliced the requested window in memory — replaced under FCW2 with
-    /// `BlobStore::get_range`, which transfers only the requested bytes).
-    pub fn read_range(&self, path: impl AsRef<Path>, range: Range<u64>) -> FsResult<Bytes> {
-        let path = normalize_path(path.as_ref())?;
-        let key = key_for_path(&path)?;
-        let manifest = self
-            .manifests
-            .get_object_manifest(&self.bucket, &key)
-            .map_err(core_error)?
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("object {key}")))?;
-        self.read_manifest_range(&manifest, range)
-    }
-
-    fn read_manifest_range(&self, manifest: &ObjectManifest, range: Range<u64>) -> FsResult<Bytes> {
-        let start = range.start.min(manifest.size);
-        let end = range.end.min(manifest.size);
-        if start >= end {
-            return Ok(Bytes::new());
-        }
-        match &manifest.blob_layout {
-            ObjectBlobLayout::Whole { blob_hash } => {
-                let hash = BlobHash::from_hex(blob_hash).map_err(core_error)?;
-                self.get_blob_range(&hash, start..end)
-            }
-            ObjectBlobLayout::Chunked { chunks } => {
-                let mut bytes = Vec::with_capacity((end - start) as usize);
-                let mut chunk_start = 0u64;
-                for chunk in chunks {
-                    let chunk_end = chunk_start + chunk.len;
-                    if start < chunk_end && end > chunk_start {
-                        let local_start = start.saturating_sub(chunk_start);
-                        let local_end = end.min(chunk_end) - chunk_start;
-                        let hash = BlobHash::from_hex(&chunk.blob_hash).map_err(core_error)?;
-                        let window = self.get_blob_range(&hash, local_start..local_end)?;
-                        bytes.extend_from_slice(&window);
-                    }
-                    chunk_start = chunk_end;
-                    if chunk_start >= end {
-                        break;
-                    }
-                }
-                Ok(Bytes::from(bytes))
-            }
-        }
-    }
-
-    fn manifest_for_path(&self, path: &Path) -> FsResult<Option<ObjectManifest>> {
-        if path == Path::new("/") {
-            return Ok(None);
-        }
-        let key = key_for_path(path)?;
-        Ok(self
-            .manifests
-            .get_object_manifest(&self.bucket, &key)
-            .map_err(core_error)?)
-    }
-
-    fn list_prefix(&self, prefix: &str, limit: usize) -> FsResult<Vec<ObjectManifest>> {
-        Ok(self
-            .manifests
-            .list_object_manifests(&self.bucket, prefix, limit)
-            .map_err(core_error)?)
-    }
-
-    fn stat_path(&self, path: &Path) -> FsResult<FsStat> {
-        let path = normalize_path(path)?;
-        if path == Path::new("/") {
-            return Ok(stat_dir(0o755));
-        }
-        if let Some(manifest) = self.manifest_for_path(&path)? {
-            return Ok(stat_file(manifest.size, 0o644));
-        }
-        if self.directory_exists(&path)? {
-            return Ok(stat_dir(0o755));
-        }
-        Err(io::ErrorKind::NotFound.into())
-    }
-
-    fn directory_exists(&self, path: &Path) -> FsResult<bool> {
-        if path == Path::new("/") {
-            return Ok(true);
-        }
-        if self.directories()?.contains(path) {
-            return Ok(true);
-        }
-        let prefix = prefix_for_directory(path)?;
-        Ok(!self.list_prefix(&prefix, 1)?.is_empty())
-    }
-
-    fn read_dir_entries(&self, path: &Path) -> FsResult<Vec<FsDirEntry>> {
-        let path = normalize_path(path)?;
-        if self.manifest_for_path(&path)?.is_some() {
-            return Err(io::Error::new(io::ErrorKind::NotADirectory, "path is an object").into());
-        }
-        if !self.directory_exists(&path)? {
-            return Err(io::ErrorKind::NotFound.into());
-        }
-        let prefix = if path == Path::new("/") {
-            String::new()
-        } else {
-            prefix_for_directory(&path)?
-        };
-        let mut entries = BTreeMap::<String, FsDirEntry>::new();
-        for manifest in self.list_prefix(&prefix, OBJECT_FS_LIST_LIMIT)? {
-            let Some(relative) = manifest.key.strip_prefix(&prefix) else {
-                continue;
-            };
-            if relative.is_empty() {
-                continue;
-            }
-            if let Some((dir, _)) = relative.split_once('/') {
-                entries
-                    .entry(dir.to_string())
-                    .or_insert_with(|| FsDirEntry {
-                        name: dir.to_string(),
-                        is_file: false,
-                        is_directory: true,
-                        is_symlink: false,
-                    });
-            } else {
-                entries.insert(
-                    relative.to_string(),
-                    FsDirEntry {
-                        name: relative.to_string(),
-                        is_file: true,
-                        is_directory: false,
-                        is_symlink: false,
-                    },
-                );
-            }
-        }
-        for dir in self.directories()?.iter() {
-            if dir == &path {
-                continue;
-            }
-            let Ok(relative) = dir.strip_prefix(&path) else {
-                continue;
-            };
-            let mut components = relative.components();
-            let Some(Component::Normal(name)) = components.next() else {
-                continue;
-            };
-            if components.next().is_some() {
-                continue;
-            }
-            let name = name.to_string_lossy().into_owned();
-            entries.entry(name.clone()).or_insert(FsDirEntry {
-                name,
-                is_file: false,
-                is_directory: true,
-                is_symlink: false,
-            });
-        }
-        Ok(entries.into_values().collect())
-    }
-
-    fn create_dir(&self, path: &Path, recursive: bool) -> FsResult<()> {
-        let path = normalize_path(path)?;
-        if path == Path::new("/") {
-            return Ok(());
-        }
-        if self.manifest_for_path(&path)?.is_some() {
-            return Err(
-                io::Error::new(io::ErrorKind::AlreadyExists, "object exists at path").into(),
-            );
-        }
-        if !recursive {
-            let parent = path.parent().unwrap_or_else(|| Path::new("/"));
-            if !self.directory_exists(parent)? {
-                return Err(
-                    io::Error::new(io::ErrorKind::NotFound, "parent directory not found").into(),
-                );
-            }
-        }
-        let mut dirs = self.directories()?;
-        if recursive {
-            insert_parent_dirs(&mut dirs, &path);
-        }
-        dirs.insert(path);
-        Ok(())
-    }
-
-    fn remove_path(&self, path: &Path, recursive: bool) -> FsResult<()> {
-        let path = normalize_path(path)?;
-        if path == Path::new("/") {
-            return Err(io::ErrorKind::PermissionDenied.into());
-        }
-        if let Some(manifest) = self.manifest_for_path(&path)? {
-            self.manifests
-                .delete_object_manifest(&manifest.bucket, &manifest.key)
-                .map_err(core_error)?;
-            return Ok(());
-        }
-        if !self.directory_exists(&path)? {
-            return Err(io::ErrorKind::NotFound.into());
-        }
-        let prefix = prefix_for_directory(&path)?;
-        let manifests = self.list_prefix(&prefix, OBJECT_FS_LIST_LIMIT)?;
-        if !recursive && !manifests.is_empty() {
-            return Err(io::ErrorKind::DirectoryNotEmpty.into());
-        }
-        if recursive {
-            for manifest in manifests {
-                self.manifests
-                    .delete_object_manifest(&manifest.bucket, &manifest.key)
-                    .map_err(core_error)?;
-            }
-        }
-        let mut dirs = self.directories()?;
-        let removing: Vec<_> = dirs
-            .iter()
-            .filter(|dir| *dir == &path || dir.starts_with(&path))
-            .cloned()
-            .collect();
-        for dir in removing {
-            dirs.remove(&dir);
-        }
-        Ok(())
-    }
-
-    fn copy_object(&self, oldpath: &Path, newpath: &Path) -> FsResult<()> {
-        let bytes = self.read_path(oldpath)?;
-        self.commit_path(newpath, bytes)?;
-        Ok(())
-    }
-
-    fn record_parent_dirs_for_key(&self, key: &str) -> FsResult<()> {
-        let path = path_for_key(key);
-        let mut dirs = self.directories()?;
-        insert_parent_dirs(&mut dirs, &path);
-        Ok(())
-    }
-
     fn directories(&self) -> FsResult<std::sync::MutexGuard<'_, BTreeSet<PathBuf>>> {
         self.directories
             .lock()
@@ -475,70 +146,11 @@ impl std::fmt::Debug for ObjectRwBackend {
     }
 }
 
-impl ObjectWriteSession {
-    pub fn write_sequential(&mut self, offset: u64, bytes: &[u8]) -> FsResult<usize> {
-        if offset != self.data.len() as u64 {
-            return reject_unsupported_value(ObjectUnsupportedOperation::RandomWrite);
-        }
-        self.data.extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    pub fn len(&self) -> u64 {
-        self.data.len() as u64
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
-    }
-
-    pub fn commit(&self) -> FsResult<ObjectManifest> {
-        self.backend
-            .commit_key(&self.key, Bytes::copy_from_slice(&self.data))
-    }
-}
-
-impl ExternalFuseObjectMount {
-    pub fn new(backend: ObjectRwBackend) -> Self {
-        Self { backend }
-    }
-
-    pub fn read(&self, path: impl AsRef<Path>, offset: u64, size: u32) -> FsResult<Vec<u8>> {
-        let end = offset.saturating_add(size as u64);
-        let bytes = self.backend.read_range(path, offset..end)?;
-        Ok(bytes.to_vec())
-    }
-
-    pub fn begin_write(&self, path: impl AsRef<Path>) -> FsResult<ExternalFuseWrite> {
-        Ok(ExternalFuseWrite {
-            session: self.backend.begin_agent_write(path)?,
-        })
-    }
-}
-
 impl std::fmt::Debug for ExternalFuseObjectMount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExternalFuseObjectMount")
             .field("bucket", &self.backend.bucket())
             .finish_non_exhaustive()
-    }
-}
-
-impl ExternalFuseWrite {
-    pub fn write_at(&mut self, offset: u64, bytes: &[u8]) -> FsResult<usize> {
-        self.session.write_sequential(offset, bytes)
-    }
-
-    pub fn flush(&self) -> FsResult<ObjectManifest> {
-        self.session.commit()
-    }
-
-    pub fn len(&self) -> u64 {
-        self.session.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.session.is_empty()
     }
 }
 
@@ -576,53 +188,9 @@ impl FileSystem for ObjectRwBackend {
             || options.append
             || options.create_new
         {
-            if options.create_new && self.manifest_for_path(&path)?.is_some() {
-                return Err(io::ErrorKind::AlreadyExists.into());
-            }
-            let existing = self.manifest_for_path(&path)?;
-            if existing.is_none() && !(options.create || options.create_new) {
-                return Err(io::ErrorKind::NotFound.into());
-            }
-            if existing.is_some() && !options.truncate && !options.append {
-                return reject_unsupported_value(ObjectUnsupportedOperation::RandomWrite);
-            }
-            let mut data = if options.append {
-                existing
-                    .as_ref()
-                    .map(|manifest| self.read_manifest(manifest))
-                    .transpose()?
-                    .map(|bytes| bytes.to_vec())
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-            let cursor = data.len() as u64;
-            if options.truncate && existing.is_some() {
-                data.clear();
-            }
-            return Ok(Rc::new(ObjectFile {
-                backend: self.clone(),
-                path,
-                key,
-                cursor: Mutex::new(cursor),
-                state: Mutex::new(ObjectFileState::Writer(data)),
-                readable: options.read,
-                writable: true,
-            }));
+            return self.open_writer(path, key, options);
         }
-
-        let manifest = self
-            .manifest_for_path(&path)?
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("object {key}")))?;
-        Ok(Rc::new(ObjectFile {
-            backend: self.clone(),
-            path,
-            key,
-            cursor: Mutex::new(0),
-            state: Mutex::new(ObjectFileState::Reader(Box::new(manifest))),
-            readable: true,
-            writable: false,
-        }))
+        self.open_reader(path, key)
     }
 
     async fn open_async<'a>(
@@ -942,32 +510,7 @@ impl FileSystem for ObjectRwBackend {
         options: OpenOptions,
         data: &[u8],
     ) -> FsResult<()> {
-        if options.create_new && self.manifest_for_path(&normalize_path(path)?)?.is_some() {
-            return Err(io::ErrorKind::AlreadyExists.into());
-        }
-        let existing = self.manifest_for_path(&normalize_path(path)?)?;
-        let bytes = if options.append {
-            let mut current = existing
-                .as_ref()
-                .map(|manifest| self.read_manifest(manifest))
-                .transpose()?
-                .map(|bytes| bytes.to_vec())
-                .unwrap_or_default();
-            current.extend_from_slice(data);
-            Bytes::from(current)
-        } else {
-            if existing.is_some() && !options.truncate {
-                return ObjectRwBackend::reject_unsupported(
-                    ObjectUnsupportedOperation::RandomWrite,
-                );
-            }
-            if existing.is_none() && !(options.create || options.create_new) {
-                return Err(io::ErrorKind::NotFound.into());
-            }
-            Bytes::copy_from_slice(data)
-        };
-        self.commit_path(path, bytes)?;
-        Ok(())
+        self.write_file(path, options, data)
     }
 
     async fn write_file_async<'a>(
@@ -997,64 +540,13 @@ impl FileSystem for ObjectRwBackend {
 }
 
 #[async_trait::async_trait(?Send)]
-impl FsReadDir for ObjectReadDir {
-    async fn next(&self) -> FsResult<Option<FsDirEntry>> {
-        Ok(self.entries.lock().unwrap().pop())
-    }
-}
-
-impl ObjectFile {
-    /// Serves `buf.len()` bytes starting at `start` out of `manifest` through
-    /// bounded `get_range` windows (shared with the external FUSE face via
-    /// `ObjectRwBackend::read_manifest_range` — no duplicated window math).
-    /// Never transfers more than the manifest's remaining size.
-    fn read_window(
-        &self,
-        manifest: &ObjectManifest,
-        start: u64,
-        buf: &mut [u8],
-    ) -> FsResult<usize> {
-        if start >= manifest.size || buf.is_empty() {
-            return Ok(0);
-        }
-        let end = start.saturating_add(buf.len() as u64).min(manifest.size);
-        let window = self.backend.read_manifest_range(manifest, start..end)?;
-        let nread = window.len();
-        buf[..nread].copy_from_slice(&window);
-        Ok(nread)
-    }
-}
-
-#[async_trait::async_trait(?Send)]
 impl File for ObjectFile {
     fn maybe_path(&self) -> Option<&Path> {
         Some(&self.path)
     }
 
     fn read_sync(self: Rc<Self>, buf: &mut [u8]) -> FsResult<usize> {
-        if !self.readable {
-            return Err(io::ErrorKind::PermissionDenied.into());
-        }
-        let mut cursor = self.cursor.lock().unwrap();
-        let state = self.state.lock().unwrap();
-        let nread = match &*state {
-            ObjectFileState::Reader(manifest) => self.read_window(manifest, *cursor, buf)?,
-            ObjectFileState::Writer(bytes) => {
-                let start = usize::try_from(*cursor).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "cursor overflows usize")
-                })?;
-                if start >= bytes.len() {
-                    0
-                } else {
-                    let nread = (bytes.len() - start).min(buf.len());
-                    buf[..nread].copy_from_slice(&bytes[start..start + nread]);
-                    nread
-                }
-            }
-        };
-        drop(state);
-        *cursor += nread as u64;
-        Ok(nread)
+        self.read_current(buf)
     }
 
     async fn read_byob(self: Rc<Self>, mut buf: BufMutView) -> FsResult<(usize, BufMutView)> {
@@ -1063,24 +555,7 @@ impl File for ObjectFile {
     }
 
     fn write_sync(self: Rc<Self>, buf: &[u8]) -> FsResult<usize> {
-        if !self.writable {
-            return Err(io::ErrorKind::PermissionDenied.into());
-        }
-        let commit = {
-            let mut cursor = self.cursor.lock().unwrap();
-            let mut state = self.state.lock().unwrap();
-            let ObjectFileState::Writer(bytes) = &mut *state else {
-                return Err(io::ErrorKind::PermissionDenied.into());
-            };
-            if *cursor != bytes.len() as u64 {
-                return reject_unsupported_value(ObjectUnsupportedOperation::RandomWrite);
-            }
-            bytes.extend_from_slice(buf);
-            *cursor = bytes.len() as u64;
-            Bytes::copy_from_slice(bytes)
-        };
-        self.backend.commit_key(&self.key, commit)?;
-        Ok(buf.len())
+        self.write_current(buf)
     }
 
     async fn write(self: Rc<Self>, view: BufView) -> FsResult<WriteOutcome> {
@@ -1098,31 +573,7 @@ impl File for ObjectFile {
     }
 
     fn read_all_sync(self: Rc<Self>) -> FsResult<Cow<'static, [u8]>> {
-        if !self.readable {
-            return Err(io::ErrorKind::PermissionDenied.into());
-        }
-        let cursor = *self.cursor.lock().unwrap();
-        let state = self.state.lock().unwrap();
-        match &*state {
-            ObjectFileState::Reader(manifest) => {
-                if cursor >= manifest.size {
-                    return Ok(Cow::Owned(Vec::new()));
-                }
-                let bytes = self
-                    .backend
-                    .read_manifest_range(manifest, cursor..manifest.size)?;
-                Ok(Cow::Owned(bytes.to_vec()))
-            }
-            ObjectFileState::Writer(bytes) => {
-                let start = usize::try_from(cursor).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "cursor overflows usize")
-                })?;
-                if start >= bytes.len() {
-                    return Ok(Cow::Owned(Vec::new()));
-                }
-                Ok(Cow::Owned(bytes[start..].to_vec()))
-            }
-        }
+        self.read_all_current()
     }
 
     async fn read_all_async(self: Rc<Self>) -> FsResult<Cow<'static, [u8]>> {
@@ -1146,26 +597,7 @@ impl File for ObjectFile {
     }
 
     fn seek_sync(self: Rc<Self>, pos: io::SeekFrom) -> FsResult<u64> {
-        let len = {
-            let state = self.state.lock().unwrap();
-            match &*state {
-                ObjectFileState::Reader(manifest) => manifest.size,
-                ObjectFileState::Writer(bytes) => bytes.len() as u64,
-            }
-        };
-        let current = *self.cursor.lock().unwrap();
-        let next = match pos {
-            io::SeekFrom::Start(pos) => pos as i128,
-            io::SeekFrom::End(offset) => len as i128 + offset as i128,
-            io::SeekFrom::Current(offset) => current as i128 + offset as i128,
-        };
-        if next < 0 {
-            return Err(io::ErrorKind::InvalidInput.into());
-        }
-        let next = u64::try_from(next)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "seek overflows u64"))?;
-        *self.cursor.lock().unwrap() = next;
-        Ok(next)
+        self.seek_to(pos)
     }
 
     async fn seek_async(self: Rc<Self>, pos: io::SeekFrom) -> FsResult<u64> {
@@ -1181,15 +613,7 @@ impl File for ObjectFile {
     }
 
     fn sync_sync(self: Rc<Self>) -> FsResult<()> {
-        let commit = {
-            let state = self.state.lock().unwrap();
-            match &*state {
-                ObjectFileState::Reader(_) => return Ok(()),
-                ObjectFileState::Writer(bytes) => Bytes::copy_from_slice(bytes),
-            }
-        };
-        self.backend.commit_key(&self.key, commit)?;
-        Ok(())
+        self.sync_current()
     }
 
     async fn sync_async(self: Rc<Self>) -> FsResult<()> {
@@ -1197,14 +621,7 @@ impl File for ObjectFile {
     }
 
     fn stat_sync(self: Rc<Self>) -> FsResult<FsStat> {
-        let len = {
-            let state = self.state.lock().unwrap();
-            match &*state {
-                ObjectFileState::Reader(manifest) => manifest.size,
-                ObjectFileState::Writer(bytes) => bytes.len() as u64,
-            }
-        };
-        Ok(stat_file(len, 0o644))
+        self.stat_current()
     }
 
     async fn stat_async(self: Rc<Self>) -> FsResult<FsStat> {
@@ -1236,23 +653,7 @@ impl File for ObjectFile {
     }
 
     fn truncate_sync(self: Rc<Self>, len: u64) -> FsResult<()> {
-        if !self.writable {
-            return Err(io::ErrorKind::PermissionDenied.into());
-        }
-        if len != 0 {
-            return ObjectRwBackend::reject_unsupported(ObjectUnsupportedOperation::RandomWrite);
-        }
-        {
-            let mut cursor = self.cursor.lock().unwrap();
-            let mut state = self.state.lock().unwrap();
-            let ObjectFileState::Writer(bytes) = &mut *state else {
-                return Err(io::ErrorKind::PermissionDenied.into());
-            };
-            bytes.clear();
-            *cursor = 0;
-        }
-        self.backend.commit_key(&self.key, Bytes::new())?;
-        Ok(())
+        self.truncate_current(len)
     }
 
     async fn truncate_async(self: Rc<Self>, len: u64) -> FsResult<()> {
@@ -1280,22 +681,7 @@ impl File for ObjectFile {
     }
 
     fn read_at_sync(self: Rc<Self>, buf: &mut [u8], position: u64) -> FsResult<usize> {
-        let state = self.state.lock().unwrap();
-        match &*state {
-            ObjectFileState::Reader(manifest) => self.read_window(manifest, position, buf),
-            ObjectFileState::Writer(bytes) if self.readable => {
-                let start = usize::try_from(position).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "position overflows usize")
-                })?;
-                if start >= bytes.len() {
-                    return Ok(0);
-                }
-                let nread = (bytes.len() - start).min(buf.len());
-                buf[..nread].copy_from_slice(&bytes[start..start + nread]);
-                Ok(nread)
-            }
-            ObjectFileState::Writer(_) => Err(io::ErrorKind::PermissionDenied.into()),
-        }
+        self.read_at(buf, position)
     }
 
     async fn read_at_async(
@@ -1308,11 +694,7 @@ impl File for ObjectFile {
     }
 
     fn write_at_sync(self: Rc<Self>, buf: &[u8], position: u64) -> FsResult<usize> {
-        let current = *self.cursor.lock().unwrap();
-        if position != current {
-            return reject_unsupported_value(ObjectUnsupportedOperation::RandomWrite);
-        }
-        self.write_sync(buf)
+        self.write_at(buf, position)
     }
 
     fn as_stdio(self: Rc<Self>) -> FsResult<PlatformStdio> {
@@ -1415,93 +797,12 @@ fn key_for_path(path: &Path) -> FsResult<String> {
     Ok(key)
 }
 
-fn path_for_key(key: &str) -> PathBuf {
-    let mut path = PathBuf::from("/");
-    for part in key.split('/') {
-        if !part.is_empty() {
-            path.push(part);
-        }
-    }
-    path
-}
-
 fn prefix_for_directory(path: &Path) -> FsResult<String> {
     let path = normalize_path(path)?;
     if path == Path::new("/") {
         return Ok(String::new());
     }
     Ok(format!("{}/", key_for_path(&path)?))
-}
-
-fn insert_parent_dirs(dirs: &mut BTreeSet<PathBuf>, path: &Path) {
-    dirs.insert(PathBuf::from("/"));
-    let mut current = PathBuf::from("/");
-    for component in path.parent().unwrap_or_else(|| Path::new("/")).components() {
-        if let Component::Normal(part) = component {
-            current.push(part);
-            dirs.insert(current.clone());
-        }
-    }
-}
-
-fn stat_file(size: u64, mode: u32) -> FsStat {
-    FsStat {
-        is_file: true,
-        is_directory: false,
-        is_symlink: false,
-        size,
-        mtime: None,
-        atime: None,
-        birthtime: None,
-        ctime: None,
-        dev: 0,
-        ino: None,
-        mode,
-        nlink: Some(1),
-        uid: 0,
-        gid: 0,
-        rdev: 0,
-        blksize: 4096,
-        blocks: Some(size.div_ceil(512)),
-        is_block_device: false,
-        is_char_device: false,
-        is_fifo: false,
-        is_socket: false,
-    }
-}
-
-fn stat_dir(mode: u32) -> FsStat {
-    FsStat {
-        is_file: false,
-        is_directory: true,
-        is_symlink: false,
-        size: 0,
-        mtime: None,
-        atime: None,
-        birthtime: None,
-        ctime: None,
-        dev: 0,
-        ino: None,
-        mode,
-        nlink: Some(1),
-        uid: 0,
-        gid: 0,
-        rdev: 0,
-        blksize: 4096,
-        blocks: Some(0),
-        is_block_device: false,
-        is_char_device: false,
-        is_fifo: false,
-        is_socket: false,
-    }
-}
-
-fn now_millis() -> FsResult<u64> {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| io::Error::other(format!("system clock before epoch: {error}")))?;
-    u64::try_from(duration.as_millis())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "timestamp overflows u64").into())
 }
 
 fn core_error(error: nimbus_core::Error) -> io::Error {
@@ -1512,9 +813,4 @@ fn core_error(error: nimbus_core::Error) -> io::Error {
         }
         other => io::Error::other(other.to_string()),
     }
-}
-
-fn reject_unsupported_value<T>(operation: ObjectUnsupportedOperation) -> FsResult<T> {
-    ObjectRwBackend::reject_unsupported(operation)?;
-    unreachable!("reject_unsupported always returns an error")
 }

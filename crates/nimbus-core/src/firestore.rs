@@ -1,12 +1,13 @@
 //! Provider-family Firestore semantics shared by Firebase and Cloud Functions.
 //!
-//! This crate owns pure Firestore path, database, and storage-locator lowering.
+//! This module owns pure Firestore path, database, and storage-locator lowering.
 //! Adapter crates keep their request/response wire contracts.
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use nimbus_core::{CollectionPath, DocumentLocator, DocumentPath, Error, Result, TableName};
 use ring::digest::{SHA256, digest};
+
+use crate::{CollectionPath, DocumentLocator, DocumentPath, Error, Result, TableName};
 
 pub const DEFAULT_FIRESTORE_DATABASE_ID: &str = "(default)";
 
