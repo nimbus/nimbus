@@ -207,7 +207,7 @@ pub(super) fn rebuild_index_locked(
     let mut header_corrupt_packs = BTreeSet::new();
     let pack_ids = local::pack_ids_on_disk(&state.packs_dir)?;
 
-    for pack_id in pack_ids {
+    for pack_id in pack_ids.iter().copied() {
         let pack_scan = scan_pack(&state.packs_dir, pack_id, None, &mut pacing)?;
         report.packs_scanned += 1;
         if report.first_scanned_pack_id.is_none() {
@@ -279,12 +279,22 @@ pub(super) fn rebuild_index_locked(
     // unindexed corrupt bytes are not durable anywhere else.
     local::invalidate_scrub_checkpoint(state, &*observer)?;
     state.index = rebuilt;
-    state.active_pack_id = state
+    // Never select a header-corrupt pack (its records were quarantine-
+    // carried) as the active append target: roll to a fresh id past
+    // everything on disk instead.
+    let index_max = state
         .index
         .values()
         .map(|entry| entry.pack_id)
         .max()
         .unwrap_or(0);
+    let disk_max = pack_ids.iter().max().copied().unwrap_or(0);
+    let candidate = index_max.max(disk_max);
+    state.active_pack_id = if header_corrupt_packs.contains(&candidate) {
+        candidate.saturating_add(1)
+    } else {
+        candidate
+    };
     state.active_pack_bytes =
         local::ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
     if state.active_pack_bytes >= state.pack_target_bytes

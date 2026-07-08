@@ -275,7 +275,27 @@ impl LocalPackStore {
             &mut report,
             &*observer,
         )?;
-        let quarantined = load_quarantine(&quarantine_path)?;
+        let mut quarantined = load_quarantine(&quarantine_path)?;
+        // Prune stale entries: a crash between release's index tombstone and
+        // the quarantine side-file rewrite leaves an absent-claim entry that
+        // would otherwise poison a future reintroduction of the same content
+        // hash (release is the operation that lifts content quarantines).
+        let before = quarantined.len();
+        quarantined.retain(|hash, _| index.contains_key(hash));
+        report.stale_quarantine_entries_pruned = before - quarantined.len();
+        if report.stale_quarantine_entries_pruned > 0 {
+            disk::write_replace_durable(
+                &quarantine_path,
+                &encode_quarantine(&quarantined),
+                &*observer,
+            )
+            .map_err(|err| {
+                io_error(
+                    err,
+                    format!("prune stale quarantine {}", quarantine_path.display()),
+                )
+            })?;
+        }
         report.quarantine_entries_loaded = quarantined.len();
         // Active = max over index AND disk: a fresh pack rolled by pack
         // retirement (or a crash) has no index entries yet, but it — not the
@@ -283,6 +303,21 @@ impl LocalPackStore {
         let index_max = index.values().map(|entry| entry.pack_id).max().unwrap_or(0);
         let disk_max = pack_ids_on_disk(&packs_dir)?.into_iter().max().unwrap_or(0);
         let mut active_pack_id = index_max.max(disk_max);
+        // A header-corrupt candidate-active pack with ZERO live index
+        // references retires at open (roll past it — zero data loss,
+        // reported): refusing would brick the root over a file no claim
+        // depends on, and appending behind the bad header is worse. A
+        // REFERENCED corrupt pack still fails closed below; scrub owns its
+        // quarantine + retirement.
+        let disk_max_referenced = index.values().any(|entry| entry.pack_id == disk_max);
+        if active_pack_id == disk_max
+            && !disk_max_referenced
+            && pack_path(&packs_dir, disk_max).exists()
+            && !pack_header_is_valid(&packs_dir, disk_max)
+        {
+            report.unreferenced_corrupt_packs_retired += 1;
+            active_pack_id = disk_max.saturating_add(1);
+        }
         let mut active_pack_bytes = ensure_pack_file(&packs_dir, active_pack_id, &*observer)?;
         if active_pack_bytes >= options.pack_target_bytes
             && active_pack_bytes > PACK_MAGIC.len() as u64
