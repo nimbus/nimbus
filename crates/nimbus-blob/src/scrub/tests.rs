@@ -896,3 +896,43 @@ async fn checkpoint_publication_refused_after_compaction_epoch_moves() {
     assert!(dir.path().join("scrub-checkpoint.nbls").exists());
     assert!(store.has(&keep).await.unwrap());
 }
+
+#[tokio::test]
+async fn resume_rescans_packs_with_findings() {
+    // Tiny pack target: each put rolls the active pack -> packs 0,1,2.
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalPackStore::open_with_pack_target(dir.path(), 64).unwrap();
+    for payload in [&b"pack zero"[..], b"pack one", b"pack two"] {
+        store.put(Bytes::copy_from_slice(payload)).await.unwrap();
+    }
+
+    // Orphan structural corruption in sealed pack 1: a finding with no
+    // durable quarantine entry (the indexed record itself stays valid).
+    let path = local::pack_path(&dir.path().join("packs"), 1);
+    let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+    file.write_all(b"XXXXGARBAGE").unwrap();
+    file.sync_data().unwrap();
+
+    // Interrupted run scans packs 0 (clean) and 1 (dirty): the resume
+    // checkpoint must freeze at pack 0 — findings for unindexed corrupt
+    // bytes are not durable anywhere else.
+    let scrubber = LocalPackScrubber::new(store.clone());
+    let partial = scrubber.scrub_with_pack_limit(2).await.unwrap();
+    assert!(!partial.completed);
+    assert_eq!(partial.checkpoint.last_completed_pack_id, Some(0));
+
+    // The resumed run rescans pack 1 and re-surfaces the finding in its own
+    // (completed) report instead of silently omitting it.
+    let resumed = scrubber.scrub().await.unwrap();
+    assert!(resumed.completed);
+    assert_eq!(
+        resumed.packs_skipped_via_checkpoint, 1,
+        "only clean pack 0 skips"
+    );
+    assert!(
+        resumed.findings.iter().any(|finding| {
+            finding.kind == ScrubFindingKind::InvalidRecordMagic && finding.pack_id == Some(1)
+        }),
+        "the dirty pack's finding re-surfaces on resume: {resumed:?}"
+    );
+}
