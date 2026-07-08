@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use nimbus_core::{CommitEntry, Document, DocumentId, SequenceNumber, TableName};
+use nimbus_core::{
+    CommitEntry, Document, DocumentId, SequenceNumber, TableName, TenantEventRecord,
+};
 
 use crate::subscriptions::{
     QueuedSubscriptionWork, SubscriptionBatchCandidate, dispatch_subscription_work,
@@ -27,6 +29,35 @@ fn deleted_documents_for_commit(commit: &CommitEntry) -> Vec<Document> {
         .filter(|write| matches!(write.op_type, nimbus_core::WriteOpType::Delete))
         .filter_map(|write| write.previous.clone())
         .collect()
+}
+
+/// Returns the identity of a batch's sole document-bearing commit, if exactly
+/// one exists AND every other record in the batch is provably inert. Kinds
+/// live only on the unflattened `TenantEventRecord` -- a `CommitEntry` has
+/// already erased them down to `writes`, which is why this takes records and
+/// must run before that flattening. The provider catch-up path is the only
+/// production caller that needs this: it re-reads a raw journal tail that can
+/// span more than one originating operation, so its batch can legitimately
+/// mix a document write with a zero-write record of ANY kind. A zero-write
+/// record is inert only when it carries event detail and every event is
+/// `TriggerDelivery` -- the trigger-candidate feed's own delivery-cursor
+/// advance, which by construction changes no documents, schema, or policy.
+/// Any other zero-write kind (`SchemaChange`, `TableLifecycle`, ...) forces
+/// `None`: an access-policy or table-lifecycle change riding along with a
+/// document write in the same batch is exactly the case a preserved hint
+/// would let a runtime-backed subscription transform skip re-evaluating.
+pub(in crate::engine) fn document_bearing_commit_identity(
+    records: &[TenantEventRecord],
+) -> Option<CommitEntry> {
+    let mut document_bearing = records.iter().filter(|record| !record.writes.is_empty());
+    let (Some(only), None) = (document_bearing.next(), document_bearing.next()) else {
+        return None;
+    };
+    let other_records_are_provably_inert = records
+        .iter()
+        .filter(|record| record.writes.is_empty())
+        .all(TenantEventRecord::is_provably_inert_trigger_delivery_only);
+    other_records_are_provably_inert.then(|| only.as_commit_entry())
 }
 
 fn merge_deleted_documents_for_batch(applied: &[CommitEntry]) -> Vec<Document> {
@@ -142,6 +173,7 @@ impl Engine {
         &self,
         runtime: Arc<TenantRuntime>,
         applied: &[CommitEntry],
+        commit_identity: Option<CommitEntry>,
         emit_trigger_candidates: bool,
     ) {
         if applied.is_empty() {
@@ -176,10 +208,17 @@ impl Engine {
             let work = QueuedSubscriptionWork::new_coalesced(
                 affected.subscription_ids,
                 latest.sequence,
-                // Coalesced batches intentionally omit per-commit identity; only a
-                // single applied commit can safely preserve exact commit metadata
-                // for downstream consumers.
-                (applied.len() == 1).then(|| latest.clone()),
+                // Coalesced batches intentionally omit per-commit identity
+                // unless the caller can prove exactly one commit in the
+                // batch actually carries writes and everything else is
+                // inert. `CommitEntry` alone cannot prove that (it has
+                // already lost event-kind information), so identity is
+                // supplied by the caller: the live mutation-queue apply path
+                // (batches are always real document commits, so `len() == 1`
+                // is exact) or the provider catch-up path (kind-aware over
+                // the still-unflattened `TenantEventRecord`s, via
+                // `document_bearing_commit_identity`).
+                commit_identity,
                 merge_deleted_documents_for_batch(applied),
             );
             self.dispatch_or_enqueue_subscription_work(runtime.clone(), work);

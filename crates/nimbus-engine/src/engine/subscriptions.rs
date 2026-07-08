@@ -144,6 +144,38 @@ impl Engine {
             return;
         }
 
+        // Something advanced the applied head between the bootstrap read and
+        // activation above -- but `applied_head` also advances through
+        // zero-write journal records, and only ONE kind of those is provably
+        // inert for a pending subscription: the trigger-candidate feed's own
+        // delivery-cursor advance (`TenantEventKind::TriggerDelivery`), which
+        // by construction changes no documents, no schema, and no policy. If
+        // the whole gap is such records, re-evaluating now would only
+        // reproduce the bootstrap read's own result -- a spurious duplicate.
+        // Every other record kind must catch up: document writes obviously,
+        // but also zero-write records like `SchemaChange`/`TableLifecycle`
+        // (an access-policy change landing while the subscription is still
+        // pending is not caught by the active-subscription policy-revision
+        // checks, so this catch-up is what re-evaluates under the new
+        // policy). Kinds are read from the durable journal -- the commit-log
+        // view flattens records via `as_commit_entry` and cannot make this
+        // distinction. This is the uncommon "something happened during
+        // bootstrap" branch, not the hot path, so the direct read is cheap;
+        // fail open (assume a catch-up is needed) if the read itself errors
+        // or a record carries no event detail.
+        let gap_is_only_trigger_cursor_advances = runtime
+            .store()
+            .read_durable_journal_from(SequenceNumber(covered_sequence.0.saturating_add(1)))
+            .map(|records| {
+                records
+                    .iter()
+                    .all(nimbus_core::TenantEventRecord::is_provably_inert_trigger_delivery_only)
+            })
+            .unwrap_or(false);
+        if gap_is_only_trigger_cursor_advances {
+            return;
+        }
+
         let work = QueuedSubscriptionWork::new_coalesced(
             vec![subscription_id],
             current_applied,

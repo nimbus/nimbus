@@ -249,6 +249,12 @@ async fn paused_first_load_catches_up_before_publication() {
         .expect("first query should succeed");
     assert_eq!(document_bodies(&first_query), vec!["Ada", "Beta"]);
 
+    // Settle the trigger cursor before the paired publication/stats reads
+    // below: the cursor worker runs on its own OS thread and can widen
+    // coverage between two separate accessor calls, breaking the
+    // exact-equality assertion nondeterministically. Post-settle it is
+    // quiescent, so both reads observe one frontier.
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
     let publication = engine
         .materialized_table_publication_stats_for_testing(&tenant_id, &table)
         .expect("publication should load")
@@ -379,6 +385,10 @@ async fn concurrent_first_load_only_publishes_caught_up_newest_materialized_tabl
         .expect("second query should succeed");
     assert_eq!(document_bodies(&second_query), vec!["Ada", "Beta"]);
 
+    // Settle before the paired publication/stats reads (same reason as the
+    // sibling site above): quiescence makes the exact-equality against
+    // `stats.latest_covered_sequence` deterministic.
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
     let publication_after_release = engine
         .materialized_table_publication_stats_for_testing(&tenant_id, &table)
         .expect("materialized publication should load")

@@ -272,6 +272,28 @@ impl TenantEventRecord {
         self.events.as_slice()
     }
 
+    /// True when this record carries no document writes and every event on
+    /// it is a `TriggerDelivery` cursor advance -- the trigger-candidate
+    /// feed's own bookkeeping commit, which by construction changes no
+    /// documents, schema, or policy. Any other zero-write kind
+    /// (`SchemaChange`, `TableLifecycle`, ...) is NOT provably inert by this
+    /// definition: a caller that skips re-evaluating or re-folding across
+    /// such a record would miss a real state change. A record carrying
+    /// writes is never inert here regardless of its events. This is the
+    /// shared predicate behind every "is it safe to treat this gap as a
+    /// no-op" decision in the engine (subscription bootstrap-gap catch-up,
+    /// coalesced-batch commit identity, materialized-read coverage
+    /// widening) -- keep it centralized here rather than re-deriving it at
+    /// each call site.
+    pub fn is_provably_inert_trigger_delivery_only(&self) -> bool {
+        self.writes.is_empty()
+            && !self.events.is_empty()
+            && self
+                .events
+                .iter()
+                .all(|event| matches!(event, TenantEventKind::TriggerDelivery { .. }))
+    }
+
     pub fn compatibility_document_record(
         sequence: SequenceNumber,
         timestamp: Timestamp,

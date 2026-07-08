@@ -85,6 +85,23 @@ pub(crate) fn durable_journal_commits(
         .collect()
 }
 
+/// Reads the current high-water sequence of the *full* durable journal,
+/// including zero-write cursor-advance commits. Unlike `durable_journal_commits`
+/// (which filters those out), this reflects whatever the trigger-candidate
+/// feed's own commit most recently appended, so it can be used right after
+/// observing `trigger_delivery_cursor.materialized_through` reach a target to
+/// pin down exactly which durable state that round produced -- see the
+/// settle helpers below for why a fixed target isn't enough on its own.
+fn latest_durable_journal_sequence(engine: &Engine, tenant_id: &TenantId) -> SequenceNumber {
+    engine
+        .read_durable_journal(tenant_id, SequenceNumber(0))
+        .expect("durable journal should read")
+        .into_iter()
+        .map(|record| record.as_commit_entry().sequence)
+        .max()
+        .unwrap_or(SequenceNumber(0))
+}
+
 pub(crate) fn subscription_channel() -> (
     mpsc::Sender<SubscriptionUpdate>,
     mpsc::Receiver<SubscriptionUpdate>,
@@ -179,14 +196,39 @@ pub(crate) async fn wait_for_active_subscription_count(
 ///   document commit's sequence (`QueuedSubscriptionWork::delivery_sequence`)
 ///   and cursor-advance commits generate no deliveries, so a subscription
 ///   coverage wait pinned to a cursor-advance sequence never completes.
+///
+/// Also waits for the tenant's in-memory `durable_head` stat to catch up to
+/// the durable journal's high-water sequence *observed at the moment the
+/// cursor settles*, not just past `target`: `materialize_trigger_invocations_and_sync`
+/// durably commits the cursor-advance commit (and its cursor value) in one
+/// storage transaction, but only calls `sync_mutation_journal_progress`
+/// (which updates the in-memory stat `mutation_journal_stats_for_testing`
+/// reads) as a *separate*, later step. Under scheduling pressure the worker
+/// can be preempted between those two steps, so a caller that settles on the
+/// cursor alone and immediately reads `mutation_journal_stats_for_testing`
+/// can observe a stale `durable_head`. Comparing against a fixed `target`
+/// doesn't close that window either: when document commits land close
+/// together, an *earlier* round's cursor-advance commit can already have
+/// pushed `durable_head` past a *later* document's own sequence, so
+/// `durable_head > target` can be trivially true before the later round's
+/// own cursor-advance commit has been synced. Re-reading the durable
+/// journal's high-water mark right after the cursor observation pins down
+/// exactly which commit that specific round produced, so waiting for
+/// `durable_head` to reach *that* value can't be satisfied by a round that
+/// already ran before it.
 pub(crate) async fn settled_latest_document_sequence(
     engine: &Arc<Engine>,
     tenant_id: &TenantId,
 ) -> SequenceNumber {
-    let target = durable_journal_commits(engine, tenant_id, SequenceNumber(0))
+    // No document commit has landed yet, so there is nothing to settle
+    // against: any cursor-advance commit would require a document commit to
+    // advance through first.
+    let Some(target) = durable_journal_commits(engine, tenant_id, SequenceNumber(0))
         .last()
         .map(|commit| commit.sequence)
-        .unwrap_or(SequenceNumber(0));
+    else {
+        return SequenceNumber(0);
+    };
     wait_for_value(
         "trigger delivery cursor should settle through the last document commit",
         ci_or_local_duration(Duration::from_secs(1), Duration::from_secs(3)),
@@ -199,21 +241,50 @@ pub(crate) async fn settled_latest_document_sequence(
         move |cursor| cursor.materialized_through.0 >= target.0,
     )
     .await;
+    let settled_head = latest_durable_journal_sequence(engine, tenant_id);
+    wait_for_mutation_journal_stats(
+        engine,
+        tenant_id,
+        "durable_head stat should catch up to the settled cursor-advance commit",
+        move |stats| stats.durable_head.0 >= settled_head.0,
+    )
+    .await;
     target
 }
 
 /// Blocking (non-async) form of the settle in
 /// [`settled_latest_document_sequence`], for `#[test]` callers: waits until
 /// the trigger-delivery cursor has caught up through the last
-/// document-bearing commit, at which point the worker's queue is drained and
-/// its final cursor-advance commit has landed (it lands atomically with the
-/// cursor write this poll observes), so no further background sequence
-/// consumption can race the caller until the next document write.
+/// document-bearing commit and its cursor-advance commit's durable-head bump
+/// is visible in the in-memory `mutation_journal_stats_for_testing` stat, so
+/// no further background sequence consumption can race the caller until the
+/// next document write.
+///
+/// The cursor-advance commit is durably committed (cursor value included)
+/// in one storage transaction inside `materialize_trigger_invocations_and_sync`,
+/// but that function only calls `sync_mutation_journal_progress` (which
+/// updates the in-memory `durable_head` stat) as a separate, later step.
+/// Settling on the cursor alone can therefore return while `durable_head`
+/// is still stale under scheduling pressure. Waiting for `durable_head` to
+/// pass a *fixed* `target` doesn't close that window either: when document
+/// commits land close together, an earlier round's cursor-advance commit can
+/// already have pushed `durable_head` past a later document's own sequence,
+/// making `durable_head > target` trivially true before that later round's
+/// own cursor-advance commit has synced. Re-reading the durable journal's
+/// high-water mark right after the cursor catches up pins down exactly which
+/// commit *this* round produced, so waiting for `durable_head` to reach that
+/// freshly observed value can't be satisfied by a round that already ran
+/// before it.
 pub(crate) fn settle_trigger_cursor_blocking(engine: &Engine, tenant_id: &TenantId) {
-    let target = durable_journal_commits(engine, tenant_id, SequenceNumber(0))
+    // No document commit has landed yet, so there is nothing to settle
+    // against: any cursor-advance commit would require a document commit to
+    // advance through first.
+    let Some(target) = durable_journal_commits(engine, tenant_id, SequenceNumber(0))
         .last()
         .map(|commit| commit.sequence)
-        .unwrap_or(SequenceNumber(0));
+    else {
+        return;
+    };
     let timeout = ci_or_local_duration(Duration::from_millis(500), Duration::from_secs(5));
     let started_at = std::time::Instant::now();
     loop {
@@ -221,14 +292,31 @@ pub(crate) fn settle_trigger_cursor_blocking(engine: &Engine, tenant_id: &Tenant
             .trigger_delivery_cursor_for_testing(tenant_id)
             .expect("trigger delivery cursor should load");
         if cursor.materialized_through.0 >= target.0 {
-            return;
+            break;
         }
         assert!(
             started_at.elapsed() < timeout,
             "trigger delivery cursor should settle through the last document commit \
              (materialized_through {} < target {})",
             cursor.materialized_through.0,
-            target.0
+            target.0,
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let settled_head = latest_durable_journal_sequence(engine, tenant_id);
+    loop {
+        let stats = engine
+            .mutation_journal_stats_for_testing(tenant_id)
+            .expect("mutation journal stats should load");
+        if stats.durable_head.0 >= settled_head.0 {
+            return;
+        }
+        assert!(
+            started_at.elapsed() < timeout,
+            "durable_head stat should catch up to the settled cursor-advance commit \
+             (durable_head {} < settled_head {})",
+            stats.durable_head.0,
+            settled_head.0,
         );
         std::thread::sleep(Duration::from_millis(5));
     }

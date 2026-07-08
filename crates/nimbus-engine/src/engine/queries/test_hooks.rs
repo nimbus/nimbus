@@ -9,12 +9,15 @@ use nimbus_core::Result;
 use nimbus_core::TenantId;
 #[cfg(test)]
 use nimbus_core::{
-    ResourcePathBinding, SequenceNumber, TableName, TriggerDeliveryCursor, TriggerInvocationRecord,
+    ResourcePathBinding, SequenceNumber, TableName, TenantEventRecord, TriggerDeliveryCursor,
+    TriggerInvocationRecord,
 };
 
 #[cfg(test)]
 use crate::TriggerRegistration;
 use crate::engine::Engine;
+#[cfg(test)]
+use crate::engine::mutations::document_bearing_commit_identity;
 
 impl Engine {
     #[cfg(any(test, feature = "test-hooks"))]
@@ -386,5 +389,33 @@ impl Engine {
         self.with_runtime_for_testing(tenant_id, |runtime| {
             runtime.store.save_trigger_invocation(record)
         })?
+    }
+
+    /// Drives `process_applied_commit_batch` directly with a caller-supplied
+    /// `records` slice, bypassing the mutation queue and provider catch-up
+    /// paths that normally assemble it. This lets tests reconstruct the one
+    /// real, storage-backed scenario where a coalesced batch legitimately
+    /// mixes a document-bearing commit with a zero-write one -- the
+    /// Postgres-provider catch-up path re-reading a raw journal tail that
+    /// spans both -- without standing up an external provider fixture. Takes
+    /// unflattened records and computes `commit_identity` the same
+    /// kind-aware way that catch-up path does, rather than the caller's own
+    /// choice, so the test hook cannot silently drift from production
+    /// behavior.
+    #[cfg(test)]
+    pub(crate) fn process_applied_commit_batch_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        records: &[TenantEventRecord],
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let applied = records
+            .iter()
+            .map(TenantEventRecord::as_commit_entry)
+            .collect::<Vec<_>>();
+        let commit_identity = document_bearing_commit_identity(records);
+        self.process_applied_commit_batch(runtime, &applied, commit_identity, false);
+        Ok(())
     }
 }

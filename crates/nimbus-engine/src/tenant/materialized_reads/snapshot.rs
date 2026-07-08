@@ -179,6 +179,51 @@ impl ServingSnapshotManager {
         }
     }
 
+    /// Widens the latest retained version's coverage to `snapshot`'s sequence
+    /// in place, instead of retaining it as a new history entry. Callers use
+    /// this exclusively for zero-write commits (the trigger-candidate feed's
+    /// delivery-cursor advance): `snapshot`'s table contents are guaranteed
+    /// byte-identical to the current latest version's, since nothing was
+    /// written, so there is no distinct historical revision to keep around.
+    /// Retaining one anyway would only inflate `retained_snapshot_count` with
+    /// content-free duplicates and evict genuinely distinct versions sooner.
+    ///
+    /// The in-place replace is only safe while the current latest is
+    /// unpinned. A pin clones the `Arc`-backed snapshot directly, so the pin
+    /// itself stays valid either way -- but `prune_locked` also treats a
+    /// pinned *front* of the deque as manager-level protection against
+    /// pruning it away. Popping a pinned latest here would silently strip
+    /// that protection: if it is also the front (the common case with a
+    /// small `version_capacity`), the next `publish()` could prune it from
+    /// history out from under a caller that still holds the pin. So when the
+    /// current latest is pinned, push the widened snapshot alongside it
+    /// instead of replacing it; the deque grows by one, bounded by how long
+    /// the pin lives, and the next `publish()` prunes normally once it is
+    /// released.
+    pub(super) fn extend_latest_coverage(&self, snapshot: ServingSnapshot) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("serving snapshot manager lock should not be poisoned");
+        let sequence = snapshot.covered_sequence();
+        match state.versions.back() {
+            Some(latest) if latest.covered_sequence().0 >= sequence.0 => return,
+            Some(latest) if latest.pin_count() > 1 => {
+                state.versions.push_back(snapshot);
+            }
+            Some(_) => {
+                state.versions.pop_back();
+                state.versions.push_back(snapshot);
+            }
+            None => state.versions.push_back(snapshot),
+        }
+        let ready_waiters = self.take_ready_waiters_locked(&mut state, sequence);
+        drop(state);
+        for waiter in ready_waiters {
+            waiter.notify_waiters();
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn snapshot_covering(
         &self,
@@ -319,5 +364,112 @@ impl ServingSnapshotManager {
             state.versions.pop_front();
             self.pruned_version_count.fetch_add(1, Ordering::Relaxed);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nimbus_core::{
+        CommitSequence, CommitTimestamp, HistoricalReadSnapshot, ReadTimestamp, SchemaChangeEvent,
+        TableId, TenantEventRecord, Timestamp, VersionedRegistry,
+    };
+
+    use super::*;
+
+    fn table() -> TableName {
+        TableName::new("tasks").expect("table name should build")
+    }
+
+    fn snapshot_at(sequence: SequenceNumber) -> ServingSnapshot {
+        let mut tables = HashMap::new();
+        tables.insert(table(), Arc::new(MaterializedTableDocuments::new()));
+        ServingSnapshot::from_tables(sequence, tables)
+    }
+
+    fn read_shape_at(sequence: SequenceNumber) -> HistoricalReadShape {
+        let table = table();
+        let table_id = TableId::new();
+        let registry = VersionedRegistry::from_records([TenantEventRecord::schema_change(
+            SequenceNumber(1),
+            Timestamp(100),
+            SchemaChangeEvent::SetTable {
+                table: table.clone(),
+                table_id: table_id.clone(),
+                previous: None,
+                current: nimbus_core::TableSchema {
+                    table: table.clone(),
+                    fields: Vec::new(),
+                    indexes: Vec::new(),
+                    access_policy: None,
+                },
+            },
+        )
+        .expect("schema change event should build")])
+        .expect("registry should build");
+        let timestamp = Timestamp(sequence.0.saturating_mul(100));
+        registry
+            .read_shape_at(
+                &table,
+                HistoricalReadSnapshot::new(
+                    ReadTimestamp::new(timestamp),
+                    CommitSequence::new(sequence),
+                    CommitTimestamp::new(timestamp),
+                ),
+            )
+            .expect("read shape should load")
+            .expect("table should exist at historical read")
+    }
+
+    /// Pins the latest retained snapshot (`pin_read_shape`), then widens it
+    /// with a newer snapshot: the pinned original must stay retained by the
+    /// manager -- not just independently valid through the pin's own `Arc`
+    /// clone -- alongside the widened snapshot as the new latest.
+    #[test]
+    fn extend_latest_coverage_retains_pinned_latest_alongside_widened_snapshot() {
+        let manager = ServingSnapshotManager::new();
+        let original = snapshot_at(SequenceNumber(5));
+        manager.publish(original.clone(), 10);
+
+        let pinned = original
+            .pin_read_shape(read_shape_at(SequenceNumber(5)))
+            .expect("snapshot should pin the read shape it covers");
+        drop(original);
+
+        manager.extend_latest_coverage(snapshot_at(SequenceNumber(6)));
+
+        let stats = manager.stats();
+        assert_eq!(
+            stats.retained_snapshot_count, 2,
+            "a pinned latest must not be popped by extend_latest_coverage; the widened \
+             snapshot should be retained alongside it instead of replacing it"
+        );
+        assert_eq!(stats.latest_retained_sequence, Some(SequenceNumber(6)));
+        assert_eq!(
+            manager
+                .snapshot_covering(SequenceNumber(5))
+                .map(|snapshot| snapshot.covered_sequence()),
+            Some(SequenceNumber(5)),
+            "the pinned original must still be retrievable from the manager's own history, \
+             not just kept alive by the caller's independent pin"
+        );
+        assert_eq!(pinned.covered_sequence(), SequenceNumber(5));
+    }
+
+    /// The in-place replace behavior is unchanged when the current latest
+    /// carries no outstanding pin.
+    #[test]
+    fn extend_latest_coverage_replaces_unpinned_latest_in_place() {
+        let manager = ServingSnapshotManager::new();
+        manager.publish(snapshot_at(SequenceNumber(1)), 10);
+
+        manager.extend_latest_coverage(snapshot_at(SequenceNumber(2)));
+
+        let stats = manager.stats();
+        assert_eq!(
+            stats.retained_snapshot_count, 1,
+            "an unpinned latest should still be replaced in place, not retained alongside \
+             the widened snapshot"
+        );
+        assert_eq!(stats.latest_retained_sequence, Some(SequenceNumber(2)));
     }
 }
