@@ -152,6 +152,106 @@ pub(crate) async fn wait_for_active_subscription_count(
     .await
 }
 
+/// Waits for the tenant's trigger-delivery cursor to catch up through the
+/// last document-bearing commit, then returns that document commit's
+/// sequence.
+///
+/// Every tenant runs a background `TriggerCandidateFeed` worker that, by
+/// design, advances a durable trigger-delivery cursor after every commit --
+/// including commits with zero matching trigger registrations -- by
+/// appending its own empty-write commit to the same commit log and sequence
+/// space real document writes use (see `trigger_candidates.rs`). That
+/// cursor-advance commit lands asynchronously, on its own OS thread, so a
+/// test that captures `latest_sequence` and later compares it against an
+/// independently observed read (a subscription snapshot's covered_sequence,
+/// a materialized publication's covered_sequence, an applied-head stat,
+/// etc.) can otherwise race against that background commit landing between
+/// the two observations. Settling here first closes that window.
+///
+/// Two properties make the DOCUMENT commit (not the raw `latest_sequence`)
+/// the only sound settle target and return value:
+/// - `materialized_through` only ever advances through commits the worker
+///   processes, and the worker never re-processes its own cursor-advance
+///   commits. Targeting a raw `latest_sequence` that happens to be a
+///   cursor-advance commit therefore waits on a predicate that can never
+///   become true.
+/// - Reactive subscription deliveries stamp `covered_sequence` from the
+///   document commit's sequence (`QueuedSubscriptionWork::delivery_sequence`)
+///   and cursor-advance commits generate no deliveries, so a subscription
+///   coverage wait pinned to a cursor-advance sequence never completes.
+pub(crate) async fn settled_latest_document_sequence(
+    engine: &Arc<Engine>,
+    tenant_id: &TenantId,
+) -> SequenceNumber {
+    let target = durable_journal_commits(engine, tenant_id, SequenceNumber(0))
+        .last()
+        .map(|commit| commit.sequence)
+        .unwrap_or(SequenceNumber(0));
+    wait_for_value(
+        "trigger delivery cursor should settle through the last document commit",
+        ci_or_local_duration(Duration::from_secs(1), Duration::from_secs(3)),
+        Duration::ZERO,
+        || async {
+            engine
+                .trigger_delivery_cursor_for_testing(tenant_id)
+                .expect("trigger delivery cursor should load")
+        },
+        move |cursor| cursor.materialized_through.0 >= target.0,
+    )
+    .await;
+    target
+}
+
+/// Blocking (non-async) form of the settle in
+/// [`settled_latest_document_sequence`], for `#[test]` callers: waits until
+/// the trigger-delivery cursor has caught up through the last
+/// document-bearing commit, at which point the worker's queue is drained and
+/// its final cursor-advance commit has landed (it lands atomically with the
+/// cursor write this poll observes), so no further background sequence
+/// consumption can race the caller until the next document write.
+pub(crate) fn settle_trigger_cursor_blocking(engine: &Engine, tenant_id: &TenantId) {
+    let target = durable_journal_commits(engine, tenant_id, SequenceNumber(0))
+        .last()
+        .map(|commit| commit.sequence)
+        .unwrap_or(SequenceNumber(0));
+    let timeout = ci_or_local_duration(Duration::from_millis(500), Duration::from_secs(5));
+    let started_at = std::time::Instant::now();
+    loop {
+        let cursor = engine
+            .trigger_delivery_cursor_for_testing(tenant_id)
+            .expect("trigger delivery cursor should load");
+        if cursor.materialized_through.0 >= target.0 {
+            return;
+        }
+        assert!(
+            started_at.elapsed() < timeout,
+            "trigger delivery cursor should settle through the last document commit \
+             (materialized_through {} < target {})",
+            cursor.materialized_through.0,
+            target.0
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Settles like [`settled_latest_document_sequence`], then returns the raw
+/// `latest_sequence` (which may be the sequence of the worker's own
+/// cursor-advance commit). Stable once settled: the final cursor-advance
+/// commit lands atomically with the cursor write the settle observes, and
+/// nothing re-processes cursor-advance commits. Use this only to assert
+/// against sequences stamped from live store state (e.g. a subscription
+/// bootstrap snapshot's covered_sequence); coverage waits on reactive
+/// deliveries must use [`settled_latest_document_sequence`] instead.
+pub(crate) async fn settled_latest_sequence(
+    engine: &Arc<Engine>,
+    tenant_id: &TenantId,
+) -> SequenceNumber {
+    settled_latest_document_sequence(engine, tenant_id).await;
+    engine
+        .latest_sequence(tenant_id)
+        .expect("latest sequence should load")
+}
+
 pub(crate) fn filter(field: &str, op: FilterOp, value: serde_json::Value) -> Filter {
     Filter {
         field: field.to_string(),

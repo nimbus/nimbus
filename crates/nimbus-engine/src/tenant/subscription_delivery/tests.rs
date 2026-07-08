@@ -64,6 +64,16 @@ async fn engine_mutation_returns_while_subscription_delivery_worker_is_blocked()
             serde_json::Map::from_iter([("title".to_string(), json!("Before"))]),
         )
         .expect("seed insert should succeed");
+    // The tenant's background trigger-candidate feed advances a durable
+    // delivery cursor after every commit -- including this seed insert --
+    // by appending its own empty-write commit to the same commit log and
+    // sequence space (see `crate::tests::settled_latest_document_sequence`). If that
+    // cursor-advance commit lands in the gap between `subscribe`'s bootstrap
+    // read and its `applied_head` catch-up check, it spuriously enqueues an
+    // extra coalesced delivery that can later merge with the update below
+    // and erase its single-commit metadata. Settle it first so `subscribe`
+    // observes a stable `applied_head`.
+    crate::tests::settled_latest_sequence(&engine, &tenant_id).await;
 
     let (tx, mut rx) = subscription_channel();
     let _subscription = engine

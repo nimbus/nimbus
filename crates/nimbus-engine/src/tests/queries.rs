@@ -436,6 +436,18 @@ async fn subscription_async_initial_evaluation_uses_materialized_serving_path_fo
         )
         .expect("seed insert should succeed");
 
+    // The tenant's background trigger-candidate feed advances a durable
+    // delivery cursor after every commit -- including this seed insert --
+    // by appending its own empty-write commit to the same commit log and
+    // sequence space (see `crate::tests::settled_latest_document_sequence`). If that
+    // cursor-advance commit lands between `subscribe_async`'s bootstrap read
+    // and `activate_bootstrapped_subscription`'s `applied_head` catch-up
+    // check, it spuriously enqueues an extra coalesced delivery that
+    // re-evaluates the query and inflates the materialized-surface load and
+    // planning counters asserted below. Settle it first so activation
+    // observes a stable `applied_head`.
+    settled_latest_sequence(&engine, &tenant_id).await;
+
     let (tx, mut rx) = subscription_channel();
     let subscription = engine
         .subscribe_async(

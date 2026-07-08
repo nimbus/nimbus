@@ -1,14 +1,45 @@
 use super::*;
 
+/// Polls `mutation_journal_stats_for_testing().applied_head` until it
+/// reaches `target` (or a bounded timeout elapses), then returns it.
+///
+/// The tenant's background trigger-candidate feed advances a durable
+/// delivery cursor after every commit by appending its own empty-write
+/// commit to the same commit log and sequence space real document writes
+/// use (see `crate::tests::settled_latest_document_sequence`), and calls
+/// `mark_applied_head` asynchronously right after writing that commit, not
+/// atomically with it. A materialized read's `covered_sequence` -- sourced
+/// from the same raw sequence counter -- can therefore briefly outrun
+/// `applied_head` even though both settle to the same value moments later;
+/// poll for that brief, self-resolving catch-up instead of asserting on a
+/// single racy read. This is a plain, non-async helper (used from both
+/// `#[test]` and `#[tokio::test]` callers), so it polls with a thread sleep
+/// rather than the crate's async `wait_for_value`.
+fn wait_for_applied_head_at_least(
+    engine: &Engine,
+    tenant_id: &TenantId,
+    target: SequenceNumber,
+) -> SequenceNumber {
+    let timeout = ci_or_local_duration(Duration::from_millis(200), Duration::from_secs(2));
+    let started_at = std::time::Instant::now();
+    loop {
+        let applied_head = engine
+            .mutation_journal_stats_for_testing(tenant_id)
+            .expect("journal stats should load")
+            .applied_head;
+        if applied_head.0 >= target.0 || started_at.elapsed() >= timeout {
+            return applied_head;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 fn assert_publication_covers_document_tail(
     engine: &Engine,
     tenant_id: &TenantId,
     covered_sequence: SequenceNumber,
 ) {
-    let applied_head = engine
-        .mutation_journal_stats_for_testing(tenant_id)
-        .expect("journal stats should load")
-        .applied_head;
+    let applied_head = wait_for_applied_head_at_least(engine, tenant_id, covered_sequence);
     assert!(
         covered_sequence.0 <= applied_head.0,
         "publication coverage {} must not exceed applied head {}",
@@ -107,9 +138,6 @@ fn materialized_surface_handles_concurrent_reads_and_writes() {
     sorted.sort_unstable();
     assert_eq!(bodies, sorted);
     assert_eq!(bodies.len(), 33);
-    let journal_stats = engine
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should load");
 
     let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
@@ -139,8 +167,9 @@ fn materialized_surface_handles_concurrent_reads_and_writes() {
         latest_covered_sequence.0 >= latest_document_sequence.0,
         "materialized surface should cover every document write"
     );
+    let applied_head = wait_for_applied_head_at_least(&engine, &tenant_id, latest_covered_sequence);
     assert!(
-        latest_covered_sequence.0 <= journal_stats.applied_head.0,
+        latest_covered_sequence.0 <= applied_head.0,
         "materialized surface should not report coverage beyond applied visibility"
     );
 }
