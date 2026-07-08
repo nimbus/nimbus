@@ -18,11 +18,11 @@ on:
       bun_source_ref:
         description: "Bun source ref or tag"
         required: true
-        default: "nimbus-bun-jsc-proof-main-20260525"
+        default: "nimbus-bun-jsc-proof-main-20260708"
       bun_source_revision:
         description: "Expected Bun source commit"
         required: true
-        default: "ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57"
+        default: "9c9ed55fd8859b1e27fed2afaae770a4b7527574"
       install_bun_with_npm:
         description: "Install a pinned Bun CLI with npm before building; keep enabled for self-sufficient hosted runner dispatches"
         required: true
