@@ -108,6 +108,11 @@ impl TenantMaterializedReadSurface {
         self.backend.apply_commits(&self.snapshots, commits);
     }
 
+    pub(super) fn advance_coverage_for_zero_write_commit(&self, sequence: SequenceNumber) {
+        self.backend
+            .advance_coverage_for_zero_write_commit(&self.snapshots, sequence);
+    }
+
     pub(super) fn record_evaluation(&self) {
         self.evaluation_count.fetch_add(1, Ordering::Relaxed);
     }

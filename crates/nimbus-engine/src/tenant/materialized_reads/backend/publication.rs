@@ -155,6 +155,52 @@ impl MaterializedServingBackend {
         table_state.current.covered_sequence = covered_sequence;
     }
 
+    /// Carries every loaded table's coverage frontier through to `sequence`
+    /// without touching a single document. The trigger-candidate feed's own
+    /// delivery-cursor advance is exactly such a commit: a zero-write entry
+    /// appended to the same commit log and sequence space real document
+    /// writes use, purely to record how far it has delivered. Because it
+    /// carries no writes, it can never change what any materialized-serving
+    /// snapshot serves, so every loaded table can be carried through it the
+    /// same way `apply_commit` already carries an untouched table through a
+    /// real commit (`advance_current_coverage_without_retention`). Skipping
+    /// this (as every caller other than the cursor-advance path correctly
+    /// does, since their commits may carry real writes not yet folded in)
+    /// would leave loaded tables behind: the read path would treat the
+    /// widened `(covered, required]` gap as "reload needed" and pay for a
+    /// full table rebuild that changes nothing.
+    ///
+    /// Publishes the widened snapshot via `extend_latest_coverage` rather
+    /// than `publish_serving_snapshot_locked`: a zero-write commit produces a
+    /// snapshot whose table contents are identical to the one already
+    /// published, so it extends the latest retained version's coverage in
+    /// place instead of retaining a content-free duplicate history entry.
+    pub(crate) fn advance_coverage_for_zero_write_commit(
+        &self,
+        snapshots: &ServingSnapshotManager,
+        sequence: SequenceNumber,
+    ) {
+        let mut tables = self
+            .tables
+            .write()
+            .expect("materialized read surface lock should not be poisoned");
+        if tables.is_empty() {
+            return;
+        }
+        let mut advanced = false;
+        for table_state in tables.values_mut() {
+            if sequence.0 > table_state.current.covered_sequence.0 {
+                Self::advance_current_coverage_without_retention(table_state, sequence);
+                advanced = true;
+            }
+        }
+        if advanced
+            && let Some(snapshot) = Self::current_serving_snapshot_from_locked_tables(&tables)
+        {
+            snapshots.extend_latest_coverage(snapshot);
+        }
+    }
+
     fn apply_writes_to_current_version(
         table_state: &mut RetainedMaterializedTable,
         covered_sequence: SequenceNumber,

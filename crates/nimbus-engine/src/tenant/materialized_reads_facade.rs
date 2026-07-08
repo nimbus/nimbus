@@ -54,6 +54,14 @@ impl TenantRuntime {
             .await
     }
 
+    pub(crate) fn advance_materialized_read_coverage_for_zero_write_commit(
+        &self,
+        sequence: SequenceNumber,
+    ) {
+        self.materialized_reads
+            .advance_coverage_for_zero_write_commit(sequence);
+    }
+
     pub(crate) fn record_materialized_query_evaluation(&self) {
         self.materialized_reads.record_evaluation();
     }

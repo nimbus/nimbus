@@ -33,6 +33,15 @@ fn pinned_materialized_serving_snapshots_remain_stable_after_later_applies() {
         .expect("warming query should succeed");
     assert_eq!(document_bodies(&warmed), vec!["Ada"]);
 
+    // Settle the seed's cursor-advance commit before capturing `before_insert`
+    // and pinning against it below. `MaterializedServingBackend` widens the
+    // currently-published version's coverage through that zero-write commit
+    // in place; without settling first, that widening can land between
+    // capturing `before_insert` and pinning the snapshot for it, so the
+    // "same" snapshot looked up a moment later would already cover a later
+    // sequence than the one just captured.
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
+
     let before_insert = published_sequence(
         &engine,
         &tenant_id,
@@ -59,6 +68,12 @@ fn pinned_materialized_serving_snapshots_remain_stable_after_later_applies() {
             ]),
         )
         .expect("second insert should succeed");
+
+    // Settle Beta's own cursor-advance commit before capturing `after_insert`
+    // and reading the snapshot back for it, for the same reason as the seed
+    // settle above: without it, that commit's in-place widening of the
+    // now-current version can land between the capture and the read-back.
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
 
     let after_insert = published_sequence(
         &engine,
@@ -134,6 +149,15 @@ fn pinned_serving_read_shape_handle_preserves_identity_and_documents_after_later
         .query_documents(&tenant_id, &query)
         .expect("warming query should succeed");
     assert_eq!(document_bodies(&warmed), vec!["Ada"]);
+
+    // Settle the seed's cursor-advance commit before capturing `before_insert`
+    // and pinning against it below. `MaterializedServingBackend` widens the
+    // currently-published version's coverage through that zero-write commit
+    // in place; without settling first, that widening can land between
+    // capturing `before_insert` and pinning the snapshot for it, so the
+    // "same" snapshot looked up a moment later would already cover a later
+    // sequence than the one just captured.
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
 
     let before_insert = published_sequence(
         &engine,
@@ -315,6 +339,15 @@ fn materialized_surface_reacquires_retained_covering_version_for_older_required_
         .expect("warming query should succeed");
     assert_eq!(document_bodies(&warmed), vec!["Ada"]);
 
+    // Settle the seed's cursor-advance commit before capturing `first_sequence`
+    // below. `MaterializedServingBackend` now widens the currently-published
+    // version's coverage through that zero-write commit, in place, before the
+    // second insert below would otherwise push it into `retained` history --
+    // without settling first, that widening can race the second insert, and
+    // the retained historical entry this test looks up further down would
+    // then cover a later sequence than the `first_sequence` snapshotted here.
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
+
     let first_sequence = published_sequence(
         &engine,
         &tenant_id,
@@ -332,6 +365,12 @@ fn materialized_surface_reacquires_retained_covering_version_for_older_required_
             ]),
         )
         .expect("second insert should succeed");
+
+    // Settle Beta's own cursor-advance commit before capturing `second_sequence`
+    // and the stats/current-snapshot reads below, for the same reason as the
+    // seed settle above: without it, that commit's in-place widening of the
+    // now-current version can land between the capture and the read-back.
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
 
     let second_sequence = published_sequence(
         &engine,
@@ -424,6 +463,27 @@ fn pinned_materialized_serving_snapshot_is_exact_across_multiple_loaded_tables()
         .query_documents(&tenant_id, &query_for(beta.clone()))
         .expect("beta warm query should succeed");
 
+    // This test pins historical serving snapshots at exact sequence numbers
+    // captured mid-test, then asserts each pinned snapshot's `covered_sequence`
+    // equals the exact value captured. The tenant's background
+    // trigger-candidate feed advances a durable delivery cursor via its own
+    // zero-write commits on this same sequence space, and
+    // `MaterializedServingBackend` folds each such commit's coverage into
+    // whichever version is currently the serving-snapshot manager's latest
+    // retained entry (`ServingSnapshotManager::extend_latest_coverage`). A
+    // settle call only proves the feed caught up as of that call -- it does
+    // not stop a *later* cursor-advance commit from widening the same still-
+    // latest entry again before the next real commit supersedes it. Arming
+    // the pause here blocks the feed for the entire alpha-update-then-beta-
+    // update sequence below, so alpha's retained entry is guaranteed frozen
+    // at exactly the sequence its own real commit produced by the time
+    // beta's real commit supersedes it, and likewise for beta's own entry
+    // (which nothing ever supersedes, since it is the test's last write).
+    let trigger_pause = engine
+        .trigger_candidate_pause_handle_for_testing(&tenant_id)
+        .expect("trigger candidate pause handle should load");
+    trigger_pause.arm();
+
     engine
         .insert_document(
             &tenant_id,
@@ -434,6 +494,14 @@ fn pinned_materialized_serving_snapshot_is_exact_across_multiple_loaded_tables()
             ]),
         )
         .expect("alpha update insert should succeed");
+    assert!(
+        trigger_pause.wait_until_entered(ci_or_local_duration(
+            Duration::from_millis(500),
+            Duration::from_secs(5)
+        )),
+        "trigger candidate worker should pause before alpha's update cursor advance"
+    );
+
     let alpha_update_sequence = published_sequence(
         &engine,
         &tenant_id,
@@ -451,6 +519,7 @@ fn pinned_materialized_serving_snapshot_is_exact_across_multiple_loaded_tables()
             ]),
         )
         .expect("beta update insert should succeed");
+
     let latest_sequence = published_sequence(
         &engine,
         &tenant_id,
@@ -496,6 +565,11 @@ fn pinned_materialized_serving_snapshot_is_exact_across_multiple_loaded_tables()
         .collect::<Vec<_>>();
     latest_beta_bodies.sort_unstable();
     assert_eq!(latest_beta_bodies, vec!["Delta", "Gamma"]);
+
+    // Release and settle now that every exact-sequence comparison above is
+    // done; nothing after this point reads snapshot-manager state.
+    trigger_pause.release();
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
 }
 
 #[tokio::test]
@@ -504,6 +578,25 @@ async fn serving_snapshot_waiter_wakes_when_new_frontier_is_published() {
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let table = messages_table("messages_snapshot_waiter");
+
+    // This test picks `required_sequence` as exactly one past the warmed
+    // table's covered sequence, then relies on that specific sequence being
+    // reached *only* once "Beta" below actually lands. The tenant's
+    // background trigger-candidate feed also advances a durable delivery
+    // cursor via its own zero-write commits on this same sequence space, and
+    // those commits notify this exact same waiter mechanism
+    // (`ServingSnapshotManager::extend_latest_coverage` calls
+    // `take_ready_waiters_locked` too) -- so without pausing the feed, a
+    // cursor-advance commit could itself land on `required_sequence` and
+    // wake the waiter before "Beta" is ever applied, with a snapshot that
+    // does not yet include it. Arming the pause *before* the seed insert
+    // below (rather than after) is required: arming it any later risks the
+    // worker having already raced ahead and materialized the seed's own
+    // cursor advance before we can observe it paused.
+    let trigger_pause = engine
+        .trigger_candidate_pause_handle_for_testing(&tenant_id)
+        .expect("trigger candidate pause handle should load");
+    trigger_pause.arm();
 
     engine
         .insert_document(
@@ -515,6 +608,21 @@ async fn serving_snapshot_waiter_wakes_when_new_frontier_is_published() {
             ]),
         )
         .expect("seed insert should succeed");
+
+    assert!(
+        tokio::task::spawn_blocking({
+            let trigger_pause = trigger_pause.clone();
+            move || {
+                trigger_pause.wait_until_entered(ci_or_local_duration(
+                    Duration::from_millis(500),
+                    Duration::from_secs(5),
+                ))
+            }
+        })
+        .await
+        .expect("pause waiter should join"),
+        "trigger candidate worker should pause before the seed's cursor advance"
+    );
 
     let query = Query {
         table: table.clone(),
@@ -601,6 +709,15 @@ async fn serving_snapshot_waiter_wakes_when_new_frontier_is_published() {
             .is_some_and(|sequence| sequence.0 >= required_sequence.0),
         "latest retained snapshot should cover at least the waiter requirement"
     );
+
+    trigger_pause.release();
+    tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move || crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id)
+    })
+    .await
+    .expect("settle task should join");
 }
 
 #[test]
@@ -624,6 +741,18 @@ fn pinned_serving_snapshot_extends_retention_until_release() {
             ]),
         )
         .expect("seed insert should succeed");
+
+    // Settle the seed's cursor-advance commit before warming. The tenant's
+    // background trigger-candidate feed advances a durable delivery cursor
+    // via its own zero-write commit on this same sequence space, and
+    // `MaterializedServingBackend` now folds that commit's coverage into
+    // whichever version is currently the serving-snapshot manager's latest
+    // retained entry (see `ServingSnapshotManager::extend_latest_coverage`).
+    // This test compares sequence numbers captured via separate accessor
+    // calls (`published_sequence` against `serving_snapshot_manager_stats`)
+    // for exact equality further down, so each phase settles the feed first
+    // to keep those calls quiescent instead of racing an in-flight advance.
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
 
     let query = Query {
         table: table.clone(),
@@ -661,6 +790,13 @@ fn pinned_serving_snapshot_extends_retention_until_release() {
             )
             .expect("follow-up insert should succeed");
     }
+
+    // Settle again before capturing `third_sequence` and the stats below, for
+    // the same reason as above: this keeps the pair quiescent instead of
+    // leaving a window where Beta's or Gamma's cursor-advance commit could
+    // still widen the snapshot manager's latest entry between the two reads.
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
+
     let third_sequence = published_sequence(
         &engine,
         &tenant_id,
@@ -691,6 +827,11 @@ fn pinned_serving_snapshot_extends_retention_until_release() {
             ]),
         )
         .expect("final insert should succeed");
+
+    // Settle once more before capturing `fourth_sequence` and `released_stats`
+    // below, for the same reason as the two settle points above.
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
+
     let fourth_sequence = published_sequence(
         &engine,
         &tenant_id,
@@ -704,7 +845,14 @@ fn pinned_serving_snapshot_extends_retention_until_release() {
     assert_eq!(released_stats.retained_snapshot_count, 2);
     assert_eq!(
         released_stats.earliest_retained_sequence,
-        Some(third_sequence)
+        Some(third_sequence),
+        "third_sequence={:?} fourth_sequence={:?} released_stats.latest={:?} \
+         pruned={} discarded_out_of_order={}",
+        third_sequence,
+        fourth_sequence,
+        released_stats.latest_retained_sequence,
+        released_stats.pruned_snapshot_count,
+        released_stats.discarded_out_of_order_count,
     );
     assert_eq!(
         released_stats.latest_retained_sequence,

@@ -179,6 +179,38 @@ impl ServingSnapshotManager {
         }
     }
 
+    /// Widens the latest retained version's coverage to `snapshot`'s sequence
+    /// in place, instead of retaining it as a new history entry. Callers use
+    /// this exclusively for zero-write commits (the trigger-candidate feed's
+    /// delivery-cursor advance): `snapshot`'s table contents are guaranteed
+    /// byte-identical to the current latest version's, since nothing was
+    /// written, so there is no distinct historical revision to keep around.
+    /// Retaining one anyway would only inflate `retained_snapshot_count` with
+    /// content-free duplicates and evict genuinely distinct versions sooner.
+    /// Any pin already held on the replaced entry stays valid: pins clone the
+    /// `Arc`-backed snapshot directly, so dropping the deque's own reference
+    /// to it does not affect a caller that already holds one.
+    pub(super) fn extend_latest_coverage(&self, snapshot: ServingSnapshot) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("serving snapshot manager lock should not be poisoned");
+        let sequence = snapshot.covered_sequence();
+        match state.versions.back() {
+            Some(latest) if latest.covered_sequence().0 >= sequence.0 => return,
+            Some(_) => {
+                state.versions.pop_back();
+                state.versions.push_back(snapshot);
+            }
+            None => state.versions.push_back(snapshot),
+        }
+        let ready_waiters = self.take_ready_waiters_locked(&mut state, sequence);
+        drop(state);
+        for waiter in ready_waiters {
+            waiter.notify_waiters();
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn snapshot_covering(
         &self,

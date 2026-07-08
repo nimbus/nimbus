@@ -143,15 +143,6 @@ fn warmed_materialized_tables_track_global_applied_coverage_without_reloading() 
         )
         .expect("seed insert should succeed");
 
-    // Settle the trigger-candidate feed before warming so the seed's
-    // cursor-advance commit is already part of the coverage baseline the
-    // warm load captures. Left unsettled, that commit can land between the
-    // warm load and the refreshed query, bumping the query's
-    // `required_sequence` past what `apply_commit` (which only reacts to
-    // real document commits) can carry the warmed table to -- a spurious
-    // reload.
-    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
-
     let query = Query {
         table: table.clone(),
         filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
@@ -175,18 +166,17 @@ fn warmed_materialized_tables_track_global_applied_coverage_without_reloading() 
     let initial_generation = publication.generation;
     assert_eq!(publication.document_count, 1);
 
-    // See the identical comment in
-    // `warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots`:
-    // pause the background trigger-candidate feed so its cursor-advance
-    // commit for the unrelated insert below can't race the refreshed
-    // query's `required_sequence` capture ahead of what the warmed table's
-    // `apply_commit`-driven `covered_sequence` can reach, which would
-    // otherwise force a spurious reload.
-    let trigger_pause = engine
-        .trigger_candidate_pause_handle_for_testing(&tenant_id)
-        .expect("trigger candidate pause handle should load");
-    trigger_pause.arm();
-
+    // The tenant's background trigger-candidate feed keeps advancing its
+    // delivery cursor via zero-write commits on the same commit log and
+    // sequence space real document writes use (see
+    // `crate::tests::settled_latest_sequence`). This unrelated insert's own
+    // real commit and the feed's cursor-advance commits all race freely here
+    // -- no pause, no settle. `MaterializedServingBackend` carries every
+    // loaded table's coverage frontier through a zero-write cursor-advance
+    // commit the moment it lands (TI7), so no matter how these interleave,
+    // the warmed table above never needs a reload to stay current: a real
+    // commit for a different table only ever advances its frontier, and a
+    // cursor-advance commit changes nothing to begin with.
     engine
         .insert_document(
             &tenant_id,
@@ -194,21 +184,6 @@ fn warmed_materialized_tables_track_global_applied_coverage_without_reloading() 
             serde_json::Map::from_iter([("title".to_string(), json!("Elsewhere"))]),
         )
         .expect("unrelated insert should succeed");
-
-    // Wait for the worker to park at the armed barrier *after* enqueuing the
-    // insert above. The worker only reaches its pause check once `pop_next`
-    // has returned work (trigger_candidates.rs), so this wait must follow the
-    // enqueuing insert -- arming and waiting *before* it would depend on
-    // incidental already-queued work and time out once the queue has drained.
-    // Arming still precedes the insert so the worker pauses before it can
-    // materialize the insert's cursor-advance commit.
-    assert!(
-        trigger_pause.wait_until_entered(ci_or_local_duration(
-            Duration::from_millis(500),
-            Duration::from_secs(5)
-        )),
-        "trigger candidate worker should pause before the unrelated insert's cursor advance"
-    );
 
     let publication = engine
         .materialized_table_publication_stats_for_testing(&tenant_id, &table)
@@ -229,6 +204,15 @@ fn warmed_materialized_tables_track_global_applied_coverage_without_reloading() 
         .expect("refreshed query should reuse the warmed publication");
     assert_eq!(document_bodies(&refreshed), vec!["Ada"]);
 
+    // Re-read the table's own publication immediately before the aggregate
+    // stats below (rather than reusing the `publication` captured above) so
+    // both come from back-to-back accessor calls with nothing but the
+    // refreshed query between them -- the tightest window available without
+    // reintroducing a pause.
+    let publication = engine
+        .materialized_table_publication_stats_for_testing(&tenant_id, &table)
+        .expect("materialized publication should load")
+        .expect("warmed table should stay published");
     let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
@@ -239,8 +223,6 @@ fn warmed_materialized_tables_track_global_applied_coverage_without_reloading() 
         stats.latest_covered_sequence,
         Some(publication.covered_sequence)
     );
-
-    trigger_pause.release();
 }
 
 #[test]
@@ -274,12 +256,6 @@ fn warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots() {
         limit: None,
     };
 
-    // Settle before warming for the same reason as
-    // `warmed_materialized_tables_track_global_applied_coverage_without_reloading`:
-    // the seeds' cursor-advance commits must be part of the warm loads'
-    // coverage baseline, not land between warm and refreshed query.
-    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
-
     assert_eq!(
         document_bodies(
             &engine
@@ -303,19 +279,10 @@ fn warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots() {
     // log and sequence space real document writes use (see
     // `crate::tests::settled_latest_sequence`). That cursor-advance commit
     // bumps `durable_head` (and hence the `required_sequence` the query
-    // below dispatches with) without ever flowing through
-    // `MaterializedServingBackend::apply_commit`, which only reacts to real
-    // commits. If it lands between the insert and the query, a warmed
-    // table's `covered_sequence` -- which can only ever advance via real
-    // commits once loaded -- would appear to lag `required_sequence`,
-    // forcing a spurious reload. Pause the worker for this window so the
-    // query only ever has to catch up on real commits, which `apply_commit`
-    // already keeps every loaded table current on.
-    let trigger_pause = engine
-        .trigger_candidate_pause_handle_for_testing(&tenant_id)
-        .expect("trigger candidate pause handle should load");
-    trigger_pause.arm();
-
+    // below dispatches with), but `MaterializedServingBackend` now carries
+    // every loaded table's coverage frontier through it the moment it lands
+    // (TI7), so it can race the insert and the query below freely -- no
+    // pause needed -- without ever forcing a spurious reload.
     engine
         .insert_document(
             &tenant_id,
@@ -324,26 +291,18 @@ fn warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots() {
         )
         .expect("unrelated insert should succeed");
 
-    // Wait for the worker to park at the armed barrier *after* enqueuing the
-    // insert above. The worker only reaches its pause check once `pop_next`
-    // has returned work (trigger_candidates.rs), so this wait must follow the
-    // enqueuing insert -- arming and waiting *before* it would depend on
-    // incidental already-queued work and time out once the queue has drained.
-    // Arming still precedes the insert so the worker pauses before it can
-    // materialize the insert's cursor-advance commit.
-    assert!(
-        trigger_pause.wait_until_entered(ci_or_local_duration(
-            Duration::from_millis(500),
-            Duration::from_secs(5)
-        )),
-        "trigger candidate worker should pause before the unrelated insert's cursor advance"
-    );
-
     let beta_again = engine
         .query_documents(&tenant_id, &query_for(beta.clone()))
         .expect("beta query should reuse the warmed serving snapshot");
     assert_eq!(document_bodies(&beta_again), vec!["Beta"]);
 
+    // Read the beta table's own publication immediately before the aggregate
+    // stats below, back-to-back, so the tightest possible window separates
+    // the two accessor calls the final assertion compares.
+    let beta_publication = engine
+        .materialized_table_publication_stats_for_testing(&tenant_id, &beta)
+        .expect("beta publication stats should load")
+        .expect("beta table should stay published");
     let stats = engine
         .materialized_read_surface_stats_for_testing(&tenant_id)
         .expect("materialized surface stats should load");
@@ -352,17 +311,121 @@ fn warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots() {
     assert_eq!(stats.evaluation_count, 3);
     assert_eq!(stats.retained_version_count, 0);
     assert_eq!(stats.retained_estimated_bytes, 0);
-
-    let beta_publication = engine
-        .materialized_table_publication_stats_for_testing(&tenant_id, &beta)
-        .expect("beta publication stats should load")
-        .expect("beta table should stay published");
     assert_eq!(
         stats.latest_covered_sequence,
         Some(beta_publication.covered_sequence)
     );
+}
 
+#[test]
+fn cursor_advance_commit_between_warm_and_query_does_not_force_a_reload() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_materialized_cursor_advance");
+
+    // Arm the trigger-candidate pause *before* the seed insert below so the
+    // worker cannot race ahead and materialize the seed's cursor-advance
+    // commit before we can observe it paused, waiting to do exactly that.
+    let trigger_pause = engine
+        .trigger_candidate_pause_handle_for_testing(&tenant_id)
+        .expect("trigger candidate pause handle should load");
+    trigger_pause.arm();
+
+    engine
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("status".to_string(), json!("keep")),
+                ("body".to_string(), json!("Ada")),
+            ]),
+        )
+        .expect("seed insert should succeed");
+
+    // Wait for the worker to park at the armed barrier *after* enqueuing the
+    // insert above (see the identical reasoning in the TI6 tests above this
+    // one): the worker only reaches its pause check once it has dequeued the
+    // seed's trigger candidate, so it is now blocked immediately before
+    // appending that candidate's cursor-advance commit.
+    assert!(
+        trigger_pause.wait_until_entered(ci_or_local_duration(
+            Duration::from_millis(500),
+            Duration::from_secs(5)
+        )),
+        "trigger candidate worker should pause before the seed's cursor advance"
+    );
+
+    let query = Query {
+        table: table.clone(),
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    // Warm the table while the worker is still paused: this publication's
+    // `covered_sequence` reflects only the seed's real document commit, not
+    // the still-pending cursor-advance commit.
+    let warmed = engine
+        .query_documents(&tenant_id, &query)
+        .expect("warming query should succeed");
+    assert_eq!(document_bodies(&warmed), vec!["Ada"]);
+
+    let journal_before_release = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("mutation journal stats should load");
+
+    // Release the worker so it materializes exactly the seed's pending
+    // cursor-advance commit -- a zero-write commit that bumps `durable_head`
+    // without touching any document -- then settle so it has definitely
+    // landed before the query below captures `required_sequence`.
     trigger_pause.release();
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
+
+    let journal_after_release = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("mutation journal stats should load");
+    assert!(
+        journal_after_release.durable_head.0 > journal_before_release.durable_head.0,
+        "settling after release should observe the cursor-advance commit's durable head bump \
+         (before {}, after {})",
+        journal_before_release.durable_head.0,
+        journal_after_release.durable_head.0
+    );
+
+    // Before TI7, this query would see `required_sequence` (derived from
+    // the now-advanced durable head) run ahead of the warmed table's
+    // `covered_sequence` (which only tracked real document commits), and
+    // pay for a spurious reload that changed nothing. With the fix, the
+    // cursor-advance commit already carried the warmed table's coverage
+    // frontier through to the new durable head when it landed, so this
+    // query reuses the existing publication.
+    let refreshed = engine
+        .query_documents(&tenant_id, &query)
+        .expect("refreshed query should reuse the warmed publication");
+    assert_eq!(document_bodies(&refreshed), vec!["Ada"]);
+
+    let publication = engine
+        .materialized_table_publication_stats_for_testing(&tenant_id, &table)
+        .expect("materialized publication should load")
+        .expect("warmed table should stay published");
+    assert_eq!(
+        publication.covered_sequence.0, journal_after_release.durable_head.0,
+        "the cursor-advance commit should have carried coverage through to the new durable head"
+    );
+
+    let stats = engine
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.loaded_table_count, 1);
+    assert_eq!(
+        stats.table_load_count, 1,
+        "the interleaved cursor-advance commit should not have forced a reload"
+    );
+    assert_eq!(stats.evaluation_count, 2);
 }
 
 #[tokio::test]

@@ -392,7 +392,17 @@ fn materialize_trigger_invocations_and_sync(
     runtime
         .store
         .materialize_trigger_invocations(records, cursor)?;
-    runtime.sync_mutation_journal_progress(runtime.store.journal_progress()?);
+    let progress = runtime.store.journal_progress()?;
+    // The cursor-advance commit `materialize_trigger_invocations` just
+    // appended is zero-write by construction, so it can never change what a
+    // materialized-serving snapshot serves. Carry every loaded table's
+    // coverage frontier through to the new durable head *before* publishing
+    // that head below: a racing query derives `required_sequence` from the
+    // durable head, and if the head became visible first, the query could
+    // observe it ahead of a table's `covered_sequence` and pay for a
+    // spurious reload that changes nothing.
+    runtime.advance_materialized_read_coverage_for_zero_write_commit(progress.durable_head);
+    runtime.sync_mutation_journal_progress(progress);
     Ok(())
 }
 
