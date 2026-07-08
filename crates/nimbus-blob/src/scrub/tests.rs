@@ -617,3 +617,65 @@ async fn scrub_ignores_bytes_past_snapshot_active_length() {
         Bytes::from_static(b"settled record")
     );
 }
+
+#[tokio::test]
+async fn scrub_quarantines_records_behind_corrupt_pack_header() {
+    let (dir, store) = open_temp(64 * 1024);
+    let a = store.put(Bytes::from_static(b"first blob")).await.unwrap();
+    let b = store.put(Bytes::from_static(b"second blob")).await.unwrap();
+
+    // Smash the PACK header (not a record): the whole file is discredited.
+    let entry = entry_for(&store, a).await;
+    let path = local::pack_path(&dir.path().join("packs"), entry.pack_id);
+    let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write_all(b"BAD").unwrap();
+    file.sync_data().unwrap();
+
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| finding.kind == ScrubFindingKind::InvalidPackHeader),
+        "{report:?}"
+    );
+    for hash in [a, b] {
+        assert!(
+            report.quarantined_hashes.contains(&hash),
+            "every record behind a corrupt pack header is quarantined: {report:?}"
+        );
+        let err = store.get(&hash).await.unwrap_err();
+        assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    }
+}
+
+#[tokio::test]
+async fn interrupted_checkpoint_records_snapshot_active_pack() {
+    // Tiny pack target: each put rolls the active pack, giving us 3 packs
+    // with pack 2 active.
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalPackStore::open_with_pack_target(dir.path(), 64).unwrap();
+    for payload in [&b"one"[..], b"two", b"three"] {
+        store.put(Bytes::copy_from_slice(payload)).await.unwrap();
+    }
+
+    let partial = LocalPackScrubber::new(store.clone())
+        .scrub_with_pack_limit(1)
+        .await
+        .unwrap();
+    assert!(!partial.completed);
+
+    // The checkpoint's sealed-boundary field must be the ACTIVE pack id from
+    // the locked snapshot (2), never a post-snapshot directory listing: only
+    // packs strictly below it are checkpoint-skippable on resume.
+    let bytes = fs::read(dir.path().join("scrub-checkpoint.nbls")).unwrap();
+    let magic_len = b"NBLSCP1\n".len();
+    let mut raw_max = [0u8; 8];
+    raw_max.copy_from_slice(&bytes[magic_len + 8..magic_len + 16]);
+    let active = store
+        .blocking(|state| Ok(state.active_pack_id))
+        .await
+        .unwrap();
+    assert_eq!(u64::from_le_bytes(raw_max), active);
+}

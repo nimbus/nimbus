@@ -242,8 +242,12 @@ impl LocalPackScrubber {
             _ => None,
         };
 
-        let pack_ids = local::pack_ids_on_disk(&snapshot.packs_dir)?;
-        let max_pack_seen = pack_ids.iter().max().copied();
+        let pack_ids = snapshot.pack_ids.clone();
+        // The sealed-boundary recorded in checkpoints is the ACTIVE pack at
+        // snapshot time: everything below it was sealed and fully scanned;
+        // the active pack itself (and anything that rolls over later) is
+        // never checkpoint-skippable.
+        let max_pack_seen = Some(snapshot.active_pack_id);
         let mut report = ScrubReport::default();
         report.checkpoint.path = Some(checkpoint_path.clone());
         report.checkpoint.resumed_after_pack_id =
@@ -365,12 +369,14 @@ impl LocalPackScrubber {
             .blocking(|state| {
                 local::ensure_writable(&state, "scrub")?;
                 let root = root_from_index_path(&state.index_path)?;
+                let pack_ids = local::pack_ids_on_disk(&state.packs_dir)?;
                 Ok(ScrubSnapshot {
                     root,
                     packs_dir: state.packs_dir.clone(),
                     index: state.index.clone(),
                     active_pack_id: state.active_pack_id,
                     active_pack_bytes: state.active_pack_bytes,
+                    pack_ids,
                 })
             })
             .await
@@ -479,6 +485,10 @@ struct ScrubSnapshot {
     /// the next scrub.
     active_pack_id: u64,
     active_pack_bytes: u64,
+    /// Pack ids enumerated under the SAME lock as the index/active-pack
+    /// facts. Deriving them later (unlocked) would let a concurrent rollover
+    /// desynchronize the checkpoint's sealed-boundary from the scanned caps.
+    pack_ids: BTreeSet<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1147,6 +1157,15 @@ async fn merge_pack_findings(
     let mut direct_verify: Vec<(BlobHash, PackEntry)> = Vec::new();
     for (hash, entry) in index {
         if entry.pack_id != pack_scan.pack_id {
+            continue;
+        }
+        // A corrupt/truncated PACK HEADER discredits the whole file: unlike a
+        // single corrupt record behind a valid header (whose siblings get
+        // direct verification), header corruption means something rewrote the
+        // pack's front matter, and the store itself would refuse this file as
+        // an active pack. Fail closed: quarantine every indexed record.
+        if !pack_scan.pack_header_valid {
+            quarantine.push((*hash, Some(*entry)));
             continue;
         }
         match valid_by_offset.get(&entry.offset) {
