@@ -1,16 +1,15 @@
 use std::sync::Arc;
 
+use nimbus_cloud_functions::CloudFunctionsRegistry;
+use nimbus_convex::ConvexRegistry;
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, NominalRuntimeHostPressureSource,
     RuntimeAdaptiveControllerSettings, RuntimeHostPressureSource, RuntimeHostResourceBudget,
     RuntimeScalingPlanSet,
 };
 
-use crate::adapters::cloud_functions::CloudFunctionsRegistry;
-use crate::adapters::convex::ConvexRegistry;
-
 #[derive(Clone)]
-pub(crate) struct RuntimeGovernorConfig {
+pub struct RuntimeGovernorConfig {
     runtime_host_resource_budget: RuntimeHostResourceBudget,
     runtime_host_pressure_source: Arc<dyn RuntimeHostPressureSource>,
     runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
@@ -29,15 +28,12 @@ impl Default for RuntimeGovernorConfig {
 }
 
 impl RuntimeGovernorConfig {
-    pub(crate) fn with_runtime_host_resource_budget(
-        mut self,
-        budget: RuntimeHostResourceBudget,
-    ) -> Self {
+    pub fn with_runtime_host_resource_budget(mut self, budget: RuntimeHostResourceBudget) -> Self {
         self.runtime_host_resource_budget = budget;
         self
     }
 
-    pub(crate) fn with_runtime_host_pressure_source(
+    pub fn with_runtime_host_pressure_source(
         mut self,
         pressure_source: Arc<dyn RuntimeHostPressureSource>,
     ) -> Self {
@@ -45,7 +41,7 @@ impl RuntimeGovernorConfig {
         self
     }
 
-    pub(crate) fn with_runtime_adaptive_controller_settings(
+    pub fn with_runtime_adaptive_controller_settings(
         mut self,
         settings: RuntimeAdaptiveControllerSettings,
     ) -> Self {
@@ -53,38 +49,32 @@ impl RuntimeGovernorConfig {
         self
     }
 
-    pub(crate) fn with_effective_runtime_scaling_plan(
-        self,
-        plan: EffectiveRuntimeScalingPlan,
-    ) -> Self {
+    pub fn with_effective_runtime_scaling_plan(self, plan: EffectiveRuntimeScalingPlan) -> Self {
         self.with_effective_runtime_scaling_plans(RuntimeScalingPlanSet::single(plan))
     }
 
-    pub(crate) fn with_effective_runtime_scaling_plans(
-        mut self,
-        plans: RuntimeScalingPlanSet,
-    ) -> Self {
+    pub fn with_effective_runtime_scaling_plans(mut self, plans: RuntimeScalingPlanSet) -> Self {
         self.effective_runtime_scaling_plans = plans;
         self
     }
 
-    pub(crate) fn runtime_host_resource_budget(&self) -> RuntimeHostResourceBudget {
+    pub fn runtime_host_resource_budget(&self) -> RuntimeHostResourceBudget {
         self.runtime_host_resource_budget
     }
 
-    pub(crate) fn runtime_adaptive_controller_settings(&self) -> RuntimeAdaptiveControllerSettings {
+    pub fn runtime_adaptive_controller_settings(&self) -> RuntimeAdaptiveControllerSettings {
         self.runtime_adaptive_controller_settings
     }
 
-    pub(crate) fn effective_runtime_scaling_plan(&self) -> &EffectiveRuntimeScalingPlan {
+    pub fn effective_runtime_scaling_plan(&self) -> &EffectiveRuntimeScalingPlan {
         self.effective_runtime_scaling_plans.default_plan()
     }
 
-    pub(crate) fn effective_runtime_scaling_plans(&self) -> &RuntimeScalingPlanSet {
+    pub fn effective_runtime_scaling_plans(&self) -> &RuntimeScalingPlanSet {
         &self.effective_runtime_scaling_plans
     }
 
-    pub(crate) fn configure_convex_registry(&self, registry: ConvexRegistry) -> ConvexRegistry {
+    pub fn configure_convex_registry(&self, registry: ConvexRegistry) -> ConvexRegistry {
         registry
             .with_runtime_host_governor(
                 self.runtime_host_resource_budget,
@@ -94,7 +84,7 @@ impl RuntimeGovernorConfig {
             .with_effective_runtime_scaling_plans(self.effective_runtime_scaling_plans.clone())
     }
 
-    pub(crate) fn configure_cloud_functions_registry(
+    pub fn configure_cloud_functions_registry(
         &self,
         registry: CloudFunctionsRegistry,
     ) -> CloudFunctionsRegistry {

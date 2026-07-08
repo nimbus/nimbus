@@ -5,9 +5,9 @@ use nimbus_services::{
     EmptyServiceInstanceCatalog, RuntimeServiceRegistry, ServiceInstanceBindingRegistry,
     ServiceInstanceCatalog, ServiceManager,
 };
+use nimbus_tenant::TenantIsolationMode;
 
 use crate::machine_lifecycle::MachineLifecycleManager;
-use crate::tenant::TenantIsolationMode;
 
 #[derive(Clone)]
 enum RuntimeServiceSource {
@@ -73,7 +73,7 @@ impl RuntimeServiceSource {
 }
 
 #[derive(Clone)]
-pub(crate) struct NodeServicesConfig {
+pub struct NodeServicesConfig {
     runtime_service_source: RuntimeServiceSource,
     machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
     tenant_isolation_mode: TenantIsolationMode,
@@ -90,8 +90,8 @@ impl Default for NodeServicesConfig {
 }
 
 impl NodeServicesConfig {
-    #[cfg(test)]
-    pub(crate) fn from_runtime_service_registry(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn from_runtime_service_registry(
         runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     ) -> Self {
         Self {
@@ -103,7 +103,7 @@ impl NodeServicesConfig {
         }
     }
 
-    pub(crate) fn resolve(self, system_state_engine: Arc<Engine>) -> Self {
+    pub fn resolve(self, system_state_engine: Arc<Engine>) -> Self {
         Self {
             runtime_service_source: self.runtime_service_source.resolve(system_state_engine),
             machine_lifecycle_manager: self.machine_lifecycle_manager,
@@ -111,7 +111,7 @@ impl NodeServicesConfig {
         }
     }
 
-    pub(crate) fn with_service_instance_catalog(
+    pub fn with_service_instance_catalog(
         mut self,
         service_instances: Arc<dyn ServiceInstanceCatalog>,
     ) -> Self {
@@ -120,12 +120,12 @@ impl NodeServicesConfig {
         self
     }
 
-    pub(crate) fn with_service_manager(mut self, service_manager: Arc<ServiceManager>) -> Self {
+    pub fn with_service_manager(mut self, service_manager: Arc<ServiceManager>) -> Self {
         self.runtime_service_source = RuntimeServiceSource::ServiceManager(service_manager);
         self
     }
 
-    pub(crate) fn with_machine_lifecycle_manager(
+    pub fn with_machine_lifecycle_manager(
         mut self,
         machine_lifecycle_manager: Arc<dyn MachineLifecycleManager>,
     ) -> Self {
@@ -133,24 +133,24 @@ impl NodeServicesConfig {
         self
     }
 
-    pub(crate) fn with_tenant_isolation_mode(mut self, mode: TenantIsolationMode) -> Self {
+    pub fn with_tenant_isolation_mode(mut self, mode: TenantIsolationMode) -> Self {
         self.tenant_isolation_mode = mode;
         self
     }
 
-    pub(crate) fn runtime_service_registry(&self) -> Arc<dyn RuntimeServiceRegistry> {
+    pub fn runtime_service_registry(&self) -> Arc<dyn RuntimeServiceRegistry> {
         self.runtime_service_source.runtime_service_registry()
     }
 
-    pub(crate) fn service_manager(&self) -> Option<Arc<ServiceManager>> {
+    pub fn service_manager(&self) -> Option<Arc<ServiceManager>> {
         self.runtime_service_source.service_manager()
     }
 
-    pub(crate) fn machine_lifecycle_manager(&self) -> Option<Arc<dyn MachineLifecycleManager>> {
+    pub fn machine_lifecycle_manager(&self) -> Option<Arc<dyn MachineLifecycleManager>> {
         self.machine_lifecycle_manager.clone()
     }
 
-    pub(crate) fn tenant_isolation_mode(&self) -> TenantIsolationMode {
+    pub fn tenant_isolation_mode(&self) -> TenantIsolationMode {
         self.tenant_isolation_mode
     }
 }

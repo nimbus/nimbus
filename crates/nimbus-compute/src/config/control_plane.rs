@@ -1,17 +1,17 @@
 use std::sync::Arc;
 
-use crate::license::LicenseState;
-use crate::local_server::LocalServerSecurityState;
+use nimbus_license::LicenseState;
+use nimbus_operator::LocalServerSecurityState;
 
 #[derive(Clone)]
-pub(crate) struct ControlPlaneConfig {
+pub struct ControlPlaneConfig {
     license_state: LicenseState,
     deploy_admin_token: Option<String>,
     local_server_security: Option<Arc<LocalServerSecurityState>>,
 }
 
 impl ControlPlaneConfig {
-    pub(crate) fn router_options_default() -> Self {
+    pub fn router_options_default() -> Self {
         Self {
             license_state: LicenseState::community(),
             deploy_admin_token: None,
@@ -19,7 +19,7 @@ impl ControlPlaneConfig {
         }
     }
 
-    pub(crate) fn build_default() -> Self {
+    pub fn build_default() -> Self {
         Self {
             license_state: LicenseState::community(),
             deploy_admin_token: std::env::var("NIMBUS_DEPLOY_TOKEN").ok(),
@@ -27,7 +27,7 @@ impl ControlPlaneConfig {
         }
     }
 
-    pub(crate) fn overlay_router_options(&mut self, options: Self) {
+    pub fn overlay_router_options(&mut self, options: Self) {
         self.license_state = options.license_state;
         if options.deploy_admin_token.is_some() {
             self.deploy_admin_token = options.deploy_admin_token;
@@ -37,23 +37,23 @@ impl ControlPlaneConfig {
         }
     }
 
-    pub(crate) fn with_license(mut self, license_state: LicenseState) -> Self {
+    pub fn with_license(mut self, license_state: LicenseState) -> Self {
         self.license_state = license_state;
         self
     }
 
-    pub(crate) fn with_deploy_admin_token(mut self, token: impl Into<String>) -> Self {
+    pub fn with_deploy_admin_token(mut self, token: impl Into<String>) -> Self {
         self.deploy_admin_token = Some(token.into());
         self
     }
 
-    #[cfg(test)]
-    pub(crate) fn without_deploy_admin_token(mut self) -> Self {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn without_deploy_admin_token(mut self) -> Self {
         self.deploy_admin_token = None;
         self
     }
 
-    pub(crate) fn with_local_server_security(
+    pub fn with_local_server_security(
         mut self,
         local_server_security: Arc<LocalServerSecurityState>,
     ) -> Self {
@@ -61,15 +61,15 @@ impl ControlPlaneConfig {
         self
     }
 
-    pub(crate) fn license_state(&self) -> &LicenseState {
+    pub fn license_state(&self) -> &LicenseState {
         &self.license_state
     }
 
-    pub(crate) fn deploy_admin_token(&self) -> Option<&str> {
+    pub fn deploy_admin_token(&self) -> Option<&str> {
         self.deploy_admin_token.as_deref()
     }
 
-    pub(crate) fn local_server_security(&self) -> Option<Arc<LocalServerSecurityState>> {
+    pub fn local_server_security(&self) -> Option<Arc<LocalServerSecurityState>> {
         self.local_server_security.clone()
     }
 }
