@@ -11,21 +11,21 @@ const MAX_PAGE_LIMIT: usize = 100;
 /// response regardless of item type.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(in crate::http) struct CollectionMetadataResponse {
-    pub(in crate::http) tenant_id: String,
-    pub(in crate::http) resource_version: String,
-    pub(in crate::http) limit: usize,
+pub struct CollectionMetadataResponse {
+    pub tenant_id: String,
+    pub resource_version: String,
+    pub limit: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(in crate::http) next_page_token: Option<String>,
-    pub(in crate::http) remaining_count: usize,
+    pub next_page_token: Option<String>,
+    pub remaining_count: usize,
 }
 
 /// Limit, next-page-token, and remaining-count for a single page, before the
 /// caller adds the resource-specific `tenant_id` and `resource_version`.
-pub(in crate::http) struct PageMeta {
-    pub(in crate::http) limit: usize,
-    pub(in crate::http) next_page_token: Option<String>,
-    pub(in crate::http) remaining_count: usize,
+pub struct PageMeta {
+    pub limit: usize,
+    pub next_page_token: Option<String>,
+    pub remaining_count: usize,
 }
 
 /// Applies page-token filtering to `items` (already sorted and domain-filtered
@@ -34,7 +34,7 @@ pub(in crate::http) struct PageMeta {
 ///
 /// `key` must extract the same field `items` is sorted by, since it is used
 /// both to re-apply the page-token filter and to derive the next page token.
-pub(in crate::http) fn paginate_by_key<T>(
+pub fn paginate_by_key<T>(
     mut items: Vec<T>,
     page_token: Option<&str>,
     limit: Option<usize>,

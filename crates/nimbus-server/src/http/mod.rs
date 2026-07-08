@@ -10,16 +10,18 @@ use nimbus_engine::DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT;
 use std::sync::Arc;
 
 use crate::protocol::{
-    CreateTenantRequest, CronJobsResponse, DataResponse, DocumentDataResponse, DocumentResponse,
-    HealthResponse, InsertDocumentRequest, JournalBootstrapResponse, JournalStreamRequest,
-    JournalStreamResponse, MaterializedJournalSnapshotResponse, RuntimeDiagnosticsResponse,
+    CreateTenantRequest, DataResponse, DocumentDataResponse, DocumentResponse, HealthResponse,
+    InsertDocumentRequest, JournalBootstrapResponse, JournalStreamRequest, JournalStreamResponse,
+    MaterializedJournalSnapshotResponse, RuntimeDiagnosticsResponse,
     RuntimeLaneDiagnosticsResponse, RuntimeLimitsResponse, RuntimeTenantBudgetResponse,
-    ScheduleResponse, ScheduledJobResultResponse, ScheduledJobsResponse,
     TenantEngineDiagnosticsResponse, TenantListResponse, TenantResponse, UpdateDocumentRequest,
     VersionInfoResponse,
 };
 use crate::state::{AppError, AppState, RequestCancellationGuard};
 use crate::tenant::TenantIsolationContext;
+use nimbus_compute::scheduling::{
+    CronJobsResponse, ScheduleResponse, ScheduledJobResultResponse, ScheduledJobsResponse,
+};
 
 mod authz;
 mod deploy;
@@ -28,10 +30,8 @@ mod graph;
 mod local_admin;
 mod machines;
 mod metadata;
-mod pagination;
 mod queries;
 mod resource_control;
-mod sandbox_spec;
 mod sandboxes;
 mod scheduling;
 mod schema;

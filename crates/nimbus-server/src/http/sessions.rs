@@ -10,12 +10,12 @@ use nimbus_services::{
 use serde::{Deserialize, Serialize};
 
 use super::authz::{OperatorAuthScope, format_millis_rfc3339, record_operator_authorization_audit};
-use super::pagination::{CollectionMetadataResponse, paginate_by_key};
 use super::resource_control::sessions::{
     SessionAction, SessionRouteAuthorizationRequest, authorize_session_resource_lookup,
     authorize_session_resource_target, authorize_session_route,
 };
 use super::{AppError, AppState, parse_user_tenant_id};
+use nimbus_compute::pagination::{CollectionMetadataResponse, paginate_by_key};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

@@ -52,36 +52,3 @@ use crate::state::{AppError, AppState};
 use nimbus_bridge::read_tracking::{
     RuntimeIndexRangeRead, RuntimeReadSet, synthesize_runtime_subscription_base_queries,
 };
-
-pub(crate) fn convex_system_deployment_record_input<'a>(
-    summary: &'a ConvexRegistryDeploySummary,
-    source_ref: &'a str,
-) -> nimbus_system::SystemDeploymentRecordInput<'a> {
-    nimbus_system::SystemDeploymentRecordInput {
-        source_ref,
-        functions: summary
-            .functions
-            .iter()
-            .map(
-                |function| nimbus_system::SystemDeploymentFunctionRecordInput {
-                    name: function.name.as_str(),
-                    kind: function.kind,
-                    fingerprint: function.fingerprint.as_str(),
-                },
-            )
-            .collect(),
-        http_routes: summary
-            .http_routes
-            .iter()
-            .map(
-                |route| nimbus_system::SystemDeploymentHttpRouteRecordInput {
-                    key: route.key.as_str(),
-                    fingerprint: route.fingerprint.as_str(),
-                },
-            )
-            .collect(),
-        schema_fingerprint: summary.schema_fingerprint.as_deref(),
-        index_fingerprint: summary.index_fingerprint.as_deref(),
-        runtime_bundle_fingerprint: summary.runtime_bundle_fingerprint.as_deref(),
-    }
-}

@@ -26,8 +26,8 @@ use super::{
     ConvexRegistry, ConvexScheduleAfterRequest, ConvexScheduleAtRequest,
     normalize_http_request_path, parse_job_id,
 };
-use crate::protocol::ScheduleResponse;
 use crate::state::{AppError, AppState, RequestCancellationGuard, record_authenticated_usage};
+use nimbus_compute::scheduling::ScheduleResponse;
 
 mod function_routes;
 mod http;

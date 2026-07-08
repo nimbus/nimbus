@@ -4,7 +4,6 @@ use axum::response::{IntoResponse, Response};
 use nimbus_core::Error;
 use nimbus_engine::Engine;
 
-use crate::adapters::cloud_functions::CloudFunctionsRegistry;
 use crate::config::transport::TransportConfig;
 use crate::error_envelope::StructuredHttpError;
 use crate::local_server::LocalServerPolicyError;
@@ -87,26 +86,6 @@ impl AppState {
             ))
         })?;
         sender.send_replace(true);
-        Ok(())
-    }
-
-    pub(crate) fn install_cloud_functions_runtime_hooks(
-        &self,
-        registry: Arc<CloudFunctionsRegistry>,
-    ) -> std::result::Result<(), AppError> {
-        let deployment_generation = self.current_deployment().generation;
-        self.engine
-            .install_trigger_registrations(registry.trigger_registrations()?)?;
-        self.engine.install_trigger_invocation_executor(Arc::new(
-            crate::adapters::cloud_functions::CloudFunctionsTriggerExecutor::new(
-                self.engine.clone(),
-                registry,
-                deployment_generation,
-                self.runtime_service_registry(),
-                self.tenant_isolation_mode(),
-                Arc::new(crate::adapters::cloud_functions::ServerCloudFunctionsRuntimeInvoker),
-            ),
-        ))?;
         Ok(())
     }
 }
