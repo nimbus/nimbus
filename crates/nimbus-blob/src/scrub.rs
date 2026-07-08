@@ -380,26 +380,6 @@ impl LocalPackScrubber {
             report.last_scanned_pack_id = Some(pack_id);
             report.records_scanned += pack_scan.records_scanned;
             report.bytes_scanned = report.bytes_scanned.saturating_add(pack_scan.bytes_scanned);
-            // Retire a header-discredited ACTIVE pack that has NO indexed
-            // hashes here: merge_pack_findings' quarantine path (which retires
-            // AFTER durably writing the quarantine) never runs for it, so
-            // without this the corrupt empty pack keeps accepting appends.
-            // A pack WITH indexed hashes is retired inside
-            // quarantine_hashes_locked, ordered after the quarantine write —
-            // retiring it early here would open a crash window where reopen
-            // picks the fresh pack, loads no quarantine, and serves the
-            // corrupt pack's still-indexed records (reads don't revalidate
-            // headers).
-            let pack_has_indexed = snapshot
-                .index
-                .values()
-                .any(|entry| entry.pack_id == pack_id);
-            if !pack_scan.pack_header_valid
-                && pack_id == snapshot.active_pack_id
-                && !pack_has_indexed
-            {
-                self.store.retire_pack_if_active(pack_id).await?;
-            }
             let findings_before = report.findings.len();
             let pack_had_scan_findings = !pack_scan.findings.is_empty();
             merge_pack_findings(
@@ -412,6 +392,20 @@ impl LocalPackScrubber {
                 &mut pacing,
             )
             .await?;
+            // Retire a header-discredited ACTIVE pack AFTER the quarantine
+            // pass, unconditionally: `retire_pack_if_active` re-validates the
+            // header under the store lock (a no-op if the pack is no longer
+            // active or its header is fine), so this is correct whether the
+            // pack had indexed hashes, had none, or had them released out
+            // from under the scrub between snapshot and quarantine. Ordering
+            // it after `merge_pack_findings` guarantees any quarantine is
+            // durable before the pack rolls, and doing it here (not inside
+            // quarantine_hashes_locked's insert path) means a release race
+            // that skips every insert still cannot leave the corrupt pack
+            // appendable.
+            if !pack_scan.pack_header_valid {
+                self.store.retire_pack_if_active(pack_id).await?;
+            }
             if pack_had_scan_findings || report.findings.len() > findings_before {
                 checkpoint_frozen = true;
             }

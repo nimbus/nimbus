@@ -1458,3 +1458,47 @@ async fn rebuild_retains_live_claim_behind_corrupt_pack_header() {
         assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
     }
 }
+
+#[tokio::test]
+async fn scrub_retires_corrupt_active_pack_despite_release_race() {
+    let (dir, store) = open_temp(64 * 1024);
+    // The active pack has an indexed record at scrub-snapshot time...
+    let victim = store
+        .put(Bytes::from_static(b"released mid-scrub"))
+        .await
+        .unwrap();
+    let entry = entry_for(&store, victim).await;
+    let path = local::pack_path(&dir.path().join("packs"), entry.pack_id);
+    {
+        let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.write_all(b"BAD").unwrap();
+        file.sync_data().unwrap();
+    }
+
+    // ...but the claim is released before the scrub's quarantine pass. The
+    // CorruptPackHeader request is then skipped (index no longer maps it),
+    // so no quarantine is inserted — yet the corrupt active pack must STILL
+    // be retired, or a later put would append behind the bad header.
+    store.release(&victim).await.unwrap();
+
+    LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    let active = store
+        .blocking(|state| Ok(state.active_pack_id))
+        .await
+        .unwrap();
+    assert_ne!(
+        active, entry.pack_id,
+        "corrupt active pack retires even when the release race skipped every quarantine insert"
+    );
+
+    let fresh = store.put(Bytes::from_static(b"safe write")).await.unwrap();
+    let fresh_entry = entry_for(&store, fresh).await;
+    assert_ne!(fresh_entry.pack_id, entry.pack_id);
+    drop(store);
+    let reopened = LocalPackStore::open(dir.path()).unwrap();
+    assert_eq!(
+        reopened.get(&fresh).await.unwrap(),
+        Bytes::from_static(b"safe write")
+    );
+}

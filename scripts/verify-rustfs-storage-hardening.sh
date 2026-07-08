@@ -196,6 +196,7 @@ required_tests=(
   quarantine_revalidation_bytes_are_accounted
   scrub_retires_empty_corrupt_active_pack
   rebuild_retains_live_claim_behind_corrupt_pack_header
+  scrub_retires_corrupt_active_pack_despite_release_race
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then
