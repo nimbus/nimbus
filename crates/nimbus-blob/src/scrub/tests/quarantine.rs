@@ -944,21 +944,82 @@ async fn put_rolls_off_corrupt_active_header_before_appending() {
 
 #[tokio::test]
 async fn encrypted_scrub_tolerates_release_race() {
+    // A hash present in the AEAD-pass snapshot but released (absent) by the
+    // time get() runs: the pass must SKIP it and complete, not abort. Driving
+    // aead_pass directly with a snapshot entry for an already-released hash
+    // exercises exactly the Err(NotFound) branch.
     let (_dir, store) = open_temp(64 * 1024);
-    // A live blob the encrypted scrub will snapshot, then we release it
-    // before the AEAD pass reads it (via a raw put so the framed bytes exist).
     let raw = store
-        .put(Bytes::from_static(b"raw framed-ish"))
+        .put(Bytes::from_static(b"snapshotted then released"))
         .await
         .unwrap();
-
-    // Snapshot happens inside scrub(); to force the race deterministically,
-    // release right before scrubbing so the snapshot still lists it but get()
-    // returns NotFound.
-    let scrubber = EncryptedBlobScrubber::new(store.clone(), key("tenant-a"));
+    let entry = store.live_entries().unwrap()[0];
+    assert_eq!(entry.hash, raw);
     store.release(&raw).await.unwrap();
+    assert!(store.get(&raw).await.is_err(), "released -> NotFound");
 
-    // The scrub must COMPLETE (release race is a skip), not abort.
-    let report = scrubber.scrub().await.unwrap();
-    assert!(report.completed);
+    let scrubber = EncryptedBlobScrubber::new(store.clone(), key("tenant-a"));
+    let mut report = ScrubReport::default();
+    scrubber
+        .aead_pass_for_test(&mut report, vec![entry])
+        .await
+        .expect("release race is a skip, not an abort");
+    assert!(
+        report.quarantined_hashes.is_empty() && report.findings.is_empty(),
+        "a stale (released) snapshot entry produces no finding: {report:?}"
+    );
+}
+
+#[tokio::test]
+async fn release_clears_orphaned_quarantine_and_unwedges_recovery() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store
+        .put(Bytes::from_static(b"orphan claim"))
+        .await
+        .unwrap();
+    let entry = entry_for(&store, victim).await;
+    flip_first_body_byte(&dir, &store, victim).await;
+    LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    drop(store);
+
+    // Destroy the record framing (unrecoverable) and lose the index: the
+    // claim is now orphaned (side-file only), which refuses compaction and
+    // fails closed on rebuild.
+    let path = local::pack_path(&dir.path().join("packs"), entry.pack_id);
+    {
+        let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.seek(SeekFrom::Start(entry.offset)).unwrap();
+        file.write_all(b"XXXX").unwrap();
+        file.sync_data().unwrap();
+    }
+    fs::remove_file(dir.path().join("index.log")).unwrap();
+
+    let store = LocalPackStore::open(dir.path()).unwrap();
+    assert_eq!(store.open_report().unwrap().quarantine_entries_loaded, 1);
+    // Wedged: compaction refuses, rebuild fails closed.
+    assert!(store.compact().await.is_err());
+    assert!(
+        LocalPackScrubber::new(store.clone())
+            .rebuild_index_from_packs()
+            .await
+            .is_err()
+    );
+
+    // The DOCUMENTED recovery: release the orphaned claim. It must durably
+    // clear the side-file entry even with no index entry.
+    store.release(&victim).await.unwrap();
+    assert_eq!(store.open_report().unwrap().quarantine_entries_loaded, 1); // stale in-report
+
+    // After release the orphan is gone: rebuild + compaction proceed.
+    drop(store);
+    let store = LocalPackStore::open(dir.path()).unwrap();
+    assert_eq!(
+        store.open_report().unwrap().quarantine_entries_loaded,
+        0,
+        "release durably cleared the orphaned quarantine claim"
+    );
+    LocalPackScrubber::new(store.clone())
+        .rebuild_index_from_packs()
+        .await
+        .expect("recovery is no longer wedged");
 }

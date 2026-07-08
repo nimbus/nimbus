@@ -620,18 +620,24 @@ impl BlobStore for LocalPackStore {
         self.blocking(move |mut state| {
             ensure_writable(&state, "release")?;
             let result = (|state: &mut LocalPackState| {
+                let observer = Arc::clone(&state.observer);
+                // Append the release tombstone only when there is an indexed
+                // claim to drop.
                 if state.index.contains_key(&hash) {
-                    let observer = Arc::clone(&state.observer);
                     append_release_index_record(&state.index_path, &hash, &*observer)?;
                     state.index.remove(&hash);
-                    // A released claim's quarantine entry is meaningless (and
-                    // would otherwise pin absent hashes forever): lift it.
-                    if state.quarantined.contains_key(&hash) {
-                        let mut next = state.quarantined.clone();
-                        next.remove(&hash);
-                        write_quarantine_locked(state, &next, &*observer)?;
-                        state.quarantined = next;
-                    }
+                }
+                // ALWAYS lift the quarantine entry, even for an ORPHANED claim
+                // (no index entry — the index-loss state). This is the
+                // documented recovery: `release` of an unrecoverable
+                // quarantined claim must durably clear it so compaction stops
+                // returning Busy and rebuild stops failing closed. Without
+                // this, an orphaned claim would wedge recovery.
+                if state.quarantined.contains_key(&hash) {
+                    let mut next = state.quarantined.clone();
+                    next.remove(&hash);
+                    write_quarantine_locked(state, &next, &*observer)?;
+                    state.quarantined = next;
                 }
                 Ok(())
             })(&mut state);

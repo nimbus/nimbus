@@ -147,7 +147,10 @@ pub(super) fn rebuild_corrupt_index_under_guard(
     if !unlocatable.is_empty() {
         unlocatable.sort();
         return Err(Error::storage(
-            StorageErrorKind::Corruption,
+            // Busy, not Corruption: a precondition refusal (operator must
+            // release the unrecoverable claims), not a disk fault, so it must
+            // not poison the store.
+            StorageErrorKind::Busy,
             format!(
                 "corrupt-index repair aborted: {} quarantined claim(s) unrecoverable \
                  (pack destroyed + no salvageable index entry); release them explicitly to \
@@ -427,7 +430,8 @@ pub(super) fn rebuild_index_locked(
         }
         unlocatable.sort();
         return Err(Error::storage(
-            StorageErrorKind::Corruption,
+            // Busy, not Corruption: precondition refusal, must not poison.
+            StorageErrorKind::Busy,
             format!(
                 "index rebuild aborted: {} quarantined claim(s) unrecoverable (pack destroyed \
                  + no index entry); release them explicitly to proceed: {}",

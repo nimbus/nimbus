@@ -563,8 +563,21 @@ impl EncryptedBlobScrubber {
         let local = LocalPackScrubber::new(self.store.clone()).with_pacing(self.local_pacing);
         let mut report = local.scrub().await?;
         let entries = self.store.live_entries()?;
-        let mut quarantine = Vec::new();
+        self.aead_pass(&local, &mut report, entries).await?;
+        Ok(report)
+    }
 
+    /// AEAD-opens each snapshot entry to catch ciphertext that passes BLAKE3
+    /// but fails authentication. Split out of [`Self::scrub`] as a seam so the
+    /// release-race path (a snapshot entry `get()`s as `NotFound`) is directly
+    /// testable.
+    async fn aead_pass(
+        &self,
+        local: &LocalPackScrubber,
+        report: &mut ScrubReport,
+        entries: Vec<crate::LocalBlobEntry>,
+    ) -> Result<()> {
+        let mut quarantine = Vec::new();
         for entry in entries {
             let framed = match self.store.get(&entry.hash).await {
                 Ok(bytes) => bytes,
@@ -600,8 +613,17 @@ impl EncryptedBlobScrubber {
                 quarantine.push((entry.hash, QuarantineCheck::Unconditional));
             }
         }
-        local.quarantine(&mut report, None, quarantine).await?;
-        Ok(report)
+        local.quarantine(report, None, quarantine).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn aead_pass_for_test(
+        &self,
+        report: &mut ScrubReport,
+        entries: Vec<crate::LocalBlobEntry>,
+    ) -> Result<()> {
+        let local = LocalPackScrubber::new(self.store.clone());
+        self.aead_pass(&local, report, entries).await
     }
 }
 

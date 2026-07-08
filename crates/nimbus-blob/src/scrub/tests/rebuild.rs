@@ -424,7 +424,7 @@ async fn corrupt_index_repair_fails_closed_on_unrecoverable_claim() {
         LocalPackScrubber::rebuild_index_in_root(dir.path(), LocalPackStoreOptions::default())
             .await
             .unwrap_err();
-    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Busy));
     assert!(
         err.to_string().contains("unrecoverable"),
         "the error names the unrecoverable claim: {err}"
@@ -462,7 +462,7 @@ async fn failed_missing_index_rebuild_leaves_no_provisional_index() {
         LocalPackScrubber::rebuild_index_in_root(dir.path(), LocalPackStoreOptions::default())
             .await
             .unwrap_err();
-    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Busy));
     assert!(
         !dir.path().join("index.log").exists(),
         "no provisional empty index is left after a failed rebuild"
@@ -504,7 +504,7 @@ async fn failed_open_then_rebuild_removes_provisional_index() {
         .rebuild_index_from_packs()
         .await
         .unwrap_err();
-    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Busy));
     drop(store);
     assert!(
         !dir.path().join("index.log").exists(),
