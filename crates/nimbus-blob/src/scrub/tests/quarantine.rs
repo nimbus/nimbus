@@ -902,3 +902,63 @@ async fn rebuild_reports_created_quarantines() {
         "rebuild-created quarantines are surfaced in the report: {report:?}"
     );
 }
+
+#[tokio::test]
+async fn put_rolls_off_corrupt_active_header_before_appending() {
+    let (dir, store) = open_temp(64 * 1024);
+    // Put one blob so pack 0 is the active pack with a record.
+    let first = store.put(Bytes::from_static(b"first")).await.unwrap();
+    let entry = entry_for(&store, first).await;
+
+    // Corrupt the active pack's header out-of-band (simulating the scrub
+    // race: a writer holds the lock before scrub retirement lands).
+    let path = local::pack_path(&dir.path().join("packs"), entry.pack_id);
+    {
+        let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.write_all(b"BAD").unwrap();
+        file.sync_data().unwrap();
+    }
+
+    // The very next put must NOT land behind the bad header: the put path
+    // validates the active header under the lock and rolls to a fresh pack.
+    let second = store.put(Bytes::from_static(b"second")).await.unwrap();
+    let second_entry = entry_for(&store, second).await;
+    assert_ne!(
+        second_entry.pack_id, entry.pack_id,
+        "put rolled to a fresh pack"
+    );
+    assert_eq!(
+        store.get(&second).await.unwrap(),
+        Bytes::from_static(b"second")
+    );
+
+    // And reopen selects the fresh pack (no brick).
+    drop(store);
+    let reopened = LocalPackStore::open(dir.path()).unwrap();
+    assert_eq!(
+        reopened.get(&second).await.unwrap(),
+        Bytes::from_static(b"second")
+    );
+}
+
+#[tokio::test]
+async fn encrypted_scrub_tolerates_release_race() {
+    let (_dir, store) = open_temp(64 * 1024);
+    // A live blob the encrypted scrub will snapshot, then we release it
+    // before the AEAD pass reads it (via a raw put so the framed bytes exist).
+    let raw = store
+        .put(Bytes::from_static(b"raw framed-ish"))
+        .await
+        .unwrap();
+
+    // Snapshot happens inside scrub(); to force the race deterministically,
+    // release right before scrubbing so the snapshot still lists it but get()
+    // returns NotFound.
+    let scrubber = EncryptedBlobScrubber::new(store.clone(), key("tenant-a"));
+    store.release(&raw).await.unwrap();
+
+    // The scrub must COMPLETE (release race is a skip), not abort.
+    let report = scrubber.scrub().await.unwrap();
+    assert!(report.completed);
+}

@@ -207,6 +207,8 @@ required_tests=(
   empty_index_after_crash_does_not_prune_or_reclaim_quarantine
   authoritative_index_with_records_prunes_released_quarantine
   rebuild_reports_created_quarantines
+  put_rolls_off_corrupt_active_header_before_appending
+  encrypted_scrub_tolerates_release_race
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then

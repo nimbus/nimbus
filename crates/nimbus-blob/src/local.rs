@@ -970,6 +970,16 @@ fn append_pack_record(
     let observer = Arc::clone(&state.observer);
     let record_len =
         RECORD_MAGIC.len() as u64 + crate::BLAKE3_HASH_LEN as u64 + 8 + bytes.len() as u64;
+    // Never append behind a discredited pack header. The scrub's retirement
+    // runs off a lock-free snapshot, so a writer holding the mutex here could
+    // otherwise land a record in an active pack whose header went corrupt
+    // (externally, or a scrub found it but has not retired it yet). Validate
+    // under the lock and roll to a fresh pack first — the definitive fence.
+    if !quarantine::pack_header_is_valid(&state.packs_dir, state.active_pack_id) {
+        state.active_pack_id = state.active_pack_id.saturating_add(1);
+        state.active_pack_bytes =
+            ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
+    }
     if state.active_pack_bytes > PACK_MAGIC.len() as u64
         && state.active_pack_bytes.saturating_add(record_len) > state.pack_target_bytes
     {

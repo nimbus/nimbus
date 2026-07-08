@@ -573,6 +573,12 @@ impl EncryptedBlobScrubber {
                 // and `report.quarantined_hashes`, so skipping the AEAD open
                 // here loses nothing.
                 Err(err) if err.storage_kind() == Some(StorageErrorKind::Corruption) => continue,
+                // Release race: a same-process writer released this hash after
+                // the `live_entries()` snapshot. The snapshot entry is stale;
+                // skip it rather than aborting the whole scrub (matches the
+                // local pass's report-only treatment of release races). Real
+                // I/O errors still propagate.
+                Err(Error::NotFound(_)) => continue,
                 Err(err) => return Err(err),
             };
             if let Err(err) = open_framed_blob(&self.key, &framed) {
