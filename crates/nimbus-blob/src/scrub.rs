@@ -301,9 +301,9 @@ impl LocalPackScrubber {
                 missing_quarantine.push((*hash, QuarantineCheck::CorruptRecord(*entry)));
             }
         }
-        self.quarantine(&mut report, missing_quarantine).await?;
-
         let mut pacing = PacingTracker::new(self.pacing);
+        self.quarantine(&mut report, Some(&mut pacing), missing_quarantine)
+            .await?;
         let mut scanned = 0usize;
         let mut last_checkpoint = resume.and_then(|checkpoint| checkpoint.last_completed_pack_id);
         // Once a pack produces ANY finding, the resume checkpoint freezes:
@@ -462,6 +462,7 @@ impl LocalPackScrubber {
     async fn quarantine(
         &self,
         report: &mut ScrubReport,
+        pacing: Option<&mut PacingTracker>,
         requests: Vec<(BlobHash, QuarantineCheck)>,
     ) -> Result<()> {
         if requests.is_empty() {
@@ -470,12 +471,20 @@ impl LocalPackScrubber {
         let unique = requests
             .into_iter()
             .collect::<BTreeMap<BlobHash, QuarantineCheck>>();
-        let mut inserted = self
+        let mut outcome = self
             .store
             .quarantine_hashes(unique.into_iter().collect())
             .await?;
-        if !inserted.is_empty() {
-            report.quarantined_hashes.append(&mut inserted);
+        // Ground-truth revalidation I/O rides the same accounting contract
+        // as scanning.
+        report.bytes_scanned = report
+            .bytes_scanned
+            .saturating_add(outcome.revalidation_bytes);
+        if let Some(pacing) = pacing {
+            pacing.account(outcome.revalidation_bytes);
+        }
+        if !outcome.inserted.is_empty() {
+            report.quarantined_hashes.append(&mut outcome.inserted);
             report.quarantined_hashes.sort();
             report.quarantined_hashes.dedup();
         }
@@ -563,7 +572,7 @@ impl EncryptedBlobScrubber {
                 quarantine.push((entry.hash, QuarantineCheck::Unconditional));
             }
         }
-        local.quarantine(&mut report, quarantine).await?;
+        local.quarantine(&mut report, None, quarantine).await?;
         Ok(report)
     }
 }
@@ -1365,11 +1374,15 @@ async fn merge_pack_findings(
     let requests = quarantine
         .into_iter()
         .collect::<BTreeMap<BlobHash, QuarantineCheck>>();
-    let mut inserted = store
+    let mut outcome = store
         .quarantine_hashes(requests.into_iter().collect())
         .await?;
-    if !inserted.is_empty() {
-        report.quarantined_hashes.append(&mut inserted);
+    report.bytes_scanned = report
+        .bytes_scanned
+        .saturating_add(outcome.revalidation_bytes);
+    pacing.account(outcome.revalidation_bytes);
+    if !outcome.inserted.is_empty() {
+        report.quarantined_hashes.append(&mut outcome.inserted);
         report.quarantined_hashes.sort();
         report.quarantined_hashes.dedup();
     }

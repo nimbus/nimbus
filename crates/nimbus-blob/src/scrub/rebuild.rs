@@ -111,7 +111,9 @@ pub(super) fn rebuild_corrupt_index_under_guard(
     // their bytes stay claim-tracked. Without this, corrupt-index repair
     // silently drops live, readable blobs the normal rebuild preserves.
     let salvaged = local::salvage_index_prefix(&index_path);
-    let quarantined = local::load_quarantine(&canonical.join(local::QUARANTINE_FILE))?;
+    let quarantine_path = canonical.join(local::QUARANTINE_FILE);
+    let mut quarantined = local::load_quarantine(&quarantine_path)?;
+    let mut new_quarantines: HashMap<BlobHash, local::QuarantineReason> = HashMap::new();
     // Quarantined claims must stay locatable (claim-tracked, pack-retained)
     // even when the corrupt index prefix cannot supply their entry: recover
     // coordinates from the pack scan's corrupt records; report the ones that
@@ -157,11 +159,54 @@ pub(super) fn rebuild_corrupt_index_under_guard(
             continue;
         }
         let mut direct_bytes = 0u64;
-        if verify_record_paced(&packs_dir, &hash, entry, &mut pacing, &mut direct_bytes).is_ok() {
-            rebuilt.insert(hash, entry);
-            report.records_verified += 1;
+        match verify_record_paced(&packs_dir, &hash, entry, &mut pacing, &mut direct_bytes) {
+            Ok(()) => {
+                rebuilt.insert(hash, entry);
+                report.records_verified += 1;
+            }
+            Err(err) => {
+                // Retain the LIVE claim fail-closed instead of silently
+                // dropping it: keep the entry, quarantine it, and name it in
+                // the report — silent removal would turn a corruption read
+                // into NotFound and let compaction delete the bytes.
+                rebuilt.insert(hash, entry);
+                new_quarantines.insert(hash, local::QuarantineReason::Record);
+                report.corrupt_records += 1;
+                report.findings.push(finding(
+                    ScrubFindingKind::HashMismatch,
+                    Some(entry.pack_id),
+                    Some(entry.offset),
+                    Some(hash),
+                    Some(hash),
+                    None,
+                    format!(
+                        "direct verification of live claim {hash} failed during rebuild: {err}"
+                    ),
+                ));
+            }
         }
         report.bytes_scanned = report.bytes_scanned.saturating_add(direct_bytes);
+    }
+    // Persist newly discovered quarantines BEFORE the rebuilt index so a
+    // crash between the two leaves the claim either absent (old corrupt
+    // index) or quarantined — never live-and-unguarded.
+    if !new_quarantines.is_empty() {
+        quarantined.extend(
+            new_quarantines
+                .iter()
+                .map(|(hash, reason)| (*hash, *reason)),
+        );
+        disk::write_replace_durable(
+            &quarantine_path,
+            &local::encode_quarantine(&quarantined),
+            &observer,
+        )
+        .map_err(|err| {
+            local::io_error(
+                err,
+                format!("persist rebuild quarantines {}", quarantine_path.display()),
+            )
+        })?;
     }
     // Invalidate any resume checkpoint BEFORE publishing the rebuilt index:
     // its evidence was gathered against the pre-rebuild index/scan state, and
@@ -207,6 +252,7 @@ pub(super) fn rebuild_index_locked(
     let mut report = ScrubReport::default();
     let mut pacing = PacingTracker::new(pacing);
     let mut rebuilt = HashMap::new();
+    let mut new_quarantines: HashMap<BlobHash, local::QuarantineReason> = HashMap::new();
     let mut header_corrupt_packs = BTreeSet::new();
     let pack_ids = local::pack_ids_on_disk(&state.packs_dir)?;
 
@@ -245,6 +291,7 @@ pub(super) fn rebuild_index_locked(
     // NotFound and let a later compaction delete their bytes. Quarantined
     // claims are carried unconditionally: their bytes stay claim-tracked
     // (and pack-retained) until an explicit release/repair decision.
+    let observer = Arc::clone(&state.observer);
     for (hash, entry) in &state.index {
         if rebuilt.contains_key(hash) {
             continue;
@@ -257,23 +304,53 @@ pub(super) fn rebuild_index_locked(
             continue;
         }
         let mut direct_bytes = 0u64;
-        if verify_record_paced(
+        match verify_record_paced(
             &state.packs_dir,
             hash,
             *entry,
             &mut pacing,
             &mut direct_bytes,
-        )
-        .is_ok()
-        {
-            rebuilt.insert(*hash, *entry);
-            report.records_verified += 1;
+        ) {
+            Ok(()) => {
+                rebuilt.insert(*hash, *entry);
+                report.records_verified += 1;
+            }
+            Err(err) => {
+                // Retain fail-closed instead of silently dropping (see the
+                // guard-path second pass).
+                rebuilt.insert(*hash, *entry);
+                new_quarantines.insert(*hash, local::QuarantineReason::Record);
+                report.corrupt_records += 1;
+                report.findings.push(finding(
+                    ScrubFindingKind::HashMismatch,
+                    Some(entry.pack_id),
+                    Some(entry.offset),
+                    Some(*hash),
+                    Some(*hash),
+                    None,
+                    format!(
+                        "direct verification of live claim {hash} failed during rebuild: {err}"
+                    ),
+                ));
+            }
         }
         report.bytes_scanned = report.bytes_scanned.saturating_add(direct_bytes);
     }
 
+    // Persist newly discovered quarantines BEFORE the rebuilt index (see the
+    // guard-path ordering rationale).
+    if !new_quarantines.is_empty() {
+        let mut merged = state.quarantined.clone();
+        merged.extend(
+            new_quarantines
+                .iter()
+                .map(|(hash, reason)| (*hash, *reason)),
+        );
+        local::write_quarantine_locked(state, &merged, &*observer)?;
+        state.quarantined = merged;
+    }
+
     let index_bytes = encode_index(&rebuilt);
-    let observer = Arc::clone(&state.observer);
     // Invalidate any resume checkpoint BEFORE publishing the rebuilt index:
     // its evidence was gathered against the pre-rebuild index/scan state,
     // and a crash between the two must never leave a stale checkpoint

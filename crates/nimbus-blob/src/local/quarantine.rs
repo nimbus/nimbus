@@ -163,12 +163,21 @@ pub(crate) fn encode_quarantine(quarantined: &HashMap<BlobHash, QuarantineReason
     bytes
 }
 
+/// Result of a quarantine batch: the hashes actually inserted plus the
+/// ground-truth revalidation I/O performed (bytes), so callers can fold it
+/// into their pacing/accounting contract.
+pub(crate) struct QuarantineOutcome {
+    pub(crate) inserted: Vec<BlobHash>,
+    pub(crate) revalidation_bytes: u64,
+}
+
 pub(crate) fn quarantine_hashes_locked(
     state: &mut LocalPackState,
     requests: &[(BlobHash, QuarantineCheck)],
-) -> Result<Vec<BlobHash>> {
+) -> Result<QuarantineOutcome> {
     let mut next = state.quarantined.clone();
     let mut inserted = Vec::new();
+    let mut revalidation_bytes = 0u64;
     let mut retire_packs: BTreeSet<u64> = BTreeSet::new();
     for (hash, check) in requests {
         match check {
@@ -185,6 +194,12 @@ pub(crate) fn quarantine_hashes_locked(
                 if state.index.get(hash) != Some(expected) {
                     continue;
                 }
+                // The re-read walks header + up to `len` body bytes either
+                // way; account it so the scrub's pacing/reporting contract
+                // covers revalidation I/O too.
+                revalidation_bytes = revalidation_bytes
+                    .saturating_add(expected.len)
+                    .saturating_add(4 + crate::BLAKE3_HASH_LEN as u64 + 8);
                 if read_pack_entry(&state.packs_dir, hash, *expected).is_ok() {
                     continue;
                 }
@@ -193,6 +208,7 @@ pub(crate) fn quarantine_hashes_locked(
                 if state.index.get(hash) != Some(expected) {
                     continue;
                 }
+                revalidation_bytes = revalidation_bytes.saturating_add(PACK_MAGIC.len() as u64);
                 if pack_header_is_valid(&state.packs_dir, expected.pack_id) {
                     continue;
                 }
@@ -227,7 +243,10 @@ pub(crate) fn quarantine_hashes_locked(
         state.active_pack_bytes =
             ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
     }
-    Ok(inserted)
+    Ok(QuarantineOutcome {
+        inserted,
+        revalidation_bytes,
+    })
 }
 
 pub(crate) fn write_quarantine_locked(

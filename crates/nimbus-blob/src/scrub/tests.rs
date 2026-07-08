@@ -431,7 +431,10 @@ async fn scrub_stale_snapshot_cannot_quarantine_relocated_blob() {
         .quarantine_hashes(vec![(keep, QuarantineCheck::CorruptRecord(stale_entry))])
         .await
         .unwrap();
-    assert!(inserted.is_empty(), "stale finding must not quarantine");
+    assert!(
+        inserted.inserted.is_empty(),
+        "stale finding must not quarantine"
+    );
     assert_eq!(
         store.get(&keep).await.unwrap(),
         Bytes::from_static(b"healthy mover")
@@ -704,7 +707,7 @@ async fn quarantine_reverifies_record_before_inserting() {
         .await
         .unwrap();
     assert!(
-        inserted.is_empty(),
+        inserted.inserted.is_empty(),
         "a record that verifies right now is never quarantined"
     );
     assert_eq!(
@@ -749,11 +752,11 @@ async fn rebuild_preserves_healthy_records_after_corrupt_segment() {
         store.get(&after).await.unwrap(),
         Bytes::from_static(b"after segment")
     );
-    // The structurally corrupt record itself is dropped from the index.
-    assert!(matches!(
-        store.get(&corrupt).await.unwrap_err(),
-        nimbus_core::Error::NotFound(_)
-    ));
+    // The structurally corrupt record is RETAINED as a quarantined claim
+    // (fail-closed read), never silently dropped to NotFound.
+    assert!(store.has(&corrupt).await.unwrap());
+    let err = store.get(&corrupt).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
 }
 
 #[tokio::test]
@@ -806,10 +809,11 @@ async fn corrupt_index_rebuild_salvages_prefix_offsets() {
         store.get(&after).await.unwrap(),
         Bytes::from_static(b"after segment")
     );
-    assert!(matches!(
-        store.get(&corrupt).await.unwrap_err(),
-        nimbus_core::Error::NotFound(_)
-    ));
+    // The corrupt record's claim is RETAINED (salvaged prefix supplies the
+    // entry; direct verification fails -> quarantined, fail-closed).
+    assert!(store.has(&corrupt).await.unwrap());
+    let err = store.get(&corrupt).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
 }
 
 #[tokio::test]
@@ -1168,7 +1172,7 @@ async fn unconditional_quarantine_skips_released_hash() {
         .quarantine_hashes(vec![(hash, QuarantineCheck::Unconditional)])
         .await
         .unwrap();
-    assert!(inserted.is_empty());
+    assert!(inserted.inserted.is_empty());
 
     drop(store);
     let reopened = LocalPackStore::open(dir.path()).unwrap();
@@ -1344,4 +1348,32 @@ async fn repeat_scrub_of_corrupt_header_still_retires_active_pack() {
     let fresh = store.put(Bytes::from_static(b"fresh write")).await.unwrap();
     let fresh_entry = entry_for(&store, fresh).await;
     assert_ne!(fresh_entry.pack_id, old_entry.pack_id);
+}
+
+#[tokio::test]
+async fn quarantine_revalidation_bytes_are_accounted() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store.put(Bytes::from(vec![3u8; 2000])).await.unwrap();
+    let entry = entry_for(&store, victim).await;
+    flip_first_body_byte(&dir, &store, victim).await;
+
+    let pack_len = fs::metadata(local::pack_path(&dir.path().join("packs"), entry.pack_id))
+        .unwrap()
+        .len();
+
+    let report = LocalPackScrubber::new(store.clone())
+        .with_pacing(ScrubPacing::bytes_per_tick(64).unwrap())
+        .scrub()
+        .await
+        .unwrap();
+
+    assert!(report.quarantined_hashes.contains(&victim));
+    // The ground-truth revalidation re-read is part of the accounting
+    // contract: total scanned bytes exceed the pure sequential scan.
+    assert!(
+        report.bytes_scanned > pack_len,
+        "revalidation I/O is accounted: scanned {} vs pack {}",
+        report.bytes_scanned,
+        pack_len
+    );
 }

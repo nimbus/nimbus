@@ -478,7 +478,7 @@ impl LocalPackStore {
     pub(crate) async fn quarantine_hashes(
         &self,
         requests: Vec<(BlobHash, QuarantineCheck)>,
-    ) -> Result<Vec<BlobHash>> {
+    ) -> Result<quarantine::QuarantineOutcome> {
         self.blocking(move |mut state| {
             ensure_writable(&state, "quarantine")?;
             let result = quarantine_hashes_locked(&mut state, &requests);
