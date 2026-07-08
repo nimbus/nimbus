@@ -29,6 +29,7 @@ ignore = [
   { id = "RUSTSEC-2026-0118", reason = "Pinned nimbus/deno v2.9.0-nimbus.3 carries hickory-proto 0.25 through deno_net; keep visible until the Deno fork moves DNSSEC validation off the affected 0.25 API." },
   { id = "RUSTSEC-2026-0119", reason = "Pinned nimbus/deno v2.9.0-nimbus.3 carries hickory-proto 0.25 through deno_net; keep visible until the Deno fork advances to hickory-proto >=0.26.1." },
   { id = "RUSTSEC-2024-0437", reason = "Pingora 0.8.1 pulls prometheus 0.13/protobuf 2.28 through pingora-core metrics; Nimbus does not parse untrusted protobuf on this path. Revisit when Pingora moves prometheus to protobuf >=3.7.2." },
+  { id = "RUSTSEC-2026-0204", reason = "crossbeam-epoch 0.9.20 (the advisory's fix release) deterministically SIGABRTs the nimbus-server test binary on macOS (libc++ hardening: vector[] OOB; A/B/A-bisected 2026-07-08), so we hold 0.9.18 — banned below. The advisory itself is unsound fmt::Pointer/Display of invalid Atomic/Shared pointers, which no Nimbus path formats. Revisit on crossbeam-epoch >0.9.20." },
 ]
 
 [licenses]
@@ -70,6 +71,16 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 # duplicate versions.
 multiple-versions = "deny"
 wildcards = "allow"
+deny = [
+    # 0.9.20 (published 2026-07-08 as the RUSTSEC-2026-0204 fix) deterministically
+    # SIGABRTs the nimbus-server test binary on macOS (libc++ hardening assertion:
+    # vector[] index out of bounds; isolated by A/B/A lockfile bisect with
+    # serial_test held constant). Enforce the 0.9.18 hold so a routine
+    # `cargo update` cannot silently re-bump it; the advisory is ignored with
+    # justification in [advisories] above. Lift both when a later release lands
+    # clean against the full nimbus-server suite.
+    { crate = "crossbeam-epoch@0.9.20", reason = "Aborts nimbus-server test binary on macOS; hold 0.9.18 (see RUSTSEC-2026-0204 ignore)." },
+]
 skip = [
     { crate = "addr2line@0.25.1", reason = "Pingora 0.8.1's optional tracing/cache lane carries cf-rustracing/backtrace on addr2line 0.25 alongside Wasmtime's newer addr2line lane." },
     { crate = "base16ct@1.0.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
