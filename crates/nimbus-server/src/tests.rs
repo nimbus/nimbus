@@ -1824,6 +1824,8 @@ mod registry_and_license;
 mod rest_route_parity;
 #[path = "tests/scheduling.rs"]
 mod scheduling;
+#[path = "tests/service_manager.rs"]
+mod service_manager;
 #[path = "tests/tenant_isolation_harness.rs"]
 mod tenant_isolation_harness;
 #[path = "tests/tls_serve.rs"]

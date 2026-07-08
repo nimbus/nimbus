@@ -27,10 +27,7 @@ impl ServiceEvidenceWriter for SystemTenantServiceEvidenceWriter {
     }
 }
 
-pub(crate) fn attach_system_state_engine(manager: &ServiceManager, engine: Arc<Engine>) {
+pub fn attach_system_state_engine(manager: &ServiceManager, engine: Arc<Engine>) {
     manager
         .set_service_evidence_writer_arc(Arc::new(SystemTenantServiceEvidenceWriter::new(engine)));
 }
-
-#[cfg(test)]
-mod tests;

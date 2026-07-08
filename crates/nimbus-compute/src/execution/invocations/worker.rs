@@ -10,7 +10,7 @@ use super::{
     runtime_invocation_context,
 };
 
-pub(crate) async fn invoke_runtime_bundle_on_worker_with_host_state<H, S>(
+pub async fn invoke_runtime_bundle_on_worker_with_host_state<H, S>(
     runtime_executor: &RuntimeExecutor,
     runtime_policy: Arc<RuntimePolicy>,
     host_bridge: Arc<H>,
@@ -34,7 +34,7 @@ where
     Ok((response, snapshot(host_bridge.as_ref())))
 }
 
-pub(crate) async fn invoke_runtime_bundle_on_worker_with_egress_gateway<H>(
+pub async fn invoke_runtime_bundle_on_worker_with_egress_gateway<H>(
     runtime_executor: &RuntimeExecutor,
     runtime_policy: Arc<RuntimePolicy>,
     host_bridge: Arc<H>,

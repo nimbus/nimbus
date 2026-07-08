@@ -19,7 +19,7 @@ impl<'a> RuntimeBundleInvocationOptions<'a> {
         self
     }
 
-    pub(crate) fn with_optional_runtime_bundle_provenance_gate(
+    pub fn with_optional_runtime_bundle_provenance_gate(
         self,
         gate: Option<&'a RuntimeBundleProvenanceConfig>,
     ) -> Self {

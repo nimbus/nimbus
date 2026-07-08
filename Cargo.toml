@@ -11,6 +11,7 @@ members = [
     "crates/nimbus-bridge",
     "crates/nimbus-cloud-functions",
     "crates/nimbus-code-index",
+    "crates/nimbus-compute",
     "crates/nimbus-convex",
     "crates/nimbus-crypto",
     "crates/nimbus-dynamodb",

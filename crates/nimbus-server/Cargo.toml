@@ -51,6 +51,7 @@ nimbus-operator = { path = "../nimbus-operator" }
 nimbus-system = { path = "../nimbus-system" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 nimbus-workloads = { path = "../nimbus-workloads" }
+nimbus-compute = { path = "../nimbus-compute" }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-engine = { path = "../nimbus-engine" }
 nimbus-firebase = { path = "../nimbus-firebase" }
@@ -106,6 +107,7 @@ aws-sigv4 = "=1.4.3"
 # team-binding bearer (a public-API test target with no crate-internal verifier).
 base64.workspace = true
 ring.workspace = true
+nimbus-compute = { path = "../nimbus-compute", features = ["test-hooks"] }
 nimbus-engine = { path = "../nimbus-engine", features = ["test-hooks"] }
 nimbus-testing = { path = "../nimbus-testing" }
 serde_yaml.workspace = true

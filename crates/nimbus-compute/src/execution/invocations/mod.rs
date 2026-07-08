@@ -26,7 +26,7 @@ pub(crate) enum RuntimeInvocationScope {
     Nested,
 }
 
-pub(crate) struct RuntimeBundleInvocationOptions<'a> {
+pub struct RuntimeBundleInvocationOptions<'a> {
     pub(crate) tenant_id: &'a TenantId,
     pub(crate) server_request_id: Option<&'a str>,
     pub(crate) cancellation: Option<HostCallCancellation>,
@@ -42,7 +42,7 @@ pub(crate) enum RuntimeBundleProvenanceGate<'a> {
 }
 
 impl<'a> RuntimeBundleInvocationOptions<'a> {
-    pub(crate) fn enforcing_policy_limit(
+    pub fn enforcing_policy_limit(
         tenant_id: &'a TenantId,
         server_request_id: Option<&'a str>,
         cancellation: Option<HostCallCancellation>,
@@ -57,7 +57,7 @@ impl<'a> RuntimeBundleInvocationOptions<'a> {
         }
     }
 
-    pub(crate) fn budgeted_nested_invocation_bypass(
+    pub fn budgeted_nested_invocation_bypass(
         tenant_id: &'a TenantId,
         server_request_id: Option<&'a str>,
         cancellation: Option<HostCallCancellation>,
@@ -73,7 +73,7 @@ impl<'a> RuntimeBundleInvocationOptions<'a> {
     }
 }
 
-pub(crate) fn next_runtime_server_request_id(prefix: &str) -> String {
+pub fn next_runtime_server_request_id(prefix: &str) -> String {
     static NEXT_RUNTIME_SERVER_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
     format!(
         "{prefix}-{}",
@@ -137,8 +137,8 @@ where
     ))
 }
 
-pub(crate) use blocking::invoke_runtime_bundle_blocking_with_egress_gateway;
-#[cfg(test)]
-pub(crate) use blocking::invoke_runtime_bundle_blocking_with_host_state;
-pub(crate) use worker::invoke_runtime_bundle_on_worker_with_egress_gateway;
-pub(crate) use worker::invoke_runtime_bundle_on_worker_with_host_state;
+pub use blocking::invoke_runtime_bundle_blocking_with_egress_gateway;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use blocking::invoke_runtime_bundle_blocking_with_host_state;
+pub use worker::invoke_runtime_bundle_on_worker_with_egress_gateway;
+pub use worker::invoke_runtime_bundle_on_worker_with_host_state;

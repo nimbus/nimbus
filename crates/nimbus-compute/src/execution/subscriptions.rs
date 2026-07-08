@@ -1,3 +1,5 @@
+use std::fmt;
+use std::future::Future;
 use std::sync::Arc;
 
 use nimbus_core::{PrincipalContext, Query, TenantId};
@@ -6,27 +8,66 @@ use nimbus_engine::{
     SubscriptionUpdate,
 };
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 
-use crate::owned_tasks::OwnedTaskSet;
-use crate::state::AppError;
+/// Tracks the forwarding tasks a single [`RuntimeSubscriptionHandle`] spawns.
+/// This is the compute-side equivalent of nimbus-server's `OwnedTaskSet`
+/// (kept server-side for its transport consumers: ws/socket, the convex
+/// socket adapter) — the bridge tasks here never leave this handle, so a
+/// tiny local task set is the smaller correct cut over threading a
+/// server-owned type across the crate boundary.
+#[derive(Default)]
+struct BridgeTaskSet {
+    tasks: JoinSet<()>,
+}
+
+impl BridgeTaskSet {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn spawn<F>(&mut self, task: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        self.tasks.spawn(task);
+    }
+
+    async fn shutdown_and_drain(mut self) {
+        self.tasks.abort_all();
+        while self.tasks.join_next().await.is_some() {}
+    }
+
+    fn task_count(&self) -> usize {
+        self.tasks.len()
+    }
+}
+
+impl fmt::Debug for BridgeTaskSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BridgeTaskSet")
+            .field("task_count", &self.task_count())
+            .finish()
+    }
+}
 
 #[derive(Debug)]
-pub(crate) struct RuntimeSubscriptionHandle {
-    pub(crate) primary_subscription_id: u64,
+pub struct RuntimeSubscriptionHandle {
+    pub primary_subscription_id: u64,
     pub(crate) cleanup_handles: Vec<SubscriptionCleanupHandle>,
-    pub(crate) bridge_tasks: OwnedTaskSet,
+    bridge_tasks: BridgeTaskSet,
     pending_receivers: Vec<mpsc::Receiver<SubscriptionUpdate>>,
 }
 
 impl RuntimeSubscriptionHandle {
-    pub(crate) fn underlying_subscription_ids(&self) -> Vec<u64> {
+    pub fn underlying_subscription_ids(&self) -> Vec<u64> {
         self.cleanup_handles
             .iter()
             .map(SubscriptionCleanupHandle::subscription_id)
             .collect()
     }
 
-    pub(crate) fn start_forwarding(&mut self, sender: mpsc::Sender<SubscriptionUpdate>) {
+    pub fn start_forwarding(&mut self, sender: mpsc::Sender<SubscriptionUpdate>) {
         for receiver in self.pending_receivers.drain(..) {
             let primary_subscription_id = self.primary_subscription_id;
             self.bridge_tasks.spawn({
@@ -77,31 +118,31 @@ impl RuntimeSubscriptionHandle {
         }
     }
 
-    pub(crate) async fn shutdown_and_drain(self) {
+    pub async fn shutdown_and_drain(self) {
         drop(self.cleanup_handles);
         self.bridge_tasks.shutdown_and_drain().await;
     }
 
-    #[cfg(test)]
-    pub(crate) fn new_for_testing(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn new_for_testing(
         primary_subscription_id: u64,
         pending_receiver: mpsc::Receiver<SubscriptionUpdate>,
     ) -> Self {
         Self {
             primary_subscription_id,
             cleanup_handles: Vec::new(),
-            bridge_tasks: OwnedTaskSet::new(),
+            bridge_tasks: BridgeTaskSet::new(),
             pending_receivers: vec![pending_receiver],
         }
     }
 }
 
-pub(crate) async fn subscribe_runtime_base_queries(
+pub async fn subscribe_runtime_base_queries(
     service: Arc<nimbus_engine::Engine>,
     tenant_id: TenantId,
     base_queries: Vec<Query>,
     principal: PrincipalContext,
-) -> Result<RuntimeSubscriptionHandle, AppError> {
+) -> Result<RuntimeSubscriptionHandle, nimbus_core::Error> {
     let mut underlying = Vec::with_capacity(base_queries.len());
 
     for (index, query) in base_queries.into_iter().enumerate() {
@@ -120,7 +161,7 @@ pub(crate) async fn subscribe_runtime_base_queries(
             .await
         {
             Ok(registration) => underlying.push((registration, bridge_rx)),
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(error),
         }
     }
 
@@ -140,7 +181,7 @@ pub(crate) async fn subscribe_runtime_base_queries(
     Ok(RuntimeSubscriptionHandle {
         primary_subscription_id,
         cleanup_handles,
-        bridge_tasks: OwnedTaskSet::new(),
+        bridge_tasks: BridgeTaskSet::new(),
         pending_receivers,
     })
 }
@@ -162,7 +203,7 @@ mod tests {
         let mut handle = RuntimeSubscriptionHandle {
             primary_subscription_id: 42,
             cleanup_handles: Vec::new(),
-            bridge_tasks: OwnedTaskSet::new(),
+            bridge_tasks: BridgeTaskSet::new(),
             pending_receivers: vec![pending_rx],
         };
 

@@ -6781,6 +6781,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "nimbus-compute"
+version = "0.1.45"
+dependencies = [
+ "nimbus-artifacts",
+ "nimbus-bridge",
+ "nimbus-core",
+ "nimbus-engine",
+ "nimbus-fs",
+ "nimbus-machine",
+ "nimbus-provenance",
+ "nimbus-runtime",
+ "nimbus-sandbox",
+ "nimbus-services",
+ "nimbus-system",
+ "nimbus-tenant",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "workspace-hack",
+]
+
+[[package]]
 name = "nimbus-convex"
 version = "0.1.45"
 dependencies = [
@@ -7238,6 +7261,7 @@ dependencies = [
  "nimbus-bridge",
  "nimbus-cloud-functions",
  "nimbus-code-index",
+ "nimbus-compute",
  "nimbus-convex",
  "nimbus-core",
  "nimbus-dynamodb",
