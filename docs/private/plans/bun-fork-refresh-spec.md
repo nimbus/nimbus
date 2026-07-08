@@ -106,11 +106,18 @@ atomic Nimbus PR:
 | `scripts/verify-install-helper.sh` | fixture ref/revision + component version string |
 | `.github/workflows/bun-jsc-adapter.yml` | `bun_source_ref`, `bun_source_revision` defaults; `bun_bootstrap_version` only if a newer official npm Bun exists |
 | `scripts/verify-fork-upstream-standardization.sh` | `nimbus/bun` registry row: active branch, proof tag, base marker (`332f7444f9` short form), upstream sync tag if upstream released past 1.3.14 |
+| `packages/nimbus-ui/src/test/handlers.ts` | MSW fixture `source_ref` + `source_revision` — note the fixture ref is already drifted (`bun-v1.4.0-nimbus.5`, pre-FUS naming); fix to the new proof ref |
+| `packages/nimbus-ui/src/test/msw.spec.ts` | asserted ref string (same drift) |
+| `packages/nimbus-ui/src/routes/operator/settings/configuration.spec.tsx` | asserted ref string (same drift) |
+| `crates/nimbus-runtime/tests/engine_proofs/bun_jsc.rs` | fallback `bun_repo()` default path — repoint `~/src/github.com/oven-sh/bun` → `~/src/github.com/nimbus/bun` (env override unchanged) |
+| `scripts/verify-bun-jsc-in-process-lockdown.sh` | same stale default path repoint |
 
 Completeness check: after the pin update,
-`grep -rn "nimbus-bun-jsc-proof-main-20260525\|ad0e1d2bbc" crates/ scripts/ .github/`
+`grep -rn "nimbus-bun-jsc-proof-main-20260525\|ad0e1d2bbc\|bun-v1.4.0-nimbus" crates/ scripts/ packages/ .github/`
 must return zero hits (archived plans and proof history under
-`docs/private/plans/` are exempt — they are immutable evidence).
+`docs/private/plans/` are exempt — they are immutable evidence; the
+`gate-66-final-closeout.md` label of `ad0e1d2` as `bun-v1.4.0-nimbus.5` is
+historical drift and stays as written).
 
 ## GitHub Repository State
 
