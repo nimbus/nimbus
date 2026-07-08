@@ -491,3 +491,62 @@ async fn released_quarantined_blob_reads_not_found() {
     let err = reopened.get(&victim).await.unwrap_err();
     assert!(matches!(err, nimbus_core::Error::NotFound(_)), "{err}");
 }
+
+async fn smash_record_magic(dir: &tempfile::TempDir, store: &LocalPackStore, hash: BlobHash) {
+    let entry = entry_for(store, hash).await;
+    let path = local::pack_path(&dir.path().join("packs"), entry.pack_id);
+    let mut file = OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .expect("pack opens for corruption");
+    file.seek(SeekFrom::Start(entry.offset))
+        .expect("seek to record magic");
+    file.write_all(b"XXXX").expect("smash record magic");
+    file.sync_data().expect("corruption lands on disk");
+}
+
+#[tokio::test]
+async fn scrub_does_not_quarantine_healthy_records_after_corrupt_segment() {
+    let (dir, store) = open_temp(64 * 1024);
+    let before = store
+        .put(Bytes::from_static(b"before segment"))
+        .await
+        .unwrap();
+    let corrupt = store
+        .put(Bytes::from_static(b"corrupt segment"))
+        .await
+        .unwrap();
+    let after = store
+        .put(Bytes::from_static(b"after segment"))
+        .await
+        .unwrap();
+
+    // Destroy the middle record's MAGIC: the sequential scan cannot walk past
+    // it, but the record after it is still readable by direct index offset.
+    smash_record_magic(&dir, &store, corrupt).await;
+
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+
+    assert!(report.quarantined_hashes.contains(&corrupt));
+    assert!(
+        !report.quarantined_hashes.contains(&after),
+        "a healthy record past the corrupt segment must not be quarantined: {report:?}"
+    );
+    assert!(
+        !report.quarantined_hashes.contains(&before),
+        "records before the corrupt segment are unaffected"
+    );
+    assert_eq!(
+        store.get(&before).await.unwrap(),
+        Bytes::from_static(b"before segment")
+    );
+    assert_eq!(
+        store.get(&after).await.unwrap(),
+        Bytes::from_static(b"after segment"),
+        "direct-offset reads past the corrupt segment keep working"
+    );
+    let err = store.get(&corrupt).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    // Both healthy records were verified (one sequentially, one directly).
+    assert!(report.records_verified >= 2, "{report:?}");
+}

@@ -215,19 +215,22 @@ impl LocalPackScrubber {
 
         let repair_root = root.clone();
         let open_options = options.clone();
-        tokio::task::spawn_blocking(move || repair_corrupt_index_for_rebuild(repair_root, options))
-            .await
-            .map_err(|err| {
-                Error::storage(
-                    StorageErrorKind::Other,
-                    format!("local index repair task: {err}"),
-                )
-            })??;
+        let pacing = ScrubPacing::default();
+        let report = tokio::task::spawn_blocking(move || {
+            rebuild_corrupt_index_under_guard(repair_root, options, pacing)
+        })
+        .await
+        .map_err(|err| {
+            Error::storage(
+                StorageErrorKind::Other,
+                format!("local index repair task: {err}"),
+            )
+        })??;
 
-        let store = LocalPackStore::open_with_options(&root, open_options)?;
-        LocalPackScrubber::new(store)
-            .rebuild_index_from_packs()
-            .await
+        // The rebuilt index is already durably published (single atomic
+        // replace, under the root guard); this open just validates it loads.
+        let _store = LocalPackStore::open_with_options(&root, open_options)?;
+        Ok(report)
     }
 
     async fn scrub_inner(&self, max_packs: Option<usize>) -> Result<ScrubReport> {
@@ -324,6 +327,7 @@ impl LocalPackScrubber {
                 &state_index,
                 &index_offsets,
                 &self.store,
+                &snapshot.packs_dir,
             )
             .await?;
 
@@ -593,6 +597,11 @@ struct PackScan {
     findings: Vec<ScrubFinding>,
     valid_records: Vec<ScannedRecord>,
     corrupt_offsets: BTreeSet<u64>,
+    /// Offset up to which the sequential scan verified the pack. The scanner
+    /// stops at the first structurally corrupt record, but records at or past
+    /// this boundary may still be healthy and readable by direct index
+    /// offset — they get direct verification instead of blanket quarantine.
+    scan_boundary: u64,
 }
 
 fn root_from_index_path(index_path: &Path) -> Result<PathBuf> {
@@ -614,7 +623,18 @@ fn is_index_corruption(err: &Error) -> bool {
     }
 }
 
-fn repair_corrupt_index_for_rebuild(root: PathBuf, options: LocalPackStoreOptions) -> Result<()> {
+/// Repairs a corrupt `index.log` by scanning packs and publishing the FULL
+/// rebuilt index as one atomic durable replace, all under the root guard.
+///
+/// There is deliberately no intermediate durable state: a crash at any point
+/// leaves either the old (corrupt, still refusing to open) index or the
+/// complete rebuilt one — never a valid-but-empty index that would hide every
+/// existing pack record from a subsequent open.
+fn rebuild_corrupt_index_under_guard(
+    root: PathBuf,
+    options: LocalPackStoreOptions,
+    pacing: ScrubPacing,
+) -> Result<ScrubReport> {
     root_guard::check_writable_root_shape(&root, &options)?;
     let canonical = root.canonicalize().map_err(|err| {
         local::io_error(err, format!("canonicalize blob root {}", root.display()))
@@ -628,13 +648,48 @@ fn repair_corrupt_index_for_rebuild(root: PathBuf, options: LocalPackStoreOption
         SystemClock.now_millis(),
         &observer,
     )?;
+
+    let mut report = ScrubReport::default();
+    let mut pacing = PacingTracker::new(pacing);
+    let mut rebuilt = HashMap::new();
+    let written_at_millis = SystemClock.now_millis();
+    for pack_id in local::pack_ids_on_disk(&packs_dir)? {
+        let pack_scan = scan_pack(&packs_dir, pack_id, &mut pacing)?;
+        report.packs_scanned += 1;
+        if report.first_scanned_pack_id.is_none() {
+            report.first_scanned_pack_id = Some(pack_id);
+        }
+        report.last_scanned_pack_id = Some(pack_id);
+        report.records_scanned += pack_scan.records_scanned;
+        report.bytes_scanned = report.bytes_scanned.saturating_add(pack_scan.bytes_scanned);
+        report.corrupt_records += pack_scan.findings.len();
+        report.findings.extend(pack_scan.findings);
+        for record in pack_scan.valid_records {
+            rebuilt.insert(
+                record.hash,
+                PackEntry {
+                    pack_id: record.pack_id,
+                    offset: record.offset,
+                    len: record.len,
+                    written_at_millis,
+                },
+            );
+            report.records_verified += 1;
+        }
+    }
+
     let index_path = canonical.join("index.log");
-    disk::write_replace_durable(&index_path, INDEX_MAGIC, &observer).map_err(|err| {
-        local::io_error(
-            err,
-            format!("replace corrupt index {}", index_path.display()),
-        )
-    })
+    disk::write_replace_durable(&index_path, &encode_index(&rebuilt), &observer).map_err(
+        |err| {
+            local::io_error(
+                err,
+                format!("publish rebuilt index {}", index_path.display()),
+            )
+        },
+    )?;
+    report.completed = true;
+    report.pacing = pacing.finish();
+    Ok(report)
 }
 
 fn checkpoint_path(state: &LocalPackState) -> Result<PathBuf> {
@@ -772,6 +827,7 @@ fn scan_pack(packs_dir: &Path, pack_id: u64, pacing: &mut PacingTracker) -> Resu
     scan.pack_header_valid = true;
 
     let mut offset = PACK_MAGIC.len() as u64;
+    scan.scan_boundary = offset;
     while offset < file_len {
         let record_offset = offset;
         let mut magic = [0u8; 4];
@@ -784,6 +840,7 @@ fn scan_pack(packs_dir: &Path, pack_id: u64, pacing: &mut PacingTracker) -> Resu
         )?;
         offset = offset.saturating_add(read as u64);
         if read < magic.len() {
+            scan.scan_boundary = record_offset;
             scan.corrupt_offsets.insert(record_offset);
             scan.findings.push(finding(
                 ScrubFindingKind::TruncatedRecord,
@@ -800,6 +857,7 @@ fn scan_pack(packs_dir: &Path, pack_id: u64, pacing: &mut PacingTracker) -> Resu
             break;
         }
         if magic != RECORD_MAGIC {
+            scan.scan_boundary = record_offset;
             scan.corrupt_offsets.insert(record_offset);
             scan.findings.push(finding(
                 ScrubFindingKind::InvalidRecordMagic,
@@ -826,6 +884,7 @@ fn scan_pack(packs_dir: &Path, pack_id: u64, pacing: &mut PacingTracker) -> Resu
         )?;
         offset = offset.saturating_add(read as u64);
         if read < stored_hash.len() {
+            scan.scan_boundary = record_offset;
             scan.corrupt_offsets.insert(record_offset);
             scan.findings.push(finding(
                 ScrubFindingKind::TruncatedRecord,
@@ -848,6 +907,7 @@ fn scan_pack(packs_dir: &Path, pack_id: u64, pacing: &mut PacingTracker) -> Resu
             read_fully_or_short(&mut file, &path, &mut len, pacing, &mut scan.bytes_scanned)?;
         offset = offset.saturating_add(read as u64);
         if read < len.len() {
+            scan.scan_boundary = record_offset;
             scan.corrupt_offsets.insert(record_offset);
             scan.findings.push(finding(
                 ScrubFindingKind::TruncatedRecord,
@@ -866,6 +926,7 @@ fn scan_pack(packs_dir: &Path, pack_id: u64, pacing: &mut PacingTracker) -> Resu
         let len = u64::from_le_bytes(len);
         let body_start = record_offset.saturating_add(RECORD_HEADER_LEN);
         if len > file_len.saturating_sub(body_start) {
+            scan.scan_boundary = record_offset;
             scan.corrupt_offsets.insert(record_offset);
             scan.findings.push(finding(
                 ScrubFindingKind::TruncatedRecord,
@@ -899,6 +960,9 @@ fn scan_pack(packs_dir: &Path, pack_id: u64, pacing: &mut PacingTracker) -> Resu
                     path.display()
                 ),
             ));
+            // The record's structure was walked even though its content is
+            // corrupt: the sequential scan boundary advances past it.
+            scan.scan_boundary = offset;
             continue;
         }
 
@@ -908,6 +972,7 @@ fn scan_pack(packs_dir: &Path, pack_id: u64, pacing: &mut PacingTracker) -> Resu
             hash: stored_hash,
             len,
         });
+        scan.scan_boundary = offset;
     }
     Ok(scan)
 }
@@ -983,6 +1048,7 @@ async fn merge_pack_findings(
     index: &HashMap<BlobHash, PackEntry>,
     index_offsets: &HashSet<(u64, u64)>,
     store: &LocalPackStore,
+    packs_dir: &Path,
 ) -> Result<()> {
     report.corrupt_records += pack_scan.findings.len();
     report.findings.extend(pack_scan.findings.clone());
@@ -994,6 +1060,7 @@ async fn merge_pack_findings(
         .collect::<BTreeMap<_, _>>();
 
     let mut quarantine = Vec::new();
+    let mut direct_verify: Vec<(BlobHash, PackEntry)> = Vec::new();
     for (hash, entry) in index {
         if entry.pack_id != pack_scan.pack_id {
             continue;
@@ -1037,6 +1104,14 @@ async fn merge_pack_findings(
             None if pack_scan.corrupt_offsets.contains(&entry.offset) => {
                 quarantine.push((*hash, Some(*entry)));
             }
+            None if entry.offset >= pack_scan.scan_boundary => {
+                // The sequential scan stopped at an earlier corrupt segment
+                // and never reached this offset. Records past a corrupt
+                // segment are still readable by direct index offset, so
+                // verify this one directly instead of blanket-quarantining
+                // healthy data (data-availability rule).
+                direct_verify.push((*hash, *entry));
+            }
             None if pack_scan.pack_header_valid => {
                 report.corrupt_records += 1;
                 report.findings.push(finding(
@@ -1055,6 +1130,48 @@ async fn merge_pack_findings(
             }
             None => {
                 quarantine.push((*hash, Some(*entry)));
+            }
+        }
+    }
+
+    if !direct_verify.is_empty() {
+        let packs_dir = packs_dir.to_path_buf();
+        let batch = direct_verify.clone();
+        let verdicts = tokio::task::spawn_blocking(move || {
+            batch
+                .into_iter()
+                .map(|(hash, entry)| {
+                    let verdict = local::read_pack_entry(&packs_dir, &hash, entry);
+                    (hash, entry, verdict.map(|_| ()))
+                })
+                .collect::<Vec<_>>()
+        })
+        .await
+        .map_err(|err| {
+            Error::storage(
+                StorageErrorKind::Other,
+                format!("local scrub direct-verify task: {err}"),
+            )
+        })?;
+        for (hash, entry, verdict) in verdicts {
+            match verdict {
+                Ok(()) => report.records_verified += 1,
+                Err(err) => {
+                    report.corrupt_records += 1;
+                    report.findings.push(finding(
+                        ScrubFindingKind::HashMismatch,
+                        Some(entry.pack_id),
+                        Some(entry.offset),
+                        Some(hash),
+                        Some(hash),
+                        None,
+                        format!(
+                            "direct verification of {hash} at pack {} offset {} failed: {err}",
+                            entry.pack_id, entry.offset
+                        ),
+                    ));
+                    quarantine.push((hash, Some(entry)));
+                }
             }
         }
     }

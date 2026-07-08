@@ -168,6 +168,7 @@ required_tests=(
   scrub_stale_snapshot_cannot_quarantine_relocated_blob
   scrub_resume_rescans_growable_pack
   released_quarantined_blob_reads_not_found
+  scrub_does_not_quarantine_healthy_records_after_corrupt_segment
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then

@@ -1090,7 +1090,11 @@ fn read_blob_range_locked(
     Ok(bytes)
 }
 
-fn read_pack_entry(packs_dir: &Path, expected_hash: &BlobHash, entry: PackEntry) -> Result<Bytes> {
+pub(crate) fn read_pack_entry(
+    packs_dir: &Path,
+    expected_hash: &BlobHash,
+    entry: PackEntry,
+) -> Result<Bytes> {
     let path = pack_path(packs_dir, entry.pack_id);
     let mut file =
         File::open(&path).map_err(|err| io_error(err, format!("open pack {}", path.display())))?;
