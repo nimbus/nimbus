@@ -2,8 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use nimbus_core::{
-    CommitEntry, Document, DocumentId, SequenceNumber, TableName, TenantEventKind,
-    TenantEventRecord,
+    CommitEntry, Document, DocumentId, SequenceNumber, TableName, TenantEventRecord,
 };
 
 use crate::subscriptions::{
@@ -57,13 +56,7 @@ pub(in crate::engine) fn document_bearing_commit_identity(
     let other_records_are_provably_inert = records
         .iter()
         .filter(|record| record.writes.is_empty())
-        .all(|record| {
-            !record.events().is_empty()
-                && record
-                    .events()
-                    .iter()
-                    .all(|event| matches!(event, TenantEventKind::TriggerDelivery { .. }))
-        });
+        .all(TenantEventRecord::is_provably_inert_trigger_delivery_only);
     other_records_are_provably_inert.then(|| only.as_commit_entry())
 }
 

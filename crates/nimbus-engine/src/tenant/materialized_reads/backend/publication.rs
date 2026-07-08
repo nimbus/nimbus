@@ -155,20 +155,27 @@ impl MaterializedServingBackend {
         table_state.current.covered_sequence = covered_sequence;
     }
 
-    /// Carries every loaded table's coverage frontier through to `sequence`
-    /// without touching a single document. The trigger-candidate feed's own
-    /// delivery-cursor advance is exactly such a commit: a zero-write entry
-    /// appended to the same commit log and sequence space real document
-    /// writes use, purely to record how far it has delivered. Because it
-    /// carries no writes, it can never change what any materialized-serving
-    /// snapshot serves, so every loaded table can be carried through it the
-    /// same way `apply_commit` already carries an untouched table through a
-    /// real commit (`advance_current_coverage_without_retention`). Skipping
-    /// this (as every caller other than the cursor-advance path correctly
-    /// does, since their commits may carry real writes not yet folded in)
-    /// would leave loaded tables behind: the read path would treat the
-    /// widened `(covered, required]` gap as "reload needed" and pay for a
-    /// full table rebuild that changes nothing.
+    /// Carries a loaded table's coverage frontier through to `head` without
+    /// touching a single document, PROVIDED the table is already known to
+    /// have folded everything through `floor`. The trigger-candidate feed's
+    /// own delivery-cursor advance is exactly such a widening commit: a
+    /// zero-write entry appended to the same commit log and sequence space
+    /// real document writes use, purely to record how far it has delivered.
+    /// Because it carries no writes, it can never change what any
+    /// materialized-serving snapshot serves -- but only for a table that
+    /// provably has no *other*, unfolded write sitting in `(floor, head]`.
+    /// `floor` is the sequence of the commit the caller just materialized
+    /// invocations for; the caller has already verified every record in
+    /// `(floor, head]` is provably inert before calling this, which makes
+    /// widening sound for any table whose `covered_sequence` is already
+    /// `>= floor` (the same way `apply_commit` already carries an untouched
+    /// table through a real commit via
+    /// `advance_current_coverage_without_retention`). A table whose
+    /// `covered_sequence < floor` is lagging behind real commits a
+    /// provider-catch-up pass owns folding in -- it must NOT be carried
+    /// past writes it has not folded, even though the `(floor, head]` gap
+    /// itself is inert, so it is left untouched here and simply reloads on
+    /// its next query.
     ///
     /// Publishes the widened snapshot via `extend_latest_coverage` rather
     /// than `publish_serving_snapshot_locked`: a zero-write commit produces a
@@ -178,7 +185,8 @@ impl MaterializedServingBackend {
     pub(crate) fn advance_coverage_for_zero_write_commit(
         &self,
         snapshots: &ServingSnapshotManager,
-        sequence: SequenceNumber,
+        floor: SequenceNumber,
+        head: SequenceNumber,
     ) {
         let mut tables = self
             .tables
@@ -189,8 +197,9 @@ impl MaterializedServingBackend {
         }
         let mut advanced = false;
         for table_state in tables.values_mut() {
-            if sequence.0 > table_state.current.covered_sequence.0 {
-                Self::advance_current_coverage_without_retention(table_state, sequence);
+            let covered = table_state.current.covered_sequence.0;
+            if covered >= floor.0 && head.0 > covered {
+                Self::advance_current_coverage_without_retention(table_state, head);
                 advanced = true;
             }
         }
@@ -263,5 +272,61 @@ pub(super) fn apply_write_to_materialized_documents(
                     estimated_bytes.saturating_sub(estimate_document_bytes(&previous));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nimbus_core::TableName;
+
+    use super::{MaterializedServingBackend, SequenceNumber, ServingSnapshotManager};
+
+    fn seed_table(
+        backend: &MaterializedServingBackend,
+        snapshots: &ServingSnapshotManager,
+        table: &str,
+        covered_sequence: u64,
+    ) {
+        backend.publish_table_snapshot(
+            snapshots,
+            TableName::new(table).expect("table name should be valid"),
+            1,
+            SequenceNumber(covered_sequence),
+            Default::default(),
+        );
+    }
+
+    #[test]
+    fn advance_coverage_for_zero_write_commit_widens_only_tables_at_or_above_floor() {
+        let backend = MaterializedServingBackend::new();
+        let snapshots = ServingSnapshotManager::new();
+        // "caught_up" folded the same commit the trigger-delivery cursor was
+        // materialized against (covered_sequence == floor): the caller has
+        // already proven `(floor, head]` is inert, so it is sound to widen
+        // this table's coverage straight through to `head`.
+        seed_table(&backend, &snapshots, "caught_up", 5);
+        // "lagging" has not folded a real commit that landed before `floor`
+        // (covered_sequence < floor): a provider catch-up pass, not this
+        // zero-write widening, owns bringing it forward. Widening it here
+        // would mark writes it never folded as covered.
+        seed_table(&backend, &snapshots, "lagging", 3);
+
+        let floor = SequenceNumber(5);
+        let head = SequenceNumber(8);
+        backend.advance_coverage_for_zero_write_commit(&snapshots, floor, head);
+
+        let caught_up = backend
+            .table_publication_stats(&TableName::new("caught_up").expect("valid table name"))
+            .expect("caught_up table should be published");
+        assert_eq!(caught_up.covered_sequence, head);
+
+        let lagging = backend
+            .table_publication_stats(&TableName::new("lagging").expect("valid table name"))
+            .expect("lagging table should be published");
+        assert_eq!(
+            lagging.covered_sequence,
+            SequenceNumber(3),
+            "a table lagging behind the verified-inert floor must not be advanced"
+        );
     }
 }

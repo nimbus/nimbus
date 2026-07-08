@@ -167,13 +167,9 @@ impl Engine {
             .store()
             .read_durable_journal_from(SequenceNumber(covered_sequence.0.saturating_add(1)))
             .map(|records| {
-                records.iter().all(|record| {
-                    record.writes.is_empty()
-                        && !record.events().is_empty()
-                        && record.events().iter().all(|event| {
-                            matches!(event, nimbus_core::TenantEventKind::TriggerDelivery { .. })
-                        })
-                })
+                records
+                    .iter()
+                    .all(nimbus_core::TenantEventRecord::is_provably_inert_trigger_delivery_only)
             })
             .unwrap_or(false);
         if gap_is_only_trigger_cursor_advances {

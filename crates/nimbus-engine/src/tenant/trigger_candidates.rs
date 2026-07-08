@@ -401,13 +401,141 @@ fn materialize_trigger_invocations_and_sync(
     // durable head, and if the head became visible first, the query could
     // observe it ahead of a table's `covered_sequence` and pay for a
     // spurious reload that changes nothing.
-    runtime.advance_materialized_read_coverage_for_zero_write_commit(progress.durable_head);
+    //
+    // That widening is only sound across the span `(floor, head]` we can
+    // *prove* is inert. `floor` is the sequence of the commit we just
+    // materialized invocations for. `lock_mutation_sequence` above is a
+    // process-local mutex, so on a provider-backed tenant a foreign engine
+    // process can append -- and apply -- its own commit between our
+    // cursor-record write and the `journal_progress()` read above. If that
+    // happened, `head` has moved past a real write this process has not
+    // folded into its materialized tables, and blindly widening every
+    // loaded table's `covered_sequence` to `head` would mark that write as
+    // already covered: future queries would then serve stale documents
+    // instead of reloading. So before widening anything, re-read the gap
+    // and verify every record in it is provably inert (our own
+    // cursor-advance commit always is; anything else means a foreign
+    // commit landed). If verification fails or the re-read itself errors,
+    // skip the widening entirely and fail closed -- loaded tables simply
+    // behave as they did pre-TI7 and reload on their next query.
+    // Correctness over optimization.
+    let floor = cursor.materialized_through;
+    if progress.durable_head.0 > floor.0 {
+        let gap_is_inert = runtime
+            .store
+            .read_durable_journal_from(nimbus_core::SequenceNumber(floor.0.saturating_add(1)))
+            .map(|gap_records| gap_is_provably_inert(&gap_records))
+            .unwrap_or(false);
+        if gap_is_inert {
+            runtime.advance_materialized_read_coverage_for_zero_write_commit(
+                floor,
+                progress.durable_head,
+            );
+        }
+    }
     runtime.sync_mutation_journal_progress(progress);
     Ok(())
+}
+
+/// True when every record in a re-read journal gap is provably inert, i.e.
+/// safe for `materialize_trigger_invocations_and_sync` to assume that
+/// widening a loaded table's coverage across it changes nothing it serves.
+/// See `TenantEventRecord::is_provably_inert_trigger_delivery_only` for what
+/// "inert" means. An empty gap is vacuously inert; in practice this is only
+/// called when the gap is non-empty (it always contains at least the
+/// cursor-advance commit this call just appended).
+fn gap_is_provably_inert(records: &[nimbus_core::TenantEventRecord]) -> bool {
+    records
+        .iter()
+        .all(nimbus_core::TenantEventRecord::is_provably_inert_trigger_delivery_only)
 }
 
 impl Drop for TriggerCandidateFeed {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod gap_inertness_tests {
+    use nimbus_core::{
+        DocumentId, SequenceNumber, TableId, TableName, TenantEventKind, TenantEventRecord,
+        Timestamp, TriggerDeliveryCursor, WriteOp, WriteOpType,
+    };
+
+    use super::gap_is_provably_inert;
+
+    fn trigger_delivery_record(sequence: u64) -> TenantEventRecord {
+        TenantEventRecord::from_events(
+            SequenceNumber(sequence),
+            Timestamp(sequence * 100),
+            vec![TenantEventKind::TriggerDelivery {
+                cursor: TriggerDeliveryCursor::new(SequenceNumber(sequence - 1)),
+            }],
+        )
+        .expect("trigger-delivery-only record should construct")
+    }
+
+    fn document_write_record(sequence: u64) -> TenantEventRecord {
+        let table = TableName::new("tasks").expect("table name should be valid");
+        TenantEventRecord::new(
+            SequenceNumber(sequence),
+            Timestamp(sequence * 100),
+            vec![WriteOp {
+                table: table.clone(),
+                table_id: TableId::new(),
+                op_type: WriteOpType::Insert,
+                doc_id: DocumentId::new(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: None,
+                current: None,
+            }],
+            None,
+        )
+        .expect("document-write record should construct")
+    }
+
+    fn barrier_record(sequence: u64) -> TenantEventRecord {
+        TenantEventRecord::barrier(
+            SequenceNumber(sequence),
+            Timestamp(sequence * 100),
+            "foreign-schema-migration".to_string(),
+        )
+        .expect("barrier record should construct")
+    }
+
+    #[test]
+    fn gap_containing_only_the_own_cursor_advance_is_inert() {
+        // This is the common case: the gap re-read after
+        // `materialize_trigger_invocations` sees exactly the zero-write
+        // TriggerDelivery record this call just appended, and nothing else
+        // landed concurrently.
+        assert!(gap_is_provably_inert(&[trigger_delivery_record(2)]));
+    }
+
+    #[test]
+    fn gap_containing_a_foreign_document_write_is_not_inert() {
+        // A foreign engine process appended (and applied) a real document
+        // commit between our cursor-record write and the journal_progress
+        // read -- this is the exact race this P1 guards against. Widening
+        // coverage across this gap would hide that write from queries.
+        assert!(!gap_is_provably_inert(&[
+            trigger_delivery_record(2),
+            document_write_record(3),
+        ]));
+    }
+
+    #[test]
+    fn gap_containing_a_foreign_non_inert_zero_write_record_is_not_inert() {
+        // A foreign zero-write record that is NOT a TriggerDelivery advance
+        // (e.g. a schema/table-lifecycle change, represented here by a
+        // Barrier for minimal construction) is just as unsafe to widen
+        // across as a real document write: it is a real state transition
+        // this process has not folded in.
+        assert!(!gap_is_provably_inert(&[
+            trigger_delivery_record(2),
+            barrier_record(3),
+        ]));
     }
 }
