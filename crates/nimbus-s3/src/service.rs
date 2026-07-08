@@ -918,10 +918,7 @@ fn timestamp_from_millis(millis: u64) -> s3s::dto::Timestamp {
 }
 
 fn current_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or_default()
+    nimbus_core::clock::system_now_millis()
 }
 
 fn size_to_i64(size: u64) -> S3Result<i64> {

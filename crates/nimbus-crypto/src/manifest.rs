@@ -15,7 +15,6 @@
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use super::key::{WrappedDataKey, WrappingCipher};
 use super::provider::KeyProviderKind;
@@ -245,10 +244,7 @@ impl KeyManifest {
         key_provider: KeyProviderKind,
         wrapped_key: WrappedDataKey,
     ) -> Self {
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let now = nimbus_core::clock::system_now_secs();
 
         Self {
             header: KeyManifestHeader {

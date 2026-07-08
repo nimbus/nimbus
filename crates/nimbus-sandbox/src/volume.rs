@@ -31,7 +31,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use nimbus_blob::{BlobHash, BlobStore};
+use nimbus_blob::{BlobHash, BlobPin, BlobPinRegistry, BlobStore};
 use nimbus_core::TenantId;
 
 use crate::error::{Result, SandboxError};
@@ -151,6 +151,15 @@ pub struct LocalDirVolume {
     /// Seam A handle for snapshot/fork. `None` = no byte plane configured:
     /// snapshot/fork fail closed instead of inventing local state.
     blob_store: Option<Arc<dyn BlobStore>>,
+    /// Write-intent registry shared with the byte plane's `BlobGc` (GR9).
+    /// `None` = no GC configured for this volume's byte plane, so snapshot
+    /// pinning is a no-op and behavior is unchanged from pre-GR9.
+    pins: Option<BlobPinRegistry>,
+    /// Live snapshot pins, keyed by the `SnapshotId` each one guards.
+    /// Removing an entry (via `release_snapshot` or volume teardown)
+    /// releases the hold; `fork()` never needs to re-pin because a snapshot
+    /// stays pinned for as long as its `SnapshotId` is still known here.
+    snapshot_pins: Mutex<HashMap<SnapshotId, BlobPin>>,
     volumes: Mutex<HashMap<VolumeId, ProvisionedVolume>>,
 }
 
@@ -159,6 +168,8 @@ impl LocalDirVolume {
         Self {
             root: root.into(),
             blob_store: None,
+            pins: None,
+            snapshot_pins: Mutex::new(HashMap::new()),
             volumes: Mutex::new(HashMap::new()),
         }
     }
@@ -167,6 +178,26 @@ impl LocalDirVolume {
     pub fn with_blob_store(mut self, blob_store: Arc<dyn BlobStore>) -> Self {
         self.blob_store = Some(blob_store);
         self
+    }
+
+    /// Attach the `BlobPinRegistry` shared with this volume's byte-plane
+    /// `BlobGc` (GR9), so `snapshot()` can hold a write-intent pin on the
+    /// archive blob until it is safe to release (see `release_snapshot`).
+    /// Not calling this leaves `pins` `None`: snapshot/fork behavior is
+    /// unchanged (the grace window is the only backstop, as before GR9).
+    pub fn with_pins(mut self, pins: BlobPinRegistry) -> Self {
+        self.pins = Some(pins);
+        self
+    }
+
+    /// Releases the write-intent pin (if any) held for `snap`, e.g. once a
+    /// snapshot has been durably registered as a root elsewhere, or the
+    /// snapshot itself is being deleted. A no-op if `snap` has no live pin
+    /// (including when no `BlobPinRegistry` was ever attached).
+    pub fn release_snapshot(&self, snap: &SnapshotId) {
+        if let Ok(mut pins) = self.snapshot_pins.lock() {
+            pins.remove(snap);
+        }
     }
 
     fn volume_dir(&self, tenant: &TenantId, sandbox: &SandboxId) -> PathBuf {
@@ -274,7 +305,18 @@ impl VolumeProvider for LocalDirVolume {
             .map_err(|error| SandboxError::OperationFailed {
                 message: format!("failed to write volume snapshot blob: {error}"),
             })?;
-        Ok(SnapshotId(hash))
+        let snapshot_id = SnapshotId(hash);
+        // GR9: hold the archive blob past `put`'s grace window until this
+        // snapshot is released (see `release_snapshot`) or another root
+        // covers it, so a sweep between `snapshot()` and `fork()` cannot
+        // reclaim it. A no-op when no registry is attached (`pins: None`).
+        if let Some(pins) = &self.pins {
+            let pin = pins.pin(hash);
+            if let Ok(mut snapshot_pins) = self.snapshot_pins.lock() {
+                snapshot_pins.insert(snapshot_id.clone(), pin);
+            }
+        }
+        Ok(snapshot_id)
     }
 
     async fn fork(&self, snap: &SnapshotId, into: &SandboxId) -> Result<MountSource> {
@@ -458,8 +500,12 @@ async fn materialize_volume(archive: &Bytes, dir: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use nimbus_blob::{BlobGc, LocalPackStore, MemoryBlobStore, StaticBlobRoots};
+    use nimbus_core::{ManualClock, Timestamp};
+
     use super::*;
-    use nimbus_blob::MemoryBlobStore;
 
     fn provider(root: &Path) -> LocalDirVolume {
         LocalDirVolume::new(root).with_blob_store(Arc::new(MemoryBlobStore::new()))
@@ -575,6 +621,79 @@ mod tests {
         assert_eq!(
             snap1, snap3,
             "child divergence must not leak into the parent"
+        );
+    }
+
+    /// GR9 repro closure: `snapshot()` puts the archive blob and, before
+    /// this slice, nothing registered it as a root, so a sweep between
+    /// `snapshot()` and `fork()` could reclaim it. With the write-intent
+    /// pin wired through, the same sweep now retains it, and releasing the
+    /// pin afterward lets a later sweep reclaim it as before.
+    #[tokio::test]
+    async fn snapshot_pin_survives_sweep_so_fork_succeeds_then_release_allows_sweep() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let store_root = tempfile::tempdir().expect("tempdir");
+        let clock = Arc::new(ManualClock::new(Timestamp(0)));
+        let pack_store = LocalPackStore::open(store_root.path())
+            .expect("pack store opens")
+            .with_clock(clock.clone());
+        let pins = BlobPinRegistry::new();
+
+        let provider = LocalDirVolume::new(root.path())
+            .with_blob_store(Arc::new(pack_store.clone()))
+            .with_pins(pins.clone());
+
+        let MountSource::HostPath(dir) = provider
+            .provision(&tenant(), &sandbox("src"), VolumePolicy::Snapshot)
+            .await
+            .expect("provision")
+        else {
+            panic!("HostPath expected");
+        };
+        tokio::fs::write(dir.join("a.txt"), b"alpha").await.unwrap();
+
+        let vol = VolumeId::derive(&tenant(), &sandbox("src"));
+        let snap = provider.snapshot(&vol).await.expect("snapshot");
+
+        // Advance well past a grace window that would otherwise reclaim an
+        // unrooted blob, then sweep: the write-intent pin should be the only
+        // thing standing between the archive blob and reclamation.
+        clock.advance(Duration::from_secs(120));
+        let gc = BlobGc::new(
+            pack_store.clone(),
+            StaticBlobRoots::default(),
+            Duration::from_secs(60),
+        )
+        .with_clock(clock.clone())
+        .with_pins(pins.clone());
+
+        let report = gc.sweep().await.expect("sweep");
+        assert_eq!(
+            report.intent_retained, 1,
+            "pinned snapshot archive should be retained, not swept"
+        );
+        assert_eq!(report.swept, 0);
+
+        let MountSource::HostPath(forked) = provider
+            .fork(&snap, &sandbox("child"))
+            .await
+            .expect("fork should succeed: the archive blob must still be present")
+        else {
+            panic!("HostPath expected");
+        };
+        assert_eq!(
+            tokio::fs::read(forked.join("a.txt")).await.unwrap(),
+            b"alpha"
+        );
+
+        // Releasing the snapshot's pin (its "deletion") should let the next
+        // sweep reclaim the now-unrooted, past-grace blob.
+        provider.release_snapshot(&snap);
+        let report = gc.sweep().await.expect("sweep after release");
+        assert_eq!(report.intent_retained, 0);
+        assert_eq!(
+            report.swept, 1,
+            "released, unrooted, past-grace blob should be swept"
         );
     }
 

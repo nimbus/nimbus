@@ -6711,6 +6711,7 @@ dependencies = [
  "nimbus",
  "nimbus-assets",
  "nimbus-convex",
+ "nimbus-core",
  "nimbus-crypto",
  "nimbus-fs",
  "nimbus-kv",
@@ -6977,6 +6978,7 @@ dependencies = [
 name = "nimbus-license"
 version = "0.1.45"
 dependencies = [
+ "nimbus-core",
  "serde",
  "serde_json",
  "tempfile",

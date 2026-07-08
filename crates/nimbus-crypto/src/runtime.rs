@@ -55,14 +55,8 @@ pub fn generate_key_manifest(
         cipher,
         subject_descriptor: subject.descriptor(),
         key_provider: provider.kind(),
-        created_at: std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .map(|duration| duration.as_secs())
-            .unwrap_or(0),
-        rotated_at: std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .map(|duration| duration.as_secs())
-            .unwrap_or(0),
+        created_at: nimbus_core::clock::system_now_secs(),
+        rotated_at: nimbus_core::clock::system_now_secs(),
     };
     let generated = provider
         .generate_data_key(subject, &header)

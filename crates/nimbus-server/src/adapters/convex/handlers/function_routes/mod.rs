@@ -1,6 +1,6 @@
 use super::common::registry_and_auth_for_path;
 use super::*;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 use tracing::warn;
 
 mod actions;
@@ -55,9 +55,11 @@ impl RunTrace {
     }
 }
 
+/// `RunTrace::started_at` stamp. `RunTrace` is a transient per-invocation
+/// telemetry value (constructed fresh per request, discarded after
+/// `record`), not unit-tested for its timing, so this is plumbing rather
+/// than a site worth threading `Arc<dyn Clock>` through every
+/// action/mutation/query call site for.
 fn unix_time_millis_lossy() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or_default()
+    nimbus_core::clock::system_now_millis()
 }

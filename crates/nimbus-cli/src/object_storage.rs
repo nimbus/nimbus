@@ -1,7 +1,6 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Args, Subcommand, ValueEnum};
 use nimbus::{
@@ -483,7 +482,7 @@ fn set_private_dir_permissions(path: &Path) -> std::io::Result<()> {
 }
 
 fn current_unix_ms() -> Result<u64, Box<dyn Error>> {
-    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64)
+    Ok(nimbus_core::clock::system_now_millis())
 }
 
 fn emit_object_storage_info(message: impl AsRef<str>) {

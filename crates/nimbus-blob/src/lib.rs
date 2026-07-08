@@ -38,6 +38,7 @@ mod hash;
 mod local;
 mod memory;
 mod object_store;
+mod pins;
 mod placement;
 mod store;
 
@@ -53,6 +54,7 @@ pub use local::{CompactionStats, LocalBlobEntry, LocalPackStore};
 pub use memory::MemoryBlobStore;
 pub use nimbus_crypto::{FRAME_PLAINTEXT_LEN, FramedBlobKey, KEY_SEED_LEN, NONCE_LEN};
 pub use object_store::{BlobCloudConfig, BlobS3Credentials, ObjectStoreBlobStore};
+pub use pins::{BlobPin, BlobPinRegistry};
 pub use placement::{PlacementBlobStore, PlacementMode};
 #[cfg(feature = "cluster")]
 pub use store::ReplicatingBlobStore;
