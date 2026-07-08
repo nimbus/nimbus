@@ -98,8 +98,11 @@ async fn release_removes_index_entry_without_deleting_other_blobs() {
     assert_eq!(store.get(&keep).await.unwrap(), Bytes::from_static(b"keep"));
 }
 
-#[test]
-fn open_rejects_corrupted_pack_header() {
+#[tokio::test]
+async fn open_retires_unreferenced_corrupt_header_pack() {
+    // No live claim references pack 0; its corrupt header retires at open
+    // (rolled past, reported) instead of bricking the root over a file no
+    // data depends on.
     let (dir, store) = open_temp(256);
     drop(store);
 
@@ -109,8 +112,40 @@ fn open_rejects_corrupted_pack_header() {
     file.write_all(b"BAD").unwrap();
     file.sync_data().unwrap();
 
+    let reopened = LocalPackStore::open_with_pack_target(dir.path(), 256).unwrap();
+    assert_eq!(
+        reopened
+            .open_report()
+            .unwrap()
+            .unreferenced_corrupt_packs_retired,
+        1
+    );
+    let hash = reopened
+        .put(Bytes::from_static(b"fresh start"))
+        .await
+        .unwrap();
+    assert_eq!(
+        reopened.get(&hash).await.unwrap(),
+        Bytes::from_static(b"fresh start")
+    );
+}
+
+#[tokio::test]
+async fn open_fails_closed_on_referenced_corrupt_header_pack() {
+    // A corrupt header on a pack that LIVE claims reference still fails
+    // closed at open; scrub owns its quarantine + retirement.
+    let (dir, store) = open_temp(256);
+    store.put(Bytes::from_static(b"referenced")).await.unwrap();
+    drop(store);
+
+    let path = pack_path(&dir.path().join("packs"), 0);
+    let mut file = OpenOptions::new().write(true).open(path).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write_all(b"BAD").unwrap();
+    file.sync_data().unwrap();
+
     let err = match LocalPackStore::open_with_pack_target(dir.path(), 256) {
-        Ok(_) => panic!("corrupted pack header should fail to open"),
+        Ok(_) => panic!("a referenced corrupt pack header must fail closed"),
         Err(err) => err,
     };
     assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
@@ -800,5 +835,47 @@ async fn durable_write_fsync_error_poisons_store() {
     assert_eq!(
         reopened.get(&fresh).await.unwrap(),
         Bytes::from_static(b"after reopen")
+    );
+}
+
+#[tokio::test]
+async fn open_prunes_stale_quarantine_entries() {
+    // Simulate the crash window between release's index tombstone and the
+    // quarantine side-file rewrite: a quarantine entry for an absent claim.
+    // A second LIVE blob keeps the index non-empty (authoritative), which is
+    // the condition under which the open-time prune applies.
+    let (dir, store) = open_temp(256);
+    let keep = store.put(Bytes::from_static(b"keeper")).await.unwrap();
+    let hash = store
+        .put(Bytes::from_static(b"reintroduce me"))
+        .await
+        .unwrap();
+    store.release(&hash).await.unwrap();
+    drop(store);
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"NBLQ2\n");
+    bytes.extend_from_slice(hash.as_bytes());
+    bytes.push(2u8); // Content reason: the sticky kind.
+    fs::write(dir.path().join("quarantine.nblq"), &bytes).unwrap();
+
+    let reopened = LocalPackStore::open_with_pack_target(dir.path(), 256).unwrap();
+    let report = reopened.open_report().unwrap();
+    assert_eq!(report.stale_quarantine_entries_pruned, 1);
+    assert_eq!(report.quarantine_entries_loaded, 0);
+
+    // Reintroducing the same content hash works and reads back.
+    let again = reopened
+        .put(Bytes::from_static(b"reintroduce me"))
+        .await
+        .unwrap();
+    assert_eq!(again, hash);
+    assert_eq!(
+        reopened.get(&again).await.unwrap(),
+        Bytes::from_static(b"reintroduce me")
+    );
+    assert_eq!(
+        reopened.get(&keep).await.unwrap(),
+        Bytes::from_static(b"keeper")
     );
 }

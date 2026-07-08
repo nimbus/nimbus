@@ -42,6 +42,7 @@ mod object_store;
 mod pins;
 mod placement;
 mod root_guard;
+mod scrub;
 mod store;
 
 pub use backup::{
@@ -59,6 +60,10 @@ pub use object_store::{BlobCloudConfig, BlobS3Credentials, ObjectStoreBlobStore}
 pub use pins::{BlobPin, BlobPinRegistry};
 pub use placement::{PlacementBlobStore, PlacementMode};
 pub use root_guard::{LocalPackStoreOptions, OpenReport};
+pub use scrub::{
+    EncryptedBlobScrubber, LocalPackScrubber, ScrubCheckpointStatus, ScrubFinding,
+    ScrubFindingKind, ScrubPacing, ScrubPacingStatus, ScrubReport,
+};
 #[cfg(feature = "cluster")]
 pub use store::ReplicatingBlobStore;
 pub use store::{BlobStore, ByteStream};

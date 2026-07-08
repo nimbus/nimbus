@@ -65,11 +65,11 @@ use crate::hash::BlobHash;
 use crate::root_guard::{self, LocalPackStoreOptions, OpenReport, RootLock};
 use crate::store::{BlobStore, ByteStream};
 
-const PACK_MAGIC: &[u8] = b"NBLPACK1\n";
-const RECORD_MAGIC: &[u8] = b"NBLR";
-const INDEX_MAGIC: &[u8] = b"NBLIDX2\n";
-const INDEX_PUT: u8 = 1;
-const INDEX_RELEASE: u8 = 2;
+pub(crate) const PACK_MAGIC: &[u8] = b"NBLPACK1\n";
+pub(crate) const RECORD_MAGIC: &[u8] = b"NBLR";
+pub(crate) const INDEX_MAGIC: &[u8] = b"NBLIDX2\n";
+pub(crate) const INDEX_PUT: u8 = 1;
+pub(crate) const INDEX_RELEASE: u8 = 2;
 pub(crate) const DEFAULT_PACK_TARGET_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_PACK_TARGET_BYTES: u64 = 512 * 1024 * 1024;
 
@@ -92,29 +92,42 @@ pub struct LocalBlobEntry {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PackEntry {
-    pack_id: u64,
-    offset: u64,
-    len: u64,
-    written_at_millis: u64,
+pub(crate) struct PackEntry {
+    pub(crate) pack_id: u64,
+    pub(crate) offset: u64,
+    pub(crate) len: u64,
+    pub(crate) written_at_millis: u64,
 }
 
-struct LocalPackState {
-    packs_dir: PathBuf,
-    index_path: PathBuf,
-    pack_target_bytes: u64,
-    active_pack_id: u64,
-    active_pack_bytes: u64,
-    index: HashMap<BlobHash, PackEntry>,
+pub(crate) struct LocalPackState {
+    pub(crate) packs_dir: PathBuf,
+    pub(crate) index_path: PathBuf,
+    pub(crate) quarantine_path: PathBuf,
+    pub(crate) pack_target_bytes: u64,
+    pub(crate) active_pack_id: u64,
+    pub(crate) active_pack_bytes: u64,
+    pub(crate) index: HashMap<BlobHash, PackEntry>,
+    pub(crate) quarantined: HashMap<BlobHash, QuarantineReason>,
+    /// Bumped by every compaction. Scrub checkpoints capture it at snapshot
+    /// and refuse publication when it moved: a checkpoint derived from a
+    /// pre-compaction pack layout must never land after compaction reused
+    /// pack ids (cross-process is excluded by the root flock; this guards
+    /// the in-process shared state).
+    pub(crate) compaction_epoch: u64,
     /// Read-only inspection handle: refuses every mutation.
-    read_only: bool,
+    pub(crate) read_only: bool,
     /// Set on any write-path I/O/corruption failure; all further mutations
     /// fail until the store is reopened (fail-stop, see module docs).
-    poisoned: bool,
+    pub(crate) poisoned: bool,
+    /// This open created `index.log` from missing, so the empty index on disk
+    /// is provisional — a rebuild that fails closed removes it (rather than
+    /// leaving an authoritative-looking empty index the next open would prune
+    /// quarantine against).
+    pub(crate) index_provisional: bool,
     /// What this open observed and repaired.
-    report: OpenReport,
+    pub(crate) report: OpenReport,
     /// Receives every durability-relevant sync/rename, in order.
-    observer: Arc<dyn SyncObserver>,
+    pub(crate) observer: Arc<dyn SyncObserver>,
     /// Advisory exclusive root lock; released when the last clone drops.
     /// `None` for read-only handles.
     _lock: Option<RootLock>,
@@ -241,6 +254,7 @@ impl LocalPackStore {
 
         let packs_dir = canonical.join("packs");
         let index_path = canonical.join("index.log");
+        let quarantine_path = canonical.join(QUARANTINE_FILE);
         let guard = root_guard::guard_writable_root(
             &canonical,
             &packs_dir,
@@ -256,7 +270,7 @@ impl LocalPackStore {
                 format!("create local pack directory {}", packs_dir.display()),
             )
         })?;
-        ensure_index_file(&index_path, &canonical, &*observer)?;
+        let index_was_missing = ensure_index_file(&index_path, &canonical, &*observer)?;
 
         let index = load_index(
             &index_path,
@@ -264,7 +278,75 @@ impl LocalPackStore {
             &mut report,
             &*observer,
         )?;
-        let mut active_pack_id = index.values().map(|entry| entry.pack_id).max().unwrap_or(0);
+        let mut quarantined = load_quarantine(&quarantine_path)?;
+        // Prune stale entries: a crash between release's index tombstone and
+        // the quarantine side-file rewrite leaves an absent-claim entry that
+        // would otherwise poison a future reintroduction of the same content
+        // hash (release is the operation that lifts content quarantines).
+        //
+        // Prune ONLY when the index log CONTAINS RECORDS — a crash-durable
+        // signal read from disk, not the in-memory map or a restart-fragile
+        // flag. Three cases:
+        //   * log has records (PUT/RELEASE) → authoritative log that has been
+        //     written to (even if the net live map is empty because every
+        //     blob was released); an absent quarantine entry is a genuinely
+        //     released claim → prune.
+        //   * log is magic-only → either a fresh store (no quarantine to
+        //     lose) or a provisional/index-loss state (a crash after a
+        //     provisional open, before rebuild) → never prune; preserve the
+        //     only claim-tracking evidence.
+        // The compaction guard (see `compact_locked`) protects the
+        // magic-only-with-claims case from pack deletion until rebuild
+        // republishes the claims into a real index.
+        let index_has_records = fs::metadata(&index_path)
+            .map(|meta| meta.len() > INDEX_MAGIC.len() as u64)
+            .unwrap_or(false);
+        let before = quarantined.len();
+        if index_has_records {
+            quarantined.retain(|hash, _| index.contains_key(hash));
+        }
+        report.stale_quarantine_entries_pruned = before - quarantined.len();
+        if report.stale_quarantine_entries_pruned > 0 {
+            disk::write_replace_durable(
+                &quarantine_path,
+                &encode_quarantine(&quarantined),
+                &*observer,
+            )
+            .map_err(|err| {
+                io_error(
+                    err,
+                    format!("prune stale quarantine {}", quarantine_path.display()),
+                )
+            })?;
+        }
+        report.quarantine_entries_loaded = quarantined.len();
+        // Active = max over index AND disk: a fresh pack rolled by pack
+        // retirement (or a crash) has no index entries yet, but it — not the
+        // retired/full pack below it — must be selected as active.
+        let index_max = index.values().map(|entry| entry.pack_id).max().unwrap_or(0);
+        let disk_max = pack_ids_on_disk(&packs_dir)?.into_iter().max().unwrap_or(0);
+        let mut active_pack_id = index_max.max(disk_max);
+        // A header-corrupt candidate-active pack with ZERO live index
+        // references retires at open (roll past it — zero data loss,
+        // reported): refusing would brick the root over a file no claim
+        // depends on, and appending behind the bad header is worse. A
+        // REFERENCED corrupt pack still fails closed below; scrub owns its
+        // quarantine + retirement.
+        // "Referenced" means referenced by a NON-quarantined live claim:
+        // quarantined claims read fail-closed regardless, so a corrupt pack
+        // holding only quarantined records (e.g. a crash landed between the
+        // quarantine write and the retirement roll) must not brick reopen.
+        let disk_max_referenced = index
+            .iter()
+            .any(|(hash, entry)| entry.pack_id == disk_max && !quarantined.contains_key(hash));
+        if active_pack_id == disk_max
+            && !disk_max_referenced
+            && pack_path(&packs_dir, disk_max).exists()
+            && !pack_header_is_valid(&packs_dir, disk_max)
+        {
+            report.unreferenced_corrupt_packs_retired += 1;
+            active_pack_id = disk_max.saturating_add(1);
+        }
         let mut active_pack_bytes = ensure_pack_file(&packs_dir, active_pack_id, &*observer)?;
         if active_pack_bytes >= options.pack_target_bytes
             && active_pack_bytes > PACK_MAGIC.len() as u64
@@ -276,12 +358,16 @@ impl LocalPackStore {
         let state = Arc::new(Mutex::new(LocalPackState {
             packs_dir,
             index_path,
+            quarantine_path,
             pack_target_bytes: options.pack_target_bytes,
             active_pack_id,
             active_pack_bytes,
             index,
+            quarantined,
+            compaction_epoch: 0,
             read_only: false,
             poisoned: false,
+            index_provisional: index_was_missing,
             report,
             observer,
             _lock: guard.lock,
@@ -304,6 +390,7 @@ impl LocalPackStore {
         let root = root.as_ref().to_path_buf();
         let packs_dir = root.join("packs");
         let index_path = root.join("index.log");
+        let quarantine_path = root.join(QUARANTINE_FILE);
         let observer: Arc<dyn SyncObserver> = Arc::new(disk::NoopSyncObserver);
 
         root_guard::guard_read_only_root(&root)?;
@@ -319,18 +406,24 @@ impl LocalPackStore {
         } else {
             HashMap::new()
         };
+        let quarantined = load_quarantine(&quarantine_path)?;
+        report.quarantine_entries_loaded = quarantined.len();
         let active_pack_id = index.values().map(|entry| entry.pack_id).max().unwrap_or(0);
 
         Ok(Self {
             state: Arc::new(Mutex::new(LocalPackState {
                 packs_dir,
                 index_path,
+                quarantine_path,
                 pack_target_bytes: DEFAULT_PACK_TARGET_BYTES,
                 active_pack_id,
                 active_pack_bytes: 0,
                 index,
+                quarantined,
+                compaction_epoch: 0,
                 read_only: true,
                 poisoned: false,
+                index_provisional: false,
                 report,
                 observer,
                 _lock: None,
@@ -389,7 +482,7 @@ impl LocalPackStore {
         .await
     }
 
-    async fn blocking<T>(
+    pub(crate) async fn blocking<T>(
         &self,
         op: impl FnOnce(MutexGuard<'_, LocalPackState>) -> Result<T> + Send + 'static,
     ) -> Result<T>
@@ -403,6 +496,48 @@ impl LocalPackStore {
         })
         .await
         .map_err(|err| Error::storage(StorageErrorKind::Other, format!("local pack task: {err}")))?
+    }
+
+    /// Quarantines hashes, revalidating each finding against CURRENT on-disk
+    /// ground truth under the store lock (see [`QuarantineCheck`]) so a stale
+    /// scrub snapshot can never quarantine a healthy blob. Returns the hashes
+    /// actually inserted.
+    /// Retires `pack_id` iff it is the current active pack and its header no
+    /// longer validates: rolls to a fresh validated active pack so new puts
+    /// never land behind the bad header and reopen selects the fresh pack.
+    /// Idempotent and finding-free (used by scrub for an unreferenced corrupt
+    /// active pack that has no hashes to quarantine).
+    pub(crate) async fn retire_pack_if_active(&self, pack_id: u64) -> Result<()> {
+        self.blocking(move |mut state| {
+            ensure_writable(&state, "retire pack")?;
+            let result = (|state: &mut LocalPackState| {
+                if state.active_pack_id == pack_id
+                    && !quarantine::pack_header_is_valid(&state.packs_dir, pack_id)
+                {
+                    let observer = Arc::clone(&state.observer);
+                    state.active_pack_id = state.active_pack_id.saturating_add(1);
+                    state.active_pack_bytes =
+                        ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
+                }
+                Ok(())
+            })(&mut state);
+            poison_on_write_failure(&mut state, &result);
+            result
+        })
+        .await
+    }
+
+    pub(crate) async fn quarantine_hashes(
+        &self,
+        requests: Vec<(BlobHash, QuarantineCheck)>,
+    ) -> Result<quarantine::QuarantineOutcome> {
+        self.blocking(move |mut state| {
+            ensure_writable(&state, "quarantine")?;
+            let result = quarantine_hashes_locked(&mut state, &requests);
+            poison_on_write_failure(&mut state, &result);
+            result
+        })
+        .await
     }
 
     /// Replaces the sync observer so tests can assert fsync ordering.
@@ -485,10 +620,24 @@ impl BlobStore for LocalPackStore {
         self.blocking(move |mut state| {
             ensure_writable(&state, "release")?;
             let result = (|state: &mut LocalPackState| {
+                let observer = Arc::clone(&state.observer);
+                // Append the release tombstone only when there is an indexed
+                // claim to drop.
                 if state.index.contains_key(&hash) {
-                    let observer = Arc::clone(&state.observer);
                     append_release_index_record(&state.index_path, &hash, &*observer)?;
                     state.index.remove(&hash);
+                }
+                // ALWAYS lift the quarantine entry, even for an ORPHANED claim
+                // (no index entry — the index-loss state). This is the
+                // documented recovery: `release` of an unrecoverable
+                // quarantined claim must durably clear it so compaction stops
+                // returning Busy and rebuild stops failing closed. Without
+                // this, an orphaned claim would wedge recovery.
+                if state.quarantined.contains_key(&hash) {
+                    let mut next = state.quarantined.clone();
+                    next.remove(&hash);
+                    write_quarantine_locked(state, &next, &*observer)?;
+                    state.quarantined = next;
                 }
                 Ok(())
             })(&mut state);
@@ -499,7 +648,7 @@ impl BlobStore for LocalPackStore {
     }
 }
 
-fn ensure_writable(state: &LocalPackState, operation: &str) -> Result<()> {
+pub(crate) fn ensure_writable(state: &LocalPackState, operation: &str) -> Result<()> {
     if state.read_only {
         return Err(Error::storage(
             StorageErrorKind::Busy,
@@ -521,7 +670,7 @@ fn ensure_writable(state: &LocalPackState, operation: &str) -> Result<()> {
 /// Fail-stop: after an I/O or corruption error on the write path, a retried
 /// sync may falsely succeed against a clean-but-lost page cache (fsyncgate),
 /// so the store stops accepting mutations until it is reopened.
-fn poison_on_write_failure<T>(state: &mut LocalPackState, result: &Result<T>) {
+pub(crate) fn poison_on_write_failure<T>(state: &mut LocalPackState, result: &Result<T>) {
     // Nested `if` rather than a let-chain: nimbus-blob's MSRV is 1.86 and
     // let-chains need 1.88.
     if let Err(err) = result {
@@ -534,7 +683,7 @@ fn poison_on_write_failure<T>(state: &mut LocalPackState, result: &Result<T>) {
     }
 }
 
-fn lock(state: &Mutex<LocalPackState>) -> Result<MutexGuard<'_, LocalPackState>> {
+pub(crate) fn lock(state: &Mutex<LocalPackState>) -> Result<MutexGuard<'_, LocalPackState>> {
     state.lock().map_err(|_| {
         Error::storage(
             StorageErrorKind::Corruption,
@@ -543,21 +692,27 @@ fn lock(state: &Mutex<LocalPackState>) -> Result<MutexGuard<'_, LocalPackState>>
     })
 }
 
-fn io_error(error: std::io::Error, context: impl Into<String>) -> Error {
+pub(crate) fn io_error(error: std::io::Error, context: impl Into<String>) -> Error {
     Error::storage(StorageErrorKind::Io, format!("{}: {error}", context.into()))
 }
 
-fn corruption(message: impl Into<String>) -> Error {
+pub(crate) fn corruption(message: impl Into<String>) -> Error {
     Error::storage(StorageErrorKind::Corruption, message)
 }
 
-fn pack_path(packs_dir: &Path, pack_id: u64) -> PathBuf {
+pub(crate) fn pack_path(packs_dir: &Path, pack_id: u64) -> PathBuf {
     packs_dir.join(format!("pack-{pack_id:016}.npack"))
 }
 
-fn ensure_index_file(index_path: &Path, root: &Path, observer: &dyn SyncObserver) -> Result<()> {
+/// Returns `true` if it created a fresh empty index (the original was
+/// missing), `false` if one already existed.
+pub(crate) fn ensure_index_file(
+    index_path: &Path,
+    root: &Path,
+    observer: &dyn SyncObserver,
+) -> Result<bool> {
     if index_path.exists() {
-        return Ok(());
+        return Ok(false);
     }
     if let Some(parent) = index_path.parent() {
         fs::create_dir_all(parent)
@@ -569,10 +724,14 @@ fn ensure_index_file(index_path: &Path, root: &Path, observer: &dyn SyncObserver
     let _ = root;
     disk::write_replace_durable(index_path, INDEX_MAGIC, observer)
         .map_err(|err| io_error(err, format!("create index {}", index_path.display())))?;
-    Ok(())
+    Ok(true)
 }
 
-fn ensure_pack_file(packs_dir: &Path, pack_id: u64, observer: &dyn SyncObserver) -> Result<u64> {
+pub(crate) fn ensure_pack_file(
+    packs_dir: &Path,
+    pack_id: u64,
+    observer: &dyn SyncObserver,
+) -> Result<u64> {
     fs::create_dir_all(packs_dir)
         .map_err(|err| io_error(err, format!("create packs dir {}", packs_dir.display())))?;
     let path = pack_path(packs_dir, pack_id);
@@ -764,14 +923,47 @@ fn put_locked(
     written_at_millis: u64,
 ) -> Result<BlobHash> {
     let hash = BlobHash::of(&bytes);
-    if state.index.contains_key(&hash) {
+    // Only a RECORD-level quarantine is repairable by re-upload: the fresh
+    // bytes produce a fresh verified record. A CONTENT-level quarantine
+    // (AEAD failure) would reproduce the identical failure from identical
+    // bytes, so it never lifts here.
+    let quarantined = state.quarantined.get(&hash) == Some(&QuarantineReason::Record);
+    if state.index.contains_key(&hash) && !quarantined {
         return Ok(hash);
     }
 
+    // A quarantined hash's indexed record is corrupt on disk; the caller just
+    // handed us verified-good bytes for the same content address, so write a
+    // fresh record and lift the quarantine (content-addressed self-repair).
+    // Ordering: publish the good record first, un-quarantine last — a crash
+    // in between leaves the blob unreadable-but-repairable, never a
+    // quarantine lifted without its replacement record being durable.
+    // NOTE: a header-corrupt pack is retired (rolled off) at quarantine time
+    // (see quarantine_hashes_locked), so a heal here always appends behind a
+    // validated active-pack header.
     let entry = append_pack_record(state, &hash, &bytes, written_at_millis)?;
     let observer = Arc::clone(&state.observer);
     append_put_index_record(&state.index_path, &hash, entry, &*observer)?;
     state.index.insert(hash, entry);
+    if quarantined {
+        let mut next = state.quarantined.clone();
+        next.remove(&hash);
+        disk::write_replace_durable(
+            &state.quarantine_path,
+            &encode_quarantine(&next),
+            &*observer,
+        )
+        .map_err(|err| {
+            io_error(
+                err,
+                format!(
+                    "lift quarantine {} after re-upload",
+                    state.quarantine_path.display()
+                ),
+            )
+        })?;
+        state.quarantined = next;
+    }
     Ok(hash)
 }
 
@@ -784,6 +976,34 @@ fn append_pack_record(
     let observer = Arc::clone(&state.observer);
     let record_len =
         RECORD_MAGIC.len() as u64 + crate::BLAKE3_HASH_LEN as u64 + 8 + bytes.len() as u64;
+    // Never append behind a discredited pack header. The scrub's retirement
+    // runs off a lock-free snapshot, so a writer holding the mutex here could
+    // otherwise land a record in an active pack whose header went corrupt
+    // (externally, or a scrub found it but has not retired it yet). Validate
+    // under the lock; if the header is bad, QUARANTINE every live claim in
+    // that pack (a corrupt header discredits the whole file — those blocks
+    // must fail closed on read and stay fail-closed across reopen) and roll
+    // to a fresh pack. Routing through the CorruptPackHeader quarantine check
+    // reuses the same ground-truth revalidation + retirement as scrub.
+    let active_pack_id = state.active_pack_id;
+    if !quarantine::pack_header_is_valid(&state.packs_dir, active_pack_id) {
+        let requests: Vec<(BlobHash, QuarantineCheck)> = state
+            .index
+            .iter()
+            .filter(|(_, entry)| entry.pack_id == active_pack_id)
+            .map(|(hash, entry)| (*hash, QuarantineCheck::CorruptPackHeader(*entry)))
+            .collect();
+        // Quarantines the live claims AND retires (rolls off) the corrupt
+        // active pack, all durably under the lock.
+        quarantine::quarantine_hashes_locked(state, &requests)?;
+        // If the pack had no live claims, the quarantine batch did not retire
+        // it (no CorruptPackHeader request was produced) — roll here.
+        if state.active_pack_id == active_pack_id {
+            state.active_pack_id = state.active_pack_id.saturating_add(1);
+            state.active_pack_bytes =
+                ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
+        }
+    }
     if state.active_pack_bytes > PACK_MAGIC.len() as u64
         && state.active_pack_bytes.saturating_add(record_len) > state.pack_target_bytes
     {
@@ -867,11 +1087,17 @@ fn append_index_record(
 }
 
 fn read_blob_locked(state: &LocalPackState, hash: &BlobHash) -> Result<Bytes> {
+    // Liveness first: an unindexed hash is NotFound even if a stale
+    // quarantine entry survives; only a LIVE quarantined claim reads as
+    // corruption.
     let entry = state
         .index
         .get(hash)
         .copied()
         .ok_or_else(|| Error::NotFound(format!("blob {hash}")))?;
+    if state.quarantined.contains_key(hash) {
+        return Err(corruption(format!("blob {hash} is quarantined by scrub")));
+    }
     read_pack_entry(&state.packs_dir, hash, entry)
 }
 
@@ -899,6 +1125,9 @@ fn read_blob_range_locked(
         .get(hash)
         .copied()
         .ok_or_else(|| Error::NotFound(format!("blob {hash}")))?;
+    if state.quarantined.contains_key(hash) {
+        return Err(corruption(format!("blob {hash} is quarantined by scrub")));
+    }
     if range.end > entry.len {
         return Err(Error::InvalidInput(format!(
             "range {}..{} out of bounds for blob of {} bytes",
@@ -913,7 +1142,11 @@ fn read_blob_range_locked(
     Ok(bytes)
 }
 
-fn read_pack_entry(packs_dir: &Path, expected_hash: &BlobHash, entry: PackEntry) -> Result<Bytes> {
+pub(crate) fn read_pack_entry(
+    packs_dir: &Path,
+    expected_hash: &BlobHash,
+    entry: PackEntry,
+) -> Result<Bytes> {
     let path = pack_path(packs_dir, entry.pack_id);
     let mut file =
         File::open(&path).map_err(|err| io_error(err, format!("open pack {}", path.display())))?;
@@ -1032,7 +1265,35 @@ fn read_pack_entry_range(
 }
 
 fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
+    // Refuse to compact while ANY quarantine claim survives only in the side
+    // file with no index entry (the index-loss state, whether or not this
+    // handle created the provisional index): those claims' bytes live in
+    // packs this function would delete. This is unconditional — after a
+    // crash the `index_provisional` flag is gone but the empty index and
+    // orphaned claims persist, and compaction must still refuse. There is no
+    // deadlock: a non-empty (authoritative) index has its stale entries
+    // pruned at open, so by compaction time no claim is orphaned there.
+    if state
+        .quarantined
+        .keys()
+        .any(|hash| !state.index.contains_key(hash))
+    {
+        // Busy, not Corruption: this is a precondition refusal, not a disk
+        // fault, so it must NOT poison the store (the caller resolves the
+        // condition — rebuild or release — then retries).
+        return Err(Error::storage(
+            StorageErrorKind::Busy,
+            "refusing to compact: quarantine claims exist with no index entry \
+             (index-loss state); rebuild or release them first",
+        ));
+    }
     let observer = Arc::clone(&state.observer);
+    state.compaction_epoch = state.compaction_epoch.saturating_add(1);
+    // Compaction restructures pack ids wholesale (and the empty-store branch
+    // even reuses pack id 0), so any scrub checkpoint taken against the old
+    // pack layout is meaningless — and dangerously so on resume, where a
+    // reused pack id would be skipped as "already verified". Invalidate it.
+    invalidate_scrub_checkpoint(state, &*observer)?;
     let original_packs = pack_ids_on_disk(&state.packs_dir)?;
     if state.index.is_empty() {
         let mut stats = CompactionStats::default();
@@ -1052,9 +1313,15 @@ fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
         return Ok(stats);
     }
 
+    // Quarantined entries are corrupt on disk: they cannot be re-read and
+    // rewritten, so compaction skips them. Their index entries stay pointing
+    // at the old pack, which keeps that pack in `referenced_packs` below —
+    // corrupt bytes are never deleted by compaction, only by an explicit
+    // release/repair decision (RFS6 rule).
     let live: Vec<(BlobHash, PackEntry, Bytes)> = state
         .index
         .iter()
+        .filter(|(hash, _)| !state.quarantined.contains_key(hash))
         .map(|(hash, entry)| {
             read_pack_entry(&state.packs_dir, hash, *entry).map(|bytes| (*hash, *entry, bytes))
         })
@@ -1097,7 +1364,7 @@ fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
     Ok(stats)
 }
 
-fn pack_ids_on_disk(packs_dir: &Path) -> Result<BTreeSet<u64>> {
+pub(crate) fn pack_ids_on_disk(packs_dir: &Path) -> Result<BTreeSet<u64>> {
     let mut pack_ids = BTreeSet::new();
     for entry in fs::read_dir(packs_dir)
         .map_err(|err| io_error(err, format!("read packs dir {}", packs_dir.display())))?
@@ -1123,6 +1390,14 @@ fn pack_ids_on_disk(packs_dir: &Path) -> Result<BTreeSet<u64>> {
     }
     Ok(pack_ids)
 }
+
+mod quarantine;
+
+pub(crate) use quarantine::{
+    QUARANTINE_FILE, QuarantineCheck, QuarantineReason, encode_quarantine,
+    invalidate_scrub_checkpoint, load_quarantine, pack_header_is_valid, quarantine_hashes_locked,
+    salvage_index_prefix, write_quarantine_locked,
+};
 
 #[cfg(test)]
 mod tests;
