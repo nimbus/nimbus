@@ -29,7 +29,4 @@ pub use self::engine::{EmbeddedProviderKind, EmbeddedRedbProvider, OpenedEmbedde
 pub use self::read::{RedbTenantStorage, RedbUsageStorage};
 pub use self::sqlite::{EmbeddedSqliteProvider, OpenedEmbeddedSqliteTenant, SqliteTenantStorage};
 pub(crate) use self::task_error::{map_executor_join_error, map_executor_permit_error};
-pub use self::traits::{
-    EmbeddedPersistenceProvider, TenantReadStorage, TenantWriteOutcome, TenantWriteStorage,
-    UsageStorage,
-};
+pub use self::traits::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, UsageStorage};

@@ -30,9 +30,9 @@ pub mod traits;
 pub mod usage_store;
 
 pub use async_storage::{
-    EmbeddedPersistenceProvider, EmbeddedProviderKind, EmbeddedRedbControlPlaneProvider,
-    EmbeddedRedbProvider, EmbeddedSqliteProvider, RedbTenantStorage, RedbUsageStorage,
-    SqliteTenantStorage, TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, UsageStorage,
+    EmbeddedProviderKind, EmbeddedRedbControlPlaneProvider, EmbeddedRedbProvider,
+    EmbeddedSqliteProvider, RedbTenantStorage, RedbUsageStorage, SqliteTenantStorage,
+    TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, UsageStorage,
 };
 pub use changefeed::{
     ChangefeedBootstrap, ChangefeedCursor, ChangefeedEvent, ChangefeedHandle, ChangefeedPage,

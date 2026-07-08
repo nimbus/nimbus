@@ -11,7 +11,6 @@ use nimbus_crypto::{
 
 use super::read::{RedbTenantStorage, default_tenant_read_parallelism};
 use super::task_error::map_join_error;
-use super::traits::EmbeddedPersistenceProvider;
 
 /// Selects the retained embedded persistence provider from the composition root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -149,6 +148,30 @@ impl EmbeddedRedbProvider {
             .map_err(|error| Error::Internal(error.to_string()))
     }
 
+    pub async fn list_tenants(&self) -> Result<Vec<TenantId>> {
+        let data_dir = self.data_dir.clone();
+        self.storage_handle
+            .spawn_blocking(move || {
+                let mut tenants = Vec::new();
+                let entries = std::fs::read_dir(&data_dir)
+                    .map_err(|error| Error::Internal(error.to_string()))?;
+                for entry in entries {
+                    let entry = entry.map_err(|error| Error::Internal(error.to_string()))?;
+                    let path = entry.path();
+                    if path.extension().is_some_and(|extension| {
+                        extension == EmbeddedProviderKind::Redb.tenant_file_extension()
+                    }) && let Some(stem) = path.file_stem()
+                    {
+                        tenants.push(TenantId::new(stem.to_string_lossy().to_string())?);
+                    }
+                }
+                tenants.sort();
+                Ok(tenants)
+            })
+            .await
+            .map_err(map_join_error)?
+    }
+
     fn tenant_path(&self, tenant_id: &TenantId) -> PathBuf {
         self.data_dir.join(format!(
             "{}.{}",
@@ -194,33 +217,5 @@ impl EmbeddedRedbProvider {
             store,
             read_storage,
         })
-    }
-}
-
-impl EmbeddedPersistenceProvider for EmbeddedRedbProvider {
-    type TenantRead = RedbTenantStorage;
-
-    async fn list_tenants(&self) -> Result<Vec<TenantId>> {
-        let data_dir = self.data_dir.clone();
-        self.storage_handle
-            .spawn_blocking(move || {
-                let mut tenants = Vec::new();
-                let entries = std::fs::read_dir(&data_dir)
-                    .map_err(|error| Error::Internal(error.to_string()))?;
-                for entry in entries {
-                    let entry = entry.map_err(|error| Error::Internal(error.to_string()))?;
-                    let path = entry.path();
-                    if path.extension().is_some_and(|extension| {
-                        extension == EmbeddedProviderKind::Redb.tenant_file_extension()
-                    }) && let Some(stem) = path.file_stem()
-                    {
-                        tenants.push(TenantId::new(stem.to_string_lossy().to_string())?);
-                    }
-                }
-                tenants.sort();
-                Ok(tenants)
-            })
-            .await
-            .map_err(map_join_error)?
     }
 }
