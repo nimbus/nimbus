@@ -615,7 +615,7 @@ pub(crate) fn ensure_index_file(
     Ok(())
 }
 
-fn load_quarantine(path: &Path) -> Result<HashSet<BlobHash>> {
+pub(crate) fn load_quarantine(path: &Path) -> Result<HashSet<BlobHash>> {
     let mut file = match File::open(path) {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(HashSet::new()),
@@ -659,6 +659,36 @@ fn encode_quarantine(quarantined: &HashSet<BlobHash>) -> Vec<u8> {
         bytes.extend_from_slice(hash.as_bytes());
     }
     bytes
+}
+
+/// Best-effort salvage of a (possibly corrupt) index log: parses records
+/// from the front and stops at the FIRST structural failure of any kind,
+/// returning the last-wins map of the parseable prefix. Used by corrupt-index
+/// repair to recover offsets for records a sequential pack scan cannot reach;
+/// never used on the normal open path (which distinguishes torn tails from
+/// corruption and fails closed accordingly).
+pub(crate) fn salvage_index_prefix(index_path: &Path) -> HashMap<BlobHash, PackEntry> {
+    let mut bytes = Vec::new();
+    let readable = File::open(index_path)
+        .and_then(|mut file| file.read_to_end(&mut bytes))
+        .is_ok();
+    let mut salvaged = HashMap::new();
+    if !readable || !bytes.starts_with(INDEX_MAGIC) {
+        return salvaged;
+    }
+    let mut cursor = INDEX_MAGIC.len();
+    while cursor < bytes.len() {
+        match parse_index_record(&bytes, &mut cursor) {
+            Ok((IndexRecord::Put(entry), hash)) => {
+                salvaged.insert(hash, entry);
+            }
+            Ok((IndexRecord::Release, hash)) => {
+                salvaged.remove(&hash);
+            }
+            Err(_) => break,
+        }
+    }
+    salvaged
 }
 
 /// How a quarantine request is revalidated against on-disk ground truth

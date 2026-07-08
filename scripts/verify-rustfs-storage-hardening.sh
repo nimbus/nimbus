@@ -175,6 +175,7 @@ required_tests=(
   interrupted_checkpoint_records_snapshot_active_pack
   quarantine_reverifies_record_before_inserting
   rebuild_preserves_healthy_records_after_corrupt_segment
+  corrupt_index_rebuild_salvages_prefix_offsets
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then

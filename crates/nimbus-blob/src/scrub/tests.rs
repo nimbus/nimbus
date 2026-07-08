@@ -749,3 +749,59 @@ async fn rebuild_preserves_healthy_records_after_corrupt_segment() {
         nimbus_core::Error::NotFound(_)
     ));
 }
+
+#[tokio::test]
+async fn corrupt_index_rebuild_salvages_prefix_offsets() {
+    let (dir, store) = open_temp(64 * 1024);
+    let before = store
+        .put(Bytes::from_static(b"before segment"))
+        .await
+        .unwrap();
+    let corrupt = store
+        .put(Bytes::from_static(b"corrupt segment"))
+        .await
+        .unwrap();
+    let after = store
+        .put(Bytes::from_static(b"after segment"))
+        .await
+        .unwrap();
+    drop(store);
+
+    // Structural corruption in the pack stops the sequential rebuild scan...
+    let index_path = dir.path().join("index.log");
+    {
+        let store = LocalPackStore::open(dir.path()).unwrap();
+        smash_record_magic(&dir, &store, corrupt).await;
+        drop(store);
+    }
+    // ...and the index log ALSO goes corrupt (unknown tag appended), so a
+    // normal open refuses and rebuild_index_in_root's repair path runs.
+    let mut file = OpenOptions::new().append(true).open(&index_path).unwrap();
+    file.write_all(&[9u8]).unwrap();
+    file.write_all(&[0u8; crate::BLAKE3_HASH_LEN]).unwrap();
+    file.sync_data().unwrap();
+    assert!(LocalPackStore::open(dir.path()).is_err(), "open refuses");
+
+    let report =
+        LocalPackScrubber::rebuild_index_in_root(dir.path(), LocalPackStoreOptions::default())
+            .await
+            .unwrap();
+    assert!(report.completed);
+
+    // The salvaged index prefix carried the offset of the record PAST the
+    // corrupt pack segment; direct verification preserved it. Only the
+    // structurally corrupt record itself is gone.
+    let store = LocalPackStore::open(dir.path()).unwrap();
+    assert_eq!(
+        store.get(&before).await.unwrap(),
+        Bytes::from_static(b"before segment")
+    );
+    assert_eq!(
+        store.get(&after).await.unwrap(),
+        Bytes::from_static(b"after segment")
+    );
+    assert!(matches!(
+        store.get(&corrupt).await.unwrap_err(),
+        nimbus_core::Error::NotFound(_)
+    ));
+}

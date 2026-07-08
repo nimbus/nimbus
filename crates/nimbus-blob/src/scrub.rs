@@ -676,6 +676,7 @@ fn rebuild_corrupt_index_under_guard(
     let mut report = ScrubReport::default();
     let mut pacing = PacingTracker::new(pacing);
     let mut rebuilt = HashMap::new();
+    let mut header_corrupt_packs = BTreeSet::new();
     let written_at_millis = SystemClock.now_millis();
     for pack_id in local::pack_ids_on_disk(&packs_dir)? {
         let pack_scan = scan_pack(&packs_dir, pack_id, None, &mut pacing)?;
@@ -688,6 +689,9 @@ fn rebuild_corrupt_index_under_guard(
         report.bytes_scanned = report.bytes_scanned.saturating_add(pack_scan.bytes_scanned);
         report.corrupt_records += pack_scan.findings.len();
         report.findings.extend(pack_scan.findings);
+        if !pack_scan.pack_header_valid {
+            header_corrupt_packs.insert(pack_id);
+        }
         for record in pack_scan.valid_records {
             rebuilt.insert(
                 record.hash,
@@ -703,6 +707,34 @@ fn rebuild_corrupt_index_under_guard(
     }
 
     let index_path = canonical.join("index.log");
+
+    // Mirror the in-state rebuild's second pass: the corrupt index's
+    // parseable PREFIX still knows offsets the sequential pack scan could
+    // not reach (records past a structurally corrupt segment). Direct-verify
+    // each salvaged entry and carry it forward; carry quarantined claims
+    // (the quarantine side file is separate and intact) unconditionally so
+    // their bytes stay claim-tracked. Without this, corrupt-index repair
+    // silently drops live, readable blobs the normal rebuild preserves.
+    let salvaged = local::salvage_index_prefix(&index_path);
+    let quarantined = local::load_quarantine(&canonical.join(local::QUARANTINE_FILE))?;
+    for (hash, entry) in salvaged {
+        if rebuilt.contains_key(&hash) {
+            continue;
+        }
+        if quarantined.contains(&hash) {
+            rebuilt.insert(hash, entry);
+            continue;
+        }
+        if header_corrupt_packs.contains(&entry.pack_id) {
+            continue;
+        }
+        let mut direct_bytes = 0u64;
+        if verify_record_paced(&packs_dir, &hash, entry, &mut pacing, &mut direct_bytes).is_ok() {
+            rebuilt.insert(hash, entry);
+            report.records_verified += 1;
+        }
+        report.bytes_scanned = report.bytes_scanned.saturating_add(direct_bytes);
+    }
     disk::write_replace_durable(&index_path, &encode_index(&rebuilt), &observer).map_err(
         |err| {
             local::io_error(
