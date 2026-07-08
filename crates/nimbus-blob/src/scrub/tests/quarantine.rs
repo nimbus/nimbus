@@ -692,3 +692,77 @@ async fn scrub_retires_corrupt_active_pack_despite_release_race() {
         Bytes::from_static(b"safe write")
     );
 }
+
+#[tokio::test]
+async fn record_finding_does_not_downgrade_content_quarantine() {
+    let (dir, store) = open_temp(64 * 1024);
+    let encrypted = EncryptedBlobStore::new(store.clone(), key("tenant-a"));
+    let original = encrypted
+        .put(Bytes::from_static(b"authenticated"))
+        .await
+        .unwrap();
+    let mut framed = store.get(&original).await.unwrap().to_vec();
+    framed[nimbus_crypto::FRAMED_HEADER_LEN] ^= 0xff;
+    let tampered_bytes = Bytes::from(framed);
+    let tampered = store.put(tampered_bytes.clone()).await.unwrap();
+
+    // Content-quarantine it via the encrypted scrubber.
+    EncryptedBlobScrubber::new(store.clone(), key("tenant-a"))
+        .scrub()
+        .await
+        .unwrap();
+    assert!(store.get(&tampered).await.is_err());
+
+    // A later local (no-key) scrub in a batch that also inserts a NEW hash
+    // must not downgrade the Content reason to Record. Force a co-inserted
+    // record finding by corrupting a second blob.
+    let other = store
+        .put(Bytes::from_static(b"second victim"))
+        .await
+        .unwrap();
+    flip_first_body_byte(&dir, &store, other).await;
+    LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+
+    // The Content quarantine must STILL survive an identical-byte re-upload.
+    let again = store.put(tampered_bytes).await.unwrap();
+    assert_eq!(again, tampered);
+    let err = store.get(&tampered).await.unwrap_err();
+    assert_eq!(
+        err.storage_kind(),
+        Some(StorageErrorKind::Corruption),
+        "content quarantine was not downgraded to repairable record"
+    );
+}
+
+#[tokio::test]
+async fn missing_index_open_does_not_prune_quarantine_before_rebuild() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store
+        .put(Bytes::from_static(b"claimed corrupt"))
+        .await
+        .unwrap();
+    flip_first_body_byte(&dir, &store, victim).await;
+    LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(store.get(&victim).await.is_err(), "quarantined");
+    drop(store);
+
+    // The index log is lost entirely (e.g. a partial-restore). Opening for
+    // rebuild must NOT prune the quarantine before rebuild can carry it.
+    fs::remove_file(dir.path().join("index.log")).unwrap();
+
+    let report =
+        LocalPackScrubber::rebuild_index_in_root(dir.path(), LocalPackStoreOptions::default())
+            .await
+            .unwrap();
+    assert!(report.completed);
+
+    // The corrupt blob is still claim-tracked and fail-closed, not silently
+    // turned into NotFound + compaction-reclaimable.
+    let store = LocalPackStore::open(dir.path()).unwrap();
+    assert!(
+        store.has(&victim).await.unwrap(),
+        "claim survived index loss"
+    );
+    let err = store.get(&victim).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+}

@@ -273,6 +273,7 @@ pub(super) fn rebuild_index_locked(
     let mut rebuilt = HashMap::new();
     let mut new_quarantines: HashMap<BlobHash, local::QuarantineReason> = HashMap::new();
     let mut header_corrupt_packs = BTreeSet::new();
+    let mut corrupt_record_index: HashMap<BlobHash, ScannedRecord> = HashMap::new();
     let pack_ids = local::pack_ids_on_disk(&state.packs_dir)?;
 
     for pack_id in pack_ids.iter().copied() {
@@ -288,6 +289,10 @@ pub(super) fn rebuild_index_locked(
         report.findings.extend(pack_scan.findings);
         if !pack_scan.pack_header_valid {
             header_corrupt_packs.insert(pack_id);
+        }
+        for (record, body_hash) in &pack_scan.corrupt_records {
+            corrupt_record_index.insert(record.hash, record.clone());
+            corrupt_record_index.insert(*body_hash, record.clone());
         }
         for record in pack_scan.valid_records {
             rebuilt.insert(
@@ -357,6 +362,47 @@ pub(super) fn rebuild_index_locked(
             }
         }
         report.bytes_scanned = report.bytes_scanned.saturating_add(direct_bytes);
+    }
+
+    // Recover quarantined claims that have NO current index entry (e.g. the
+    // index log was lost entirely, so `state.index` is empty). Their bytes
+    // are corrupt but claim-tracked: relocate via the pack scan's corrupt
+    // records; a genuinely unrecoverable claim fails the repair closed
+    // rather than being silently dropped.
+    let mut unlocatable: Vec<BlobHash> = Vec::new();
+    for hash in state.quarantined.keys() {
+        if rebuilt.contains_key(hash) {
+            continue;
+        }
+        if let Some(record) = corrupt_record_index.get(hash) {
+            rebuilt.insert(
+                *hash,
+                PackEntry {
+                    pack_id: record.pack_id,
+                    offset: record.offset,
+                    len: record.len,
+                    written_at_millis,
+                },
+            );
+        } else {
+            unlocatable.push(*hash);
+        }
+    }
+    if !unlocatable.is_empty() {
+        unlocatable.sort();
+        return Err(Error::storage(
+            StorageErrorKind::Corruption,
+            format!(
+                "index rebuild aborted: {} quarantined claim(s) unrecoverable (pack destroyed \
+                 + no index entry); release them explicitly to proceed: {}",
+                unlocatable.len(),
+                unlocatable
+                    .iter()
+                    .map(BlobHash::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ));
     }
 
     // Persist newly discovered quarantines BEFORE the rebuilt index (see the

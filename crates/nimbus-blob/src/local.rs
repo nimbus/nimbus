@@ -265,7 +265,7 @@ impl LocalPackStore {
                 format!("create local pack directory {}", packs_dir.display()),
             )
         })?;
-        ensure_index_file(&index_path, &canonical, &*observer)?;
+        let index_was_missing = ensure_index_file(&index_path, &canonical, &*observer)?;
 
         let index = load_index(
             &index_path,
@@ -278,8 +278,16 @@ impl LocalPackStore {
         // the quarantine side-file rewrite leaves an absent-claim entry that
         // would otherwise poison a future reintroduction of the same content
         // hash (release is the operation that lifts content quarantines).
+        // Skip pruning when the index was just (re)created from missing: an
+        // empty index would drop EVERY quarantine claim before a rebuild can
+        // carry it, erasing the only claim-tracking evidence for corrupt
+        // blobs whose index log was lost. Rebuild re-establishes the entries;
+        // a genuine release-race stale entry is pruned on the next normal
+        // open once the index is authoritative again.
         let before = quarantined.len();
-        quarantined.retain(|hash, _| index.contains_key(hash));
+        if !index_was_missing {
+            quarantined.retain(|hash, _| index.contains_key(hash));
+        }
         report.stale_quarantine_entries_pruned = before - quarantined.len();
         if report.stale_quarantine_entries_pruned > 0 {
             disk::write_replace_durable(
@@ -671,13 +679,15 @@ pub(crate) fn pack_path(packs_dir: &Path, pack_id: u64) -> PathBuf {
     packs_dir.join(format!("pack-{pack_id:016}.npack"))
 }
 
+/// Returns `true` if it created a fresh empty index (the original was
+/// missing), `false` if one already existed.
 pub(crate) fn ensure_index_file(
     index_path: &Path,
     root: &Path,
     observer: &dyn SyncObserver,
-) -> Result<()> {
+) -> Result<bool> {
     if index_path.exists() {
-        return Ok(());
+        return Ok(false);
     }
     if let Some(parent) = index_path.parent() {
         fs::create_dir_all(parent)
@@ -689,7 +699,7 @@ pub(crate) fn ensure_index_file(
     let _ = root;
     disk::write_replace_durable(index_path, INDEX_MAGIC, observer)
         .map_err(|err| io_error(err, format!("create index {}", index_path.display())))?;
-    Ok(())
+    Ok(true)
 }
 
 pub(crate) fn ensure_pack_file(

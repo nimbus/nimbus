@@ -221,7 +221,16 @@ pub(crate) fn quarantine_hashes_locked(
                 QuarantineReason::Record
             }
         };
-        if next.insert(*hash, reason).is_none() {
+        // Never DOWNGRADE Content -> Record: a Content quarantine (AEAD
+        // failure) must survive identical-byte re-uploads, whereas Record
+        // quarantines lift on re-upload. Content is the stickier reason, so a
+        // later record/header finding for a Content-quarantined hash keeps
+        // Content.
+        let effective = match next.get(hash) {
+            Some(QuarantineReason::Content) => QuarantineReason::Content,
+            _ => reason,
+        };
+        if next.insert(*hash, effective).is_none() {
             inserted.push(*hash);
         }
     }
