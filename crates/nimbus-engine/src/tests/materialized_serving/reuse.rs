@@ -204,11 +204,14 @@ fn warmed_materialized_tables_track_global_applied_coverage_without_reloading() 
         .expect("refreshed query should reuse the warmed publication");
     assert_eq!(document_bodies(&refreshed), vec!["Ada"]);
 
-    // Re-read the table's own publication immediately before the aggregate
-    // stats below (rather than reusing the `publication` captured above) so
-    // both come from back-to-back accessor calls with nothing but the
-    // refreshed query between them -- the tightest window available without
-    // reintroducing a pause.
+    // Settle the trigger cursor before the paired reads below: after the
+    // settle, the cursor worker is quiescent (the insert's own cursor-advance
+    // commit has landed and nothing else is queued), so the per-table
+    // publication and the aggregate stats observe the same coverage frontier
+    // deterministically. Two "back-to-back" accessor calls are NOT enough --
+    // the worker runs on its own OS thread and can widen coverage between
+    // them, breaking the exact-equality assertion nondeterministically.
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
     let publication = engine
         .materialized_table_publication_stats_for_testing(&tenant_id, &table)
         .expect("materialized publication should load")
@@ -296,9 +299,12 @@ fn warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots() {
         .expect("beta query should reuse the warmed serving snapshot");
     assert_eq!(document_bodies(&beta_again), vec!["Beta"]);
 
-    // Read the beta table's own publication immediately before the aggregate
-    // stats below, back-to-back, so the tightest possible window separates
-    // the two accessor calls the final assertion compares.
+    // Settle the trigger cursor before the paired reads below (same reason
+    // as the sibling test above): the cursor worker runs on its own OS
+    // thread and can widen coverage between two "back-to-back" accessor
+    // calls, breaking the exact-equality assertion nondeterministically.
+    // Post-settle it is quiescent, so both reads observe one frontier.
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
     let beta_publication = engine
         .materialized_table_publication_stats_for_testing(&tenant_id, &beta)
         .expect("beta publication stats should load")

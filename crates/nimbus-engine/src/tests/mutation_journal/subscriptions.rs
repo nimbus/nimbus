@@ -298,6 +298,98 @@ async fn async_subscription_bootstrap_catch_up_ignores_zero_write_cursor_advance
 }
 
 #[tokio::test]
+async fn async_subscription_bootstrap_catch_up_runs_for_zero_write_schema_change_gap() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("seed"))]),
+        )
+        .await
+        .expect("seed insert should succeed");
+    // Settle first so the bootstrap-to-activation gap below contains ONLY
+    // the schema change -- no cursor-advance noise.
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
+
+    let pause = engine
+        .subscription_bootstrap_pause_handle_for_testing(&tenant_id)
+        .expect("bootstrap pause handle should load");
+    pause.arm();
+
+    let (tx, mut rx) = subscription_channel();
+    let subscribe_task = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .subscribe_async(
+                    tenant_id,
+                    query_for("tasks"),
+                    "schema-change-gap".to_string(),
+                    tx,
+                    SubscribeOptions::anonymous(),
+                )
+                .await
+        }
+    });
+
+    let initial = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("initial subscription result should arrive")
+        .expect("subscription channel should remain open");
+    assert!(
+        matches!(initial, SubscriptionUpdate::Result { .. }),
+        "bootstrap should deliver an initial result"
+    );
+
+    assert!(
+        pause.wait_until_entered(Duration::from_secs(1)),
+        "subscription bootstrap should pause before activation"
+    );
+
+    // A zero-write SchemaChange record lands in the gap. Unlike the
+    // trigger feed's cursor advance, this is NOT inert for a pending
+    // subscription: an access-policy change must re-evaluate under the new
+    // policy, and the active-subscription policy-revision checks do not
+    // cover a subscription that has not activated yet. Activation must
+    // fail open and dispatch the catch-up.
+    let schema = TableSchema {
+        table: TableName::new("tasks").expect("table name should be valid"),
+        fields: vec![FieldSchema {
+            name: "title".to_string(),
+            field_type: FieldType::String,
+            required: false,
+        }],
+        indexes: Vec::new(),
+        access_policy: None,
+    };
+    engine
+        .set_table_schema(&tenant_id, schema)
+        .expect("schema change should succeed");
+
+    pause.release();
+
+    let _subscription = timeout(Duration::from_secs(1), subscribe_task)
+        .await
+        .expect("subscribe task should finish after pause release")
+        .expect("subscribe task should join successfully")
+        .expect("subscription should register successfully");
+
+    let catch_up = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("a catch-up update must arrive for a schema-change gap")
+        .expect("subscription channel should remain open");
+    assert!(
+        matches!(catch_up, SubscriptionUpdate::Result { .. }),
+        "schema-change gap must trigger a catch-up re-evaluation: {catch_up:?}"
+    );
+}
+
+#[tokio::test]
 async fn async_subscription_bootstrap_cancellation_before_activation_returns_cancelled() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();

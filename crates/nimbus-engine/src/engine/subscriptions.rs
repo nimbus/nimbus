@@ -146,21 +146,37 @@ impl Engine {
 
         // Something advanced the applied head between the bootstrap read and
         // activation above -- but `applied_head` also advances through
-        // zero-write commits (e.g. the trigger-candidate feed's own
-        // delivery-cursor advance, which shares this tenant's commit log and
-        // sequence space). If nothing document-bearing landed in that gap,
-        // re-evaluating now would only reproduce the bootstrap read's own
-        // result: dispatching a catch-up would be a spurious duplicate, not
-        // a real update. This is the uncommon "something happened during
-        // bootstrap" branch, not the hot path, so a direct commit-log read
-        // is cheap here; fail open (assume a catch-up is needed) if the read
-        // itself errors.
-        let gap_has_document_bearing_commit = runtime
+        // zero-write journal records, and only ONE kind of those is provably
+        // inert for a pending subscription: the trigger-candidate feed's own
+        // delivery-cursor advance (`TenantEventKind::TriggerDelivery`), which
+        // by construction changes no documents, no schema, and no policy. If
+        // the whole gap is such records, re-evaluating now would only
+        // reproduce the bootstrap read's own result -- a spurious duplicate.
+        // Every other record kind must catch up: document writes obviously,
+        // but also zero-write records like `SchemaChange`/`TableLifecycle`
+        // (an access-policy change landing while the subscription is still
+        // pending is not caught by the active-subscription policy-revision
+        // checks, so this catch-up is what re-evaluates under the new
+        // policy). Kinds are read from the durable journal -- the commit-log
+        // view flattens records via `as_commit_entry` and cannot make this
+        // distinction. This is the uncommon "something happened during
+        // bootstrap" branch, not the hot path, so the direct read is cheap;
+        // fail open (assume a catch-up is needed) if the read itself errors
+        // or a record carries no event detail.
+        let gap_is_only_trigger_cursor_advances = runtime
             .store()
-            .read_commit_log_from(SequenceNumber(covered_sequence.0.saturating_add(1)))
-            .map(|commits| commits.iter().any(|commit| !commit.writes.is_empty()))
-            .unwrap_or(true);
-        if !gap_has_document_bearing_commit {
+            .read_durable_journal_from(SequenceNumber(covered_sequence.0.saturating_add(1)))
+            .map(|records| {
+                records.iter().all(|record| {
+                    record.writes.is_empty()
+                        && !record.events().is_empty()
+                        && record.events().iter().all(|event| {
+                            matches!(event, nimbus_core::TenantEventKind::TriggerDelivery { .. })
+                        })
+                })
+            })
+            .unwrap_or(false);
+        if gap_is_only_trigger_cursor_advances {
             return;
         }
 

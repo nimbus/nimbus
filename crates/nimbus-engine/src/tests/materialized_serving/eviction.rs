@@ -182,6 +182,11 @@ async fn materialized_surface_rewarms_evicted_tables_and_publishes_fresh_frontie
         vec!["Ada", "Beta", "Delta"]
     );
 
+    // Settle the trigger cursor before the paired publication/stats reads:
+    // the cursor worker can widen coverage between the `republished_alpha`
+    // capture and the aggregate stats read below, breaking their
+    // exact-equality nondeterministically. Post-settle it is quiescent.
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
     let republished_alpha = engine
         .materialized_table_publication_stats_for_testing(&tenant_id, &alpha)
         .expect("alpha publication should load")
