@@ -1,4 +1,4 @@
-use nimbus_core::{CommitEntry, Result, Schema, SequenceNumber, TenantEventRecord};
+use nimbus_core::{Result, Schema, SequenceNumber, TenantEventRecord};
 use nimbus_storage::JournalProgress;
 
 use super::*;
@@ -48,34 +48,40 @@ impl TenantPersistence {
         }
     }
 
-    pub(crate) async fn read_commit_log_from_async(
+    pub(crate) async fn read_durable_journal_from_async(
         &self,
         read_storage: &TenantPersistenceExecutor,
         next_sequence: SequenceNumber,
-    ) -> Result<Vec<CommitEntry>> {
+    ) -> Result<Vec<TenantEventRecord>> {
         match self {
-            Self::Postgres(store) => store.read_commit_log_from_async(next_sequence).await,
+            Self::Postgres(store) => store.read_durable_journal_from_async(next_sequence).await,
             Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) | Self::MySql(_) => {
                 read_storage
-                    .execute(move |store| store.read_commit_log_from(next_sequence))
+                    .execute(move |store| store.read_durable_journal_from(next_sequence))
                     .await
             }
         }
     }
 
+    /// Recovers a provider's raw journal tail as unflattened records, kept
+    /// event-kind-aware for callers that need to tell a real document write
+    /// apart from a zero-write commit that must still force re-evaluation
+    /// (e.g. a `SchemaChange`/`TableLifecycle`). `read_commit_log_from_async`
+    /// flattens away that distinction via `as_commit_entry` and must not be
+    /// used here.
     pub(crate) async fn recover_journal_tail_async(
         &self,
         read_storage: &TenantPersistenceExecutor,
         next_sequence: SequenceNumber,
-    ) -> Result<(JournalProgress, Vec<CommitEntry>)> {
+    ) -> Result<(JournalProgress, Vec<TenantEventRecord>)> {
         let progress = self.recover_durable_journal_async(read_storage).await?;
-        let commits = if progress.applied_head.0 >= next_sequence.0 {
-            self.read_commit_log_from_async(read_storage, next_sequence)
+        let records = if progress.applied_head.0 >= next_sequence.0 {
+            self.read_durable_journal_from_async(read_storage, next_sequence)
                 .await?
         } else {
             Vec::new()
         };
-        Ok((progress, commits))
+        Ok((progress, records))
     }
 
     pub(crate) async fn has_scheduled_work_async(

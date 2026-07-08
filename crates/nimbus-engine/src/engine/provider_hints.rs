@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use nimbus_core::{Result, SequenceNumber, TenantId};
+use nimbus_core::{Result, SequenceNumber, TenantEventRecord, TenantId};
 use nimbus_storage::{PostgresProvider, PostgresProviderNotification};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
@@ -11,6 +11,7 @@ use crate::persistence::WorkerContext;
 use crate::tenant::TenantRuntime;
 
 use super::Engine;
+use super::mutations::document_bearing_commit_identity;
 
 #[cfg(test)]
 const POSTGRES_HINT_RECONNECT_DELAY: Duration = Duration::from_secs(1);
@@ -195,16 +196,30 @@ impl Engine {
 
         if refresh_journal {
             let next_sequence = SequenceNumber(runtime.applied_head().0.saturating_add(1));
-            let (progress, commits) = runtime
+            let (progress, records) = runtime
                 .store
                 .recover_journal_tail_async(&runtime.read_storage, next_sequence)
                 .await?;
+            let commits = records
+                .iter()
+                .map(TenantEventRecord::as_commit_entry)
+                .collect::<Vec<_>>();
             if !commits.is_empty() {
                 runtime.invalidate_document_cache_for_commits(commits.iter());
             }
             runtime.sync_mutation_journal_progress(progress);
             if !commits.is_empty() {
-                self.process_applied_commit_batch(runtime, &commits, emit_trigger_candidates);
+                // Unlike the live mutation-queue apply path, a raw journal
+                // tail re-read here can span more than one originating
+                // operation, so identity must be proven kind-aware over the
+                // still-unflattened records, not assumed from `len() == 1`.
+                let commit_identity = document_bearing_commit_identity(&records);
+                self.process_applied_commit_batch(
+                    runtime,
+                    &commits,
+                    commit_identity,
+                    emit_trigger_candidates,
+                );
             }
         }
 

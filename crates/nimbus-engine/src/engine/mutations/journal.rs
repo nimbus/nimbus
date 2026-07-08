@@ -93,7 +93,22 @@ impl Engine {
                     for pending_response in batch_result.responses {
                         let _ = pending_response.response.send(Ok(pending_response.result));
                     }
-                    self.process_applied_commit_batch(runtime.clone(), &batch_result.applied, true);
+                    // Real document commits only: this batch is drained from
+                    // the mutation admission queue, never mixed with a
+                    // zero-write commit from another source (the
+                    // trigger-candidate feed's own cursor advance is
+                    // appended through a separate path that never reaches
+                    // here). So `len() == 1` alone is an exact identity
+                    // check -- no need for the kind-aware records check the
+                    // provider catch-up path requires.
+                    let commit_identity =
+                        (batch_result.applied.len() == 1).then(|| batch_result.applied[0].clone());
+                    self.process_applied_commit_batch(
+                        runtime.clone(),
+                        &batch_result.applied,
+                        commit_identity,
+                        true,
+                    );
                 }
                 Ok(Err(error)) => {
                     runtime.record_mutation_worker_failure();

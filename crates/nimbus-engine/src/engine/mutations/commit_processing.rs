@@ -1,7 +1,10 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use nimbus_core::{CommitEntry, Document, DocumentId, SequenceNumber, TableName};
+use nimbus_core::{
+    CommitEntry, Document, DocumentId, SequenceNumber, TableName, TenantEventKind,
+    TenantEventRecord,
+};
 
 use crate::subscriptions::{
     QueuedSubscriptionWork, SubscriptionBatchCandidate, dispatch_subscription_work,
@@ -29,19 +32,39 @@ fn deleted_documents_for_commit(commit: &CommitEntry) -> Vec<Document> {
         .collect()
 }
 
-/// Returns the identity of the batch's sole document-bearing commit, if
-/// exactly one exists. Zero-write commits (e.g. a trigger-candidate delivery
-/// cursor advance) share the same commit log and sequence space as real
-/// document commits and can land in the same coalesced batch, but they never
-/// carry a document write and so can never themselves be the subject of a
-/// subscription update -- they must not count toward "more than one commit"
-/// when deciding whether to preserve exact commit metadata.
-fn document_bearing_commit_identity(applied: &[CommitEntry]) -> Option<CommitEntry> {
-    let mut document_bearing = applied.iter().filter(|commit| !commit.writes.is_empty());
-    match (document_bearing.next(), document_bearing.next()) {
-        (Some(only), None) => Some(only.clone()),
-        _ => None,
-    }
+/// Returns the identity of a batch's sole document-bearing commit, if exactly
+/// one exists AND every other record in the batch is provably inert. Kinds
+/// live only on the unflattened `TenantEventRecord` -- a `CommitEntry` has
+/// already erased them down to `writes`, which is why this takes records and
+/// must run before that flattening. The provider catch-up path is the only
+/// production caller that needs this: it re-reads a raw journal tail that can
+/// span more than one originating operation, so its batch can legitimately
+/// mix a document write with a zero-write record of ANY kind. A zero-write
+/// record is inert only when it carries event detail and every event is
+/// `TriggerDelivery` -- the trigger-candidate feed's own delivery-cursor
+/// advance, which by construction changes no documents, schema, or policy.
+/// Any other zero-write kind (`SchemaChange`, `TableLifecycle`, ...) forces
+/// `None`: an access-policy or table-lifecycle change riding along with a
+/// document write in the same batch is exactly the case a preserved hint
+/// would let a runtime-backed subscription transform skip re-evaluating.
+pub(in crate::engine) fn document_bearing_commit_identity(
+    records: &[TenantEventRecord],
+) -> Option<CommitEntry> {
+    let mut document_bearing = records.iter().filter(|record| !record.writes.is_empty());
+    let (Some(only), None) = (document_bearing.next(), document_bearing.next()) else {
+        return None;
+    };
+    let other_records_are_provably_inert = records
+        .iter()
+        .filter(|record| record.writes.is_empty())
+        .all(|record| {
+            !record.events().is_empty()
+                && record
+                    .events()
+                    .iter()
+                    .all(|event| matches!(event, TenantEventKind::TriggerDelivery { .. }))
+        });
+    other_records_are_provably_inert.then(|| only.as_commit_entry())
 }
 
 fn merge_deleted_documents_for_batch(applied: &[CommitEntry]) -> Vec<Document> {
@@ -157,6 +180,7 @@ impl Engine {
         &self,
         runtime: Arc<TenantRuntime>,
         applied: &[CommitEntry],
+        commit_identity: Option<CommitEntry>,
         emit_trigger_candidates: bool,
     ) {
         if applied.is_empty() {
@@ -188,19 +212,19 @@ impl Engine {
             let latest = applied
                 .last()
                 .expect("non-empty applied batch should have a latest commit");
-            let commit_identity = document_bearing_commit_identity(applied);
             let work = QueuedSubscriptionWork::new_coalesced(
                 affected.subscription_ids,
                 latest.sequence,
-                // Coalesced batches intentionally omit per-commit identity unless
-                // exactly one commit in the batch actually carries writes. A
-                // zero-write commit (e.g. the trigger-candidate feed's own
-                // delivery-cursor advance) shares this same commit log and
-                // sequence space with real document commits, so it can land in
-                // `applied` alongside a single real commit; counting it toward
-                // "more than one commit" would erase that lone real commit's
-                // identity even though nothing else in the batch could ever be
-                // the subject of a subscription update.
+                // Coalesced batches intentionally omit per-commit identity
+                // unless the caller can prove exactly one commit in the
+                // batch actually carries writes and everything else is
+                // inert. `CommitEntry` alone cannot prove that (it has
+                // already lost event-kind information), so identity is
+                // supplied by the caller: the live mutation-queue apply path
+                // (batches are always real document commits, so `len() == 1`
+                // is exact) or the provider catch-up path (kind-aware over
+                // the still-unflattened `TenantEventRecord`s, via
+                // `document_bearing_commit_identity`).
                 commit_identity,
                 merge_deleted_documents_for_batch(applied),
             );
