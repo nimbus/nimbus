@@ -709,10 +709,11 @@ struct PackScan {
     findings: Vec<ScrubFinding>,
     valid_records: Vec<ScannedRecord>,
     /// Structurally walked records whose body failed verification, with
-    /// full coordinates (stored hash + offset + len). Repair uses these to
-    /// keep quarantined claims locatable when the index cannot supply the
-    /// entry.
-    corrupt_records: Vec<ScannedRecord>,
+    /// full coordinates and BOTH hashes (the stored hash field and the hash
+    /// the body actually computes to — either may be the corrupted part).
+    /// Repair uses these to keep quarantined claims locatable when the index
+    /// cannot supply the entry.
+    corrupt_records: Vec<(ScannedRecord, BlobHash)>,
     corrupt_offsets: BTreeSet<u64>,
     /// Offset up to which the sequential scan verified the pack. The scanner
     /// stops at the first structurally corrupt record, but records at or past
@@ -1008,12 +1009,15 @@ fn scan_pack(
                     path.display()
                 ),
             ));
-            scan.corrupt_records.push(ScannedRecord {
-                pack_id,
-                offset: record_offset,
-                hash: stored_hash,
-                len,
-            });
+            scan.corrupt_records.push((
+                ScannedRecord {
+                    pack_id,
+                    offset: record_offset,
+                    hash: stored_hash,
+                    len,
+                },
+                actual,
+            ));
             // The record's structure was walked even though its content is
             // corrupt: the sequential scan boundary advances past it.
             scan.scan_boundary = offset;

@@ -80,8 +80,12 @@ pub(super) fn rebuild_corrupt_index_under_guard(
         if !pack_scan.pack_header_valid {
             header_corrupt_packs.insert(pack_id);
         }
-        for record in &pack_scan.corrupt_records {
+        for (record, body_hash) in &pack_scan.corrupt_records {
+            // Index the evidence under BOTH hashes: when the hash FIELD was
+            // the corrupted bytes, the quarantine side file knows the blob by
+            // its true (body) hash, not the garbage stored one.
             corrupt_record_index.insert(record.hash, record.clone());
+            corrupt_record_index.insert(*body_hash, record.clone());
         }
         for record in pack_scan.valid_records {
             rebuilt.insert(

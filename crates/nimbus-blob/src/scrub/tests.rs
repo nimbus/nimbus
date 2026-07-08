@@ -1024,3 +1024,83 @@ async fn rebuild_invalidates_stale_scrub_checkpoint() {
         "rebuild durably invalidates the resume checkpoint"
     );
 }
+
+#[tokio::test]
+async fn reupload_after_pack_header_corruption_heals_into_fresh_pack() {
+    let (dir, store) = open_temp(64 * 1024);
+    let payload = Bytes::from_static(b"headline victim");
+    let victim = store.put(payload.clone()).await.unwrap();
+    let old_entry = entry_for(&store, victim).await;
+
+    // Smash the ACTIVE pack's header and quarantine via scrub.
+    let path = local::pack_path(&dir.path().join("packs"), old_entry.pack_id);
+    {
+        let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.write_all(b"BAD").unwrap();
+        file.sync_data().unwrap();
+    }
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(report.quarantined_hashes.contains(&victim));
+
+    // The heal must land in a FRESH validated pack, never behind the
+    // discredited header.
+    let again = store.put(payload.clone()).await.unwrap();
+    assert_eq!(again, victim);
+    let new_entry = entry_for(&store, victim).await;
+    assert_ne!(
+        new_entry.pack_id, old_entry.pack_id,
+        "heal rolls to a fresh pack: {new_entry:?} vs {old_entry:?}"
+    );
+    assert_eq!(store.get(&victim).await.unwrap(), payload);
+
+    // And the store survives reopen: the corrupt pack is no longer the
+    // active pack, so open's active-header validation does not brick.
+    drop(store);
+    let reopened = LocalPackStore::open(dir.path()).unwrap();
+    assert_eq!(reopened.get(&victim).await.unwrap(), payload);
+}
+
+#[tokio::test]
+async fn corrupt_index_repair_recovers_claim_when_hash_field_corrupted() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store
+        .put(Bytes::from_static(b"true content"))
+        .await
+        .unwrap();
+    let entry = entry_for(&store, victim).await;
+
+    // Corrupt the record's HASH FIELD (the body still hashes to `victim`).
+    let path = local::pack_path(&dir.path().join("packs"), entry.pack_id);
+    {
+        let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.seek(SeekFrom::Start(entry.offset + RECORD_MAGIC.len() as u64))
+            .unwrap();
+        file.write_all(&[0xEEu8; 8]).unwrap();
+        file.sync_data().unwrap();
+    }
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(report.quarantined_hashes.contains(&victim));
+    drop(store);
+
+    // Corrupt the index at its first record: no salvageable prefix, so the
+    // quarantined claim is only recoverable via the corrupt-record evidence,
+    // which must be findable by the blob's TRUE (body) hash.
+    let index_path = dir.path().join("index.log");
+    let mut file = OpenOptions::new().write(true).open(&index_path).unwrap();
+    file.seek(SeekFrom::Start(8)).unwrap();
+    file.write_all(&[9u8]).unwrap();
+    file.sync_data().unwrap();
+
+    LocalPackScrubber::rebuild_index_in_root(dir.path(), LocalPackStoreOptions::default())
+        .await
+        .unwrap();
+
+    let store = LocalPackStore::open(dir.path()).unwrap();
+    assert!(
+        store.has(&victim).await.unwrap(),
+        "the quarantined claim survives repair via its body hash"
+    );
+    let err = store.get(&victim).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+}

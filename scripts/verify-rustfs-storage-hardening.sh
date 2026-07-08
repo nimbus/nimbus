@@ -182,6 +182,8 @@ required_tests=(
   repeat_scrub_reports_previously_quarantined
   raw_reupload_does_not_clear_aead_quarantine
   rebuild_invalidates_stale_scrub_checkpoint
+  reupload_after_pack_header_corruption_heals_into_fresh_pack
+  corrupt_index_repair_recovers_claim_when_hash_field_corrupted
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then

@@ -1033,6 +1033,18 @@ fn put_locked(
     // Ordering: publish the good record first, un-quarantine last — a crash
     // in between leaves the blob unreadable-but-repairable, never a
     // quarantine lifted without its replacement record being durable.
+    if quarantined {
+        // Heal into a FRESH, header-validated pack: the quarantined record's
+        // pack may be discredited wholesale (corrupt pack header), and
+        // appending the replacement behind the same bad header would lift
+        // the quarantine while the pack stays invalid. Rolling over also
+        // means the corrupt pack stops being the active pack, so reopen's
+        // active-header validation cannot brick on it.
+        let observer = Arc::clone(&state.observer);
+        state.active_pack_id = state.active_pack_id.saturating_add(1);
+        state.active_pack_bytes =
+            ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
+    }
     let entry = append_pack_record(state, &hash, &bytes, written_at_millis)?;
     let observer = Arc::clone(&state.observer);
     append_put_index_record(&state.index_path, &hash, entry, &*observer)?;
