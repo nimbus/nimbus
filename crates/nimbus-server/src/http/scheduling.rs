@@ -7,18 +7,9 @@ pub(crate) async fn schedule_mutation(
     Json(request): Json<ScheduleRequest>,
 ) -> Result<(StatusCode, Json<ScheduleResponse>), AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.schedule.create")?;
-    let service = state.engine.clone();
-    let job_id = service
-        .schedule_mutation_async(tenant.tenant_id().clone(), request)
-        .await?;
-    crate::system_tenant::sync_scheduler_state_for_tenant_async(&service, tenant.tenant_id())
-        .await?;
-    Ok((
-        StatusCode::CREATED,
-        Json(ScheduleResponse {
-            job_id: job_id.to_string(),
-        }),
-    ))
+    let response =
+        nimbus_compute::scheduling::schedule_mutation(&state, tenant.tenant_id(), request).await?;
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 /// Lists all pending scheduled jobs for a tenant.
@@ -27,13 +18,9 @@ pub(crate) async fn list_scheduled_jobs(
     Path(tenant_id): Path<String>,
 ) -> Result<Json<ScheduledJobsResponse>, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.schedule.list")?;
-    let service = state.engine.clone();
-    crate::system_tenant::sync_scheduler_state_for_tenant_async(&service, tenant.tenant_id())
-        .await?;
-    let jobs = service
-        .list_scheduled_jobs_async(tenant.tenant_id().clone())
-        .await?;
-    Ok(Json(ScheduledJobsResponse { jobs }))
+    let response =
+        nimbus_compute::scheduling::list_scheduled_jobs(&state, tenant.tenant_id()).await?;
+    Ok(Json(response))
 }
 
 /// Loads the final result for an executed scheduled job.
@@ -43,17 +30,10 @@ pub(crate) async fn get_scheduled_job_result(
 ) -> Result<Json<ScheduledJobResultResponse>, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.schedule.result")?;
     let job_id = parse_document_id(&job_id)?;
-    let service = state.engine.clone();
-    let result = service
-        .get_scheduled_job_result_async(tenant.tenant_id().clone(), job_id)
-        .await?;
-    crate::system_tenant::record_scheduled_job_result_state_async(
-        &service,
-        tenant.tenant_id(),
-        &result,
-    )
-    .await?;
-    Ok(Json(ScheduledJobResultResponse { result }))
+    let response =
+        nimbus_compute::scheduling::get_scheduled_job_result(&state, tenant.tenant_id(), job_id)
+            .await?;
+    Ok(Json(response))
 }
 
 /// Cancels a pending scheduled job before it starts executing.
@@ -63,12 +43,7 @@ pub(crate) async fn cancel_scheduled_job(
 ) -> Result<StatusCode, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.schedule.cancel")?;
     let job_id = parse_document_id(&job_id)?;
-    let service = state.engine.clone();
-    service
-        .cancel_scheduled_job_async(tenant.tenant_id().clone(), job_id.clone())
-        .await?;
-    crate::system_tenant::delete_scheduled_job_state_async(&service, tenant.tenant_id(), &job_id)
-        .await?;
+    nimbus_compute::scheduling::cancel_scheduled_job(&state, tenant.tenant_id(), job_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -79,12 +54,7 @@ pub(crate) async fn create_cron_job(
     Json(request): Json<CreateCronRequest>,
 ) -> Result<StatusCode, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.crons.create")?;
-    let service = state.engine.clone();
-    service
-        .create_cron_job_async(tenant.tenant_id().clone(), request)
-        .await?;
-    crate::system_tenant::sync_scheduler_state_for_tenant_async(&service, tenant.tenant_id())
-        .await?;
+    nimbus_compute::scheduling::create_cron_job(&state, tenant.tenant_id(), request).await?;
     Ok(StatusCode::CREATED)
 }
 
@@ -94,13 +64,8 @@ pub(crate) async fn list_cron_jobs(
     Path(tenant_id): Path<String>,
 ) -> Result<Json<CronJobsResponse>, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.crons.list")?;
-    let service = state.engine.clone();
-    crate::system_tenant::sync_scheduler_state_for_tenant_async(&service, tenant.tenant_id())
-        .await?;
-    let crons = service
-        .load_cron_jobs_async(tenant.tenant_id().clone())
-        .await?;
-    Ok(Json(CronJobsResponse { crons }))
+    let response = nimbus_compute::scheduling::list_cron_jobs(&state, tenant.tenant_id()).await?;
+    Ok(Json(response))
 }
 
 /// Deletes a cron job definition.
@@ -109,10 +74,6 @@ pub(crate) async fn delete_cron_job(
     Path((tenant_id, name)): Path<(String, String)>,
 ) -> Result<StatusCode, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.crons.delete")?;
-    let service = state.engine.clone();
-    service
-        .delete_cron_job_async(tenant.tenant_id().clone(), name.clone())
-        .await?;
-    crate::system_tenant::delete_cron_job_state_async(&service, tenant.tenant_id(), &name).await?;
+    nimbus_compute::scheduling::delete_cron_job(&state, tenant.tenant_id(), &name).await?;
     Ok(StatusCode::NO_CONTENT)
 }

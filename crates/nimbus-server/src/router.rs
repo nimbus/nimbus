@@ -381,7 +381,8 @@ impl RouterBuildConfig {
             .await?;
         if let Some(registry) = self.deployment.convex_registry.as_ref() {
             let summary = registry.deploy_summary();
-            let input = convex::convex_system_deployment_record_input(&summary, "startup");
+            let input =
+                nimbus_compute::deploy::convex_system_deployment_record_input(&summary, "startup");
             nimbus_system::record_deployment_state_async(&self.engine, &input).await?;
         }
         let Some(listen_addr) = self.transport.listen_addr() else {

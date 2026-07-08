@@ -40,11 +40,6 @@ pub(crate) struct DocumentResponse {
     pub id: String,
 }
 
-#[derive(Debug, Serialize)]
-pub(crate) struct ScheduleResponse {
-    pub job_id: String,
-}
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdateDocumentRequest {
     pub patch: serde_json::Map<String, Value>,
@@ -204,21 +199,6 @@ pub(crate) struct JournalBootstrapResponse {
     pub resume_after_sequence: u64,
     pub bootstrap_cut_sequence: u64,
     pub cursor_floor_sequence: u64,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct ScheduledJobsResponse {
-    pub jobs: Vec<nimbus_core::ScheduledJob>,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct ScheduledJobResultResponse {
-    pub result: nimbus_core::ScheduledJobResult,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct CronJobsResponse {
-    pub crons: Vec<nimbus_core::CronJob>,
 }
 
 #[derive(Debug, Deserialize)]

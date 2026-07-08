@@ -9,7 +9,14 @@
 pub mod artifact_verifier_effects;
 pub mod cloudflare_config;
 pub mod config;
+pub mod deploy;
 pub mod execution;
 pub mod machine_lifecycle;
+pub mod machines;
+pub mod pagination;
+pub mod sandbox_spec;
+pub mod sandboxes;
+pub mod scheduling;
 pub mod service_manager;
+pub mod services;
 pub mod state;

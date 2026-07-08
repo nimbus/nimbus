@@ -43,11 +43,10 @@ nimbus-system = { path = "../nimbus-system" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
+time = { workspace = true, features = ["formatting", "parsing"] }
 tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
-
-[dev-dependencies]
-tempfile.workspace = true

@@ -11,9 +11,9 @@ use serde_json::Value;
 
 use super::response::build_http_response;
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
-use crate::adapters::cloud_functions::ServerCloudFunctionsRuntimeInvoker;
 use crate::execution::invocations::next_runtime_server_request_id;
 use crate::state::AppError;
+use nimbus_compute::deploy::ComputeCloudFunctionsRuntimeInvoker;
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::TenantIsolationMode;
 
@@ -48,7 +48,7 @@ pub(super) fn execute_http_target(
         engine,
         runtime_service_registry,
         tenant_isolation_mode,
-        Arc::new(ServerCloudFunctionsRuntimeInvoker),
+        Arc::new(ComputeCloudFunctionsRuntimeInvoker),
     );
     let response = execute_adapter_http_target(
         runtime_context,

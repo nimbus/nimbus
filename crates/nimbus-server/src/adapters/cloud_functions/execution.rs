@@ -1,47 +1,12 @@
-use nimbus_cloud_functions::{CloudFunctionsRuntimeInvocation, CloudFunctionsRuntimeInvoker};
-use nimbus_core::Result;
-
 #[cfg(test)]
 use nimbus_cloud_functions::CloudFunctionsTriggerExecutor;
-
-use crate::execution::errors::runtime_error_to_core;
-use crate::execution::invocations::{
-    RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_egress_gateway,
-};
-
-#[derive(Debug, Clone)]
-pub(crate) struct ServerCloudFunctionsRuntimeInvoker;
-
-impl CloudFunctionsRuntimeInvoker for ServerCloudFunctionsRuntimeInvoker {
-    fn invoke_runtime_bundle(
-        &self,
-        invocation: CloudFunctionsRuntimeInvocation,
-    ) -> Result<serde_json::Value> {
-        // Route Cloud Functions through the egress-gateway entrypoint (not the
-        // coarse no-gateway `_with_host` path) so the handler's `fetch` is bound
-        // to the tenant's nimbus-egress PDP. CloudFunctionsHostBridge implements
-        // EgressGateway, so the isolate fetch hook inherits the L7 fail-closed
-        // for free. (audit M13 — Cloud Functions egress parity.)
-        invoke_runtime_bundle_blocking_with_egress_gateway(
-            &invocation.runtime_executor,
-            invocation.runtime_policy,
-            invocation.host_bridge,
-            invocation.bundle,
-            invocation.request,
-            RuntimeBundleInvocationOptions::enforcing_policy_limit(
-                &invocation.tenant_id,
-                invocation.server_request_id.as_deref(),
-                None,
-            )
-            .with_optional_runtime_bundle_provenance_gate(invocation.provenance_gate.as_ref()),
-        )
-        .map_err(runtime_error_to_core)
-    }
-}
+#[cfg(test)]
+use nimbus_core::Result;
 
 #[cfg(test)]
 mod tests {
     use crate::adapters::firebase::locator_for_document_path;
+    use nimbus_compute::deploy::ComputeCloudFunctionsRuntimeInvoker;
 
     use std::collections::BTreeMap;
     use std::fs;
@@ -167,7 +132,7 @@ export {};
             1,
             runtime_service_registry,
             TenantIsolationMode::LocalDevelopment,
-            Arc::new(ServerCloudFunctionsRuntimeInvoker),
+            Arc::new(ComputeCloudFunctionsRuntimeInvoker),
         );
 
         assert_eq!(
@@ -256,7 +221,7 @@ export {};
             1,
             runtime_service_registry,
             TenantIsolationMode::LocalDevelopment,
-            Arc::new(ServerCloudFunctionsRuntimeInvoker),
+            Arc::new(ComputeCloudFunctionsRuntimeInvoker),
         );
 
         assert_eq!(
@@ -349,7 +314,7 @@ export {};
             1,
             runtime_service_registry,
             TenantIsolationMode::LocalDevelopment,
-            Arc::new(ServerCloudFunctionsRuntimeInvoker),
+            Arc::new(ComputeCloudFunctionsRuntimeInvoker),
         );
 
         let users = TableName::new("users").expect("users table should parse");
@@ -851,7 +816,7 @@ export {};
             1,
             runtime_service_registry,
             TenantIsolationMode::LocalDevelopment,
-            Arc::new(ServerCloudFunctionsRuntimeInvoker),
+            Arc::new(ComputeCloudFunctionsRuntimeInvoker),
         );
 
         let outcome = executor.execute_invocation(
@@ -925,7 +890,7 @@ export {};
             1,
             runtime_service_registry,
             TenantIsolationMode::LocalDevelopment,
-            Arc::new(ServerCloudFunctionsRuntimeInvoker),
+            Arc::new(ComputeCloudFunctionsRuntimeInvoker),
         );
 
         let outcome = executor.execute_invocation(

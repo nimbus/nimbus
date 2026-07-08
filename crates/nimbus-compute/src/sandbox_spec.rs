@@ -1,3 +1,9 @@
+//! Wire-facing sandbox spec conversion shared by the sandbox and service
+//! (sandbox-backed) resource orchestration. Reference shape for CP3: the
+//! request/response DTOs live beside their conversion logic in
+//! `nimbus-compute` rather than the transport crate, since neither carries
+//! any HTTP-framework dependency.
+
 use std::path::PathBuf;
 
 use nimbus_core::{Error, TenantId};
@@ -5,13 +11,14 @@ use nimbus_sandbox::{
     SandboxBackendKind, SandboxOciImageReferenceSpec, SandboxOciImageSource, SandboxOwnerSpec,
     SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
 };
+use nimbus_system::user_tenant_id;
 use serde::{Deserialize, Serialize};
 
-use super::{AppError, parse_user_tenant_id};
+use crate::state::ComputeError;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct SandboxSpecInput {
+pub struct SandboxSpecInput {
     tenant_id: Option<String>,
     owner: SandboxOwnerInput,
     backend: SandboxBackendInput,
@@ -20,16 +27,16 @@ pub(crate) struct SandboxSpecInput {
 }
 
 impl SandboxSpecInput {
-    pub(crate) fn into_spec(
+    pub fn into_spec(
         self,
         default_tenant_id: &TenantId,
         default_service_name: Option<&str>,
-    ) -> Result<SandboxSpec, AppError> {
+    ) -> Result<SandboxSpec, ComputeError> {
         let tenant_id = match self.tenant_id {
             Some(tenant_id) => {
-                let tenant_id = parse_user_tenant_id(tenant_id)?;
+                let tenant_id = user_tenant_id(tenant_id).map_err(ComputeError::from)?;
                 if &tenant_id != default_tenant_id {
-                    return Err(AppError::from(Error::InvalidInput(format!(
+                    return Err(ComputeError::from(Error::InvalidInput(format!(
                         "sandbox spec tenantId `{tenant_id}` must match route tenant `{default_tenant_id}`"
                     ))));
                 }
@@ -49,7 +56,7 @@ impl SandboxSpecInput {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct SandboxSpecResponse {
+pub struct SandboxSpecResponse {
     tenant_id: String,
     owner: SandboxOwnerResponse,
     backend: &'static str,
@@ -58,7 +65,7 @@ pub(crate) struct SandboxSpecResponse {
 }
 
 impl SandboxSpecResponse {
-    pub(crate) fn from_spec(spec: SandboxSpec) -> Self {
+    pub fn from_spec(spec: SandboxSpec) -> Self {
         Self {
             tenant_id: spec.tenant_id.as_str().to_owned(),
             owner: SandboxOwnerResponse::from_owner(spec.owner),
@@ -85,13 +92,16 @@ enum SandboxOwnerInput {
 }
 
 impl SandboxOwnerInput {
-    fn into_owner(self, default_service_name: Option<&str>) -> Result<SandboxOwnerSpec, AppError> {
+    fn into_owner(
+        self,
+        default_service_name: Option<&str>,
+    ) -> Result<SandboxOwnerSpec, ComputeError> {
         match self {
             Self::Service { service_name } => {
                 let service_name = service_name
                     .or_else(|| default_service_name.map(str::to_owned))
                     .ok_or_else(|| {
-                        AppError::from(Error::InvalidInput(
+                        ComputeError::from(Error::InvalidInput(
                             "service-owned sandbox specs require owner.serviceName".to_owned(),
                         ))
                     })?;
@@ -166,13 +176,15 @@ enum SandboxRootInput {
 }
 
 impl SandboxRootInput {
-    fn into_root(self) -> Result<SandboxRootSpec, AppError> {
+    fn into_root(self) -> Result<SandboxRootSpec, ComputeError> {
         match self {
-            Self::Rootfs { rootfs, readonly } => Err(AppError::from(Error::InvalidInput(format!(
-                "public sandbox specs must use root.kind `oci_image`; host rootfs path `{}` readonly={} is an operator-only internal input",
-                rootfs.display(),
-                readonly
-            )))),
+            Self::Rootfs { rootfs, readonly } => {
+                Err(ComputeError::from(Error::InvalidInput(format!(
+                    "public sandbox specs must use root.kind `oci_image`; host rootfs path `{}` readonly={} is an operator-only internal input",
+                    rootfs.display(),
+                    readonly
+                ))))
+            }
             Self::OciImage { source } => Ok(SandboxRootSpec::oci_image(source.into_source()?)),
         }
     }
@@ -228,7 +240,7 @@ enum SandboxOciImageSourceInput {
 }
 
 impl SandboxOciImageSourceInput {
-    fn into_source(self) -> Result<SandboxOciImageSource, AppError> {
+    fn into_source(self) -> Result<SandboxOciImageSource, ComputeError> {
         match self {
             Self::Reference { reference } => Ok(SandboxOciImageSource::Reference(
                 SandboxOciImageReferenceSpec::new(reference),
@@ -237,7 +249,7 @@ impl SandboxOciImageSourceInput {
                 image_name,
                 dockerfile_path,
                 context_path,
-            } => Err(AppError::from(Error::InvalidInput(format!(
+            } => Err(ComputeError::from(Error::InvalidInput(format!(
                 "public sandbox specs must use an admitted OCI image reference; local build context paths for image `{image_name}` at dockerfile `{}` and context `{}` are operator-only internal inputs",
                 dockerfile_path.display(),
                 context_path.display()
