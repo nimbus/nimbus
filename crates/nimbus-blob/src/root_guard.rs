@@ -263,8 +263,24 @@ fn establish_marker(
                 .map_err(|err| guard_error(err, format!("write root marker {}", path.display())))?;
             Ok(())
         }
-        // Read-only inspection of a root that predates markers is allowed.
-        None => Ok(()),
+        // No marker and read-only: allowed only for an empty/uninitialized
+        // root (inspection of a tenant with no data yet). A root that already
+        // carries pack data without a marker is unowned/foreign — refuse
+        // (pre-launch: every root this code created has a marker).
+        None => {
+            let has_data = root.join("index.log").exists() || root.join("packs").exists();
+            if has_data {
+                return Err(Error::storage(
+                    StorageErrorKind::Corruption,
+                    format!(
+                        "blob root {} carries pack data but no format marker; refusing to \
+                         inspect an unowned root",
+                        root.display()
+                    ),
+                ));
+            }
+            Ok(())
+        }
     }
 }
 

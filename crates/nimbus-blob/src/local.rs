@@ -440,6 +440,11 @@ impl BlobStore for LocalPackStore {
     }
 
     async fn put_stream(&self, mut src: ByteStream) -> Result<BlobHash> {
+        // Refuse before consuming the stream: a read-only or poisoned handle
+        // must fail-stop immediately, not after buffering arbitrary input.
+        // `put` re-checks under the same lock, so the gap is benign.
+        self.blocking(|state| ensure_writable(&state, "put_stream"))
+            .await?;
         let mut buf = Vec::new();
         src.read_to_end(&mut buf).await.map_err(|err| {
             Error::storage(StorageErrorKind::Io, format!("read blob stream: {err}"))
@@ -687,6 +692,14 @@ fn parse_index_record(
 ) -> std::result::Result<(IndexRecord, BlobHash), IndexParseError> {
     let tag = bytes[*cursor];
     *cursor += 1;
+    // Fail closed on the tag BEFORE parsing the record body: an unknown tag
+    // torn at EOF is still corruption, never a healable torn tail — only
+    // known PUT/RELEASE records are eligible for torn-tail healing.
+    if tag != INDEX_PUT && tag != INDEX_RELEASE {
+        return Err(IndexParseError::Corrupt(format!(
+            "unknown record tag {tag}"
+        )));
+    }
     let hash = read_hash(bytes, cursor)?;
     match tag {
         INDEX_PUT => {
@@ -705,9 +718,7 @@ fn parse_index_record(
             ))
         }
         INDEX_RELEASE => Ok((IndexRecord::Release, hash)),
-        other => Err(IndexParseError::Corrupt(format!(
-            "unknown record tag {other}"
-        ))),
+        _ => unreachable!("tag validated above"),
     }
 }
 
@@ -1447,6 +1458,65 @@ mod tests {
         };
         let err = LocalPackStore::open_with_options(dir.path(), foreign).unwrap_err();
         assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    }
+
+    #[tokio::test]
+    async fn read_only_put_stream_refuses_before_consuming_input() {
+        let (dir, _owner) = open_temp(256);
+        let inspector = LocalPackStore::open_read_only(dir.path()).unwrap();
+
+        // A reader that panics if polled proves the gate fires before the
+        // stream is consumed.
+        struct Unpollable;
+        impl tokio::io::AsyncRead for Unpollable {
+            fn poll_read(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+                _: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                panic!("read-only put_stream must refuse before reading input");
+            }
+        }
+        let err = inspector
+            .put_stream(Box::new(Unpollable))
+            .await
+            .unwrap_err();
+        assert_eq!(err.storage_kind(), Some(StorageErrorKind::Busy));
+    }
+
+    #[tokio::test]
+    async fn crash_index_unknown_tag_torn_at_eof_still_fails_closed() {
+        let (dir, store) = open_temp(4096);
+        store.put(Bytes::from_static(b"fine")).await.unwrap();
+        drop(store);
+
+        // Unknown tag followed by only a partial hash: EOF-torn, but the tag
+        // itself is garbage — corruption, never a healable torn tail.
+        let index_path = dir.path().join("index.log");
+        let mut file = OpenOptions::new().append(true).open(&index_path).unwrap();
+        file.write_all(&[9u8]).unwrap();
+        file.write_all(&[0u8; 10]).unwrap();
+        file.sync_data().unwrap();
+
+        let err = match LocalPackStore::open_with_pack_target(dir.path(), 4096) {
+            Ok(_) => panic!("unknown tag torn at EOF must fail closed"),
+            Err(err) => err,
+        };
+        assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    }
+
+    #[tokio::test]
+    async fn read_only_refuses_unowned_data_bearing_root() {
+        // Data without a marker: unowned/foreign — inspection refuses.
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("packs")).unwrap();
+        let err = LocalPackStore::open_read_only(dir.path()).unwrap_err();
+        assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+
+        // An empty root inspects as an empty store.
+        let empty = tempfile::tempdir().unwrap();
+        let inspector = LocalPackStore::open_read_only(empty.path()).unwrap();
+        assert_eq!(inspector.len().unwrap(), 0);
     }
 
     // ---- RFS3: durable commit-point writes and crash windows ----
