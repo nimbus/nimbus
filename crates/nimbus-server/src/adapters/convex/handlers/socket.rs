@@ -1,4 +1,4 @@
-use super::common::registry_and_auth_for_path;
+use super::registry_auth::registry_and_auth_for_path;
 use super::*;
 
 /// WebSocket endpoint for Convex-style query subscriptions bound to a tenant in the URL.

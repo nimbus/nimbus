@@ -431,6 +431,9 @@ fn execute_single_update(
     })
 }
 
+// Single call site forwarding heterogeneous locals already in scope (conn,
+// engine, tenant/table identifiers, BSON docs, flags, principal); a wrapper
+// struct would only relocate the same fields without a natural sub-concept.
 #[allow(clippy::too_many_arguments)]
 fn execute_upsert(
     body: &bson::Document,
@@ -822,6 +825,8 @@ struct FindAndModifyWriteContext<'a> {
     principal: &'a PrincipalContext,
 }
 
+// Single call site, same rationale as `execute_upsert` above: heterogeneous
+// forwarded locals with no natural sub-concept to bundle.
 #[allow(clippy::too_many_arguments)]
 fn find_and_upsert(
     body: &bson::Document,

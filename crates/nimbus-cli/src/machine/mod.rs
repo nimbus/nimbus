@@ -70,21 +70,16 @@ use self::record::{
 };
 
 #[cfg(test)]
-#[allow(unused_imports)]
 use self::command::*;
 #[cfg(test)]
-#[allow(unused_imports)]
 use self::files::*;
 #[cfg(test)]
-#[allow(unused_imports)]
 use self::handlers::*;
 #[cfg(test)]
-#[allow(unused_imports)]
 use self::manager::*;
 #[cfg(test)]
 use self::record::{MachineGuestConfig, MachineResources};
 #[cfg(test)]
-#[allow(unused_imports)]
 use self::render::*;
 
 const DEFAULT_MACHINE_NAME: &str = "default";

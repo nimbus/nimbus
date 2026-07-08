@@ -994,6 +994,11 @@ async fn handle_client(
     }
 }
 
+// Single call site; params already carry pre-built types (ParsedProxyRequest,
+// PingoraPeerPlan, CompiledEgressPolicy, ClientHandlerContext,
+// RequestPhaseRecorder) spanning connection/policy/telemetry concerns with no
+// single owning concept. Bundling risks behavior drift in this egress-policy
+// path for no clarity gain; a broader restructure belongs in its own change.
 #[allow(clippy::too_many_arguments)]
 async fn handle_forward_http(
     client: TcpStream,

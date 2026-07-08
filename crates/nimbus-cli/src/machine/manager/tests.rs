@@ -14,9 +14,10 @@ use oci_client::manifest::{OCI_IMAGE_INDEX_MEDIA_TYPE, OCI_IMAGE_MEDIA_TYPE};
 use tempfile::TempDir;
 
 use super::guest::{ensure_guest_nimbus_socket_shell_script, guest_nimbus_archive_name};
-use super::helpers::{
+use super::helper_env_guard::write_helper_stub;
+use super::helper_paths::{
     bundled_helper_candidates_for_executable, known_helper_candidates, resolve_gvproxy_binary,
-    resolve_helper_binary, write_helper_stub,
+    resolve_helper_binary,
 };
 use super::image::{
     attestation_repositories_for_reference, build_digest_reference,

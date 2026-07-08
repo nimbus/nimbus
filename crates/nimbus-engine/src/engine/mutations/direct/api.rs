@@ -193,7 +193,6 @@ impl Engine {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn update_document_async_with<Fut, Check>(
         self: &Arc<Self>,
         tenant_id: TenantId,

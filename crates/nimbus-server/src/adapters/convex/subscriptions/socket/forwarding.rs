@@ -30,6 +30,9 @@ pub(super) async fn unsubscribe_active_subscriptions(
     }
 }
 
+// Single call site (spawned task); every param is a distinctly-typed handle
+// or channel forwarded directly from the caller's locals with no natural
+// sub-concept to bundle them under.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_subscription_forwarder(
     subscription_rx: mpsc::Receiver<SubscriptionUpdate>,

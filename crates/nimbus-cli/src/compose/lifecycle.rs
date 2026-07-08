@@ -80,24 +80,6 @@ impl ServiceLifecycleTarget {
     }
 }
 
-#[cfg(test)]
-pub(super) async fn service_up_outcomes_for_platform(
-    command: &ComposeUpCommand,
-    control_data_dir: &Path,
-    host_platform: super::ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
-    let selection = super::resolve_required_compose_selection(command.file.as_slice())?;
-    service_up_outcomes_for_selection(
-        command,
-        &selection,
-        control_data_dir,
-        host_platform,
-        machine_api_client,
-    )
-    .await
-}
-
 pub(super) async fn service_up_outcomes_for_selection(
     command: &ComposeUpCommand,
     selection: &ResolvedComposeSelection,
@@ -205,24 +187,6 @@ pub(super) async fn service_up_outcomes_for_selection(
             Ok(outcomes)
         }
     }
-}
-
-#[cfg(test)]
-pub(super) async fn service_down_outcomes_for_platform(
-    command: &ComposeDownCommand,
-    control_data_dir: &Path,
-    host_platform: super::ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
-    let selection = super::resolve_required_compose_selection(command.file.as_slice())?;
-    service_down_outcomes_for_selection(
-        command,
-        &selection,
-        control_data_dir,
-        host_platform,
-        machine_api_client,
-    )
-    .await
 }
 
 pub(super) async fn service_down_outcomes_for_selection(

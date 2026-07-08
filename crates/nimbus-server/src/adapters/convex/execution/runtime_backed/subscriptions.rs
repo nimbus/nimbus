@@ -4,6 +4,9 @@ use nimbus_auth::normalize_principal_context;
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::{TenantIsolationContext, TenantIsolationMode};
 
+// Single call site; every param is a distinctly-typed handle or subscription
+// value forwarded directly from the caller's locals with no natural
+// sub-concept to bundle them under.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_async(
     service: &Arc<nimbus_engine::Engine>,

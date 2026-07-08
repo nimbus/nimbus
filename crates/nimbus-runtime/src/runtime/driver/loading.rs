@@ -16,7 +16,7 @@ use super::super::bootstrap::{
     reset_bootstrap_invocation_state_in_realm, reset_runtime_contract,
     runtime_resource_table_delta,
 };
-use super::super::helpers::{
+use super::super::classify::{
     deserialize_json_value, ensure_wait_until_drain_succeeded, runtime_js_error,
 };
 use super::super::realm_lease::{

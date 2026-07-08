@@ -1,4 +1,4 @@
-use super::common::registry_and_auth_for_path;
+use super::registry_auth::registry_and_auth_for_path;
 use super::*;
 
 /// Schedules a public convex mutation by relative delay.

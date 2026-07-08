@@ -12,7 +12,7 @@ use crate::limits::{RuntimePolicy, RuntimePoolKind};
 use crate::watchdog::WatchdogTimer;
 
 use super::super::bootstrap::{RuntimeCancellationState, take_runtime_wait_until_pending};
-use super::super::helpers::{classify_runtime_error, classify_wait_until_drain_error};
+use super::super::classify::{classify_runtime_error, classify_wait_until_drain_error};
 use super::super::realm_lease::RuntimeRealmLeaseCondemnationReason;
 use super::super::realm_lifecycle::destroy_fresh_realm;
 use super::super::{

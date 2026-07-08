@@ -14,7 +14,8 @@ use crate::machine::{
     require_default_machine_api_client,
 };
 
-use super::{ComposeProjectContext, ServiceLifecycleTarget, file};
+use super::lifecycle::ServiceLifecycleTarget;
+use super::{ComposeProjectContext, file};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ServiceHostPlatform {

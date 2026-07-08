@@ -1,4 +1,4 @@
-use super::helpers::placeholder_name;
+use super::render::placeholder_name;
 use super::*;
 
 pub fn resolve_template(template: &Value, args: &Value) -> Result<Value, Error> {
