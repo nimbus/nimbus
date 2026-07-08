@@ -48,6 +48,13 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   UI hygiene, doc/spec truth-ups, and the `nimbus-compute` extraction plus
   workload-identity decision records. Review-driven refactor and cleanup work
   should route through this plan's band ledgers while it is active.
+- `rustfs-storage-hardening-plan.md` - `proposed`. Owns the RustFS-informed
+  storage hardening lane: narrow Apache-2.0 recipe/test ports and pattern
+  borrows into `LocalPackStore` behind the existing `BlobStore` seam — no
+  RustFS crate dependency, per-chunk adversarial security review — plus the
+  RFS1 design-memo gate that decides whether RustFS's colocated
+  object+metadata architecture could ever reopen Nimbus's current
+  `ObjectMetaStore` split.
 - `archive/nimbus-proxy-pingora-plan.md` - `complete, archived` (K11P0-K11P13 merged, PR #94; verifier 113/0). Owned the production proxy substrate
   inside `nimbus-proxy`: Pingora phases, async forwarding, peer/pool identity,
   lifecycle, observability, selective HTTPS interception, credential injection,
