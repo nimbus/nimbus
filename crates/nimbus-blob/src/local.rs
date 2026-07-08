@@ -277,7 +277,12 @@ impl LocalPackStore {
         )?;
         let quarantined = load_quarantine(&quarantine_path)?;
         report.quarantine_entries_loaded = quarantined.len();
-        let mut active_pack_id = index.values().map(|entry| entry.pack_id).max().unwrap_or(0);
+        // Active = max over index AND disk: a fresh pack rolled by pack
+        // retirement (or a crash) has no index entries yet, but it — not the
+        // retired/full pack below it — must be selected as active.
+        let index_max = index.values().map(|entry| entry.pack_id).max().unwrap_or(0);
+        let disk_max = pack_ids_on_disk(&packs_dir)?.into_iter().max().unwrap_or(0);
+        let mut active_pack_id = index_max.max(disk_max);
         let mut active_pack_bytes = ensure_pack_file(&packs_dir, active_pack_id, &*observer)?;
         if active_pack_bytes >= options.pack_target_bytes
             && active_pack_bytes > PACK_MAGIC.len() as u64
@@ -767,9 +772,18 @@ fn quarantine_hashes_locked(
 ) -> Result<Vec<BlobHash>> {
     let mut next = state.quarantined.clone();
     let mut inserted = Vec::new();
+    let mut retire_packs: BTreeSet<u64> = BTreeSet::new();
     for (hash, check) in requests {
         match check {
-            QuarantineCheck::Unconditional => {}
+            QuarantineCheck::Unconditional => {
+                // Content-level findings still require a LIVE claim: a
+                // release that raced the scrub already dropped the claim,
+                // and a stale side-file entry would poison a future
+                // reintroduction of the same content hash.
+                if !state.index.contains_key(hash) {
+                    continue;
+                }
+            }
             QuarantineCheck::CorruptRecord(expected) => {
                 if state.index.get(hash) != Some(expected) {
                     continue;
@@ -785,6 +799,7 @@ fn quarantine_hashes_locked(
                 if pack_header_is_valid(&state.packs_dir, expected.pack_id) {
                     continue;
                 }
+                retire_packs.insert(expected.pack_id);
             }
         }
         let reason = match check {
@@ -804,6 +819,16 @@ fn quarantine_hashes_locked(
     let observer = Arc::clone(&state.observer);
     write_quarantine_locked(state, &next, &*observer)?;
     state.quarantined = next;
+
+    // Retire a header-discredited ACTIVE pack: roll to a fresh validated
+    // pack under this same lock so (a) unrelated new puts never land behind
+    // the bad header and (b) reopen selects the fresh pack as active instead
+    // of re-validating (and refusing) the corrupt one.
+    if retire_packs.contains(&state.active_pack_id) {
+        state.active_pack_id = state.active_pack_id.saturating_add(1);
+        state.active_pack_bytes =
+            ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
+    }
     Ok(inserted)
 }
 
@@ -1033,18 +1058,9 @@ fn put_locked(
     // Ordering: publish the good record first, un-quarantine last — a crash
     // in between leaves the blob unreadable-but-repairable, never a
     // quarantine lifted without its replacement record being durable.
-    if quarantined {
-        // Heal into a FRESH, header-validated pack: the quarantined record's
-        // pack may be discredited wholesale (corrupt pack header), and
-        // appending the replacement behind the same bad header would lift
-        // the quarantine while the pack stays invalid. Rolling over also
-        // means the corrupt pack stops being the active pack, so reopen's
-        // active-header validation cannot brick on it.
-        let observer = Arc::clone(&state.observer);
-        state.active_pack_id = state.active_pack_id.saturating_add(1);
-        state.active_pack_bytes =
-            ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
-    }
+    // NOTE: a header-corrupt pack is retired (rolled off) at quarantine time
+    // (see quarantine_hashes_locked), so a heal here always appends behind a
+    // validated active-pack header.
     let entry = append_pack_record(state, &hash, &bytes, written_at_millis)?;
     let observer = Arc::clone(&state.observer);
     append_put_index_record(&state.index_path, &hash, entry, &*observer)?;

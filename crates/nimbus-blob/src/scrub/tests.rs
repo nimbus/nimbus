@@ -1104,3 +1104,82 @@ async fn corrupt_index_repair_recovers_claim_when_hash_field_corrupted() {
     let err = store.get(&victim).await.unwrap_err();
     assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
 }
+
+#[tokio::test]
+async fn scrub_of_corrupt_active_header_retires_pack() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store
+        .put(Bytes::from_static(b"behind bad header"))
+        .await
+        .unwrap();
+    let old_entry = entry_for(&store, victim).await;
+
+    // Smash the ACTIVE pack's header; scrub quarantines and must RETIRE the
+    // pack (roll to a fresh validated active pack) in the same operation.
+    let path = local::pack_path(&dir.path().join("packs"), old_entry.pack_id);
+    {
+        let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.write_all(b"BAD").unwrap();
+        file.sync_data().unwrap();
+    }
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(report.quarantined_hashes.contains(&victim));
+
+    // Unrelated NEW writes land in the fresh pack, never behind the
+    // discredited header.
+    let fresh = store
+        .put(Bytes::from_static(b"unrelated write"))
+        .await
+        .unwrap();
+    let fresh_entry = entry_for(&store, fresh).await;
+    assert_ne!(fresh_entry.pack_id, old_entry.pack_id);
+    assert_eq!(
+        store.get(&fresh).await.unwrap(),
+        Bytes::from_static(b"unrelated write")
+    );
+
+    // And reopen selects the fresh pack as active instead of refusing the
+    // corrupt one (no restart brick).
+    drop(store);
+    let reopened = LocalPackStore::open(dir.path()).unwrap();
+    assert_eq!(
+        reopened.get(&fresh).await.unwrap(),
+        Bytes::from_static(b"unrelated write")
+    );
+    let err = reopened.get(&victim).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+}
+
+#[tokio::test]
+async fn unconditional_quarantine_skips_released_hash() {
+    let (dir, store) = open_temp(64 * 1024);
+    let hash = store
+        .put(Bytes::from_static(b"released racer"))
+        .await
+        .unwrap();
+    store.release(&hash).await.unwrap();
+
+    // A content-level finding whose claim was released before insertion must
+    // not land: a stale side-file entry would poison a future
+    // reintroduction of the same content hash.
+    let inserted = store
+        .quarantine_hashes(vec![(hash, QuarantineCheck::Unconditional)])
+        .await
+        .unwrap();
+    assert!(inserted.is_empty());
+
+    drop(store);
+    let reopened = LocalPackStore::open(dir.path()).unwrap();
+    assert_eq!(reopened.open_report().unwrap().quarantine_entries_loaded, 0);
+    // Reintroducing the content works normally.
+    let again = reopened
+        .put(Bytes::from_static(b"released racer"))
+        .await
+        .unwrap();
+    assert_eq!(again, hash);
+    assert_eq!(
+        reopened.get(&again).await.unwrap(),
+        Bytes::from_static(b"released racer")
+    );
+}
