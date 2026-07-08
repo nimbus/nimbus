@@ -258,6 +258,22 @@ fn establish_marker(
             Ok(())
         }
         None if writable => {
+            // Initialize only an empty root. A root that already carries pack
+            // data without a marker is unowned/foreign — silently stamping it
+            // (and possibly binding it to this caller's identity) would defeat
+            // the ownership check. Pre-launch: every root this code created
+            // has a marker; there is no migration path.
+            let has_data = root.join("index.log").exists() || root.join("packs").exists();
+            if has_data {
+                return Err(Error::storage(
+                    StorageErrorKind::Corruption,
+                    format!(
+                        "blob root {} carries pack data but no format marker; refusing to \
+                         adopt an unowned root",
+                        root.display()
+                    ),
+                ));
+            }
             let marker = FormatMarker::new(created_at_millis, desired_identity);
             disk::write_replace_durable(&path, &marker.encode(), observer)
                 .map_err(|err| guard_error(err, format!("write root marker {}", path.display())))?;
@@ -313,7 +329,9 @@ pub(crate) fn check_writable_root_shape(
     options: &LocalPackStoreOptions,
 ) -> Result<()> {
     check_root_shape(root, options.allow_symlinked_root)?;
-    fs::create_dir_all(root)
+    // Durable mkdir: fsync each newly created level's parent so a brand-new
+    // root's directory entries survive power loss along with its contents.
+    disk::create_dir_all_durable(root, &disk::NoopSyncObserver)
         .map_err(|err| guard_error(err, format!("create blob root {}", root.display())))
 }
 

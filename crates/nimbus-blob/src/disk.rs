@@ -101,6 +101,37 @@ pub(crate) fn fsync_dir(dir: &Path, observer: &dyn SyncObserver) -> io::Result<(
     Ok(())
 }
 
+/// `create_dir_all` with durable directory entries: after creating any
+/// missing levels, fsyncs the parent of every newly created directory so the
+/// new entries survive power loss. Without this, an acknowledged first write
+/// into a brand-new root could lose the entire root directory on crash.
+pub(crate) fn create_dir_all_durable(path: &Path, observer: &dyn SyncObserver) -> io::Result<()> {
+    // Find the deepest ancestor that already exists.
+    let mut missing: Vec<PathBuf> = Vec::new();
+    let mut probe = path.to_path_buf();
+    while !probe.exists() {
+        missing.push(probe.clone());
+        match probe.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => probe = parent.to_path_buf(),
+            _ => break,
+        }
+    }
+    if missing.is_empty() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(path)?;
+    // Fsync the parent of each created level (deepest last) so every new
+    // directory entry is durable.
+    for dir in missing.iter().rev() {
+        if let Some(parent) = dir.parent() {
+            if !parent.as_os_str().is_empty() {
+                fsync_dir(parent, observer)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Whether a failed commit-point rename should be retried.
 ///
 /// Only the first failure is retried, and `NotFound` is never retried: the

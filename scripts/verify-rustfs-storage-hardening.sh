@@ -147,6 +147,8 @@ required_tests=(
   crash_index_unknown_tag_torn_at_eof_still_fails_closed
   read_only_put_stream_refuses_before_consuming_input
   read_only_refuses_unowned_data_bearing_root
+  writable_open_refuses_unowned_data_bearing_root
+  fresh_root_creation_fsyncs_new_directory_entries
   crash_release_replay_order_preserved
   compaction_crash_replay_prefers_rewritten_records
   local_pack_concurrent_same_hash_dedups_under_mutex
