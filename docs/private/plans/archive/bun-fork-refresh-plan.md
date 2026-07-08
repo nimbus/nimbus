@@ -1,6 +1,6 @@
 # Bun Fork Refresh Plan
 
-Status: active
+Status: complete, archived
 Date: 2026-07-08
 Spec: `bun-fork-refresh-spec.md` (contract; this file owns execution order)
 Fork checkout: `~/src/github.com/nimbus/bun`
@@ -147,14 +147,23 @@ reviews, BFR5 (PR), and BFR6 (evidence) stay with the orchestrator.
   (WebKit CI gap) — tracked as FR-WK; the dlopen-safe-TLS precondition for
   coexistence is verified (step 6).
 
-## BFR5 — Nimbus PR — `pending`
+## BFR5 — Nimbus PR — `done (2026-07-08)`
 
 - `cargo fmt --all --check`, `make clippy`, `make ci` on the branch.
 - Open the PR against `nimbus/nimbus` main; merge on confirmed-green CI per
   the standing merge-on-green authorization.
 - Completion gate: PR merged with green hosted CI including the
   `bun-runtime-contract` lane.
-- Evidence: (fill at completion — PR number, merge SHA, CI verdict.)
+- Evidence: PR #165 squash-merged (`addf299ce1`) — 14 pin sites + LLVM-21
+  workflow fix; hosted CI 46 pass / 3 skip / 0 fail incl. Bun/JSC Runtime
+  Contract (19m50s). Follow-up PR #166 squash-merged (`6c0ababb5`) — the one
+  workflow_dispatch-default pin site missed from #165's commit; CI green after
+  a re-run cleared a flaky, unrelated `nimbus-server` Convex seed-corpus test
+  (passed on #165, flaked on #166 — causally impossible for a 2-line workflow
+  default to affect it). Source-ref pin completeness grep on main is clean.
+  (Note: `adapter_version` package-version test fixtures like
+  `v0.1.0-bun-proof-main-20260525` are a separate convention, not source-ref
+  pins; tests pass with them — left as-is.)
 
 ## FR-WK — Make the hosted Bun/JSC adapter workflow self-sufficient (follow-up)
 
@@ -184,7 +193,7 @@ regressions; both need an owner after this campaign:
   generated-bundle evaluation; a generated bundle relying on `new Function`
   runtime handlers would fail to load (current bundles don't).
 
-## BFR6 — Post-merge evidence and closeout — `pending`
+## BFR6 — Post-merge evidence and closeout — `done (2026-07-08)`
 
 - Dispatch `bun-jsc-adapter.yml` for linux-x86_64 + darwin-arm64 against the
   new tag; record run results.
@@ -194,4 +203,18 @@ regressions; both need an owner after this campaign:
 - Update the spec's identity table if any recorded value diverged; archive
   this plan; remove its README entry per the plans-README convention.
 - Completion gate: evidence note exists; plans README carries no stale entry.
-- Evidence: (fill at completion.)
+- Evidence: hosted `bun-jsc-adapter.yml` dispatch NOT re-run — blocked by the
+  WebKit CI gap (FR-WK); the multi-platform artifact build is deferred there.
+  Evidence note written: `proof/runtime-engine/bun-jsc/gate-47-fork-refresh-20260708.md`
+  (local-only, matching the untracked gate-note convention). Spec identity
+  table matches recorded values (no divergence). Plan archived + README entry
+  removed on completion.
+
+---
+
+Campaign COMPLETE 2026-07-08 — do not re-execute. Fork refreshed and published
+(`nimbus/bun-main-20260708` @ `9c9ed55fd88`, tag
+`nimbus-bun-jsc-proof-main-20260708`, default branch flipped, upstream
+workflows disabled); Nimbus repinned (PRs #165 + #166 merged). One tracked
+follow-up (FR-WK: hosted WebKit build for the Linux simdutf audit + V8
+coexistence) and two pre-existing delta follow-ups remain.
