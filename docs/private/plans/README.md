@@ -80,6 +80,11 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   component linker, NimbusFS binder, and HTTP-client binder exist. Owns the
   process primitive and WIT projection layer; it must not re-own filesystem or
   proxy behavior.
+- `bun-fork-refresh-plan.md` - `active`. Owns the 2026-07-08 refresh of the
+  `nimbus/bun` fork (rebase the 23-commit embedder delta onto upstream main
+  `332f7444f94`, republish branch/tag/default branch) and the atomic Nimbus
+  pin repoint. Contract in `bun-fork-refresh-spec.md`; the adapter ABI and
+  export set do not change.
 
 Phase 2 coordination: if future filesystem work, Wasmtime, or WAC need runtime
 bootstrap changes in the same window, create or reuse a shared
