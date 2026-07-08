@@ -6,7 +6,8 @@
 //! native object-storage byte-plane resolver.
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(test)]
+use std::time::SystemTime;
 
 use async_trait::async_trait;
 use axum::Router;
@@ -278,10 +279,7 @@ fn convex_download_error(error: ConvexStorageError) -> Response<Body> {
 }
 
 fn current_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or_default()
+    nimbus_core::clock::system_now_millis()
 }
 
 async fn handle_s3_error(err: HttpError) -> Response<Body> {

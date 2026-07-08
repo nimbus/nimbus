@@ -8,8 +8,6 @@
 
 use std::sync::Arc;
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use base64::Engine as Base64Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use extenddb_core::error::DynamoDbError;
@@ -216,10 +214,7 @@ fn invalid_iterator() -> DynamoDbError {
 }
 
 fn epoch_seconds() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs() as i64)
-        .unwrap_or(0)
+    nimbus_core::clock::system_now_secs() as i64
 }
 
 fn event_name_str(event: StreamEventName) -> &'static str {

@@ -60,6 +60,16 @@ impl WorkloadPepTlsAuthority {
                 "TLS interception leaf hostname is invalid: {error}"
             ))
         })?;
+        // CO7: left as a direct SystemTime read rather than injected via
+        // `Clock`. This is purely in-process leaf-cache freshness/eviction
+        // logic (never serialized, never compared across a network), and
+        // `WorkloadPepTlsAuthority` is constructed through
+        // `generate_ephemeral()`/`generate_with_upstream_roots()` with no
+        // existing seam to thread a clock through; the existing test already
+        // forces expiry deterministically by setting `expires_at` directly
+        // to `SystemTime::UNIX_EPOCH` rather than needing a controllable
+        // clock. `Clock::now_systemtime()` exists for any future consumer
+        // that does need this wired in.
         let now = SystemTime::now();
         {
             let guard = self.inner.leaf_cache.read().map_err(|_| {

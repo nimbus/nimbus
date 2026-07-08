@@ -7,7 +7,7 @@
 //! delete (DynamoDB Local never does).
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use nimbus_dynamodb::AccessKeyRegistry;
 use nimbus_engine::Engine;
@@ -15,11 +15,14 @@ use tokio::time::{MissedTickBehavior, interval};
 use tracing::{info, warn};
 
 /// Current UNIX time in whole seconds (the unit DynamoDB TTL attributes use).
+///
+/// Pure plumbing: this loop is not itself unit-tested (it's a real
+/// `tokio::spawn` background task on a real `tokio::time::interval`); the
+/// clock-dependent unit that *is* tested is `sweep_all_tenants`, which
+/// already takes `now: i64` as an explicit parameter. No struct here would
+/// benefit from holding an injected `Arc<dyn Clock>`.
 fn now_epoch_seconds() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs() as i64)
-        .unwrap_or(0)
+    nimbus_core::clock::system_now_secs() as i64
 }
 
 /// Sweep expired items on `period` until the task is aborted. Per-tenant errors

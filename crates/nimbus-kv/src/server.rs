@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use nimbus_core::{TenantId, refuse_non_loopback_bind};
 use rand::{RngCore, rngs::OsRng};
@@ -837,11 +837,7 @@ fn storage_error(error: KvError) -> Response {
 }
 
 fn now_ms() -> i64 {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or(0);
-    i64::try_from(millis).unwrap_or(i64::MAX)
+    i64::try_from(nimbus_core::clock::system_now_millis()).unwrap_or(i64::MAX)
 }
 
 fn parse_expire_seconds(value: &[u8]) -> Result<i64, Response> {
