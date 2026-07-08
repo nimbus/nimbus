@@ -119,6 +119,11 @@ pub(crate) struct LocalPackState {
     /// Set on any write-path I/O/corruption failure; all further mutations
     /// fail until the store is reopened (fail-stop, see module docs).
     pub(crate) poisoned: bool,
+    /// This open created `index.log` from missing, so the empty index on disk
+    /// is provisional — a rebuild that fails closed removes it (rather than
+    /// leaving an authoritative-looking empty index the next open would prune
+    /// quarantine against).
+    pub(crate) index_provisional: bool,
     /// What this open observed and repaired.
     pub(crate) report: OpenReport,
     /// Receives every durability-relevant sync/rename, in order.
@@ -350,6 +355,7 @@ impl LocalPackStore {
             compaction_epoch: 0,
             read_only: false,
             poisoned: false,
+            index_provisional: index_was_missing,
             report,
             observer,
             _lock: guard.lock,
@@ -405,6 +411,7 @@ impl LocalPackStore {
                 compaction_epoch: 0,
                 read_only: true,
                 poisoned: false,
+                index_provisional: false,
                 report,
                 observer,
                 _lock: None,

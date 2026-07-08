@@ -20,7 +20,7 @@ use crate::hash::BlobHash;
 
 use super::{
     INDEX_MAGIC, IndexRecord, LocalPackState, PACK_MAGIC, PackEntry, corruption, ensure_pack_file,
-    io_error, pack_path, parse_index_record, read_pack_entry,
+    io_error, pack_path, parse_index_record,
 };
 
 pub(crate) const QUARANTINE_FILE: &str = "quarantine.nblq";
@@ -109,6 +109,63 @@ pub(crate) fn pack_header_is_valid(packs_dir: &Path, pack_id: u64) -> bool {
     }
 }
 
+/// Streaming re-verify of an indexed record for quarantine revalidation:
+/// checks framing (magic + stored hash + len) and hashes the body in fixed
+/// chunks so a multi-GB record is never materialized under the store lock.
+/// Returns `(is_still_corrupt, bytes_read)` — any read/parse error or a
+/// framing/hash mismatch counts as still-corrupt (fail closed).
+fn record_reverifies_corrupt(
+    packs_dir: &Path,
+    expected_hash: &BlobHash,
+    entry: PackEntry,
+) -> (bool, u64) {
+    const CHUNK: usize = 64 * 1024;
+    let mut read = 0u64;
+    let corrupt = |read: u64| (true, read);
+    let path = pack_path(packs_dir, entry.pack_id);
+    let mut file = match File::open(&path) {
+        Ok(file) => file,
+        Err(_) => return corrupt(read),
+    };
+    use std::io::{Seek, SeekFrom};
+    if file.seek(SeekFrom::Start(entry.offset)).is_err() {
+        return corrupt(read);
+    }
+    let mut header = [0u8; 4 + crate::BLAKE3_HASH_LEN + 8];
+    if file.read_exact(&mut header).is_err() {
+        return corrupt(read);
+    }
+    read = read.saturating_add(header.len() as u64);
+    if &header[..4] != super::RECORD_MAGIC {
+        return corrupt(read);
+    }
+    if &header[4..4 + crate::BLAKE3_HASH_LEN] != expected_hash.as_bytes() {
+        return corrupt(read);
+    }
+    let mut len_bytes = [0u8; 8];
+    len_bytes.copy_from_slice(&header[4 + crate::BLAKE3_HASH_LEN..]);
+    if u64::from_le_bytes(len_bytes) != entry.len {
+        return corrupt(read);
+    }
+    let mut hasher = blake3::Hasher::new();
+    let mut remaining = entry.len;
+    let mut buf = vec![0u8; CHUNK];
+    while remaining > 0 {
+        let want = remaining.min(CHUNK as u64) as usize;
+        match file.read(&mut buf[..want]) {
+            Ok(0) => return corrupt(read),
+            Ok(n) => {
+                hasher.update(&buf[..n]);
+                read = read.saturating_add(n as u64);
+                remaining -= n as u64;
+            }
+            Err(_) => return corrupt(read),
+        }
+    }
+    let still_corrupt = hasher.finalize().as_bytes() != expected_hash.as_bytes();
+    (still_corrupt, read)
+}
+
 pub(crate) fn load_quarantine(path: &Path) -> Result<HashMap<BlobHash, QuarantineReason>> {
     let mut file = match File::open(path) {
         Ok(file) => file,
@@ -194,13 +251,14 @@ pub(crate) fn quarantine_hashes_locked(
                 if state.index.get(hash) != Some(expected) {
                     continue;
                 }
-                // The re-read walks header + up to `len` body bytes either
-                // way; account it so the scrub's pacing/reporting contract
-                // covers revalidation I/O too.
-                revalidation_bytes = revalidation_bytes
-                    .saturating_add(expected.len)
-                    .saturating_add(4 + crate::BLAKE3_HASH_LEN as u64 + 8);
-                if read_pack_entry(&state.packs_dir, hash, *expected).is_ok() {
+                // Streaming re-verify: hashes the body in fixed chunks rather
+                // than materializing the whole (possibly multi-GB) record, so
+                // revalidation under the store lock cannot OOM. Returns bytes
+                // read so the scrub's pacing/reporting contract covers it.
+                let (still_corrupt, read_bytes) =
+                    record_reverifies_corrupt(&state.packs_dir, hash, *expected);
+                revalidation_bytes = revalidation_bytes.saturating_add(read_bytes);
+                if !still_corrupt {
                     continue;
                 }
             }

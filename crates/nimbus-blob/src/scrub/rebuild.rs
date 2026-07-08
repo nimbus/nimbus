@@ -389,6 +389,14 @@ pub(super) fn rebuild_index_locked(
         }
     }
     if !unlocatable.is_empty() {
+        // Fail closed WITHOUT leaving a provisional empty index behind: if
+        // this open created `index.log` from missing, remove it so the next
+        // open sees the index as still-missing (needs repair) rather than as
+        // an authoritative empty index that would prune the quarantine claims
+        // we are refusing to drop.
+        if state.index_provisional && state.index.is_empty() {
+            let _ = std::fs::remove_file(&state.index_path);
+        }
         unlocatable.sort();
         return Err(Error::storage(
             StorageErrorKind::Corruption,

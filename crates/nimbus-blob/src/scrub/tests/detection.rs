@@ -348,3 +348,30 @@ async fn corrupt_checkpoint_is_ignored_and_full_scan_runs() {
         "the corruption is found despite the damaged checkpoint: {report:?}"
     );
 }
+
+#[tokio::test]
+async fn quarantine_revalidation_streams_large_corrupt_record() {
+    // A large record with a single flipped byte: revalidation must not
+    // materialize the whole blob, and the streamed bytes are accounted.
+    let (dir, store) = open_temp(16 * 1024 * 1024);
+    let big: Vec<u8> = (0..4_000_000usize).map(|i| (i % 251) as u8).collect();
+    let victim = store.put(Bytes::from(big.clone())).await.unwrap();
+    flip_first_body_byte(&dir, &store, victim).await;
+
+    let report = LocalPackScrubber::new(store.clone())
+        .with_pacing(ScrubPacing::bytes_per_tick(64 * 1024).unwrap())
+        .scrub()
+        .await
+        .unwrap();
+
+    assert!(report.quarantined_hashes.contains(&victim));
+    // Every tick — sequential scan AND streamed revalidation — stays under
+    // the configured budget (proves neither path buffered the whole blob).
+    assert!(
+        report.pacing.bytes_per_tick.iter().all(|t| *t <= 64 * 1024),
+        "no tick exceeds budget: {:?}",
+        report.pacing.bytes_per_tick
+    );
+    let err = store.get(&victim).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+}

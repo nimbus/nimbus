@@ -475,3 +475,44 @@ async fn failed_missing_index_rebuild_leaves_no_provisional_index() {
         "quarantine evidence retained"
     );
 }
+
+#[tokio::test]
+async fn failed_open_then_rebuild_removes_provisional_index() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store.put(Bytes::from_static(b"claimed")).await.unwrap();
+    let entry = entry_for(&store, victim).await;
+    flip_first_body_byte(&dir, &store, victim).await;
+    LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    drop(store);
+
+    // Destroy the record framing (unrecoverable) and remove the index.
+    let path = local::pack_path(&dir.path().join("packs"), entry.pack_id);
+    {
+        let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.seek(SeekFrom::Start(entry.offset)).unwrap();
+        file.write_all(b"XXXX").unwrap();
+        file.sync_data().unwrap();
+    }
+    fs::remove_file(dir.path().join("index.log")).unwrap();
+
+    // The PUBLIC open-then-rebuild workflow: open (creates provisional empty
+    // index) then rebuild_index_from_packs, which fails closed. The
+    // provisional index must be removed so a later open still sees the index
+    // as missing (needs repair) rather than pruning the quarantine claim.
+    let store = LocalPackStore::open(dir.path()).unwrap();
+    let err = LocalPackScrubber::new(store.clone())
+        .rebuild_index_from_packs()
+        .await
+        .unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    drop(store);
+    assert!(
+        !dir.path().join("index.log").exists(),
+        "the provisional empty index is removed on fail-closed rebuild"
+    );
+    let quarantine = fs::read(dir.path().join("quarantine.nblq")).unwrap();
+    assert!(
+        quarantine.len() > b"NBLQ2\n".len(),
+        "quarantine evidence retained"
+    );
+}
