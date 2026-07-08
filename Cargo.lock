@@ -6668,6 +6668,7 @@ dependencies = [
  "async-trait",
  "blake3",
  "bytes",
+ "fs2",
  "futures",
  "nimbus-core",
  "nimbus-crypto",

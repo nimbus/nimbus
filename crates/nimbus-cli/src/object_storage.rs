@@ -311,7 +311,9 @@ fn run_bootstrap_master_key(command: BootstrapMasterKeyCommand) -> Result<(), Bo
 fn run_gc_status(command: GcStatusCommand) -> Result<(), Box<dyn Error>> {
     let tenant = TenantId::new(command.tenant)?;
     let root = object_blob_root(&command.data_dir, &tenant);
-    let store = LocalPackStore::open(&root)?;
+    // Read-only inspection: coexists with a running server that holds the
+    // root's exclusive write lock.
+    let store = LocalPackStore::open_read_only(&root)?;
     let live = store.live_entries()?;
     emit_object_storage_info(format!(
         "gc-status tenant={} live_blobs={} root={}",
@@ -424,7 +426,9 @@ fn backup_roots_from_archive_or_local(
     match object_backup_roots(archive) {
         Ok(roots) if !roots.is_empty() => Ok(roots),
         Ok(_) | Err(_) => {
-            let local = LocalPackStore::open(object_blob_root(data_dir, tenant))?;
+            // Read-only enumeration: must not contend for the root's
+            // exclusive write lock.
+            let local = LocalPackStore::open_read_only(object_blob_root(data_dir, tenant))?;
             Ok(local
                 .live_entries()?
                 .into_iter()

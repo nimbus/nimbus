@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use nimbus_blob::{
-    BlobCloudConfig, BlobS3Credentials, BlobStore, EncryptedBlobStore, LocalPackStore,
-    ObjectStoreBlobStore, PlacementBlobStore, PlacementMode,
+    BlobCloudConfig, BlobHash, BlobS3Credentials, BlobStore, EncryptedBlobStore, LocalPackStore,
+    LocalPackStoreOptions, ObjectStoreBlobStore, PlacementBlobStore, PlacementMode,
 };
 use nimbus_core::{Error, Result, StorageErrorKind, TenantId};
 use nimbus_crypto::{
@@ -139,8 +139,17 @@ impl ObjectStorageResolver {
             }
         }
 
+        // Bind the pack root to this tenant: a root provisioned for tenant A
+        // refuses to open as tenant B (format-marker identity), and the
+        // exclusive root lock makes any second live writable handle Busy.
         let store: Arc<dyn BlobStore> = Arc::new(EncryptedBlobStore::new(
-            LocalPackStore::open(self.object_blob_root(tenant))?,
+            LocalPackStore::open_with_options(
+                self.object_blob_root(tenant),
+                LocalPackStoreOptions {
+                    identity: Some(tenant_root_identity(tenant)),
+                    ..LocalPackStoreOptions::default()
+                },
+            )?,
             self.tenant_blob_key(tenant)?,
         ));
         let mut stores = self.local_stores.lock().map_err(|_| {
@@ -266,6 +275,11 @@ impl ObjectStorageResolver {
 /// Returns the local byte-plane root for one tenant under a deployment data dir.
 pub fn object_blob_root(data_dir: &Path, tenant: &TenantId) -> PathBuf {
     data_dir.join("object-blobs").join(tenant.as_str())
+}
+
+/// Root identity a tenant's pack root is bound to (BLAKE3 of the tenant id).
+pub fn tenant_root_identity(tenant: &TenantId) -> [u8; 32] {
+    *BlobHash::of(tenant.as_str().as_bytes()).as_bytes()
 }
 
 /// Returns the default object-storage master-key file under a deployment data dir.

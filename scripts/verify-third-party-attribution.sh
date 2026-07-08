@@ -7,7 +7,8 @@
 #   3. Each file listed in THIRD_PARTY.md carries a "Lifted from <project>@<sha>"
 #      or "Adapted from <project>@<sha>" header in its first 20 lines.
 #
-# Scope (per G4): crates/nimbus-guest, crates/nimbus-libkrun-*.
+# Scope (per G4): crates/nimbus-guest, crates/nimbus-libkrun-*; plus
+# crates/nimbus-blob (RustFS-adapted disk primitives, rustfs-storage-hardening plan).
 # Pre-existence: if none of the guarded crates exist yet, this gate passes
 # with an informational note — the crates land in Band B2 / Band S.
 
@@ -33,6 +34,7 @@ pass() {
 
 required_license_for() {
   case "$1" in
+    nimbus-blob) printf 'LICENSE-APACHE-rustfs' ;;
     nimbus-guest) printf 'LICENSE-MIT-muvm' ;;
     nimbus-libkrun-snapshot) printf 'LICENSE-APACHE-firecracker' ;;
     nimbus-libkrun-fork-primitive) printf 'LICENSE-APACHE-zeroboot' ;;
@@ -100,6 +102,9 @@ check_crate() {
 
 shopt -s nullglob
 crate_dirs=()
+if [ -d "crates/nimbus-blob" ]; then
+  crate_dirs+=("crates/nimbus-blob")
+fi
 if [ -d "crates/nimbus-guest" ]; then
   crate_dirs+=("crates/nimbus-guest")
 fi
@@ -109,7 +114,7 @@ done
 shopt -u nullglob
 
 if [ "${#crate_dirs[@]}" -eq 0 ]; then
-  printf 'no guarded crates exist yet (crates/nimbus-guest, crates/nimbus-libkrun-*)\n'
+  printf 'no guarded crates exist yet (crates/nimbus-blob, crates/nimbus-guest, crates/nimbus-libkrun-*)\n'
   printf 'gate passes: nothing to enforce until Band B2 / Band S land\n'
   exit 0
 fi
