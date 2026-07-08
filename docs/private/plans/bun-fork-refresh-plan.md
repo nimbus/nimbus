@@ -14,7 +14,7 @@ Execution model: BFR0/BFR1 and BFR3/BFR4 are delegated to Codex (gpt-5.5)
 rescue jobs with this plan + the spec as the brief; BFR2 (GitHub state), all
 reviews, BFR5 (PR), and BFR6 (evidence) stay with the orchestrator.
 
-## BFR0 — Rebase the delta onto the new base — `pending`
+## BFR0 — Rebase the delta onto the new base — `done` (2026-07-08)
 
 - In the fork checkout: branch `nimbus/bun-main-20260708` at
   `332f7444f94025776a173a96b0d7c584298ffea1`.
@@ -28,18 +28,50 @@ reviews, BFR5 (PR), and BFR6 (evidence) stay with the orchestrator.
   written reason per fold); `bun scripts/build.ts` configure step succeeds;
   `cargo check` of the touched fork crates (`embed_probe`, `link_bridge`,
   `bun_bin`) passes.
-- Evidence: (fill at completion — conflict log, observed upstream version.)
+- Evidence: 26 commits (23 ported + 3 post-review hardening); delta HEAD
+  `634c7e910b0`. 4 picks conflicted (probe target, resolver denial, simdutf
+  namespace, shared embedder build mode); full log + review triage at fork
+  `.git/BFR0-conflict-log.md`. Upstream at 1.4.0 (unreleased), no release
+  tag past `bun-v1.3.14`; WebKit pin moved to `c9ad5813fd2` (checked out).
+  Notable re-expressions: simdutf decoration regenerated to cover 2 new
+  upstream functions (62 C / 61 Rust symbols); new
+  `embedder_touch_runtime_state()` accessor replaces the raw
+  `runtime_state()` touch after upstream's `pub(crate)` sweep;
+  `bun_private_simdutf_namespace` registered in workspace check-cfg lints.
+  A read-only Codex review (autoreview branch-diff) returned 6 findings;
+  triage: 2 accepted+fixed (ELF LTO fix-up skipped for probe/shared links;
+  embedder deny gate bypassable via the NodeVM path AND the node:vm-context
+  loader hook — both gated now), 1 false positive, 2 pre-existing delta
+  designs recorded as follow-ups, 1 by-design. Gates: `cargo check
+  -p bun_embed_probe -p bun_link_bridge -p bun_bin` clean; `cargo fmt --all
+  --check` clean; targeted `ninja` compile of NodeVM.cpp.o clean. Executed
+  by orchestrator (Codex sandbox denies `.git` writes). Environment notes:
+  fork converted to standalone clone (user-approved); keg-only `lld@21`
+  must be on PATH for bare cargo commands; `vendor/lolhtml` populated via
+  `ninja -C build/debug clone-lolhtml`.
 
-## BFR1 — Fork proof suite green on the new base — `pending`
+## BFR1 — Fork proof suite green on the new base — `partial (local 1-7 green; behavior → hosted)`
 
 - Build the proof target on darwin-arm64: profile `release-local`, simdutf
   namespace enabled, target `check-bun-embed-shared`.
 - Completion gate: build succeeds; the shared adapter exports exactly the 11
   contract symbols; the probe suite (`nimbus_bun_embed_probe_*`) passes;
   build-graph audit shows dlopen-safe TLS and no muldefs.
-- Evidence: (fill at completion — proof output, export list, delta HEAD SHA.)
+- Evidence (local, darwin-arm64, HEAD `9c9ed55fd88`): verifier steps 1-7
+  PASSED — fork native shared-adapter build succeeds; export audit shows
+  exactly the 11 contract symbols with 0 leaked native symbols; build-graph
+  safety (no muldefs / no static-TLS) and simdutf-namespace separation pass.
+  Steps 8-11 (nimbus-side dlopen behavior tests, incl. the node:vm proof)
+  could NOT complete locally: the machine is in swap exhaustion (44/46 GiB
+  used) after the hours-long fork builds, and macOS jetsam repeatedly kills
+  the multi-GiB nimbus-runtime linked-test link. The only large memory
+  consumers are the user's own apps (not safe to kill). This is an
+  environmental limit, not a code fault. The behavior half is routed to the
+  hosted `bun-jsc-adapter.yml` dispatch (run 28963909313, linux-x86_64 +
+  darwin-arm64), which builds from the pushed branch and runs the identical
+  probe suite on clean-memory runners. Local logs: scratchpad `bfr1-*.log`.
 
-## BFR2 — Publish fork state — `pending`
+## BFR2 — Publish fork state — `in_progress (branch pushed; tag/default held for hosted proof)`
 
 - Tag `nimbus-bun-jsc-proof-main-20260708` at the proof-verified HEAD.
 - Push branch + tag with explicit refspecs; verify with `git ls-remote`.
@@ -48,7 +80,12 @@ reviews, BFR5 (PR), and BFR6 (evidence) stay with the orchestrator.
 - Disable inherited upstream automation workflows on the fork.
 - Completion gate: remote shows new branch, tag → verified SHA, new default
   branch; old refs untouched.
-- Evidence: (fill at completion.)
+- Progress: branch `nimbus/bun-main-20260708` pushed to origin at
+  `9c9ed55fd88` and verified via `git ls-remote` (reversible prep — no
+  release claim). The proof TAG, default-branch flip, and upstream-workflow
+  disable are HELD until the hosted proof (run 28963909313) is green, per the
+  spec rule "tag only after the proof suite passes" — the tag is the claim.
+- Evidence: (fill tag SHA + default-branch flip at completion.)
 
 ## BFR3 — Repoint Nimbus pins — `pending`
 
@@ -78,6 +115,20 @@ reviews, BFR5 (PR), and BFR6 (evidence) stay with the orchestrator.
 - Completion gate: PR merged with green hosted CI including the
   `bun-runtime-contract` lane.
 - Evidence: (fill at completion — PR number, merge SHA, CI verdict.)
+
+## Follow-ups surfaced by the BFR0 Codex review (out of campaign scope)
+
+Pre-existing delta design, identical on the old branch — not rebase
+regressions; both need an owner after this campaign:
+
+- `EMBEDDER_DENY_ALL_MODULE_RESOLUTION` (fork `src/jsc/ModuleLoader.rs`) is a
+  process-wide `AtomicBool`; concurrent VMs in one process race the deny
+  gate (guard drop re-enables resolution for the other VM). Safe under the
+  current fresh-discard single-VM adapter use; must become per-VM state
+  before any multi-VM-per-process embedding.
+- The native permission deny profile disables string codegen before
+  generated-bundle evaluation; a generated bundle relying on `new Function`
+  runtime handlers would fail to load (current bundles don't).
 
 ## BFR6 — Post-merge evidence and closeout — `pending`
 
