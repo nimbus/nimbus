@@ -226,6 +226,11 @@ pub(super) fn rebuild_corrupt_index_under_guard(
                 format!("persist rebuild quarantines {}", quarantine_path.display()),
             )
         })?;
+        // Surface the rebuild-created quarantines to operator automation,
+        // matching the normal scrub quarantine path.
+        report.quarantined_hashes.extend(new_quarantines.keys());
+        report.quarantined_hashes.sort();
+        report.quarantined_hashes.dedup();
     }
     // Invalidate any resume checkpoint BEFORE publishing the rebuilt index:
     // its evidence was gathered against the pre-rebuild index/scan state, and
@@ -447,6 +452,11 @@ pub(super) fn rebuild_index_locked(
         );
         local::write_quarantine_locked(state, &merged, &*observer)?;
         state.quarantined = merged;
+        // Surface the rebuild-created quarantines to operator automation,
+        // matching the normal scrub quarantine path.
+        report.quarantined_hashes.extend(new_quarantines.keys());
+        report.quarantined_hashes.sort();
+        report.quarantined_hashes.dedup();
     }
 
     let index_bytes = encode_index(&rebuilt);

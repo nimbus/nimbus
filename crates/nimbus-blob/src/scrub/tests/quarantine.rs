@@ -844,3 +844,61 @@ async fn empty_index_after_crash_does_not_prune_or_reclaim_quarantine() {
     let err = store.get(&victim).await.unwrap_err();
     assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
 }
+
+#[tokio::test]
+async fn authoritative_index_with_records_prunes_released_quarantine() {
+    // An index log that HAS records (a live blob + a released one) is
+    // authoritative: a stale quarantine entry for the released hash is
+    // pruned, and compaction is not deadlocked. This is the crash-durable
+    // distinction from a magic-only (provisional/loss) index, which is never
+    // pruned against.
+    let (dir, store) = open_temp(64 * 1024);
+    let keep = store.put(Bytes::from_static(b"live blob")).await.unwrap();
+    let released = store
+        .put(Bytes::from_static(b"released blob"))
+        .await
+        .unwrap();
+    store.release(&released).await.unwrap();
+    drop(store);
+
+    // Craft the stale side-file entry (the lost rewrite after release).
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"NBLQ2\n");
+    bytes.extend_from_slice(released.as_bytes());
+    bytes.push(2u8); // Content reason.
+    fs::write(dir.path().join("quarantine.nblq"), &bytes).unwrap();
+
+    let store = LocalPackStore::open(dir.path()).unwrap();
+    assert_eq!(
+        store.open_report().unwrap().stale_quarantine_entries_pruned,
+        1,
+        "an authoritative (record-bearing) index prunes the released stale entry"
+    );
+    // Not deadlocked: compaction proceeds.
+    store.compact().await.unwrap();
+    assert_eq!(
+        store.get(&keep).await.unwrap(),
+        Bytes::from_static(b"live blob")
+    );
+}
+
+#[tokio::test]
+async fn rebuild_reports_created_quarantines() {
+    let (dir, store) = open_temp(64 * 1024);
+    let before = store.put(Bytes::from_static(b"before")).await.unwrap();
+    let corrupt = store.put(Bytes::from_static(b"corrupt seg")).await.unwrap();
+    let after = store.put(Bytes::from_static(b"after")).await.unwrap();
+    let _ = (before, after);
+
+    // A record whose direct verification fails during rebuild is quarantined
+    // AND must be named in the report.
+    flip_first_body_byte(&dir, &store, corrupt).await;
+    let report = LocalPackScrubber::new(store.clone())
+        .rebuild_index_from_packs()
+        .await
+        .unwrap();
+    assert!(
+        report.quarantined_hashes.contains(&corrupt),
+        "rebuild-created quarantines are surfaced in the report: {report:?}"
+    );
+}

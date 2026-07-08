@@ -284,20 +284,25 @@ impl LocalPackStore {
         // would otherwise poison a future reintroduction of the same content
         // hash (release is the operation that lifts content quarantines).
         //
-        // Prune ONLY when the index is non-empty. A non-empty index is always
-        // COMPLETE and authoritative — it is produced either by a normal
-        // load or by rebuild's single atomic replace (which carries every
-        // quarantine claim into it) — so a quarantine entry absent from it is
-        // genuinely a released claim. An EMPTY index, by contrast, is either
-        // a fresh store (no quarantine entries to lose) or a
-        // provisional/index-loss state; pruning against it would erase the
-        // only claim-tracking evidence for corrupt blobs whose index was
-        // lost. This makes the decision crash-safe without relying on the
-        // in-memory `index_was_missing` flag surviving a restart. The
-        // compaction guard (see `compact_locked`) protects the empty-index
-        // case from pack deletion until a rebuild republishes the claims.
+        // Prune ONLY when the index log CONTAINS RECORDS — a crash-durable
+        // signal read from disk, not the in-memory map or a restart-fragile
+        // flag. Three cases:
+        //   * log has records (PUT/RELEASE) → authoritative log that has been
+        //     written to (even if the net live map is empty because every
+        //     blob was released); an absent quarantine entry is a genuinely
+        //     released claim → prune.
+        //   * log is magic-only → either a fresh store (no quarantine to
+        //     lose) or a provisional/index-loss state (a crash after a
+        //     provisional open, before rebuild) → never prune; preserve the
+        //     only claim-tracking evidence.
+        // The compaction guard (see `compact_locked`) protects the
+        // magic-only-with-claims case from pack deletion until rebuild
+        // republishes the claims into a real index.
+        let index_has_records = fs::metadata(&index_path)
+            .map(|meta| meta.len() > INDEX_MAGIC.len() as u64)
+            .unwrap_or(false);
         let before = quarantined.len();
-        if !index.is_empty() {
+        if index_has_records {
             quarantined.retain(|hash, _| index.contains_key(hash));
         }
         report.stale_quarantine_entries_pruned = before - quarantined.len();
