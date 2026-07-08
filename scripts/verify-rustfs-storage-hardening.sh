@@ -165,6 +165,9 @@ required_tests=(
   scrub_encrypted_layer_detects_aead_failure
   scrub_quarantine_survives_compaction_without_poisoning
   scrub_reupload_clears_quarantine
+  scrub_stale_snapshot_cannot_quarantine_relocated_blob
+  scrub_resume_rescans_growable_pack
+  released_quarantined_blob_reads_not_found
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then

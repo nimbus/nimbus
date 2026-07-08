@@ -234,15 +234,17 @@ impl LocalPackScrubber {
         let snapshot = self.snapshot().await?;
         let checkpoint_path = snapshot.root.join(SCRUB_CHECKPOINT_FILE);
         let checkpoint = load_checkpoint(&checkpoint_path)?;
-        let resume_after = match checkpoint {
-            Some(checkpoint) if !checkpoint.complete => checkpoint.last_completed_pack_id,
+        let resume = match checkpoint {
+            Some(checkpoint) if !checkpoint.complete => Some(checkpoint),
             _ => None,
         };
 
         let pack_ids = local::pack_ids_on_disk(&snapshot.packs_dir)?;
+        let max_pack_seen = pack_ids.iter().max().copied();
         let mut report = ScrubReport::default();
         report.checkpoint.path = Some(checkpoint_path.clone());
-        report.checkpoint.resumed_after_pack_id = resume_after;
+        report.checkpoint.resumed_after_pack_id =
+            resume.and_then(|checkpoint| checkpoint.last_completed_pack_id);
 
         let index_offsets = snapshot
             .index
@@ -264,17 +266,22 @@ impl LocalPackScrubber {
                     None,
                     format!("index references missing pack {}", entry.pack_id),
                 ));
-                missing_quarantine.push(*hash);
+                // Location-bound: quarantine only if the hash still maps to
+                // this exact (missing-pack) record at quarantine time.
+                missing_quarantine.push((*hash, Some(*entry)));
             }
         }
         self.quarantine(&mut report, missing_quarantine).await?;
 
         let mut pacing = PacingTracker::new(self.pacing);
         let mut scanned = 0usize;
-        let mut last_checkpoint = resume_after;
-        for pack_id in pack_ids {
-            if let Some(last) = resume_after {
-                if pack_id <= last {
+        let mut last_checkpoint = resume.and_then(|checkpoint| checkpoint.last_completed_pack_id);
+        for pack_id in pack_ids.iter().copied() {
+            if let Some(resume) = resume {
+                // Only provably sealed, fully verified packs are skipped; the
+                // pack that was still appendable when the interrupted run
+                // scanned it is rescanned (it may have grown since).
+                if resume.safe_to_skip(pack_id) {
                     report.packs_skipped_via_checkpoint += 1;
                     continue;
                 }
@@ -322,6 +329,7 @@ impl LocalPackScrubber {
 
             let checkpoint = ScrubCheckpoint {
                 last_completed_pack_id: Some(pack_id),
+                max_pack_seen,
                 complete: false,
             };
             self.write_checkpoint(checkpoint).await?;
@@ -331,6 +339,7 @@ impl LocalPackScrubber {
 
         let complete_checkpoint = ScrubCheckpoint {
             last_completed_pack_id: last_checkpoint,
+            max_pack_seen,
             complete: true,
         };
         self.write_checkpoint(complete_checkpoint).await?;
@@ -355,16 +364,23 @@ impl LocalPackScrubber {
             .await
     }
 
-    async fn quarantine(&self, report: &mut ScrubReport, hashes: Vec<BlobHash>) -> Result<()> {
-        if hashes.is_empty() {
+    async fn quarantine(
+        &self,
+        report: &mut ScrubReport,
+        requests: Vec<(BlobHash, Option<PackEntry>)>,
+    ) -> Result<()> {
+        if requests.is_empty() {
             return Ok(());
         }
-        let unique = hashes.into_iter().collect::<BTreeSet<_>>();
-        let hashes = unique.iter().copied().collect::<Vec<_>>();
-        let inserted = self.store.quarantine_hashes(hashes).await?;
-        if inserted > 0 {
-            let mut inserted_hashes = unique.into_iter().collect::<Vec<_>>();
-            report.quarantined_hashes.append(&mut inserted_hashes);
+        let unique = requests
+            .into_iter()
+            .collect::<BTreeMap<BlobHash, Option<PackEntry>>>();
+        let mut inserted = self
+            .store
+            .quarantine_hashes(unique.into_iter().collect())
+            .await?;
+        if !inserted.is_empty() {
+            report.quarantined_hashes.append(&mut inserted);
             report.quarantined_hashes.sort();
             report.quarantined_hashes.dedup();
         }
@@ -430,7 +446,9 @@ impl EncryptedBlobScrubber {
                         hash = entry.hash
                     ),
                 ));
-                quarantine.push(entry.hash);
+                // Content-level corruption: identical bytes wherever the
+                // record lives (content-addressed), so no location validation.
+                quarantine.push((entry.hash, None));
             }
         }
         local.quarantine(&mut report, quarantine).await?;
@@ -448,12 +466,25 @@ struct ScrubSnapshot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ScrubCheckpoint {
     last_completed_pack_id: Option<u64>,
+    /// Highest pack id on disk when the checkpointed run scanned. Packs below
+    /// this were sealed (only the max pack accepts appends), so only they are
+    /// safe to skip on resume; the max pack may have grown and is rescanned.
+    max_pack_seen: Option<u64>,
     complete: bool,
 }
 
 impl ScrubCheckpoint {
+    /// Whether `pack_id` was provably sealed when this checkpoint was taken
+    /// and already fully verified, i.e. safe to skip on resume.
+    fn safe_to_skip(&self, pack_id: u64) -> bool {
+        match (self.last_completed_pack_id, self.max_pack_seen) {
+            (Some(last), Some(max_seen)) => pack_id <= last && pack_id < max_seen,
+            _ => false,
+        }
+    }
+
     fn encode(self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(SCRUB_CHECKPOINT_MAGIC.len() + 8 + 1);
+        let mut bytes = Vec::with_capacity(SCRUB_CHECKPOINT_MAGIC.len() + 8 + 8 + 1);
         bytes.extend_from_slice(SCRUB_CHECKPOINT_MAGIC);
         bytes.extend_from_slice(
             &self
@@ -461,6 +492,7 @@ impl ScrubCheckpoint {
                 .unwrap_or(u64::MAX)
                 .to_le_bytes(),
         );
+        bytes.extend_from_slice(&self.max_pack_seen.unwrap_or(u64::MAX).to_le_bytes());
         bytes.push(u8::from(self.complete));
         bytes
     }
@@ -623,7 +655,7 @@ fn load_checkpoint(path: &Path) -> Result<Option<ScrubCheckpoint>> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|err| local::io_error(err, format!("read checkpoint {}", path.display())))?;
-    if bytes.len() != SCRUB_CHECKPOINT_MAGIC.len() + 8 + 1 {
+    if bytes.len() != SCRUB_CHECKPOINT_MAGIC.len() + 8 + 8 + 1 {
         return Err(local::corruption(format!(
             "checkpoint {} has invalid length",
             path.display()
@@ -639,7 +671,10 @@ fn load_checkpoint(path: &Path) -> Result<Option<ScrubCheckpoint>> {
     let mut raw_pack = [0u8; 8];
     raw_pack.copy_from_slice(&bytes[cursor..cursor + 8]);
     let raw_pack = u64::from_le_bytes(raw_pack);
-    let complete = match bytes[cursor + 8] {
+    let mut raw_max = [0u8; 8];
+    raw_max.copy_from_slice(&bytes[cursor + 8..cursor + 16]);
+    let raw_max = u64::from_le_bytes(raw_max);
+    let complete = match bytes[cursor + 16] {
         0 => false,
         1 => true,
         other => {
@@ -654,6 +689,11 @@ fn load_checkpoint(path: &Path) -> Result<Option<ScrubCheckpoint>> {
             None
         } else {
             Some(raw_pack)
+        },
+        max_pack_seen: if raw_max == u64::MAX {
+            None
+        } else {
+            Some(raw_max)
         },
         complete,
     }))
@@ -973,7 +1013,7 @@ async fn merge_pack_findings(
                         entry.pack_id, entry.offset, record.hash
                     ),
                 ));
-                quarantine.push(*hash);
+                quarantine.push((*hash, Some(*entry)));
             }
             Some(record) if record.len != entry.len => {
                 report.corrupt_records += 1;
@@ -989,13 +1029,13 @@ async fn merge_pack_findings(
                         entry.len, record.len
                     ),
                 ));
-                quarantine.push(*hash);
+                quarantine.push((*hash, Some(*entry)));
             }
             Some(_) => {
                 report.records_verified += 1;
             }
             None if pack_scan.corrupt_offsets.contains(&entry.offset) => {
-                quarantine.push(*hash);
+                quarantine.push((*hash, Some(*entry)));
             }
             None if pack_scan.pack_header_valid => {
                 report.corrupt_records += 1;
@@ -1011,10 +1051,10 @@ async fn merge_pack_findings(
                         entry.pack_id, entry.offset
                     ),
                 ));
-                quarantine.push(*hash);
+                quarantine.push((*hash, Some(*entry)));
             }
             None => {
-                quarantine.push(*hash);
+                quarantine.push((*hash, Some(*entry)));
             }
         }
     }
@@ -1040,13 +1080,14 @@ async fn merge_pack_findings(
     if quarantine.is_empty() {
         return Ok(());
     }
-    let hashes = quarantine.into_iter().collect::<BTreeSet<_>>();
-    let inserted = store
-        .quarantine_hashes(hashes.iter().copied().collect::<Vec<_>>())
+    let requests = quarantine
+        .into_iter()
+        .collect::<BTreeMap<BlobHash, Option<PackEntry>>>();
+    let mut inserted = store
+        .quarantine_hashes(requests.into_iter().collect())
         .await?;
-    if inserted > 0 {
-        let mut inserted_hashes = hashes.into_iter().collect::<Vec<_>>();
-        report.quarantined_hashes.append(&mut inserted_hashes);
+    if !inserted.is_empty() {
+        report.quarantined_hashes.append(&mut inserted);
         report.quarantined_hashes.sort();
         report.quarantined_hashes.dedup();
     }

@@ -392,3 +392,102 @@ async fn scrub_reupload_clears_quarantine() {
     assert_eq!(reopened.get(&victim).await.unwrap(), victim_bytes);
     assert_eq!(reopened.open_report().unwrap().quarantine_entries_loaded, 0);
 }
+
+#[tokio::test]
+async fn scrub_stale_snapshot_cannot_quarantine_relocated_blob() {
+    let (_dir, store) = open_temp(64 * 1024);
+    let keep = store
+        .put(Bytes::from_static(b"healthy mover"))
+        .await
+        .unwrap();
+    let junk = store.put(Bytes::from_static(b"junk")).await.unwrap();
+    store.release(&junk).await.unwrap();
+
+    // A stale scrub snapshot captured this entry...
+    let stale_entry = entry_for(&store, keep).await;
+    // ...then compaction legitimately rewrote the blob to a new pack.
+    store.compact().await.unwrap();
+    let moved_entry = entry_for(&store, keep).await;
+    assert_ne!(
+        (stale_entry.pack_id, stale_entry.offset),
+        (moved_entry.pack_id, moved_entry.offset),
+        "compaction relocated the record"
+    );
+
+    // A location-bound quarantine request from the stale snapshot must be a
+    // no-op: the current record is healthy.
+    let inserted = store
+        .quarantine_hashes(vec![(keep, Some(stale_entry))])
+        .await
+        .unwrap();
+    assert!(inserted.is_empty(), "stale finding must not quarantine");
+    assert_eq!(
+        store.get(&keep).await.unwrap(),
+        Bytes::from_static(b"healthy mover")
+    );
+}
+
+#[tokio::test]
+async fn scrub_resume_rescans_growable_pack() {
+    let (dir, store) = open_temp(64 * 1024);
+    store
+        .put(Bytes::from_static(b"first record"))
+        .await
+        .unwrap();
+
+    // Simulate a scrub that crashed right after checkpointing pack 0 while
+    // pack 0 was still the active (appendable) pack: last_completed == 0,
+    // max_pack_seen == 0, complete == false. (The pack-limit early-return can
+    // never produce this shape — it always stops BEFORE a further pack — so
+    // this is a crash-window state, hand-crafted like the other crash tests.)
+    let checkpoint_path = dir.path().join("scrub-checkpoint.nbls");
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"NBLSCP1\n");
+    bytes.extend_from_slice(&0u64.to_le_bytes());
+    bytes.extend_from_slice(&0u64.to_le_bytes());
+    bytes.push(0u8);
+    fs::write(&checkpoint_path, &bytes).unwrap();
+
+    // The pack grows after the checkpoint, and the new record is corrupted.
+    let grown = store
+        .put(Bytes::from_static(b"appended later"))
+        .await
+        .unwrap();
+    flip_first_body_byte(&dir, &store, grown).await;
+
+    // Resume must NOT skip pack 0 (it was appendable when checkpointed): the
+    // corruption is found and quarantined.
+    let resumed = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(resumed.completed);
+    assert_eq!(
+        resumed.packs_skipped_via_checkpoint, 0,
+        "an appendable pack is never checkpoint-skipped"
+    );
+    assert!(resumed.quarantined_hashes.contains(&grown));
+    let err = store.get(&grown).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+}
+
+#[tokio::test]
+async fn released_quarantined_blob_reads_not_found() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store
+        .put(Bytes::from_static(b"doomed bytes"))
+        .await
+        .unwrap();
+    flip_first_body_byte(&dir, &store, victim).await;
+    let report = LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(report.quarantined_hashes.contains(&victim));
+
+    // Releasing the claim lifts the quarantine entry with it: the hash reads
+    // as absent (NotFound), not as corruption, and the lift is durable.
+    store.release(&victim).await.unwrap();
+    let err = store.get(&victim).await.unwrap_err();
+    assert!(matches!(err, nimbus_core::Error::NotFound(_)), "{err}");
+
+    drop(store);
+    let reopened = LocalPackStore::open(dir.path()).unwrap();
+    assert_eq!(reopened.open_report().unwrap().quarantine_entries_loaded, 0);
+    let err = reopened.get(&victim).await.unwrap_err();
+    assert!(matches!(err, nimbus_core::Error::NotFound(_)), "{err}");
+}

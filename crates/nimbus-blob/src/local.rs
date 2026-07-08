@@ -419,10 +419,22 @@ impl LocalPackStore {
         .map_err(|err| Error::storage(StorageErrorKind::Other, format!("local pack task: {err}")))?
     }
 
-    pub(crate) async fn quarantine_hashes(&self, hashes: Vec<BlobHash>) -> Result<usize> {
+    /// Quarantines hashes, revalidating location-scoped findings against the
+    /// CURRENT index so a stale scrub snapshot can never quarantine a healthy
+    /// blob that compaction moved in the meantime.
+    ///
+    /// `expected: Some(entry)` quarantines only while the hash still maps to
+    /// exactly that record (record-level corruption is location-bound);
+    /// `None` quarantines unconditionally (content-level corruption, e.g. an
+    /// AEAD failure — content-addressed bytes are identical wherever they
+    /// live). Returns the hashes actually inserted.
+    pub(crate) async fn quarantine_hashes(
+        &self,
+        requests: Vec<(BlobHash, Option<PackEntry>)>,
+    ) -> Result<Vec<BlobHash>> {
         self.blocking(move |mut state| {
             ensure_writable(&state, "quarantine")?;
-            let result = quarantine_hashes_locked(&mut state, &hashes);
+            let result = quarantine_hashes_locked(&mut state, &requests);
             poison_on_write_failure(&mut state, &result);
             result
         })
@@ -513,6 +525,14 @@ impl BlobStore for LocalPackStore {
                     let observer = Arc::clone(&state.observer);
                     append_release_index_record(&state.index_path, &hash, &*observer)?;
                     state.index.remove(&hash);
+                    // A released claim's quarantine entry is meaningless (and
+                    // would otherwise pin absent hashes forever): lift it.
+                    if state.quarantined.contains(&hash) {
+                        let mut next = state.quarantined.clone();
+                        next.remove(&hash);
+                        write_quarantine_locked(state, &next, &*observer)?;
+                        state.quarantined = next;
+                    }
                 }
                 Ok(())
             })(&mut state);
@@ -646,32 +666,48 @@ fn encode_quarantine(quarantined: &HashSet<BlobHash>) -> Vec<u8> {
     bytes
 }
 
-fn quarantine_hashes_locked(state: &mut LocalPackState, hashes: &[BlobHash]) -> Result<usize> {
+fn quarantine_hashes_locked(
+    state: &mut LocalPackState,
+    requests: &[(BlobHash, Option<PackEntry>)],
+) -> Result<Vec<BlobHash>> {
     let mut next = state.quarantined.clone();
-    let mut inserted = 0usize;
-    for hash in hashes {
+    let mut inserted = Vec::new();
+    for (hash, expected) in requests {
+        // Location-bound findings must still describe the CURRENT record: a
+        // concurrent compaction may have rewritten the blob to a healthy
+        // record since the scrub snapshotted the index.
+        if let Some(expected) = expected {
+            if state.index.get(hash) != Some(expected) {
+                continue;
+            }
+        }
         if next.insert(*hash) {
-            inserted += 1;
+            inserted.push(*hash);
         }
     }
-    if inserted == 0 {
-        return Ok(0);
+    if inserted.is_empty() {
+        return Ok(inserted);
     }
 
     let observer = Arc::clone(&state.observer);
-    disk::write_replace_durable(
-        &state.quarantine_path,
-        &encode_quarantine(&next),
-        &*observer,
-    )
-    .map_err(|err| {
-        io_error(
-            err,
-            format!("write quarantine {}", state.quarantine_path.display()),
-        )
-    })?;
+    write_quarantine_locked(state, &next, &*observer)?;
     state.quarantined = next;
     Ok(inserted)
+}
+
+fn write_quarantine_locked(
+    state: &LocalPackState,
+    next: &HashSet<BlobHash>,
+    observer: &dyn SyncObserver,
+) -> Result<()> {
+    disk::write_replace_durable(&state.quarantine_path, &encode_quarantine(next), observer).map_err(
+        |err| {
+            io_error(
+                err,
+                format!("write quarantine {}", state.quarantine_path.display()),
+            )
+        },
+    )
 }
 
 pub(crate) fn ensure_pack_file(
@@ -999,14 +1035,17 @@ fn append_index_record(
 }
 
 fn read_blob_locked(state: &LocalPackState, hash: &BlobHash) -> Result<Bytes> {
-    if state.quarantined.contains(hash) {
-        return Err(corruption(format!("blob {hash} is quarantined by scrub")));
-    }
+    // Liveness first: an unindexed hash is NotFound even if a stale
+    // quarantine entry survives; only a LIVE quarantined claim reads as
+    // corruption.
     let entry = state
         .index
         .get(hash)
         .copied()
         .ok_or_else(|| Error::NotFound(format!("blob {hash}")))?;
+    if state.quarantined.contains(hash) {
+        return Err(corruption(format!("blob {hash} is quarantined by scrub")));
+    }
     read_pack_entry(&state.packs_dir, hash, entry)
 }
 
@@ -1029,14 +1068,14 @@ fn read_blob_range_locked(
     hash: &BlobHash,
     range: Range<u64>,
 ) -> Result<Bytes> {
-    if state.quarantined.contains(hash) {
-        return Err(corruption(format!("blob {hash} is quarantined by scrub")));
-    }
     let entry = state
         .index
         .get(hash)
         .copied()
         .ok_or_else(|| Error::NotFound(format!("blob {hash}")))?;
+    if state.quarantined.contains(hash) {
+        return Err(corruption(format!("blob {hash} is quarantined by scrub")));
+    }
     if range.end > entry.len {
         return Err(Error::InvalidInput(format!(
             "range {}..{} out of bounds for blob of {} bytes",
