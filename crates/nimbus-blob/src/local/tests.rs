@@ -842,7 +842,10 @@ async fn durable_write_fsync_error_poisons_store() {
 async fn open_prunes_stale_quarantine_entries() {
     // Simulate the crash window between release's index tombstone and the
     // quarantine side-file rewrite: a quarantine entry for an absent claim.
+    // A second LIVE blob keeps the index non-empty (authoritative), which is
+    // the condition under which the open-time prune applies.
     let (dir, store) = open_temp(256);
+    let keep = store.put(Bytes::from_static(b"keeper")).await.unwrap();
     let hash = store
         .put(Bytes::from_static(b"reintroduce me"))
         .await
@@ -870,5 +873,9 @@ async fn open_prunes_stale_quarantine_entries() {
     assert_eq!(
         reopened.get(&again).await.unwrap(),
         Bytes::from_static(b"reintroduce me")
+    );
+    assert_eq!(
+        reopened.get(&keep).await.unwrap(),
+        Bytes::from_static(b"keeper")
     );
 }

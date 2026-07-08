@@ -283,14 +283,21 @@ impl LocalPackStore {
         // the quarantine side-file rewrite leaves an absent-claim entry that
         // would otherwise poison a future reintroduction of the same content
         // hash (release is the operation that lifts content quarantines).
-        // Skip pruning when the index was just (re)created from missing: an
-        // empty index would drop EVERY quarantine claim before a rebuild can
-        // carry it, erasing the only claim-tracking evidence for corrupt
-        // blobs whose index log was lost. Rebuild re-establishes the entries;
-        // a genuine release-race stale entry is pruned on the next normal
-        // open once the index is authoritative again.
+        //
+        // Prune ONLY when the index is non-empty. A non-empty index is always
+        // COMPLETE and authoritative — it is produced either by a normal
+        // load or by rebuild's single atomic replace (which carries every
+        // quarantine claim into it) — so a quarantine entry absent from it is
+        // genuinely a released claim. An EMPTY index, by contrast, is either
+        // a fresh store (no quarantine entries to lose) or a
+        // provisional/index-loss state; pruning against it would erase the
+        // only claim-tracking evidence for corrupt blobs whose index was
+        // lost. This makes the decision crash-safe without relying on the
+        // in-memory `index_was_missing` flag surviving a restart. The
+        // compaction guard (see `compact_locked`) protects the empty-index
+        // case from pack deletion until a rebuild republishes the claims.
         let before = quarantined.len();
-        if !index_was_missing {
+        if !index.is_empty() {
             quarantined.retain(|hash, _| index.contains_key(hash));
         }
         report.stale_quarantine_entries_pruned = before - quarantined.len();
@@ -1219,16 +1226,18 @@ fn read_pack_entry_range(
 }
 
 fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
-    // Refuse to compact while quarantine claims survive only in the side
-    // file with no index entry (the index-loss state a provisional open
-    // leaves until rebuild): those claims' bytes live in packs this function
-    // would delete. Fail closed until rebuild re-establishes their index
-    // entries (or they are explicitly released).
-    if state.index_provisional
-        && state
-            .quarantined
-            .keys()
-            .any(|hash| !state.index.contains_key(hash))
+    // Refuse to compact while ANY quarantine claim survives only in the side
+    // file with no index entry (the index-loss state, whether or not this
+    // handle created the provisional index): those claims' bytes live in
+    // packs this function would delete. This is unconditional — after a
+    // crash the `index_provisional` flag is gone but the empty index and
+    // orphaned claims persist, and compaction must still refuse. There is no
+    // deadlock: a non-empty (authoritative) index has its stale entries
+    // pruned at open, so by compaction time no claim is orphaned there.
+    if state
+        .quarantined
+        .keys()
+        .any(|hash| !state.index.contains_key(hash))
     {
         // Busy, not Corruption: this is a precondition refusal, not a disk
         // fault, so it must NOT poison the store (the caller resolves the

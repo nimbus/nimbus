@@ -804,3 +804,43 @@ async fn compaction_refused_while_quarantine_orphaned_after_index_loss() {
         "claim recovered by rebuild"
     );
 }
+
+#[tokio::test]
+async fn empty_index_after_crash_does_not_prune_or_reclaim_quarantine() {
+    let (dir, store) = open_temp(64 * 1024);
+    let victim = store
+        .put(Bytes::from_static(b"claim survives crash"))
+        .await
+        .unwrap();
+    flip_first_body_byte(&dir, &store, victim).await;
+    LocalPackScrubber::new(store.clone()).scrub().await.unwrap();
+    assert!(store.get(&victim).await.is_err());
+    drop(store);
+
+    // Index-loss followed by a CRASH after a provisional open (before rebuild):
+    // simulate by leaving an empty index.log on disk (magic only). The
+    // index_provisional flag did NOT survive — the next open sees an existing
+    // empty index.
+    fs::remove_file(dir.path().join("index.log")).unwrap();
+    fs::write(dir.path().join("index.log"), b"NBLIDX2\n").unwrap();
+
+    // A fresh open must NOT prune the quarantine against the empty index...
+    let store = LocalPackStore::open(dir.path()).unwrap();
+    assert_eq!(
+        store.open_report().unwrap().quarantine_entries_loaded,
+        1,
+        "quarantine claim survives an empty index after crash"
+    );
+    // ...and compaction must refuse (bytes retained for rebuild).
+    let err = store.compact().await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Busy));
+
+    // Rebuild recovers the claim into the index; it reads fail-closed again.
+    LocalPackScrubber::new(store.clone())
+        .rebuild_index_from_packs()
+        .await
+        .unwrap();
+    assert!(store.has(&victim).await.unwrap());
+    let err = store.get(&victim).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+}
