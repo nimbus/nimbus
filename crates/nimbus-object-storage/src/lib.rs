@@ -15,6 +15,7 @@ pub use config::{ObjectStorageConfig, ObjectStorageEnv};
 pub use credentials::{ObjectStoreCredentialResolver, ObjectStoreSecret};
 pub use resolver::{
     ObjectStorageResolver, object_blob_key_path, object_blob_root, object_master_key_path,
+    tenant_root_identity,
 };
 
 #[cfg(test)]

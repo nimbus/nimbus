@@ -23,10 +23,16 @@ nimbus-core = { path = "../nimbus-core" }
 async-trait.workspace = true
 blake3.workspace = true
 bytes.workspace = true
+# Advisory root lock (flock). fs2 is the workspace's established locking
+# crate (cli, crypto, sandbox, server, operator); a repo-wide fs2->fs4
+# refresh is an enterprise-crate-adoption question, not this crate's.
+fs2.workspace = true
 object_store.workspace = true
+# The durable-write recipe (src/disk.rs) writes commit-point files through a
+# same-directory temp file persisted into place.
+tempfile.workspace = true
 tokio = { workspace = true }
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
-tempfile.workspace = true
 futures.workspace = true

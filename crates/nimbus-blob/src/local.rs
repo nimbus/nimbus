@@ -1,9 +1,52 @@
 //! [`LocalPackStore`] - durable append-only local [`BlobStore`] implementation.
 //!
 //! The pack store keeps one tenant's immutable blobs in a small set of pack
-//! files plus an append-only binary index. Pack bytes are persisted before the
-//! index record is published, so a crash may leave an unindexed orphaned record
-//! but not a visible blob whose bytes were never written.
+//! files plus an append-only binary index.
+//!
+//! ## Durability invariants
+//!
+//! - **Pack bytes are durable before the index record is published.** A crash
+//!   may leave an unindexed orphaned record but never a visible blob whose
+//!   bytes were not written (`crash_bytes_written_index_missing`).
+//! - **The index is append-only with per-record sync.** Index publication is
+//!   an append followed by `fdatasync` — the chosen RFS3 invariant (append+sync,
+//!   not temp+rename: the index is a log, so a torn tail is truncated at the
+//!   next open rather than atomically replaced). Torn trailing records are
+//!   self-healed at open; garbage mid-file fails closed as corruption.
+//! - **Commit-point files that stay in place go through the durable-replace
+//!   recipe** (temp → fdatasync → rename → parent-dir fsync; see
+//!   [`crate::disk`]) — today that is the root format marker.
+//! - **Directory entries are fsynced at creation commit points** (new pack
+//!   files, the index file, compaction removals), so a freshly created file
+//!   survives power loss along with its contents.
+//!
+//! ## Root ownership and the single-writer assumption
+//!
+//! Opening a root takes an exclusive advisory lock, validates/stamps the
+//! format marker, and sweeps crash leftovers — see [`crate::root_guard`].
+//! [`LocalPackStore::open_read_only`] is the lock-free inspection mode:
+//! point-in-time reads, never mutates (no marker stamping, no cleanup, no
+//! torn-tail truncation), and refuses writes with
+//! [`StorageErrorKind::Busy`]. Every crash-window guarantee above assumes a
+//! **single writer**: in-process writes serialize on the state mutex, and the
+//! root lock excludes any second writable handle for the store's lifetime.
+//!
+//! ## Write failures are fail-stop
+//!
+//! A failed `fdatasync` can leave the page cache clean while the data never
+//! reached disk, so a retried write may falsely succeed (the "fsyncgate"
+//! failure mode). Any I/O or corruption error on the write path therefore
+//! **poisons** the store: every subsequent mutation fails with
+//! [`StorageErrorKind::Unavailable`] until the store is reopened (reopen
+//! revalidates everything from disk). Reads stay available — they verify the
+//! BLAKE3 content address, so they cannot return wrong bytes.
+//!
+//! ## Filesystem contract
+//!
+//! The recipes here assume a local POSIX filesystem where same-directory
+//! rename is atomic and `fsync`/`fdatasync` are honored (APFS, ext4, XFS).
+//! Network and overlay filesystems (NFS, 9p, overlayfs) are outside the
+//! contract; do not place tenant byte roots on them.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions};
@@ -17,7 +60,9 @@ use bytes::Bytes;
 use nimbus_core::{Clock, Error, Result, StorageErrorKind, SystemClock};
 use tokio::io::AsyncReadExt;
 
+use crate::disk::{self, SyncObserver};
 use crate::hash::BlobHash;
+use crate::root_guard::{self, LocalPackStoreOptions, OpenReport, RootLock};
 use crate::store::{BlobStore, ByteStream};
 
 const PACK_MAGIC: &[u8] = b"NBLPACK1\n";
@@ -25,7 +70,7 @@ const RECORD_MAGIC: &[u8] = b"NBLR";
 const INDEX_MAGIC: &[u8] = b"NBLIDX2\n";
 const INDEX_PUT: u8 = 1;
 const INDEX_RELEASE: u8 = 2;
-const DEFAULT_PACK_TARGET_BYTES: u64 = 128 * 1024 * 1024;
+pub(crate) const DEFAULT_PACK_TARGET_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_PACK_TARGET_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Result of a local pack compaction run.
@@ -61,6 +106,18 @@ struct LocalPackState {
     active_pack_id: u64,
     active_pack_bytes: u64,
     index: HashMap<BlobHash, PackEntry>,
+    /// Read-only inspection handle: refuses every mutation.
+    read_only: bool,
+    /// Set on any write-path I/O/corruption failure; all further mutations
+    /// fail until the store is reopened (fail-stop, see module docs).
+    poisoned: bool,
+    /// What this open observed and repaired.
+    report: OpenReport,
+    /// Receives every durability-relevant sync/rename, in order.
+    observer: Arc<dyn SyncObserver>,
+    /// Advisory exclusive root lock; released when the last clone drops.
+    /// `None` for read-only handles.
+    _lock: Option<RootLock>,
     /// Body bytes actually read off disk by `get_range`, tracked only in test
     /// builds to prove a range read stays bounded instead of pulling the
     /// whole pack record.
@@ -80,10 +137,24 @@ pub struct LocalPackStore {
     clock: Arc<dyn Clock>,
 }
 
+impl std::fmt::Debug for LocalPackStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut debug = f.debug_struct("LocalPackStore");
+        match self.state.lock() {
+            Ok(state) => debug
+                .field("packs_dir", &state.packs_dir)
+                .field("read_only", &state.read_only)
+                .field("live_blobs", &state.index.len())
+                .finish(),
+            Err(_) => debug.field("state", &"<poisoned>").finish(),
+        }
+    }
+}
+
 impl LocalPackStore {
     /// Opens or creates a local pack store rooted at `root`.
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
-        Self::open_with_pack_target(root, DEFAULT_PACK_TARGET_BYTES)
+        Self::open_with_options(root, LocalPackStoreOptions::default())
     }
 
     /// Opens or creates a local pack store with a custom pack target.
@@ -91,52 +162,132 @@ impl LocalPackStore {
     /// This is public so operators/tests can choose smaller stores, but the
     /// hard cap preserves the plan's 512 MB launch bound.
     pub fn open_with_pack_target(root: impl AsRef<Path>, pack_target_bytes: u64) -> Result<Self> {
-        if pack_target_bytes == 0 || pack_target_bytes > MAX_PACK_TARGET_BYTES {
+        Self::open_with_options(
+            root,
+            LocalPackStoreOptions {
+                pack_target_bytes,
+                ..LocalPackStoreOptions::default()
+            },
+        )
+    }
+
+    /// Opens or creates a local pack store with full [`LocalPackStoreOptions`].
+    ///
+    /// Takes the exclusive root lock ([`StorageErrorKind::Busy`] if another
+    /// live handle or process owns the root), validates or stamps the format
+    /// marker, sweeps crash-leftover temp files, and self-heals a torn
+    /// trailing index record. See [`LocalPackStore::open_report`].
+    pub fn open_with_options(
+        root: impl AsRef<Path>,
+        options: LocalPackStoreOptions,
+    ) -> Result<Self> {
+        if options.pack_target_bytes == 0 || options.pack_target_bytes > MAX_PACK_TARGET_BYTES {
             return Err(Error::InvalidInput(format!(
-                "local pack target must be 1..={MAX_PACK_TARGET_BYTES} bytes, got {pack_target_bytes}"
+                "local pack target must be 1..={MAX_PACK_TARGET_BYTES} bytes, got {}",
+                options.pack_target_bytes
             )));
         }
 
         let root = root.as_ref().to_path_buf();
         let packs_dir = root.join("packs");
         let index_path = root.join("index.log");
+        let observer: Arc<dyn SyncObserver> = Arc::new(disk::NoopSyncObserver);
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+
+        let guard = root_guard::guard_writable_root(
+            &root,
+            &packs_dir,
+            &options,
+            clock.now_millis(),
+            &*observer,
+        )?;
+        let mut report = guard.report;
+
         fs::create_dir_all(&packs_dir).map_err(|err| {
             io_error(
                 err,
                 format!("create local pack directory {}", packs_dir.display()),
             )
         })?;
-        ensure_index_file(&index_path)?;
+        ensure_index_file(&index_path, &root, &*observer)?;
 
-        let index = load_index(&index_path)?;
-        let active_pack_id = index.values().map(|entry| entry.pack_id).max().unwrap_or(0);
-        let mut active_pack_bytes = ensure_pack_file(&packs_dir, active_pack_id)?;
-        if active_pack_bytes >= pack_target_bytes && active_pack_bytes > PACK_MAGIC.len() as u64 {
-            let next_pack_id = active_pack_id.saturating_add(1);
-            active_pack_bytes = ensure_pack_file(&packs_dir, next_pack_id)?;
-            return Ok(Self {
-                state: Arc::new(Mutex::new(LocalPackState {
-                    packs_dir,
-                    index_path,
-                    pack_target_bytes,
-                    active_pack_id: next_pack_id,
-                    active_pack_bytes,
-                    index,
-                    #[cfg(test)]
-                    body_bytes_read: 0,
-                })),
-                clock: Arc::new(SystemClock),
-            });
+        let index = load_index(
+            &index_path,
+            IndexLoadMode::HealTornTail,
+            &mut report,
+            &*observer,
+        )?;
+        let mut active_pack_id = index.values().map(|entry| entry.pack_id).max().unwrap_or(0);
+        let mut active_pack_bytes = ensure_pack_file(&packs_dir, active_pack_id, &*observer)?;
+        if active_pack_bytes >= options.pack_target_bytes
+            && active_pack_bytes > PACK_MAGIC.len() as u64
+        {
+            active_pack_id = active_pack_id.saturating_add(1);
+            active_pack_bytes = ensure_pack_file(&packs_dir, active_pack_id, &*observer)?;
         }
 
         Ok(Self {
             state: Arc::new(Mutex::new(LocalPackState {
                 packs_dir,
                 index_path,
-                pack_target_bytes,
+                pack_target_bytes: options.pack_target_bytes,
                 active_pack_id,
                 active_pack_bytes,
                 index,
+                read_only: false,
+                poisoned: false,
+                report,
+                observer,
+                _lock: guard.lock,
+                #[cfg(test)]
+                body_bytes_read: 0,
+            })),
+            clock,
+        })
+    }
+
+    /// Opens a lock-free, read-only inspection handle over `root`.
+    ///
+    /// Coexists with a live writable owner (it takes no lock), so reads are a
+    /// point-in-time snapshot: a record compacted away after this open reads
+    /// as missing. Never mutates the root — no marker stamping, no temp
+    /// cleanup, no torn-tail truncation (a torn trailing index record is
+    /// ignored in memory) — and every write method fails with
+    /// [`StorageErrorKind::Busy`].
+    pub fn open_read_only(root: impl AsRef<Path>) -> Result<Self> {
+        let root = root.as_ref().to_path_buf();
+        let packs_dir = root.join("packs");
+        let index_path = root.join("index.log");
+        let observer: Arc<dyn SyncObserver> = Arc::new(disk::NoopSyncObserver);
+
+        root_guard::guard_read_only_root(&root)?;
+
+        let mut report = OpenReport::default();
+        let index = if index_path.exists() {
+            load_index(
+                &index_path,
+                IndexLoadMode::IgnoreTornTail,
+                &mut report,
+                &*observer,
+            )?
+        } else {
+            HashMap::new()
+        };
+        let active_pack_id = index.values().map(|entry| entry.pack_id).max().unwrap_or(0);
+
+        Ok(Self {
+            state: Arc::new(Mutex::new(LocalPackState {
+                packs_dir,
+                index_path,
+                pack_target_bytes: DEFAULT_PACK_TARGET_BYTES,
+                active_pack_id,
+                active_pack_bytes: 0,
+                index,
+                read_only: true,
+                poisoned: false,
+                report,
+                observer,
+                _lock: None,
                 #[cfg(test)]
                 body_bytes_read: 0,
             })),
@@ -149,6 +300,11 @@ impl LocalPackStore {
     pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
         self.clock = clock;
         self
+    }
+
+    /// What this open observed and repaired (stale temps, torn index tail).
+    pub fn open_report(&self) -> Result<OpenReport> {
+        Ok(lock(&self.state)?.report)
     }
 
     /// Number of live blobs in the local index.
@@ -178,7 +334,13 @@ impl LocalPackStore {
     /// Rewrites live blobs into fresh packs and removes packs no live index entry
     /// references afterward.
     pub async fn compact(&self) -> Result<CompactionStats> {
-        self.blocking(|mut state| compact_locked(&mut state)).await
+        self.blocking(|mut state| {
+            ensure_writable(&state, "compact")?;
+            let result = compact_locked(&mut state);
+            poison_on_write_failure(&mut state, &result);
+            result
+        })
+        .await
     }
 
     async fn blocking<T>(
@@ -195,6 +357,12 @@ impl LocalPackStore {
         })
         .await
         .map_err(|err| Error::storage(StorageErrorKind::Other, format!("local pack task: {err}")))?
+    }
+
+    /// Replaces the sync observer so tests can assert fsync ordering.
+    #[cfg(test)]
+    fn set_sync_observer(&self, observer: Arc<dyn SyncObserver>) {
+        lock(&self.state).expect("state lock").observer = observer;
     }
 
     /// Returns and resets the body bytes read by `get_range` so far.
@@ -216,8 +384,13 @@ impl LocalPackStore {
 impl BlobStore for LocalPackStore {
     async fn put(&self, bytes: Bytes) -> Result<BlobHash> {
         let clock = Arc::clone(&self.clock);
-        self.blocking(move |mut state| put_locked(&mut state, bytes, clock.now_millis()))
-            .await
+        self.blocking(move |mut state| {
+            ensure_writable(&state, "put")?;
+            let result = put_locked(&mut state, bytes, clock.now_millis());
+            poison_on_write_failure(&mut state, &result);
+            result
+        })
+        .await
     }
 
     async fn put_stream(&self, mut src: ByteStream) -> Result<BlobHash> {
@@ -259,12 +432,52 @@ impl BlobStore for LocalPackStore {
     async fn release(&self, hash: &BlobHash) -> Result<()> {
         let hash = *hash;
         self.blocking(move |mut state| {
-            if state.index.remove(&hash).is_some() {
-                append_release_index_record(&state.index_path, &hash)?;
-            }
-            Ok(())
+            ensure_writable(&state, "release")?;
+            let result = (|state: &mut LocalPackState| {
+                if state.index.contains_key(&hash) {
+                    let observer = Arc::clone(&state.observer);
+                    append_release_index_record(&state.index_path, &hash, &*observer)?;
+                    state.index.remove(&hash);
+                }
+                Ok(())
+            })(&mut state);
+            poison_on_write_failure(&mut state, &result);
+            result
         })
         .await
+    }
+}
+
+fn ensure_writable(state: &LocalPackState, operation: &str) -> Result<()> {
+    if state.read_only {
+        return Err(Error::storage(
+            StorageErrorKind::Busy,
+            format!("read-only inspection handle refuses {operation}"),
+        ));
+    }
+    if state.poisoned {
+        return Err(Error::storage(
+            StorageErrorKind::Unavailable,
+            format!(
+                "local pack store is poisoned by an earlier write failure; \
+                 refusing {operation} — reopen the store to recover"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Fail-stop: after an I/O or corruption error on the write path, a retried
+/// sync may falsely succeed against a clean-but-lost page cache (fsyncgate),
+/// so the store stops accepting mutations until it is reopened.
+fn poison_on_write_failure<T>(state: &mut LocalPackState, result: &Result<T>) {
+    if let Err(err) = result
+        && matches!(
+            err.storage_kind(),
+            Some(StorageErrorKind::Io) | Some(StorageErrorKind::Corruption)
+        )
+    {
+        state.poisoned = true;
     }
 }
 
@@ -289,7 +502,7 @@ fn pack_path(packs_dir: &Path, pack_id: u64) -> PathBuf {
     packs_dir.join(format!("pack-{pack_id:016}.npack"))
 }
 
-fn ensure_index_file(index_path: &Path) -> Result<()> {
+fn ensure_index_file(index_path: &Path, root: &Path, observer: &dyn SyncObserver) -> Result<()> {
     if index_path.exists() {
         return Ok(());
     }
@@ -304,11 +517,15 @@ fn ensure_index_file(index_path: &Path) -> Result<()> {
         .map_err(|err| io_error(err, format!("create index {}", index_path.display())))?;
     file.write_all(INDEX_MAGIC)
         .map_err(|err| io_error(err, format!("write index header {}", index_path.display())))?;
-    file.sync_data()
-        .map_err(|err| io_error(err, format!("sync index {}", index_path.display())))
+    disk::sync_file_data(&file, index_path, observer)
+        .map_err(|err| io_error(err, format!("sync index {}", index_path.display())))?;
+    // The index stays where it is created: persist its directory entry too.
+    disk::fsync_dir(root, observer)
+        .map_err(|err| io_error(err, format!("sync root dir {}", root.display())))?;
+    Ok(())
 }
 
-fn ensure_pack_file(packs_dir: &Path, pack_id: u64) -> Result<u64> {
+fn ensure_pack_file(packs_dir: &Path, pack_id: u64, observer: &dyn SyncObserver) -> Result<u64> {
     fs::create_dir_all(packs_dir)
         .map_err(|err| io_error(err, format!("create packs dir {}", packs_dir.display())))?;
     let path = pack_path(packs_dir, pack_id);
@@ -320,8 +537,11 @@ fn ensure_pack_file(packs_dir: &Path, pack_id: u64) -> Result<u64> {
             .map_err(|err| io_error(err, format!("create pack {}", path.display())))?;
         file.write_all(PACK_MAGIC)
             .map_err(|err| io_error(err, format!("write pack header {}", path.display())))?;
-        file.sync_data()
+        disk::sync_file_data(&file, &path, observer)
             .map_err(|err| io_error(err, format!("sync pack {}", path.display())))?;
+        // Pack files stay where they are created: persist the directory entry.
+        disk::fsync_dir(packs_dir, observer)
+            .map_err(|err| io_error(err, format!("sync packs dir {}", packs_dir.display())))?;
     }
     let len = fs::metadata(&path)
         .map_err(|err| io_error(err, format!("stat pack {}", path.display())))?
@@ -346,7 +566,27 @@ fn ensure_pack_file(packs_dir: &Path, pack_id: u64) -> Result<u64> {
     Ok(len)
 }
 
-fn load_index(index_path: &Path) -> Result<HashMap<BlobHash, PackEntry>> {
+/// How [`load_index`] treats a torn (crash-truncated) trailing record.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IndexLoadMode {
+    /// Truncate the file back to the last whole record and report the bytes.
+    HealTornTail,
+    /// Parse up to the tear and ignore it (read-only handles never write).
+    IgnoreTornTail,
+}
+
+/// Loads the index, distinguishing a torn tail from mid-file corruption.
+///
+/// A record that ends early **at end-of-file** is a crash artifact of the
+/// append+sync protocol (the append raced power loss) and is recoverable: the
+/// blob it named was never acknowledged. Anything else — bad magic, an
+/// unknown record tag — is real corruption and fails closed.
+fn load_index(
+    index_path: &Path,
+    mode: IndexLoadMode,
+    report: &mut OpenReport,
+    observer: &dyn SyncObserver,
+) -> Result<HashMap<BlobHash, PackEntry>> {
     let mut file = File::open(index_path)
         .map_err(|err| io_error(err, format!("open index {}", index_path.display())))?;
     let mut bytes = Vec::new();
@@ -361,46 +601,101 @@ fn load_index(index_path: &Path) -> Result<HashMap<BlobHash, PackEntry>> {
 
     let mut index = HashMap::new();
     let mut cursor = INDEX_MAGIC.len();
+    let mut valid_len = cursor;
     while cursor < bytes.len() {
-        let tag = bytes[cursor];
-        cursor += 1;
-        let hash = read_hash(index_path, &bytes, &mut cursor)?;
-        match tag {
-            INDEX_PUT => {
-                let pack_id = read_u64(index_path, &bytes, &mut cursor)?;
-                let offset = read_u64(index_path, &bytes, &mut cursor)?;
-                let len = read_u64(index_path, &bytes, &mut cursor)?;
-                let written_at_millis = read_u64(index_path, &bytes, &mut cursor)?;
-                index.insert(
-                    hash,
-                    PackEntry {
-                        pack_id,
-                        offset,
-                        len,
-                        written_at_millis,
-                    },
-                );
+        let record_start = cursor;
+        match parse_index_record(&bytes, &mut cursor) {
+            Ok((tag, hash)) => match tag {
+                IndexRecord::Put(entry) => {
+                    index.insert(hash, entry);
+                    valid_len = cursor;
+                }
+                IndexRecord::Release => {
+                    index.remove(&hash);
+                    valid_len = cursor;
+                }
+            },
+            Err(IndexParseError::TornTail) => {
+                let torn = (bytes.len() - record_start) as u64;
+                if mode == IndexLoadMode::HealTornTail {
+                    truncate_index(index_path, record_start as u64, observer)?;
+                    report.torn_index_bytes_truncated = torn;
+                }
+                break;
             }
-            INDEX_RELEASE => {
-                index.remove(&hash);
-            }
-            other => {
+            Err(IndexParseError::Corrupt(message)) => {
                 return Err(corruption(format!(
-                    "index {} has unknown record tag {other}",
+                    "index {}: {message}",
                     index_path.display()
                 )));
             }
         }
     }
+    let _ = valid_len;
     Ok(index)
 }
 
-fn read_hash(path: &Path, bytes: &[u8], cursor: &mut usize) -> Result<BlobHash> {
+enum IndexRecord {
+    Put(PackEntry),
+    Release,
+}
+
+enum IndexParseError {
+    /// The record ran out of bytes at end-of-file (crash-torn append).
+    TornTail,
+    /// Structurally invalid content (unknown tag).
+    Corrupt(String),
+}
+
+fn parse_index_record(
+    bytes: &[u8],
+    cursor: &mut usize,
+) -> std::result::Result<(IndexRecord, BlobHash), IndexParseError> {
+    let tag = bytes[*cursor];
+    *cursor += 1;
+    let hash = read_hash(bytes, cursor)?;
+    match tag {
+        INDEX_PUT => {
+            let pack_id = read_u64(bytes, cursor)?;
+            let offset = read_u64(bytes, cursor)?;
+            let len = read_u64(bytes, cursor)?;
+            let written_at_millis = read_u64(bytes, cursor)?;
+            Ok((
+                IndexRecord::Put(PackEntry {
+                    pack_id,
+                    offset,
+                    len,
+                    written_at_millis,
+                }),
+                hash,
+            ))
+        }
+        INDEX_RELEASE => Ok((IndexRecord::Release, hash)),
+        other => Err(IndexParseError::Corrupt(format!(
+            "unknown record tag {other}"
+        ))),
+    }
+}
+
+fn truncate_index(index_path: &Path, valid_len: u64, observer: &dyn SyncObserver) -> Result<()> {
+    let file = OpenOptions::new()
+        .write(true)
+        .open(index_path)
+        .map_err(|err| io_error(err, format!("open index {}", index_path.display())))?;
+    file.set_len(valid_len)
+        .map_err(|err| io_error(err, format!("truncate torn index {}", index_path.display())))?;
+    disk::sync_file_data(&file, index_path, observer).map_err(|err| {
+        io_error(
+            err,
+            format!("sync truncated index {}", index_path.display()),
+        )
+    })?;
+    Ok(())
+}
+
+fn read_hash(bytes: &[u8], cursor: &mut usize) -> std::result::Result<BlobHash, IndexParseError> {
     if bytes.len().saturating_sub(*cursor) < crate::BLAKE3_HASH_LEN {
-        return Err(corruption(format!(
-            "index {} ended mid hash record",
-            path.display()
-        )));
+        return Err(IndexParseError::TornTail);
     }
     let mut hash = [0u8; crate::BLAKE3_HASH_LEN];
     hash.copy_from_slice(&bytes[*cursor..*cursor + crate::BLAKE3_HASH_LEN]);
@@ -408,12 +703,9 @@ fn read_hash(path: &Path, bytes: &[u8], cursor: &mut usize) -> Result<BlobHash> 
     Ok(BlobHash::from_bytes(hash))
 }
 
-fn read_u64(path: &Path, bytes: &[u8], cursor: &mut usize) -> Result<u64> {
+fn read_u64(bytes: &[u8], cursor: &mut usize) -> std::result::Result<u64, IndexParseError> {
     if bytes.len().saturating_sub(*cursor) < 8 {
-        return Err(corruption(format!(
-            "index {} ended mid u64 record",
-            path.display()
-        )));
+        return Err(IndexParseError::TornTail);
     }
     let mut raw = [0u8; 8];
     raw.copy_from_slice(&bytes[*cursor..*cursor + 8]);
@@ -432,7 +724,8 @@ fn put_locked(
     }
 
     let entry = append_pack_record(state, &hash, &bytes, written_at_millis)?;
-    append_put_index_record(&state.index_path, &hash, entry)?;
+    let observer = Arc::clone(&state.observer);
+    append_put_index_record(&state.index_path, &hash, entry, &*observer)?;
     state.index.insert(hash, entry);
     Ok(hash)
 }
@@ -443,13 +736,15 @@ fn append_pack_record(
     bytes: &[u8],
     written_at_millis: u64,
 ) -> Result<PackEntry> {
+    let observer = Arc::clone(&state.observer);
     let record_len =
         RECORD_MAGIC.len() as u64 + crate::BLAKE3_HASH_LEN as u64 + 8 + bytes.len() as u64;
     if state.active_pack_bytes > PACK_MAGIC.len() as u64
         && state.active_pack_bytes.saturating_add(record_len) > state.pack_target_bytes
     {
         state.active_pack_id = state.active_pack_id.saturating_add(1);
-        state.active_pack_bytes = ensure_pack_file(&state.packs_dir, state.active_pack_id)?;
+        state.active_pack_bytes =
+            ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
     }
 
     let path = pack_path(&state.packs_dir, state.active_pack_id);
@@ -471,7 +766,7 @@ fn append_pack_record(
         .map_err(|err| io_error(err, format!("write record len {}", path.display())))?;
     file.write_all(bytes)
         .map_err(|err| io_error(err, format!("write record body {}", path.display())))?;
-    file.sync_data()
+    disk::sync_file_data(&file, &path, &*observer)
         .map_err(|err| io_error(err, format!("sync pack {}", path.display())))?;
     state.active_pack_bytes = offset.saturating_add(record_len);
     Ok(PackEntry {
@@ -482,8 +777,13 @@ fn append_pack_record(
     })
 }
 
-fn append_put_index_record(index_path: &Path, hash: &BlobHash, entry: PackEntry) -> Result<()> {
-    append_index_record(index_path, |file| {
+fn append_put_index_record(
+    index_path: &Path,
+    hash: &BlobHash,
+    entry: PackEntry,
+    observer: &dyn SyncObserver,
+) -> Result<()> {
+    append_index_record(index_path, observer, |file| {
         file.write_all(&[INDEX_PUT])?;
         file.write_all(hash.as_bytes())?;
         file.write_all(&entry.pack_id.to_le_bytes())?;
@@ -494,8 +794,12 @@ fn append_put_index_record(index_path: &Path, hash: &BlobHash, entry: PackEntry)
     })
 }
 
-fn append_release_index_record(index_path: &Path, hash: &BlobHash) -> Result<()> {
-    append_index_record(index_path, |file| {
+fn append_release_index_record(
+    index_path: &Path,
+    hash: &BlobHash,
+    observer: &dyn SyncObserver,
+) -> Result<()> {
+    append_index_record(index_path, observer, |file| {
         file.write_all(&[INDEX_RELEASE])?;
         file.write_all(hash.as_bytes())?;
         Ok(())
@@ -504,6 +808,7 @@ fn append_release_index_record(index_path: &Path, hash: &BlobHash) -> Result<()>
 
 fn append_index_record(
     index_path: &Path,
+    observer: &dyn SyncObserver,
     write: impl FnOnce(&mut File) -> std::io::Result<()>,
 ) -> Result<()> {
     let mut file = OpenOptions::new()
@@ -512,7 +817,7 @@ fn append_index_record(
         .map_err(|err| io_error(err, format!("open index {}", index_path.display())))?;
     write(&mut file)
         .map_err(|err| io_error(err, format!("append index {}", index_path.display())))?;
-    file.sync_data()
+    disk::sync_file_data(&file, index_path, observer)
         .map_err(|err| io_error(err, format!("sync index {}", index_path.display())))
 }
 
@@ -682,6 +987,7 @@ fn read_pack_entry_range(
 }
 
 fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
+    let observer = Arc::clone(&state.observer);
     let original_packs = pack_ids_on_disk(&state.packs_dir)?;
     if state.index.is_empty() {
         let mut stats = CompactionStats::default();
@@ -692,7 +998,12 @@ fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
             stats.packs_removed += 1;
         }
         state.active_pack_id = 0;
-        state.active_pack_bytes = ensure_pack_file(&state.packs_dir, state.active_pack_id)?;
+        state.active_pack_bytes =
+            ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
+        // Persist the removals along with the fresh pack's directory entry.
+        disk::fsync_dir(&state.packs_dir, &*observer).map_err(|err| {
+            io_error(err, format!("sync packs dir {}", state.packs_dir.display()))
+        })?;
         return Ok(stats);
     }
 
@@ -705,18 +1016,19 @@ fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
         .collect::<Result<Vec<_>>>()?;
 
     state.active_pack_id = state.active_pack_id.saturating_add(1);
-    state.active_pack_bytes = ensure_pack_file(&state.packs_dir, state.active_pack_id)?;
+    state.active_pack_bytes = ensure_pack_file(&state.packs_dir, state.active_pack_id, &*observer)?;
 
     let mut stats = CompactionStats::default();
     for (hash, old_entry, bytes) in live {
         let entry = append_pack_record(state, &hash, &bytes, old_entry.written_at_millis)?;
-        append_put_index_record(&state.index_path, &hash, entry)?;
+        append_put_index_record(&state.index_path, &hash, entry, &*observer)?;
         state.index.insert(hash, entry);
         stats.blobs_rewritten += 1;
         stats.bytes_rewritten += bytes.len() as u64;
     }
 
     let referenced_packs: BTreeSet<u64> = state.index.values().map(|entry| entry.pack_id).collect();
+    let mut removed_any = false;
     for pack_id in original_packs {
         if referenced_packs.contains(&pack_id) {
             continue;
@@ -727,7 +1039,15 @@ fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
                 io_error(err, format!("remove compacted pack {}", path.display()))
             })?;
             stats.packs_removed += 1;
+            removed_any = true;
         }
+    }
+    if removed_any {
+        // Persist the unlink entries so a power loss cannot resurrect packs
+        // the rewritten index no longer references.
+        disk::fsync_dir(&state.packs_dir, &*observer).map_err(|err| {
+            io_error(err, format!("sync packs dir {}", state.packs_dir.display()))
+        })?;
     }
     Ok(stats)
 }
@@ -762,6 +1082,9 @@ fn pack_ids_on_disk(packs_dir: &Path) -> Result<BTreeSet<u64>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::disk::SyncEvent;
+    use crate::disk::recorder::RecordingSyncObserver;
+    use crate::root_guard::FORMAT_FILE;
 
     fn open_temp(target: u64) -> (tempfile::TempDir, LocalPackStore) {
         let dir = tempfile::tempdir().expect("tempdir should create");
@@ -854,31 +1177,6 @@ mod tests {
         assert_eq!(store.get(&keep).await.unwrap(), Bytes::from_static(b"keep"));
     }
 
-    #[tokio::test]
-    async fn read_detects_pack_corruption() {
-        let (dir, store) = open_temp(256);
-        let hash = store.put(Bytes::from_static(b"authentic")).await.unwrap();
-        let entry = lock(&store.state)
-            .unwrap()
-            .index
-            .get(&hash)
-            .copied()
-            .unwrap();
-        drop(store);
-
-        let path = pack_path(&dir.path().join("packs"), entry.pack_id);
-        let mut file = OpenOptions::new().write(true).open(path).unwrap();
-        let body_offset =
-            entry.offset + RECORD_MAGIC.len() as u64 + crate::BLAKE3_HASH_LEN as u64 + 8;
-        file.seek(SeekFrom::Start(body_offset)).unwrap();
-        file.write_all(b"X").unwrap();
-        file.sync_data().unwrap();
-
-        let reopened = LocalPackStore::open_with_pack_target(dir.path(), 256).unwrap();
-        let err = reopened.get(&hash).await.unwrap_err();
-        assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
-    }
-
     #[test]
     fn open_rejects_corrupted_pack_header() {
         let (dir, store) = open_temp(256);
@@ -936,5 +1234,507 @@ mod tests {
         let mut out = Vec::new();
         reader.read_to_end(&mut out).await.unwrap();
         assert_eq!(out, b"streamed");
+    }
+
+    // ---- RFS2: root ownership and format guard ----
+
+    #[tokio::test]
+    async fn local_pack_second_open_same_root_fails() {
+        let (dir, store) = open_temp(256);
+
+        let err = LocalPackStore::open_with_pack_target(dir.path(), 256).unwrap_err();
+        assert_eq!(
+            err.storage_kind(),
+            Some(StorageErrorKind::Busy),
+            "a second writable open of a live root must be refused"
+        );
+
+        drop(store);
+        LocalPackStore::open_with_pack_target(dir.path(), 256)
+            .expect("dropping the owner releases the root lock");
+    }
+
+    #[test]
+    fn local_pack_format_marker_roundtrip() {
+        let (dir, store) = open_temp(256);
+        drop(store);
+
+        assert!(
+            dir.path().join(FORMAT_FILE).exists(),
+            "open stamps a marker"
+        );
+        let reopened = LocalPackStore::open_with_pack_target(dir.path(), 256).unwrap();
+        assert_eq!(reopened.open_report().unwrap(), OpenReport::default());
+    }
+
+    #[test]
+    fn local_pack_rejects_foreign_or_future_marker() {
+        let (dir, store) = open_temp(256);
+        drop(store);
+        let marker_path = dir.path().join(FORMAT_FILE);
+
+        // Foreign marker: not ours at all.
+        fs::write(&marker_path, b"someone else's format file").unwrap();
+        let err = LocalPackStore::open_with_pack_target(dir.path(), 256).unwrap_err();
+        assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+
+        // Future-versioned marker: fail closed instead of guessing.
+        let mut future = fs::read({
+            // Restore a valid marker first, then bump its version field.
+            drop(LocalPackStore::open_with_pack_target(dir.path(), 256));
+            fs::remove_file(&marker_path).unwrap();
+            drop(LocalPackStore::open_with_pack_target(dir.path(), 256).unwrap());
+            &marker_path
+        })
+        .unwrap();
+        future[8..12].copy_from_slice(&99u32.to_le_bytes());
+        fs::write(&marker_path, &future).unwrap();
+        let err = LocalPackStore::open_with_pack_target(dir.path(), 256).unwrap_err();
+        assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    }
+
+    #[test]
+    fn local_pack_startup_cleanup_removes_stale_temp() {
+        let (dir, store) = open_temp(256);
+        drop(store);
+
+        let root_temp = dir.path().join(format!("{}stale", disk::TMP_PREFIX));
+        let packs_temp = dir
+            .path()
+            .join("packs")
+            .join(format!("{}stale", disk::TMP_PREFIX));
+        fs::write(&root_temp, b"crash leftover").unwrap();
+        fs::write(&packs_temp, b"crash leftover").unwrap();
+
+        let reopened = LocalPackStore::open_with_pack_target(dir.path(), 256).unwrap();
+        assert!(!root_temp.exists(), "root temp removed");
+        assert!(!packs_temp.exists(), "packs temp removed");
+        assert_eq!(
+            reopened.open_report().unwrap().stale_temp_files_removed,
+            2,
+            "cleanup is reported, not silent"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_pack_rejects_symlinked_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        fs::create_dir_all(&real).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let err = LocalPackStore::open(&link).unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn local_pack_read_only_serves_reads_and_rejects_writes() {
+        let (dir, owner) = open_temp(256);
+        let hash = owner.put(Bytes::from_static(b"inspect me")).await.unwrap();
+
+        // Coexists with the live writable owner: no lock conflict.
+        let inspector = LocalPackStore::open_read_only(dir.path()).unwrap();
+        assert_eq!(
+            inspector.get(&hash).await.unwrap(),
+            Bytes::from_static(b"inspect me")
+        );
+        assert_eq!(inspector.len().unwrap(), 1);
+
+        for err in [
+            inspector
+                .put(Bytes::from_static(b"nope"))
+                .await
+                .unwrap_err(),
+            inspector.release(&hash).await.unwrap_err(),
+            inspector.compact().await.unwrap_err(),
+        ] {
+            assert_eq!(
+                err.storage_kind(),
+                Some(StorageErrorKind::Busy),
+                "read-only handle refuses mutations"
+            );
+        }
+
+        // The owner is unaffected.
+        assert_eq!(
+            owner.get(&hash).await.unwrap(),
+            Bytes::from_static(b"inspect me")
+        );
+    }
+
+    // ---- RFS3: durable commit-point writes and crash windows ----
+
+    #[tokio::test]
+    async fn durable_write_fsync_order() {
+        let (dir, store) = open_temp(4096);
+        let recorder = Arc::new(RecordingSyncObserver::new());
+        store.set_sync_observer(recorder.clone());
+
+        store
+            .put(Bytes::from_static(b"ordered durability"))
+            .await
+            .unwrap();
+
+        let packs_dir = dir.path().join("packs");
+        let index_path = dir.path().join("index.log");
+        let pack_sync = recorder.index_where(
+            |e| matches!(e, SyncEvent::FileSync(path) if path.starts_with(&packs_dir)),
+        );
+        let index_sync =
+            recorder.index_where(|e| matches!(e, SyncEvent::FileSync(path) if path == &index_path));
+        assert!(
+            pack_sync < index_sync,
+            "pack bytes must be durable before the index record is published: {:?}",
+            recorder.events()
+        );
+    }
+
+    #[tokio::test]
+    async fn crash_bytes_written_index_missing() {
+        let (dir, store) = open_temp(4096);
+        let visible = store
+            .put(Bytes::from_static(b"acknowledged"))
+            .await
+            .unwrap();
+        drop(store);
+
+        // Simulate the crash window: pack record fully written and synced,
+        // index record never published.
+        let orphan_body = b"never acknowledged";
+        let orphan_hash = BlobHash::of(orphan_body);
+        let path = pack_path(&dir.path().join("packs"), 0);
+        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(RECORD_MAGIC).unwrap();
+        file.write_all(orphan_hash.as_bytes()).unwrap();
+        file.write_all(&(orphan_body.len() as u64).to_le_bytes())
+            .unwrap();
+        file.write_all(orphan_body).unwrap();
+        file.sync_data().unwrap();
+
+        let reopened = LocalPackStore::open_with_pack_target(dir.path(), 4096).unwrap();
+        assert!(
+            !reopened.has(&orphan_hash).await.unwrap(),
+            "an unindexed orphan record is invisible"
+        );
+        assert_eq!(
+            reopened.get(&visible).await.unwrap(),
+            Bytes::from_static(b"acknowledged")
+        );
+        // The store keeps working; a fresh put lands after the orphan bytes.
+        let next = reopened
+            .put(Bytes::from_static(b"after crash"))
+            .await
+            .unwrap();
+        assert_eq!(
+            reopened.get(&next).await.unwrap(),
+            Bytes::from_static(b"after crash")
+        );
+    }
+
+    #[tokio::test]
+    async fn crash_index_partially_written() {
+        let (dir, store) = open_temp(4096);
+        let keep = store.put(Bytes::from_static(b"kept")).await.unwrap();
+        let torn = store.put(Bytes::from_static(b"torn away")).await.unwrap();
+        drop(store);
+
+        // Tear the tail: cut 3 bytes out of the last index record.
+        let index_path = dir.path().join("index.log");
+        let full_len = fs::metadata(&index_path).unwrap().len();
+        let file = OpenOptions::new().write(true).open(&index_path).unwrap();
+        file.set_len(full_len - 3).unwrap();
+        file.sync_data().unwrap();
+
+        let reopened = LocalPackStore::open_with_pack_target(dir.path(), 4096).unwrap();
+        assert!(reopened.has(&keep).await.unwrap(), "whole records survive");
+        assert!(
+            !reopened.has(&torn).await.unwrap(),
+            "the torn record was never acknowledged and is dropped"
+        );
+        // A PUT record is 1 (tag) + 32 (hash) + 4*8 (fields) = 65 bytes; the
+        // tear removed 3, so the heal truncates the remaining 62.
+        assert_eq!(
+            reopened.open_report().unwrap().torn_index_bytes_truncated,
+            62
+        );
+        assert_eq!(
+            fs::metadata(&index_path).unwrap().len(),
+            full_len - 65,
+            "the index is truncated back to the last whole record"
+        );
+
+        // The heal is durable: the next open sees a clean index.
+        drop(reopened);
+        let again = LocalPackStore::open_with_pack_target(dir.path(), 4096).unwrap();
+        assert_eq!(again.open_report().unwrap().torn_index_bytes_truncated, 0);
+        // And the store accepts the blob again.
+        let rewritten = again.put(Bytes::from_static(b"torn away")).await.unwrap();
+        assert_eq!(rewritten, torn);
+        assert_eq!(
+            again.get(&rewritten).await.unwrap(),
+            Bytes::from_static(b"torn away")
+        );
+    }
+
+    #[tokio::test]
+    async fn crash_active_pack_truncated() {
+        let (dir, store) = open_temp(64 * 1024);
+        let victim_body: Vec<u8> = (0..2048usize).map(|i| (i % 251) as u8).collect();
+        let victim = store.put(Bytes::from(victim_body)).await.unwrap();
+        drop(store);
+
+        // Truncate the pack mid-record-body.
+        let path = pack_path(&dir.path().join("packs"), 0);
+        let full_len = fs::metadata(&path).unwrap().len();
+        let file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_len(full_len - 100).unwrap();
+        file.sync_data().unwrap();
+
+        // The store still opens; the truncated blob fails closed on read.
+        let reopened = LocalPackStore::open_with_pack_target(dir.path(), 64 * 1024).unwrap();
+        let err = reopened.get(&victim).await.unwrap_err();
+        assert!(
+            matches!(
+                err.storage_kind(),
+                Some(StorageErrorKind::Io) | Some(StorageErrorKind::Corruption)
+            ),
+            "no partial bytes are ever served: {err}"
+        );
+
+        // New writes still work.
+        let fresh = reopened.put(Bytes::from_static(b"fresh")).await.unwrap();
+        assert_eq!(
+            reopened.get(&fresh).await.unwrap(),
+            Bytes::from_static(b"fresh")
+        );
+    }
+
+    #[tokio::test]
+    async fn crash_temp_file_left_behind() {
+        let (dir, store) = open_temp(256);
+        drop(store);
+        let leftover = dir.path().join(format!("{}crashed", disk::TMP_PREFIX));
+        fs::write(&leftover, b"half-written marker").unwrap();
+
+        let reopened = LocalPackStore::open_with_pack_target(dir.path(), 256).unwrap();
+        assert!(!leftover.exists(), "crash leftovers are swept at open");
+        assert_eq!(reopened.open_report().unwrap().stale_temp_files_removed, 1);
+        let hash = reopened
+            .put(Bytes::from_static(b"back to work"))
+            .await
+            .unwrap();
+        assert_eq!(
+            reopened.get(&hash).await.unwrap(),
+            Bytes::from_static(b"back to work")
+        );
+    }
+
+    #[tokio::test]
+    async fn crash_index_points_at_corrupt_bytes() {
+        let (dir, store) = open_temp(256);
+        let hash = store.put(Bytes::from_static(b"authentic")).await.unwrap();
+        let entry = lock(&store.state)
+            .unwrap()
+            .index
+            .get(&hash)
+            .copied()
+            .unwrap();
+        drop(store);
+
+        let path = pack_path(&dir.path().join("packs"), entry.pack_id);
+        let mut file = OpenOptions::new().write(true).open(path).unwrap();
+        let body_offset =
+            entry.offset + RECORD_MAGIC.len() as u64 + crate::BLAKE3_HASH_LEN as u64 + 8;
+        file.seek(SeekFrom::Start(body_offset)).unwrap();
+        file.write_all(b"X").unwrap();
+        file.sync_data().unwrap();
+
+        let reopened = LocalPackStore::open_with_pack_target(dir.path(), 256).unwrap();
+        let err = reopened.get(&hash).await.unwrap_err();
+        assert_eq!(
+            err.storage_kind(),
+            Some(StorageErrorKind::Corruption),
+            "a content-address mismatch fails closed; no partial bytes"
+        );
+    }
+    #[tokio::test]
+    async fn crash_index_torn_release_tail_truncated() {
+        let (dir, store) = open_temp(4096);
+        let hash = store.put(Bytes::from_static(b"released?")).await.unwrap();
+        store.release(&hash).await.unwrap();
+        drop(store);
+
+        // Tear the trailing RELEASE record (1 tag + 32 hash = 33 bytes).
+        let index_path = dir.path().join("index.log");
+        let full_len = fs::metadata(&index_path).unwrap().len();
+        let file = OpenOptions::new().write(true).open(&index_path).unwrap();
+        file.set_len(full_len - 3).unwrap();
+        file.sync_data().unwrap();
+
+        let reopened = LocalPackStore::open_with_pack_target(dir.path(), 4096).unwrap();
+        assert!(
+            reopened.has(&hash).await.unwrap(),
+            "a torn release was never acknowledged, so the blob stays live"
+        );
+        assert_eq!(
+            reopened.open_report().unwrap().torn_index_bytes_truncated,
+            30
+        );
+    }
+
+    #[tokio::test]
+    async fn crash_index_unknown_tag_fails_closed() {
+        let (dir, store) = open_temp(4096);
+        store.put(Bytes::from_static(b"fine")).await.unwrap();
+        drop(store);
+
+        // Append a structurally complete record with an unknown tag: this is
+        // not a torn tail, it is corruption, and the open must refuse.
+        let index_path = dir.path().join("index.log");
+        let mut file = OpenOptions::new().append(true).open(&index_path).unwrap();
+        file.write_all(&[9u8]).unwrap();
+        file.write_all(&[0u8; crate::BLAKE3_HASH_LEN]).unwrap();
+        file.sync_data().unwrap();
+
+        let err = match LocalPackStore::open_with_pack_target(dir.path(), 4096) {
+            Ok(_) => panic!("unknown index tag must fail closed"),
+            Err(err) => err,
+        };
+        assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    }
+
+    #[tokio::test]
+    async fn crash_release_replay_order_preserved() {
+        let (dir, store) = open_temp(4096);
+        let hash = store.put(Bytes::from_static(b"cycled")).await.unwrap();
+        store.release(&hash).await.unwrap();
+        let again = store.put(Bytes::from_static(b"cycled")).await.unwrap();
+        assert_eq!(hash, again);
+        drop(store);
+
+        // Replay must apply PUT / RELEASE / PUT in log order: live at the end.
+        let reopened = LocalPackStore::open_with_pack_target(dir.path(), 4096).unwrap();
+        assert!(reopened.has(&hash).await.unwrap());
+        assert_eq!(
+            reopened.get(&hash).await.unwrap(),
+            Bytes::from_static(b"cycled")
+        );
+        assert_eq!(
+            reopened.len().unwrap(),
+            1,
+            "duplicate PUTs collapse to one entry"
+        );
+    }
+
+    #[tokio::test]
+    async fn compaction_crash_replay_prefers_rewritten_records() {
+        let (dir, store) = open_temp(4096);
+        let keep = store.put(Bytes::from_static(b"survivor")).await.unwrap();
+        let dead = store.put(Bytes::from_static(b"garbage")).await.unwrap();
+        store.release(&dead).await.unwrap();
+        store.compact().await.unwrap();
+        drop(store);
+
+        // Simulate a crash where an old pack's delete never persisted: the
+        // orphan pack reappears next to the rewritten one.
+        let packs_dir = dir.path().join("packs");
+        let orphan = pack_path(&packs_dir, 0);
+        assert!(!orphan.exists(), "compaction removed the original pack");
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&orphan)
+            .unwrap();
+        file.write_all(PACK_MAGIC).unwrap();
+        file.sync_data().unwrap();
+
+        // Replay resolves the survivor to the rewritten (last-wins) record,
+        // and the resurrected orphan is inert.
+        let reopened = LocalPackStore::open_with_pack_target(dir.path(), 4096).unwrap();
+        assert_eq!(
+            reopened.get(&keep).await.unwrap(),
+            Bytes::from_static(b"survivor")
+        );
+        assert!(!reopened.has(&dead).await.unwrap());
+
+        // The next compaction removes the orphan pack.
+        reopened.compact().await.unwrap();
+        assert!(!orphan.exists(), "orphan pack is reclaimed by compaction");
+        assert_eq!(
+            reopened.get(&keep).await.unwrap(),
+            Bytes::from_static(b"survivor")
+        );
+    }
+
+    #[tokio::test]
+    async fn local_pack_concurrent_same_hash_dedups_under_mutex() {
+        let (_dir, store) = open_temp(64 * 1024);
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let store = store.clone();
+            handles.push(tokio::spawn(async move {
+                store.put(Bytes::from_static(b"same payload")).await
+            }));
+        }
+        let mut hashes = Vec::new();
+        for handle in handles {
+            hashes.push(handle.await.unwrap().unwrap());
+        }
+        assert!(hashes.windows(2).all(|w| w[0] == w[1]));
+        assert_eq!(store.len().unwrap(), 1, "concurrent identical puts dedup");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn durable_write_fsync_error_poisons_store() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (dir, store) = open_temp(4096);
+        let hash = store
+            .put(Bytes::from_static(b"before failure"))
+            .await
+            .unwrap();
+
+        // Make the index unwritable so the next index append fails.
+        let index_path = dir.path().join("index.log");
+        fs::set_permissions(&index_path, fs::Permissions::from_mode(0o400)).unwrap();
+        let err = store.release(&hash).await.unwrap_err();
+        assert!(
+            matches!(err.storage_kind(), Some(StorageErrorKind::Io)),
+            "the failing write surfaces as Io: {err}"
+        );
+
+        // Fail-stop: even a write that would touch different files is refused.
+        fs::set_permissions(&index_path, fs::Permissions::from_mode(0o644)).unwrap();
+        let err = store
+            .put(Bytes::from_static(b"after failure"))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.storage_kind(),
+            Some(StorageErrorKind::Unavailable),
+            "a poisoned store refuses further mutations until reopened"
+        );
+
+        // Reads stay available (content-verified).
+        assert_eq!(
+            store.get(&hash).await.unwrap(),
+            Bytes::from_static(b"before failure")
+        );
+
+        // Reopening recovers: state is revalidated from disk.
+        drop(store);
+        let reopened = LocalPackStore::open_with_pack_target(dir.path(), 4096).unwrap();
+        assert!(reopened.has(&hash).await.unwrap(), "release never landed");
+        let fresh = reopened
+            .put(Bytes::from_static(b"after reopen"))
+            .await
+            .unwrap();
+        assert_eq!(
+            reopened.get(&fresh).await.unwrap(),
+            Bytes::from_static(b"after reopen")
+        );
     }
 }

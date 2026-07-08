@@ -32,6 +32,7 @@
 //! the single-file structural backup bundle that can restore into any placement.
 
 mod backup;
+mod disk;
 mod encrypted;
 mod gc;
 mod hash;
@@ -40,6 +41,7 @@ mod memory;
 mod object_store;
 mod pins;
 mod placement;
+mod root_guard;
 mod store;
 
 pub use backup::{
@@ -56,6 +58,7 @@ pub use nimbus_crypto::{FRAME_PLAINTEXT_LEN, FramedBlobKey, KEY_SEED_LEN, NONCE_
 pub use object_store::{BlobCloudConfig, BlobS3Credentials, ObjectStoreBlobStore};
 pub use pins::{BlobPin, BlobPinRegistry};
 pub use placement::{PlacementBlobStore, PlacementMode};
+pub use root_guard::{LocalPackStoreOptions, OpenReport};
 #[cfg(feature = "cluster")]
 pub use store::ReplicatingBlobStore;
 pub use store::{BlobStore, ByteStream};

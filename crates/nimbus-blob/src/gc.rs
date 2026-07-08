@@ -99,10 +99,8 @@ where
     /// Runs mark-and-sweep over local blobs and then compacts dead pack bytes.
     pub async fn sweep(&self) -> Result<BlobGcReport> {
         let roots = self.roots.live_blob_hashes().await?;
-        let cutoff = self
-            .clock
-            .now_millis()
-            .saturating_sub(self.grace_window.as_millis() as u64);
+        let now = self.clock.now_millis();
+        let grace_millis = self.grace_window.as_millis() as u64;
         let mut report = BlobGcReport::default();
 
         for entry in self.store.live_entries()? {
@@ -114,7 +112,11 @@ where
                 report.intent_retained += 1;
                 continue;
             }
-            if entry.written_at_millis > cutoff {
+            // Age-based grace: an entry stamped at or after `now` (clock
+            // regression) has age 0 and is retained by any positive grace
+            // window — a regressed clock must never make young writes look
+            // old enough to sweep. (`Duration::ZERO` disables grace.)
+            if now.saturating_sub(entry.written_at_millis) < grace_millis {
                 report.grace_retained += 1;
                 continue;
             }
@@ -179,6 +181,33 @@ mod tests {
             StaticBlobRoots::default(),
             Duration::from_secs(60),
         );
+
+        let report = gc.sweep().await.unwrap();
+
+        assert_eq!(report.grace_retained, 1);
+        assert_eq!(report.swept, 0);
+        assert!(store.has(&hash).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn gc_grace_retains_when_clock_regresses() {
+        let (_dir, store) = open_temp(128);
+        let clock = Arc::new(ManualClock::new(Timestamp(100_000)));
+        let store = store.with_clock(clock.clone());
+        let hash = store
+            .put(Bytes::from_static(b"future write"))
+            .await
+            .unwrap();
+
+        // The clock regresses far below the write timestamp. Age saturates to
+        // zero, so any positive grace window retains the blob.
+        let regressed = Arc::new(ManualClock::new(Timestamp(1_000)));
+        let gc = BlobGc::new(
+            store.clone(),
+            StaticBlobRoots::default(),
+            Duration::from_secs(60),
+        )
+        .with_clock(regressed);
 
         let report = gc.sweep().await.unwrap();
 

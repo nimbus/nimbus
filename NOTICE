@@ -27,6 +27,20 @@ same revision. Each retains its Apache-2.0 SPDX header; modified files carry a
   crates/nimbus-dynamodb/src/auth/sigv4/canonical.rs    (modified: axum::http -> http)
   crates/nimbus-dynamodb/src/auth/sigv4/verify.rs       (modified: axum::http -> http)
 ================================================================================
+RustFS — https://github.com/rustfs/rustfs
+Copyright 2024 RustFS Team
+Licensed under the Apache License, Version 2.0; a copy is available at
+http://www.apache.org/licenses/LICENSE-2.0. RustFS is a trademark of
+RustFS, Inc.
+
+crates/nimbus-blob adapts RustFS's local-disk durability primitives
+(directory-fsync helpers and the durable temp-write-rename recipe from
+crates/ecstore/src/disk/{os.rs,local.rs} at revision bd5d3c5d) into
+crates/nimbus-blob/src/disk.rs. The adapted file preserves the upstream
+copyright header and carries an "Adapted from rustfs/rustfs@<sha>" provenance
+banner; see crates/nimbus-blob/THIRD_PARTY.md and
+crates/nimbus-blob/LICENSE-APACHE-rustfs.
+================================================================================
 @bufbuild/protobuf — https://github.com/bufbuild/protobuf-es
 Copyright 2021-2026 Buf Technologies, Inc.
 Licensed under the Apache License, Version 2.0, with portions under the

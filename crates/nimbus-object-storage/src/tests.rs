@@ -128,7 +128,8 @@ async fn resolver_builds_local_blob_store() {
         Bytes::from_static(b"native bytes")
     );
 
-    let raw_local = LocalPackStore::open(resolver.object_blob_root(&tenant)).unwrap();
+    // Read-only inspection coexists with the resolver's live (locked) store.
+    let raw_local = LocalPackStore::open_read_only(resolver.object_blob_root(&tenant)).unwrap();
     assert!(
         raw_local.has(&hash).await.unwrap(),
         "the raw pack stores the encrypted blob address returned by the resolver"
@@ -198,7 +199,7 @@ async fn resolver_mirror_policy_round_trips_with_encrypted_legs() {
         store.get(&hash).await.unwrap(),
         Bytes::from_static(b"mirrored encrypted bytes")
     );
-    let raw_local = LocalPackStore::open(resolver.object_blob_root(&tenant)).unwrap();
+    let raw_local = LocalPackStore::open_read_only(resolver.object_blob_root(&tenant)).unwrap();
     assert_ne!(
         raw_local.get(&hash).await.unwrap(),
         Bytes::from_static(b"mirrored encrypted bytes"),
@@ -219,18 +220,25 @@ async fn resolver_tier_policy_rehydrates_encrypted_local_cache() {
     );
     let tenant = tenant();
 
+    let root = resolver.object_blob_root(&tenant);
     let store = resolver.blob_store(&tenant).unwrap();
     let hash = store
         .put(Bytes::from_static(b"tiered encrypted bytes"))
         .await
         .unwrap();
+    // Release the root lock before mutating the local leg out-of-band.
+    drop(store);
+    drop(resolver);
 
-    let raw_local = LocalPackStore::open(resolver.object_blob_root(&tenant)).unwrap();
+    // A writable maintenance handle may open a bound root without declaring
+    // an identity (identity-agnostic tools like backup/GC enumerate roots).
+    let raw_local = LocalPackStore::open(&root).unwrap();
     raw_local.release(&hash).await.unwrap();
     assert!(
         !raw_local.has(&hash).await.unwrap(),
         "test starts with a cold-tier-only copy"
     );
+    drop(raw_local);
 
     let resolver = ObjectStorageResolver::with_config(
         engine,
@@ -241,7 +249,8 @@ async fn resolver_tier_policy_rehydrates_encrypted_local_cache() {
         store.get(&hash).await.unwrap(),
         Bytes::from_static(b"tiered encrypted bytes")
     );
-    let raw_local = LocalPackStore::open(resolver.object_blob_root(&tenant)).unwrap();
+    // Read-only inspection coexists with the live resolver store.
+    let raw_local = LocalPackStore::open_read_only(&root).unwrap();
     assert!(
         raw_local.has(&hash).await.unwrap(),
         "tier read rehydrates the encrypted local cache"
@@ -250,6 +259,55 @@ async fn resolver_tier_policy_rehydrates_encrypted_local_cache() {
         raw_local.get(&hash).await.unwrap(),
         Bytes::from_static(b"tiered encrypted bytes"),
         "rehydrated local cache stores ciphertext"
+    );
+}
+
+#[tokio::test]
+async fn resolver_root_lock_refuses_second_writable_open() {
+    let temp = tempdir().unwrap();
+    let engine = Arc::new(Engine::new(temp.path()).unwrap());
+    let resolver = ObjectStorageResolver::new(engine);
+    let tenant = tenant();
+    let _store = resolver.blob_store(&tenant).unwrap();
+
+    let err = LocalPackStore::open(resolver.object_blob_root(&tenant)).unwrap_err();
+    assert_eq!(
+        err.storage_kind(),
+        Some(nimbus_core::StorageErrorKind::Busy),
+        "a second writable handle on a live tenant root is refused"
+    );
+}
+
+#[tokio::test]
+async fn tenant_root_identity_refuses_foreign_tenant() {
+    let temp = tempdir().unwrap();
+    let engine = Arc::new(Engine::new(temp.path()).unwrap());
+    let resolver = ObjectStorageResolver::new(engine);
+    let tenant = tenant();
+    let root = resolver.object_blob_root(&tenant);
+    let _hash = resolver
+        .blob_store(&tenant)
+        .unwrap()
+        .put(Bytes::from_static(b"bound"))
+        .await
+        .unwrap();
+    drop(resolver);
+
+    // Opening tenant-a's root while claiming to be tenant-b fails closed.
+    let err = LocalPackStore::open_with_options(
+        &root,
+        nimbus_blob::LocalPackStoreOptions {
+            identity: Some(crate::tenant_root_identity(
+                &TenantId::new("tenant-b").unwrap(),
+            )),
+            ..nimbus_blob::LocalPackStoreOptions::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        err.storage_kind(),
+        Some(nimbus_core::StorageErrorKind::Corruption),
+        "a root bound to tenant-a refuses to open as tenant-b"
     );
 }
 
