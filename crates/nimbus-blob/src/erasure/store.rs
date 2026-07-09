@@ -86,6 +86,18 @@ impl ErasureBlobStore {
         // all k+m, so up to k-1 manifest losses stay visible (data itself
         // only tolerates m shard losses — manifests are never the weaker
         // link); an interrupted put's minority never becomes visible.
+        //
+        // A CRASH after quorum but before full replication leaves the blob
+        // visible although put never returned. That is deliberate and safe:
+        // shards are durably written before any manifest, so visibility
+        // implies the blob is complete, durable, and hash-verified —
+        // "unacknowledged but durable", the same semantics the baseline
+        // LocalPackStore has at its index-append commit point (a crash
+        // after the append, before put returns, leaves the blob visible on
+        // restart). No coordinator-free protocol can close the
+        // ack-vs-durability gap; the guarantees that matter are that an
+        // ERRORED put is invisible (publish rollback + quorum) and that
+        // anything visible is completely readable.
         let quorum = self.config.parity_shards + 1;
         blocking(move || manifest::load_newest(&hash, &drive_roots, quorum)).await
     }
