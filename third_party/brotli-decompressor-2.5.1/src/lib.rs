@@ -5,6 +5,9 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
+// Vendored upstream crate: rust 1.97.0's clippy flags `&x` format args as
+// useless borrows. Silence rather than diverge from upstream source.
+#![allow(clippy::useless_borrows_in_formatting)]
 #![cfg_attr(feature="no-stdlib-ffi-binding",cfg_attr(not(feature="std"), feature(lang_items)))]
 #![cfg_attr(feature="no-stdlib-ffi-binding",cfg_attr(not(feature="std"), feature(panic_handler)))]
 

@@ -158,7 +158,7 @@ impl ConvexHostBridge {
             .enter_host_call_session(format!(
                 "{}:{}",
                 request.kind.as_str(),
-                &request.function_name
+                request.function_name
             ))
             .map_err(runtime_error_to_core)?;
         let response = invoke_runtime_bundle_on_worker_with_egress_gateway(
@@ -200,7 +200,7 @@ impl ConvexHostBridge {
             .enter_host_call_session(format!(
                 "{}:{}",
                 request.kind.as_str(),
-                &request.function_name
+                request.function_name
             ))
             .map_err(runtime_error_to_core)?;
         let response = invoke_runtime_bundle_blocking_with_egress_gateway(
