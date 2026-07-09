@@ -193,9 +193,15 @@ pub struct ScrubSummary {
 pub struct LocalPackStats {
     /// Payload bytes of live (non-quarantined) blobs.
     pub live_bytes: u64,
-    /// Dead on-disk bytes a full compaction would reclaim (released-but-not-
-    /// yet-compacted record space), reserving pack + record framing.
+    /// Dead on-disk record space a compaction would reclaim **right now** —
+    /// unreferenced record bytes in packs a compaction can rewrite. Excludes
+    /// dead space trapped inside retained quarantined packs (see
+    /// [`Self::quarantine_blocked_bytes`]); reserves pack + record framing.
     pub reclaimable_bytes: u64,
+    /// Dead on-disk record space trapped inside packs that hold a quarantined
+    /// blob (compaction retains those packs whole — RFS6). Becomes reclaimable
+    /// only once the quarantine is repaired or released.
+    pub quarantine_blocked_bytes: u64,
     /// Payload bytes of quarantined blobs (retained until repair/release).
     pub quarantined_bytes: u64,
     /// Number of pack files on disk.
@@ -1545,20 +1551,28 @@ fn injected_compaction_crash() -> Error {
 
 /// Computes a [`LocalPackStats`] snapshot under the caller's held state lock.
 ///
-/// `reclaimable_bytes` is the dead on-disk record space a full compaction
-/// would drop: the total post-header pack region minus the framed size of
-/// every record the index still references (live and quarantined). It reserves
-/// per-pack `PACK_MAGIC` and per-record framing and uses `saturating_sub` so
-/// it never underflows right after a compaction.
+/// Dead record space is accounted **per pack** so the two reclaim figures are
+/// operator-honest: a pack that holds a quarantined blob is retained whole by
+/// compaction (RFS6), so its dead space is `quarantine_blocked_bytes` (not
+/// freeable until repair/release); every other pack's dead space is
+/// `reclaimable_bytes` (freeable by a compaction right now). Both reserve
+/// per-pack `PACK_MAGIC` and per-record framing (`record_len`) and use
+/// `saturating_sub` so neither underflows immediately after a compaction.
 fn stats_locked(state: &LocalPackState) -> Result<LocalPackStats> {
     let mut live_bytes = 0u64;
     let mut live_blob_count = 0usize;
     let mut quarantined_bytes = 0u64;
     let mut quarantined_blob_count = 0usize;
-    let mut referenced_record_bytes = 0u64;
+    // Per-pack: referenced record bytes, and whether the pack holds a
+    // quarantined entry (which makes compaction retain it whole).
+    let mut per_pack: std::collections::HashMap<u64, (u64, bool)> =
+        std::collections::HashMap::new();
     for (hash, entry) in &state.index {
-        referenced_record_bytes = referenced_record_bytes.saturating_add(record_len(entry.len));
-        if state.quarantined.contains_key(hash) {
+        let quarantined = state.quarantined.contains_key(hash);
+        let slot = per_pack.entry(entry.pack_id).or_insert((0, false));
+        slot.0 = slot.0.saturating_add(record_len(entry.len));
+        slot.1 |= quarantined;
+        if quarantined {
             quarantined_bytes = quarantined_bytes.saturating_add(entry.len);
             quarantined_blob_count += 1;
         } else {
@@ -1568,19 +1582,27 @@ fn stats_locked(state: &LocalPackState) -> Result<LocalPackStats> {
     }
 
     let pack_ids = pack_ids_on_disk(&state.packs_dir)?;
-    let mut on_disk_region = 0u64;
+    let mut reclaimable_bytes = 0u64;
+    let mut quarantine_blocked_bytes = 0u64;
     for pack_id in &pack_ids {
         let path = pack_path(&state.packs_dir, *pack_id);
         let size = fs::metadata(&path)
             .map(|meta| meta.len())
             .map_err(|err| io_error(err, format!("stat pack {}", path.display())))?;
-        on_disk_region =
-            on_disk_region.saturating_add(size.saturating_sub(PACK_MAGIC.len() as u64));
+        let region = size.saturating_sub(PACK_MAGIC.len() as u64);
+        let (referenced, blocked) = per_pack.get(pack_id).copied().unwrap_or((0, false));
+        let dead = region.saturating_sub(referenced);
+        if blocked {
+            quarantine_blocked_bytes = quarantine_blocked_bytes.saturating_add(dead);
+        } else {
+            reclaimable_bytes = reclaimable_bytes.saturating_add(dead);
+        }
     }
 
     Ok(LocalPackStats {
         live_bytes,
-        reclaimable_bytes: on_disk_region.saturating_sub(referenced_record_bytes),
+        reclaimable_bytes,
+        quarantine_blocked_bytes,
         quarantined_bytes,
         pack_count: pack_ids.len(),
         live_blob_count,

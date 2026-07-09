@@ -922,8 +922,18 @@ async fn stats_reports_live_reclaimable_quarantined_and_pack_count() {
     assert_eq!(stats.live_blob_count, 1);
     assert_eq!(stats.quarantined_blob_count, 1);
     assert_eq!(stats.pack_count, 1, "all records share one pack");
-    // The released blob's framed record space is reclaimable.
-    assert_eq!(stats.reclaimable_bytes, record_len(6));
+    // The one pack holds the quarantined blob, so compaction retains it whole:
+    // the released blob's dead record space is quarantine-BLOCKED, not
+    // reclaimable right now.
+    assert_eq!(
+        stats.reclaimable_bytes, 0,
+        "the only pack is retained (quarantine)"
+    );
+    assert_eq!(
+        stats.quarantine_blocked_bytes,
+        record_len(6),
+        "the released blob's dead space is trapped behind the quarantine"
+    );
     // No sweep yet; the quarantine scrub above already recorded a scrub summary.
     assert!(stats.last_gc.is_none(), "no sweep has run yet");
     assert!(
@@ -960,14 +970,18 @@ async fn stats_reports_live_reclaimable_quarantined_and_pack_count() {
     assert_eq!(after.live_bytes, 2);
     assert_eq!(after.quarantined_bytes, 4);
     // Compaction rewrote the live blob into a fresh pack but RETAINED the
-    // quarantined blob's original pack (RFS6: quarantined packs are not
-    // deleted before repair). That retained pack still holds the live blob's
-    // superseded copy AND the released blob's dead record — space that is
-    // reclaimable only once the quarantine is resolved.
+    // quarantined blob's original pack (RFS6). That retained pack now holds
+    // the live blob's superseded copy AND the released blob's dead record —
+    // all quarantine-BLOCKED (freeable only once the quarantine resolves), so
+    // nothing is reclaimable right now.
     assert_eq!(
-        after.reclaimable_bytes,
+        after.reclaimable_bytes, 0,
+        "no freeable dead space while blocked"
+    );
+    assert_eq!(
+        after.quarantine_blocked_bytes,
         record_len(2) + record_len(6),
-        "dead space trapped in the retained quarantined pack"
+        "the superseded live copy + released record are trapped behind the quarantine"
     );
 
     // Resolving the quarantine (release) then compacting reclaims it fully.
@@ -977,6 +991,10 @@ async fn stats_reports_live_reclaimable_quarantined_and_pack_count() {
     assert_eq!(
         resolved.reclaimable_bytes, 0,
         "all dead space reclaimed after repair"
+    );
+    assert_eq!(
+        resolved.quarantine_blocked_bytes, 0,
+        "nothing blocked once quarantine cleared"
     );
     assert_eq!(resolved.quarantined_bytes, 0);
     assert_eq!(resolved.live_bytes, 2);
@@ -1087,4 +1105,29 @@ async fn compaction_crash_safe_empty_store_removal() {
     let reopened = LocalPackStore::open_with_pack_target(dir.path(), 128).unwrap();
     reopened.compact().await.unwrap();
     assert_eq!(reopened.len().unwrap(), 0);
+}
+
+#[tokio::test]
+async fn stats_reclaimable_bytes_is_freeable_when_no_quarantine() {
+    // Two blobs in one pack, one released, no quarantine: the released blob's
+    // dead record space is reclaimable RIGHT NOW (its pack has no quarantined
+    // entry, so compaction can rewrite + drop it).
+    let (_dir, store) = open_temp(64 * 1024);
+    let keep = store.put(Bytes::from_static(b"keep me")).await.unwrap();
+    let released = store.put(Bytes::from_static(b"free me now")).await.unwrap(); // len 11
+    store.release(&released).await.unwrap();
+
+    let stats = store.stats().await.unwrap();
+    assert_eq!(stats.reclaimable_bytes, record_len(11), "freeable now");
+    assert_eq!(stats.quarantine_blocked_bytes, 0);
+
+    // Compaction frees it.
+    store.compact().await.unwrap();
+    let after = store.stats().await.unwrap();
+    assert_eq!(after.reclaimable_bytes, 0);
+    assert_eq!(after.live_bytes, 7);
+    assert_eq!(
+        store.get(&keep).await.unwrap(),
+        Bytes::from_static(b"keep me")
+    );
 }

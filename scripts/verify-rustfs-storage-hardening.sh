@@ -218,6 +218,7 @@ required_tests=(
   compaction_crash_safe
   compaction_crash_safe_empty_store_removal
   compaction_no_crash_control_is_clean
+  stats_reclaimable_bytes_is_freeable_when_no_quarantine
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then
