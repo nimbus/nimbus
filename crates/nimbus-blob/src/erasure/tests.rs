@@ -827,11 +827,11 @@ async fn erasure_failed_republish_preserves_committed_replicas() {
     perms.set_mode(0o500);
     fs::set_permissions(&last_dir, perms).unwrap();
 
-    let err = store.put(bytes.clone()).await.unwrap_err();
-    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Io));
-
-    // The four untouched committed replicas survived the rollback (drive 0's
-    // freshly created copy was removed again): still >= quorum, readable.
+    // Round 8 refinement: the four untouched committed replicas survive the
+    // rollback and form a durable quorum, so the republish reports SUCCESS
+    // (Err always means not-visible; an acknowledged-invisible or
+    // errored-visible contradiction is never observable).
+    assert_eq!(store.put(bytes.clone()).await.unwrap(), hash);
     assert!(
         store.has(&hash).await.unwrap(),
         "failed republish must not drop a committed blob below quorum"
@@ -927,4 +927,99 @@ async fn erasure_concurrent_put_and_release_linearize() {
         assert_eq!(store.put(bytes.clone()).await.unwrap(), hash);
         assert_eq!(store.get(&hash).await.unwrap(), bytes);
     }
+}
+
+#[tokio::test]
+async fn erasure_forged_blob_len_fails_closed_without_overallocation() {
+    // Review fix (round 8, P1): a checksum-valid manifest whose blob_len /
+    // stripe records are internally consistent but point at nonexistent
+    // shards must fail closed on the first stripe read — reads grow from
+    // verified bytes only and never reserve manifest-claimed capacity.
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let seed = store.put(payload(8)).await.unwrap();
+
+    // Forge a manifest claiming a large blob (1024 stripes) whose shard
+    // hashes do not exist anywhere.
+    let stripes = 1024usize;
+    let forged_len = (stripes * STRIPE) as u64;
+    let target_hash = BlobHash::of(b"forged large blob that was never put");
+    let mut stripe_hashes = Vec::with_capacity(stripes);
+    let mut stripe_refs = Vec::with_capacity(stripes);
+    for stripe_index in 0..stripes {
+        stripe_hashes.push(BlobHash::of(format!("stripe {stripe_index}").as_bytes()));
+        stripe_refs.push(
+            (0..K + M)
+                .map(|shard_index| ShardRef {
+                    shard_index: shard_index as u16,
+                    shard_hash: BlobHash::of(
+                        format!("missing shard {stripe_index}/{shard_index}").as_bytes(),
+                    ),
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    let forged = ErasureManifest {
+        generation: 1,
+        blob_hash: target_hash,
+        blob_len: forged_len,
+        data_shards: K,
+        parity_shards: M,
+        stripe_width: STRIPE,
+        stripe_hashes,
+        stripes: stripe_refs,
+    };
+    let encoded = forged.encode();
+    // Round-trips decode (structurally valid), and plant a full quorum.
+    ErasureManifest::decode(&encoded).unwrap();
+    for index in 0..(K + M) {
+        let path = manifest::manifest_path(&store.drive_root(index), &target_hash);
+        fs::write(&path, &encoded).unwrap();
+    }
+
+    // Visible (quorum of valid manifests) but every read fails closed fast
+    // on the missing shards — Corruption, no panic, no huge reservation.
+    assert!(store.has(&target_hash).await.unwrap());
+    let err = store.get(&target_hash).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    let err = store.get_range(&target_hash, 0..64).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+
+    // The healthy blob is unaffected.
+    assert_eq!(store.get(&seed).await.unwrap(), payload(8));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn erasure_publish_failure_with_durable_quorum_reports_success() {
+    // Review fix (round 8, P2): when a publish failure strikes AFTER a
+    // durable quorum of identical replicas exists (and rollback cannot or
+    // must not undo them), publish reports Ok — Err always means
+    // not-visible. Simulated by pre-seeding quorum replicas so the failing
+    // call's skip logic leaves them untouched.
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(STRIPE + 5);
+    let hash = store.put(bytes.clone()).await.unwrap();
+
+    // Strip down to exactly quorum (3 of 6) replicas, then make one empty
+    // drive's manifests dir unwritable so a republish fails there.
+    for index in 3..(K + M) {
+        fs::remove_file(manifest::manifest_path(&store.drive_root(index), &hash)).unwrap();
+    }
+    let blocked = manifest::manifest_dir(&store.drive_root(K + M - 1));
+    let mut perms = fs::metadata(&blocked).unwrap().permissions();
+    perms.set_mode(0o500);
+    fs::set_permissions(&blocked, perms).unwrap();
+
+    // The idempotent put republishes: drives 0-2 skip (identical), drives
+    // 3-4 get fresh copies, drive 5 fails — but a durable quorum exists, so
+    // the put reports SUCCESS and the blob stays fully readable.
+    assert_eq!(store.put(bytes.clone()).await.unwrap(), hash);
+    assert!(store.has(&hash).await.unwrap());
+    assert_eq!(store.get(&hash).await.unwrap(), bytes);
+
+    let mut perms = fs::metadata(&blocked).unwrap().permissions();
+    perms.set_mode(0o700);
+    fs::set_permissions(&blocked, perms).unwrap();
 }

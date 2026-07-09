@@ -167,15 +167,21 @@ impl ErasureManifest {
 ///
 /// - a drive already holding IDENTICAL bytes is skipped (idempotent
 ///   republish is a no-op there);
-/// - on any write failure, every path this call changed is rolled back —
+/// - on a write failure, every path this call changed is rolled back —
 ///   restored to its prior bytes if one existed (committed replicas survive
-///   a failed republish), removed if the call created it (an errored fresh
-///   put stays invisible; even interrupted cleanup leaves at most a
-///   below-quorum minority — see [`load_newest`]).
+///   a failed republish), removed if the call created it;
+/// - after rollback the surviving byte-identical replica count decides the
+///   outcome: `>= quorum` returns Ok — the manifest set is durably visible
+///   (shards were written before any manifest, so the blob is complete)
+///   and treating it as an error would leave an acknowledged-invisible
+///   contradiction if cleanup itself failed; `< quorum` returns Err, which
+///   the visibility rule keeps invisible. Err therefore always means
+///   not-visible, even when rollback is interrupted or partially fails.
 pub(crate) fn publish(
     manifest: &ErasureManifest,
     drive_roots: &[PathBuf],
     observer: &dyn SyncObserver,
+    quorum: usize,
 ) -> Result<()> {
     let bytes = manifest.encode();
     let mut changed: Vec<(PathBuf, Option<Vec<u8>>)> = Vec::with_capacity(drive_roots.len());
@@ -204,6 +210,9 @@ pub(crate) fn publish(
                     }
                 }
             }
+            if count_identical_replicas(&manifest.blob_hash, drive_roots, &bytes) >= quorum {
+                return Ok(());
+            }
             return Err(Error::storage(
                 StorageErrorKind::Io,
                 format!("write erasure manifest {}: {err}", path.display()),
@@ -214,13 +223,18 @@ pub(crate) fn publish(
     Ok(())
 }
 
-/// Loads the visible manifest for `hash`: the highest generation holding a
-/// valid copy on at least `quorum` drives. Quorum visibility is what makes
-/// the commit protocol all-or-nothing without a coordinator: an interrupted
-/// or errored put (post-cleanup) can leave at most a below-quorum minority
-/// of replicas, which this rule keeps invisible, while a committed blob
-/// (all-drive publish) tolerates the loss or corruption of
-/// `drives - quorum` manifest copies before losing visibility.
+/// Counts drive roots holding a byte-identical valid replica of `bytes`.
+fn count_identical_replicas(hash: &BlobHash, drive_roots: &[PathBuf], bytes: &[u8]) -> usize {
+    drive_roots
+        .iter()
+        .filter(|root| {
+            fs::read(manifest_path(root, hash))
+                .map(|existing| existing == bytes)
+                .unwrap_or(false)
+        })
+        .count()
+}
+
 pub(crate) fn load_newest(
     hash: &BlobHash,
     drive_roots: &[PathBuf],

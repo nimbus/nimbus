@@ -115,7 +115,7 @@ impl ErasureBlobStore {
         // ack-vs-durability gap; the guarantees that matter are that an
         // ERRORED put is invisible (publish rollback + quorum) and that
         // anything visible is completely readable.
-        let quorum = (self.config.parity_shards + 1).min(self.config.data_shards);
+        let quorum = self.visibility_quorum();
         blocking(move || manifest::load_newest(&hash, &drive_roots, quorum)).await
     }
 
@@ -159,7 +159,12 @@ impl ErasureBlobStore {
     async fn publish_manifest(&self, manifest: ErasureManifest) -> Result<()> {
         let drive_roots = self.drive_roots.clone();
         let observer = Arc::clone(&self.observer);
-        blocking(move || manifest::publish(&manifest, &drive_roots, &*observer)).await
+        let quorum = self.visibility_quorum();
+        blocking(move || manifest::publish(&manifest, &drive_roots, &*observer, quorum)).await
+    }
+
+    fn visibility_quorum(&self) -> usize {
+        (self.config.parity_shards + 1).min(self.config.data_shards)
     }
 
     /// Reads, reassembles, and VERIFIES one stripe against its manifest
@@ -353,7 +358,10 @@ impl BlobStore for ErasureBlobStore {
 
     async fn get(&self, hash: &BlobHash) -> Result<Bytes> {
         let manifest = self.manifest_for_read(hash).await?;
-        let mut out = Vec::with_capacity(manifest.blob_len as usize);
+        // Grow from verified stripe bytes only — blob_len is manifest data
+        // and a checksum-valid forgery with a huge claim must fail closed on
+        // its (missing) shards, not reserve memory upfront.
+        let mut out = Vec::new();
         for stripe_index in 0..manifest.stripes.len() {
             let stripe = self.read_stripe_verified(&manifest, stripe_index).await?;
             out.extend_from_slice(&stripe);
@@ -395,7 +403,9 @@ impl BlobStore for ErasureBlobStore {
             .map_err(|_| Error::InvalidInput("range start overflows usize".to_string()))?;
         let last_stripe = usize::try_from((range.end - 1) / manifest.stripe_width as u64)
             .map_err(|_| Error::InvalidInput("range end overflows usize".to_string()))?;
-        let mut out = Vec::with_capacity((range.end - range.start) as usize);
+        // Grow from verified stripe bytes only (see get: manifest-supplied
+        // lengths must not drive upfront reservations).
+        let mut out = Vec::new();
         for stripe_index in first_stripe..=last_stripe {
             let stripe = self.read_stripe_verified(&manifest, stripe_index).await?;
             let stripe_start = stripe_index as u64 * manifest.stripe_width as u64;

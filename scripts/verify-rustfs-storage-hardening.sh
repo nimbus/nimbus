@@ -244,6 +244,8 @@ required_tests=(
   erasure_high_parity_manifests_survive_parity_drive_losses
   erasure_same_leg_instances_share_the_mutation_lock
   erasure_concurrent_put_and_release_linearize
+  erasure_forged_blob_len_fails_closed_without_overallocation
+  erasure_publish_failure_with_durable_quorum_reports_success
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then
