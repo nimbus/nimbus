@@ -35,6 +35,7 @@ digest-93f6ce9d446188ac = { package = "digest", version = "0.10", features = ["m
 digest-a6292c17cd707f01 = { package = "digest", version = "0.11", features = ["alloc", "mac", "oid"] }
 either = { version = "1", features = ["use_std"] }
 fastrand = { version = "2" }
+fixedbitset = { version = "0.5", default-features = false, features = ["std"] }
 flate2 = { version = "1", features = ["zlib", "zlib-ng"] }
 form_urlencoded = { version = "1" }
 futures-channel = { version = "0.3", features = ["sink"] }
@@ -120,6 +121,7 @@ crypto-common = { version = "0.1", default-features = false, features = ["getran
 digest-93f6ce9d446188ac = { package = "digest", version = "0.10", features = ["mac", "std"] }
 either = { version = "1", features = ["use_std"] }
 fastrand = { version = "2" }
+fixedbitset = { version = "0.5", default-features = false, features = ["std"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["std"] }
 hashbrown = { version = "0.17" }
 indexmap = { version = "2", features = ["serde"] }

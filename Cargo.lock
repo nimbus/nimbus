@@ -13903,6 +13903,7 @@ dependencies = [
  "either",
  "errno",
  "fastrand",
+ "fixedbitset 0.5.7",
  "flate2",
  "form_urlencoded",
  "futures-channel",
