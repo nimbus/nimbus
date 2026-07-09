@@ -581,12 +581,16 @@ async fn erasure_put_repairs_partially_replicated_manifest() {
     let bytes = payload(STRIPE + 3);
     let hash = store.put(bytes.clone()).await.unwrap();
 
-    // Simulate a partial publish: strip the manifest from all but drive 0.
-    for index in 1..(K + M) {
+    // Simulate a partial publish: strip the manifest below quorum (m+1=3),
+    // leaving copies on drives 0 and 1 only.
+    for index in 2..(K + M) {
         let path = manifest::manifest_path(&store.drive_root(index), &hash);
         fs::remove_file(&path).unwrap();
     }
-    assert!(store.has(&hash).await.unwrap(), "one copy keeps it visible");
+    assert!(
+        !store.has(&hash).await.unwrap(),
+        "a below-quorum manifest minority must be invisible (round-2 P1)"
+    );
 
     let again = store.put(bytes.clone()).await.unwrap();
     assert_eq!(again, hash);
@@ -653,4 +657,74 @@ async fn erasure_manifest_huge_stripe_count_rejected() {
     let path = manifest::manifest_path(&store.drive_root(0), &hash);
     fs::write(&path, &frame).unwrap();
     assert!(store.has(&hash).await.unwrap());
+}
+
+#[tokio::test]
+async fn erasure_under_quorum_manifest_is_invisible() {
+    // Review fix (round 2, P1): visibility requires parity+1 valid manifest
+    // replicas, so the minority an interrupted put can leave behind is
+    // never observable as committed — while a committed blob tolerates
+    // k-1 manifest losses (more than the m shard losses data tolerates).
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(STRIPE + 11);
+    let hash = store.put(bytes.clone()).await.unwrap();
+
+    // k+m = 6 copies; quorum = m+1 = 3. Removing 3 leaves exactly quorum.
+    for index in 0..M + 1 {
+        let path = manifest::manifest_path(&store.drive_root(index), &hash);
+        fs::remove_file(&path).unwrap();
+    }
+    assert!(
+        store.has(&hash).await.unwrap(),
+        "quorum copies stay visible"
+    );
+    assert_eq!(store.get(&hash).await.unwrap(), bytes);
+
+    // One more removal drops below quorum: invisible, fail-closed.
+    let path = manifest::manifest_path(&store.drive_root(M + 1), &hash);
+    fs::remove_file(&path).unwrap();
+    assert!(!store.has(&hash).await.unwrap());
+    assert!(matches!(
+        store.get(&hash).await.unwrap_err(),
+        Error::NotFound(_)
+    ));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn erasure_failed_publish_leaves_put_invisible() {
+    // Review fix (round 2, P1): a put whose manifest publish fails partway
+    // returns Err AND stays invisible — publish undoes the copies it
+    // already wrote, and the quorum rule bounds any cleanup remnant.
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(2 * STRIPE + 9);
+    let hash = BlobHash::of(&bytes);
+
+    // Make the LAST drive's manifests dir unwritable so every earlier
+    // replica writes before the failure.
+    let last = store.drive_root(K + M - 1);
+    let dir = manifest::manifest_dir(&last);
+    let mut perms = fs::metadata(&dir).unwrap().permissions();
+    perms.set_mode(0o500);
+    fs::set_permissions(&dir, perms).unwrap();
+
+    let err = store.put(bytes.clone()).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Io));
+    assert!(
+        !store.has(&hash).await.unwrap(),
+        "an errored put must not be observable as committed"
+    );
+    for index in 0..(K + M - 1) {
+        let path = manifest::manifest_path(&store.drive_root(index), &hash);
+        assert!(!path.exists(), "publish cleanup removed drive {index} copy");
+    }
+
+    // Restore and retry: the same put commits cleanly.
+    let mut perms = fs::metadata(&dir).unwrap().permissions();
+    perms.set_mode(0o700);
+    fs::set_permissions(&dir, perms).unwrap();
+    assert_eq!(store.put(bytes.clone()).await.unwrap(), hash);
+    assert_eq!(store.get(&hash).await.unwrap(), bytes);
 }

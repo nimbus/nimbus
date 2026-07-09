@@ -162,29 +162,50 @@ impl ErasureManifest {
     }
 }
 
+/// Publishes the manifest to EVERY drive root. On any write failure, the
+/// copies already written by THIS call are best-effort removed before the
+/// error returns, so an errored put stays invisible (and even if cleanup is
+/// also interrupted, at most a below-quorum minority of replicas can remain
+/// — see [`load_newest`]'s visibility rule).
 pub(crate) fn publish(
     manifest: &ErasureManifest,
     drive_roots: &[PathBuf],
     observer: &dyn SyncObserver,
 ) -> Result<()> {
     let bytes = manifest.encode();
+    let mut written: Vec<PathBuf> = Vec::with_capacity(drive_roots.len());
     for root in drive_roots {
         let path = manifest_path(root, &manifest.blob_hash);
-        disk::write_replace_durable(&path, &bytes, observer).map_err(|err| {
-            Error::storage(
+        if let Err(err) = disk::write_replace_durable(&path, &bytes, observer) {
+            for undo in &written {
+                let _ = fs::remove_file(undo);
+                if let Some(dir) = undo.parent() {
+                    let _ = disk::fsync_dir(dir, observer);
+                }
+            }
+            return Err(Error::storage(
                 StorageErrorKind::Io,
                 format!("write erasure manifest {}: {err}", path.display()),
-            )
-        })?;
+            ));
+        }
+        written.push(path);
     }
     Ok(())
 }
 
+/// Loads the visible manifest for `hash`: the highest generation holding a
+/// valid copy on at least `quorum` drives. Quorum visibility is what makes
+/// the commit protocol all-or-nothing without a coordinator: an interrupted
+/// or errored put (post-cleanup) can leave at most a below-quorum minority
+/// of replicas, which this rule keeps invisible, while a committed blob
+/// (all-drive publish) tolerates the loss or corruption of
+/// `drives - quorum` manifest copies before losing visibility.
 pub(crate) fn load_newest(
     hash: &BlobHash,
     drive_roots: &[PathBuf],
+    quorum: usize,
 ) -> Result<Option<ErasureManifest>> {
-    let mut newest: Option<ErasureManifest> = None;
+    let mut candidates: Vec<(u64, usize, ErasureManifest)> = Vec::new();
     for root in drive_roots {
         let path = manifest_path(root, hash);
         let bytes = match fs::read(&path) {
@@ -195,15 +216,19 @@ pub(crate) fn load_newest(
             Ok(manifest) => manifest,
             Err(_) => continue,
         };
-        if newest
-            .as_ref()
-            .map(|current| manifest.generation > current.generation)
-            .unwrap_or(true)
+        match candidates
+            .iter_mut()
+            .find(|(generation, _, _)| *generation == manifest.generation)
         {
-            newest = Some(manifest);
+            Some((_, count, _)) => *count += 1,
+            None => candidates.push((manifest.generation, 1, manifest)),
         }
     }
-    Ok(newest)
+    Ok(candidates
+        .into_iter()
+        .filter(|(_, count, _)| *count >= quorum)
+        .max_by_key(|(generation, _, _)| *generation)
+        .map(|(_, _, manifest)| manifest))
 }
 
 pub(crate) fn manifest_dir(root: &Path) -> PathBuf {

@@ -82,7 +82,12 @@ impl ErasureBlobStore {
     async fn load_manifest(&self, hash: &BlobHash) -> Result<Option<ErasureManifest>> {
         let hash = *hash;
         let drive_roots = self.drive_roots.clone();
-        blocking(move || manifest::load_newest(&hash, &drive_roots)).await
+        // Visibility quorum: parity+1 replicas. A committed publish writes
+        // all k+m, so up to k-1 manifest losses stay visible (data itself
+        // only tolerates m shard losses — manifests are never the weaker
+        // link); an interrupted put's minority never becomes visible.
+        let quorum = self.config.parity_shards + 1;
+        blocking(move || manifest::load_newest(&hash, &drive_roots, quorum)).await
     }
 
     async fn manifest_for_read(&self, hash: &BlobHash) -> Result<ErasureManifest> {
@@ -361,8 +366,14 @@ impl BlobStore for ErasureBlobStore {
         }
         // Range reads are bounded to covering stripes; integrity comes from
         // per-shard pack verification PLUS the per-stripe payload hash
-        // checked in read_stripe_verified (a whole-blob hash would require
-        // reading bytes outside the requested range).
+        // checked in read_stripe_verified. This intentionally does NOT bind
+        // the window to the whole-blob content address (that would require
+        // reading every stripe or a merkle-proof scheme): it matches — and
+        // exceeds — the repo-wide BlobStore range-read contract, where
+        // LocalPackStore serves the requested window without a whole-record
+        // re-hash and at-rest integrity is owned by verified-at-write
+        // structures, the scrubber, and AEAD authentication at the
+        // encryption layer in the shipped composition.
         Ok(Bytes::from(out))
     }
 
