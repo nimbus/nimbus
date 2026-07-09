@@ -25,6 +25,15 @@ pub(crate) struct ErasureManifest {
     pub(crate) data_shards: usize,
     pub(crate) parity_shards: usize,
     pub(crate) stripe_width: usize,
+    /// BLAKE3 of each stripe's TRUE payload (pre-padding). Range reads
+    /// verify reassembled stripes against these instead of the whole-blob
+    /// hash (which would require reading every stripe), closing the
+    /// wrong-shard-ref bug class for partial reads: a manifest whose shard
+    /// refs drifted (e.g. a heal bug) fails the stripe hash instead of
+    /// serving wrong bytes. A deliberately forged manifest is out of scope —
+    /// in the shipped composition the encryption layer above authenticates
+    /// bytes end-to-end via AEAD frames.
+    pub(crate) stripe_hashes: Vec<BlobHash>,
     pub(crate) stripes: Vec<Vec<ShardRef>>,
 }
 
@@ -38,7 +47,8 @@ impl ErasureManifest {
         body.extend_from_slice(&(self.parity_shards as u16).to_le_bytes());
         body.extend_from_slice(&(self.stripe_width as u64).to_le_bytes());
         body.extend_from_slice(&(self.stripes.len() as u64).to_le_bytes());
-        for stripe in &self.stripes {
+        for (stripe, stripe_hash) in self.stripes.iter().zip(&self.stripe_hashes) {
+            body.extend_from_slice(stripe_hash.as_bytes());
             body.extend_from_slice(&(stripe.len() as u16).to_le_bytes());
             for shard in stripe {
                 body.extend_from_slice(&shard.shard_index.to_le_bytes());
@@ -92,8 +102,21 @@ impl ErasureManifest {
         }
 
         let total = data_shards + parity_shards;
+        // Bound the count by what the body can physically hold BEFORE any
+        // allocation: a crafted (checksum-valid) manifest with a huge
+        // blob_len/stripe_count must fail structurally, not via a
+        // capacity-overflow panic or an enormous reservation.
+        let stripe_record_len = CHECKSUM_LEN + 2 + total * (2 + crate::BLAKE3_HASH_LEN);
+        let max_stripes = body.len().saturating_sub(cursor) / stripe_record_len;
+        if stripe_count > max_stripes {
+            return Err(corruption(format!(
+                "erasure manifest claims {stripe_count} stripes but body holds at most {max_stripes}"
+            )));
+        }
+        let mut stripe_hashes = Vec::with_capacity(stripe_count);
         let mut stripes = Vec::with_capacity(stripe_count);
         for _ in 0..stripe_count {
+            stripe_hashes.push(read_hash(body, &mut cursor)?);
             let refs = read_u16(body, &mut cursor)? as usize;
             if refs != total {
                 return Err(corruption(format!(
@@ -133,6 +156,7 @@ impl ErasureManifest {
             data_shards,
             parity_shards,
             stripe_width,
+            stripe_hashes,
             stripes,
         })
     }

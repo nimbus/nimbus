@@ -47,7 +47,7 @@ impl ErasureBlobStore {
             let store = LocalPackStore::open_with_options(
                 root,
                 LocalPackStoreOptions {
-                    identity: Some(drive_identity(index)),
+                    identity: Some(drive_identity(&config.leg_id, index)),
                     ..LocalPackStoreOptions::default()
                 },
             )?;
@@ -114,6 +114,11 @@ impl ErasureBlobStore {
                 "erasure manifest shard count does not match drive count",
             ));
         }
+        if manifest.stripe_hashes.len() != manifest.stripes.len() {
+            return Err(corruption(
+                "erasure manifest stripe hash count does not match stripe count",
+            ));
+        }
         Ok(())
     }
 
@@ -121,6 +126,33 @@ impl ErasureBlobStore {
         let drive_roots = self.drive_roots.clone();
         let observer = Arc::clone(&self.observer);
         blocking(move || manifest::publish(&manifest, &drive_roots, &*observer)).await
+    }
+
+    /// Reads, reassembles, and VERIFIES one stripe against its manifest
+    /// payload hash. Every read path goes through this, so a manifest whose
+    /// shard refs drifted (wrong-but-valid shard) fails closed here instead
+    /// of serving wrong bytes — including range reads that never see the
+    /// whole blob.
+    async fn read_stripe_verified(
+        &self,
+        manifest: &ErasureManifest,
+        stripe_index: usize,
+    ) -> Result<Bytes> {
+        let shards = self.read_stripe_data(manifest, stripe_index).await?;
+        let true_len = Self::stripe_true_len(manifest, stripe_index)?;
+        let stripe = stripe::reassemble_stripe(&shards, true_len)?;
+        let expected = manifest.stripe_hashes.get(stripe_index).ok_or_else(|| {
+            corruption(format!(
+                "erasure manifest missing stripe hash for stripe {stripe_index}"
+            ))
+        })?;
+        let actual = BlobHash::of(&stripe);
+        if actual != *expected {
+            return Err(corruption(format!(
+                "erasure stripe {stripe_index} reassembled to {actual}, manifest expects {expected}"
+            )));
+        }
+        Ok(stripe)
     }
 
     async fn read_stripe_data(
@@ -221,7 +253,14 @@ impl ErasureBlobStore {
 impl BlobStore for ErasureBlobStore {
     async fn put(&self, bytes: Bytes) -> Result<BlobHash> {
         let hash = BlobHash::of(&bytes);
-        if self.has(&hash).await? {
+        if let Some(existing) = self.load_manifest(&hash).await? {
+            // Idempotent path REPAIRS replication: a crash mid-publish or a
+            // partially completed release can leave the manifest on a subset
+            // of drives, and treating one surviving copy as success would
+            // leave the commit point permanently under-replicated. Publish is
+            // an atomic replace per drive, so re-publishing is safe.
+            self.validate_manifest(&hash, &existing)?;
+            self.publish_manifest(existing).await?;
             return Ok(hash);
         }
 
@@ -232,10 +271,12 @@ impl BlobStore for ErasureBlobStore {
             data_shards: self.config.data_shards,
             parity_shards: self.config.parity_shards,
             stripe_width: self.config.stripe_width,
+            stripe_hashes: Vec::new(),
             stripes: Vec::new(),
         };
 
         for (stripe_index, chunk) in bytes.chunks(self.config.stripe_width).enumerate() {
+            manifest.stripe_hashes.push(BlobHash::of(chunk));
             let shards =
                 stripe::encode_stripe(chunk, self.config.data_shards, self.config.parity_shards)?;
             let mut refs = Vec::with_capacity(shards.len());
@@ -270,9 +311,7 @@ impl BlobStore for ErasureBlobStore {
         let manifest = self.manifest_for_read(hash).await?;
         let mut out = Vec::with_capacity(manifest.blob_len as usize);
         for stripe_index in 0..manifest.stripes.len() {
-            let shards = self.read_stripe_data(&manifest, stripe_index).await?;
-            let true_len = Self::stripe_true_len(&manifest, stripe_index)?;
-            let stripe = stripe::reassemble_stripe(&shards, true_len)?;
+            let stripe = self.read_stripe_verified(&manifest, stripe_index).await?;
             out.extend_from_slice(&stripe);
         }
         out.truncate(manifest.blob_len as usize);
@@ -314,17 +353,16 @@ impl BlobStore for ErasureBlobStore {
             .map_err(|_| Error::InvalidInput("range end overflows usize".to_string()))?;
         let mut out = Vec::with_capacity((range.end - range.start) as usize);
         for stripe_index in first_stripe..=last_stripe {
-            let shards = self.read_stripe_data(&manifest, stripe_index).await?;
-            let true_len = Self::stripe_true_len(&manifest, stripe_index)?;
-            let stripe = stripe::reassemble_stripe(&shards, true_len)?;
+            let stripe = self.read_stripe_verified(&manifest, stripe_index).await?;
             let stripe_start = stripe_index as u64 * manifest.stripe_width as u64;
             let copy_start = range.start.max(stripe_start) - stripe_start;
             let copy_end = range.end.min(stripe_start + stripe.len() as u64) - stripe_start;
             out.extend_from_slice(&stripe[copy_start as usize..copy_end as usize]);
         }
-        // Range reads are intentionally bounded to covering stripes and trust
-        // shard-level pack verification; a whole-blob hash would require
-        // reading bytes outside the requested range.
+        // Range reads are bounded to covering stripes; integrity comes from
+        // per-shard pack verification PLUS the per-stripe payload hash
+        // checked in read_stripe_verified (a whole-blob hash would require
+        // reading bytes outside the requested range).
         Ok(Bytes::from(out))
     }
 
@@ -375,9 +413,14 @@ where
         .map_err(|err| Error::storage(StorageErrorKind::Other, format!("erasure task: {err}")))?
 }
 
-fn drive_identity(index: usize) -> [u8; crate::BLAKE3_HASH_LEN] {
+/// Binds a drive root to BOTH the leg instance and its drive index: a root
+/// provisioned for another leg (even at the same index) or for another index
+/// of this leg refuses to open (RFS2 fail-closed identity semantics).
+fn drive_identity(leg_id: &str, index: usize) -> [u8; crate::BLAKE3_HASH_LEN] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"nimbus-erasure-leg");
+    hasher.update(&(leg_id.len() as u64).to_le_bytes());
+    hasher.update(leg_id.as_bytes());
     hasher.update(&(index as u64).to_le_bytes());
     *hasher.finalize().as_bytes()
 }

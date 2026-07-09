@@ -24,7 +24,7 @@ fn open_temp(k: usize, m: usize, stripe_width: usize) -> (TempDir, ErasureBlobSt
     let roots = (0..k + m)
         .map(|index| dir.path().join(format!("drive-{index}")))
         .collect::<Vec<_>>();
-    let config = ErasureConfig::new(roots.clone(), k, m, stripe_width).unwrap();
+    let config = ErasureConfig::new("test-leg", roots.clone(), k, m, stripe_width).unwrap();
     let store = ErasureBlobStore::open(config).unwrap();
     (dir, store, roots)
 }
@@ -380,7 +380,8 @@ async fn erasure_drive_identity_refuses_swapped_roots() {
     swapped.swap(0, 1);
 
     let err =
-        ErasureBlobStore::open(ErasureConfig::new(swapped, K, M, STRIPE).unwrap()).unwrap_err();
+        ErasureBlobStore::open(ErasureConfig::new("test-leg", swapped, K, M, STRIPE).unwrap())
+            .unwrap_err();
 
     assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
 }
@@ -411,7 +412,8 @@ async fn erasure_crash_before_manifest_publish_is_invisible() {
     drop(store);
 
     let reopened =
-        ErasureBlobStore::open(ErasureConfig::new(roots, K, M, STRIPE).unwrap()).unwrap();
+        ErasureBlobStore::open(ErasureConfig::new("test-leg", roots, K, M, STRIPE).unwrap())
+            .unwrap();
 
     assert!(!reopened.has(&hash).await.unwrap());
     let err = reopened.get(&hash).await.unwrap_err();
@@ -528,4 +530,127 @@ impl TestRng {
             values.swap(index, swap);
         }
     }
+}
+
+#[tokio::test]
+async fn erasure_get_range_detects_wrong_shard_manifest() {
+    // Review fix (round 1, P1): a manifest whose shard ref drifted to a
+    // wrong-but-valid shard must fail RANGE reads closed too — the
+    // per-stripe payload hash catches what the whole-blob hash (full-get
+    // only) used to be the sole guard for.
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(3 * STRIPE);
+    let hash = store.put(bytes.clone()).await.unwrap();
+    let mut manifest = store.load_manifest_for_test(&hash).await.unwrap();
+
+    // Decoy shard: same length, valid content address, wrong bytes.
+    let shard = shard_ref(&manifest, 1, 0);
+    let drive = stripe::drive_for(0, 1, K + M);
+    let original = store
+        .drive_store(drive)
+        .get(&shard.shard_hash)
+        .await
+        .unwrap();
+    let decoy = Bytes::from(original.iter().map(|byte| byte ^ 0x5a).collect::<Vec<_>>());
+    let decoy_hash = store.drive_store(drive).put(decoy).await.unwrap();
+    manifest.generation += 1;
+    manifest.stripes[1]
+        .iter_mut()
+        .find(|candidate| candidate.shard_index == 0)
+        .unwrap()
+        .shard_hash = decoy_hash;
+    store.publish_manifest_for_test(manifest).await.unwrap();
+
+    // A range confined to the poisoned stripe fails closed...
+    let err = store
+        .get_range(&hash, (STRIPE as u64)..(STRIPE as u64 + 8))
+        .await
+        .unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    // ...while a range over healthy stripes still serves exact bytes.
+    let healthy = store.get_range(&hash, 0..(STRIPE as u64)).await.unwrap();
+    assert_eq!(healthy, bytes.slice(0..STRIPE));
+}
+
+#[tokio::test]
+async fn erasure_put_repairs_partially_replicated_manifest() {
+    // Review fix (round 1, P2): the idempotent put path must re-publish the
+    // manifest to every drive, healing crash-mid-publish / partial-release
+    // windows instead of blessing a single surviving copy.
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(STRIPE + 3);
+    let hash = store.put(bytes.clone()).await.unwrap();
+
+    // Simulate a partial publish: strip the manifest from all but drive 0.
+    for index in 1..(K + M) {
+        let path = manifest::manifest_path(&store.drive_root(index), &hash);
+        fs::remove_file(&path).unwrap();
+    }
+    assert!(store.has(&hash).await.unwrap(), "one copy keeps it visible");
+
+    let again = store.put(bytes.clone()).await.unwrap();
+    assert_eq!(again, hash);
+    for index in 0..(K + M) {
+        let path = manifest::manifest_path(&store.drive_root(index), &hash);
+        assert!(
+            path.exists(),
+            "idempotent put must repair the manifest replica on drive {index}"
+        );
+    }
+    assert_eq!(store.get(&hash).await.unwrap(), bytes);
+}
+
+#[tokio::test]
+async fn erasure_foreign_leg_root_refused() {
+    // Review fix (round 1, P2): identity binds the LEG INSTANCE, not just
+    // the drive index — a root provisioned for another leg refuses to open
+    // even at the same index.
+    let dir = tempfile::tempdir().unwrap();
+    let roots = (0..K + M)
+        .map(|index| dir.path().join(format!("drive-{index}")))
+        .collect::<Vec<_>>();
+    let first =
+        ErasureBlobStore::open(ErasureConfig::new("leg-a", roots.clone(), K, M, STRIPE).unwrap())
+            .unwrap();
+    drop(first);
+
+    let err = ErasureBlobStore::open(ErasureConfig::new("leg-b", roots, K, M, STRIPE).unwrap())
+        .unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+}
+
+#[tokio::test]
+async fn erasure_manifest_huge_stripe_count_rejected() {
+    // Review fix (round 1, P2): a checksum-valid manifest claiming a huge
+    // stripe count must fail structurally (bounded by body size) instead of
+    // panicking or reserving enormous capacity.
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(STRIPE);
+    let hash = store.put(bytes).await.unwrap();
+
+    // Hand-encode a manifest frame: magic + body + BLAKE3 checksum, where
+    // blob_len/stripe_count are astronomically large but the body is tiny.
+    let huge_stripes: u64 = u64::MAX / (STRIPE as u64); // consistent with blob_len below
+    let mut body = Vec::new();
+    body.extend_from_slice(&2u64.to_le_bytes()); // generation
+    body.extend_from_slice(hash.as_bytes()); // blob_hash
+    body.extend_from_slice(&u64::MAX.to_le_bytes()); // blob_len (huge)
+    body.extend_from_slice(&(K as u16).to_le_bytes());
+    body.extend_from_slice(&(M as u16).to_le_bytes());
+    body.extend_from_slice(&(STRIPE as u64).to_le_bytes()); // stripe_width
+    body.extend_from_slice(&huge_stripes.to_le_bytes()); // stripe_count (huge)
+    let checksum = blake3::hash(&body);
+    let mut frame = Vec::new();
+    frame.extend_from_slice(b"NBLE1");
+    frame.extend_from_slice(&body);
+    frame.extend_from_slice(checksum.as_bytes());
+
+    let err = ErasureManifest::decode(&frame).unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+
+    // The store keeps serving the healthy generation-1 manifest even if the
+    // crafted frame lands on a drive.
+    let path = manifest::manifest_path(&store.drive_root(0), &hash);
+    fs::write(&path, &frame).unwrap();
+    assert!(store.has(&hash).await.unwrap());
 }

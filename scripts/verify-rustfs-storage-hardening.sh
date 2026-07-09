@@ -233,6 +233,10 @@ required_tests=(
   erasure_manifest_torn_write_ignored
   erasure_crash_before_manifest_publish_is_invisible
   erasure_random_loss_within_parity_always_roundtrips
+  erasure_get_range_detects_wrong_shard_manifest
+  erasure_put_repairs_partially_replicated_manifest
+  erasure_foreign_leg_root_refused
+  erasure_manifest_huge_stripe_count_rejected
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then

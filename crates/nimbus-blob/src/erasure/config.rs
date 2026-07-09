@@ -10,6 +10,11 @@ const DEFAULT_STRIPE_WIDTH: usize = 1024 * 1024;
 /// Configuration for the multi-drive erasure-coded blob leg.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ErasureConfig {
+    /// Stable identifier for this erasure leg instance (e.g. a tenant- or
+    /// deployment-derived name). Bound into every drive root's format-marker
+    /// identity so a root from a DIFFERENT leg refuses to open even at the
+    /// same drive index (RFS2 semantics extended from role to instance).
+    pub leg_id: String,
     pub drives: Vec<PathBuf>,
     pub data_shards: usize,
     pub parity_shards: usize,
@@ -18,11 +23,18 @@ pub struct ErasureConfig {
 
 impl ErasureConfig {
     pub fn new(
+        leg_id: impl Into<String>,
         drives: Vec<PathBuf>,
         data_shards: usize,
         parity_shards: usize,
         stripe_width: usize,
     ) -> Result<Self> {
+        let leg_id = leg_id.into();
+        if leg_id.is_empty() {
+            return Err(Error::InvalidInput(
+                "erasure leg id must be non-empty".to_string(),
+            ));
+        }
         if !(2..=16).contains(&data_shards) {
             return Err(Error::InvalidInput(format!(
                 "erasure data shard count must be 2..=16, got {data_shards}"
@@ -60,6 +72,7 @@ impl ErasureConfig {
         }
 
         Ok(Self {
+            leg_id,
             drives,
             data_shards,
             parity_shards,
@@ -67,8 +80,9 @@ impl ErasureConfig {
         })
     }
 
-    pub fn default_for_drives(drives: Vec<PathBuf>) -> Result<Self> {
+    pub fn default_for_drives(leg_id: impl Into<String>, drives: Vec<PathBuf>) -> Result<Self> {
         Self::new(
+            leg_id,
             drives,
             DEFAULT_DATA_SHARDS,
             DEFAULT_PARITY_SHARDS,
