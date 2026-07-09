@@ -879,3 +879,255 @@ async fn open_prunes_stale_quarantine_entries() {
         Bytes::from_static(b"keeper")
     );
 }
+
+// ---- RFS6: metrics/status snapshot ----
+
+#[tokio::test]
+async fn stats_reports_live_reclaimable_quarantined_and_pack_count() {
+    let (dir, store) = open_temp(64 * 1024);
+    let live = store.put(Bytes::from_static(b"AA")).await.unwrap(); // len 2
+    let quarantined = store.put(Bytes::from_static(b"BBBB")).await.unwrap(); // len 4
+    let released = store.put(Bytes::from_static(b"CCCCCC")).await.unwrap(); // len 6
+
+    // Quarantine the middle blob by corrupting its record body, then scrub.
+    let q_entry = lock(&store.state)
+        .unwrap()
+        .index
+        .get(&quarantined)
+        .copied()
+        .unwrap();
+    let path = pack_path(&dir.path().join("packs"), q_entry.pack_id);
+    {
+        let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+        let body = q_entry.offset + RECORD_MAGIC.len() as u64 + crate::BLAKE3_HASH_LEN as u64 + 8;
+        file.seek(SeekFrom::Start(body)).unwrap();
+        file.write_all(b"Z").unwrap();
+        file.sync_data().unwrap();
+    }
+    let scrub = crate::LocalPackScrubber::new(store.clone())
+        .scrub()
+        .await
+        .unwrap();
+    assert!(scrub.quarantined_hashes.contains(&quarantined));
+
+    // Release the third blob (dead-but-not-compacted → reclaimable).
+    store.release(&released).await.unwrap();
+
+    let stats = store.stats().await.unwrap();
+    assert_eq!(
+        stats.live_bytes, 2,
+        "only the live blob's payload counts as live"
+    );
+    assert_eq!(stats.quarantined_bytes, 4);
+    assert_eq!(stats.live_blob_count, 1);
+    assert_eq!(stats.quarantined_blob_count, 1);
+    assert_eq!(stats.pack_count, 1, "all records share one pack");
+    // The one pack holds the quarantined blob, so compaction retains it whole:
+    // the released blob's dead record space is quarantine-BLOCKED, not
+    // reclaimable right now.
+    assert_eq!(
+        stats.reclaimable_bytes, 0,
+        "the only pack is retained (quarantine)"
+    );
+    assert_eq!(
+        stats.quarantine_blocked_bytes,
+        record_len(6),
+        "the released blob's dead space is trapped behind the quarantine"
+    );
+    // No sweep yet; the quarantine scrub above already recorded a scrub summary.
+    assert!(stats.last_gc.is_none(), "no sweep has run yet");
+    assert!(
+        stats.last_scrub.is_some(),
+        "the quarantine scrub recorded a summary"
+    );
+
+    // A sweep + scrub populate the last-run summaries.
+    let gc = crate::BlobGc::new(
+        store.clone(),
+        crate::StaticBlobRoots::new([live]),
+        Duration::ZERO,
+    );
+    let report = gc.sweep().await.unwrap();
+    assert_eq!(
+        report.swept, 0,
+        "live rooted, quarantined retained, released already gone"
+    );
+    assert_eq!(report.quarantine_retained, 1);
+    let _ = crate::LocalPackScrubber::new(store.clone())
+        .scrub()
+        .await
+        .unwrap();
+
+    let after = store.stats().await.unwrap();
+    let gc_summary = after.last_gc.expect("sweep recorded a summary");
+    assert_eq!(gc_summary.quarantine_retained, 1);
+    assert_eq!(gc_summary.referenced_retained, 1);
+    let scrub_summary = after.last_scrub.expect("scrub recorded a summary");
+    assert_eq!(
+        scrub_summary.quarantined, 1,
+        "the quarantined blob is still reported"
+    );
+    assert_eq!(after.live_bytes, 2);
+    assert_eq!(after.quarantined_bytes, 4);
+    // Compaction rewrote the live blob into a fresh pack but RETAINED the
+    // quarantined blob's original pack (RFS6). That retained pack now holds
+    // the live blob's superseded copy AND the released blob's dead record —
+    // all quarantine-BLOCKED (freeable only once the quarantine resolves), so
+    // nothing is reclaimable right now.
+    assert_eq!(
+        after.reclaimable_bytes, 0,
+        "no freeable dead space while blocked"
+    );
+    assert_eq!(
+        after.quarantine_blocked_bytes,
+        record_len(2) + record_len(6),
+        "the superseded live copy + released record are trapped behind the quarantine"
+    );
+
+    // Resolving the quarantine (release) then compacting reclaims it fully.
+    store.release(&quarantined).await.unwrap();
+    store.compact().await.unwrap();
+    let resolved = store.stats().await.unwrap();
+    assert_eq!(
+        resolved.reclaimable_bytes, 0,
+        "all dead space reclaimed after repair"
+    );
+    assert_eq!(
+        resolved.quarantine_blocked_bytes, 0,
+        "nothing blocked once quarantine cleared"
+    );
+    assert_eq!(resolved.quarantined_bytes, 0);
+    assert_eq!(resolved.live_bytes, 2);
+}
+
+// ---- RFS6: compaction crash-safety ----
+
+use std::time::Duration;
+
+/// Runs one compaction-crash scenario: writes blobs across packs, releases one
+/// (so compaction has a pack to drop), arms the crash point, compacts (expects
+/// the injected error), drops ALL store clones, reopens from disk, and asserts
+/// every surviving blob still serves its original bytes.
+async fn assert_crash_point_loses_no_live_blob(point: CompactionCrashPoint) {
+    let dir = tempfile::tempdir().unwrap();
+    let survivors: Vec<(BlobHash, Vec<u8>)>;
+    {
+        let store = LocalPackStore::open_with_pack_target(dir.path(), 128).unwrap();
+        let mut kept = Vec::new();
+        for i in 0..5u8 {
+            let payload = vec![b'a' + i; 40 + i as usize];
+            let hash = store.put(Bytes::from(payload.clone())).await.unwrap();
+            kept.push((hash, payload));
+        }
+        // Release one so compaction reclaims its pack (gives a removal step).
+        let (dead, _) = kept.remove(2);
+        store.release(&dead).await.unwrap();
+        survivors = kept;
+
+        store.arm_compaction_crash(point).await.unwrap();
+        let err = store.compact().await.unwrap_err();
+        assert_eq!(
+            err.storage_kind(),
+            Some(StorageErrorKind::Io),
+            "the injected crash surfaces as Io ({point:?})"
+        );
+        // Drop the ONLY clone so the shared state + flock release and reopen
+        // rebuilds purely from disk.
+        drop(store);
+    }
+
+    let reopened = LocalPackStore::open_with_pack_target(dir.path(), 128).unwrap();
+    for (hash, payload) in &survivors {
+        assert_eq!(
+            reopened.get(hash).await.unwrap(),
+            Bytes::from(payload.clone()),
+            "survivor {hash} lost its bytes after a crash at {point:?}"
+        );
+    }
+    // Recovery is compaction-clean afterwards.
+    reopened.compact().await.unwrap();
+    for (hash, payload) in &survivors {
+        assert_eq!(
+            reopened.get(hash).await.unwrap(),
+            Bytes::from(payload.clone())
+        );
+    }
+}
+
+#[tokio::test]
+async fn compaction_crash_safe() {
+    assert_crash_point_loses_no_live_blob(CompactionCrashPoint::AfterRewrites(2)).await;
+    assert_crash_point_loses_no_live_blob(CompactionCrashPoint::BeforePackRemoval).await;
+    assert_crash_point_loses_no_live_blob(CompactionCrashPoint::DuringPackRemoval(1)).await;
+}
+
+#[tokio::test]
+async fn compaction_no_crash_control_is_clean() {
+    let (_dir, store) = open_temp(128);
+    let mut kept = Vec::new();
+    for i in 0..4u8 {
+        let payload = vec![b'x' + i; 50];
+        let hash = store.put(Bytes::from(payload.clone())).await.unwrap();
+        kept.push((hash, payload));
+    }
+    let (dead, _) = kept.remove(1);
+    store.release(&dead).await.unwrap();
+
+    // No crash armed: compaction succeeds and every survivor is readable.
+    let stats = store.compact().await.unwrap();
+    assert!(stats.packs_removed >= 1);
+    for (hash, payload) in &kept {
+        assert_eq!(store.get(hash).await.unwrap(), Bytes::from(payload.clone()));
+    }
+    assert!(!store.has(&dead).await.unwrap());
+}
+
+#[tokio::test]
+async fn compaction_crash_safe_empty_store_removal() {
+    // The empty-store early-return branch also removes packs; a crash there
+    // must not corrupt the store (all blobs were released, so none to lose).
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let store = LocalPackStore::open_with_pack_target(dir.path(), 128).unwrap();
+        for i in 0..3u8 {
+            let hash = store.put(Bytes::from(vec![b'q' + i; 60])).await.unwrap();
+            store.release(&hash).await.unwrap();
+        }
+        store
+            .arm_compaction_crash(CompactionCrashPoint::DuringEmptyStoreRemoval(1))
+            .await
+            .unwrap();
+        let err = store.compact().await.unwrap_err();
+        assert_eq!(err.storage_kind(), Some(StorageErrorKind::Io));
+        drop(store);
+    }
+    // Reopen and compact cleanly.
+    let reopened = LocalPackStore::open_with_pack_target(dir.path(), 128).unwrap();
+    reopened.compact().await.unwrap();
+    assert_eq!(reopened.len().unwrap(), 0);
+}
+
+#[tokio::test]
+async fn stats_reclaimable_bytes_is_freeable_when_no_quarantine() {
+    // Two blobs in one pack, one released, no quarantine: the released blob's
+    // dead record space is reclaimable RIGHT NOW (its pack has no quarantined
+    // entry, so compaction can rewrite + drop it).
+    let (_dir, store) = open_temp(64 * 1024);
+    let keep = store.put(Bytes::from_static(b"keep me")).await.unwrap();
+    let released = store.put(Bytes::from_static(b"free me now")).await.unwrap(); // len 11
+    store.release(&released).await.unwrap();
+
+    let stats = store.stats().await.unwrap();
+    assert_eq!(stats.reclaimable_bytes, record_len(11), "freeable now");
+    assert_eq!(stats.quarantine_blocked_bytes, 0);
+
+    // Compaction frees it.
+    store.compact().await.unwrap();
+    let after = store.stats().await.unwrap();
+    assert_eq!(after.reclaimable_bytes, 0);
+    assert_eq!(after.live_bytes, 7);
+    assert_eq!(
+        store.get(&keep).await.unwrap(),
+        Bytes::from_static(b"keep me")
+    );
+}

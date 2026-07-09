@@ -49,15 +49,17 @@ pub use backup::{
     BackupBundle, BackupChunk, BackupRequest, BackupRestoreReport, KeyEscrow, ObjectBackup,
 };
 pub use encrypted::EncryptedBlobStore;
-pub use gc::{BlobGc, BlobGcReport, BlobGcRoots, StaticBlobRoots};
+pub use gc::{BlobGc, BlobGcReport, BlobGcRoots, CompositeBlobRoots, StaticBlobRoots};
 pub use hash::{BLAKE3_HASH_LEN, BlobHash};
 #[cfg(feature = "cluster")]
 pub use hash::{BlobTicket, PeerAddr};
-pub use local::{CompactionStats, LocalBlobEntry, LocalPackStore};
+pub use local::{
+    CompactionStats, GcSummary, LocalBlobEntry, LocalPackStats, LocalPackStore, ScrubSummary,
+};
 pub use memory::MemoryBlobStore;
 pub use nimbus_crypto::{FRAME_PLAINTEXT_LEN, FramedBlobKey, KEY_SEED_LEN, NONCE_LEN};
 pub use object_store::{BlobCloudConfig, BlobS3Credentials, ObjectStoreBlobStore};
-pub use pins::{BlobPin, BlobPinRegistry};
+pub use pins::{BlobPin, BlobPinRegistry, BlobPinSet};
 pub use placement::{PlacementBlobStore, PlacementMode};
 pub use root_guard::{LocalPackStoreOptions, OpenReport};
 pub use scrub::{

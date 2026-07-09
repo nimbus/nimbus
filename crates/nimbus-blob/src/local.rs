@@ -85,10 +85,21 @@ pub struct CompactionStats {
 }
 
 /// Live local blob metadata used by the GC seam.
+///
+/// Self-reports quarantine state and payload size so the sweep and the stats
+/// snapshot never take a second lock: both are read straight from the pack
+/// index under the same lock that produced the entry (see [`LocalPackStore::
+/// live_entries`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LocalBlobEntry {
     pub hash: BlobHash,
     pub written_at_millis: u64,
+    /// Payload byte length of the blob's pack record (excludes framing).
+    pub len: u64,
+    /// Whether this blob is currently quarantined. A quarantined blob is
+    /// retained by GC regardless of roots/grace — the scrub/repair/release
+    /// decision owns its reclamation, not the sweep.
+    pub quarantined: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,14 +139,95 @@ pub(crate) struct LocalPackState {
     pub(crate) report: OpenReport,
     /// Receives every durability-relevant sync/rename, in order.
     pub(crate) observer: Arc<dyn SyncObserver>,
+    /// Summary of the most recent GC sweep run through this shared state, for
+    /// operator status. `None` until a sweep records one.
+    pub(crate) last_gc: Option<GcSummary>,
+    /// Summary of the most recent scrub run through this shared state.
+    pub(crate) last_scrub: Option<ScrubSummary>,
     /// Advisory exclusive root lock; released when the last clone drops.
     /// `None` for read-only handles.
     _lock: Option<RootLock>,
+    /// When armed (tests only), `compact_locked` returns an injected error at
+    /// the named commit point to exercise crash recovery.
+    #[cfg(test)]
+    compact_crash_point: Option<CompactionCrashPoint>,
     /// Body bytes actually read off disk by `get_range`, tracked only in test
     /// builds to prove a range read stays bounded instead of pulling the
     /// whole pack record.
     #[cfg(test)]
     body_bytes_read: u64,
+}
+
+/// Operator-facing summary of the most recent GC sweep. A derived digest of
+/// [`crate::BlobGcReport`] (kept here rather than embedding that type so
+/// `local` never depends on `gc`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GcSummary {
+    pub referenced_retained: usize,
+    pub intent_retained: usize,
+    pub backup_retained: usize,
+    pub quarantine_retained: usize,
+    pub grace_retained: usize,
+    pub swept: usize,
+    pub packs_removed: usize,
+    pub bytes_rewritten: u64,
+    pub at_millis: u64,
+}
+
+/// Operator-facing summary of the most recent scrub. A derived digest of
+/// `ScrubReport` (kept here so `local` never depends on `scrub`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScrubSummary {
+    pub packs_scanned: usize,
+    pub records_scanned: usize,
+    pub findings: usize,
+    pub quarantined: usize,
+    pub at_millis: u64,
+}
+
+/// A consistent, single-lock snapshot of the local pack store's physical
+/// accounting plus the last GC/scrub summaries. Every field is computed under
+/// one state-lock acquisition (see [`LocalPackStore::stats`]) so it is
+/// TOCTOU-free against concurrent puts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LocalPackStats {
+    /// Payload bytes of live (non-quarantined) blobs.
+    pub live_bytes: u64,
+    /// Dead on-disk record space a compaction would reclaim **right now** —
+    /// unreferenced record bytes in packs a compaction can rewrite. Excludes
+    /// dead space trapped inside retained quarantined packs (see
+    /// [`Self::quarantine_blocked_bytes`]); reserves pack + record framing.
+    pub reclaimable_bytes: u64,
+    /// Dead on-disk record space trapped inside packs that hold a quarantined
+    /// blob (compaction retains those packs whole — RFS6). Becomes reclaimable
+    /// only once the quarantine is repaired or released.
+    pub quarantine_blocked_bytes: u64,
+    /// Payload bytes of quarantined blobs (retained until repair/release).
+    pub quarantined_bytes: u64,
+    /// Number of pack files on disk.
+    pub pack_count: usize,
+    /// Number of live (non-quarantined) index entries.
+    pub live_blob_count: usize,
+    /// Number of quarantined index entries.
+    pub quarantined_blob_count: usize,
+    pub last_gc: Option<GcSummary>,
+    pub last_scrub: Option<ScrubSummary>,
+}
+
+/// Commit points at which [`compact_locked`] can inject a simulated crash
+/// (tests only), to prove no live blob is lost when compaction is interrupted.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CompactionCrashPoint {
+    /// After `n` live records have been rewritten + index-published, before
+    /// any old pack is unlinked.
+    AfterRewrites(usize),
+    /// After all rewrites, immediately before removing any old pack.
+    BeforePackRemoval,
+    /// After `n` old packs have been removed (mid-removal).
+    DuringPackRemoval(usize),
+    /// In the empty-store branch, after `n` old packs have been removed.
+    DuringEmptyStoreRemoval(usize),
 }
 
 /// Durable local byte-plane store backed by append-only pack files.
@@ -370,7 +462,11 @@ impl LocalPackStore {
             index_provisional: index_was_missing,
             report,
             observer,
+            last_gc: None,
+            last_scrub: None,
             _lock: guard.lock,
+            #[cfg(test)]
+            compact_crash_point: None,
             #[cfg(test)]
             body_bytes_read: 0,
         }));
@@ -426,7 +522,11 @@ impl LocalPackStore {
                 index_provisional: false,
                 report,
                 observer,
+                last_gc: None,
+                last_scrub: None,
                 _lock: None,
+                #[cfg(test)]
+                compact_crash_point: None,
                 #[cfg(test)]
                 body_bytes_read: 0,
             })),
@@ -457,17 +557,57 @@ impl LocalPackStore {
     }
 
     /// Returns a stable snapshot of live local blob entries.
+    ///
+    /// Each entry self-reports its payload `len` and whether it is
+    /// `quarantined`, both read under this one lock, so the GC sweep decides
+    /// retention without any second store call.
     pub fn live_entries(&self) -> Result<Vec<LocalBlobEntry>> {
-        let mut entries = lock(&self.state)?
+        let state = lock(&self.state)?;
+        let mut entries = state
             .index
             .iter()
             .map(|(hash, entry)| LocalBlobEntry {
                 hash: *hash,
                 written_at_millis: entry.written_at_millis,
+                len: entry.len,
+                quarantined: state.quarantined.contains_key(hash),
             })
             .collect::<Vec<_>>();
+        drop(state);
         entries.sort_by_key(|entry| entry.hash);
         Ok(entries)
+    }
+
+    /// Records the most recent GC sweep summary for [`Self::stats`].
+    pub(crate) fn set_last_gc(&self, summary: GcSummary) -> Result<()> {
+        lock(&self.state)?.last_gc = Some(summary);
+        Ok(())
+    }
+
+    /// Records the most recent scrub summary for [`Self::stats`].
+    pub(crate) fn set_last_scrub(&self, summary: ScrubSummary) -> Result<()> {
+        lock(&self.state)?.last_scrub = Some(summary);
+        Ok(())
+    }
+
+    /// Returns a consistent physical-accounting snapshot of this store.
+    ///
+    /// Every metric — including each pack file's on-disk size — is computed
+    /// under ONE state-lock acquisition, so it is TOCTOU-free against
+    /// concurrent puts (which mutate under the same lock). Runs the disk stat
+    /// off the async runtime via [`Self::blocking`].
+    pub async fn stats(&self) -> Result<LocalPackStats> {
+        self.blocking(|state| stats_locked(&state)).await
+    }
+
+    /// Arms a compaction crash-injection point (tests only).
+    #[cfg(test)]
+    pub(crate) async fn arm_compaction_crash(&self, point: CompactionCrashPoint) -> Result<()> {
+        self.blocking(move |mut state| {
+            state.compact_crash_point = Some(point);
+            Ok(())
+        })
+        .await
     }
 
     /// Rewrites live blobs into fresh packs and removes packs no live index entry
@@ -974,8 +1114,7 @@ fn append_pack_record(
     written_at_millis: u64,
 ) -> Result<PackEntry> {
     let observer = Arc::clone(&state.observer);
-    let record_len =
-        RECORD_MAGIC.len() as u64 + crate::BLAKE3_HASH_LEN as u64 + 8 + bytes.len() as u64;
+    let record_len = record_len(bytes.len() as u64);
     // Never append behind a discredited pack header. The scrub's retirement
     // runs off a lock-free snapshot, so a writer holding the mutex here could
     // otherwise land a record in an active pack whose header went corrupt
@@ -1302,6 +1441,14 @@ fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
             fs::remove_file(&path)
                 .map_err(|err| io_error(err, format!("remove empty pack {}", path.display())))?;
             stats.packs_removed += 1;
+            #[cfg(test)]
+            if state.compact_crash_point
+                == Some(CompactionCrashPoint::DuringEmptyStoreRemoval(
+                    stats.packs_removed,
+                ))
+            {
+                return Err(injected_compaction_crash());
+            }
         }
         state.active_pack_id = 0;
         state.active_pack_bytes =
@@ -1337,6 +1484,22 @@ fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
         state.index.insert(hash, entry);
         stats.blobs_rewritten += 1;
         stats.bytes_rewritten += bytes.len() as u64;
+        // Crash after this record is rewritten + published but before any old
+        // pack is unlinked: recovery must still serve every pre-compaction
+        // hash from the intact old packs (the rebuilt records are orphaned
+        // and reclaimed by the next compaction).
+        #[cfg(test)]
+        if state.compact_crash_point
+            == Some(CompactionCrashPoint::AfterRewrites(stats.blobs_rewritten))
+        {
+            return Err(injected_compaction_crash());
+        }
+    }
+
+    // Crash after all rewrites, before the first old-pack unlink.
+    #[cfg(test)]
+    if state.compact_crash_point == Some(CompactionCrashPoint::BeforePackRemoval) {
+        return Err(injected_compaction_crash());
     }
 
     let referenced_packs: BTreeSet<u64> = state.index.values().map(|entry| entry.pack_id).collect();
@@ -1352,6 +1515,15 @@ fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
             })?;
             stats.packs_removed += 1;
             removed_any = true;
+            // Crash mid-removal: the rewritten index already references the new
+            // pack, so every live blob is served from it; the not-yet-removed
+            // old packs are orphans the next compaction reclaims.
+            #[cfg(test)]
+            if state.compact_crash_point
+                == Some(CompactionCrashPoint::DuringPackRemoval(stats.packs_removed))
+            {
+                return Err(injected_compaction_crash());
+            }
         }
     }
     if removed_any {
@@ -1362,6 +1534,82 @@ fn compact_locked(state: &mut LocalPackState) -> Result<CompactionStats> {
         })?;
     }
     Ok(stats)
+}
+
+/// On-disk framed size of one pack record: magic + stored hash + length field
+/// + payload. The single source of truth for pack-space accounting.
+pub(crate) fn record_len(payload_len: u64) -> u64 {
+    RECORD_MAGIC.len() as u64 + crate::BLAKE3_HASH_LEN as u64 + 8 + payload_len
+}
+
+/// The error a compaction crash-injection point returns (tests only) — an
+/// `Io` error so it flows through the normal fail-stop path.
+#[cfg(test)]
+fn injected_compaction_crash() -> Error {
+    Error::storage(StorageErrorKind::Io, "injected compaction crash")
+}
+
+/// Computes a [`LocalPackStats`] snapshot under the caller's held state lock.
+///
+/// Dead record space is accounted **per pack** so the two reclaim figures are
+/// operator-honest: a pack that holds a quarantined blob is retained whole by
+/// compaction (RFS6), so its dead space is `quarantine_blocked_bytes` (not
+/// freeable until repair/release); every other pack's dead space is
+/// `reclaimable_bytes` (freeable by a compaction right now). Both reserve
+/// per-pack `PACK_MAGIC` and per-record framing (`record_len`) and use
+/// `saturating_sub` so neither underflows immediately after a compaction.
+fn stats_locked(state: &LocalPackState) -> Result<LocalPackStats> {
+    let mut live_bytes = 0u64;
+    let mut live_blob_count = 0usize;
+    let mut quarantined_bytes = 0u64;
+    let mut quarantined_blob_count = 0usize;
+    // Per-pack: referenced record bytes, and whether the pack holds a
+    // quarantined entry (which makes compaction retain it whole).
+    let mut per_pack: std::collections::HashMap<u64, (u64, bool)> =
+        std::collections::HashMap::new();
+    for (hash, entry) in &state.index {
+        let quarantined = state.quarantined.contains_key(hash);
+        let slot = per_pack.entry(entry.pack_id).or_insert((0, false));
+        slot.0 = slot.0.saturating_add(record_len(entry.len));
+        slot.1 |= quarantined;
+        if quarantined {
+            quarantined_bytes = quarantined_bytes.saturating_add(entry.len);
+            quarantined_blob_count += 1;
+        } else {
+            live_bytes = live_bytes.saturating_add(entry.len);
+            live_blob_count += 1;
+        }
+    }
+
+    let pack_ids = pack_ids_on_disk(&state.packs_dir)?;
+    let mut reclaimable_bytes = 0u64;
+    let mut quarantine_blocked_bytes = 0u64;
+    for pack_id in &pack_ids {
+        let path = pack_path(&state.packs_dir, *pack_id);
+        let size = fs::metadata(&path)
+            .map(|meta| meta.len())
+            .map_err(|err| io_error(err, format!("stat pack {}", path.display())))?;
+        let region = size.saturating_sub(PACK_MAGIC.len() as u64);
+        let (referenced, blocked) = per_pack.get(pack_id).copied().unwrap_or((0, false));
+        let dead = region.saturating_sub(referenced);
+        if blocked {
+            quarantine_blocked_bytes = quarantine_blocked_bytes.saturating_add(dead);
+        } else {
+            reclaimable_bytes = reclaimable_bytes.saturating_add(dead);
+        }
+    }
+
+    Ok(LocalPackStats {
+        live_bytes,
+        reclaimable_bytes,
+        quarantine_blocked_bytes,
+        quarantined_bytes,
+        pack_count: pack_ids.len(),
+        live_blob_count,
+        quarantined_blob_count,
+        last_gc: state.last_gc,
+        last_scrub: state.last_scrub,
+    })
 }
 
 pub(crate) fn pack_ids_on_disk(packs_dir: &Path) -> Result<BTreeSet<u64>> {
