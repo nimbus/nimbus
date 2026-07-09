@@ -1,0 +1,404 @@
+use std::collections::BTreeSet;
+use std::fs;
+use std::time::Duration;
+
+use bytes::Bytes;
+use nimbus_core::StorageErrorKind;
+
+use super::*;
+use crate::{ErasureHealer, HealPacing, LocalPackScrubber};
+
+fn payload_with_seed(len: usize, seed: u8) -> Bytes {
+    Bytes::from(
+        (0..len)
+            .map(|index| {
+                let mixed = index
+                    .wrapping_mul(37)
+                    .wrapping_add((seed as usize).wrapping_mul(19))
+                    .wrapping_add(11);
+                (mixed % 251) as u8
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
+async fn write_orphan_shards(
+    store: &ErasureBlobStore,
+    bytes: Bytes,
+) -> BTreeSet<(usize, BlobHash)> {
+    let mut written = BTreeSet::new();
+    for (stripe_index, chunk) in bytes.chunks(STRIPE).enumerate() {
+        let shards = stripe::encode_stripe(chunk, K, M).unwrap();
+        for (shard_index, shard) in shards.into_iter().enumerate() {
+            let drive = stripe::drive_for(shard_index, stripe_index, K + M);
+            let hash = store.drive_store(drive).put(shard).await.unwrap();
+            written.insert((drive, hash));
+        }
+    }
+    written
+}
+
+fn manifest_shards(
+    store: &ErasureBlobStore,
+    manifest: &ErasureManifest,
+) -> BTreeSet<(usize, BlobHash)> {
+    let mut shards = BTreeSet::new();
+    for (stripe_index, stripe) in manifest.stripes.iter().enumerate() {
+        for shard in stripe {
+            let drive = stripe::drive_for(
+                shard.shard_index as usize,
+                stripe_index,
+                store.drive_roots().len(),
+            );
+            shards.insert((drive, shard.shard_hash));
+        }
+    }
+    shards
+}
+
+fn manifest_shard_indices(
+    store: &ErasureBlobStore,
+    manifest: &ErasureManifest,
+) -> BTreeSet<(usize, usize, BlobHash)> {
+    let mut shards = BTreeSet::new();
+    for (stripe_index, stripe) in manifest.stripes.iter().enumerate() {
+        for shard in stripe {
+            let shard_index = shard.shard_index as usize;
+            let drive = stripe::drive_for(shard_index, stripe_index, store.drive_roots().len());
+            shards.insert((drive, shard_index, shard.shard_hash));
+        }
+    }
+    shards
+}
+
+async fn sweep_all(store: &ErasureBlobStore, grace: Duration) -> usize {
+    let mut swept = 0usize;
+    for drive in 0..K + M {
+        let report = store.shard_gc(drive, grace).sweep().await.unwrap();
+        swept += report.swept;
+    }
+    swept
+}
+
+async fn sweep_all_reports(store: &ErasureBlobStore, grace: Duration) -> Vec<crate::BlobGcReport> {
+    let mut reports = Vec::new();
+    for drive in 0..K + M {
+        reports.push(store.shard_gc(drive, grace).sweep().await.unwrap());
+    }
+    reports
+}
+
+fn manifest_generations(store: &ErasureBlobStore, hash: &BlobHash) -> Vec<u64> {
+    (0..K + M)
+        .map(|drive| {
+            let path = manifest::manifest_path(&store.drive_root(drive), hash);
+            ErasureManifest::decode(&fs::read(path).unwrap())
+                .unwrap()
+                .generation
+        })
+        .collect()
+}
+
+async fn assert_shards_present(store: &ErasureBlobStore, shards: &BTreeSet<(usize, BlobHash)>) {
+    for (drive, hash) in shards {
+        assert!(
+            store.drive_store(*drive).has(hash).await.unwrap(),
+            "drive {drive} should retain shard {hash}"
+        );
+    }
+}
+
+async fn assert_shards_absent(store: &ErasureBlobStore, shards: &BTreeSet<(usize, BlobHash)>) {
+    for (drive, hash) in shards {
+        assert!(
+            !store.drive_store(*drive).has(hash).await.unwrap(),
+            "drive {drive} should reclaim shard {hash}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn erasure_gc_reclaims_orphan_shards_after_failed_put() {
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let kept = payload_with_seed(STRIPE + 5, 1);
+    let kept_hash = store.put(kept).await.unwrap();
+    let kept_manifest = store.load_manifest_for_test(&kept_hash).await.unwrap();
+    let kept_shards = manifest_shards(&store, &kept_manifest);
+    let orphans = write_orphan_shards(&store, payload_with_seed(STRIPE + 9, 91)).await;
+    let reclaimable = orphans
+        .difference(&kept_shards)
+        .copied()
+        .collect::<BTreeSet<_>>();
+
+    let swept = sweep_all(&store, Duration::ZERO).await;
+
+    assert_eq!(swept, reclaimable.len());
+    assert_shards_present(&store, &kept_shards).await;
+    assert_shards_absent(&store, &reclaimable).await;
+}
+
+#[tokio::test]
+async fn erasure_gc_respects_visible_manifest_roots() {
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let keep_hash = store.put(payload_with_seed(STRIPE + 3, 2)).await.unwrap();
+    let drop_hash = store.put(payload_with_seed(STRIPE + 11, 77)).await.unwrap();
+    let keep_manifest = store.load_manifest_for_test(&keep_hash).await.unwrap();
+    let drop_manifest = store.load_manifest_for_test(&drop_hash).await.unwrap();
+    let keep_shards = manifest_shards(&store, &keep_manifest);
+    let drop_shards = manifest_shards(&store, &drop_manifest);
+    let drop_unique = drop_shards
+        .difference(&keep_shards)
+        .copied()
+        .collect::<BTreeSet<_>>();
+
+    store.release(&drop_hash).await.unwrap();
+    let swept = sweep_all(&store, Duration::ZERO).await;
+
+    assert_eq!(swept, drop_unique.len());
+    assert_shards_present(&store, &keep_shards).await;
+    assert_shards_absent(&store, &drop_unique).await;
+}
+
+#[tokio::test]
+async fn erasure_gc_grace_retains_young_orphans() {
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let orphans = write_orphan_shards(&store, payload_with_seed(STRIPE + 7, 13)).await;
+
+    let reports = sweep_all_reports(&store, Duration::from_secs(60)).await;
+
+    assert_eq!(reports.iter().map(|report| report.swept).sum::<usize>(), 0);
+    assert_eq!(
+        reports
+            .iter()
+            .map(|report| report.grace_retained)
+            .sum::<usize>(),
+        orphans.len()
+    );
+    assert_shards_present(&store, &orphans).await;
+}
+
+#[tokio::test]
+async fn erasure_heal_restores_missing_shard() {
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload_with_seed(STRIPE + 17, 3);
+    let hash = store.put(bytes.clone()).await.unwrap();
+    let manifest = store.load_manifest_for_test(&hash).await.unwrap();
+    let shard = shard_ref(&manifest, 0, 0);
+    let drive = stripe::drive_for(0, 0, K + M);
+    release_shard(&store, &manifest, 0, 0).await;
+    assert!(
+        !store
+            .drive_store(drive)
+            .has(&shard.shard_hash)
+            .await
+            .unwrap()
+    );
+
+    let report = ErasureHealer::new(store.clone()).heal().await.unwrap();
+
+    assert_eq!(report.blobs_examined, 1);
+    assert_eq!(report.degraded, 1);
+    assert_eq!(report.stripes_repaired, 1);
+    assert_eq!(report.shards_rewritten, 1);
+    assert!(report.beyond_repair.is_empty());
+    assert!(!report.exhausted);
+    assert_eq!(manifest_generations(&store, &hash), vec![2; K + M]);
+    assert!(
+        store
+            .drive_store(drive)
+            .has(&shard.shard_hash)
+            .await
+            .unwrap()
+    );
+    assert_eq!(store.get(&hash).await.unwrap(), bytes);
+}
+
+#[tokio::test]
+async fn erasure_heal_lifts_quarantine_via_reupload() {
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload_with_seed(STRIPE + 5, 4);
+    let hash = store.put(bytes.clone()).await.unwrap();
+    let manifest = store.load_manifest_for_test(&hash).await.unwrap();
+    let shard = shard_ref(&manifest, 0, 1);
+    let drive = stripe::drive_for(1, 0, K + M);
+
+    flip_shard_body_byte(&store.drive_root(drive), &shard.shard_hash);
+    let scrub = LocalPackScrubber::new(store.drive_store(drive))
+        .scrub()
+        .await
+        .unwrap();
+    assert!(scrub.quarantined_hashes.contains(&shard.shard_hash));
+    let err = store
+        .drive_store(drive)
+        .get(&shard.shard_hash)
+        .await
+        .unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+
+    let report = ErasureHealer::new(store.clone()).heal().await.unwrap();
+
+    assert_eq!(report.shards_rewritten, 1);
+    assert!(
+        store
+            .drive_store(drive)
+            .get(&shard.shard_hash)
+            .await
+            .is_ok()
+    );
+    assert_eq!(store.get(&hash).await.unwrap(), bytes);
+}
+
+#[tokio::test]
+async fn erasure_heal_reports_beyond_repair_without_deleting() {
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let hash = store.put(payload_with_seed(STRIPE, 5)).await.unwrap();
+    let manifest = store.load_manifest_for_test(&hash).await.unwrap();
+    let all = manifest_shard_indices(&store, &manifest);
+    let removed_indices = BTreeSet::from([0usize, 1, K]);
+    for shard_index in &removed_indices {
+        release_shard(&store, &manifest, 0, *shard_index).await;
+    }
+    let remaining = all
+        .into_iter()
+        .filter(|(_, shard_index, _)| !removed_indices.contains(shard_index))
+        .map(|(drive, _, hash)| (drive, hash))
+        .collect::<BTreeSet<_>>();
+
+    let report = ErasureHealer::new(store.clone()).heal().await.unwrap();
+
+    assert_eq!(report.beyond_repair, vec![hash]);
+    assert_eq!(report.stripes_repaired, 0);
+    assert_eq!(report.shards_rewritten, 0);
+    assert_shards_present(&store, &remaining).await;
+    let err = store.get(&hash).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+}
+
+#[tokio::test]
+async fn erasure_heal_verifies_before_writing() {
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let hash = store.put(payload_with_seed(STRIPE, 6)).await.unwrap();
+    let mut manifest = store.load_manifest_for_test(&hash).await.unwrap();
+    let shard = shard_ref(&manifest, 0, 0);
+    let drive = stripe::drive_for(0, 0, K + M);
+    release_shard(&store, &manifest, 0, 0).await;
+    manifest.generation += 1;
+    manifest.stripe_hashes[0] = BlobHash::of(b"wrong stripe hash");
+    store.publish_manifest_for_test(manifest).await.unwrap();
+
+    let report = ErasureHealer::new(store.clone()).heal().await.unwrap();
+
+    assert_eq!(report.beyond_repair, vec![hash]);
+    assert_eq!(report.stripes_repaired, 0);
+    assert_eq!(report.shards_rewritten, 0);
+    assert!(
+        !store
+            .drive_store(drive)
+            .has(&shard.shard_hash)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        store
+            .load_manifest_for_test(&hash)
+            .await
+            .unwrap()
+            .generation,
+        2
+    );
+}
+
+#[tokio::test]
+async fn erasure_heal_window_blocks_gc() {
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let hash = store.put(payload_with_seed(STRIPE, 7)).await.unwrap();
+    let manifest = store.load_manifest_for_test(&hash).await.unwrap();
+    let shards = manifest_shards(&store, &manifest);
+    let window = store
+        .heal_pin_registry()
+        .pin_all(shards.iter().map(|(_, hash)| *hash));
+    store.release(&hash).await.unwrap();
+
+    let during = sweep_all_reports(&store, Duration::ZERO).await;
+
+    assert_eq!(
+        during
+            .iter()
+            .map(|report| report.intent_retained)
+            .sum::<usize>(),
+        shards.len()
+    );
+    assert_eq!(during.iter().map(|report| report.swept).sum::<usize>(), 0);
+    assert_shards_present(&store, &shards).await;
+
+    drop(window);
+    let swept = sweep_all(&store, Duration::ZERO).await;
+    assert_eq!(swept, shards.len());
+    assert_shards_absent(&store, &shards).await;
+}
+
+#[tokio::test]
+async fn erasure_heal_pacing_stops_at_budget() {
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let mut expected = std::collections::HashMap::new();
+    for seed in [8u8, 9] {
+        let bytes = payload_with_seed(STRIPE, seed);
+        let hash = store.put(bytes.clone()).await.unwrap();
+        let manifest = store.load_manifest_for_test(&hash).await.unwrap();
+        release_shard(&store, &manifest, 0, 0).await;
+        expected.insert(hash, bytes);
+    }
+
+    let pacing = HealPacing::max_bytes_per_run(STRIPE as u64).unwrap();
+    let first = ErasureHealer::new(store.clone())
+        .with_pacing(pacing)
+        .heal()
+        .await
+        .unwrap();
+    assert!(first.exhausted);
+    assert_eq!(first.stripes_repaired, 1);
+    assert_eq!(first.shards_rewritten, 1);
+
+    let second = ErasureHealer::new(store.clone())
+        .with_pacing(pacing)
+        .heal()
+        .await
+        .unwrap();
+    assert!(!second.exhausted);
+    assert_eq!(second.stripes_repaired, 1);
+    assert_eq!(second.shards_rewritten, 1);
+    for (hash, bytes) in expected {
+        assert_eq!(store.get(&hash).await.unwrap(), bytes);
+    }
+}
+
+#[tokio::test]
+async fn erasure_stats_aggregates_per_drive_and_heal() {
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let degraded_hash = store.put(payload_with_seed(STRIPE, 10)).await.unwrap();
+    let degraded_manifest = store.load_manifest_for_test(&degraded_hash).await.unwrap();
+    release_shard(&store, &degraded_manifest, 0, 0).await;
+    let beyond_hash = store.put(payload_with_seed(STRIPE, 11)).await.unwrap();
+    let beyond_manifest = store.load_manifest_for_test(&beyond_hash).await.unwrap();
+    for shard_index in [0usize, 1, K] {
+        release_shard(&store, &beyond_manifest, 0, shard_index).await;
+    }
+
+    let report = ErasureHealer::new(store.clone()).heal().await.unwrap();
+    let stats = store.stats().await.unwrap();
+
+    assert_eq!(report.degraded, 1);
+    assert_eq!(report.beyond_repair, vec![beyond_hash]);
+    assert_eq!(stats.per_drive.len(), K + M);
+    assert_eq!(stats.blob_count, 2);
+    assert_eq!(stats.degraded_blobs, 1);
+    assert_eq!(stats.beyond_repair_blobs, 1);
+    let summary = stats.last_heal.expect("heal summary recorded");
+    assert_eq!(summary.blobs_examined, report.blobs_examined);
+    assert_eq!(summary.stripes_repaired, report.stripes_repaired);
+    assert_eq!(summary.shards_rewritten, report.shards_rewritten);
+    assert_eq!(summary.degraded_blobs, report.degraded);
+    assert_eq!(summary.beyond_repair_blobs, report.beyond_repair.len());
+    assert_eq!(summary.exhausted, report.exhausted);
+    assert_eq!(summary.at_millis, report.at_millis);
+}

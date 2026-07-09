@@ -50,7 +50,10 @@ pub use backup::{
     BackupBundle, BackupChunk, BackupRequest, BackupRestoreReport, KeyEscrow, ObjectBackup,
 };
 pub use encrypted::EncryptedBlobStore;
-pub use erasure::{ErasureBlobStore, ErasureConfig};
+pub use erasure::{
+    ErasureBlobStore, ErasureConfig, ErasureHealer, ErasureStats, HealPacing, HealReport,
+    HealSummary,
+};
 pub use gc::{BlobGc, BlobGcReport, BlobGcRoots, CompositeBlobRoots, StaticBlobRoots};
 pub use hash::{BLAKE3_HASH_LEN, BlobHash};
 #[cfg(feature = "cluster")]

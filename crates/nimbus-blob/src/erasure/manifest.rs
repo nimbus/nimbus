@@ -304,6 +304,50 @@ pub(crate) fn load_newest(
         .map(|(_, _, _, manifest)| manifest))
 }
 
+pub(crate) fn list_visible(drive_roots: &[PathBuf], quorum: usize) -> Result<Vec<ErasureManifest>> {
+    let mut hashes = BTreeSet::new();
+    for root in drive_roots {
+        let dir = manifest_dir(root);
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                return Err(Error::storage(
+                    StorageErrorKind::Io,
+                    format!("read erasure manifest dir {}: {err}", dir.display()),
+                ));
+            }
+        };
+        for entry in entries {
+            let entry = entry.map_err(|err| {
+                Error::storage(
+                    StorageErrorKind::Io,
+                    format!("read erasure manifest dir entry {}: {err}", dir.display()),
+                )
+            })?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some(MANIFEST_EXT) {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            if let Ok(hash) = BlobHash::from_hex(stem) {
+                hashes.insert(hash);
+            }
+        }
+    }
+
+    let mut manifests = Vec::new();
+    for hash in hashes {
+        if let Some(manifest) = load_newest(&hash, drive_roots, quorum)? {
+            manifests.push(manifest);
+        }
+    }
+    manifests.sort_by_key(|manifest| manifest.blob_hash);
+    Ok(manifests)
+}
+
 pub(crate) fn manifest_dir(root: &Path) -> PathBuf {
     root.join("manifests")
 }
