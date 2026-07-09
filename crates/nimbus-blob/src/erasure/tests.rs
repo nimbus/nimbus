@@ -1023,3 +1023,54 @@ async fn erasure_publish_failure_with_durable_quorum_reports_success() {
     perms.set_mode(0o700);
     fs::set_permissions(&blocked, perms).unwrap();
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn erasure_nondurable_rollback_poisons_the_store() {
+    // Review fix (round 9, P2): when a publish fails below quorum AND the
+    // rollback cannot be proven durable (a crash could resurrect the failed
+    // put's replicas), the store fail-stops (RFS3 poison idiom) instead of
+    // reporting the put invisible — no operation may observe the ambiguous
+    // state; a restart re-resolves via the quorum rule.
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_dir, store, roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(STRIPE + 33);
+    let hash = BlobHash::of(&bytes);
+
+    // Fresh put that fails on the last drive, with the nondurable-rollback
+    // seam armed.
+    let blocked = manifest::manifest_dir(&store.drive_root(K + M - 1));
+    let mut perms = fs::metadata(&blocked).unwrap().permissions();
+    perms.set_mode(0o500);
+    fs::set_permissions(&blocked, perms).unwrap();
+    store.arm_nondurable_rollback();
+
+    let err = store.put(bytes.clone()).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Io));
+    assert!(store.is_poisoned(), "nondurable rollback must poison");
+
+    // Every subsequent operation fail-stops.
+    for outcome in [
+        store.put(bytes.clone()).await.err(),
+        store.get(&hash).await.err(),
+        store.has(&hash).await.err(),
+    ] {
+        let err = outcome.expect("poisoned store must refuse");
+        assert_eq!(err.storage_kind(), Some(StorageErrorKind::Io));
+        assert!(err.to_string().contains("poisoned"));
+    }
+
+    // "Restart": a fresh open over the same roots re-resolves cleanly and
+    // the blob is absent (the rollback actually held in this simulation).
+    let mut perms = fs::metadata(&blocked).unwrap().permissions();
+    perms.set_mode(0o700);
+    fs::set_permissions(&blocked, perms).unwrap();
+    drop(store);
+    let reopened =
+        ErasureBlobStore::open(ErasureConfig::new("test-leg", roots, K, M, STRIPE).unwrap())
+            .unwrap();
+    assert!(!reopened.has(&hash).await.unwrap());
+    assert_eq!(reopened.put(bytes.clone()).await.unwrap(), hash);
+    assert_eq!(reopened.get(&hash).await.unwrap(), bytes);
+}

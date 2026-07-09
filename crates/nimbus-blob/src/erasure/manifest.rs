@@ -162,6 +162,15 @@ impl ErasureManifest {
     }
 }
 
+/// A publish failure, carrying whether the rollback provably reached
+/// durable storage. `rollback_durable == false` means the failed put's
+/// replicas may resurface after a crash (unlinks not fsynced) — the store
+/// must fail-stop rather than report the put invisible.
+pub(crate) struct PublishError {
+    pub(crate) rollback_durable: bool,
+    pub(crate) error: Error,
+}
+
 /// Publishes the manifest to EVERY drive root, preserving committed state
 /// on failure:
 ///
@@ -182,7 +191,7 @@ pub(crate) fn publish(
     drive_roots: &[PathBuf],
     observer: &dyn SyncObserver,
     quorum: usize,
-) -> Result<()> {
+) -> std::result::Result<(), PublishError> {
     let bytes = manifest.encode();
     let mut changed: Vec<(PathBuf, Option<Vec<u8>>)> = Vec::with_capacity(drive_roots.len());
     for root in drive_roots {
@@ -197,15 +206,30 @@ pub(crate) fn publish(
             Err(_) => None,
         };
         if let Err(err) = disk::write_replace_durable(&path, &bytes, observer) {
+            // Roll back, TRACKING durability: an unlink that is not followed
+            // by a successful directory fsync can un-happen after a crash.
+            let mut rollback_durable = true;
             for (undo, prior) in &changed {
                 match prior {
                     Some(prior_bytes) => {
-                        let _ = disk::write_replace_durable(undo, prior_bytes, observer);
+                        if disk::write_replace_durable(undo, prior_bytes, observer).is_err() {
+                            rollback_durable = false;
+                        }
                     }
                     None => {
-                        let _ = fs::remove_file(undo);
-                        if let Some(dir) = undo.parent() {
-                            let _ = disk::fsync_dir(dir, observer);
+                        match fs::remove_file(undo) {
+                            Ok(()) => {}
+                            Err(remove_err)
+                                if remove_err.kind() == std::io::ErrorKind::NotFound => {}
+                            Err(_) => rollback_durable = false,
+                        }
+                        match undo.parent() {
+                            Some(dir) => {
+                                if disk::fsync_dir(dir, observer).is_err() {
+                                    rollback_durable = false;
+                                }
+                            }
+                            None => rollback_durable = false,
                         }
                     }
                 }
@@ -213,10 +237,13 @@ pub(crate) fn publish(
             if count_identical_replicas(&manifest.blob_hash, drive_roots, &bytes) >= quorum {
                 return Ok(());
             }
-            return Err(Error::storage(
-                StorageErrorKind::Io,
-                format!("write erasure manifest {}: {err}", path.display()),
-            ));
+            return Err(PublishError {
+                rollback_durable,
+                error: Error::storage(
+                    StorageErrorKind::Io,
+                    format!("write erasure manifest {}: {err}", path.display()),
+                ),
+            });
         }
         changed.push((path, prior));
     }

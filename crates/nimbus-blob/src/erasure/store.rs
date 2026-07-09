@@ -34,6 +34,15 @@ pub struct ErasureBlobStore {
     /// stay lock-free: a loaded manifest keeps serving (shards outlive
     /// release until Phase B GC), and quorum keeps partial states invisible.
     mutation: Arc<AsyncMutex<()>>,
+    /// Fail-stop poison (RFS3 fsyncgate idiom): set when a publish rollback
+    /// could not be made durable while below quorum — the failed put's
+    /// replicas may resurface after a crash, so no further operation on
+    /// this leg is allowed to observe the ambiguous state. A restart
+    /// re-resolves via the quorum rule (both post-crash states are safe:
+    /// the unlinks held, or a complete durable blob reappeared whole).
+    poisoned: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(test)]
+    force_nondurable_rollback: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl std::fmt::Debug for ErasureBlobStore {
@@ -88,7 +97,21 @@ impl ErasureBlobStore {
             stores,
             observer,
             mutation,
+            poisoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(test)]
+            force_nondurable_rollback: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
+    }
+
+    fn ensure_live(&self) -> Result<()> {
+        if self.poisoned.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(Error::storage(
+                StorageErrorKind::Io,
+                "erasure store poisoned: a publish rollback could not be made durable; \
+                 restart to re-resolve manifest state via the quorum rule",
+            ));
+        }
+        Ok(())
     }
 
     async fn load_manifest(&self, hash: &BlobHash) -> Result<Option<ErasureManifest>> {
@@ -160,7 +183,33 @@ impl ErasureBlobStore {
         let drive_roots = self.drive_roots.clone();
         let observer = Arc::clone(&self.observer);
         let quorum = self.visibility_quorum();
-        blocking(move || manifest::publish(&manifest, &drive_roots, &*observer, quorum)).await
+        #[cfg(test)]
+        let force_nondurable = self
+            .force_nondurable_rollback
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let outcome = blocking(move || {
+            Ok(manifest::publish(
+                &manifest,
+                &drive_roots,
+                &*observer,
+                quorum,
+            ))
+        })
+        .await?;
+        match outcome {
+            Ok(()) => Ok(()),
+            Err(publish_err) => {
+                #[cfg(test)]
+                let rollback_durable = publish_err.rollback_durable && !force_nondurable;
+                #[cfg(not(test))]
+                let rollback_durable = publish_err.rollback_durable;
+                if !rollback_durable {
+                    self.poisoned
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                Err(publish_err.error)
+            }
+        }
     }
 
     fn visibility_quorum(&self) -> usize {
@@ -283,6 +332,17 @@ impl ErasureBlobStore {
     }
 
     #[cfg(test)]
+    pub(crate) fn arm_nondurable_rollback(&self) {
+        self.force_nondurable_rollback
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_poisoned(&self) -> bool {
+        self.poisoned.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[cfg(test)]
     pub(crate) async fn load_manifest_for_test(&self, hash: &BlobHash) -> Result<ErasureManifest> {
         self.manifest_for_read(hash).await
     }
@@ -296,6 +356,7 @@ impl ErasureBlobStore {
 #[async_trait]
 impl BlobStore for ErasureBlobStore {
     async fn put(&self, bytes: Bytes) -> Result<BlobHash> {
+        self.ensure_live()?;
         let hash = BlobHash::of(&bytes);
         // Mutations are serialized per leg: without this, an idempotent put
         // could observe an existing quorum, skip identical replicas, and
@@ -357,6 +418,7 @@ impl BlobStore for ErasureBlobStore {
     }
 
     async fn get(&self, hash: &BlobHash) -> Result<Bytes> {
+        self.ensure_live()?;
         let manifest = self.manifest_for_read(hash).await?;
         // Grow from verified stripe bytes only — blob_len is manifest data
         // and a checksum-valid forgery with a huge claim must fail closed on
@@ -382,6 +444,7 @@ impl BlobStore for ErasureBlobStore {
     }
 
     async fn get_range(&self, hash: &BlobHash, range: Range<u64>) -> Result<Bytes> {
+        self.ensure_live()?;
         let manifest = self.manifest_for_read(hash).await?;
         if range.start > range.end {
             return Err(Error::InvalidInput(format!(
@@ -427,10 +490,12 @@ impl BlobStore for ErasureBlobStore {
     }
 
     async fn has(&self, hash: &BlobHash) -> Result<bool> {
+        self.ensure_live()?;
         Ok(self.load_manifest(hash).await?.is_some())
     }
 
     async fn release(&self, hash: &BlobHash) -> Result<()> {
+        self.ensure_live()?;
         let _mutation = self.mutation.lock().await;
         let hash = *hash;
         let drive_roots = self.drive_roots.clone();
