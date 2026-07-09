@@ -61,6 +61,17 @@ impl BlobPinRegistry {
         }
     }
 
+    /// Acquires one hold on every hash in `hashes`, returning a [`BlobPinSet`]
+    /// whose `Drop` releases them all together.
+    ///
+    /// A backup runner holds one of these across its ENTIRE export read so
+    /// every root — including ones not yet read — is retained for the whole
+    /// duration; because it is RAII, the holds also release on an early `?`
+    /// return. Duplicate hashes take independent (ref-counted) holds.
+    pub fn pin_all(&self, hashes: impl IntoIterator<Item = BlobHash>) -> BlobPinSet {
+        BlobPinSet(hashes.into_iter().map(|hash| self.pin(hash)).collect())
+    }
+
     /// Whether `hash` currently has at least one live pin.
     pub fn is_held(&self, hash: &BlobHash) -> bool {
         self.lock().contains_key(hash)
@@ -70,6 +81,23 @@ impl BlobPinRegistry {
         self.holds
             .lock()
             .expect("blob pin registry lock should not be poisoned")
+    }
+}
+
+/// RAII multi-hold from [`BlobPinRegistry::pin_all`]. Dropping it releases
+/// every contained [`BlobPin`] (each drops independently, so overlapping holds
+/// on the same hash compose correctly).
+pub struct BlobPinSet(Vec<BlobPin>);
+
+impl BlobPinSet {
+    /// Number of holds in this set (one per input hash, duplicates counted).
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether the set holds nothing.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -150,5 +178,35 @@ mod tests {
         assert!(shared.is_held(&h), "clone should observe the same holds");
         drop(pin);
         assert!(!shared.is_held(&h));
+    }
+
+    #[test]
+    fn pin_all_holds_every_hash_until_the_set_drops() {
+        let registry = BlobPinRegistry::new();
+        let hashes = [hash(5), hash(6), hash(7)];
+        let set = registry.pin_all(hashes);
+        assert_eq!(set.len(), 3);
+        for h in &hashes {
+            assert!(registry.is_held(h), "every batched hash is held");
+        }
+        drop(set);
+        for h in &hashes {
+            assert!(!registry.is_held(h), "dropping the set releases every hold");
+        }
+    }
+
+    #[test]
+    fn pin_all_composes_with_an_independent_pin() {
+        let registry = BlobPinRegistry::new();
+        let h = hash(8);
+        let solo = registry.pin(h);
+        let set = registry.pin_all([h]);
+        drop(set);
+        assert!(
+            registry.is_held(&h),
+            "the independent pin still holds after the set drops"
+        );
+        drop(solo);
+        assert!(!registry.is_held(&h));
     }
 }

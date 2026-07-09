@@ -169,7 +169,23 @@ impl LocalPackScrubber {
 
     /// Scans every pack not covered by an incomplete checkpoint.
     pub async fn scrub(&self) -> Result<ScrubReport> {
-        self.scrub_inner(None).await
+        let report = self.scrub_inner(None).await?;
+        self.record_summary(&report)?;
+        Ok(report)
+    }
+
+    /// Records the scrub's summary on the store for [`LocalPackStore::stats`].
+    fn record_summary(&self, report: &ScrubReport) -> Result<()> {
+        self.store.set_last_scrub(crate::ScrubSummary {
+            packs_scanned: report.packs_scanned,
+            records_scanned: report.records_scanned,
+            findings: report.findings.len(),
+            // Total quarantine visibility: newly quarantined this run plus
+            // claims already quarantined (a repeat scrub of persistent
+            // corruption still reports it).
+            quarantined: report.quarantined_hashes.len() + report.previously_quarantined.len(),
+            at_millis: self.clock.now_millis(),
+        })
     }
 
     /// Test/operator seam for an interrupted scrub pass.
@@ -564,6 +580,9 @@ impl EncryptedBlobScrubber {
         let mut report = local.scrub().await?;
         let entries = self.store.live_entries()?;
         self.aead_pass(&local, &mut report, entries).await?;
+        // Overwrite the local-pass summary with the final report so the
+        // recorded stats include the AEAD findings/quarantines this pass added.
+        local.record_summary(&report)?;
         Ok(report)
     }
 

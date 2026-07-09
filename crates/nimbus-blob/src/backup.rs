@@ -11,6 +11,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use nimbus_core::{Error, Result, StorageErrorKind};
 
 use crate::hash::{BLAKE3_HASH_LEN, BlobHash};
+use crate::pins::BlobPinRegistry;
 use crate::store::BlobStore;
 
 const BUNDLE_MAGIC: &[u8] = b"NIMBUSOBJBACKUP1\n";
@@ -197,6 +198,25 @@ pub struct BackupRestoreReport {
 pub struct ObjectBackup;
 
 impl ObjectBackup {
+    /// Exports a bundle while holding a GC backup-safety window over its roots.
+    ///
+    /// Acquires a [`BlobPinRegistry::pin_all`] hold on the whole root set
+    /// **before** the first read and holds it across the entire export (which
+    /// reads roots one at a time), so a concurrent [`crate::BlobGc`] sharing
+    /// the same registry via `with_backup_pins` never reclaims a root — even
+    /// one not yet read. RAII releases the hold on normal return and on any
+    /// `?` early exit. This is the only supported way to run a backup
+    /// concurrently with GC.
+    pub async fn export_bundle_with_pins(
+        source: &dyn BlobStore,
+        request: BackupRequest,
+        backup_pins: &BlobPinRegistry,
+    ) -> Result<BackupBundle> {
+        // Pin every root before `request` is consumed by `export_bundle`.
+        let _window = backup_pins.pin_all(request.root_hashes.iter().copied());
+        Self::export_bundle(source, request).await
+    }
+
     /// Exports a bundle from a pinned set of blob roots.
     pub async fn export_bundle(
         source: &dyn BlobStore,
