@@ -34,6 +34,7 @@
 mod backup;
 mod disk;
 mod encrypted;
+mod erasure;
 mod gc;
 mod hash;
 mod local;
@@ -49,6 +50,7 @@ pub use backup::{
     BackupBundle, BackupChunk, BackupRequest, BackupRestoreReport, KeyEscrow, ObjectBackup,
 };
 pub use encrypted::EncryptedBlobStore;
+pub use erasure::{ErasureBlobStore, ErasureConfig};
 pub use gc::{BlobGc, BlobGcReport, BlobGcRoots, CompositeBlobRoots, StaticBlobRoots};
 pub use hash::{BLAKE3_HASH_LEN, BlobHash};
 #[cfg(feature = "cluster")]

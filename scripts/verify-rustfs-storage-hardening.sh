@@ -219,6 +219,34 @@ required_tests=(
   compaction_crash_safe_empty_store_removal
   compaction_no_crash_control_is_clean
   stats_reclaimable_bytes_is_freeable_when_no_quarantine
+  erasure_recovers_missing_data_shard
+  erasure_recovers_missing_parity_shard
+  erasure_short_shard_read_fails_closed_then_recovers
+  erasure_shard_checksum_mismatch_degrades
+  erasure_insufficient_quorum_fails_closed
+  erasure_inconsistent_parity_source_detected
+  erasure_put_get_roundtrip_across_stripe_boundaries
+  erasure_get_range_reads_only_covering_stripes
+  erasure_put_is_idempotent
+  erasure_release_removes_manifest_everywhere
+  erasure_drive_identity_refuses_swapped_roots
+  erasure_manifest_torn_write_ignored
+  erasure_crash_before_manifest_publish_is_invisible
+  erasure_random_loss_within_parity_always_roundtrips
+  erasure_get_range_detects_wrong_shard_manifest
+  erasure_put_repairs_partially_replicated_manifest
+  erasure_foreign_leg_root_refused
+  erasure_manifest_huge_stripe_count_rejected
+  erasure_under_quorum_manifest_is_invisible
+  erasure_failed_publish_leaves_put_invisible
+  erasure_quorum_requires_identical_manifest_content
+  erasure_failed_republish_preserves_committed_replicas
+  erasure_high_parity_manifests_survive_parity_drive_losses
+  erasure_same_leg_instances_share_the_mutation_lock
+  erasure_concurrent_put_and_release_linearize
+  erasure_forged_blob_len_fails_closed_without_overallocation
+  erasure_publish_failure_with_durable_quorum_reports_success
+  erasure_nondurable_rollback_poisons_the_store
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then
