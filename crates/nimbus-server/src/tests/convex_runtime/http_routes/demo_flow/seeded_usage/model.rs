@@ -42,12 +42,28 @@ fn scenario_message_budget() -> usize {
     12
 }
 
+// Wall-clock guards for a single seeded Convex demo request. These are only
+// meant to surface a genuinely hung action, not to police latency. A fixed 3s
+// was too tight under nextest parallelism: the harness runs many scenarios
+// concurrently, each spinning a full ServerFixture + V8 isolates, and a request
+// occasionally lapses past 3s under CPU contention — panicking a test whose
+// operation stream is otherwise deterministic (SplitMix64, sorted snapshots).
+// Default generously and let loaded CI / slow hosts widen it further via env.
+fn seeded_demo_timeout_from_env(var: &str, default_ms: u64) -> Duration {
+    let ms = std::env::var(var)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .unwrap_or(default_ms);
+    Duration::from_millis(ms)
+}
+
 pub(super) fn seeded_convex_demo_request_timeout() -> Duration {
-    Duration::from_secs(3)
+    seeded_demo_timeout_from_env("NIMBUS_SEEDED_DEMO_REQUEST_TIMEOUT_MS", 10_000)
 }
 
 pub(super) fn seeded_convex_demo_fault_recovery_timeout() -> Duration {
-    Duration::from_secs(5)
+    seeded_demo_timeout_from_env("NIMBUS_SEEDED_DEMO_FAULT_RECOVERY_TIMEOUT_MS", 15_000)
 }
 
 pub(super) fn seeded_convex_demo_operation_count(step_count: usize) -> usize {
