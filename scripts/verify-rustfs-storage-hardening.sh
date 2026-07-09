@@ -219,6 +219,20 @@ required_tests=(
   compaction_crash_safe_empty_store_removal
   compaction_no_crash_control_is_clean
   stats_reclaimable_bytes_is_freeable_when_no_quarantine
+  erasure_recovers_missing_data_shard
+  erasure_recovers_missing_parity_shard
+  erasure_short_shard_read_fails_closed_then_recovers
+  erasure_shard_checksum_mismatch_degrades
+  erasure_insufficient_quorum_fails_closed
+  erasure_inconsistent_parity_source_detected
+  erasure_put_get_roundtrip_across_stripe_boundaries
+  erasure_get_range_reads_only_covering_stripes
+  erasure_put_is_idempotent
+  erasure_release_removes_manifest_everywhere
+  erasure_drive_identity_refuses_swapped_roots
+  erasure_manifest_torn_write_ignored
+  erasure_crash_before_manifest_publish_is_invisible
+  erasure_random_loss_within_parity_always_roundtrips
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then

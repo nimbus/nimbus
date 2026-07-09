@@ -28,6 +28,7 @@ bytes.workspace = true
 # refresh is an enterprise-crate-adoption question, not this crate's.
 fs2.workspace = true
 object_store.workspace = true
+reed-solomon-simd = "=3.1.0"
 # The durable-write recipe (src/disk.rs) writes commit-point files through a
 # same-directory temp file persisted into place.
 tempfile.workspace = true

@@ -1,0 +1,387 @@
+use std::fs;
+use std::ops::Range;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use bytes::Bytes;
+use nimbus_core::{Error, Result, StorageErrorKind};
+use tokio::io::AsyncReadExt;
+
+use crate::disk::{self, NoopSyncObserver, SyncObserver};
+use crate::hash::BlobHash;
+use crate::local::LocalPackStore;
+use crate::root_guard::LocalPackStoreOptions;
+use crate::store::{BlobStore, ByteStream};
+
+use super::config::ErasureConfig;
+use super::manifest::{self, ErasureManifest, ShardRef};
+use super::stripe;
+
+#[derive(Clone)]
+pub struct ErasureBlobStore {
+    config: ErasureConfig,
+    drive_roots: Vec<PathBuf>,
+    stores: Vec<LocalPackStore>,
+    observer: Arc<dyn SyncObserver>,
+}
+
+impl std::fmt::Debug for ErasureBlobStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ErasureBlobStore")
+            .field("drive_roots", &self.drive_roots)
+            .field("data_shards", &self.config.data_shards)
+            .field("parity_shards", &self.config.parity_shards)
+            .field("stripe_width", &self.config.stripe_width)
+            .finish()
+    }
+}
+
+impl ErasureBlobStore {
+    pub fn open(config: ErasureConfig) -> Result<Self> {
+        let mut stores = Vec::with_capacity(config.drives.len());
+        let mut drive_roots = Vec::with_capacity(config.drives.len());
+        let observer: Arc<dyn SyncObserver> = Arc::new(NoopSyncObserver);
+
+        for (index, root) in config.drives.iter().enumerate() {
+            let store = LocalPackStore::open_with_options(
+                root,
+                LocalPackStoreOptions {
+                    identity: Some(drive_identity(index)),
+                    ..LocalPackStoreOptions::default()
+                },
+            )?;
+            let canonical = root.canonicalize().map_err(|err| {
+                Error::storage(
+                    StorageErrorKind::Io,
+                    format!("canonicalize erasure drive root {}: {err}", root.display()),
+                )
+            })?;
+            let manifest_dir = manifest::manifest_dir(&canonical);
+            disk::create_dir_all_durable(&manifest_dir, &*observer).map_err(|err| {
+                Error::storage(
+                    StorageErrorKind::Io,
+                    format!(
+                        "create erasure manifest dir {}: {err}",
+                        manifest_dir.display()
+                    ),
+                )
+            })?;
+            stores.push(store);
+            drive_roots.push(canonical);
+        }
+
+        Ok(Self {
+            config,
+            drive_roots,
+            stores,
+            observer,
+        })
+    }
+
+    async fn load_manifest(&self, hash: &BlobHash) -> Result<Option<ErasureManifest>> {
+        let hash = *hash;
+        let drive_roots = self.drive_roots.clone();
+        blocking(move || manifest::load_newest(&hash, &drive_roots)).await
+    }
+
+    async fn manifest_for_read(&self, hash: &BlobHash) -> Result<ErasureManifest> {
+        let manifest = self
+            .load_manifest(hash)
+            .await?
+            .ok_or_else(|| Error::NotFound(format!("blob {hash}")))?;
+        self.validate_manifest(hash, &manifest)?;
+        Ok(manifest)
+    }
+
+    fn validate_manifest(&self, hash: &BlobHash, manifest: &ErasureManifest) -> Result<()> {
+        if manifest.blob_hash != *hash {
+            return Err(corruption(format!(
+                "manifest file for {hash} names blob {}",
+                manifest.blob_hash
+            )));
+        }
+        if manifest.data_shards != self.config.data_shards
+            || manifest.parity_shards != self.config.parity_shards
+            || manifest.stripe_width != self.config.stripe_width
+        {
+            return Err(corruption(
+                "erasure manifest layout does not match this store",
+            ));
+        }
+        if manifest.data_shards + manifest.parity_shards != self.stores.len() {
+            return Err(corruption(
+                "erasure manifest shard count does not match drive count",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn publish_manifest(&self, manifest: ErasureManifest) -> Result<()> {
+        let drive_roots = self.drive_roots.clone();
+        let observer = Arc::clone(&self.observer);
+        blocking(move || manifest::publish(&manifest, &drive_roots, &*observer)).await
+    }
+
+    async fn read_stripe_data(
+        &self,
+        manifest: &ErasureManifest,
+        stripe_index: usize,
+    ) -> Result<Vec<Bytes>> {
+        let mut present = Vec::new();
+        let mut degraded = false;
+
+        for shard_index in 0..manifest.data_shards {
+            match self.read_shard(manifest, stripe_index, shard_index).await {
+                Ok(bytes) => present.push((shard_index, bytes)),
+                Err(_) => degraded = true,
+            }
+        }
+
+        if !degraded {
+            present.sort_by_key(|(index, _)| *index);
+            return Ok(present.into_iter().map(|(_, bytes)| bytes).collect());
+        }
+
+        for shard_index in manifest.data_shards..manifest.data_shards + manifest.parity_shards {
+            if let Ok(bytes) = self.read_shard(manifest, stripe_index, shard_index).await {
+                present.push((shard_index, bytes));
+            }
+        }
+
+        if present.len() < manifest.data_shards {
+            return Err(corruption(format!(
+                "erasure stripe {stripe_index} has {} healthy shards, need {}",
+                present.len(),
+                manifest.data_shards
+            )));
+        }
+        stripe::decode_stripe(manifest.data_shards, manifest.parity_shards, &present)
+    }
+
+    async fn read_shard(
+        &self,
+        manifest: &ErasureManifest,
+        stripe_index: usize,
+        shard_index: usize,
+    ) -> Result<Bytes> {
+        let shard = manifest.stripes[stripe_index]
+            .iter()
+            .find(|shard| shard.shard_index as usize == shard_index)
+            .ok_or_else(|| {
+                corruption(format!(
+                    "erasure manifest missing shard {shard_index} for stripe {stripe_index}"
+                ))
+            })?;
+        let drive = stripe::drive_for(shard_index, stripe_index, self.stores.len());
+        self.stores[drive].get(&shard.shard_hash).await
+    }
+
+    fn stripe_true_len(manifest: &ErasureManifest, stripe_index: usize) -> Result<usize> {
+        let start = (stripe_index as u64)
+            .checked_mul(manifest.stripe_width as u64)
+            .ok_or_else(|| corruption("erasure stripe offset overflow"))?;
+        let remaining = manifest.blob_len.checked_sub(start).ok_or_else(|| {
+            corruption(format!(
+                "erasure stripe {stripe_index} starts beyond blob length {}",
+                manifest.blob_len
+            ))
+        })?;
+        usize::try_from(remaining.min(manifest.stripe_width as u64))
+            .map_err(|_| corruption("erasure stripe length overflows usize"))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn drive_store(&self, index: usize) -> LocalPackStore {
+        self.stores[index].clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn drive_root(&self, index: usize) -> PathBuf {
+        self.drive_roots[index].clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn drive_roots(&self) -> Vec<PathBuf> {
+        self.drive_roots.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn load_manifest_for_test(&self, hash: &BlobHash) -> Result<ErasureManifest> {
+        self.manifest_for_read(hash).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn publish_manifest_for_test(&self, manifest: ErasureManifest) -> Result<()> {
+        self.publish_manifest(manifest).await
+    }
+}
+
+#[async_trait]
+impl BlobStore for ErasureBlobStore {
+    async fn put(&self, bytes: Bytes) -> Result<BlobHash> {
+        let hash = BlobHash::of(&bytes);
+        if self.has(&hash).await? {
+            return Ok(hash);
+        }
+
+        let mut manifest = ErasureManifest {
+            generation: 1,
+            blob_hash: hash,
+            blob_len: bytes.len() as u64,
+            data_shards: self.config.data_shards,
+            parity_shards: self.config.parity_shards,
+            stripe_width: self.config.stripe_width,
+            stripes: Vec::new(),
+        };
+
+        for (stripe_index, chunk) in bytes.chunks(self.config.stripe_width).enumerate() {
+            let shards =
+                stripe::encode_stripe(chunk, self.config.data_shards, self.config.parity_shards)?;
+            let mut refs = Vec::with_capacity(shards.len());
+            for (shard_index, shard_bytes) in shards.into_iter().enumerate() {
+                let drive =
+                    stripe::drive_for(shard_index, stripe_index, self.config.total_shards());
+                let shard_hash = self.stores[drive].put(shard_bytes).await?;
+                refs.push(ShardRef {
+                    shard_index: shard_index as u16,
+                    shard_hash,
+                });
+            }
+            refs.sort_by_key(|shard| shard.shard_index);
+            manifest.stripes.push(refs);
+        }
+
+        // Phase B's root-based GC owns reclaiming shards left behind if this
+        // put fails after shard writes but before or during manifest publish.
+        self.publish_manifest(manifest).await?;
+        Ok(hash)
+    }
+
+    async fn put_stream(&self, mut src: ByteStream) -> Result<BlobHash> {
+        let mut buf = Vec::new();
+        src.read_to_end(&mut buf).await.map_err(|err| {
+            Error::storage(StorageErrorKind::Io, format!("read blob stream: {err}"))
+        })?;
+        self.put(Bytes::from(buf)).await
+    }
+
+    async fn get(&self, hash: &BlobHash) -> Result<Bytes> {
+        let manifest = self.manifest_for_read(hash).await?;
+        let mut out = Vec::with_capacity(manifest.blob_len as usize);
+        for stripe_index in 0..manifest.stripes.len() {
+            let shards = self.read_stripe_data(&manifest, stripe_index).await?;
+            let true_len = Self::stripe_true_len(&manifest, stripe_index)?;
+            let stripe = stripe::reassemble_stripe(&shards, true_len)?;
+            out.extend_from_slice(&stripe);
+        }
+        out.truncate(manifest.blob_len as usize);
+        let bytes = Bytes::from(out);
+        let actual = BlobHash::of(&bytes);
+        if actual != *hash {
+            return Err(corruption(format!(
+                "erasure blob {hash} reassembled to content address {actual}"
+            )));
+        }
+        Ok(bytes)
+    }
+
+    async fn get_stream(&self, hash: &BlobHash) -> Result<ByteStream> {
+        Ok(Box::new(std::io::Cursor::new(self.get(hash).await?)))
+    }
+
+    async fn get_range(&self, hash: &BlobHash, range: Range<u64>) -> Result<Bytes> {
+        let manifest = self.manifest_for_read(hash).await?;
+        if range.start > range.end {
+            return Err(Error::InvalidInput(format!(
+                "range {}..{} out of bounds: start after end",
+                range.start, range.end
+            )));
+        }
+        if range.end > manifest.blob_len {
+            return Err(Error::InvalidInput(format!(
+                "range {}..{} out of bounds for blob of {} bytes",
+                range.start, range.end, manifest.blob_len
+            )));
+        }
+        if range.start == range.end {
+            return Ok(Bytes::new());
+        }
+
+        let first_stripe = usize::try_from(range.start / manifest.stripe_width as u64)
+            .map_err(|_| Error::InvalidInput("range start overflows usize".to_string()))?;
+        let last_stripe = usize::try_from((range.end - 1) / manifest.stripe_width as u64)
+            .map_err(|_| Error::InvalidInput("range end overflows usize".to_string()))?;
+        let mut out = Vec::with_capacity((range.end - range.start) as usize);
+        for stripe_index in first_stripe..=last_stripe {
+            let shards = self.read_stripe_data(&manifest, stripe_index).await?;
+            let true_len = Self::stripe_true_len(&manifest, stripe_index)?;
+            let stripe = stripe::reassemble_stripe(&shards, true_len)?;
+            let stripe_start = stripe_index as u64 * manifest.stripe_width as u64;
+            let copy_start = range.start.max(stripe_start) - stripe_start;
+            let copy_end = range.end.min(stripe_start + stripe.len() as u64) - stripe_start;
+            out.extend_from_slice(&stripe[copy_start as usize..copy_end as usize]);
+        }
+        // Range reads are intentionally bounded to covering stripes and trust
+        // shard-level pack verification; a whole-blob hash would require
+        // reading bytes outside the requested range.
+        Ok(Bytes::from(out))
+    }
+
+    async fn has(&self, hash: &BlobHash) -> Result<bool> {
+        Ok(self.load_manifest(hash).await?.is_some())
+    }
+
+    async fn release(&self, hash: &BlobHash) -> Result<()> {
+        let hash = *hash;
+        let drive_roots = self.drive_roots.clone();
+        let observer = Arc::clone(&self.observer);
+        blocking(move || {
+            for root in &drive_roots {
+                let path = manifest::manifest_path(root, &hash);
+                match fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => {
+                        return Err(Error::storage(
+                            StorageErrorKind::Io,
+                            format!("remove erasure manifest {}: {err}", path.display()),
+                        ));
+                    }
+                }
+                let dir = manifest::manifest_dir(root);
+                disk::fsync_dir(&dir, &*observer).map_err(|err| {
+                    Error::storage(
+                        StorageErrorKind::Io,
+                        format!("sync erasure manifest dir {}: {err}", dir.display()),
+                    )
+                })?;
+            }
+            // Phase B's manifest-root GC owns shard reclamation. Releasing
+            // shard blobs here would be unsafe because shard hashes may be
+            // shared across blobs and crash windows need root reconstruction.
+            Ok(())
+        })
+        .await
+    }
+}
+
+async fn blocking<T>(op: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T>
+where
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(op)
+        .await
+        .map_err(|err| Error::storage(StorageErrorKind::Other, format!("erasure task: {err}")))?
+}
+
+fn drive_identity(index: usize) -> [u8; crate::BLAKE3_HASH_LEN] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"nimbus-erasure-leg");
+    hasher.update(&(index as u64).to_le_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+fn corruption(message: impl Into<String>) -> Error {
+    Error::storage(StorageErrorKind::Corruption, message)
+}
