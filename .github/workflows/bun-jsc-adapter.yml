@@ -120,7 +120,7 @@ jobs:
           bun_build="${RUNNER_TEMP}/bun-build-${{ matrix.platform_arch }}"
           echo "version=${ver}" >> "${GITHUB_OUTPUT}"
           echo "src=${src}" >> "${GITHUB_OUTPUT}"
-          echo "webkit_build=${bun_build}/deps/webkit" >> "${GITHUB_OUTPUT}"
+          echo "webkit_build=${bun_build}/deps/WebKit" >> "${GITHUB_OUTPUT}"
           # Pin a stable, cacheable Bun build dir so the WebKit output persists
           # across runs (the artifact script honors NIMBUS_BUN_BUILD_DIR).
           echo "NIMBUS_BUN_BUILD_DIR=${bun_build}" >> "${GITHUB_ENV}"
