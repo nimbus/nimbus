@@ -270,13 +270,22 @@ check_external_s3_static() {
 }
 
 check_external_s3_live() {
-  local configured
-  configured="${NIMBUS_TEST_RUSTFS_S3_URL:-}${NIMBUS_TEST_SEAWEEDFS_S3_URL:-}"
+  # Mirror the Rust harness's env scan: ANY target-scoped variable counts as
+  # "the operator configured a target" — sibling vars without the URL (or
+  # a URL without the gate) must fail loudly, never silently skip.
+  local configured=""
+  local t suffix var
+  for t in RUSTFS SEAWEEDFS; do
+    for suffix in URL BUCKET REGION ACCESS_KEY SECRET_KEY; do
+      var="NIMBUS_TEST_${t}_S3_${suffix}"
+      if [ -n "$(eval "printf '%s' \"\${${var}:-}\"")" ]; then
+        configured="${configured} ${var}"
+      fi
+    done
+  done
   if [ "${RUN_EXTERNAL_S3:-0}" != "1" ]; then
     if [ -n "$configured" ]; then
-      # A configured live target with the gate off is a misconfigured run,
-      # not a silent no-op: the operator expected the live suite to count.
-      fail "external-s3 target env set but RUN_EXTERNAL_S3=1 is missing"
+      fail "external-s3 target env set (${configured# }) but RUN_EXTERNAL_S3=1 is missing"
     else
       skip "external-s3 live suite (RUN_EXTERNAL_S3 not set)"
     fi
