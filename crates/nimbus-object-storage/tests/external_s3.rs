@@ -32,7 +32,23 @@ fn configured_target(name: &'static str, env_name: &'static str) -> Option<Exter
     let endpoint_var = format!("NIMBUS_TEST_{env_name}_S3_URL");
     let endpoint = match env::var(&endpoint_var) {
         Ok(value) => value,
-        Err(env::VarError::NotPresent) => return None,
+        Err(env::VarError::NotPresent) => {
+            // Only an ALL-vars-absent target skips. Sibling vars without the
+            // URL are a misconfigured harness and must fail loudly instead of
+            // silently skipping the live suite.
+            let siblings: Vec<String> = ["BUCKET", "REGION", "ACCESS_KEY", "SECRET_KEY"]
+                .iter()
+                .map(|suffix| format!("NIMBUS_TEST_{env_name}_S3_{suffix}"))
+                .filter(|var| env::var_os(var).is_some())
+                .collect();
+            if !siblings.is_empty() {
+                panic!(
+                    "external-s3 target {name} is misconfigured: {} set but {endpoint_var} is missing",
+                    siblings.join(", ")
+                );
+            }
+            return None;
+        }
         Err(env::VarError::NotUnicode(_)) => {
             panic!("{endpoint_var} must be valid Unicode");
         }

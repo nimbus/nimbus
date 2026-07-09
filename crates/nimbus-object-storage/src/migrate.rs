@@ -16,28 +16,51 @@ pub enum MigrationLeg {
 
 /// Classifies the migration leg implied by a placement policy.
 ///
-/// `LocalOnly` policies always use [`MigrationLeg::LocalReplicateHandoff`]
-/// because tenant blobs live only in the local pack. `Mirror`, `Tier`, and
-/// `CloudPrimary` policies use [`MigrationLeg::CloudObjectStore`] only when
-/// their target provider is a shared remote object-store kind
-/// ([`ObjectStoreProviderKind::S3`], [`ObjectStoreProviderKind::Gcs`], or
-/// [`ObjectStoreProviderKind::Azure`]). The same placement modes whose target
-/// provider is [`ObjectStoreProviderKind::Local`] or
-/// [`ObjectStoreProviderKind::Memory`] remain host-local and therefore still
-/// use [`MigrationLeg::LocalReplicateHandoff`].
+/// [`MigrationLeg::CloudObjectStore`] is chosen only when the policy
+/// GUARANTEES every accepted write is durably present on a shared remote
+/// target, so attaching the destination node to that target cannot miss
+/// blobs:
+///
+/// - `Tier` and `CloudPrimary`: the remote leg is the byte authority — a
+///   `put` persists to it before (or instead of) the local leg.
+/// - `Mirror { require_ack: true }`: a put fails unless the mirror write
+///   succeeded, so every accepted blob exists remotely.
+///
+/// Everything else uses [`MigrationLeg::LocalReplicateHandoff`]:
+///
+/// - `LocalOnly`: blobs live only in the local pack.
+/// - `Mirror { require_ack: false }`: mirroring is best-effort — a put
+///   succeeds locally even when the remote write fails, so the remote copy
+///   may be incomplete and attaching to it could lose data.
+/// - Any mode whose target provider is [`ObjectStoreProviderKind::Local`] or
+///   [`ObjectStoreProviderKind::Memory`]: the "remote" leg is host-local,
+///   nothing is shared.
+///
+/// The classification describes writes accepted UNDER the current policy. A
+/// tenant that changed policy (e.g. `LocalOnly` -> `Mirror`) may hold older
+/// local-only blobs; the migration executor must reconcile such transitions
+/// before relying on [`MigrationLeg::CloudObjectStore`].
 pub fn migration_leg(policy: &PlacementPolicy) -> MigrationLeg {
-    match policy {
-        PlacementPolicy::LocalOnly => MigrationLeg::LocalReplicateHandoff,
-        PlacementPolicy::Mirror { target, .. }
-        | PlacementPolicy::Tier { target }
-        | PlacementPolicy::CloudPrimary { target } => match target.provider {
-            ObjectStoreProviderKind::S3
-            | ObjectStoreProviderKind::Gcs
-            | ObjectStoreProviderKind::Azure => MigrationLeg::CloudObjectStore,
-            ObjectStoreProviderKind::Local | ObjectStoreProviderKind::Memory => {
-                MigrationLeg::LocalReplicateHandoff
-            }
-        },
+    let (target, remote_is_authoritative) = match policy {
+        PlacementPolicy::LocalOnly => return MigrationLeg::LocalReplicateHandoff,
+        PlacementPolicy::Mirror {
+            target,
+            require_ack,
+        } => (target, *require_ack),
+        PlacementPolicy::Tier { target } | PlacementPolicy::CloudPrimary { target } => {
+            (target, true)
+        }
+    };
+    if !remote_is_authoritative {
+        return MigrationLeg::LocalReplicateHandoff;
+    }
+    match target.provider {
+        ObjectStoreProviderKind::S3
+        | ObjectStoreProviderKind::Gcs
+        | ObjectStoreProviderKind::Azure => MigrationLeg::CloudObjectStore,
+        ObjectStoreProviderKind::Local | ObjectStoreProviderKind::Memory => {
+            MigrationLeg::LocalReplicateHandoff
+        }
     }
 }
 
@@ -73,10 +96,20 @@ mod tests {
         ] {
             assert_eq!(
                 migration_leg(&PlacementPolicy::Mirror {
-                    target: target(provider),
+                    target: target(provider.clone()),
                     require_ack: true,
                 }),
                 MigrationLeg::CloudObjectStore
+            );
+            // A best-effort mirror may hold local-only blobs (a put succeeds
+            // even when the remote write fails), so a remote target is NOT
+            // enough: migration must replicate-then-handoff.
+            assert_eq!(
+                migration_leg(&PlacementPolicy::Mirror {
+                    target: target(provider),
+                    require_ack: false,
+                }),
+                MigrationLeg::LocalReplicateHandoff
             );
         }
 
@@ -100,6 +133,26 @@ mod tests {
             migration_leg(&PlacementPolicy::LocalOnly),
             MigrationLeg::LocalReplicateHandoff
         );
+    }
+
+    #[test]
+    fn best_effort_mirror_never_classifies_as_cloud() {
+        // require_ack: false means the remote copy may be incomplete.
+        for provider in [
+            ObjectStoreProviderKind::S3,
+            ObjectStoreProviderKind::Gcs,
+            ObjectStoreProviderKind::Azure,
+            ObjectStoreProviderKind::Local,
+            ObjectStoreProviderKind::Memory,
+        ] {
+            assert_eq!(
+                migration_leg(&PlacementPolicy::Mirror {
+                    target: target(provider),
+                    require_ack: false,
+                }),
+                MigrationLeg::LocalReplicateHandoff
+            );
+        }
     }
 
     #[test]
