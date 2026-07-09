@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use bytes::Bytes;
 use nimbus_core::{Error, StorageErrorKind};
@@ -872,4 +873,58 @@ async fn erasure_high_parity_manifests_survive_parity_drive_losses() {
     // One more loss drops below quorum: fail-closed invisibility.
     fs::remove_file(manifest::manifest_path(&store.drive_root(4), &hash)).unwrap();
     assert!(!store.has(&hash).await.unwrap());
+}
+
+#[tokio::test]
+async fn erasure_same_leg_instances_share_the_mutation_lock() {
+    // Review fix (round 6, P2): manifest mutations are serialized per LEG,
+    // process-wide — a second same-process instance over the same roots
+    // aliases the same lock (mirroring LocalPackStore shared-state
+    // semantics), so put/release cannot interleave across instances.
+    let (_dir, store, roots) = open_temp(K, M, STRIPE);
+    let second =
+        ErasureBlobStore::open(ErasureConfig::new("test-leg", roots, K, M, STRIPE).unwrap())
+            .unwrap();
+    assert!(
+        Arc::ptr_eq(&store.mutation_lock(), &second.mutation_lock()),
+        "same-leg instances must share one mutation lock"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn erasure_concurrent_put_and_release_linearize() {
+    // Review fix (round 6, P2): racing an idempotent put against a release
+    // of the same hash must never produce a torn observable state — every
+    // outcome is one of the two linearizations, and the store remains
+    // fully repairable afterwards.
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(STRIPE + 29);
+    let hash = store.put(bytes.clone()).await.unwrap();
+
+    for _ in 0..25 {
+        let put_store = store.clone();
+        let put_bytes = bytes.clone();
+        let release_store = store.clone();
+        let put_task = tokio::spawn(async move { put_store.put(put_bytes).await });
+        let release_task = tokio::spawn(async move { release_store.release(&hash).await });
+        put_task.await.unwrap().unwrap();
+        release_task.await.unwrap().unwrap();
+
+        // Linearizable outcomes only: visible AND fully readable, or
+        // cleanly absent. Never Ok-from-put with a torn sub-quorum state
+        // that fails reads.
+        if store.has(&hash).await.unwrap() {
+            assert_eq!(store.get(&hash).await.unwrap(), bytes);
+        } else {
+            assert!(matches!(
+                store.get(&hash).await.unwrap_err(),
+                Error::NotFound(_)
+            ));
+        }
+
+        // Repair for the next round; the idempotent path must always be
+        // able to restore full visibility.
+        assert_eq!(store.put(bytes.clone()).await.unwrap(), hash);
+        assert_eq!(store.get(&hash).await.unwrap(), bytes);
+    }
 }

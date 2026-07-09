@@ -1,7 +1,10 @@
+use std::collections::HashMap;
 use std::fs;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
+
+use tokio::sync::Mutex as AsyncMutex;
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -24,6 +27,13 @@ pub struct ErasureBlobStore {
     drive_roots: Vec<PathBuf>,
     stores: Vec<LocalPackStore>,
     observer: Arc<dyn SyncObserver>,
+    /// Serializes manifest mutations (put's read-modify-publish, release's
+    /// multi-file removal) for the LEG, shared process-wide via a canonical
+    /// drive-0 registry — same-process instances over the same roots alias
+    /// one lock, mirroring LocalPackStore's shared-state semantics. Reads
+    /// stay lock-free: a loaded manifest keeps serving (shards outlive
+    /// release until Phase B GC), and quorum keeps partial states invisible.
+    mutation: Arc<AsyncMutex<()>>,
 }
 
 impl std::fmt::Debug for ErasureBlobStore {
@@ -71,11 +81,13 @@ impl ErasureBlobStore {
             drive_roots.push(canonical);
         }
 
+        let mutation = mutation_lock_for(&drive_roots[0]);
         Ok(Self {
             config,
             drive_roots,
             stores,
             observer,
+            mutation,
         })
     }
 
@@ -261,6 +273,11 @@ impl ErasureBlobStore {
     }
 
     #[cfg(test)]
+    pub(crate) fn mutation_lock(&self) -> Arc<AsyncMutex<()>> {
+        Arc::clone(&self.mutation)
+    }
+
+    #[cfg(test)]
     pub(crate) async fn load_manifest_for_test(&self, hash: &BlobHash) -> Result<ErasureManifest> {
         self.manifest_for_read(hash).await
     }
@@ -275,6 +292,11 @@ impl ErasureBlobStore {
 impl BlobStore for ErasureBlobStore {
     async fn put(&self, bytes: Bytes) -> Result<BlobHash> {
         let hash = BlobHash::of(&bytes);
+        // Mutations are serialized per leg: without this, an idempotent put
+        // could observe an existing quorum, skip identical replicas, and
+        // race a concurrent release into returning Ok with the manifests
+        // gone (LocalPackStore gets the equivalent from its state lock).
+        let _mutation = self.mutation.lock().await;
         if let Some(existing) = self.load_manifest(&hash).await? {
             // Idempotent path REPAIRS replication: a crash mid-publish or a
             // partially completed release can leave the manifest on a subset
@@ -399,6 +421,7 @@ impl BlobStore for ErasureBlobStore {
     }
 
     async fn release(&self, hash: &BlobHash) -> Result<()> {
+        let _mutation = self.mutation.lock().await;
         let hash = *hash;
         let drive_roots = self.drive_roots.clone();
         let observer = Arc::clone(&self.observer);
@@ -439,6 +462,22 @@ where
     tokio::task::spawn_blocking(op)
         .await
         .map_err(|err| Error::storage(StorageErrorKind::Other, format!("erasure task: {err}")))?
+}
+
+/// Process-wide registry of per-leg mutation locks, keyed by the canonical
+/// drive-0 root (unique per leg: identity binding prevents two legs from
+/// sharing any root). Weak entries let dropped stores free their slot.
+fn mutation_lock_for(drive0: &PathBuf) -> Arc<AsyncMutex<()>> {
+    static REGISTRY: OnceLock<StdMutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>> = OnceLock::new();
+    let registry = REGISTRY.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut map = registry.lock().expect("erasure mutation registry poisoned");
+    map.retain(|_, weak| weak.strong_count() > 0);
+    if let Some(existing) = map.get(drive0).and_then(Weak::upgrade) {
+        return existing;
+    }
+    let fresh = Arc::new(AsyncMutex::new(()));
+    map.insert(drive0.clone(), Arc::downgrade(&fresh));
+    fresh
 }
 
 /// Binds a drive root to BOTH the leg instance and its drive index: a root
