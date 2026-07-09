@@ -849,3 +849,27 @@ async fn erasure_failed_republish_preserves_committed_replicas() {
         );
     }
 }
+
+#[tokio::test]
+async fn erasure_high_parity_manifests_survive_parity_drive_losses() {
+    // Review fix (round 5, P2): with k=2,m=4 the quorum caps at k=2 so the
+    // manifest plane tolerates the SAME m=4 drive losses the data does —
+    // parity+1 would have demanded 5/6 manifests and lost visibility after
+    // only two failures while shards were still recoverable.
+    let (_dir, store, _roots) = open_temp(2, 4, STRIPE);
+    let bytes = payload(STRIPE + 13);
+    let hash = store.put(bytes.clone()).await.unwrap();
+
+    // Lose m=4 drives' manifests (and their shards, via quarantine-free
+    // removal of the manifest copies — shard loss is covered elsewhere):
+    // 2 replicas remain = quorum, blob stays visible and readable.
+    for index in 0..4 {
+        fs::remove_file(manifest::manifest_path(&store.drive_root(index), &hash)).unwrap();
+    }
+    assert!(store.has(&hash).await.unwrap());
+    assert_eq!(store.get(&hash).await.unwrap(), bytes);
+
+    // One more loss drops below quorum: fail-closed invisibility.
+    fs::remove_file(manifest::manifest_path(&store.drive_root(4), &hash)).unwrap();
+    assert!(!store.has(&hash).await.unwrap());
+}

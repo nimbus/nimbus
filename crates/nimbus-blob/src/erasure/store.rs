@@ -82,10 +82,15 @@ impl ErasureBlobStore {
     async fn load_manifest(&self, hash: &BlobHash) -> Result<Option<ErasureManifest>> {
         let hash = *hash;
         let drive_roots = self.drive_roots.clone();
-        // Visibility quorum: parity+1 replicas. A committed publish writes
-        // all k+m, so up to k-1 manifest losses stay visible (data itself
-        // only tolerates m shard losses — manifests are never the weaker
-        // link); an interrupted put's minority never becomes visible.
+        // Visibility quorum: min(parity+1, data) replicas. The parity+1 arm
+        // keeps interrupted-put/release minorities and forged single copies
+        // invisible; the data-shards ceiling keeps the manifest plane AT
+        // LEAST as loss-tolerant as the data plane — a committed publish
+        // writes all k+m replicas, so quorum <= k means the blob stays
+        // visible through the same m drive losses the shards tolerate
+        // (relevant for high-parity layouts like k=2,m=4, where parity+1
+        // would demand 5 of 6 manifests and lose visibility after only two
+        // drive failures while the data is still recoverable).
         //
         // A CRASH after quorum but before full replication leaves the blob
         // visible although put never returned. That is deliberate and safe:
@@ -98,7 +103,7 @@ impl ErasureBlobStore {
         // ack-vs-durability gap; the guarantees that matter are that an
         // ERRORED put is invisible (publish rollback + quorum) and that
         // anything visible is completely readable.
-        let quorum = self.config.parity_shards + 1;
+        let quorum = (self.config.parity_shards + 1).min(self.config.data_shards);
         blocking(move || manifest::load_newest(&hash, &drive_roots, quorum)).await
     }
 

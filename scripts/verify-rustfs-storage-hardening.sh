@@ -241,6 +241,7 @@ required_tests=(
   erasure_failed_publish_leaves_put_invisible
   erasure_quorum_requires_identical_manifest_content
   erasure_failed_republish_preserves_committed_replicas
+  erasure_high_parity_manifests_survive_parity_drive_losses
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then
