@@ -270,7 +270,18 @@ check_external_s3_static() {
 }
 
 check_external_s3_live() {
-  [ "${RUN_EXTERNAL_S3:-0}" = "1" ] || return 0
+  local configured
+  configured="${NIMBUS_TEST_RUSTFS_S3_URL:-}${NIMBUS_TEST_SEAWEEDFS_S3_URL:-}"
+  if [ "${RUN_EXTERNAL_S3:-0}" != "1" ]; then
+    if [ -n "$configured" ]; then
+      # A configured live target with the gate off is a misconfigured run,
+      # not a silent no-op: the operator expected the live suite to count.
+      fail "external-s3 target env set but RUN_EXTERNAL_S3=1 is missing"
+    else
+      skip "external-s3 live suite (RUN_EXTERNAL_S3 not set)"
+    fi
+    return 0
+  fi
 
   local output status targets
   output="$(cargo test -p nimbus-object-storage --test external_s3 -- --nocapture 2>&1)"

@@ -18,10 +18,10 @@ nimbus-storage = { path = "../nimbus-storage" }
 object_store.workspace = true
 rand.workspace = true
 serde_json.workspace = true
+url.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 bytes.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
-url.workspace = true

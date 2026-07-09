@@ -1,6 +1,7 @@
 //! Object-placement migration classification.
 
-use nimbus_storage::{ObjectStoreProviderKind, PlacementPolicy};
+use nimbus_storage::{ObjectStorePlacementTarget, ObjectStoreProviderKind, PlacementPolicy};
+use url::Url;
 
 /// The byte-transfer strategy needed when moving a tenant between nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +36,11 @@ pub enum MigrationLeg {
 /// - Any mode whose target provider is [`ObjectStoreProviderKind::Local`] or
 ///   [`ObjectStoreProviderKind::Memory`]: the "remote" leg is host-local,
 ///   nothing is shared.
+/// - Any target whose endpoint override points at a loopback host (or cannot
+///   be parsed): an S3-compatible service on `127.0.0.1`/`::1`/`localhost` is
+///   node-local — the destination node's loopback is a different machine, so
+///   attaching to "the same" endpoint would silently miss every blob.
+///   Unparseable endpoints classify conservatively as local (fail-safe).
 ///
 /// The classification describes writes accepted UNDER the current policy. A
 /// tenant that changed policy (e.g. `LocalOnly` -> `Mirror`) may hold older
@@ -51,7 +57,7 @@ pub fn migration_leg(policy: &PlacementPolicy) -> MigrationLeg {
             (target, true)
         }
     };
-    if !remote_is_authoritative {
+    if !remote_is_authoritative || !endpoint_is_shared(target) {
         return MigrationLeg::LocalReplicateHandoff;
     }
     match target.provider {
@@ -61,6 +67,26 @@ pub fn migration_leg(policy: &PlacementPolicy) -> MigrationLeg {
         ObjectStoreProviderKind::Local | ObjectStoreProviderKind::Memory => {
             MigrationLeg::LocalReplicateHandoff
         }
+    }
+}
+
+/// True when the target's endpoint is reachable from OTHER nodes. No endpoint
+/// override means the provider's public service. A loopback host is
+/// node-local by definition; an unparseable endpoint or one without a host is
+/// treated as not shared (fail-safe: prefer replicate-then-handoff over a
+/// migration that can silently miss blobs).
+fn endpoint_is_shared(target: &ObjectStorePlacementTarget) -> bool {
+    let Some(endpoint) = target.endpoint.as_deref() else {
+        return true;
+    };
+    let Ok(parsed) = Url::parse(endpoint) else {
+        return false;
+    };
+    match parsed.host() {
+        Some(url::Host::Domain(domain)) => !domain.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => !ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => !ip.is_loopback(),
+        None => false,
     }
 }
 
@@ -132,6 +158,41 @@ mod tests {
         assert_eq!(
             migration_leg(&PlacementPolicy::LocalOnly),
             MigrationLeg::LocalReplicateHandoff
+        );
+    }
+
+    #[test]
+    fn loopback_endpoint_never_classifies_as_cloud() {
+        // An S3-compatible service on loopback is node-local: the destination
+        // node's 127.0.0.1 is a different machine.
+        for endpoint in [
+            "http://127.0.0.1:9000",
+            "http://localhost:8333",
+            "http://[::1]:9000",
+            "not a url",
+        ] {
+            assert_eq!(
+                migration_leg(&PlacementPolicy::Tier {
+                    target: target(ObjectStoreProviderKind::S3).with_endpoint(endpoint),
+                }),
+                MigrationLeg::LocalReplicateHandoff,
+                "endpoint {endpoint} must classify as node-local"
+            );
+        }
+        // A shared (non-loopback) endpoint override keeps the cloud leg.
+        assert_eq!(
+            migration_leg(&PlacementPolicy::Tier {
+                target: target(ObjectStoreProviderKind::S3)
+                    .with_endpoint("https://seaweed.internal.example:8333"),
+            }),
+            MigrationLeg::CloudObjectStore
+        );
+        // No endpoint override = the provider's public service.
+        assert_eq!(
+            migration_leg(&PlacementPolicy::Tier {
+                target: target(ObjectStoreProviderKind::S3),
+            }),
+            MigrationLeg::CloudObjectStore
         );
     }
 
