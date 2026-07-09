@@ -278,7 +278,9 @@ check_external_s3_live() {
   for t in RUSTFS SEAWEEDFS; do
     for suffix in URL BUCKET REGION ACCESS_KEY SECRET_KEY; do
       var="NIMBUS_TEST_${t}_S3_${suffix}"
-      if [ -n "$(eval "printf '%s' \"\${${var}:-}\"")" ]; then
+      # Presence test (matches the Rust harness's env::var_os().is_some()):
+      # an empty-but-set variable still counts as configured.
+      if [ -n "${!var+x}" ]; then
         configured="${configured} ${var}"
       fi
     done

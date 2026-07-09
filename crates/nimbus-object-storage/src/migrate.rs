@@ -1,6 +1,6 @@
 //! Object-placement migration classification.
 
-use nimbus_storage::{ObjectStorePlacementTarget, ObjectStoreProviderKind, PlacementPolicy};
+use nimbus_storage::{ObjectStoreProviderKind, PlacementPolicy};
 use url::Url;
 
 /// The byte-transfer strategy needed when moving a tenant between nodes.
@@ -49,13 +49,33 @@ pub enum MigrationLeg {
 /// local-only blobs; the migration executor must reconcile such transitions
 /// before relying on [`MigrationLeg::CloudObjectStore`].
 pub fn migration_leg(policy: &PlacementPolicy) -> MigrationLeg {
+    // Mirror the resolver's endpoint materialization: an S3 target with no
+    // stored endpoint can still resolve to AWS_ENDPOINT_URL_S3/AWS_ENDPOINT
+    // at store-build time (`resolver.rs` blob_cloud_config), so the
+    // classification must judge the endpoint bytes actually go to.
+    migration_leg_with_env(policy, crate::resolver::env_s3_endpoint().as_deref())
+}
+
+/// [`migration_leg`] with the process-env S3 endpoint fallback made explicit
+/// (pure and unit-testable). `env_s3_endpoint` is what
+/// `AWS_ENDPOINT_URL_S3`/`AWS_ENDPOINT` would resolve to; it applies only to
+/// [`ObjectStoreProviderKind::S3`] targets without a stored endpoint, exactly
+/// like the resolver.
+fn migration_leg_with_env(policy: &PlacementPolicy, env_s3_endpoint: Option<&str>) -> MigrationLeg {
     let target = match policy {
         PlacementPolicy::LocalOnly | PlacementPolicy::Mirror { .. } => {
             return MigrationLeg::LocalReplicateHandoff;
         }
         PlacementPolicy::Tier { target } | PlacementPolicy::CloudPrimary { target } => target,
     };
-    if !endpoint_is_shared(target) {
+    let resolved_endpoint = target.endpoint.as_deref().or_else(|| {
+        if target.provider == ObjectStoreProviderKind::S3 {
+            env_s3_endpoint
+        } else {
+            None
+        }
+    });
+    if !endpoint_is_shared(resolved_endpoint) {
         return MigrationLeg::LocalReplicateHandoff;
     }
     match target.provider {
@@ -68,13 +88,13 @@ pub fn migration_leg(policy: &PlacementPolicy) -> MigrationLeg {
     }
 }
 
-/// True when the target's endpoint is reachable from OTHER nodes. No endpoint
-/// override means the provider's public service. A loopback host is
-/// node-local by definition; an unparseable endpoint or one without a host is
-/// treated as not shared (fail-safe: prefer replicate-then-handoff over a
-/// migration that can silently miss blobs).
-fn endpoint_is_shared(target: &ObjectStorePlacementTarget) -> bool {
-    let Some(endpoint) = target.endpoint.as_deref() else {
+/// True when the resolved endpoint is reachable from OTHER nodes. No endpoint
+/// means the provider's public service. A loopback host is node-local by
+/// definition; an unparseable endpoint or one without a host is treated as
+/// not shared (fail-safe: prefer replicate-then-handoff over a migration that
+/// can silently miss blobs).
+fn endpoint_is_shared(endpoint: Option<&str>) -> bool {
+    let Some(endpoint) = endpoint else {
         return true;
     };
     let Ok(parsed) = Url::parse(endpoint) else {
@@ -102,7 +122,7 @@ mod tests {
         PlacementPolicy,
     };
 
-    use super::{MigrationLeg, migration_leg};
+    use super::{MigrationLeg, migration_leg, migration_leg_with_env};
 
     fn target(provider: ObjectStoreProviderKind) -> ObjectStorePlacementTarget {
         ObjectStorePlacementTarget::new(
@@ -193,6 +213,46 @@ mod tests {
             migration_leg(&PlacementPolicy::Tier {
                 target: target(ObjectStoreProviderKind::S3),
             }),
+            MigrationLeg::CloudObjectStore
+        );
+    }
+
+    #[test]
+    fn env_injected_loopback_endpoint_never_classifies_as_cloud() {
+        // An S3 target with NO stored endpoint can still resolve to
+        // AWS_ENDPOINT_URL_S3/AWS_ENDPOINT at store-build time. If that env
+        // endpoint is loopback, bytes are node-local and migration must
+        // replicate-then-handoff.
+        let policy = PlacementPolicy::Tier {
+            target: target(ObjectStoreProviderKind::S3),
+        };
+        assert_eq!(
+            migration_leg_with_env(&policy, Some("http://127.0.0.1:9000")),
+            MigrationLeg::LocalReplicateHandoff
+        );
+        // A shared env endpoint keeps the cloud leg.
+        assert_eq!(
+            migration_leg_with_env(&policy, Some("https://s3.internal.example")),
+            MigrationLeg::CloudObjectStore
+        );
+        // A stored endpoint takes precedence over the env fallback.
+        let stored = PlacementPolicy::Tier {
+            target: target(ObjectStoreProviderKind::S3)
+                .with_endpoint("https://seaweed.internal.example:8333"),
+        };
+        assert_eq!(
+            migration_leg_with_env(&stored, Some("http://127.0.0.1:9000")),
+            MigrationLeg::CloudObjectStore
+        );
+        // The env fallback is S3-specific (mirrors the resolver): a Gcs
+        // target ignores it.
+        assert_eq!(
+            migration_leg_with_env(
+                &PlacementPolicy::Tier {
+                    target: target(ObjectStoreProviderKind::Gcs),
+                },
+                Some("http://127.0.0.1:9000")
+            ),
             MigrationLeg::CloudObjectStore
         );
     }
