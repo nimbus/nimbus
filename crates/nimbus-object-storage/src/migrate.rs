@@ -101,7 +101,16 @@ fn endpoint_is_shared(endpoint: Option<&str>) -> bool {
         return false;
     };
     match parsed.host() {
-        Some(url::Host::Domain(domain)) => !domain.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Domain(domain)) => {
+            // The whole RFC 6761 localhost namespace resolves to loopback:
+            // `localhost`, the FQDN form `localhost.`, and any
+            // `*.localhost` subdomain.
+            let normalized = domain.strip_suffix('.').unwrap_or(domain);
+            !(normalized.eq_ignore_ascii_case("localhost")
+                || normalized.len() > ".localhost".len()
+                    && normalized[normalized.len() - ".localhost".len()..]
+                        .eq_ignore_ascii_case(".localhost"))
+        }
         Some(url::Host::Ipv4(ip)) => !ip.is_loopback(),
         Some(url::Host::Ipv6(ip)) => {
             // Cover IPv4-mapped loopback (::ffff:127.0.0.1) as well.
@@ -189,7 +198,12 @@ mod tests {
         for endpoint in [
             "http://127.0.0.1:9000",
             "http://localhost:8333",
+            "http://localhost.:9000",
+            "http://LOCALHOST.:9000",
+            "http://s3.localhost:9000",
+            "http://s3.localhost.:9000",
             "http://[::1]:9000",
+            "http://[::ffff:127.0.0.1]:9000",
             "not a url",
         ] {
             assert_eq!(
@@ -200,14 +214,21 @@ mod tests {
                 "endpoint {endpoint} must classify as node-local"
             );
         }
-        // A shared (non-loopback) endpoint override keeps the cloud leg.
-        assert_eq!(
-            migration_leg(&PlacementPolicy::Tier {
-                target: target(ObjectStoreProviderKind::S3)
-                    .with_endpoint("https://seaweed.internal.example:8333"),
-            }),
-            MigrationLeg::CloudObjectStore
-        );
+        // Shared (non-loopback) endpoint overrides keep the cloud leg —
+        // including lookalike names that merely CONTAIN "localhost".
+        for endpoint in [
+            "https://seaweed.internal.example:8333",
+            "https://notlocalhost.example:9000",
+            "https://localhost.example.com:9000",
+        ] {
+            assert_eq!(
+                migration_leg(&PlacementPolicy::Tier {
+                    target: target(ObjectStoreProviderKind::S3).with_endpoint(endpoint),
+                }),
+                MigrationLeg::CloudObjectStore,
+                "endpoint {endpoint} is shared"
+            );
+        }
         // No endpoint override = the provider's public service.
         assert_eq!(
             migration_leg(&PlacementPolicy::Tier {
