@@ -162,25 +162,46 @@ impl ErasureManifest {
     }
 }
 
-/// Publishes the manifest to EVERY drive root. On any write failure, the
-/// copies already written by THIS call are best-effort removed before the
-/// error returns, so an errored put stays invisible (and even if cleanup is
-/// also interrupted, at most a below-quorum minority of replicas can remain
-/// — see [`load_newest`]'s visibility rule).
+/// Publishes the manifest to EVERY drive root, preserving committed state
+/// on failure:
+///
+/// - a drive already holding IDENTICAL bytes is skipped (idempotent
+///   republish is a no-op there);
+/// - on any write failure, every path this call changed is rolled back —
+///   restored to its prior bytes if one existed (committed replicas survive
+///   a failed republish), removed if the call created it (an errored fresh
+///   put stays invisible; even interrupted cleanup leaves at most a
+///   below-quorum minority — see [`load_newest`]).
 pub(crate) fn publish(
     manifest: &ErasureManifest,
     drive_roots: &[PathBuf],
     observer: &dyn SyncObserver,
 ) -> Result<()> {
     let bytes = manifest.encode();
-    let mut written: Vec<PathBuf> = Vec::with_capacity(drive_roots.len());
+    let mut changed: Vec<(PathBuf, Option<Vec<u8>>)> = Vec::with_capacity(drive_roots.len());
     for root in drive_roots {
         let path = manifest_path(root, &manifest.blob_hash);
+        let prior = match fs::read(&path) {
+            Ok(existing) => {
+                if existing == bytes {
+                    continue; // identical replica already committed here
+                }
+                Some(existing)
+            }
+            Err(_) => None,
+        };
         if let Err(err) = disk::write_replace_durable(&path, &bytes, observer) {
-            for undo in &written {
-                let _ = fs::remove_file(undo);
-                if let Some(dir) = undo.parent() {
-                    let _ = disk::fsync_dir(dir, observer);
+            for (undo, prior) in &changed {
+                match prior {
+                    Some(prior_bytes) => {
+                        let _ = disk::write_replace_durable(undo, prior_bytes, observer);
+                    }
+                    None => {
+                        let _ = fs::remove_file(undo);
+                        if let Some(dir) = undo.parent() {
+                            let _ = disk::fsync_dir(dir, observer);
+                        }
+                    }
                 }
             }
             return Err(Error::storage(
@@ -188,7 +209,7 @@ pub(crate) fn publish(
                 format!("write erasure manifest {}: {err}", path.display()),
             ));
         }
-        written.push(path);
+        changed.push((path, prior));
     }
     Ok(())
 }
@@ -205,7 +226,12 @@ pub(crate) fn load_newest(
     drive_roots: &[PathBuf],
     quorum: usize,
 ) -> Result<Option<ErasureManifest>> {
-    let mut candidates: Vec<(u64, usize, ErasureManifest)> = Vec::new();
+    // Quorum is over IDENTICAL manifest content (encoded-byte digest), not
+    // just matching generation numbers: a single divergent or forged
+    // checksum-valid copy must not piggyback on legitimate replicas' count
+    // and become the exemplar. Committed publishes write byte-identical
+    // replicas, so content-grouping costs nothing in the healthy path.
+    let mut groups: Vec<(blake3::Hash, u64, usize, ErasureManifest)> = Vec::new();
     for root in drive_roots {
         let path = manifest_path(root, hash);
         let bytes = match fs::read(&path) {
@@ -216,19 +242,25 @@ pub(crate) fn load_newest(
             Ok(manifest) => manifest,
             Err(_) => continue,
         };
-        match candidates
-            .iter_mut()
-            .find(|(generation, _, _)| *generation == manifest.generation)
-        {
-            Some((_, count, _)) => *count += 1,
-            None => candidates.push((manifest.generation, 1, manifest)),
+        let digest = blake3::hash(&bytes);
+        match groups.iter_mut().find(|(existing, ..)| *existing == digest) {
+            Some((_, _, count, _)) => *count += 1,
+            None => groups.push((digest, manifest.generation, 1, manifest)),
         }
     }
-    Ok(candidates
+    Ok(groups
         .into_iter()
-        .filter(|(_, count, _)| *count >= quorum)
-        .max_by_key(|(generation, _, _)| *generation)
-        .map(|(_, _, manifest)| manifest))
+        .filter(|(_, _, count, _)| *count >= quorum)
+        // Highest generation wins; among (pathological) same-generation
+        // content splits, the better-replicated group, then the smaller
+        // digest — any deterministic rule suffices, publish never creates
+        // divergent same-generation quorums.
+        .max_by(|a, b| {
+            a.1.cmp(&b.1)
+                .then(a.2.cmp(&b.2))
+                .then(b.0.as_bytes().cmp(a.0.as_bytes()))
+        })
+        .map(|(_, _, _, manifest)| manifest))
 }
 
 pub(crate) fn manifest_dir(root: &Path) -> PathBuf {

@@ -728,3 +728,124 @@ async fn erasure_failed_publish_leaves_put_invisible() {
     assert_eq!(store.put(bytes.clone()).await.unwrap(), hash);
     assert_eq!(store.get(&hash).await.unwrap(), bytes);
 }
+
+#[tokio::test]
+async fn erasure_quorum_requires_identical_manifest_content() {
+    // Review fix (round 3, P1): quorum groups by encoded-manifest content —
+    // a single divergent same-generation copy neither piggybacks on the
+    // legitimate replicas' count nor becomes the exemplar.
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(2 * STRIPE);
+    let hash = store.put(bytes.clone()).await.unwrap();
+    let manifest = store.load_manifest_for_test(&hash).await.unwrap();
+
+    // Divergent same-generation manifest: point stripe 0 shard 0 at a decoy
+    // shard and fix up the stripe hash so the copy is fully self-consistent.
+    let shard = shard_ref(&manifest, 0, 0);
+    let drive = stripe::drive_for(0, 0, K + M);
+    let original = store
+        .drive_store(drive)
+        .get(&shard.shard_hash)
+        .await
+        .unwrap();
+    let decoy = Bytes::from(original.iter().map(|byte| byte ^ 0x3c).collect::<Vec<_>>());
+    let decoy_hash = store.drive_store(drive).put(decoy.clone()).await.unwrap();
+    let mut forged = manifest.clone();
+    forged.stripes[0]
+        .iter_mut()
+        .find(|candidate| candidate.shard_index == 0)
+        .unwrap()
+        .shard_hash = decoy_hash;
+    // Recompute the forged stripe-0 payload hash over the decoy layout.
+    let mut poisoned_shards = Vec::new();
+    for index in 0..K {
+        let reference = forged.stripes[0]
+            .iter()
+            .find(|candidate| candidate.shard_index as usize == index)
+            .unwrap();
+        let drive = stripe::drive_for(index, 0, K + M);
+        poisoned_shards.push(
+            store
+                .drive_store(drive)
+                .get(&reference.shard_hash)
+                .await
+                .unwrap(),
+        );
+    }
+    let poisoned_stripe = stripe::reassemble_stripe(&poisoned_shards, STRIPE).unwrap();
+    forged.stripe_hashes[0] = BlobHash::of(&poisoned_stripe);
+
+    // Plant the forged copy on drive 0 (overwriting the legitimate replica).
+    let path = manifest::manifest_path(&store.drive_root(0), &hash);
+    fs::write(&path, forged.encode()).unwrap();
+
+    // 5 legitimate identical copies (>= quorum 3) vs 1 forged: reads serve
+    // the TRUE bytes, including ranges inside the poisoned stripe.
+    assert_eq!(store.get(&hash).await.unwrap(), bytes);
+    assert_eq!(
+        store.get_range(&hash, 4..12).await.unwrap(),
+        bytes.slice(4..12)
+    );
+
+    // Strip legitimate copies down to 2 (below quorum 3): the forged
+    // single never becomes visible, the blob goes invisible instead of
+    // serving forged bytes.
+    for index in 1..=M + 1 {
+        let path = manifest::manifest_path(&store.drive_root(index), &hash);
+        fs::remove_file(&path).unwrap();
+    }
+    assert!(!store.has(&hash).await.unwrap());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn erasure_failed_republish_preserves_committed_replicas() {
+    // Review fix (round 3, P1): a FAILED idempotent republish must not roll
+    // back committed replicas — the blob stays fully visible and readable.
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(STRIPE + 21);
+    let hash = store.put(bytes.clone()).await.unwrap();
+
+    // Strip ONE replica so the idempotent path has real work, then make the
+    // last drive's manifests dir unwritable so the republish fails partway.
+    fs::remove_file(manifest::manifest_path(&store.drive_root(0), &hash)).unwrap();
+    let last_dir = manifest::manifest_dir(&store.drive_root(K + M - 1));
+    let mut perms = fs::metadata(&last_dir).unwrap().permissions();
+    perms.set_mode(0o500);
+    fs::set_permissions(&last_dir, perms).unwrap();
+    // Unwritable dir only blocks CREATING the temp file; the last drive
+    // already holds an identical replica, so publish skips it. Force real
+    // failure: also strip that replica... which needs the dir writable.
+    let mut perms = fs::metadata(&last_dir).unwrap().permissions();
+    perms.set_mode(0o700);
+    fs::set_permissions(&last_dir, perms).unwrap();
+    fs::remove_file(manifest::manifest_path(&store.drive_root(K + M - 1), &hash)).unwrap();
+    let mut perms = fs::metadata(&last_dir).unwrap().permissions();
+    perms.set_mode(0o500);
+    fs::set_permissions(&last_dir, perms).unwrap();
+
+    let err = store.put(bytes.clone()).await.unwrap_err();
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Io));
+
+    // The four untouched committed replicas survived the rollback (drive 0's
+    // freshly created copy was removed again): still >= quorum, readable.
+    assert!(
+        store.has(&hash).await.unwrap(),
+        "failed republish must not drop a committed blob below quorum"
+    );
+    assert_eq!(store.get(&hash).await.unwrap(), bytes);
+
+    // Restore and repair fully.
+    let mut perms = fs::metadata(&last_dir).unwrap().permissions();
+    perms.set_mode(0o700);
+    fs::set_permissions(&last_dir, perms).unwrap();
+    assert_eq!(store.put(bytes.clone()).await.unwrap(), hash);
+    for index in 0..(K + M) {
+        assert!(
+            manifest::manifest_path(&store.drive_root(index), &hash).exists(),
+            "repair restored replica on drive {index}"
+        );
+    }
+}
