@@ -7,6 +7,7 @@ cd "$ROOT" || exit 1
 
 PASSED=0
 FAILED=0
+SKIPPED=0
 
 ACTIVE_PLAN="docs/private/plans/nimbus-s3-object-storage-plan.md"
 ARCHIVED_PLAN="docs/private/plans/archive/nimbus-s3-object-storage-plan.md"
@@ -23,6 +24,11 @@ pass() {
 fail() {
   printf 'FAIL: %s\n' "$1"
   FAILED=$((FAILED + 1))
+}
+
+skip() {
+  printf 'SKIP: %s\n' "$1"
+  SKIPPED=$((SKIPPED + 1))
 }
 
 has_file() {
@@ -86,11 +92,13 @@ check_plan_exists() {
 check_routing_entries() {
   local plan
   plan="$(any_plan_file 2>/dev/null || true)"
+  # Routing entries exist only while the plan is ACTIVE; archiving deletes
+  # them from AGENTS.md and the plans README (repo archive convention).
   if has_file "AGENTS.md" \
     && has_file "docs/private/plans/README.md" \
-    && grep_file "nimbus-s3-object-storage-plan\\.md|nimbus-s3-object-storage|NOS0" "AGENTS.md" \
     && { if [ "$plan" = "$ACTIVE_PLAN" ]; then
-      grep_file "nimbus-s3-object-storage-plan\\.md|nimbus-s3-object-storage|NOS-A0" "docs/private/plans/README.md"
+      grep_file "nimbus-s3-object-storage-plan\\.md|nimbus-s3-object-storage|NOS0" "AGENTS.md" \
+        && grep_file "nimbus-s3-object-storage-plan\\.md|nimbus-s3-object-storage|NOS-A0" "docs/private/plans/README.md"
     else
       ! grep_file "nimbus-s3-object-storage-plan\\.md|nimbus-s3-object-storage|NOS-A0" "docs/private/plans/README.md"
     fi; } \
@@ -246,6 +254,69 @@ check_nos7_closeout() {
   fi
 }
 
+check_external_s3_static() {
+  if has_file "crates/nimbus-object-storage/src/migrate.rs" \
+    && has_file "crates/nimbus-object-storage/tests/external_s3.rs" \
+    && grep_rs "migration_leg" "crates/nimbus-object-storage/src/migrate.rs" \
+    && grep_rs "external_s3_mirror_roundtrip" "crates/nimbus-object-storage/tests/external_s3.rs" \
+    && grep_rs "external_s3_tier_roundtrip" "crates/nimbus-object-storage/tests/external_s3.rs" \
+    && grep_rs "external_s3_cloud_primary_roundtrip" "crates/nimbus-object-storage/tests/external_s3.rs" \
+    && grep_rs "external_s3_range_length_checked" "crates/nimbus-object-storage/tests/external_s3.rs" \
+    && grep_rs "external_s3_mirror_without_ack_survives_unreachable_remote" "crates/nimbus-object-storage/tests/external_s3.rs"; then
+    pass "external-s3 migration classifier and integration tests are present"
+  else
+    fail "external-s3 migration classifier or named integration tests are missing"
+  fi
+}
+
+check_external_s3_live() {
+  # Mirror the Rust harness's env scan: ANY target-scoped variable counts as
+  # "the operator configured a target" — sibling vars without the URL (or
+  # a URL without the gate) must fail loudly, never silently skip.
+  local configured=""
+  local t suffix var
+  for t in RUSTFS SEAWEEDFS; do
+    for suffix in URL BUCKET REGION ACCESS_KEY SECRET_KEY; do
+      var="NIMBUS_TEST_${t}_S3_${suffix}"
+      # Presence test (matches the Rust harness's env::var_os().is_some()):
+      # an empty-but-set variable still counts as configured.
+      if [ -n "${!var+x}" ]; then
+        configured="${configured} ${var}"
+      fi
+    done
+  done
+  if [ "${RUN_EXTERNAL_S3:-0}" != "1" ]; then
+    if [ -n "$configured" ]; then
+      fail "external-s3 target env set (${configured# }) but RUN_EXTERNAL_S3=1 is missing"
+    else
+      skip "external-s3 live suite (RUN_EXTERNAL_S3 not set)"
+    fi
+    return 0
+  fi
+
+  local output status targets
+  output="$(cargo test -p nimbus-object-storage --test external_s3 -- --nocapture 2>&1)"
+  status=$?
+  printf '%s\n' "$output"
+
+  if [ "$status" -ne 0 ]; then
+    fail "external-s3 live suite"
+    return 0
+  fi
+
+  if printf '%s\n' "$output" | grep -Fq "external-s3 mode: skipped (no NIMBUS_TEST_*_S3_URL set)"; then
+    skip "external-s3 live suite (no target env configured)"
+    return 0
+  fi
+
+  targets="$(printf '%s\n' "$output" | sed -n 's/.*external-s3 mode: live target=\([^ ]*\) endpoint=.*/\1/p' | sort -u | paste -sd, -)"
+  if [ -n "$targets" ]; then
+    pass "external-s3 live suite (target=${targets})"
+  else
+    fail "external-s3 live suite did not report skipped or live mode"
+  fi
+}
+
 check_plan_exists
 check_routing_entries
 check_nos0
@@ -258,6 +329,8 @@ check_nos5_config_operator
 check_nos6_filesystem_binder
 check_garage_and_license
 check_nos7_closeout
+check_external_s3_static
+check_external_s3_live
 
-printf 'summary: %d passed, %d failed\n' "$PASSED" "$FAILED"
+printf 'summary: %d passed, %d failed, SKIPPED=%d\n' "$PASSED" "$FAILED" "$SKIPPED"
 test "$FAILED" -eq 0

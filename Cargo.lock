@@ -7089,6 +7089,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "url",
  "workspace-hack",
 ]
 

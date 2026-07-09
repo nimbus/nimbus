@@ -413,7 +413,7 @@ fn env_region() -> Option<String> {
         .or_else(|| std::env::var("AWS_DEFAULT_REGION").ok())
 }
 
-fn env_s3_endpoint() -> Option<String> {
+pub(crate) fn env_s3_endpoint() -> Option<String> {
     std::env::var("AWS_ENDPOINT_URL_S3")
         .ok()
         .or_else(|| std::env::var("AWS_ENDPOINT").ok())
