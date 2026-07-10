@@ -388,6 +388,24 @@ impl ErasureBlobStore {
                     ),
                 ));
             }
+            if self.read_only {
+                // A concurrent release removes manifests first and lets GC
+                // reclaim shards later: a read-only handle that loaded the
+                // manifest just before the release can find the shards
+                // gone. Re-check visibility from disk — a manifest that is
+                // no longer visible means the blob was legitimately
+                // DELETED, which is NotFound, not corruption.
+                let hash = manifest.blob_hash;
+                let drive_roots = self.drive_roots.clone();
+                let quorum = self.visibility_quorum();
+                let still_visible =
+                    blocking(move || manifest::load_newest(&hash, &drive_roots, quorum))
+                        .await?
+                        .is_some();
+                if !still_visible {
+                    return Err(Error::NotFound(format!("blob {}", manifest.blob_hash)));
+                }
+            }
             return Err(corruption(format!(
                 "erasure stripe {stripe_index} has {} healthy shards, need {}",
                 present.len(),

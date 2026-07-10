@@ -209,7 +209,7 @@ pub(crate) struct ErasureStatusCommand {
 #[derive(Debug, Args)]
 #[command(
     help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE,
-    after_help = "Exit codes:\n  0  Heal completed with no beyond-repair blobs\n  1  Operational error\n  3  One or more blobs are beyond repair (2 is reserved by the CLI parser for usage errors)"
+    after_help = "Exit codes:\n  0  Heal completed: nothing deferred, no beyond-repair blobs\n  1  Operational error\n  3  One or more blobs are beyond repair\n  4  Byte budget exhausted before all repairs ran — re-run or raise --max-bytes\n  (2 is reserved by the CLI parser for usage errors)"
 )]
 pub(crate) struct ErasureHealCommand {
     /// Tenant whose deployment-level erasure leg is being healed.
@@ -456,6 +456,14 @@ async fn run_erasure_heal(command: ErasureHealCommand) -> Result<(), Box<dyn Err
         for hash in &report.beyond_repair {
             println!("beyond_repair={}", hash.to_hex());
         }
+    }
+    if report.beyond_repair.is_empty() && report.exhausted {
+        // Deferred repairs are NOT a clean outcome: the budget stopped the
+        // run before every degraded blob was handled — automation must
+        // re-run (or raise --max-bytes), so the exit code says so.
+        use std::io::Write as _;
+        std::io::stdout().flush().ok();
+        std::process::exit(4);
     }
     if !report.beyond_repair.is_empty() {
         std::io::Write::flush(&mut std::io::stdout())?;
