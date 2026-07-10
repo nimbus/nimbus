@@ -1115,3 +1115,80 @@ async fn erasure_nondurable_rollback_poisons_the_store() {
     assert_eq!(reopened.put(bytes.clone()).await.unwrap(), hash);
     assert_eq!(reopened.get(&hash).await.unwrap(), bytes);
 }
+
+#[tokio::test]
+async fn erasure_read_only_open_validates_leg_identity() {
+    // Review fix (EOW round 1, P1): a read-only inspection handle must not
+    // open a FOREIGN leg's roots (or this leg's roots in the wrong drive
+    // order) — it would serve/report that leg's blobs under our leg id.
+    let dir = tempfile::tempdir().unwrap();
+    let roots = (0..K + M)
+        .map(|index| dir.path().join(format!("drive-{index}")))
+        .collect::<Vec<_>>();
+    let owner =
+        ErasureBlobStore::open(ErasureConfig::new("leg-a", roots.clone(), K, M, STRIPE).unwrap())
+            .unwrap();
+    drop(owner);
+
+    // Foreign leg id refuses read-only.
+    let err = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("leg-b", roots.clone(), K, M, STRIPE).unwrap(),
+    )
+    .map(|_| ())
+    .expect_err("foreign-leg read-only open must fail closed");
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+
+    // Swapped drive order refuses read-only (role binding).
+    let mut swapped = roots.clone();
+    swapped.swap(0, 1);
+    let err = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("leg-a", swapped, K, M, STRIPE).unwrap(),
+    )
+    .map(|_| ())
+    .expect_err("swapped-root read-only open must fail closed");
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+
+    // The correct identity still opens read-only.
+    ErasureBlobStore::open_read_only(ErasureConfig::new("leg-a", roots, K, M, STRIPE).unwrap())
+        .map(|_| ())
+        .expect("matching identity must open read-only");
+}
+
+#[tokio::test]
+async fn erasure_read_only_handle_refuses_sweep_drive() {
+    // Review fix (EOW round 1, P1): maintenance through an inspection
+    // handle would queue on the live writer's shared mutation lock and
+    // fail with unrelated read-only pack errors instead of Busy.
+    let (_dir, store, roots) = open_temp(K, M, STRIPE);
+    store.put(payload(STRIPE + 3)).await.unwrap();
+    let inspector = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("test-leg", roots, K, M, STRIPE).unwrap(),
+    )
+    .unwrap();
+    let err = match inspector.shard_gc(0, std::time::Duration::ZERO) {
+        Ok(_) => panic!("read-only shard_gc construction must refuse"),
+        Err(err) => err,
+    };
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Busy));
+    let err = inspector
+        .sweep_drive(0, std::time::Duration::ZERO)
+        .await
+        .expect_err("read-only sweep_drive must refuse");
+    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Busy));
+}
+
+#[tokio::test]
+async fn erasure_visible_blob_hashes_lists_committed_blobs_read_only() {
+    // Backup-root enumeration for erasure legs: visible (quorum) blobs by
+    // content address, served by a read-only handle alongside the writer.
+    let (_dir, store, roots) = open_temp(K, M, STRIPE);
+    let a = store.put(payload(STRIPE + 1)).await.unwrap();
+    let b = store.put(payload(2 * STRIPE + 5)).await.unwrap();
+    let inspector = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("test-leg", roots, K, M, STRIPE).unwrap(),
+    )
+    .unwrap();
+    let mut expected = vec![a, b];
+    expected.sort();
+    assert_eq!(inspector.visible_blob_hashes().await.unwrap(), expected);
+}

@@ -6,10 +6,10 @@ use clap::{Args, Subcommand, ValueEnum};
 use nimbus::{
     BackupBundle, BackupRequest, EmbeddedProviderKind, Engine, EnginePersistenceConfig,
     ErasureBlobStore, ErasureConfig, ErasureHealer, Error as NimbusError, HealPacing, HealReport,
-    HealSummary, KeyEscrow, LocalLeg, LocalPackStore, ObjectBackup, ObjectPlacement,
-    ObjectStorageConfig, ObjectStorageResolver, ObjectStorePlacementTarget,
-    ObjectStoreProviderCredentials, ObjectStoreProviderKind, PlacementPolicy,
-    PointInTimeRestoreArchive, TenantId, object_backup_roots, object_blob_root,
+    KeyEscrow, LocalLeg, LocalPackStore, ObjectBackup, ObjectPlacement, ObjectStorageConfig,
+    ObjectStorageResolver, ObjectStorePlacementTarget, ObjectStoreProviderCredentials,
+    ObjectStoreProviderKind, PlacementPolicy, PointInTimeRestoreArchive, TenantId,
+    object_backup_roots, object_blob_root,
 };
 use nimbus_core::StorageErrorKind;
 use rand::RngCore;
@@ -349,6 +349,13 @@ fn run_bootstrap_master_key(command: BootstrapMasterKeyCommand) -> Result<(), Bo
 
 fn run_gc_status(command: GcStatusCommand) -> Result<(), Box<dyn Error>> {
     let tenant = TenantId::new(command.tenant)?;
+    if matches!(local_leg_from_env()?, LocalLeg::Erasure(_)) {
+        return Err(
+            "gc-status inspects the pack leg; this deployment's local leg is erasure — \
+             use `object-storage erasure-status` instead"
+                .into(),
+        );
+    }
     let root = object_blob_root(&command.data_dir, &tenant);
     // Read-only inspection: coexists with a running server that holds the
     // root's exclusive write lock.
@@ -372,11 +379,13 @@ async fn run_erasure_status(command: ErasureStatusCommand) -> Result<(), Box<dyn
     if command.json {
         println!("{}", serde_json::to_string_pretty(&view)?);
     } else {
+        // last_heal is deliberately NOT shown: the summary lives in the
+        // process-local leg registry, so a one-shot CLI invocation can
+        // never observe a previous process's heal — erasure-heal itself
+        // prints its full report.
         println!(
-            "erasure-status tenant={} blob_count={} last_heal={}",
-            tenant,
-            stats.blob_count,
-            format_heal_summary(stats.last_heal)
+            "erasure-status tenant={} blob_count={}",
+            tenant, stats.blob_count
         );
         let rows = view
             .drives
@@ -455,6 +464,14 @@ async fn run_erasure_heal(command: ErasureHealCommand) -> Result<(), Box<dyn Err
     Ok(())
 }
 
+/// The deployment's configured local leg (env-resolved) — maintenance verbs
+/// must follow the SAME layout the server uses, or refuse explicitly;
+/// succeeding with pack semantics against an erasure deployment produced
+/// incomplete backups and incomplete tenant deletion.
+fn local_leg_from_env() -> Result<LocalLeg, Box<dyn Error>> {
+    Ok(ObjectStorageConfig::from_env(None)?.local_leg().clone())
+}
+
 fn erasure_config_from_env(tenant: &TenantId) -> Result<ErasureConfig, Box<dyn Error>> {
     let config = ObjectStorageConfig::from_env(None)?;
     let LocalLeg::Erasure(erasure) = config.local_leg() else {
@@ -486,7 +503,6 @@ struct ErasureStatusView {
     tenant: String,
     blob_count: usize,
     drives: Vec<ErasureDriveStatusView>,
-    last_heal: Option<HealSummaryView>,
 }
 
 impl ErasureStatusView {
@@ -508,7 +524,6 @@ impl ErasureStatusView {
             tenant: tenant.to_string(),
             blob_count: stats.blob_count,
             drives,
-            last_heal: stats.last_heal.map(HealSummaryView::from),
         }
     }
 }
@@ -521,31 +536,6 @@ struct ErasureDriveStatusView {
     reclaimable_bytes: u64,
     quarantined_bytes: u64,
     pack_count: usize,
-}
-
-#[derive(Serialize)]
-struct HealSummaryView {
-    blobs_examined: usize,
-    stripes_repaired: usize,
-    shards_rewritten: usize,
-    degraded_blobs: usize,
-    beyond_repair_blobs: usize,
-    exhausted: bool,
-    at_millis: u64,
-}
-
-impl From<HealSummary> for HealSummaryView {
-    fn from(summary: HealSummary) -> Self {
-        Self {
-            blobs_examined: summary.blobs_examined,
-            stripes_repaired: summary.stripes_repaired,
-            shards_rewritten: summary.shards_rewritten,
-            degraded_blobs: summary.degraded_blobs,
-            beyond_repair_blobs: summary.beyond_repair_blobs,
-            exhausted: summary.exhausted,
-            at_millis: summary.at_millis,
-        }
-    }
 }
 
 #[derive(Serialize)]
@@ -577,22 +567,6 @@ impl From<&HealReport> for HealReportView {
     }
 }
 
-fn format_heal_summary(summary: Option<HealSummary>) -> String {
-    match summary {
-        Some(summary) => format!(
-            "blobs_examined={},stripes_repaired={},shards_rewritten={},degraded={},beyond_repair={},exhausted={},at_millis={}",
-            summary.blobs_examined,
-            summary.stripes_repaired,
-            summary.shards_rewritten,
-            summary.degraded_blobs,
-            summary.beyond_repair_blobs,
-            summary.exhausted,
-            summary.at_millis,
-        ),
-        None => "none".to_string(),
-    }
-}
-
 async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error>> {
     if !command.yes {
         return Err("tenant rm requires --yes".into());
@@ -604,10 +578,27 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
     if root.exists() {
         std::fs::remove_dir_all(&root)?;
     }
+    // Erasure deployments keep the tenant's byte plane under
+    // <drive_i>/<tenant leaf>; removing only the sidecar root while
+    // reporting success would leave every shard and manifest behind.
+    let mut erasure_trees_removed = 0usize;
+    if let LocalLeg::Erasure(erasure) = local_leg_from_env()? {
+        let tenant_leaf = root
+            .file_name()
+            .ok_or("tenant object blob root has no directory-name component")?
+            .to_os_string();
+        for drive in &erasure.drives {
+            let tree = drive.join(&tenant_leaf);
+            if tree.exists() {
+                std::fs::remove_dir_all(&tree)?;
+                erasure_trees_removed += 1;
+            }
+        }
+    }
     engine.quiesce().await;
     emit_object_storage_info(format!(
-        "tenant rm tenant={} object_blobs_removed=true",
-        tenant
+        "tenant rm tenant={} object_blobs_removed=true erasure_trees_removed={}",
+        tenant, erasure_trees_removed
     ));
     Ok(())
 }
@@ -696,7 +687,24 @@ fn backup_roots_from_archive_or_local(
         Ok(roots) if !roots.is_empty() => Ok(roots),
         Ok(_) | Err(_) => {
             // Read-only enumeration: must not contend for the root's
-            // exclusive write lock.
+            // exclusive write lock. The fallback must follow the
+            // DEPLOYMENT'S local leg — walking the (empty) pack root in an
+            // erasure deployment silently produced complete-looking but
+            // empty backup root sets.
+            if matches!(local_leg_from_env()?, LocalLeg::Erasure(_)) {
+                let erasure = ErasureBlobStore::open_read_only(erasure_config_from_env(tenant)?)?;
+                let runtime = tokio::runtime::Handle::try_current();
+                let hashes = match runtime {
+                    Ok(handle) => tokio::task::block_in_place(|| {
+                        handle.block_on(erasure.visible_blob_hashes())
+                    }),
+                    Err(_) => tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()?
+                        .block_on(erasure.visible_blob_hashes()),
+                };
+                return Ok(hashes?);
+            }
             let local = LocalPackStore::open_read_only(object_blob_root(data_dir, tenant))?;
             Ok(local
                 .live_entries()?

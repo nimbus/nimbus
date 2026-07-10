@@ -87,7 +87,13 @@ impl ErasureBlobStore {
 
         for (index, root) in config.drives.iter().enumerate() {
             let store = if read_only {
-                LocalPackStore::open_read_only(root)?
+                // Identity still validated read-only: inspecting a foreign
+                // leg's roots (or the wrong drive order) fails closed
+                // instead of serving that leg's blobs under our leg id.
+                LocalPackStore::open_read_only_with_identity(
+                    root,
+                    Some(drive_identity(&config.leg_id, index)),
+                )?
             } else {
                 LocalPackStore::open_with_options(
                     root,

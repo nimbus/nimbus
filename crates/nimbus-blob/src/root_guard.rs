@@ -383,9 +383,16 @@ pub(crate) fn guard_writable_root(
 
 /// Validates a root for read-only inspection: shape and marker checks only —
 /// no lock, no writes, no cleanup.
-pub(crate) fn guard_read_only_root(root: &Path) -> Result<RootGuard> {
+/// Read-only guard that ALSO validates the root's marker identity when the
+/// caller declares one: a bound root with a different identity fails closed
+/// even for inspection (a read-only handle over a foreign leg's roots would
+/// otherwise serve or report that leg's blobs under the caller's identity).
+pub(crate) fn guard_read_only_root_with_identity(
+    root: &Path,
+    identity: Option<RootIdentity>,
+) -> Result<RootGuard> {
     check_root_shape(root, false)?;
-    establish_marker(root, None, 0, false, &disk::NoopSyncObserver)?;
+    establish_marker(root, identity, 0, false, &disk::NoopSyncObserver)?;
     Ok(RootGuard {
         lock: None,
         report: OpenReport::default(),
@@ -439,7 +446,7 @@ mod tests {
     fn read_only_guard_coexists_with_writable_owner() {
         let dir = tempfile::tempdir().unwrap();
         let _owner = open_guard(dir.path()).unwrap();
-        guard_read_only_root(dir.path()).unwrap();
+        guard_read_only_root_with_identity(dir.path(), None).unwrap();
     }
 
     #[test]

@@ -492,13 +492,23 @@ impl LocalPackStore {
     /// ignored in memory) — and every write method fails with
     /// [`StorageErrorKind::Busy`].
     pub fn open_read_only(root: impl AsRef<Path>) -> Result<Self> {
+        Self::open_read_only_with_identity(root, None)
+    }
+
+    /// Read-only open that validates the root's marker identity when
+    /// declared (see `guard_read_only_root_with_identity`): inspection of a
+    /// foreign identity's root fails closed instead of serving its blobs.
+    pub fn open_read_only_with_identity(
+        root: impl AsRef<Path>,
+        identity: Option<[u8; crate::BLAKE3_HASH_LEN]>,
+    ) -> Result<Self> {
         let root = root.as_ref().to_path_buf();
         let packs_dir = root.join("packs");
         let index_path = root.join("index.log");
         let quarantine_path = root.join(QUARANTINE_FILE);
         let observer: Arc<dyn SyncObserver> = Arc::new(disk::NoopSyncObserver);
 
-        root_guard::guard_read_only_root(&root)?;
+        root_guard::guard_read_only_root_with_identity(&root, identity)?;
 
         let mut report = OpenReport::default();
         let index = if index_path.exists() {

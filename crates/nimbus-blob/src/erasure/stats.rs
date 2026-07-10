@@ -28,6 +28,26 @@ pub struct ErasureStats {
 }
 
 impl ErasureBlobStore {
+    /// The content addresses of every VISIBLE blob (quorum rule), in hash
+    /// order. Read-only-safe; used by backup-root enumeration for erasure
+    /// legs (the pack-leg equivalent walks live pack entries).
+    pub async fn visible_blob_hashes(&self) -> Result<Vec<crate::BlobHash>> {
+        let drive_roots = self.drive_roots.clone();
+        let quorum = self.visibility_quorum();
+        let manifests =
+            tokio::task::spawn_blocking(move || manifest::list_visible(&drive_roots, quorum))
+                .await
+                .map_err(|err| {
+                    Error::storage(
+                        StorageErrorKind::Other,
+                        format!("erasure visible-blob task: {err}"),
+                    )
+                })??;
+        let mut hashes: Vec<crate::BlobHash> = manifests.into_iter().map(|m| m.blob_hash).collect();
+        hashes.sort();
+        Ok(hashes)
+    }
+
     pub async fn stats(&self) -> Result<ErasureStats> {
         self.ensure_live()?;
         let mut per_drive = Vec::with_capacity(self.stores.len());
