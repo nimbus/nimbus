@@ -66,7 +66,7 @@ pub use nimbus_crypto::{FRAME_PLAINTEXT_LEN, FramedBlobKey, KEY_SEED_LEN, NONCE_
 pub use object_store::{BlobCloudConfig, BlobS3Credentials, ObjectStoreBlobStore};
 pub use pins::{BlobPin, BlobPinRegistry, BlobPinSet};
 pub use placement::{PlacementBlobStore, PlacementMode};
-pub use root_guard::{LocalPackStoreOptions, OpenReport};
+pub use root_guard::{FORMAT_FILE, LOCK_FILE, LocalPackStoreOptions, OpenReport};
 pub use scrub::{
     EncryptedBlobScrubber, LocalPackScrubber, ScrubCheckpointStatus, ScrubFinding,
     ScrubFindingKind, ScrubPacing, ScrubPacingStatus, ScrubReport,

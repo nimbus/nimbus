@@ -13,7 +13,7 @@ mod migrate;
 mod resolver;
 
 pub use backup::object_backup_roots;
-pub use config::{ObjectStorageConfig, ObjectStorageEnv};
+pub use config::{ErasureLegConfig, LocalLeg, ObjectStorageConfig, ObjectStorageEnv};
 pub use credentials::{ObjectStoreCredentialResolver, ObjectStoreSecret};
 pub use gc::{object_gc_roots, object_gc_roots_provider};
 pub use migrate::{MigrationLeg, migration_leg};

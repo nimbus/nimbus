@@ -271,12 +271,31 @@ required_tests=(
   erasure_heal_preserves_evidence_when_a_later_stripe_is_beyond_repair
   erasure_paced_heal_still_counts_planned_degraded_blobs
   erasure_paced_heal_skips_over_budget_blob_without_starving_successors
+  erasure_read_only_open_serves_stats_and_refuses_writes
+  erasure_read_only_open_validates_leg_identity
+  erasure_read_only_handle_refuses_sweep_drive
+  erasure_visible_blob_hashes_lists_committed_blobs_read_only
+  erasure_read_only_open_tolerates_absent_drive_root
+  erasure_read_only_stale_snapshot_reports_busy_not_corruption
+  erasure_read_only_stable_loss_stays_corruption
+  erasure_read_only_survives_concurrent_compaction_as_busy
+  erasure_read_only_stats_tolerate_fresh_and_absent_roots
+  erasure_read_only_mixed_stale_and_stable_loss_stays_corruption
+  erasure_read_only_handle_does_not_pin_writable_leg_state
+  erasure_read_only_stats_report_busy_after_writer_compaction
+  erasure_config_rejects_nested_drive_roots
+  erasure_misnamed_manifest_is_not_served_or_exported
+  erasure_env_config_round_trips_and_rejects_bad_stripe
+  resolver_builds_erasure_local_leg_per_tenant
+  resolver_erasure_leg_is_encrypted_below_placement
+  cli_surface_exposes_erasure_status
+  cli_surface_exposes_erasure_heal_and_exit_codes
 )
 for t in "${required_tests[@]}"; do
-  if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then
+  if grep -rq "fn ${t}(" crates/nimbus-blob/src/ crates/nimbus-object-storage/src/ crates/nimbus-cli/src/; then
     pass "test ${t} exists"
   else
-    fail "test ${t} missing from crates/nimbus-blob"
+    fail "test ${t} missing from required crate sources"
   fi
 done
 if [ "${RUN_TESTS:-0}" = "1" ]; then

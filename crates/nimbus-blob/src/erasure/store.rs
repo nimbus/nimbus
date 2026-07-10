@@ -30,6 +30,7 @@ pub struct ErasureBlobStore {
     pub(super) stores: Vec<LocalPackStore>,
     observer: Arc<dyn SyncObserver>,
     shared: Arc<LegSharedState>,
+    read_only: bool,
     /// Serializes manifest mutations (put's read-modify-publish, release's
     /// multi-file removal) for the LEG, shared process-wide via a canonical
     /// drive-0 registry — same-process instances over the same roots alias
@@ -66,45 +67,90 @@ impl std::fmt::Debug for ErasureBlobStore {
 
 impl ErasureBlobStore {
     pub fn open(config: ErasureConfig) -> Result<Self> {
+        Self::open_inner(config, false)
+    }
+
+    /// Opens a lock-free, read-only inspection handle over every drive.
+    ///
+    /// The handle takes no per-drive flock and never mutates roots, so it can
+    /// inspect an erasure leg while its writable owner is running. Mutations
+    /// fail with [`StorageErrorKind::Busy`], matching
+    /// [`LocalPackStore::open_read_only`].
+    pub fn open_read_only(config: ErasureConfig) -> Result<Self> {
+        Self::open_inner(config, true)
+    }
+
+    fn open_inner(config: ErasureConfig, read_only: bool) -> Result<Self> {
         let mut stores = Vec::with_capacity(config.drives.len());
         let mut drive_roots = Vec::with_capacity(config.drives.len());
         let observer: Arc<dyn SyncObserver> = Arc::new(NoopSyncObserver);
 
         for (index, root) in config.drives.iter().enumerate() {
-            let store = LocalPackStore::open_with_options(
-                root,
-                LocalPackStoreOptions {
-                    identity: Some(drive_identity(&config.leg_id, index)),
-                    ..LocalPackStoreOptions::default()
-                },
-            )?;
-            let canonical = root.canonicalize().map_err(|err| {
-                Error::storage(
-                    StorageErrorKind::Io,
-                    format!("canonicalize erasure drive root {}: {err}", root.display()),
-                )
-            })?;
-            let manifest_dir = manifest::manifest_dir(&canonical);
-            disk::create_dir_all_durable(&manifest_dir, &*observer).map_err(|err| {
-                Error::storage(
-                    StorageErrorKind::Io,
-                    format!(
-                        "create erasure manifest dir {}: {err}",
-                        manifest_dir.display()
-                    ),
-                )
-            })?;
+            let store = if read_only {
+                // Identity still validated read-only: inspecting a foreign
+                // leg's roots (or the wrong drive order) fails closed
+                // instead of serving that leg's blobs under our leg id.
+                LocalPackStore::open_read_only_with_identity(
+                    root,
+                    Some(drive_identity(&config.leg_id, index)),
+                )?
+            } else {
+                LocalPackStore::open_with_options(
+                    root,
+                    LocalPackStoreOptions {
+                        identity: Some(drive_identity(&config.leg_id, index)),
+                        ..LocalPackStoreOptions::default()
+                    },
+                )?
+            };
+            let canonical = match root.canonicalize() {
+                Ok(canonical) => canonical,
+                // A read-only inspector may legitimately point at a drive
+                // root that does not exist yet (tenant with no blobs) or is
+                // currently absent (failed drive within parity tolerance):
+                // inspect what remains instead of refusing the whole leg.
+                Err(err) if read_only && err.kind() == std::io::ErrorKind::NotFound => root.clone(),
+                Err(err) => {
+                    return Err(Error::storage(
+                        StorageErrorKind::Io,
+                        format!("canonicalize erasure drive root {}: {err}", root.display()),
+                    ));
+                }
+            };
+            if !read_only {
+                let manifest_dir = manifest::manifest_dir(&canonical);
+                disk::create_dir_all_durable(&manifest_dir, &*observer).map_err(|err| {
+                    Error::storage(
+                        StorageErrorKind::Io,
+                        format!(
+                            "create erasure manifest dir {}: {err}",
+                            manifest_dir.display()
+                        ),
+                    )
+                })?;
+            }
             stores.push(store);
             drive_roots.push(canonical);
         }
 
-        let shared = shared_state_for(&drive_roots[0]);
+        // Read-only handles use DETACHED leg state: joining the process-wide
+        // registry would hold the writable leg's entry alive (its poison
+        // atomic included), blocking the documented drop-and-reopen
+        // recovery while an inspector merely exists. Inspectors never
+        // mutate, so they need no shared lock/pins, and they ignore poison
+        // by design.
+        let shared = if read_only {
+            Arc::new(LegSharedState::detached())
+        } else {
+            shared_state_for(&drive_roots[0])
+        };
         Ok(Self {
             config,
             drive_roots,
             stores,
             observer,
             shared: Arc::clone(&shared),
+            read_only,
             mutation: Arc::clone(&shared.mutation),
             leg_pins: shared.leg_pins.clone(),
             poisoned: Arc::clone(&shared.poisoned),
@@ -114,7 +160,7 @@ impl ErasureBlobStore {
     }
 
     pub(super) fn ensure_live(&self) -> Result<()> {
-        if self.poisoned.load(std::sync::atomic::Ordering::SeqCst) {
+        if !self.read_only && self.poisoned.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(Error::storage(
                 StorageErrorKind::Io,
                 "erasure store poisoned: a publish rollback could not be made durable; \
@@ -122,6 +168,20 @@ impl ErasureBlobStore {
             ));
         }
         Ok(())
+    }
+
+    pub(super) fn ensure_writable(&self, operation: &str) -> Result<()> {
+        if self.read_only {
+            return Err(Error::storage(
+                StorageErrorKind::Busy,
+                format!("read-only inspection handle refuses {operation}"),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     pub(super) async fn load_manifest(&self, hash: &BlobHash) -> Result<Option<ErasureManifest>> {
@@ -280,27 +340,72 @@ impl ErasureBlobStore {
         stripe_index: usize,
     ) -> Result<Vec<Bytes>> {
         let mut present = Vec::new();
-        let mut degraded = false;
+        let mut failed_shards: Vec<usize> = Vec::new();
 
         for shard_index in 0..manifest.data_shards {
             match self.read_shard(manifest, stripe_index, shard_index).await {
                 Ok(bytes) => present.push((shard_index, bytes)),
-                Err(_) => degraded = true,
+                Err(_) => failed_shards.push(shard_index),
             }
         }
 
-        if !degraded {
+        if failed_shards.is_empty() {
             present.sort_by_key(|(index, _)| *index);
             return Ok(present.into_iter().map(|(_, bytes)| bytes).collect());
         }
 
         for shard_index in manifest.data_shards..manifest.data_shards + manifest.parity_shards {
-            if let Ok(bytes) = self.read_shard(manifest, stripe_index, shard_index).await {
-                present.push((shard_index, bytes));
+            match self.read_shard(manifest, stripe_index, shard_index).await {
+                Ok(bytes) => present.push((shard_index, bytes)),
+                Err(_) => failed_shards.push(shard_index),
             }
         }
 
         if present.len() < manifest.data_shards {
+            // Read-only snapshot coherence: a read-only handle's per-drive
+            // pack indexes are frozen at open, while manifests are read
+            // live — a put completed AFTER the inspector opened is visible
+            // by manifest but its shards are absent from the frozen
+            // indexes. PROVE staleness before reporting Busy: freshly
+            // re-read the affected drives' on-disk indexes; a shard the
+            // FRESH index has is a stale snapshot (Busy + re-open hint),
+            // while a shard absent from disk too is stable damage and must
+            // stay a Corruption verdict — beyond-parity loss must never
+            // hide behind a retry hint. (Content addressing means a stale
+            // index can never serve WRONG bytes — only fail to find new
+            // ones.)
+            if self.read_only
+                && self
+                    .snapshot_lags_disk(manifest, stripe_index, present.len(), &failed_shards)
+                    .await?
+            {
+                return Err(Error::storage(
+                    StorageErrorKind::Busy,
+                    format!(
+                        "erasure stripe {stripe_index}: read-only snapshot lags a \
+                         concurrent writer (shards newer than this handle); re-open \
+                         to inspect the current state"
+                    ),
+                ));
+            }
+            if self.read_only {
+                // A concurrent release removes manifests first and lets GC
+                // reclaim shards later: a read-only handle that loaded the
+                // manifest just before the release can find the shards
+                // gone. Re-check visibility from disk — a manifest that is
+                // no longer visible means the blob was legitimately
+                // DELETED, which is NotFound, not corruption.
+                let hash = manifest.blob_hash;
+                let drive_roots = self.drive_roots.clone();
+                let quorum = self.visibility_quorum();
+                let still_visible =
+                    blocking(move || manifest::load_newest(&hash, &drive_roots, quorum))
+                        .await?
+                        .is_some();
+                if !still_visible {
+                    return Err(Error::NotFound(format!("blob {}", manifest.blob_hash)));
+                }
+            }
             return Err(corruption(format!(
                 "erasure stripe {stripe_index} has {} healthy shards, need {}",
                 present.len(),
@@ -308,6 +413,56 @@ impl ErasureBlobStore {
             )));
         }
         stripe::decode_stripe(manifest.data_shards, manifest.parity_shards, &present)
+    }
+
+    /// Proof of read-only snapshot staleness: for each shard THIS handle
+    /// failed to read, freshly re-open that drive's on-disk index. The
+    /// failure only counts as staleness (Busy, re-open) when the healthy
+    /// shards we DID read plus the freshly recoverable ones reach the
+    /// data-shard quorum — one relocated shard must not mask additional
+    /// stably-lost shards behind a retry hint; anything short of a fresh
+    /// quorum stays a Corruption verdict. Slow path: runs only on
+    /// read-only quorum failure.
+    async fn snapshot_lags_disk(
+        &self,
+        manifest: &ErasureManifest,
+        stripe_index: usize,
+        healthy: usize,
+        failed_shards: &[usize],
+    ) -> Result<bool> {
+        let Some(stripe) = manifest.stripes.get(stripe_index) else {
+            return Ok(false);
+        };
+        let total = manifest.data_shards + manifest.parity_shards;
+        let mut fresh_recoverable = 0usize;
+        for shard in stripe {
+            let shard_index = shard.shard_index as usize;
+            if !failed_shards.contains(&shard_index) {
+                continue;
+            }
+            let drive = stripe::drive_for(shard_index, stripe_index, total);
+            let root = &self.drive_roots[drive];
+            if !root.exists() {
+                continue;
+            }
+            // Two attempts per shard: a compaction racing the FRESH check
+            // itself can fail a get that a re-opened view serves — a
+            // single torn attempt must not tip the verdict to Corruption.
+            for _ in 0..2 {
+                let fresh = LocalPackStore::open_read_only_with_identity(
+                    root,
+                    Some(drive_identity(&self.config.leg_id, drive)),
+                )?;
+                if fresh.get(&shard.shard_hash).await.is_ok() {
+                    fresh_recoverable += 1;
+                    break;
+                }
+            }
+            if healthy + fresh_recoverable >= manifest.data_shards {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub(super) async fn read_shard(
@@ -404,6 +559,7 @@ impl ErasureBlobStore {
 #[async_trait]
 impl BlobStore for ErasureBlobStore {
     async fn put(&self, bytes: Bytes) -> Result<BlobHash> {
+        self.ensure_writable("put")?;
         self.ensure_live()?;
         let hash = BlobHash::of(&bytes);
         // Mutations are serialized per leg: without this, an idempotent put
@@ -472,6 +628,7 @@ impl BlobStore for ErasureBlobStore {
     }
 
     async fn put_stream(&self, mut src: ByteStream) -> Result<BlobHash> {
+        self.ensure_writable("put_stream")?;
         let mut buf = Vec::new();
         src.read_to_end(&mut buf).await.map_err(|err| {
             Error::storage(StorageErrorKind::Io, format!("read blob stream: {err}"))
@@ -557,6 +714,7 @@ impl BlobStore for ErasureBlobStore {
     }
 
     async fn release(&self, hash: &BlobHash) -> Result<()> {
+        self.ensure_writable("release")?;
         self.ensure_live()?;
         let _mutation = self.mutation.lock().await;
         // Same post-lock recheck as put/heal/sweep_drive.
@@ -603,6 +761,17 @@ where
         .map_err(|err| Error::storage(StorageErrorKind::Other, format!("erasure task: {err}")))?
 }
 
+impl LegSharedState {
+    fn detached() -> Self {
+        Self {
+            mutation: Arc::new(AsyncMutex::new(())),
+            leg_pins: BlobPinRegistry::new(),
+            last_heal: Arc::new(StdMutex::new(None)),
+            poisoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+}
+
 struct LegSharedState {
     mutation: Arc<AsyncMutex<()>>,
     leg_pins: BlobPinRegistry,
@@ -637,7 +806,7 @@ fn shared_state_for(drive0: &PathBuf) -> Arc<LegSharedState> {
 /// Binds a drive root to BOTH the leg instance and its drive index: a root
 /// provisioned for another leg (even at the same index) or for another index
 /// of this leg refuses to open (RFS2 fail-closed identity semantics).
-fn drive_identity(leg_id: &str, index: usize) -> [u8; crate::BLAKE3_HASH_LEN] {
+pub(super) fn drive_identity(leg_id: &str, index: usize) -> [u8; crate::BLAKE3_HASH_LEN] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"nimbus-erasure-leg");
     hasher.update(&(leg_id.len() as u64).to_le_bytes());

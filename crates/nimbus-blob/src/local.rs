@@ -492,13 +492,23 @@ impl LocalPackStore {
     /// ignored in memory) — and every write method fails with
     /// [`StorageErrorKind::Busy`].
     pub fn open_read_only(root: impl AsRef<Path>) -> Result<Self> {
+        Self::open_read_only_with_identity(root, None)
+    }
+
+    /// Read-only open that validates the root's marker identity when
+    /// declared (see `guard_read_only_root_with_identity`): inspection of a
+    /// foreign identity's root fails closed instead of serving its blobs.
+    pub fn open_read_only_with_identity(
+        root: impl AsRef<Path>,
+        identity: Option<[u8; crate::BLAKE3_HASH_LEN]>,
+    ) -> Result<Self> {
         let root = root.as_ref().to_path_buf();
         let packs_dir = root.join("packs");
         let index_path = root.join("index.log");
         let quarantine_path = root.join(QUARANTINE_FILE);
         let observer: Arc<dyn SyncObserver> = Arc::new(disk::NoopSyncObserver);
 
-        root_guard::guard_read_only_root(&root)?;
+        root_guard::guard_read_only_root_with_identity(&root, identity)?;
 
         let mut report = OpenReport::default();
         let index = if index_path.exists() {
@@ -601,6 +611,52 @@ impl LocalPackStore {
             state.active_pack_id,
             state.active_pack_bytes,
         ))
+    }
+
+    /// Snapshot of a root's ON-DISK pack layout: (pack id, byte size)
+    /// pairs in id order, read directly from the filesystem WITHOUT
+    /// opening a store (no index load, no locks). Read-only stats brackets
+    /// its whole open+compute sequence with two of these — inequality
+    /// means a writer appended, added, or removed packs anywhere in the
+    /// window (torn-accounting risk), regardless of whether the affected
+    /// packs are referenced by any frozen index.
+    pub fn disk_pack_listing(root: impl AsRef<Path>) -> Result<Vec<(u64, u64)>> {
+        let root = root.as_ref();
+        let packs_dir = root.join("packs");
+        // index.log participates in the stability signature: a release
+        // appends ONLY an index tombstone (no pack change), and a bracket
+        // blind to it would accept torn released-vs-live accounting. The
+        // log is append-only, so its size is a monotonic change marker;
+        // it rides in the listing as a reserved (u64::MAX, size) entry.
+        let index_size = match fs::metadata(root.join("index.log")) {
+            Ok(meta) => meta.len(),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(err) => return Err(io_error(err, "stat index.log".to_string())),
+        };
+        // An existing-but-uninitialized root (no packs/ yet — e.g. created
+        // by an ownership guard that never wrote) is an EMPTY layout, not
+        // an inspection error.
+        if !packs_dir.exists() {
+            return Ok(vec![(u64::MAX, index_size)]);
+        }
+        let mut listing = vec![(u64::MAX, index_size)];
+        for pack_id in pack_ids_on_disk(&packs_dir)? {
+            let path = pack_path(&packs_dir, pack_id);
+            match fs::metadata(&path) {
+                Ok(meta) => listing.push((pack_id, meta.len())),
+                // A pack that vanishes between the directory listing and
+                // its stat was removed by a concurrent compaction: record
+                // the instability (the caller's bracket comparison will
+                // differ and retry) instead of failing the probe with Io.
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    listing.push((pack_id, u64::MAX));
+                }
+                Err(err) => {
+                    return Err(io_error(err, format!("stat pack {}", path.display())));
+                }
+            }
+        }
+        Ok(listing)
     }
 
     /// Records the most recent GC sweep summary for [`Self::stats`].

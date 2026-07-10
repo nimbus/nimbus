@@ -80,12 +80,14 @@ pub use nimbus_services::{
 };
 // Storage and encryption helpers.
 pub use nimbus_blob::{
-    BackupBundle, BackupRequest, BlobHash, KeyEscrow, LocalPackStore, ObjectBackup,
+    BackupBundle, BackupRequest, BlobHash, ErasureBlobStore, ErasureConfig, ErasureHealer,
+    ErasureStats, FORMAT_FILE, HealPacing, HealReport, HealSummary, KeyEscrow, LOCK_FILE,
+    LocalPackStore, LocalPackStoreOptions, ObjectBackup,
 };
 pub use nimbus_object_storage::{
-    ObjectStorageConfig, ObjectStorageEnv, ObjectStorageResolver, ObjectStoreCredentialResolver,
-    ObjectStoreSecret, object_backup_roots, object_blob_key_path, object_blob_root,
-    object_master_key_path,
+    ErasureLegConfig, LocalLeg, ObjectStorageConfig, ObjectStorageEnv, ObjectStorageResolver,
+    ObjectStoreCredentialResolver, ObjectStoreSecret, object_backup_roots, object_blob_key_path,
+    object_blob_root, object_master_key_path, tenant_root_identity,
 };
 pub use nimbus_storage::EmbeddedProviderKind;
 pub use nimbus_storage::PointInTimeRestoreArchive;

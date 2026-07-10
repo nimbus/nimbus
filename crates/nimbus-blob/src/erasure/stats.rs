@@ -1,6 +1,6 @@
 use nimbus_core::{Error, Result, StorageErrorKind};
 
-use crate::LocalPackStats;
+use crate::{LocalPackStats, LocalPackStore};
 
 use super::heal::HealSummary;
 use super::manifest;
@@ -28,11 +28,129 @@ pub struct ErasureStats {
 }
 
 impl ErasureBlobStore {
+    /// The content addresses of every VISIBLE blob (quorum rule), in hash
+    /// order. Read-only-safe; used by backup-root enumeration for erasure
+    /// legs (the pack-leg equivalent walks live pack entries).
+    pub async fn visible_blob_hashes(&self) -> Result<Vec<crate::BlobHash>> {
+        // Poisoned WRITABLE handles refuse (fail-stop contract); read-only
+        // inspectors pass (ensure_live ignores shared poison when
+        // read-only).
+        self.ensure_live()?;
+        let drive_roots = self.drive_roots.clone();
+        let quorum = self.visibility_quorum();
+        let manifests =
+            tokio::task::spawn_blocking(move || manifest::list_visible(&drive_roots, quorum))
+                .await
+                .map_err(|err| {
+                    Error::storage(
+                        StorageErrorKind::Other,
+                        format!("erasure visible-blob task: {err}"),
+                    )
+                })??;
+        let mut hashes = Vec::with_capacity(manifests.len());
+        for manifest in &manifests {
+            // Layout must match THIS store's configuration; a stray quorum
+            // of foreign-layout manifests must fail closed rather than be
+            // exported as backup roots.
+            self.validate_manifest(&manifest.blob_hash, manifest)?;
+            hashes.push(manifest.blob_hash);
+        }
+        hashes.sort();
+        Ok(hashes)
+    }
+
     pub async fn stats(&self) -> Result<ErasureStats> {
         self.ensure_live()?;
         let mut per_drive = Vec::with_capacity(self.stores.len());
-        for store in &self.stores {
-            per_drive.push(store.stats().await?);
+        for (index, store) in self.stores.iter().enumerate() {
+            // An absent drive root (fresh tenant, failed/unmounted drive
+            // within parity tolerance) reports empty stats instead of
+            // failing the whole status view — both are supported read-only
+            // states.
+            if !self.drive_roots[index].exists() {
+                if self.is_read_only() {
+                    // Supported inspection states: fresh tenant, failed/
+                    // unmounted drive within parity tolerance.
+                    per_drive.push(LocalPackStats::default());
+                    continue;
+                }
+                // A WRITABLE handle's drive root disappearing under its
+                // held flock is catastrophic state, never a soft default.
+                return Err(Error::storage(
+                    StorageErrorKind::Io,
+                    format!(
+                        "erasure drive {index} root {} disappeared under a writable handle",
+                        self.drive_roots[index].display()
+                    ),
+                ));
+            }
+            // Read-only coherence: a frozen index over a compacted drive
+            // yields either a torn-but-SUCCESSFUL accounting (old entries
+            // counted live, replacement packs counted reclaimable) or an
+            // error. Both are discriminated by comparing the frozen
+            // compaction epoch against a fresh on-disk view: an epoch bump
+            // means the writer restructured packs since our snapshot →
+            // Busy with a re-open hint. Without an epoch bump, an error is
+            // REAL (stable corruption / Io) and keeps its original kind,
+            // and a success is at worst an append-lag approximation
+            // (documented). Writable handles never take this path.
+            if self.is_read_only() {
+                // Read-only status: FRESH per-drive open per attempt, with
+                // the computation BRACKETED by two full on-disk pack
+                // listings (ids + sizes) — inequality means a writer
+                // appended, added, or removed packs mid-call (torn
+                // accounting risk, including packs the frozen index never
+                // referenced) and we retry; three unstable attempts in a
+                // row report Busy. Errors observed while the bracket IS
+                // stable are real (Corruption/Io keep their kind);
+                // accepted numbers can never be silently torn because the
+                // index and the pack files provably did not change across
+                // the computation.
+                let mut accepted = None;
+                let mut last_unstable_err: Option<Error> = None;
+                for _ in 0..3 {
+                    // The bracket opens BEFORE the index load: a writer
+                    // appending between index.log replay and a post-open
+                    // listing would otherwise be invisible to the check.
+                    let before = LocalPackStore::disk_pack_listing(&self.drive_roots[index])?;
+                    let fresh = LocalPackStore::open_read_only_with_identity(
+                        &self.drive_roots[index],
+                        Some(super::store::drive_identity(&self.config.leg_id, index)),
+                    )?;
+                    let outcome = fresh.stats().await;
+                    let stable =
+                        LocalPackStore::disk_pack_listing(&self.drive_roots[index])? == before;
+                    match (outcome, stable) {
+                        (Ok(stats), true) => {
+                            accepted = Some(stats);
+                            break;
+                        }
+                        (Err(err), true) => return Err(err),
+                        (_, false) => {
+                            last_unstable_err = Some(Error::storage(
+                                StorageErrorKind::Busy,
+                                format!(
+                                    "erasure status raced a writer restructure on drive \
+                                     {index} (re-open or retry to inspect)"
+                                ),
+                            ));
+                        }
+                    }
+                }
+                match accepted {
+                    Some(stats) => per_drive.push(stats),
+                    None => {
+                        return Err(last_unstable_err.unwrap_or_else(|| {
+                            Error::storage(
+                                StorageErrorKind::Busy,
+                                "erasure status could not obtain a stable snapshot".to_string(),
+                            )
+                        }));
+                    }
+                }
+            } else {
+                per_drive.push(store.stats().await?);
+            }
         }
 
         let drive_roots = self.drive_roots.clone();

@@ -102,7 +102,7 @@ enum Command {
     Init(InitCommand),
     /// Run the Nimbus KV RESP listener.
     Kv(KvCommand),
-    /// Manage Nimbus object-storage placement, backup, restore, and GC.
+    /// Manage Nimbus object-storage placement, backup, restore, GC, and erasure maintenance.
     #[command(name = "object-storage", subcommand)]
     ObjectStorage(ObjectStorageCommand),
     /// Local admin token management commands.

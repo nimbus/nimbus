@@ -110,6 +110,9 @@ impl ErasureHealer {
     }
 
     pub async fn heal(&self) -> Result<HealReport> {
+        if self.store.is_read_only() {
+            self.store.ensure_writable("heal")?;
+        }
         self.store.ensure_live()?;
         let manifests = self.visible_manifests().await?;
         let mut budget = HealBudget::new(self.pacing);

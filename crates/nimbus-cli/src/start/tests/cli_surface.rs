@@ -204,7 +204,7 @@ fn cli_help_describes_codegen_machine_and_compose_surface() {
         root_help_lists_command(
             &rendered,
             "object-storage",
-            "Manage Nimbus object-storage placement, backup, restore, and GC"
+            "Manage Nimbus object-storage placement, backup, restore, GC, and erasure maintenance"
         ),
         "root help should describe the object-storage command:\n{rendered}"
     );
@@ -215,6 +215,52 @@ fn cli_help_describes_codegen_machine_and_compose_surface() {
     assert!(rendered.contains("compose"));
     assert!(!rendered.contains("node-workload-executor"));
     assert!(!rendered.contains("sandbox-supervisor"));
+}
+
+#[test]
+fn cli_surface_exposes_erasure_status() {
+    let cli = Cli::parse_from([
+        "nimbus",
+        "object-storage",
+        "erasure-status",
+        "--tenant",
+        "tenant-a",
+        "--json",
+    ]);
+    assert!(matches!(
+        cli.command,
+        Command::ObjectStorage(crate::object_storage::ObjectStorageCommand::ErasureStatus(
+            _
+        ))
+    ));
+}
+
+#[test]
+fn cli_surface_exposes_erasure_heal_and_exit_codes() {
+    let cli = Cli::parse_from([
+        "nimbus",
+        "object-storage",
+        "erasure-heal",
+        "--tenant",
+        "tenant-a",
+        "--max-bytes",
+        "1048576",
+        "--json",
+    ]);
+    assert!(matches!(
+        cli.command,
+        Command::ObjectStorage(crate::object_storage::ObjectStorageCommand::ErasureHeal(_))
+    ));
+
+    let error = Cli::try_parse_from(["nimbus", "object-storage", "erasure-heal", "--help"])
+        .expect_err("erasure-heal help should short-circuit");
+    assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+    let rendered = error.to_string();
+    assert!(rendered.contains("--tenant"));
+    assert!(rendered.contains("--max-bytes"));
+    assert!(rendered.contains("3  One or more blobs are beyond repair"));
+    assert!(rendered.contains("0  Heal completed"));
+    assert!(rendered.contains("1  Operational error"));
 }
 
 #[test]

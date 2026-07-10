@@ -130,6 +130,11 @@ impl ErasureBlobStore {
         drive_index: usize,
         grace: Duration,
     ) -> Result<crate::BlobGcReport> {
+        // A read-only inspection handle must not run maintenance: it would
+        // queue on the live writer's shared mutation lock (stalling it) and
+        // then fail with unrelated read-only pack errors instead of the
+        // promised Busy refusal.
+        self.ensure_writable("sweep_drive")?;
         self.ensure_live()?;
         let gc = self.shard_gc(drive_index, grace)?;
         let _mutation = self.mutation.lock().await;
@@ -148,6 +153,7 @@ impl ErasureBlobStore {
         drive_index: usize,
         grace: Duration,
     ) -> Result<BlobGc<CompositeBlobRoots>> {
+        self.ensure_writable("shard_gc")?;
         self.ensure_live()?;
         if drive_index >= self.stores.len() {
             return Err(Error::InvalidInput(format!(

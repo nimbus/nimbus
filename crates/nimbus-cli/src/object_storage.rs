@@ -5,12 +5,15 @@ use std::sync::Arc;
 use clap::{Args, Subcommand, ValueEnum};
 use nimbus::{
     BackupBundle, BackupRequest, EmbeddedProviderKind, Engine, EnginePersistenceConfig,
-    Error as NimbusError, KeyEscrow, LocalPackStore, ObjectBackup, ObjectPlacement,
-    ObjectStorageConfig, ObjectStorageResolver, ObjectStorePlacementTarget,
-    ObjectStoreProviderCredentials, ObjectStoreProviderKind, PlacementPolicy,
-    PointInTimeRestoreArchive, TenantId, object_backup_roots, object_blob_root,
+    ErasureBlobStore, ErasureConfig, ErasureHealer, Error as NimbusError, HealPacing, HealReport,
+    KeyEscrow, LocalLeg, LocalPackStore, ObjectBackup, ObjectPlacement, ObjectStorageConfig,
+    ObjectStorageResolver, ObjectStorePlacementTarget, ObjectStoreProviderCredentials,
+    ObjectStoreProviderKind, PlacementPolicy, PointInTimeRestoreArchive, TenantId,
+    object_backup_roots, object_blob_root,
 };
+use nimbus_core::StorageErrorKind;
 use rand::RngCore;
+use serde::Serialize;
 
 use crate::cli_ux;
 
@@ -31,6 +34,12 @@ pub(crate) enum ObjectStorageCommand {
     /// Inspect local byte-plane GC status for a tenant.
     #[command(name = "gc-status")]
     GcStatus(GcStatusCommand),
+    /// Inspect one tenant's erasure leg without taking its drive locks.
+    #[command(name = "erasure-status")]
+    ErasureStatus(ErasureStatusCommand),
+    /// Heal one tenant's erasure leg as offline maintenance.
+    #[command(name = "erasure-heal")]
+    ErasureHeal(ErasureHealCommand),
     /// Tenant object-storage lifecycle commands.
     #[command(subcommand)]
     Tenant(TenantObjectStorageCommand),
@@ -188,6 +197,34 @@ pub(crate) struct GcStatusCommand {
 
 #[derive(Debug, Args)]
 #[command(help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE)]
+pub(crate) struct ErasureStatusCommand {
+    /// Tenant whose deployment-level erasure leg is being inspected.
+    #[arg(long)]
+    pub(crate) tenant: String,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = "Exit codes:\n  0  Heal completed: nothing deferred, no beyond-repair blobs\n  1  Operational error\n  3  One or more blobs are beyond repair\n  4  Byte budget exhausted before all repairs ran — re-run or raise --max-bytes\n  (2 is reserved by the CLI parser for usage errors)"
+)]
+pub(crate) struct ErasureHealCommand {
+    /// Tenant whose deployment-level erasure leg is being healed.
+    #[arg(long)]
+    pub(crate) tenant: String,
+    /// Maximum erasure payload bytes repaired during this run.
+    #[arg(long)]
+    pub(crate) max_bytes: Option<u64>,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE)]
 pub(crate) struct TenantRemoveCommand {
     #[arg(long, default_value = "./data")]
     pub(crate) data_dir: PathBuf,
@@ -211,6 +248,8 @@ pub(crate) async fn run_object_storage_command(
         }
         ObjectStorageCommand::BootstrapMasterKey(command) => run_bootstrap_master_key(command),
         ObjectStorageCommand::GcStatus(command) => run_gc_status(command),
+        ObjectStorageCommand::ErasureStatus(command) => run_erasure_status(command).await,
+        ObjectStorageCommand::ErasureHeal(command) => run_erasure_heal(command).await,
         ObjectStorageCommand::Tenant(TenantObjectStorageCommand::Rm(command)) => {
             run_tenant_rm(command).await
         }
@@ -244,7 +283,7 @@ async fn run_backup_object_store(command: BackupObjectStoreCommand) -> Result<()
     let engine = open_engine(&command.data_dir, command.provider).await?;
     let archive = engine.export_latest_point_in_time_restore_archive(&tenant)?;
     let archive_bytes = serde_json::to_vec(&archive)?;
-    let roots = backup_roots_from_archive_or_local(&archive, &command.data_dir, &tenant)?;
+    let roots = backup_roots_from_archive_or_local(&archive, &command.data_dir, &tenant).await?;
     let source = object_storage_resolver(engine.clone())?.blob_store(&tenant)?;
     let key_escrow = read_key_escrow(&command.key_escrow_id, &command.key_escrow_file)?;
     let request = BackupRequest::new(
@@ -310,6 +349,13 @@ fn run_bootstrap_master_key(command: BootstrapMasterKeyCommand) -> Result<(), Bo
 
 fn run_gc_status(command: GcStatusCommand) -> Result<(), Box<dyn Error>> {
     let tenant = TenantId::new(command.tenant)?;
+    if matches!(local_leg_from_env()?, LocalLeg::Erasure(_)) {
+        return Err(
+            "gc-status inspects the pack leg; this deployment's local leg is erasure — \
+             use `object-storage erasure-status` instead"
+                .into(),
+        );
+    }
     let root = object_blob_root(&command.data_dir, &tenant);
     // Read-only inspection: coexists with a running server that holds the
     // root's exclusive write lock.
@@ -324,22 +370,361 @@ fn run_gc_status(command: GcStatusCommand) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+async fn run_erasure_status(command: ErasureStatusCommand) -> Result<(), Box<dyn Error>> {
+    let tenant = TenantId::new(command.tenant)?;
+    let config = erasure_config_from_env(&tenant)?;
+    let roots = config.drives.clone();
+    let stats = ErasureBlobStore::open_read_only(config)?.stats().await?;
+    let view = ErasureStatusView::new(&tenant, &roots, &stats);
+    if command.json {
+        println!("{}", serde_json::to_string_pretty(&view)?);
+    } else {
+        // last_heal is deliberately NOT shown: the summary lives in the
+        // process-local leg registry, so a one-shot CLI invocation can
+        // never observe a previous process's heal — erasure-heal itself
+        // prints its full report.
+        println!(
+            "erasure-status tenant={} blob_count={}",
+            tenant, stats.blob_count
+        );
+        let rows = view
+            .drives
+            .iter()
+            .map(|drive| {
+                vec![
+                    drive.index.to_string(),
+                    drive.root.clone(),
+                    drive.live_bytes.to_string(),
+                    drive.reclaimable_bytes.to_string(),
+                    drive.quarantined_bytes.to_string(),
+                    drive.pack_count.to_string(),
+                ]
+            })
+            .collect::<Vec<_>>();
+        println!(
+            "{}",
+            cli_ux::render_table_with_options(
+                &[
+                    cli_ux::TableColumn::right("DRIVE", 5),
+                    cli_ux::TableColumn::left("ROOT", 10),
+                    cli_ux::TableColumn::right("LIVE_BYTES", 10),
+                    cli_ux::TableColumn::right("RECLAIMABLE_BYTES", 17),
+                    cli_ux::TableColumn::right("QUARANTINED_BYTES", 17),
+                    cli_ux::TableColumn::right("PACKS", 5),
+                ],
+                &rows,
+                cli_ux::TableRenderOptions::default(),
+            )
+        );
+    }
+    Ok(())
+}
+
+async fn run_erasure_heal(command: ErasureHealCommand) -> Result<(), Box<dyn Error>> {
+    let tenant = TenantId::new(command.tenant)?;
+    let config = erasure_config_from_env(&tenant)?;
+    let store = match ErasureBlobStore::open(config) {
+        Ok(store) => store,
+        Err(error) if error.storage_kind() == Some(StorageErrorKind::Busy) => {
+            return Err(format!(
+                "{error}; stop the server or run via the server; erasure heal is offline maintenance"
+            )
+            .into());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let mut healer = ErasureHealer::new(store);
+    if let Some(max_bytes) = command.max_bytes {
+        healer = healer.with_pacing(HealPacing::max_bytes_per_run(max_bytes)?);
+    }
+    let report = healer.heal().await?;
+    let view = HealReportView::from(&report);
+    if command.json {
+        println!("{}", serde_json::to_string_pretty(&view)?);
+    } else {
+        println!(
+            "erasure-heal tenant={} blobs_examined={} stripes_repaired={} shards_rewritten={} degraded={} beyond_repair={} exhausted={} at_millis={}",
+            tenant,
+            report.blobs_examined,
+            report.stripes_repaired,
+            report.shards_rewritten,
+            report.degraded,
+            report.beyond_repair.len(),
+            report.exhausted,
+            report.at_millis,
+        );
+        for hash in &report.beyond_repair {
+            println!("beyond_repair={}", hash.to_hex());
+        }
+    }
+    if report.beyond_repair.is_empty() && report.exhausted {
+        // Deferred repairs are NOT a clean outcome: the budget stopped the
+        // run before every degraded blob was handled — automation must
+        // re-run (or raise --max-bytes), so the exit code says so.
+        use std::io::Write as _;
+        std::io::stdout().flush().ok();
+        std::process::exit(4);
+    }
+    if !report.beyond_repair.is_empty() {
+        std::io::Write::flush(&mut std::io::stdout())?;
+        std::process::exit(3);
+    }
+    Ok(())
+}
+
+/// The deployment's configured local leg (env-resolved) — maintenance verbs
+/// must follow the SAME layout the server uses, or refuse explicitly;
+/// succeeding with pack semantics against an erasure deployment produced
+/// incomplete backups and incomplete tenant deletion.
+fn local_leg_from_env() -> Result<LocalLeg, Box<dyn Error>> {
+    Ok(ObjectStorageConfig::from_env(None)?.local_leg().clone())
+}
+
+fn erasure_config_from_env(tenant: &TenantId) -> Result<ErasureConfig, Box<dyn Error>> {
+    let config = ObjectStorageConfig::from_env(None)?;
+    let LocalLeg::Erasure(erasure) = config.local_leg() else {
+        return Err(
+            "object-storage local leg is not erasure; set NIMBUS_OBJECT_STORAGE_LOCAL_LEG=erasure"
+                .into(),
+        );
+    };
+    let tenant_leaf = object_blob_root(Path::new(""), tenant)
+        .file_name()
+        .ok_or("tenant object blob root has no directory-name component")?
+        .to_os_string();
+    let roots = erasure
+        .drives
+        .iter()
+        .map(|drive| drive.join(&tenant_leaf))
+        .collect();
+    Ok(ErasureConfig::new(
+        tenant.as_str(),
+        roots,
+        erasure.data_shards,
+        erasure.parity_shards,
+        erasure.stripe_width,
+    )?)
+}
+
+#[derive(Serialize)]
+struct ErasureStatusView {
+    tenant: String,
+    blob_count: usize,
+    drives: Vec<ErasureDriveStatusView>,
+}
+
+impl ErasureStatusView {
+    fn new(tenant: &TenantId, roots: &[PathBuf], stats: &nimbus::ErasureStats) -> Self {
+        let drives = roots
+            .iter()
+            .zip(&stats.per_drive)
+            .enumerate()
+            .map(|(index, (root, drive))| ErasureDriveStatusView {
+                index,
+                root: root.display().to_string(),
+                live_bytes: drive.live_bytes,
+                reclaimable_bytes: drive.reclaimable_bytes,
+                quarantined_bytes: drive.quarantined_bytes,
+                pack_count: drive.pack_count,
+            })
+            .collect();
+        Self {
+            tenant: tenant.to_string(),
+            blob_count: stats.blob_count,
+            drives,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ErasureDriveStatusView {
+    index: usize,
+    root: String,
+    live_bytes: u64,
+    reclaimable_bytes: u64,
+    quarantined_bytes: u64,
+    pack_count: usize,
+}
+
+#[derive(Serialize)]
+struct HealReportView {
+    blobs_examined: usize,
+    stripes_repaired: usize,
+    shards_rewritten: usize,
+    degraded: usize,
+    beyond_repair: Vec<String>,
+    exhausted: bool,
+    at_millis: u64,
+}
+
+impl From<&HealReport> for HealReportView {
+    fn from(report: &HealReport) -> Self {
+        Self {
+            blobs_examined: report.blobs_examined,
+            stripes_repaired: report.stripes_repaired,
+            shards_rewritten: report.shards_rewritten,
+            degraded: report.degraded,
+            beyond_repair: report
+                .beyond_repair
+                .iter()
+                .map(|hash| hash.to_hex())
+                .collect(),
+            exhausted: report.exhausted,
+            at_millis: report.at_millis,
+        }
+    }
+}
+
 async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error>> {
     if !command.yes {
         return Err("tenant rm requires --yes".into());
     }
     let tenant = TenantId::new(command.tenant)?;
-    let engine = open_engine(&command.data_dir, command.provider).await?;
-    engine.delete_tenant_async(tenant.clone()).await?;
+    // Resolve configuration and PROVE exclusive ownership of every byte-
+    // plane root BEFORE any destructive step: config errors must not strike
+    // after partial deletion, and unlinking a tree a running server still
+    // owns (per-drive flocks) would corrupt its live state. Opening the
+    // stores writable takes the same flocks the server holds — Busy here
+    // means offline maintenance is required.
+    let local_leg = local_leg_from_env()?;
     let root = object_blob_root(&command.data_dir, &tenant);
-    if root.exists() {
-        std::fs::remove_dir_all(&root)?;
+    let erasure_trees: Vec<PathBuf> = match &local_leg {
+        LocalLeg::Pack => Vec::new(),
+        LocalLeg::Erasure(erasure) => {
+            let tenant_leaf = root
+                .file_name()
+                .ok_or("tenant object blob root has no directory-name component")?
+                .to_os_string();
+            erasure
+                .drives
+                .iter()
+                .map(|drive| drive.join(&tenant_leaf))
+                .collect()
+        }
+    };
+    // Ownership is HELD through the deletion (not probe-and-drop): a
+    // server starting between a released probe and remove_dir_all would
+    // race the unlink. Unlinking directories whose flocks our own process
+    // holds is safe on Unix; the guard drops after the trees are gone.
+    // Unconditional in erasure mode: locking only EXISTING trees leaves a
+    // window where a running server creates and writes the tenant's roots
+    // after the check — opening writable creates AND locks every drive
+    // path before any destructive step.
+    let _erasure_ownership = if matches!(&local_leg, LocalLeg::Erasure(_)) {
+        Some(
+            ErasureBlobStore::open(erasure_config_from_env(&tenant)?).map_err(
+                |err| -> Box<dyn Error> {
+                    format!(
+                        "tenant rm requires exclusive ownership of the erasure drives \
+                         (stop the server first — this is offline maintenance): {err}"
+                    )
+                    .into()
+                },
+            )?,
+        )
+    } else {
+        None
+    };
+    // Destruction holds every ownership guard THROUGH the deletion:
+    //
+    // - Both legs lock UNCONDITIONALLY (opening creates absent roots and
+    //   locks them, closing the create-after-check window a running server
+    //   could exploit).
+    // - The control-plane tenant is deleted first (TenantNotFound is
+    //   tolerated: re-running after a partial prior failure is the
+    //   recovery path) — once it is gone, no request can route to these
+    //   roots, so nothing new can be written to them through the engine.
+    // - remove_dir_all runs WHILE the flocks are held (unlinking our own
+    //   held lock files is safe on Unix; the flock stays valid on the
+    //   unlinked inode until the guard drops). A pathological external
+    //   recreation after deletion yields an empty, unroutable directory —
+    //   benign residue, no data.
+    // Every failure mode is resumable by a plain re-run.
+    let _pack_ownership = if matches!(&local_leg, LocalLeg::Pack) {
+        Some(
+            LocalPackStore::open_with_options(
+                &root,
+                nimbus::LocalPackStoreOptions {
+                    identity: Some(nimbus::tenant_root_identity(&tenant)),
+                    ..nimbus::LocalPackStoreOptions::default()
+                },
+            )
+            .map_err(|err| -> Box<dyn Error> {
+                format!(
+                    "tenant rm requires exclusive ownership of the tenant blob root \
+                     (stop the server first — this is offline maintenance): {err}"
+                )
+                .into()
+            })?,
+        )
+    } else {
+        None
+    };
+
+    let engine = open_engine(&command.data_dir, command.provider).await?;
+    match engine.delete_tenant_async(tenant.clone()).await {
+        Ok(()) => {}
+        // Idempotent re-run after a partial prior failure.
+        Err(NimbusError::TenantNotFound(_)) => {}
+        Err(err) => return Err(err.into()),
+    }
+
+    // Contents first (locks + markers retained), roots last (guards
+    // dropped): deleting an flock'd file is refused on some filesystems
+    // (Windows), and unlinking held locks violates the ownership protocol
+    // — so everything EXCEPT `lock` and `format.nblfmt` is deleted while
+    // the guards are authoritative, then the guards drop and the
+    // near-empty roots are removed. The post-drop window is benign: the
+    // control-plane tenant is already gone, so a recreated root is empty,
+    // unroutable residue.
+    let mut erasure_trees_removed = 0usize;
+    for (index, path) in std::iter::once(&root)
+        .chain(erasure_trees.iter())
+        .enumerate()
+    {
+        if !path.exists() {
+            continue;
+        }
+        remove_root_contents_except_ownership(path)?;
+        if index > 0 {
+            erasure_trees_removed += 1;
+        }
+    }
+    drop(_erasure_ownership);
+    drop(_pack_ownership);
+    for path in std::iter::once(&root).chain(erasure_trees.iter()) {
+        if path.exists() {
+            std::fs::remove_dir_all(path)?;
+        }
     }
     engine.quiesce().await;
     emit_object_storage_info(format!(
-        "tenant rm tenant={} object_blobs_removed=true",
-        tenant
+        "tenant rm tenant={} object_blobs_removed=true erasure_trees_removed={}",
+        tenant, erasure_trees_removed
     ));
+    Ok(())
+}
+
+/// Deletes everything under a byte-plane root EXCEPT the ownership files
+/// (`lock`, `format.nblfmt`), which stay until their guards drop — some
+/// filesystems refuse deleting open/locked files, and the ownership
+/// protocol keeps the root identity authoritative through the deletion.
+fn remove_root_contents_except_ownership(root: &Path) -> Result<(), Box<dyn Error>> {
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name == std::ffi::OsStr::new(nimbus::LOCK_FILE)
+            || name == std::ffi::OsStr::new(nimbus::FORMAT_FILE)
+        {
+            continue;
+        }
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
     Ok(())
 }
 
@@ -418,7 +803,7 @@ fn read_key_escrow(id: &str, path: &Path) -> Result<KeyEscrow, Box<dyn Error>> {
     Ok(KeyEscrow::new(id, std::fs::read(path)?.into())?)
 }
 
-fn backup_roots_from_archive_or_local(
+async fn backup_roots_from_archive_or_local(
     archive: &PointInTimeRestoreArchive,
     data_dir: &Path,
     tenant: &TenantId,
@@ -427,7 +812,14 @@ fn backup_roots_from_archive_or_local(
         Ok(roots) if !roots.is_empty() => Ok(roots),
         Ok(_) | Err(_) => {
             // Read-only enumeration: must not contend for the root's
-            // exclusive write lock.
+            // exclusive write lock. The fallback must follow the
+            // DEPLOYMENT'S local leg — walking the (empty) pack root in an
+            // erasure deployment silently produced complete-looking but
+            // empty backup root sets.
+            if matches!(local_leg_from_env()?, LocalLeg::Erasure(_)) {
+                let erasure = ErasureBlobStore::open_read_only(erasure_config_from_env(tenant)?)?;
+                return Ok(erasure.visible_blob_hashes().await?);
+            }
             let local = LocalPackStore::open_read_only(object_blob_root(data_dir, tenant))?;
             Ok(local
                 .live_entries()?
@@ -586,6 +978,34 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::ObjectStorage(ObjectStorageCommand::GcStatus(_))
+        ));
+
+        let cli = Cli::parse_from([
+            "nimbus",
+            "object-storage",
+            "erasure-status",
+            "--tenant",
+            "tenant-a",
+            "--json",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Command::ObjectStorage(ObjectStorageCommand::ErasureStatus(_))
+        ));
+
+        let cli = Cli::parse_from([
+            "nimbus",
+            "object-storage",
+            "erasure-heal",
+            "--tenant",
+            "tenant-a",
+            "--max-bytes",
+            "1048576",
+            "--json",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Command::ObjectStorage(ObjectStorageCommand::ErasureHeal(_))
         ));
 
         let cli = Cli::parse_from([

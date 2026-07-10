@@ -68,6 +68,19 @@ impl ErasureConfig {
                     drive.display()
                 )));
             }
+            // Ancestor/descendant nesting is rejected too: nested roots
+            // nest the per-tenant trees, and recursive maintenance
+            // (tenant deletion, compaction of one drive's subtree) on the
+            // ancestor would silently destroy the descendant drive's data.
+            for existing in &normalized {
+                if identity.starts_with(existing) || existing.starts_with(&identity) {
+                    return Err(Error::InvalidInput(format!(
+                        "erasure drive roots must not nest: {} overlaps {}",
+                        identity.display(),
+                        existing.display()
+                    )));
+                }
+            }
             normalized.push(identity);
         }
 
