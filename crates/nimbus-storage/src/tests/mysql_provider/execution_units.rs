@@ -145,7 +145,10 @@ async fn mysql_execution_unit_batch_and_scheduler_state_round_trip() {
             .expect("pending jobs should read");
         assert_eq!(recovered.len(), 1);
         assert_eq!(recovered[0].id, scheduled_job.id);
-        assert_eq!(recovered[0].run_at, Timestamp(6_000));
+        // Recovery preserves the ORIGINAL due time (min with recovery-now);
+        // re-stamping the recovery instant delayed recovered work and
+        // flaked under wall-clock regression.
+        assert_eq!(recovered[0].run_at, scheduled_job.run_at);
 
         let claimed = opened
             .store
@@ -153,7 +156,7 @@ async fn mysql_execution_unit_batch_and_scheduler_state_round_trip() {
             .expect("second claim should succeed");
         let result = ScheduledJobResult {
             id: scheduled_job.id.clone(),
-            run_at: Timestamp(6_000),
+            run_at: claimed[0].run_at,
             finished_at: Timestamp(6_500),
             mutation: claimed[0].mutation.clone(),
             outcome: ScheduledJobOutcome::Completed,
