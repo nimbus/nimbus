@@ -7,9 +7,8 @@ use nimbus::{
     BackupBundle, BackupRequest, EmbeddedProviderKind, Engine, EnginePersistenceConfig,
     ErasureBlobStore, ErasureConfig, ErasureHealer, Error as NimbusError, HealPacing, HealReport,
     KeyEscrow, LocalLeg, LocalPackStore, ObjectBackup, ObjectPlacement, ObjectStorageConfig,
-    ObjectStorageResolver, ObjectStorePlacementTarget, ObjectStoreProviderCredentials,
-    ObjectStoreProviderKind, PlacementPolicy, PointInTimeRestoreArchive, TenantId,
-    object_backup_roots, object_blob_root,
+    ObjectStorePlacementTarget, ObjectStoreProviderCredentials, ObjectStoreProviderKind,
+    PlacementPolicy, PointInTimeRestoreArchive, TenantId, object_backup_roots, object_blob_root,
 };
 use nimbus_core::StorageErrorKind;
 use rand::RngCore;
@@ -284,8 +283,36 @@ async fn run_backup_object_store(command: BackupObjectStoreCommand) -> Result<()
     let archive = engine.export_latest_point_in_time_restore_archive(&tenant)?;
     let archive_bytes = serde_json::to_vec(&archive)?;
     let roots = backup_roots_from_archive_or_local(&archive, &command.data_dir, &tenant).await?;
-    let source = object_storage_resolver(engine.clone())?.blob_store(&tenant)?;
+    // Export reads the RAW byte-plane leg: roots are ciphertext content
+    // addresses, and export_bundle verifies each chunk re-hashes to its
+    // address — the resolver's encrypted store serves PLAINTEXT for those
+    // addresses, which can never verify (and would leak plaintext into the
+    // backup artifact if it did). Chunks therefore stay ciphertext and the
+    // bundle is unreadable without the escrowed key material.
+    let source = raw_local_leg_read_only(&command.data_dir, &tenant)?;
     let key_escrow = read_key_escrow(&command.key_escrow_id, &command.key_escrow_file)?;
+    // Fail EARLY if the operator escrowed the wrong material: the escrow
+    // must be the tenant's wrapped-DEK sidecar, or the restored ciphertext
+    // will never open. (Restore installs exactly these bytes.)
+    let sidecar_path = nimbus::KeyManifest::manifest_path(&nimbus::object_blob_key_path(
+        &command.data_dir,
+        &tenant,
+    ));
+    let sidecar = std::fs::read(&sidecar_path).map_err(|err| -> Box<dyn Error> {
+        format!(
+            "read tenant blob-key sidecar {} (required to validate escrow): {err}",
+            sidecar_path.display()
+        )
+        .into()
+    })?;
+    if key_escrow.wrapped_key_material() != sidecar.as_slice() {
+        return Err(format!(
+            "key escrow does not match the tenant's wrapped-DEK sidecar {} — escrow \
+             exactly that file's bytes, or the restored ciphertext will be unreadable",
+            sidecar_path.display()
+        )
+        .into());
+    }
     let request = BackupRequest::new(
         roots,
         archive_bytes.clone().into(),
@@ -293,6 +320,7 @@ async fn run_backup_object_store(command: BackupObjectStoreCommand) -> Result<()
         key_escrow,
     )?;
     let bundle = ObjectBackup::export_bundle(source.as_ref(), request).await?;
+    drop(source);
     let encoded = bundle.encode();
     if let Some(parent) = command.out.parent()
         && !parent.as_os_str().is_empty()
@@ -319,8 +347,85 @@ async fn run_restore_object_store(
     let bundle = BackupBundle::decode(raw.into())?;
     let key_escrow = read_key_escrow(&command.key_escrow_id, &command.key_escrow_file)?;
     let engine = open_engine(&command.data_dir, command.provider).await?;
-    let target = object_storage_resolver(engine.clone())?.blob_store(&tenant)?;
+    // Install the escrowed wrapped-DEK sidecar BEFORE restoring bytes: the
+    // bundle's chunks are ciphertext sealed under that key, and a fresh
+    // tenant would otherwise mint a NEW DEK and never be able to read
+    // them. A pre-existing DIFFERENT sidecar fails closed — restore must
+    // not clobber a live tenant's key material.
+    let sidecar_path = nimbus::KeyManifest::manifest_path(&nimbus::object_blob_key_path(
+        &command.data_dir,
+        &tenant,
+    ));
+    let escrow_bytes = key_escrow.wrapped_key_material();
+    // Validate the escrow BEFORE touching the target deployment: it must
+    // parse as a key manifest, be wrapped under THIS deployment's
+    // master-key path (the resolver refuses provider-identity mismatches
+    // at open, so installing a foreign-path manifest would only defer the
+    // failure), and actually unwrap under the LOCAL master key for THIS
+    // tenant's blob-key subject — proving key bytes, tenant binding, and
+    // manifest integrity in one step.
+    let escrow_manifest = nimbus_crypto::KeyManifest::read(&command.key_escrow_file)
+        .map_err(|err| -> Box<dyn Error> {
+            format!(
+                "key escrow file {} is not a valid key manifest — escrow the tenant's                  blob-key sidecar ({}): {err}",
+                command.key_escrow_file.display(),
+                sidecar_path.display()
+            )
+            .into()
+        })?;
+    let master_key_path = nimbus::object_master_key_path(&command.data_dir);
+    let provider =
+        nimbus_crypto::MasterKeyFileProvider::new(master_key_path.clone()).map_err(|err| {
+            format!(
+                "open master key file {} (install the source deployment's master key before restore): {err}",
+                master_key_path.display()
+            )
+        })?;
+    // Subject naming matches the resolver's blob-key sidecar subject.
+    let subject = nimbus_crypto::LocalKeySubject::object_blob_store(tenant.clone(), "blob-key");
+    let protected_path = nimbus::object_blob_key_path(&command.data_dir, &tenant);
+    // Full validation in one step: subject + cipher + provider-identity
+    // checks, then an actual unwrap under the LOCAL master key — proving
+    // key bytes, tenant binding, layout, and manifest integrity before any
+    // bytes land in the target deployment.
+    nimbus_crypto::unwrap_key_manifest(
+        &escrow_manifest,
+        &provider,
+        &subject,
+        nimbus_crypto::ManifestCipher::FramedBlobAes256GcmSiv,
+        &protected_path,
+    )
+    .map_err(|err| -> Box<dyn Error> {
+        format!(
+            "escrowed key manifest is not usable by this deployment for tenant {tenant} — wrong escrow, wrong tenant, different data-dir/master-key layout, or wrong master key: {err}"
+        )
+        .into()
+    })?;
+    match std::fs::read(&sidecar_path) {
+        Ok(existing) if existing.as_slice() == escrow_bytes => {}
+        Ok(_) => {
+            return Err(format!(
+                "tenant blob-key sidecar {} already exists with DIFFERENT key material; \
+                 refusing to overwrite a live tenant's key",
+                sidecar_path.display()
+            )
+            .into());
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if let Some(parent) = sidecar_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&sidecar_path, escrow_bytes)?;
+            set_private_file_permissions(&sidecar_path)?;
+        }
+        Err(err) => return Err(err.into()),
+    }
+    // Restore writes the RAW leg: chunk bytes are ciphertext under their
+    // own content addresses, and restore_bundle verifies target.put
+    // round-trips each address — only the raw domain satisfies that.
+    let target = raw_local_leg_writable(&command.data_dir, &tenant)?;
     let report = ObjectBackup::restore_bundle(target.as_ref(), &bundle, Some(&key_escrow)).await?;
+    drop(target);
     let archive = serde_json::from_slice(bundle.manifest_snapshot())?;
     match engine.create_tenant(tenant.clone()) {
         Ok(()) | Err(NimbusError::AlreadyExists(_)) => {}
@@ -709,6 +814,44 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
 /// (`lock`, `format.nblfmt`), which stay until their guards drop — some
 /// filesystems refuse deleting open/locked files, and the ownership
 /// protocol keeps the root identity authoritative through the deletion.
+/// The tenant's RAW byte-plane leg, read-only (backup export source):
+/// content addresses are ciphertext hashes and export verification only
+/// holds in the raw domain.
+fn raw_local_leg_read_only(
+    data_dir: &Path,
+    tenant: &TenantId,
+) -> Result<Box<dyn nimbus::BlobStore>, Box<dyn Error>> {
+    match local_leg_from_env()? {
+        LocalLeg::Pack => Ok(Box::new(LocalPackStore::open_read_only_with_identity(
+            object_blob_root(data_dir, tenant),
+            Some(nimbus::tenant_root_identity(tenant)),
+        )?)),
+        LocalLeg::Erasure(_) => Ok(Box::new(ErasureBlobStore::open_read_only(
+            erasure_config_from_env(tenant)?,
+        )?)),
+    }
+}
+
+/// The tenant's RAW byte-plane leg, writable (restore target): offline
+/// maintenance — the flocks fail closed with Busy while a server runs.
+fn raw_local_leg_writable(
+    data_dir: &Path,
+    tenant: &TenantId,
+) -> Result<Box<dyn nimbus::BlobStore>, Box<dyn Error>> {
+    match local_leg_from_env()? {
+        LocalLeg::Pack => Ok(Box::new(LocalPackStore::open_with_options(
+            object_blob_root(data_dir, tenant),
+            nimbus::LocalPackStoreOptions {
+                identity: Some(nimbus::tenant_root_identity(tenant)),
+                ..nimbus::LocalPackStoreOptions::default()
+            },
+        )?)),
+        LocalLeg::Erasure(_) => Ok(Box::new(ErasureBlobStore::open(erasure_config_from_env(
+            tenant,
+        )?)?)),
+    }
+}
+
 fn remove_root_contents_except_ownership(root: &Path) -> Result<(), Box<dyn Error>> {
     for entry in std::fs::read_dir(root)? {
         let entry = entry?;
@@ -790,13 +933,6 @@ async fn open_engine(
 ) -> Result<Arc<Engine>, Box<dyn Error>> {
     let config = EnginePersistenceConfig::embedded(data_dir, provider.embedded_kind());
     Ok(Arc::new(Engine::new_with_persistence_config(config).await?))
-}
-
-fn object_storage_resolver(engine: Arc<Engine>) -> Result<ObjectStorageResolver, Box<dyn Error>> {
-    Ok(ObjectStorageResolver::with_config(
-        engine,
-        ObjectStorageConfig::from_env(None)?,
-    ))
 }
 
 fn read_key_escrow(id: &str, path: &Path) -> Result<KeyEscrow, Box<dyn Error>> {
@@ -892,6 +1028,7 @@ fn emit_object_storage_info(message: impl AsRef<str>) {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use nimbus::{Bytes, ObjectStorageResolver};
 
     use super::*;
     use crate::{Cli, Command};
@@ -1036,5 +1173,183 @@ mod tests {
         let metadata = std::fs::metadata(&key_path).expect("master key metadata should stat");
         assert_eq!(metadata.len(), 32);
         assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    }
+
+    #[tokio::test]
+    async fn backup_restore_round_trips_ciphertext_for_encrypted_tenant() {
+        // Regression for the encryption-domain defect: the verb pair used
+        // the resolver's ENCRYPTED store, whose plaintext reads can never
+        // verify against ciphertext content addresses — every non-empty
+        // backup of an encrypted tenant failed, and restore minted a fresh
+        // DEK that could never read the bundle's ciphertext. The verbs now
+        // run raw-leg ciphertext end-to-end and escrow installs the
+        // wrapped-DEK sidecar at restore.
+        let source_dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Engine::new(source_dir.path()).unwrap());
+        let tenant = TenantId::new("backup-tenant").unwrap();
+        engine.create_tenant(tenant.clone()).unwrap();
+        let resolver = ObjectStorageResolver::new(engine.clone());
+        let store = resolver.blob_store(&tenant).unwrap();
+        let plaintext = Bytes::from_static(b"SECRET-PLAINTEXT-MARKER payload");
+        let address = store.put(plaintext.clone()).await.unwrap();
+        drop(store);
+        drop(resolver);
+        engine.quiesce().await;
+        drop(engine);
+
+        // Escrow = the tenant's wrapped-DEK sidecar bytes.
+        let sidecar = std::fs::read(nimbus::KeyManifest::manifest_path(
+            &nimbus::object_blob_key_path(source_dir.path(), &tenant),
+        ))
+        .unwrap();
+        let escrow_file = source_dir.path().join("escrow.bin");
+        std::fs::write(&escrow_file, &sidecar).unwrap();
+
+        let bundle_path = source_dir.path().join("backup.nobb");
+        run_backup_object_store(BackupObjectStoreCommand {
+            tenant: tenant.as_str().to_string(),
+            data_dir: source_dir.path().to_path_buf(),
+            out: bundle_path.clone(),
+            key_escrow_id: "backup-tenant".to_string(),
+            key_escrow_file: escrow_file.clone(),
+            provider: ObjectStorageProvider::Sqlite,
+        })
+        .await
+        .expect("backup of an encrypted tenant with data must succeed");
+
+        // The bundle holds ciphertext: the plaintext marker must not appear.
+        let bundle_bytes = std::fs::read(&bundle_path).unwrap();
+        assert!(
+            !bundle_bytes
+                .windows(b"SECRET-PLAINTEXT-MARKER".len())
+                .any(|window| window == b"SECRET-PLAINTEXT-MARKER"),
+            "backup artifact must never contain plaintext"
+        );
+
+        // Disaster recovery in place: the byte plane (ciphertext + wrapped-DEK
+        // sidecar) is lost; the deployment's master key and layout survive.
+        // The key-manifest provider identity records the master-key path, so
+        // restore requires the same data-dir layout as the source.
+        std::fs::remove_dir_all(source_dir.path().join("object-blobs")).unwrap();
+
+        run_restore_object_store(RestoreObjectStoreCommand {
+            tenant: tenant.as_str().to_string(),
+            data_dir: source_dir.path().to_path_buf(),
+            input: bundle_path,
+            key_escrow_id: "backup-tenant".to_string(),
+            key_escrow_file: escrow_file,
+            provider: ObjectStorageProvider::Sqlite,
+        })
+        .await
+        .expect("restore must succeed with matching escrow");
+
+        // The restored tenant READS its plaintext through the normal
+        // encrypted composition — escrow made the ciphertext readable.
+        let engine = Arc::new(Engine::new(source_dir.path()).unwrap());
+        let resolver = ObjectStorageResolver::new(engine.clone());
+        let restored = resolver.blob_store(&tenant).unwrap();
+        assert_eq!(restored.get(&address).await.unwrap(), plaintext);
+        drop(restored);
+        engine.quiesce().await;
+    }
+
+    #[tokio::test]
+    async fn backup_rejects_escrow_that_does_not_match_the_sidecar() {
+        // Fail EARLY: escrowing the wrong material must error at backup
+        // time, not surface as an unreadable restore later.
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Engine::new(dir.path()).unwrap());
+        let tenant = TenantId::new("escrow-tenant").unwrap();
+        engine.create_tenant(tenant.clone()).unwrap();
+        let resolver = ObjectStorageResolver::new(engine.clone());
+        let store = resolver.blob_store(&tenant).unwrap();
+        store
+            .put(Bytes::from_static(b"some payload"))
+            .await
+            .unwrap();
+        drop(store);
+        drop(resolver);
+        engine.quiesce().await;
+        drop(engine);
+
+        let escrow_file = dir.path().join("wrong-escrow.bin");
+        std::fs::write(&escrow_file, b"not the sidecar bytes").unwrap();
+        let err = run_backup_object_store(BackupObjectStoreCommand {
+            tenant: tenant.as_str().to_string(),
+            data_dir: dir.path().to_path_buf(),
+            out: dir.path().join("backup.nobb"),
+            key_escrow_id: "escrow-tenant".to_string(),
+            key_escrow_file: escrow_file,
+            provider: ObjectStorageProvider::Sqlite,
+        })
+        .await
+        .expect_err("mismatched escrow must fail the backup");
+        assert!(err.to_string().contains("does not match"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn restore_rejects_a_deployment_with_a_different_master_key_layout() {
+        // The escrowed manifest is AAD-bound to the source deployment's
+        // master-key path; restoring into a different layout must fail
+        // EARLY with an actionable message, not install a sidecar the
+        // resolver will refuse at first open.
+        let source_dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Engine::new(source_dir.path()).unwrap());
+        let tenant = TenantId::new("layout-tenant").unwrap();
+        engine.create_tenant(tenant.clone()).unwrap();
+        let resolver = ObjectStorageResolver::new(engine.clone());
+        let store = resolver.blob_store(&tenant).unwrap();
+        store
+            .put(Bytes::from_static(b"layout payload"))
+            .await
+            .unwrap();
+        drop(store);
+        drop(resolver);
+        engine.quiesce().await;
+        drop(engine);
+
+        let sidecar_path = nimbus::KeyManifest::manifest_path(&nimbus::object_blob_key_path(
+            source_dir.path(),
+            &tenant,
+        ));
+        let escrow_file = source_dir.path().join("escrow.bin");
+        std::fs::copy(&sidecar_path, &escrow_file).unwrap();
+        let bundle_path = source_dir.path().join("backup.nobb");
+        run_backup_object_store(BackupObjectStoreCommand {
+            tenant: tenant.as_str().to_string(),
+            data_dir: source_dir.path().to_path_buf(),
+            out: bundle_path.clone(),
+            key_escrow_id: "layout-tenant".to_string(),
+            key_escrow_file: escrow_file.clone(),
+            provider: ObjectStorageProvider::Sqlite,
+        })
+        .await
+        .unwrap();
+
+        // Different data dir = different master-key path, even with the
+        // same master key bytes installed.
+        let target_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(target_dir.path().join("keys")).unwrap();
+        std::fs::copy(
+            nimbus::object_master_key_path(source_dir.path()),
+            nimbus::object_master_key_path(target_dir.path()),
+        )
+        .unwrap();
+        let err = run_restore_object_store(RestoreObjectStoreCommand {
+            tenant: tenant.as_str().to_string(),
+            data_dir: target_dir.path().to_path_buf(),
+            input: bundle_path,
+            key_escrow_id: "layout-tenant".to_string(),
+            key_escrow_file: escrow_file,
+            provider: ObjectStorageProvider::Sqlite,
+        })
+        .await
+        .expect_err("foreign layout must fail early");
+        assert!(err.to_string().contains("wrapped by"), "{err}");
+        // Fail-closed means NOTHING was installed in the target.
+        assert!(
+            !nimbus::object_blob_root(target_dir.path(), &tenant).exists(),
+            "restore must not leave partial state behind on validation failure"
+        );
     }
 }

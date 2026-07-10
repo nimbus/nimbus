@@ -79,10 +79,11 @@ pub use nimbus_services::{
     ServiceInstanceCatalog, ServiceManager,
 };
 // Storage and encryption helpers.
+pub use bytes::Bytes;
 pub use nimbus_blob::{
-    BackupBundle, BackupRequest, BlobHash, ErasureBlobStore, ErasureConfig, ErasureHealer,
-    ErasureStats, FORMAT_FILE, HealPacing, HealReport, HealSummary, KeyEscrow, LOCK_FILE,
-    LocalPackStore, LocalPackStoreOptions, ObjectBackup,
+    BackupBundle, BackupRequest, BlobHash, BlobStore, ErasureBlobStore, ErasureConfig,
+    ErasureHealer, ErasureStats, FORMAT_FILE, HealPacing, HealReport, HealSummary, KeyEscrow,
+    LOCK_FILE, LocalPackStore, LocalPackStoreOptions, ObjectBackup,
 };
 pub use nimbus_object_storage::{
     ErasureLegConfig, LocalLeg, ObjectStorageConfig, ObjectStorageEnv, ObjectStorageResolver,
