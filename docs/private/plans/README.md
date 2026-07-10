@@ -53,6 +53,14 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   lifecycle, observability, selective HTTPS interception, credential injection,
   DLP parity, and QUIC/UDP bypass denial. This must land before Nimbus claims
   HTTPS credential injection for agents.
+- `examples-and-target-resolution-plan.md` - `active`. Owns the user-facing
+  examples tree (`demos/` → `examples/` rename, adapter-first root index,
+  shared app specs, tier-1 `tasks` parity apps, agent examples, and the smoke
+  verification lane), the unified target-resolution CLI UX (one optional
+  positional `TARGET` = URL or configured name, local default, no node/cluster
+  distinction, riding the existing `TargetSelector` seam), and the public docs
+  pages that display, explain, and GitHub-link each example. Ships as one PR;
+  merge on confirmed green.
 - `distribution-plan.md` - `in_progress`. Owns binary release, Homebrew/cask,
   Linux package mirror, release-owned OCI images, and channel cutover. It should
   consume launch safety decisions rather than define them.
