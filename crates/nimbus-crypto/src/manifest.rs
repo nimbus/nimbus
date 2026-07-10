@@ -281,6 +281,12 @@ impl KeyManifest {
         Self::read(&Self::manifest_path(protected_path))
     }
 
+    /// Parses a manifest from bytes captured elsewhere (e.g. an escrow
+    /// buffer), labeling errors with the given origin path.
+    pub fn from_bytes(bytes: &[u8], origin: &Path) -> Result<Self, ManifestReadError> {
+        Self::parse(bytes, origin)
+    }
+
     /// Parses a manifest from bytes.
     fn parse(bytes: &[u8], path: &Path) -> Result<Self, ManifestReadError> {
         let parse_err = |msg: &str| ManifestReadError::ParseError {

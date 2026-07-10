@@ -6591,6 +6591,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 name = "nimbus"
 version = "0.1.45"
 dependencies = [
+ "bytes",
  "nimbus-blob",
  "nimbus-core",
  "nimbus-crypto",

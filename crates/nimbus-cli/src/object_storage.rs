@@ -4,18 +4,20 @@ use std::sync::Arc;
 
 use clap::{Args, Subcommand, ValueEnum};
 use nimbus::{
-    BackupBundle, BackupRequest, EmbeddedProviderKind, Engine, EnginePersistenceConfig,
-    ErasureBlobStore, ErasureConfig, ErasureHealer, Error as NimbusError, HealPacing, HealReport,
-    KeyEscrow, LocalLeg, LocalPackStore, ObjectBackup, ObjectPlacement, ObjectStorageConfig,
-    ObjectStorageResolver, ObjectStorePlacementTarget, ObjectStoreProviderCredentials,
-    ObjectStoreProviderKind, PlacementPolicy, PointInTimeRestoreArchive, TenantId,
-    object_backup_roots, object_blob_root,
+    EmbeddedProviderKind, Engine, EnginePersistenceConfig, ErasureBlobStore, ErasureConfig,
+    ErasureHealer, Error as NimbusError, HealPacing, HealReport, LocalLeg, LocalPackStore,
+    ObjectPlacement, ObjectStorageConfig, ObjectStorePlacementTarget,
+    ObjectStoreProviderCredentials, ObjectStoreProviderKind, PlacementPolicy, TenantId,
+    object_blob_root,
 };
 use nimbus_core::StorageErrorKind;
 use rand::RngCore;
 use serde::Serialize;
 
 use crate::cli_ux;
+
+mod backup_restore;
+use backup_restore::{run_backup_object_store, run_restore_object_store};
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum ObjectStorageCommand {
@@ -267,73 +269,6 @@ async fn run_set_placement(command: SetPlacementCommand) -> Result<(), Box<dyn E
         "set-placement tenant={} data_dir={}",
         tenant,
         command.data_dir.display()
-    ));
-    Ok(())
-}
-
-async fn run_backup_object_store(command: BackupObjectStoreCommand) -> Result<(), Box<dyn Error>> {
-    if command.out.exists() {
-        return Err(format!(
-            "backup-object-store target {} already exists; refusing to overwrite",
-            command.out.display()
-        )
-        .into());
-    }
-    let tenant = TenantId::new(command.tenant)?;
-    let engine = open_engine(&command.data_dir, command.provider).await?;
-    let archive = engine.export_latest_point_in_time_restore_archive(&tenant)?;
-    let archive_bytes = serde_json::to_vec(&archive)?;
-    let roots = backup_roots_from_archive_or_local(&archive, &command.data_dir, &tenant).await?;
-    let source = object_storage_resolver(engine.clone())?.blob_store(&tenant)?;
-    let key_escrow = read_key_escrow(&command.key_escrow_id, &command.key_escrow_file)?;
-    let request = BackupRequest::new(
-        roots,
-        archive_bytes.clone().into(),
-        archive_bytes.into(),
-        key_escrow,
-    )?;
-    let bundle = ObjectBackup::export_bundle(source.as_ref(), request).await?;
-    let encoded = bundle.encode();
-    if let Some(parent) = command.out.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&command.out, &encoded)?;
-    engine.quiesce().await;
-    emit_object_storage_info(format!(
-        "backup-object-store tenant={} chunks={} bytes={} out={}",
-        tenant,
-        bundle.chunks().len(),
-        encoded.len(),
-        command.out.display()
-    ));
-    Ok(())
-}
-
-async fn run_restore_object_store(
-    command: RestoreObjectStoreCommand,
-) -> Result<(), Box<dyn Error>> {
-    let tenant = TenantId::new(command.tenant)?;
-    let raw = std::fs::read(&command.input)?;
-    let bundle = BackupBundle::decode(raw.into())?;
-    let key_escrow = read_key_escrow(&command.key_escrow_id, &command.key_escrow_file)?;
-    let engine = open_engine(&command.data_dir, command.provider).await?;
-    let target = object_storage_resolver(engine.clone())?.blob_store(&tenant)?;
-    let report = ObjectBackup::restore_bundle(target.as_ref(), &bundle, Some(&key_escrow)).await?;
-    let archive = serde_json::from_slice(bundle.manifest_snapshot())?;
-    match engine.create_tenant(tenant.clone()) {
-        Ok(()) | Err(NimbusError::AlreadyExists(_)) => {}
-        Err(error) => return Err(error.into()),
-    }
-    engine.import_point_in_time_restore_archive(&tenant, &archive)?;
-    engine.quiesce().await;
-    emit_object_storage_info(format!(
-        "restore-object-store tenant={} chunks={} bytes={} input={}",
-        tenant,
-        report.restored_chunks,
-        report.restored_bytes,
-        command.input.display()
     ));
     Ok(())
 }
@@ -790,44 +725,6 @@ async fn open_engine(
 ) -> Result<Arc<Engine>, Box<dyn Error>> {
     let config = EnginePersistenceConfig::embedded(data_dir, provider.embedded_kind());
     Ok(Arc::new(Engine::new_with_persistence_config(config).await?))
-}
-
-fn object_storage_resolver(engine: Arc<Engine>) -> Result<ObjectStorageResolver, Box<dyn Error>> {
-    Ok(ObjectStorageResolver::with_config(
-        engine,
-        ObjectStorageConfig::from_env(None)?,
-    ))
-}
-
-fn read_key_escrow(id: &str, path: &Path) -> Result<KeyEscrow, Box<dyn Error>> {
-    Ok(KeyEscrow::new(id, std::fs::read(path)?.into())?)
-}
-
-async fn backup_roots_from_archive_or_local(
-    archive: &PointInTimeRestoreArchive,
-    data_dir: &Path,
-    tenant: &TenantId,
-) -> Result<Vec<nimbus::BlobHash>, Box<dyn Error>> {
-    match object_backup_roots(archive) {
-        Ok(roots) if !roots.is_empty() => Ok(roots),
-        Ok(_) | Err(_) => {
-            // Read-only enumeration: must not contend for the root's
-            // exclusive write lock. The fallback must follow the
-            // DEPLOYMENT'S local leg — walking the (empty) pack root in an
-            // erasure deployment silently produced complete-looking but
-            // empty backup root sets.
-            if matches!(local_leg_from_env()?, LocalLeg::Erasure(_)) {
-                let erasure = ErasureBlobStore::open_read_only(erasure_config_from_env(tenant)?)?;
-                return Ok(erasure.visible_blob_hashes().await?);
-            }
-            let local = LocalPackStore::open_read_only(object_blob_root(data_dir, tenant))?;
-            Ok(local
-                .live_entries()?
-                .into_iter()
-                .map(|entry| entry.hash)
-                .collect())
-        }
-    }
 }
 
 pub(crate) fn bootstrap_object_master_key(path: &Path) -> Result<(), Box<dyn Error>> {
