@@ -343,7 +343,6 @@ fn install_escrow_sidecar(sidecar_path: &Path, escrow_bytes: &[u8]) -> Result<()
 /// The tenant's RAW byte-plane leg with exclusive ownership (backup
 /// source / restore target): offline maintenance — the flocks fail
 /// closed with Busy while a server runs.
-
 fn raw_local_leg_writable(
     data_dir: &Path,
     tenant: &TenantId,
