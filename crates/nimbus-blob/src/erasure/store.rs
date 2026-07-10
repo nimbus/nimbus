@@ -103,7 +103,7 @@ impl ErasureBlobStore {
             shared: Arc::clone(&shared),
             mutation: Arc::clone(&shared.mutation),
             heal_pins: shared.heal_pins.clone(),
-            poisoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            poisoned: Arc::clone(&shared.poisoned),
             #[cfg(test)]
             force_nondurable_rollback: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
@@ -220,6 +220,10 @@ impl ErasureBlobStore {
                 Err(publish_err.error)
             }
         }
+    }
+
+    pub(super) fn poison_flag(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        Arc::clone(&self.poisoned)
     }
 
     pub(super) fn visibility_quorum(&self) -> usize {
@@ -574,6 +578,10 @@ struct LegSharedState {
     mutation: Arc<AsyncMutex<()>>,
     heal_pins: BlobPinRegistry,
     last_heal: Arc<StdMutex<Option<HealSummary>>>,
+    /// Poison is LEG state, not handle state: a nondurable rollback makes
+    /// the on-disk manifest view ambiguous for every same-process handle
+    /// over these roots, so all of them must fail-stop together.
+    poisoned: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Process-wide registry of per-leg state, keyed by the canonical drive-0 root
@@ -591,6 +599,7 @@ fn shared_state_for(drive0: &PathBuf) -> Arc<LegSharedState> {
         mutation: Arc::new(AsyncMutex::new(())),
         heal_pins: BlobPinRegistry::new(),
         last_heal: Arc::new(StdMutex::new(None)),
+        poisoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
     map.insert(drive0.clone(), Arc::downgrade(&fresh));
     fresh

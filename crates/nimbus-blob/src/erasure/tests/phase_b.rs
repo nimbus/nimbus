@@ -74,7 +74,7 @@ fn manifest_shard_indices(
 async fn sweep_all(store: &ErasureBlobStore, grace: Duration) -> usize {
     let mut swept = 0usize;
     for drive in 0..K + M {
-        let report = store.shard_gc(drive, grace).sweep().await.unwrap();
+        let report = store.shard_gc(drive, grace).unwrap().sweep().await.unwrap();
         swept += report.swept;
     }
     swept
@@ -83,7 +83,7 @@ async fn sweep_all(store: &ErasureBlobStore, grace: Duration) -> usize {
 async fn sweep_all_reports(store: &ErasureBlobStore, grace: Duration) -> Vec<crate::BlobGcReport> {
     let mut reports = Vec::new();
     for drive in 0..K + M {
-        reports.push(store.shard_gc(drive, grace).sweep().await.unwrap());
+        reports.push(store.shard_gc(drive, grace).unwrap().sweep().await.unwrap());
     }
     reports
 }
@@ -401,4 +401,65 @@ async fn erasure_stats_aggregates_per_drive_and_heal() {
     assert_eq!(summary.beyond_repair_blobs, report.beyond_repair.len());
     assert_eq!(summary.exhausted, report.exhausted);
     assert_eq!(summary.at_millis, report.at_millis);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn erasure_poisoned_leg_refuses_shard_gc() {
+    // Review fix (Phase B round 1, P1): the shard GC surface honors the
+    // poison fail-stop end to end — a poisoned leg's manifest view is
+    // ambiguous, and sweeping against it could reclaim shards whose
+    // manifests resurface after a crash. Construction refuses when already
+    // poisoned; an ALREADY-CONSTRUCTED sweep fails at root enumeration
+    // when the leg poisons afterwards, and reclaims nothing.
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let committed = store.put(payload(STRIPE + 3)).await.unwrap();
+
+    // Stage an aged orphan shard on drive 0 so a rogue sweep would have
+    // something to reclaim.
+    let orphan = store
+        .drive_store(0)
+        .put(Bytes::from_static(b"orphan shard bytes"))
+        .await
+        .unwrap();
+
+    // Construct the sweep BEFORE poisoning.
+    let gc = store.shard_gc(0, std::time::Duration::ZERO).unwrap();
+
+    // Poison via a nondurable-rollback publish failure (round-9 seam).
+    let blocked = manifest::manifest_dir(&store.drive_root(K + M - 1));
+    let mut perms = fs::metadata(&blocked).unwrap().permissions();
+    perms.set_mode(0o500);
+    fs::set_permissions(&blocked, perms).unwrap();
+    store.arm_nondurable_rollback();
+    store.put(payload(2 * STRIPE + 1)).await.unwrap_err();
+    assert!(store.is_poisoned());
+
+    // The pre-constructed sweep fails closed at enumeration; the orphan
+    // and every committed shard survive.
+    let err = gc.sweep().await.unwrap_err();
+    assert!(err.to_string().contains("poisoned"));
+    assert!(store.drive_store(0).has(&orphan).await.unwrap());
+
+    // New construction refuses outright.
+    let err = match store.shard_gc(0, std::time::Duration::ZERO) {
+        Ok(_) => panic!("poisoned leg must refuse shard_gc construction"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("poisoned"));
+
+    // A second same-leg handle sees the SAME poison (leg state, not handle
+    // state).
+    let second = ErasureBlobStore::open(
+        ErasureConfig::new("test-leg", store.drive_roots(), K, M, STRIPE).unwrap(),
+    )
+    .unwrap();
+    assert!(second.is_poisoned(), "poison must be shared per leg");
+
+    let mut perms = fs::metadata(&blocked).unwrap().permissions();
+    perms.set_mode(0o700);
+    fs::set_permissions(&blocked, perms).unwrap();
+    let _ = committed;
 }

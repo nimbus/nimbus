@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -28,9 +29,17 @@ pub(crate) struct ManifestShardRoots {
     parity_shards: usize,
     stripe_width: usize,
     quorum: usize,
+    /// The owning leg's poison flag (shared). A poisoned leg's manifest
+    /// view is AMBIGUOUS (a nondurable rollback's replicas may resurface
+    /// after a crash), so root enumeration must fail closed — otherwise a
+    /// sweep could reclaim shards whose manifests reappear, which is
+    /// data loss. An erroring root provider makes the whole sweep fail
+    /// before anything is released.
+    poisoned: Arc<AtomicBool>,
 }
 
 impl ManifestShardRoots {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         drive_roots: Vec<PathBuf>,
         drive_index: usize,
@@ -38,6 +47,7 @@ impl ManifestShardRoots {
         parity_shards: usize,
         stripe_width: usize,
         quorum: usize,
+        poisoned: Arc<AtomicBool>,
     ) -> Self {
         Self {
             drive_roots,
@@ -46,6 +56,7 @@ impl ManifestShardRoots {
             parity_shards,
             stripe_width,
             quorum,
+            poisoned,
         }
     }
 
@@ -66,6 +77,14 @@ impl ManifestShardRoots {
 #[async_trait]
 impl BlobGcRoots for ManifestShardRoots {
     async fn live_blob_hashes(&self) -> Result<BTreeSet<BlobHash>> {
+        if self.poisoned.load(Ordering::SeqCst) {
+            return Err(Error::storage(
+                StorageErrorKind::Io,
+                "erasure leg poisoned: manifest view is ambiguous; refusing to \
+                 enumerate GC roots (a sweep could reclaim shards whose \
+                 manifests resurface after a crash)",
+            ));
+        }
         let drive_roots = self.drive_roots.clone();
         let quorum = self.quorum;
         let manifests =
@@ -96,12 +115,23 @@ impl BlobGcRoots for ManifestShardRoots {
 }
 
 impl ErasureBlobStore {
-    pub fn shard_gc(&self, drive_index: usize, grace: Duration) -> BlobGc<CompositeBlobRoots> {
-        assert!(
-            drive_index < self.stores.len(),
-            "erasure drive index {drive_index} out of bounds for {} drives",
-            self.stores.len()
-        );
+    /// Builds the RFS6 sweep for one drive. Fails while the leg is
+    /// poisoned, and the returned sweep ALSO fails at enumeration time if
+    /// the leg poisons after construction — the fail-stop covers GC end to
+    /// end (review round: a sweep against an ambiguous manifest view is a
+    /// data-loss path, not a cleanup).
+    pub fn shard_gc(
+        &self,
+        drive_index: usize,
+        grace: Duration,
+    ) -> Result<BlobGc<CompositeBlobRoots>> {
+        self.ensure_live()?;
+        if drive_index >= self.stores.len() {
+            return Err(Error::InvalidInput(format!(
+                "erasure drive index {drive_index} out of bounds for {} drives",
+                self.stores.len()
+            )));
+        }
         let roots = ManifestShardRoots::new(
             self.drive_roots.clone(),
             drive_index,
@@ -109,9 +139,10 @@ impl ErasureBlobStore {
             self.config.parity_shards,
             self.config.stripe_width,
             self.visibility_quorum(),
+            self.poison_flag(),
         );
         let roots = CompositeBlobRoots::new().with(Arc::new(roots));
-        BlobGc::new(self.stores[drive_index].clone(), roots, grace)
-            .with_pins(self.heal_pins.clone())
+        Ok(BlobGc::new(self.stores[drive_index].clone(), roots, grace)
+            .with_pins(self.heal_pins.clone()))
     }
 }
