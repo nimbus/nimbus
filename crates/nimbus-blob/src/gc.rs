@@ -107,7 +107,7 @@ enum RetentionClass {
 fn classify(
     entry: &LocalBlobEntry,
     roots: &BTreeSet<BlobHash>,
-    snapshot_position: (u64, u64),
+    snapshot_position: (u64, u64, u64),
     now_millis: u64,
     grace_millis: u64,
     pins: &BlobPinRegistry,
@@ -167,6 +167,8 @@ pub struct BlobGc<R> {
     clock: Arc<dyn Clock>,
     pins: BlobPinRegistry,
     backups: BlobPinRegistry,
+    /// Optional liveness gate; see [`Self::with_release_guard`].
+    release_guard: Option<Arc<dyn Fn() -> Result<()> + Send + Sync>>,
 }
 
 impl<R> BlobGc<R>
@@ -181,6 +183,7 @@ where
             clock: Arc::new(SystemClock),
             pins: BlobPinRegistry::new(),
             backups: BlobPinRegistry::new(),
+            release_guard: None,
         }
     }
 
@@ -218,7 +221,25 @@ where
     /// Each entry is classified exactly once ([`classify`]); only the
     /// [`RetentionClass::Reclaim`] arm releases a blob. The resulting summary
     /// is recorded on the store for [`LocalPackStore::stats`].
+    /// Installs a liveness gate consulted at sweep start AND before every
+    /// release. A store whose owning composition can fail-stop mid-sweep
+    /// (e.g. an erasure leg poisoning on a nondurable rollback while roots
+    /// are being enumerated) uses this to abort before reclaiming bytes the
+    /// now-ambiguous state may still need.
+    pub fn with_release_guard(mut self, guard: Arc<dyn Fn() -> Result<()> + Send + Sync>) -> Self {
+        self.release_guard = Some(guard);
+        self
+    }
+
+    fn check_release_guard(&self) -> Result<()> {
+        match &self.release_guard {
+            Some(guard) => guard(),
+            None => Ok(()),
+        }
+    }
+
     pub async fn sweep(&self) -> Result<BlobGcReport> {
+        self.check_release_guard()?;
         // Snapshot the store's append position BEFORE enumerating roots:
         // entries appended after this point are outside the root set's
         // authority and classify() keeps them unconditionally (see the
@@ -245,6 +266,11 @@ where
                 RetentionClass::Quarantined => report.quarantine_retained += 1,
                 RetentionClass::Grace => report.grace_retained += 1,
                 RetentionClass::Reclaim => {
+                    // Re-consult the liveness gate per release: the owning
+                    // composition can fail-stop while this loop runs, and a
+                    // release after that point could reclaim evidence the
+                    // ambiguous state still references.
+                    self.check_release_guard()?;
                     self.store.release(&entry.hash).await?;
                     report.swept += 1;
                 }
@@ -771,5 +797,106 @@ mod tests {
         assert_eq!(report.swept, 1, "pre-sweep same-tick entry must reclaim");
         assert_eq!(report.grace_retained, 0);
         assert!(!store.has(&hash).await.unwrap());
+    }
+
+    /// Roots provider that compacts the store (restructuring/reusing pack
+    /// ids) and THEN writes an unrooted blob, all during enumeration —
+    /// reproducing the pack-id-reuse hole a bare (pack_id, offset) boundary
+    /// has across empty compactions.
+    struct CompactsThenWrites {
+        store: LocalPackStore,
+        payload: Bytes,
+        written: std::sync::Mutex<Option<BlobHash>>,
+    }
+
+    #[async_trait::async_trait]
+    impl BlobGcRoots for CompactsThenWrites {
+        async fn live_blob_hashes(&self) -> Result<BTreeSet<BlobHash>> {
+            self.store.compact().await?;
+            let hash = self.store.put(self.payload.clone()).await?;
+            *self.written.lock().unwrap() = Some(hash);
+            Ok(BTreeSet::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn mid_sweep_write_survives_compaction_pack_id_reuse() {
+        // Review regression (Phase B round 5, P1): the snapshot boundary is
+        // epoch-led — compaction restructures pack ids (the empty-store
+        // branch resets them), so a post-compaction mid-sweep write can
+        // compare LOWER than the snapshot on (pack_id, offset) alone. The
+        // compaction epoch orders it correctly.
+        let (_dir, store) = open_temp(96);
+        // Roll several packs, then release everything so the compaction
+        // inside enumeration hits the empty-store restructure path with a
+        // HIGH active pack id snapshotted.
+        let mut hashes = Vec::new();
+        for i in 0..6u8 {
+            hashes.push(store.put(Bytes::from(vec![b'r' + i; 60])).await.unwrap());
+        }
+        for hash in &hashes {
+            store.release(hash).await.unwrap();
+        }
+
+        let roots = std::sync::Arc::new(CompactsThenWrites {
+            store: store.clone(),
+            payload: Bytes::from_static(b"post-compaction mid-sweep write"),
+            written: std::sync::Mutex::new(None),
+        });
+        let gc = BlobGc::new(
+            store.clone(),
+            CompositeBlobRoots::new().with(roots.clone() as std::sync::Arc<dyn BlobGcRoots>),
+            Duration::ZERO,
+        );
+        let report = gc.sweep().await.unwrap();
+        let hash = roots.written.lock().unwrap().expect("provider wrote");
+
+        assert_eq!(
+            report.swept, 0,
+            "post-compaction mid-sweep write must be boundary-retained"
+        );
+        assert!(store.has(&hash).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn release_guard_aborts_sweep_before_reclaiming() {
+        // Review regression (Phase B round 5, P1): a liveness gate that
+        // trips during the sweep aborts BEFORE any release — stale
+        // pre-snapshot orphans survive when the owning composition
+        // fail-stops mid-enumeration.
+        let (_dir, store) = open_temp(64 * 1024);
+        let clock = Arc::new(ManualClock::new(Timestamp(0)));
+        let store = store.with_clock(clock.clone());
+        let orphan = store
+            .put(Bytes::from_static(b"stale orphan"))
+            .await
+            .unwrap();
+        clock.advance(Duration::from_secs(3600));
+
+        let tripped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let guard_flag = tripped.clone();
+        let gc = BlobGc::new(store.clone(), StaticBlobRoots::default(), Duration::ZERO)
+            .with_clock(clock)
+            .with_release_guard(std::sync::Arc::new(move || {
+                if guard_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Err(nimbus_core::Error::storage(
+                        StorageErrorKind::Io,
+                        "composition fail-stopped",
+                    ));
+                }
+                Ok(())
+            }));
+
+        // Guard clear: the orphan reclaims normally on a fresh sweep...
+        // but first trip the guard and prove the abort path.
+        tripped.store(true, std::sync::atomic::Ordering::SeqCst);
+        let err = gc.sweep().await.unwrap_err();
+        assert!(err.to_string().contains("fail-stopped"));
+        assert!(store.has(&orphan).await.unwrap(), "nothing reclaimed");
+
+        tripped.store(false, std::sync::atomic::Ordering::SeqCst);
+        let report = gc.sweep().await.unwrap();
+        assert_eq!(report.swept, 1);
+        assert!(!store.has(&orphan).await.unwrap());
     }
 }

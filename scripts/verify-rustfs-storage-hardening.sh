@@ -263,6 +263,9 @@ required_tests=(
   blob_written_during_root_enumeration_survives_zero_grace_sweep
   same_tick_pre_sweep_entry_is_reclaimed_under_frozen_clock
   erasure_heal_rechecks_poison_under_the_mutation_lock
+  mid_sweep_write_survives_compaction_pack_id_reuse
+  release_guard_aborts_sweep_before_reclaiming
+  erasure_sweep_fails_closed_when_leg_poisons_mid_enumeration
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then

@@ -612,3 +612,44 @@ async fn erasure_heal_rechecks_poison_under_the_mutation_lock() {
     perms.set_mode(0o700);
     fs::set_permissions(&blocked, perms).unwrap();
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn erasure_sweep_fails_closed_when_leg_poisons_mid_enumeration() {
+    // Review fix (Phase B round 5, P1): the poison gate covers the RELEASE
+    // phase, not just sweep start — a leg that poisons while roots are
+    // being enumerated aborts the sweep before any shard is reclaimed.
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    // Stage a stale orphan shard (pre-snapshot, unrooted, past any grace).
+    let orphan = store
+        .drive_store(0)
+        .put(Bytes::from_static(b"ambiguous-state evidence"))
+        .await
+        .unwrap();
+
+    // Trip the poison DURING the sweep via a nondurable-rollback put run
+    // from inside a root provider look-alike: simplest deterministic form —
+    // poison BEFORE the release loop by arming and failing a put between
+    // construction and sweep.
+    let gc = store.shard_gc(0, std::time::Duration::ZERO).unwrap();
+    let blocked = manifest::manifest_dir(&store.drive_root(K + M - 1));
+    let mut perms = fs::metadata(&blocked).unwrap().permissions();
+    perms.set_mode(0o500);
+    fs::set_permissions(&blocked, perms).unwrap();
+    store.arm_nondurable_rollback();
+    store.put(payload(STRIPE + 41)).await.unwrap_err();
+    assert!(store.is_poisoned());
+
+    let err = gc.sweep().await.unwrap_err();
+    assert!(err.to_string().contains("poisoned"));
+    assert!(
+        store.drive_store(0).has(&orphan).await.unwrap(),
+        "no shard reclaimed after the leg fail-stopped"
+    );
+
+    let mut perms = fs::metadata(&blocked).unwrap().permissions();
+    perms.set_mode(0o700);
+    fs::set_permissions(&blocked, perms).unwrap();
+}

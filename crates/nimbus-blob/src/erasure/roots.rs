@@ -142,7 +142,20 @@ impl ErasureBlobStore {
             self.poison_flag(),
         );
         let roots = CompositeBlobRoots::new().with(Arc::new(roots));
+        let poisoned = self.poison_flag();
+        let release_guard: Arc<dyn Fn() -> nimbus_core::Result<()> + Send + Sync> =
+            Arc::new(move || {
+                if poisoned.load(Ordering::SeqCst) {
+                    return Err(Error::storage(
+                        StorageErrorKind::Io,
+                        "erasure leg poisoned mid-sweep: refusing to release shards \
+                         the ambiguous manifest state may still reference",
+                    ));
+                }
+                Ok(())
+            });
         Ok(BlobGc::new(self.stores[drive_index].clone(), roots, grace)
-            .with_pins(self.leg_pins.clone()))
+            .with_pins(self.leg_pins.clone())
+            .with_release_guard(release_guard))
     }
 }
