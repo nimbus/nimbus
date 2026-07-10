@@ -378,3 +378,18 @@ async fn erasure_release_removes_manifest_everywhere() {
 }
 
 mod read_only;
+
+#[tokio::test]
+async fn erasure_config_rejects_nested_drive_roots() {
+    // Review fix (EOW round 17, P1): nested drive roots nest the
+    // per-tenant trees, and recursive tenant deletion on the ancestor
+    // would destroy the descendant drive's data.
+    let dir = tempfile::tempdir().unwrap();
+    let mut roots = (0..K + M - 1)
+        .map(|index| dir.path().join(format!("drive-{index}")))
+        .collect::<Vec<_>>();
+    roots.push(dir.path().join("drive-0").join("nested"));
+    let err = ErasureConfig::new("test-leg", roots, K, M, STRIPE)
+        .expect_err("nested drive roots must be rejected");
+    assert!(err.to_string().contains("must not nest"), "{err}");
+}
