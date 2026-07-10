@@ -346,6 +346,18 @@ async fn run_restore_object_store(
     let raw = std::fs::read(&command.input)?;
     let bundle = BackupBundle::decode(raw.into())?;
     let key_escrow = read_key_escrow(&command.key_escrow_id, &command.key_escrow_file)?;
+    // Fail BEFORE any filesystem mutation if the presented escrow is not
+    // the one recorded in this bundle: installing a different (even valid)
+    // manifest would poison a fresh target — the failed restore leaves the
+    // wrong sidecar behind and the differing-sidecar check then rejects
+    // the correct retry.
+    if &key_escrow != bundle.key_escrow() {
+        return Err(format!(
+            "key escrow {} does not match the escrow recorded in the backup bundle — supply the escrow captured by the matching backup run",
+            command.key_escrow_file.display()
+        )
+        .into());
+    }
     let engine = open_engine(&command.data_dir, command.provider).await?;
     // Install the escrowed wrapped-DEK sidecar BEFORE restoring bytes: the
     // bundle's chunks are ciphertext sealed under that key, and a fresh
@@ -363,17 +375,21 @@ async fn run_restore_object_store(
     // at open, so installing a foreign-path manifest would only defer the
     // failure), and actually unwrap under the LOCAL master key for THIS
     // tenant's blob-key subject — proving key bytes, tenant binding, and
-    // manifest integrity in one step.
-    let escrow_manifest = nimbus_crypto::KeyManifest::read(&command.key_escrow_file)
-        .map_err(|err| -> Box<dyn Error> {
-            format!(
-                "key escrow file {} is not a valid key manifest — escrow the tenant's                  blob-key sidecar ({}): {err}",
-                command.key_escrow_file.display(),
-                sidecar_path.display()
-            )
-            .into()
-        })?;
-    let master_key_path = nimbus::object_master_key_path(&command.data_dir);
+    // manifest integrity in one step. Parse the SAME captured bytes that
+    // will be installed — never a second read of the escrow path.
+    let escrow_manifest = nimbus_crypto::KeyManifest::from_bytes(
+        escrow_bytes,
+        &command.key_escrow_file,
+    )
+    .map_err(|err| -> Box<dyn Error> {
+        format!(
+            "key escrow file {} is not a valid key manifest — escrow the tenant's blob-key sidecar ({}): {err}",
+            command.key_escrow_file.display(),
+            sidecar_path.display()
+        )
+        .into()
+    })?;
+    let master_key_path = master_key_path_from_env(&command.data_dir)?;
     let provider =
         nimbus_crypto::MasterKeyFileProvider::new(master_key_path.clone()).map_err(|err| {
             format!(
@@ -583,6 +599,17 @@ async fn run_erasure_heal(command: ErasureHealCommand) -> Result<(), Box<dyn Err
 /// incomplete backups and incomplete tenant deletion.
 fn local_leg_from_env() -> Result<LocalLeg, Box<dyn Error>> {
     Ok(ObjectStorageConfig::from_env(None)?.local_leg().clone())
+}
+
+/// The master-key file this deployment resolves: the configured override
+/// (`NIMBUS_OBJECT_STORAGE_MASTER_KEY_FILE`) when set, matching
+/// `ObjectStorageResolver::object_master_key_path`, else the data-dir
+/// default.
+fn master_key_path_from_env(data_dir: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    Ok(ObjectStorageConfig::from_env(None)?
+        .master_key_file()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| nimbus::object_master_key_path(data_dir)))
 }
 
 fn erasure_config_from_env(tenant: &TenantId) -> Result<ErasureConfig, Box<dyn Error>> {
@@ -1350,6 +1377,89 @@ mod tests {
         assert!(
             !nimbus::object_blob_root(target_dir.path(), &tenant).exists(),
             "restore must not leave partial state behind on validation failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_rejects_a_valid_escrow_that_is_not_the_bundles() {
+        // A DIFFERENT tenant's sidecar is a perfectly valid manifest for
+        // this deployment — restore must still refuse it BEFORE installing
+        // anything, or the poisoned sidecar would block the correct retry.
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Engine::new(dir.path()).unwrap());
+        let tenant_a = TenantId::new("bundle-tenant").unwrap();
+        let tenant_b = TenantId::new("other-tenant").unwrap();
+        engine.create_tenant(tenant_a.clone()).unwrap();
+        engine.create_tenant(tenant_b.clone()).unwrap();
+        let resolver = ObjectStorageResolver::new(engine.clone());
+        let store_a = resolver.blob_store(&tenant_a).unwrap();
+        store_a.put(Bytes::from_static(b"payload a")).await.unwrap();
+        let _store_b = resolver.blob_store(&tenant_b).unwrap();
+        drop(store_a);
+        drop(_store_b);
+        drop(resolver);
+        engine.quiesce().await;
+        drop(engine);
+
+        let sidecar_a = nimbus::KeyManifest::manifest_path(&nimbus::object_blob_key_path(
+            dir.path(),
+            &tenant_a,
+        ));
+        let escrow_a = dir.path().join("escrow-a.bin");
+        std::fs::copy(&sidecar_a, &escrow_a).unwrap();
+        let bundle_path = dir.path().join("backup.nobb");
+        run_backup_object_store(BackupObjectStoreCommand {
+            tenant: tenant_a.as_str().to_string(),
+            data_dir: dir.path().to_path_buf(),
+            out: bundle_path.clone(),
+            key_escrow_id: "bundle-tenant".to_string(),
+            key_escrow_file: escrow_a,
+            provider: ObjectStorageProvider::Sqlite,
+        })
+        .await
+        .unwrap();
+
+        // Simulate loss, then present tenant B's (valid) sidecar as escrow.
+        std::fs::remove_dir_all(dir.path().join("object-blobs")).unwrap();
+        let sidecar_b_escrow = dir.path().join("escrow-b.bin");
+        // tenant B's sidecar was wiped with the byte plane; recreate a
+        // valid foreign manifest by re-opening tenant B's store.
+        let engine = Arc::new(Engine::new(dir.path()).unwrap());
+        let resolver = ObjectStorageResolver::new(engine.clone());
+        let _store_b = resolver.blob_store(&tenant_b).unwrap();
+        drop(_store_b);
+        drop(resolver);
+        engine.quiesce().await;
+        drop(engine);
+        std::fs::copy(
+            nimbus::KeyManifest::manifest_path(&nimbus::object_blob_key_path(
+                dir.path(),
+                &tenant_b,
+            )),
+            &sidecar_b_escrow,
+        )
+        .unwrap();
+        // Remove tenant A's freshly-minted state so install-nothing is
+        // observable.
+        std::fs::remove_dir_all(nimbus::object_blob_root(dir.path(), &tenant_a)).ok();
+
+        let err = run_restore_object_store(RestoreObjectStoreCommand {
+            tenant: tenant_a.as_str().to_string(),
+            data_dir: dir.path().to_path_buf(),
+            input: bundle_path,
+            key_escrow_id: "bundle-tenant".to_string(),
+            key_escrow_file: sidecar_b_escrow,
+            provider: ObjectStorageProvider::Sqlite,
+        })
+        .await
+        .expect_err("an escrow that is not the bundle's must be refused");
+        assert!(
+            err.to_string().contains("recorded in the backup bundle"),
+            "{err}"
+        );
+        assert!(
+            !nimbus::object_blob_root(dir.path(), &tenant_a).exists(),
+            "refusal must install nothing for the target tenant"
         );
     }
 }
