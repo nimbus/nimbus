@@ -48,6 +48,11 @@ fn mib_per_sec(bytes: u64, elapsed_secs: f64) -> f64 {
 struct Lane {
     name: &'static str,
     store: Box<dyn BlobStore>,
+    /// The lane's ACTUAL stripe width (the k*2-floored value for erasure
+    /// lanes; None for local-pack) — reported per lane, since e.g. 12+4
+    /// floors 1 MiB to 1,048,560 and a 4 MiB object then carries a fifth
+    /// 64-byte stripe, which is material to interpreting the numbers.
+    stripe_width: Option<usize>,
     _dirs: Vec<tempfile::TempDir>,
 }
 
@@ -57,6 +62,7 @@ fn local_lane() -> Lane {
     Lane {
         name: "local-pack",
         store: Box::new(store),
+        stripe_width: None,
         _dirs: vec![dir],
     }
 }
@@ -76,6 +82,7 @@ fn erasure_lane(name: &'static str, data: usize, parity: usize) -> Lane {
     Lane {
         name,
         store: Box::new(store),
+        stripe_width: Some(stripe_width),
         _dirs: dirs,
     }
 }
@@ -100,8 +107,11 @@ async fn bench_lane(lane: &Lane) {
     let get_small = start.elapsed().as_secs_f64();
 
     // -- large-object put/get --
+    // Lengths vary per object (still even) so no two objects share a
+    // degenerate tail stripe: identical all-zero-padding shards would
+    // dedup in the pack stores and silently inflate put throughput.
     let large: Vec<Bytes> = (0..LARGE_ITERS)
-        .map(|index| payload(LARGE_LEN, 100 + index as u8))
+        .map(|index| payload(LARGE_LEN + index * 8192, 100 + index as u8))
         .collect();
     let start = Instant::now();
     let mut large_hashes = Vec::with_capacity(LARGE_ITERS);
@@ -111,17 +121,21 @@ async fn bench_lane(lane: &Lane) {
     let put_large = start.elapsed().as_secs_f64();
 
     let start = Instant::now();
-    for hash in &large_hashes {
+    for (source, hash) in large.iter().zip(&large_hashes) {
         let bytes = lane.store.get(hash).await.expect("get");
-        assert_eq!(bytes.len(), LARGE_LEN);
+        assert_eq!(bytes.len(), source.len());
     }
     let get_large = start.elapsed().as_secs_f64();
 
     // -- ranged reads over large objects --
+    // Stride the window across the FULL object span so every stripe is
+    // exercised (a small fixed stride never left stripe 0 — review fix).
+    let span = (LARGE_LEN as u64) - RANGE_LEN;
+    let stride = (span / RANGE_ITERS as u64).max(2) & !1;
     let start = Instant::now();
     for iteration in 0..RANGE_ITERS {
         let hash = &large_hashes[iteration % large_hashes.len()];
-        let offset = ((iteration as u64 * 37) % ((LARGE_LEN as u64) - RANGE_LEN)) & !1;
+        let offset = ((iteration as u64 * stride) % span) & !1;
         let slice = lane
             .store
             .get_range(hash, offset..offset + RANGE_LEN)
@@ -131,11 +145,42 @@ async fn bench_lane(lane: &Lane) {
     }
     let range_reads = start.elapsed().as_secs_f64();
 
+    // UNTIMED validation: benchmark evidence is only meaningful if the
+    // lanes returned the RIGHT bytes — hashes match inputs, full gets
+    // equal their payloads, and sampled ranges equal the source slices.
+    for (bytes, hash) in small.iter().zip(&hashes) {
+        assert_eq!(*hash, nimbus_blob::BlobHash::of(bytes), "put hash mismatch");
+        assert_eq!(&lane.store.get(hash).await.expect("verify get"), bytes);
+    }
+    for (bytes, hash) in large.iter().zip(&large_hashes) {
+        assert_eq!(*hash, nimbus_blob::BlobHash::of(bytes), "put hash mismatch");
+        assert_eq!(&lane.store.get(hash).await.expect("verify get"), bytes);
+    }
+    for iteration in 0..RANGE_ITERS {
+        let object = iteration % large_hashes.len();
+        let object_span = (large[object].len() as u64) - RANGE_LEN;
+        let offset = ((iteration as u64 * stride) % object_span.min(span)) & !1;
+        let slice = lane
+            .store
+            .get_range(&large_hashes[object], offset..offset + RANGE_LEN)
+            .await
+            .expect("verify get_range");
+        assert_eq!(
+            slice,
+            large[object].slice(offset as usize..(offset + RANGE_LEN) as usize),
+            "range window content mismatch"
+        );
+    }
+
     let small_bytes = (SMALL_ITERS * SMALL_LEN) as u64;
-    let large_bytes = (LARGE_ITERS * LARGE_LEN) as u64;
+    let large_bytes: u64 = large.iter().map(|bytes| bytes.len() as u64).sum();
     let range_bytes = RANGE_ITERS as u64 * RANGE_LEN;
+    let stripe = lane
+        .stripe_width
+        .map(|width| format!("stripe {width}B"))
+        .unwrap_or_else(|| "no striping".to_string());
     println!(
-        "{:<14} | put64K {:>8.1} MiB/s | get64K {:>8.1} MiB/s | put4M {:>8.1} MiB/s | get4M {:>8.1} MiB/s | range64K {:>8.1} MiB/s",
+        "{:<14} [{stripe}] | put64K {:>8.1} MiB/s | get64K {:>8.1} MiB/s | put~4M {:>8.1} MiB/s | get~4M {:>8.1} MiB/s | range64K {:>8.1} MiB/s",
         lane.name,
         mib_per_sec(small_bytes, put_small),
         mib_per_sec(small_bytes, get_small),
@@ -152,7 +197,7 @@ fn main() {
         .expect("tokio runtime");
     runtime.block_on(async {
         println!(
-            "workloads: {SMALL_ITERS}x{SMALL_LEN}B put/get, {LARGE_ITERS}x{LARGE_LEN}B put/get, {RANGE_ITERS}x{RANGE_LEN}B ranged reads (stripe {STRIPE_WIDTH}B)"
+            "workloads: {SMALL_ITERS}x{SMALL_LEN}B put/get, {LARGE_ITERS}x(~{LARGE_LEN}B, +8KiB/obj) put/get, {RANGE_ITERS}x{RANGE_LEN}B ranged reads striding the full span (stripe target {STRIPE_WIDTH}B, floored per lane)"
         );
         for lane in [
             local_lane(),
