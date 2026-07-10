@@ -794,3 +794,57 @@ async fn erasure_paced_heal_still_counts_planned_degraded_blobs() {
         "budget-deferred blob still reported degraded"
     );
 }
+
+#[tokio::test]
+async fn erasure_paced_heal_skips_over_budget_blob_without_starving_successors() {
+    // Opus confirmation finding (Phase B, P2): an over-budget blob must
+    // not wedge the scan — successors still repair, and beyond-repair
+    // detection (read-only, budget-free) behind it still reports.
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+
+    // Blob A: TWO damaged stripes (cost 2*STRIPE — exceeds the budget).
+    let a_bytes = payload_with_seed(2 * STRIPE, 41);
+    let a = store.put(a_bytes.clone()).await.unwrap();
+    let a_manifest = store.load_manifest_for_test(&a).await.unwrap();
+    release_shard(&store, &a_manifest, 0, 0).await;
+    release_shard(&store, &a_manifest, 1, 0).await;
+
+    // Blob B: one damaged stripe (repairable within budget).
+    let b_bytes = payload_with_seed(STRIPE, 42);
+    let b = store.put(b_bytes.clone()).await.unwrap();
+    let b_manifest = store.load_manifest_for_test(&b).await.unwrap();
+    release_shard(&store, &b_manifest, 0, 0).await;
+
+    // Blob C: beyond repair (m+1 losses in one stripe).
+    let c = store.put(payload_with_seed(STRIPE, 43)).await.unwrap();
+    let c_manifest = store.load_manifest_for_test(&c).await.unwrap();
+    for shard_index in 0..=M {
+        release_shard(&store, &c_manifest, 0, shard_index).await;
+    }
+
+    let pacing = HealPacing::max_bytes_per_run(STRIPE as u64).unwrap();
+    let report = ErasureHealer::new(store.clone())
+        .with_pacing(pacing)
+        .heal()
+        .await
+        .unwrap();
+
+    assert!(
+        report.exhausted,
+        "the over-budget blob marks the run exhausted"
+    );
+    assert!(
+        report.beyond_repair.contains(&c),
+        "beyond-repair detection is never hidden by pacing"
+    );
+    // ONE of the two repairable blobs fit the budget this run (scan order
+    // is hash-ordered, so which one is not fixed — assert progress, not
+    // order).
+    assert_eq!(report.stripes_repaired, 1, "successors are not starved");
+
+    // Unlimited follow-up completes everything repairable.
+    let follow_up = ErasureHealer::new(store.clone()).heal().await.unwrap();
+    assert!(!follow_up.exhausted);
+    assert_eq!(store.get(&a).await.unwrap(), a_bytes);
+    assert_eq!(store.get(&b).await.unwrap(), b_bytes);
+}

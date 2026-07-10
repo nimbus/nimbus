@@ -122,12 +122,15 @@ impl ErasureHealer {
             self.store
                 .validate_manifest(&manifest.blob_hash, manifest)?;
             report.blobs_examined += 1;
+            // A budget refusal SKIPS the blob and keeps scanning: breaking
+            // here would let one over-budget blob starve every successor —
+            // including read-only beyond-repair detection, which consumes
+            // no budget and must never be hidden by pacing.
             if self
                 .heal_manifest(manifest, &mut report, &mut budget)
                 .await?
             {
                 report.exhausted = true;
-                break;
             }
         }
 
