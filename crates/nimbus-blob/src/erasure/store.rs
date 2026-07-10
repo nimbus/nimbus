@@ -133,7 +133,17 @@ impl ErasureBlobStore {
             drive_roots.push(canonical);
         }
 
-        let shared = shared_state_for(&drive_roots[0]);
+        // Read-only handles use DETACHED leg state: joining the process-wide
+        // registry would hold the writable leg's entry alive (its poison
+        // atomic included), blocking the documented drop-and-reopen
+        // recovery while an inspector merely exists. Inspectors never
+        // mutate, so they need no shared lock/pins, and they ignore poison
+        // by design.
+        let shared = if read_only {
+            Arc::new(LegSharedState::detached())
+        } else {
+            shared_state_for(&drive_roots[0])
+        };
         Ok(Self {
             config,
             drive_roots,
@@ -366,7 +376,7 @@ impl ErasureBlobStore {
             // ones.)
             if self.read_only
                 && self
-                    .snapshot_lags_disk(manifest, stripe_index, &failed_shards)
+                    .snapshot_lags_disk(manifest, stripe_index, present.len(), &failed_shards)
                     .await?
             {
                 return Err(Error::storage(
@@ -388,22 +398,25 @@ impl ErasureBlobStore {
     }
 
     /// Proof of read-only snapshot staleness: for each shard THIS handle
-    /// failed to read, freshly re-open that drive's on-disk index — if the
-    /// fresh view serves the shard, a writer changed the drive after our
-    /// snapshot (a later put, or compaction relocating packs our frozen
-    /// index still points at), so the failure is staleness (Busy), not
-    /// damage. A shard the fresh view also cannot serve is stable loss and
-    /// stays Corruption. Slow path: runs only on read-only quorum failure.
+    /// failed to read, freshly re-open that drive's on-disk index. The
+    /// failure only counts as staleness (Busy, re-open) when the healthy
+    /// shards we DID read plus the freshly recoverable ones reach the
+    /// data-shard quorum — one relocated shard must not mask additional
+    /// stably-lost shards behind a retry hint; anything short of a fresh
+    /// quorum stays a Corruption verdict. Slow path: runs only on
+    /// read-only quorum failure.
     async fn snapshot_lags_disk(
         &self,
         manifest: &ErasureManifest,
         stripe_index: usize,
+        healthy: usize,
         failed_shards: &[usize],
     ) -> Result<bool> {
         let Some(stripe) = manifest.stripes.get(stripe_index) else {
             return Ok(false);
         };
         let total = manifest.data_shards + manifest.parity_shards;
+        let mut fresh_recoverable = 0usize;
         for shard in stripe {
             let shard_index = shard.shard_index as usize;
             if !failed_shards.contains(&shard_index) {
@@ -419,7 +432,10 @@ impl ErasureBlobStore {
                 Some(drive_identity(&self.config.leg_id, drive)),
             )?;
             if fresh.get(&shard.shard_hash).await.is_ok() {
-                return Ok(true);
+                fresh_recoverable += 1;
+                if healthy + fresh_recoverable >= manifest.data_shards {
+                    return Ok(true);
+                }
             }
         }
         Ok(false)
@@ -719,6 +735,17 @@ where
     tokio::task::spawn_blocking(op)
         .await
         .map_err(|err| Error::storage(StorageErrorKind::Other, format!("erasure task: {err}")))?
+}
+
+impl LegSharedState {
+    fn detached() -> Self {
+        Self {
+            mutation: Arc::new(AsyncMutex::new(())),
+            leg_pins: BlobPinRegistry::new(),
+            last_heal: Arc::new(StdMutex::new(None)),
+            poisoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
 }
 
 struct LegSharedState {

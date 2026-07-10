@@ -1398,3 +1398,79 @@ async fn erasure_read_only_stats_tolerate_fresh_and_absent_roots() {
         "absent drive reports empty"
     );
 }
+
+#[tokio::test]
+async fn erasure_read_only_mixed_stale_and_stable_loss_stays_corruption() {
+    // Review fix (EOW round 5, P1): one fresh-recoverable (relocated)
+    // shard must not Busy-mask additional STABLE loss — staleness only
+    // explains a quorum failure when healthy + freshly recoverable shards
+    // reach the data quorum.
+    let (_dir, store, roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(STRIPE + 27);
+    let hash = store.put(bytes).await.unwrap();
+    let manifest = store.load_manifest_for_test(&hash).await.unwrap();
+
+    // STABLE loss beyond parity BEFORE the inspector opens: release m+1
+    // data shards.
+    for shard_index in 0..=M {
+        let reference = manifest.stripes[0]
+            .iter()
+            .find(|candidate| candidate.shard_index as usize == shard_index)
+            .unwrap();
+        let drive = stripe::drive_for(shard_index, 0, K + M);
+        store
+            .drive_store(drive)
+            .release(&reference.shard_hash)
+            .await
+            .unwrap();
+    }
+    let inspector = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("test-leg", roots, K, M, STRIPE).unwrap(),
+    )
+    .unwrap();
+    // AFTER the snapshot, the writer compacts the remaining drives —
+    // relocating the surviving shards (fresh-recoverable for the
+    // inspector) without changing the beyond-repair reality.
+    for drive in 0..(K + M) {
+        store
+            .sweep_drive(drive, std::time::Duration::ZERO)
+            .await
+            .unwrap();
+    }
+
+    let err = inspector.get(&hash).await.unwrap_err();
+    assert_eq!(
+        err.storage_kind(),
+        Some(StorageErrorKind::Corruption),
+        "stable beyond-parity loss must stay Corruption even with relocated survivors: {err}"
+    );
+}
+
+#[tokio::test]
+async fn erasure_read_only_handle_does_not_pin_writable_leg_state() {
+    // Review fix (EOW round 5, P2): an inspector must not hold the
+    // writable leg's registry entry alive — a poisoned writable leg
+    // recovers by drop-and-reopen, and that recovery must work while an
+    // inspector merely exists.
+    let (_dir, store, roots) = open_temp(K, M, STRIPE);
+    store.put(payload(STRIPE + 29)).await.unwrap();
+    let inspector = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("test-leg", roots.clone(), K, M, STRIPE).unwrap(),
+    )
+    .unwrap();
+
+    store.poison_for_test();
+    assert!(store.is_poisoned());
+    drop(store);
+
+    // Reopen writable WHILE the inspector lives: the fresh leg must not
+    // alias the dropped leg's poison.
+    let reopened =
+        ErasureBlobStore::open(ErasureConfig::new("test-leg", roots, K, M, STRIPE).unwrap())
+            .unwrap();
+    assert!(
+        !reopened.is_poisoned(),
+        "drop-and-reopen recovery must not be blocked by a live inspector"
+    );
+    drop(inspector);
+}

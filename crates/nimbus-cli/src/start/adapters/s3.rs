@@ -18,8 +18,8 @@ impl<F> ObjectStorageEnv for AdapterObjectStorageEnv<'_, F>
 where
     F: Fn(&str) -> Option<String>,
 {
-    fn get(&self, key: &str) -> Option<String> {
-        (self.lookup)(key)
+    fn get(&self, key: &str) -> nimbus::Result<Option<String>> {
+        Ok((self.lookup)(key))
     }
 }
 

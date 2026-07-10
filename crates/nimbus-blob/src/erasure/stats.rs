@@ -71,7 +71,25 @@ impl ErasureBlobStore {
                 per_drive.push(LocalPackStats::default());
                 continue;
             }
-            per_drive.push(store.stats().await?);
+            match store.stats().await {
+                Ok(stats) => per_drive.push(stats),
+                // Read-only status races a live writer (its frozen index vs
+                // current pack files — compaction can remove a pack between
+                // dir listing and metadata): surface Busy with a re-open
+                // hint, not a spurious hard failure. Writable handles keep
+                // real errors. NOTE: read-only per-drive numbers are
+                // point-in-time approximations under concurrent writers.
+                Err(err) if self.is_read_only() => {
+                    return Err(Error::storage(
+                        StorageErrorKind::Busy,
+                        format!(
+                            "erasure status raced a concurrent writer on drive {index} \
+                             (re-open to inspect): {err}"
+                        ),
+                    ));
+                }
+                Err(err) => return Err(err),
+            }
         }
 
         let drive_roots = self.drive_roots.clone();

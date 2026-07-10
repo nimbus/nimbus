@@ -252,6 +252,20 @@ fn main() {
             !targets.is_empty() && targets.iter().all(|target| *target > 0),
             "NIMBUS_BENCH_STRIPE_WIDTHS must contain positive comma-separated widths"
         );
+        // Validate EVERY target against EVERY swept layout BEFORE any timed
+        // lane runs: an invalid width must fail up front, not after minutes
+        // of benchmarking earlier lanes.
+        for target in &targets {
+            for (data, parity) in [(4usize, 2usize), (12, 4)] {
+                let unit = data * 2;
+                let floored = (target / unit) * unit;
+                assert!(
+                    floored > 0,
+                    "stripe target {target} floors to zero for the {data}+{parity} layout \
+                     (must be at least {unit})"
+                );
+            }
+        }
         targets
     });
     let runtime = tokio::runtime::Builder::new_multi_thread()

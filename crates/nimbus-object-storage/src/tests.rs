@@ -25,8 +25,8 @@ use crate::{
 struct MapEnv(BTreeMap<String, String>);
 
 impl ObjectStorageEnv for MapEnv {
-    fn get(&self, key: &str) -> Option<String> {
-        self.0.get(key).cloned()
+    fn get(&self, key: &str) -> nimbus_core::Result<Option<String>> {
+        Ok(self.0.get(key).cloned())
     }
 }
 
@@ -612,4 +612,28 @@ fn resolver_cache_is_tenant_scoped() {
         roots.get(&TenantId::new("tenant-a").unwrap()),
         roots.get(&TenantId::new("tenant-b").unwrap())
     );
+}
+
+struct BrokenEnv;
+
+impl ObjectStorageEnv for BrokenEnv {
+    fn get(&self, key: &str) -> nimbus_core::Result<Option<String>> {
+        if key == "NIMBUS_OBJECT_STORAGE_LOCAL_LEG" {
+            Err(nimbus_core::Error::InvalidInput(format!(
+                "environment variable {key} is set but not valid UTF-8"
+            )))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+#[test]
+fn invalid_env_value_fails_closed_instead_of_defaulting_to_pack() {
+    // Review fix (EOW round 5, P2): a set-but-invalid (non-UTF-8)
+    // NIMBUS_OBJECT_STORAGE_LOCAL_LEG must fail configuration, not
+    // silently start against the pack root.
+    let err = ObjectStorageConfig::from_sources(None, &BrokenEnv)
+        .expect_err("invalid env value must fail closed");
+    assert!(err.to_string().contains("not valid UTF-8"));
 }
