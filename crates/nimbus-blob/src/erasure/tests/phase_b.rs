@@ -463,3 +463,84 @@ async fn erasure_poisoned_leg_refuses_shard_gc() {
     fs::set_permissions(&blocked, perms).unwrap();
     let _ = committed;
 }
+
+#[tokio::test]
+async fn erasure_heal_rewrites_unquarantined_corrupt_shard() {
+    // Review fix (Phase B round 2, P1): a bit-flipped shard whose record is
+    // corrupt on disk but still INDEXED must be released before rewrite —
+    // LocalPackStore::put is an idempotent no-op for an indexed hash, so a
+    // bare re-put would report "repaired" while the bad bytes stayed. The
+    // healer also reads the shard back and only counts repairs it can
+    // serve.
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(STRIPE + 9);
+    let hash = store.put(bytes.clone()).await.unwrap();
+    let manifest = store.load_manifest_for_test(&hash).await.unwrap();
+
+    // Corrupt shard 0's record body on disk WITHOUT scrubbing (stays
+    // indexed, unquarantined).
+    let shard = manifest.stripes[0]
+        .iter()
+        .find(|candidate| candidate.shard_index == 0)
+        .unwrap();
+    let drive = stripe::drive_for(0, 0, K + M);
+    flip_shard_body_byte(&store.drive_root(drive), &shard.shard_hash);
+    assert_eq!(
+        store
+            .drive_store(stripe::drive_for(0, 0, K + M))
+            .get(&shard.shard_hash)
+            .await
+            .unwrap_err()
+            .storage_kind(),
+        Some(StorageErrorKind::Corruption),
+        "precondition: shard is corrupt but indexed"
+    );
+
+    let report = ErasureHealer::new(store.clone()).heal().await.unwrap();
+    assert_eq!(report.shards_rewritten, 1);
+    assert!(report.beyond_repair.is_empty());
+
+    // The drive ACTUALLY serves the healed shard now, and the blob reads
+    // non-degraded.
+    assert!(
+        store
+            .drive_store(drive)
+            .get(&shard.shard_hash)
+            .await
+            .is_ok(),
+        "healed shard must be servable, not an idempotent no-op"
+    );
+    assert_eq!(store.get(&hash).await.unwrap(), bytes);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn erasure_gc_never_sweeps_inflight_put_shards() {
+    // Review fix (Phase B round 2, P1): put pins its shard hashes before
+    // any byte lands, so even a ZERO-grace sweep racing a put cannot
+    // reclaim pre-publish shards — every acknowledged put remains fully
+    // readable.
+    let (_dir, store, _roots) = open_temp(2, 1, STRIPE);
+    for round in 0..10 {
+        let blob = payload(4 * STRIPE + round);
+        let put_store = store.clone();
+        let put_blob = blob.clone();
+        let put_task = tokio::spawn(async move { put_store.put(put_blob).await });
+
+        let gc_store = store.clone();
+        let gc_task = tokio::spawn(async move {
+            for drive in 0..3 {
+                let gc = gc_store.shard_gc(drive, std::time::Duration::ZERO).unwrap();
+                let _ = gc.sweep().await.unwrap();
+            }
+        });
+
+        let hash = put_task.await.unwrap().unwrap();
+        gc_task.await.unwrap();
+        assert_eq!(
+            store.get(&hash).await.unwrap(),
+            blob,
+            "an acknowledged put must survive a racing zero-grace sweep (round {round})"
+        );
+        store.release(&hash).await.unwrap();
+    }
+}

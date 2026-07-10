@@ -155,7 +155,7 @@ impl ErasureHealer {
             .validate_manifest(&manifest.blob_hash, &manifest)?;
         let _pins = self
             .store
-            .heal_pins
+            .leg_pins
             .pin_all(manifest_shard_hashes(&manifest));
 
         let mut repaired_any = false;
@@ -225,15 +225,15 @@ impl ErasureHealer {
             let drive = stripe::drive_for(shard_index, stripe_index, total);
             let store = &self.store.stores[drive];
             if !store.has(&shard.shard_hash).await? {
-                bad.push(shard_index);
+                bad.push((shard_index, false));
                 continue;
             }
             match store.get(&shard.shard_hash).await {
                 Ok(bytes) => healthy.push((shard_index, bytes)),
                 Err(err) if err.storage_kind() == Some(StorageErrorKind::Corruption) => {
-                    bad.push(shard_index);
+                    bad.push((shard_index, true));
                 }
-                Err(Error::NotFound(_)) => bad.push(shard_index),
+                Err(Error::NotFound(_)) => bad.push((shard_index, false)),
                 Err(err) => return Err(err),
             }
         }
@@ -262,7 +262,7 @@ impl ErasureHealer {
         let encoded =
             stripe::encode_stripe(&stripe_bytes, manifest.data_shards, manifest.parity_shards)?;
         let mut writes = Vec::with_capacity(probe.bad.len());
-        for shard_index in &probe.bad {
+        for (shard_index, present_but_corrupt) in &probe.bad {
             let shard = shard_ref(manifest, stripe_index, *shard_index)?;
             let shard_bytes = encoded.get(*shard_index).ok_or_else(|| {
                 corruption(format!("erasure encoder omitted shard {shard_index}"))
@@ -270,16 +270,40 @@ impl ErasureHealer {
             if BlobHash::of(shard_bytes) != shard.shard_hash {
                 return Ok(RepairOutcome::VerificationFailed);
             }
-            writes.push((*shard_index, shard.shard_hash, shard_bytes.clone()));
+            writes.push((
+                *shard_index,
+                shard.shard_hash,
+                shard_bytes.clone(),
+                *present_but_corrupt,
+            ));
         }
 
         let total = manifest.data_shards + manifest.parity_shards;
-        for (shard_index, expected_hash, shard_bytes) in &writes {
+        for (shard_index, expected_hash, shard_bytes, present_but_corrupt) in &writes {
             let drive = stripe::drive_for(*shard_index, stripe_index, total);
-            let actual = self.store.stores[drive].put(shard_bytes.clone()).await?;
+            let store = &self.store.stores[drive];
+            if *present_but_corrupt {
+                // A corrupt record can still be indexed; put would be an
+                // idempotent no-op leaving the bad bytes in place. Release
+                // the claim first so the rewrite appends fresh bytes (this
+                // also clears an orphaned quarantine per RFS5). The shard
+                // was already unreadable, so no reader regresses during the
+                // release->put window.
+                store.release(expected_hash).await?;
+            }
+            let actual = store.put(shard_bytes.clone()).await?;
             if actual != *expected_hash {
                 return Err(corruption(format!(
                     "healed erasure shard {shard_index} wrote {actual}, expected {expected_hash}"
+                )));
+            }
+            // Read back: the repair only counts if the drive actually
+            // serves the healed bytes (guards any further idempotent-no-op
+            // class in the underlying store).
+            let served = store.get(expected_hash).await?;
+            if served != *shard_bytes {
+                return Err(corruption(format!(
+                    "healed erasure shard {shard_index} does not serve the rewritten bytes"
                 )));
             }
         }
@@ -289,7 +313,11 @@ impl ErasureHealer {
 
 struct StripeProbe {
     healthy: Vec<(usize, Bytes)>,
-    bad: Vec<usize>,
+    /// (shard_index, present_but_corrupt): a corrupt-but-still-indexed
+    /// record must be RELEASED before rewriting — LocalPackStore::put is an
+    /// idempotent no-op for an indexed hash, so a bare re-put would count
+    /// as repaired while the corrupt bytes stay on disk.
+    bad: Vec<(usize, bool)>,
 }
 
 enum RepairOutcome {

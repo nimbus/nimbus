@@ -143,6 +143,6 @@ impl ErasureBlobStore {
         );
         let roots = CompositeBlobRoots::new().with(Arc::new(roots));
         Ok(BlobGc::new(self.stores[drive_index].clone(), roots, grace)
-            .with_pins(self.heal_pins.clone()))
+            .with_pins(self.leg_pins.clone()))
     }
 }

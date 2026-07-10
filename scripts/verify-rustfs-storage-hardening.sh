@@ -258,6 +258,8 @@ required_tests=(
   erasure_heal_pacing_stops_at_budget
   erasure_stats_aggregates_per_drive_and_heal
   erasure_poisoned_leg_refuses_shard_gc
+  erasure_heal_rewrites_unquarantined_corrupt_shard
+  erasure_gc_never_sweeps_inflight_put_shards
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then

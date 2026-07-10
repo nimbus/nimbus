@@ -37,7 +37,11 @@ pub struct ErasureBlobStore {
     /// stay lock-free: a loaded manifest keeps serving (shards outlive
     /// release until Phase B GC), and quorum keeps partial states invisible.
     pub(super) mutation: Arc<AsyncMutex<()>>,
-    pub(super) heal_pins: BlobPinRegistry,
+    /// Leg-wide pin registry: heal pins the blob it is repairing, and put
+    /// pins its in-flight shards until the manifest publish resolves —
+    /// both compose into every drive's shard GC so a sweep never reclaims
+    /// bytes an active operation depends on.
+    pub(super) leg_pins: BlobPinRegistry,
     /// Fail-stop poison (RFS3 fsyncgate idiom): set when a publish rollback
     /// could not be made durable while below quorum — the failed put's
     /// replicas may resurface after a crash, so no further operation on
@@ -102,7 +106,7 @@ impl ErasureBlobStore {
             observer,
             shared: Arc::clone(&shared),
             mutation: Arc::clone(&shared.mutation),
-            heal_pins: shared.heal_pins.clone(),
+            leg_pins: shared.leg_pins.clone(),
             poisoned: Arc::clone(&shared.poisoned),
             #[cfg(test)]
             force_nondurable_rollback: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -363,7 +367,7 @@ impl ErasureBlobStore {
 
     #[cfg(test)]
     pub(crate) fn heal_pin_registry(&self) -> BlobPinRegistry {
-        self.heal_pins.clone()
+        self.leg_pins.clone()
     }
 
     #[cfg(test)]
@@ -420,6 +424,13 @@ impl BlobStore for ErasureBlobStore {
             stripes: Vec::new(),
         };
 
+        // Pin every shard hash BEFORE its bytes land: pre-publish shards are
+        // unrooted (ManifestShardRoots only sees visible manifests), so a
+        // concurrent sweep with a short grace could otherwise reclaim live
+        // shards mid-put and the acknowledged manifest would point at
+        // missing bytes. The RAII pins drop after publish resolves — on
+        // failure the orphans become sweepable again, which is correct.
+        let mut inflight_pins = Vec::new();
         for (stripe_index, chunk) in bytes.chunks(self.config.stripe_width).enumerate() {
             manifest.stripe_hashes.push(BlobHash::of(chunk));
             let shards =
@@ -428,7 +439,10 @@ impl BlobStore for ErasureBlobStore {
             for (shard_index, shard_bytes) in shards.into_iter().enumerate() {
                 let drive =
                     stripe::drive_for(shard_index, stripe_index, self.config.total_shards());
-                let shard_hash = self.stores[drive].put(shard_bytes).await?;
+                let shard_hash = BlobHash::of(&shard_bytes);
+                inflight_pins.push(self.leg_pins.pin(shard_hash));
+                let written = self.stores[drive].put(shard_bytes).await?;
+                debug_assert_eq!(written, shard_hash, "pack stores hash their input");
                 refs.push(ShardRef {
                     shard_index: shard_index as u16,
                     shard_hash,
@@ -576,7 +590,7 @@ where
 
 struct LegSharedState {
     mutation: Arc<AsyncMutex<()>>,
-    heal_pins: BlobPinRegistry,
+    leg_pins: BlobPinRegistry,
     last_heal: Arc<StdMutex<Option<HealSummary>>>,
     /// Poison is LEG state, not handle state: a nondurable rollback makes
     /// the on-disk manifest view ambiguous for every same-process handle
@@ -597,7 +611,7 @@ fn shared_state_for(drive0: &PathBuf) -> Arc<LegSharedState> {
     }
     let fresh = Arc::new(LegSharedState {
         mutation: Arc::new(AsyncMutex::new(())),
-        heal_pins: BlobPinRegistry::new(),
+        leg_pins: BlobPinRegistry::new(),
         last_heal: Arc::new(StdMutex::new(None)),
         poisoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
