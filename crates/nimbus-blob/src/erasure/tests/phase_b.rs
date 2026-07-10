@@ -544,3 +544,71 @@ async fn erasure_gc_never_sweeps_inflight_put_shards() {
         store.release(&hash).await.unwrap();
     }
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn erasure_heal_rechecks_poison_under_the_mutation_lock() {
+    // Review fix (Phase B round 4, P1): a healer that passed its initial
+    // liveness check and then waited behind a put must re-check the
+    // fail-stop AFTER acquiring the leg mutation lock — the put ahead of
+    // it can poison the leg (nondurable rollback), and healing against the
+    // ambiguous manifest view would violate the poison contract. Relies on
+    // tokio::sync::Mutex fairness (FIFO waiters) for the interleaving.
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(STRIPE + 17);
+    let hash = store.put(bytes.clone()).await.unwrap();
+    // Degrade the blob so heal has real work queued.
+    let manifest = store.load_manifest_for_test(&hash).await.unwrap();
+    let shard = manifest.stripes[0]
+        .iter()
+        .find(|candidate| candidate.shard_index == 0)
+        .unwrap();
+    store
+        .drive_store(stripe::drive_for(0, 0, K + M))
+        .release(&shard.shard_hash)
+        .await
+        .unwrap();
+
+    // Arm a poisoning put (fresh blob, nondurable rollback on the last
+    // drive), then interleave: hold the lock, queue the put (waiter 1),
+    // queue the heal (waiter 2), release.
+    let blocked = manifest::manifest_dir(&store.drive_root(K + M - 1));
+    let mut perms = fs::metadata(&blocked).unwrap().permissions();
+    perms.set_mode(0o500);
+    fs::set_permissions(&blocked, perms).unwrap();
+    store.arm_nondurable_rollback();
+
+    let guard = store.mutation_lock().lock_owned().await;
+    let put_store = store.clone();
+    let put_task = tokio::spawn(async move { put_store.put(payload(2 * STRIPE + 23)).await });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let heal_store = store.clone();
+    let heal_task = tokio::spawn(async move { ErasureHealer::new(heal_store).heal().await });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    drop(guard);
+
+    put_task.await.unwrap().unwrap_err();
+    assert!(store.is_poisoned(), "the queued put poisoned the leg");
+    let heal_err = heal_task
+        .await
+        .unwrap()
+        .expect_err("heal behind the poisoning put must fail-stop");
+    assert!(heal_err.to_string().contains("poisoned"));
+
+    // No generation bump was published over the ambiguous view.
+    let after = manifest::load_newest(
+        &hash,
+        &store.drive_roots(),
+        // parity+1 quorum for K=4, M=2
+        M + 1,
+    )
+    .unwrap()
+    .expect("committed blob still visible");
+    assert_eq!(after.generation, manifest.generation, "no heal publish");
+
+    let mut perms = fs::metadata(&blocked).unwrap().permissions();
+    perms.set_mode(0o700);
+    fs::set_permissions(&blocked, perms).unwrap();
+}

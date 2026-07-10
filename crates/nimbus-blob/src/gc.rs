@@ -107,7 +107,7 @@ enum RetentionClass {
 fn classify(
     entry: &LocalBlobEntry,
     roots: &BTreeSet<BlobHash>,
-    snapshot_millis: u64,
+    snapshot_position: (u64, u64),
     now_millis: u64,
     grace_millis: u64,
     pins: &BlobPinRegistry,
@@ -121,14 +121,16 @@ fn classify(
         RetentionClass::BackupHeld
     } else if entry.quarantined {
         RetentionClass::Quarantined
-    } else if entry.written_at_millis >= snapshot_millis {
-        // Root-snapshot boundary: the root set was enumerated at
-        // `snapshot_millis`, so it can say nothing about entries written
-        // after it. An entry that landed mid-sweep (e.g. a concurrent put
-        // whose roots/pins resolve after our snapshot) is retained
-        // UNCONDITIONALLY — even at zero grace — and re-judged by the next
-        // sweep. Without this, roots-at-t0 + pins-dropped-at-t1 +
-        // classify-at-t2 can reclaim a just-committed blob.
+    } else if entry.position >= snapshot_position {
+        // Root-snapshot boundary: the root set was enumerated when the
+        // store's append position was `snapshot_position`, so it can say
+        // nothing about entries appended at or after it. An entry that
+        // landed mid-sweep (e.g. a concurrent put whose roots/pins resolve
+        // after our snapshot) is retained UNCONDITIONALLY — even at zero
+        // grace — and re-judged by the next sweep. The position marker is
+        // strictly monotonic and clock-free: a millisecond snapshot would
+        // either race same-tick writes (strict >) or leak same-tick
+        // pre-snapshot entries forever under a non-advancing clock (>=).
         RetentionClass::Grace
     } else if now_millis.saturating_sub(entry.written_at_millis) < grace_millis {
         // Age-based grace: an entry stamped at or after `now` (clock
@@ -217,10 +219,11 @@ where
     /// [`RetentionClass::Reclaim`] arm releases a blob. The resulting summary
     /// is recorded on the store for [`LocalPackStore::stats`].
     pub async fn sweep(&self) -> Result<BlobGcReport> {
-        // Snapshot BEFORE enumerating roots: entries written after this
-        // instant are outside the root set's authority and classify() keeps
-        // them unconditionally (see the snapshot-boundary arm).
-        let snapshot = self.clock.now_millis();
+        // Snapshot the store's append position BEFORE enumerating roots:
+        // entries appended after this point are outside the root set's
+        // authority and classify() keeps them unconditionally (see the
+        // snapshot-boundary arm).
+        let snapshot = self.store.write_position()?;
         let roots = self.roots.live_blob_hashes().await?;
         let now = self.clock.now_millis();
         let grace_millis = self.grace_window.as_millis() as u64;
@@ -747,6 +750,26 @@ mod tests {
         let gc2 = BlobGc::new(store.clone(), noop_roots, Duration::ZERO);
         let report2 = gc2.sweep().await.unwrap();
         assert_eq!(report2.swept, 1);
+        assert!(!store.has(&hash).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn same_tick_pre_sweep_entry_is_reclaimed_under_frozen_clock() {
+        // Review regression (Phase B round 4, P2): the snapshot boundary is
+        // POSITION-based, not timestamp-based — under a non-advancing
+        // clock, an unrooted blob written before the sweep (same
+        // millisecond) is still reclaimed at zero grace instead of being
+        // grace-retained forever.
+        let (_dir, store) = open_temp(64 * 1024);
+        let clock = Arc::new(ManualClock::new(Timestamp(1_000)));
+        let store = store.with_clock(clock.clone());
+        let hash = store.put(Bytes::from_static(b"same tick")).await.unwrap();
+
+        let gc = BlobGc::new(store.clone(), StaticBlobRoots::default(), Duration::ZERO)
+            .with_clock(clock);
+        let report = gc.sweep().await.unwrap();
+        assert_eq!(report.swept, 1, "pre-sweep same-tick entry must reclaim");
+        assert_eq!(report.grace_retained, 0);
         assert!(!store.has(&hash).await.unwrap());
     }
 }

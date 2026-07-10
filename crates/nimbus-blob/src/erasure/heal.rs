@@ -148,6 +148,11 @@ impl ErasureHealer {
         budget: &mut HealBudget,
     ) -> Result<bool> {
         let _mutation = self.store.mutation.lock().await;
+        // Re-check the fail-stop UNDER the lock: a put queued ahead of us
+        // can poison the leg (nondurable rollback) while we waited, and
+        // healing against the now-ambiguous manifest view — or publishing a
+        // generation bump over it — would violate the poison contract.
+        self.store.ensure_live()?;
         let Some(mut manifest) = self.store.load_manifest(&initial.blob_hash).await? else {
             return Ok(false);
         };
