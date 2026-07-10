@@ -12,11 +12,16 @@
 //! [`crate::EncryptedBlobStore`].
 
 mod config;
+mod heal;
 mod manifest;
+mod roots;
+mod stats;
 mod store;
 mod stripe;
 
 pub use config::ErasureConfig;
+pub use heal::{ErasureHealer, HealPacing, HealReport, HealSummary};
+pub use stats::ErasureStats;
 pub use store::ErasureBlobStore;
 
 #[cfg(test)]

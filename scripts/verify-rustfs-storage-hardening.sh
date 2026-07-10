@@ -247,6 +247,30 @@ required_tests=(
   erasure_forged_blob_len_fails_closed_without_overallocation
   erasure_publish_failure_with_durable_quorum_reports_success
   erasure_nondurable_rollback_poisons_the_store
+  erasure_gc_reclaims_orphan_shards_after_failed_put
+  erasure_gc_respects_visible_manifest_roots
+  erasure_gc_grace_retains_young_orphans
+  erasure_heal_restores_missing_shard
+  erasure_heal_lifts_quarantine_via_reupload
+  erasure_heal_reports_beyond_repair_without_deleting
+  erasure_heal_verifies_before_writing
+  erasure_heal_window_blocks_gc
+  erasure_heal_pacing_stops_at_budget
+  erasure_stats_aggregates_per_drive_and_heal
+  erasure_poisoned_leg_refuses_shard_gc
+  erasure_heal_rewrites_unquarantined_corrupt_shard
+  erasure_gc_never_sweeps_inflight_put_shards
+  blob_written_during_root_enumeration_survives_zero_grace_sweep
+  same_tick_pre_sweep_entry_is_reclaimed_under_frozen_clock
+  erasure_heal_rechecks_poison_under_the_mutation_lock
+  mid_sweep_write_survives_compaction_pack_id_reuse
+  release_guard_aborts_sweep_before_reclaiming
+  erasure_sweep_fails_closed_when_leg_poisons_mid_enumeration
+  erasure_heal_pacing_never_exceeds_the_byte_cap
+  erasure_put_and_release_recheck_poison_under_the_mutation_lock
+  erasure_heal_preserves_evidence_when_a_later_stripe_is_beyond_repair
+  erasure_paced_heal_still_counts_planned_degraded_blobs
+  erasure_paced_heal_skips_over_budget_blob_without_starving_successors
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then

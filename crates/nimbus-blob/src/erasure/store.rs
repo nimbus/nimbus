@@ -14,26 +14,34 @@ use tokio::io::AsyncReadExt;
 use crate::disk::{self, NoopSyncObserver, SyncObserver};
 use crate::hash::BlobHash;
 use crate::local::LocalPackStore;
+use crate::pins::BlobPinRegistry;
 use crate::root_guard::LocalPackStoreOptions;
 use crate::store::{BlobStore, ByteStream};
 
 use super::config::ErasureConfig;
+use super::heal::HealSummary;
 use super::manifest::{self, ErasureManifest, ShardRef};
 use super::stripe;
 
 #[derive(Clone)]
 pub struct ErasureBlobStore {
-    config: ErasureConfig,
-    drive_roots: Vec<PathBuf>,
-    stores: Vec<LocalPackStore>,
+    pub(super) config: ErasureConfig,
+    pub(super) drive_roots: Vec<PathBuf>,
+    pub(super) stores: Vec<LocalPackStore>,
     observer: Arc<dyn SyncObserver>,
+    shared: Arc<LegSharedState>,
     /// Serializes manifest mutations (put's read-modify-publish, release's
     /// multi-file removal) for the LEG, shared process-wide via a canonical
     /// drive-0 registry — same-process instances over the same roots alias
     /// one lock, mirroring LocalPackStore's shared-state semantics. Reads
     /// stay lock-free: a loaded manifest keeps serving (shards outlive
     /// release until Phase B GC), and quorum keeps partial states invisible.
-    mutation: Arc<AsyncMutex<()>>,
+    pub(super) mutation: Arc<AsyncMutex<()>>,
+    /// Leg-wide pin registry: heal pins the blob it is repairing, and put
+    /// pins its in-flight shards until the manifest publish resolves —
+    /// both compose into every drive's shard GC so a sweep never reclaims
+    /// bytes an active operation depends on.
+    pub(super) leg_pins: BlobPinRegistry,
     /// Fail-stop poison (RFS3 fsyncgate idiom): set when a publish rollback
     /// could not be made durable while below quorum — the failed put's
     /// replicas may resurface after a crash, so no further operation on
@@ -90,20 +98,22 @@ impl ErasureBlobStore {
             drive_roots.push(canonical);
         }
 
-        let mutation = mutation_lock_for(&drive_roots[0]);
+        let shared = shared_state_for(&drive_roots[0]);
         Ok(Self {
             config,
             drive_roots,
             stores,
             observer,
-            mutation,
-            poisoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            shared: Arc::clone(&shared),
+            mutation: Arc::clone(&shared.mutation),
+            leg_pins: shared.leg_pins.clone(),
+            poisoned: Arc::clone(&shared.poisoned),
             #[cfg(test)]
             force_nondurable_rollback: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
 
-    fn ensure_live(&self) -> Result<()> {
+    pub(super) fn ensure_live(&self) -> Result<()> {
         if self.poisoned.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(Error::storage(
                 StorageErrorKind::Io,
@@ -114,7 +124,7 @@ impl ErasureBlobStore {
         Ok(())
     }
 
-    async fn load_manifest(&self, hash: &BlobHash) -> Result<Option<ErasureManifest>> {
+    pub(super) async fn load_manifest(&self, hash: &BlobHash) -> Result<Option<ErasureManifest>> {
         let hash = *hash;
         let drive_roots = self.drive_roots.clone();
         // Visibility quorum: min(parity+1, data) replicas. The parity+1 arm
@@ -151,7 +161,11 @@ impl ErasureBlobStore {
         Ok(manifest)
     }
 
-    fn validate_manifest(&self, hash: &BlobHash, manifest: &ErasureManifest) -> Result<()> {
+    pub(super) fn validate_manifest(
+        &self,
+        hash: &BlobHash,
+        manifest: &ErasureManifest,
+    ) -> Result<()> {
         if manifest.blob_hash != *hash {
             return Err(corruption(format!(
                 "manifest file for {hash} names blob {}",
@@ -179,7 +193,7 @@ impl ErasureBlobStore {
         Ok(())
     }
 
-    async fn publish_manifest(&self, manifest: ErasureManifest) -> Result<()> {
+    pub(super) async fn publish_manifest(&self, manifest: ErasureManifest) -> Result<()> {
         let drive_roots = self.drive_roots.clone();
         let observer = Arc::clone(&self.observer);
         let quorum = self.visibility_quorum();
@@ -212,8 +226,25 @@ impl ErasureBlobStore {
         }
     }
 
-    fn visibility_quorum(&self) -> usize {
+    pub(super) fn poison_flag(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        Arc::clone(&self.poisoned)
+    }
+
+    pub(super) fn visibility_quorum(&self) -> usize {
         (self.config.parity_shards + 1).min(self.config.data_shards)
+    }
+
+    pub(super) fn set_last_heal(&self, summary: HealSummary) -> Result<()> {
+        *self.shared.last_heal.lock().map_err(|_| {
+            Error::storage(StorageErrorKind::Other, "erasure last-heal lock poisoned")
+        })? = Some(summary);
+        Ok(())
+    }
+
+    pub(super) fn last_heal(&self) -> Result<Option<HealSummary>> {
+        Ok(*self.shared.last_heal.lock().map_err(|_| {
+            Error::storage(StorageErrorKind::Other, "erasure last-heal lock poisoned")
+        })?)
     }
 
     /// Reads, reassembles, and VERIFIES one stripe against its manifest
@@ -279,7 +310,7 @@ impl ErasureBlobStore {
         stripe::decode_stripe(manifest.data_shards, manifest.parity_shards, &present)
     }
 
-    async fn read_shard(
+    pub(super) async fn read_shard(
         &self,
         manifest: &ErasureManifest,
         stripe_index: usize,
@@ -297,7 +328,10 @@ impl ErasureBlobStore {
         self.stores[drive].get(&shard.shard_hash).await
     }
 
-    fn stripe_true_len(manifest: &ErasureManifest, stripe_index: usize) -> Result<usize> {
+    pub(super) fn stripe_true_len(
+        manifest: &ErasureManifest,
+        stripe_index: usize,
+    ) -> Result<usize> {
         let start = (stripe_index as u64)
             .checked_mul(manifest.stripe_width as u64)
             .ok_or_else(|| corruption("erasure stripe offset overflow"))?;
@@ -328,12 +362,26 @@ impl ErasureBlobStore {
 
     #[cfg(test)]
     pub(crate) fn mutation_lock(&self) -> Arc<AsyncMutex<()>> {
-        Arc::clone(&self.mutation)
+        Arc::clone(&self.shared.mutation)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn heal_pin_registry(&self) -> BlobPinRegistry {
+        self.leg_pins.clone()
     }
 
     #[cfg(test)]
     pub(crate) fn arm_nondurable_rollback(&self) {
         self.force_nondurable_rollback
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Sets the leg poison directly (tests): lets interleaving tests
+    /// trip the fail-stop deterministically while holding the mutation
+    /// lock, with no scheduler-order dependence.
+    #[cfg(test)]
+    pub(crate) fn poison_for_test(&self) {
+        self.poisoned
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
@@ -363,6 +411,10 @@ impl BlobStore for ErasureBlobStore {
         // race a concurrent release into returning Ok with the manifests
         // gone (LocalPackStore gets the equivalent from its state lock).
         let _mutation = self.mutation.lock().await;
+        // Recheck the fail-stop UNDER the lock: a mutation queued ahead of
+        // us can poison the leg while we waited (heal and sweep_drive do
+        // the same).
+        self.ensure_live()?;
         if let Some(existing) = self.load_manifest(&hash).await? {
             // Idempotent path REPAIRS replication: a crash mid-publish or a
             // partially completed release can leave the manifest on a subset
@@ -385,6 +437,13 @@ impl BlobStore for ErasureBlobStore {
             stripes: Vec::new(),
         };
 
+        // Pin every shard hash BEFORE its bytes land: pre-publish shards are
+        // unrooted (ManifestShardRoots only sees visible manifests), so a
+        // concurrent sweep with a short grace could otherwise reclaim live
+        // shards mid-put and the acknowledged manifest would point at
+        // missing bytes. The RAII pins drop after publish resolves — on
+        // failure the orphans become sweepable again, which is correct.
+        let mut inflight_pins = Vec::new();
         for (stripe_index, chunk) in bytes.chunks(self.config.stripe_width).enumerate() {
             manifest.stripe_hashes.push(BlobHash::of(chunk));
             let shards =
@@ -393,7 +452,10 @@ impl BlobStore for ErasureBlobStore {
             for (shard_index, shard_bytes) in shards.into_iter().enumerate() {
                 let drive =
                     stripe::drive_for(shard_index, stripe_index, self.config.total_shards());
-                let shard_hash = self.stores[drive].put(shard_bytes).await?;
+                let shard_hash = BlobHash::of(&shard_bytes);
+                inflight_pins.push(self.leg_pins.pin(shard_hash));
+                let written = self.stores[drive].put(shard_bytes).await?;
+                debug_assert_eq!(written, shard_hash, "pack stores hash their input");
                 refs.push(ShardRef {
                     shard_index: shard_index as u16,
                     shard_hash,
@@ -497,6 +559,8 @@ impl BlobStore for ErasureBlobStore {
     async fn release(&self, hash: &BlobHash) -> Result<()> {
         self.ensure_live()?;
         let _mutation = self.mutation.lock().await;
+        // Same post-lock recheck as put/heal/sweep_drive.
+        self.ensure_live()?;
         let hash = *hash;
         let drive_roots = self.drive_roots.clone();
         let observer = Arc::clone(&self.observer);
@@ -539,18 +603,33 @@ where
         .map_err(|err| Error::storage(StorageErrorKind::Other, format!("erasure task: {err}")))?
 }
 
-/// Process-wide registry of per-leg mutation locks, keyed by the canonical
-/// drive-0 root (unique per leg: identity binding prevents two legs from
-/// sharing any root). Weak entries let dropped stores free their slot.
-fn mutation_lock_for(drive0: &PathBuf) -> Arc<AsyncMutex<()>> {
-    static REGISTRY: OnceLock<StdMutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>> = OnceLock::new();
+struct LegSharedState {
+    mutation: Arc<AsyncMutex<()>>,
+    leg_pins: BlobPinRegistry,
+    last_heal: Arc<StdMutex<Option<HealSummary>>>,
+    /// Poison is LEG state, not handle state: a nondurable rollback makes
+    /// the on-disk manifest view ambiguous for every same-process handle
+    /// over these roots, so all of them must fail-stop together.
+    poisoned: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Process-wide registry of per-leg state, keyed by the canonical drive-0 root
+/// (unique per leg: identity binding prevents two legs from sharing any root).
+/// Weak entries let dropped stores free their slot.
+fn shared_state_for(drive0: &PathBuf) -> Arc<LegSharedState> {
+    static REGISTRY: OnceLock<StdMutex<HashMap<PathBuf, Weak<LegSharedState>>>> = OnceLock::new();
     let registry = REGISTRY.get_or_init(|| StdMutex::new(HashMap::new()));
     let mut map = registry.lock().expect("erasure mutation registry poisoned");
     map.retain(|_, weak| weak.strong_count() > 0);
     if let Some(existing) = map.get(drive0).and_then(Weak::upgrade) {
         return existing;
     }
-    let fresh = Arc::new(AsyncMutex::new(()));
+    let fresh = Arc::new(LegSharedState {
+        mutation: Arc::new(AsyncMutex::new(())),
+        leg_pins: BlobPinRegistry::new(),
+        last_heal: Arc::new(StdMutex::new(None)),
+        poisoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    });
     map.insert(drive0.clone(), Arc::downgrade(&fresh));
     fresh
 }

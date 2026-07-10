@@ -100,6 +100,15 @@ pub struct LocalBlobEntry {
     /// retained by GC regardless of roots/grace — the scrub/repair/release
     /// decision owns its reclamation, not the sweep.
     pub quarantined: bool,
+    /// Strictly monotonic append position (compaction epoch, pack id,
+    /// record offset): later writes always compare greater. The epoch leads
+    /// because compaction restructures pack ids wholesale (the empty-store
+    /// branch resets them), so a bare (pack_id, offset) is NOT monotonic
+    /// across compactions. Clock-free ordering marker for GC's
+    /// root-snapshot boundary (a millisecond timestamp cannot distinguish
+    /// same-tick writes; a non-advancing test clock would retain them
+    /// forever).
+    pub position: (u64, u64, u64),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -571,11 +580,27 @@ impl LocalPackStore {
                 written_at_millis: entry.written_at_millis,
                 len: entry.len,
                 quarantined: state.quarantined.contains_key(hash),
+                position: (state.compaction_epoch, entry.pack_id, entry.offset),
             })
             .collect::<Vec<_>>();
         drop(state);
         entries.sort_by_key(|entry| entry.hash);
         Ok(entries)
+    }
+
+    /// The next append position (compaction epoch, active pack id, byte
+    /// offset). Entries with `position < write_position()` were durably
+    /// indexed before this call; later appends — and post-compaction
+    /// relocations, whose pack ids may be REUSED but whose epoch is bumped —
+    /// always compare strictly greater. Used by GC to bound a root
+    /// snapshot's authority without depending on clock granularity.
+    pub fn write_position(&self) -> Result<(u64, u64, u64)> {
+        let state = lock(&self.state)?;
+        Ok((
+            state.compaction_epoch,
+            state.active_pack_id,
+            state.active_pack_bytes,
+        ))
     }
 
     /// Records the most recent GC sweep summary for [`Self::stats`].

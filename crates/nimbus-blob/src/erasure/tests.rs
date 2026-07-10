@@ -16,6 +16,8 @@ use crate::hash::BlobHash;
 use crate::local::{INDEX_MAGIC, INDEX_PUT, INDEX_RELEASE, PackEntry, RECORD_MAGIC, pack_path};
 use crate::store::BlobStore;
 
+mod phase_b;
+
 const K: usize = 4;
 const M: usize = 2;
 const STRIPE: usize = 64;
