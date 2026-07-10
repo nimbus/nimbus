@@ -27,18 +27,27 @@ const LARGE_ITERS: usize = 16;
 const RANGE_ITERS: usize = 64;
 const STRIPE_WIDTH: usize = 1024 * 1024; // matches the erasure default
 
+/// Deterministic pseudorandom bytes (splitmix64 keyed by `seed`). A short-
+/// period arithmetic pattern is NOT enough here: slices of a 251-periodic
+/// sequence phase-collide across object/stripe/shard combinations, the
+/// colliding shards dedup in the per-drive pack stores (idempotent put
+/// skips the append + fsync), and put throughput silently inflates.
 fn payload(len: usize, seed: u8) -> Bytes {
-    Bytes::from(
-        (0..len)
-            .map(|index| {
-                let mixed = index
-                    .wrapping_mul(31)
-                    .wrapping_add((seed as usize).wrapping_mul(17))
-                    .wrapping_add(7);
-                (mixed % 251) as u8
-            })
-            .collect::<Vec<_>>(),
-    )
+    let mut state = (seed as u64)
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(0xD1B5_4A32_D192_ED03);
+    let mut out = Vec::with_capacity(len);
+    while out.len() < len {
+        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        let chunk = z.to_le_bytes();
+        let take = chunk.len().min(len - out.len());
+        out.extend_from_slice(&chunk[..take]);
+    }
+    Bytes::from(out)
 }
 
 fn mib_per_sec(bytes: u64, elapsed_secs: f64) -> f64 {
@@ -128,14 +137,18 @@ async fn bench_lane(lane: &Lane) {
     let get_large = start.elapsed().as_secs_f64();
 
     // -- ranged reads over large objects --
-    // Stride the window across the FULL object span so every stripe is
-    // exercised (a small fixed stride never left stripe 0 — review fix).
-    let span = (LARGE_LEN as u64) - RANGE_LEN;
-    let stride = (span / RANGE_ITERS as u64).max(2) & !1;
+    // Stride the window across the FULL per-object span with an INCLUSIVE
+    // endpoint: the last iteration reads up to the object's end, so the
+    // final (possibly degenerate) stripe of every layout is exercised —
+    // e.g. 12+4's floored width puts a fifth stripe at 4,194,240, past an
+    // exclusive-endpoint schedule (review fix, rounds 1+2).
     let start = Instant::now();
     for iteration in 0..RANGE_ITERS {
-        let hash = &large_hashes[iteration % large_hashes.len()];
-        let offset = ((iteration as u64 * stride) % span) & !1;
+        let object = iteration % large_hashes.len();
+        let hash = &large_hashes[object];
+        let object_span = (large[object].len() as u64) - RANGE_LEN;
+        let stride = (object_span / (RANGE_ITERS as u64 - 1)).max(2);
+        let offset = (iteration as u64 * stride).min(object_span) & !1;
         let slice = lane
             .store
             .get_range(hash, offset..offset + RANGE_LEN)
@@ -159,7 +172,8 @@ async fn bench_lane(lane: &Lane) {
     for iteration in 0..RANGE_ITERS {
         let object = iteration % large_hashes.len();
         let object_span = (large[object].len() as u64) - RANGE_LEN;
-        let offset = ((iteration as u64 * stride) % object_span.min(span)) & !1;
+        let stride = (object_span / (RANGE_ITERS as u64 - 1)).max(2);
+        let offset = (iteration as u64 * stride).min(object_span) & !1;
         let slice = lane
             .store
             .get_range(&large_hashes[object], offset..offset + RANGE_LEN)
