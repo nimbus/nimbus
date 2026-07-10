@@ -40,7 +40,7 @@ covers UI/UX, code quality, API design, and copy.
 
 | model | cost | intelligence | taste |
 | --- | --- | --- | --- |
-| gpt-5.5 | 9 | 8 | 5 |
+| gpt-5.6-sol | 9 | 9 | 5 |
 | sonnet-5 | 5 | 5 | 7 |
 | opus-4.8 | 4 | 7 | 8 |
 | fable-5 | 2 | 9 | 9 |
@@ -54,12 +54,15 @@ How to apply:
 - Cost is a tie-breaker only; when axes conflict for anything that ships,
   intelligence > taste > cost.
 - Bulk/mechanical work (clear-spec implementation, data analysis, migrations):
-  gpt-5.5 – it is lower-cost and token-efficient for this workload.
+  gpt-5.6-sol – it is lower-cost and token-efficient for this workload.
+  (gpt-5.6-sol succeeded gpt-5.5 as the Codex flagship, GA 2026-07-09; the
+  default model + `model_reasoning_effort = "high"` are set in
+  `~/.codex/config.toml` and require Codex CLI >= 0.143.0.)
 - Anything user-facing (UI, copy, API design) needs taste ≥ 7.
-- Reviews of plans/implementations: fable-5 or opus-4.8, optionally gpt-5.5 as
+- Reviews of plans/implementations: fable-5 or opus-4.8, optionally gpt-5.6-sol as
   an extra independent perspective.
 - Never use Haiku.
-- Mechanics: gpt-5.5 is handled natively via the `openai/codex-plugin-cc`
+- Mechanics: gpt-5.6-sol is handled natively via the `openai/codex-plugin-cc`
   plugin inside Claude Code, automatically adopting your user-level
   configuration from `~/.codex/config.toml`. Avoid writing custom Bash scripts;
   use the plugin's built-in tools and skills instead:
@@ -76,7 +79,7 @@ How to apply:
 - Claude models (sonnet-5, opus-4.8, fable-5) run via the Agent/Workflow model
   parameter.
 
-Using gpt-5.5 inside workflows and subagents:
+Using gpt-5.6-sol inside workflows and subagents:
 
 - Subagents and automated workflows should call the plugin's native slash
   commands or its exposed `codex-cli-runtime` skills to delegate tasks directly,
