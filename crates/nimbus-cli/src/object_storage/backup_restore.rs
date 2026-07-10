@@ -267,16 +267,50 @@ fn install_escrow_sidecar(sidecar_path: &Path, escrow_bytes: &[u8]) -> Result<()
         .parent()
         .ok_or("tenant blob-key sidecar path has no parent directory")?;
     std::fs::create_dir_all(parent)?;
+    // Verifies an existing sidecar on a HELD DESCRIPTOR: open first, then
+    // prove the handle IS the path's regular file (lstat type + dev/ino
+    // identity on unix), and do the read and chmod through the handle. A
+    // racing path swap can only produce a refusal, never a follow. On the
+    // match path this also re-enforces permissions and re-syncs the parent
+    // directory, so a retry after an interrupted install still upholds the
+    // durability guarantee before reporting success.
     let existing_regular_file_matches = |context: &str| -> Result<bool, Box<dyn Error>> {
-        let meta = std::fs::symlink_metadata(sidecar_path)?;
-        if !meta.is_file() {
-            return Err(format!(
+        use std::io::Read;
+        let not_regular = || -> Box<dyn Error> {
+            format!(
                 "tenant blob-key sidecar path {} exists but is not a regular file (symlink?); refusing to touch it{context}",
                 sidecar_path.display()
             )
-            .into());
+            .into()
+        };
+        let path_meta = std::fs::symlink_metadata(sidecar_path)?;
+        if !path_meta.is_file() {
+            return Err(not_regular());
         }
-        Ok(std::fs::read(sidecar_path)?.as_slice() == escrow_bytes)
+        let mut file = std::fs::File::open(sidecar_path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            // The handle must be the exact inode the PRE-open lstat saw:
+            // any path swap in between (e.g. to a symlink) yields a
+            // different identity and refuses.
+            let handle_meta = file.metadata()?;
+            if handle_meta.dev() != path_meta.dev() || handle_meta.ino() != path_meta.ino() {
+                return Err(not_regular());
+            }
+        }
+        let mut existing = Vec::new();
+        file.read_to_end(&mut existing)?;
+        if existing.as_slice() != escrow_bytes {
+            return Ok(false);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            std::fs::File::open(parent)?.sync_all()?;
+        }
+        Ok(true)
     };
     match std::fs::symlink_metadata(sidecar_path) {
         Ok(_) => {
