@@ -48,6 +48,11 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   UI hygiene, doc/spec truth-ups, and the `nimbus-compute` extraction plus
   workload-identity decision records. Review-driven refactor and cleanup work
   should route through this plan's band ledgers while it is active.
+- `erasure-operator-wiring-plan.md` - `in_progress`. Makes the merged
+  ErasureBlobStore operator-usable without JBOD hardware: read-only erasure
+  open, deployment-level local-leg selection + per-tenant resolver wiring,
+  erasure-status/erasure-heal CLI verbs (offline-heal posture), and a bench
+  stripe-width sweep knob. JBOD re-benchmark stays hardware-gated elsewhere.
 - `archive/nimbus-proxy-pingora-plan.md` - `complete, archived` (K11P0-K11P13 merged, PR #94; verifier 113/0). Owned the production proxy substrate
   inside `nimbus-proxy`: Pingora phases, async forwarding, peer/pool identity,
   lifecycle, observability, selective HTTPS interception, credential injection,
