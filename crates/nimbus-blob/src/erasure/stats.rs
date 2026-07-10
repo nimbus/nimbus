@@ -1,6 +1,6 @@
 use nimbus_core::{Error, Result, StorageErrorKind};
 
-use crate::LocalPackStats;
+use crate::{LocalPackStats, LocalPackStore};
 
 use super::heal::HealSummary;
 use super::manifest;
@@ -81,29 +81,24 @@ impl ErasureBlobStore {
             // REAL (stable corruption / Io) and keeps its original kind,
             // and a success is at worst an append-lag approximation
             // (documented). Writable handles never take this path.
-            let outcome = store.stats().await;
             if self.is_read_only() {
-                // Compaction is the state change that makes a frozen index
-                // produce torn-but-successful accounting (old entries
-                // counted live against replacement packs counted
-                // reclaimable): it REMOVES pack files the frozen index
-                // still references — plain appends never remove packs. If
-                // any frozen-referenced pack is gone from disk, the
-                // snapshot predates a restructure: Busy with a re-open
-                // hint. Real errors without a restructure keep their
-                // original kind; successes are at worst append-lag
-                // approximations (documented).
-                if store.frozen_packs_missing_on_disk()? {
-                    return Err(Error::storage(
-                        StorageErrorKind::Busy,
-                        format!(
-                            "erasure status snapshot predates a pack restructure on \
-                             drive {index} (re-open to inspect)"
-                        ),
-                    ));
-                }
+                // Read-only status uses a FRESH per-drive read-only open for
+                // each stats call: a frozen index over a live drive can
+                // produce torn-but-successful accounting after compaction
+                // (and no pathname heuristic reliably detects restructures —
+                // quarantine-retained packs survive compaction, and stable
+                // pack loss would false-positive forever). A fresh open
+                // reads a consistent on-disk snapshot (index.log is
+                // durably replaced atomically), so real errors keep their
+                // original kind and numbers are coherent-at-read.
+                let fresh = LocalPackStore::open_read_only_with_identity(
+                    &self.drive_roots[index],
+                    Some(super::store::drive_identity(&self.config.leg_id, index)),
+                )?;
+                per_drive.push(fresh.stats().await?);
+            } else {
+                per_drive.push(store.stats().await?);
             }
-            per_drive.push(outcome?);
         }
 
         let drive_roots = self.drive_roots.clone();

@@ -619,8 +619,20 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
     };
     let engine = open_engine(&command.data_dir, command.provider).await?;
     engine.delete_tenant_async(tenant.clone()).await?;
+    // Destruction is rename-then-delete: remove_dir_all on a live path
+    // unlinks the flock file our ownership guard holds, letting a racing
+    // server recreate the root and acquire a NEW lock mid-deletion. An
+    // atomic rename to a tombstone (same directory) moves the whole tree
+    // out of the server's path WHILE our flocks are still authoritative;
+    // deleting the tombstone afterwards races nothing (a server that
+    // recreates the now-empty path creates a fresh blob-less tenant root,
+    // and the tenant was already deleted from the control plane above).
+    let tombstone_suffix = format!(".rm.{}", std::process::id());
+    let mut tombstones: Vec<PathBuf> = Vec::new();
     if root.exists() {
-        std::fs::remove_dir_all(&root)?;
+        let tomb = tombstone_path(&root, &tombstone_suffix)?;
+        std::fs::rename(&root, &tomb)?;
+        tombstones.push(tomb);
     }
     // Erasure deployments keep the tenant's byte plane under
     // <drive_i>/<tenant leaf>; removing only the sidecar root while
@@ -628,9 +640,15 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
     let mut erasure_trees_removed = 0usize;
     for tree in &erasure_trees {
         if tree.exists() {
-            std::fs::remove_dir_all(tree)?;
+            let tomb = tombstone_path(tree, &tombstone_suffix)?;
+            std::fs::rename(tree, &tomb)?;
+            tombstones.push(tomb);
             erasure_trees_removed += 1;
         }
+    }
+    drop(_erasure_ownership);
+    for tomb in &tombstones {
+        std::fs::remove_dir_all(tomb)?;
     }
     engine.quiesce().await;
     emit_object_storage_info(format!(
@@ -638,6 +656,17 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
         tenant, erasure_trees_removed
     ));
     Ok(())
+}
+
+/// Sibling tombstone path for rename-then-delete destruction.
+fn tombstone_path(path: &Path, suffix: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let name = path
+        .file_name()
+        .ok_or("destruction target has no directory-name component")?
+        .to_os_string();
+    let mut tomb_name = name;
+    tomb_name.push(suffix);
+    Ok(path.with_file_name(tomb_name))
 }
 
 fn placement_policy_from_command(

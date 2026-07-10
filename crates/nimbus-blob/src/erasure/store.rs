@@ -782,7 +782,7 @@ fn shared_state_for(drive0: &PathBuf) -> Arc<LegSharedState> {
 /// Binds a drive root to BOTH the leg instance and its drive index: a root
 /// provisioned for another leg (even at the same index) or for another index
 /// of this leg refuses to open (RFS2 fail-closed identity semantics).
-fn drive_identity(leg_id: &str, index: usize) -> [u8; crate::BLAKE3_HASH_LEN] {
+pub(super) fn drive_identity(leg_id: &str, index: usize) -> [u8; crate::BLAKE3_HASH_LEN] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"nimbus-erasure-leg");
     hasher.update(&(leg_id.len() as u64).to_le_bytes());

@@ -1477,9 +1477,11 @@ async fn erasure_read_only_handle_does_not_pin_writable_leg_state() {
 
 #[tokio::test]
 async fn erasure_read_only_stats_report_busy_after_writer_compaction() {
-    // Review fix (EOW round 6, P2): a frozen read-only index over a
+    // Review fix (EOW rounds 6-7, P2): a frozen read-only index over a
     // compacted drive must not return torn-but-successful accounting
-    // (healthy data counted reclaimable) — the epoch compare reports Busy.
+    // (healthy data counted reclaimable). Read-only stats therefore use
+    // FRESH per-drive read-only opens per call — coherent at read, real
+    // errors keep their kind, no pathname heuristics.
     let (_dir, store, roots) = open_temp(K, M, STRIPE);
     store.put(payload(STRIPE + 31)).await.unwrap();
     let dead = store.put(payload(STRIPE + 33)).await.unwrap();
@@ -1498,16 +1500,17 @@ async fn erasure_read_only_stats_report_busy_after_writer_compaction() {
             .unwrap();
     }
 
-    let err = inspector.stats().await.unwrap_err();
-    assert_eq!(
-        err.storage_kind(),
-        Some(StorageErrorKind::Busy),
-        "post-compaction frozen stats must report Busy, not torn numbers: {err}"
+    // Read-only stats use FRESH per-drive opens per call, so the numbers
+    // reflect the post-compaction reality (no torn frozen accounting): the
+    // dead blob's space is gone, the kept blob's shards are live.
+    let stats = inspector.stats().await.unwrap();
+    assert_eq!(stats.blob_count, 1, "released blob no longer visible");
+    assert!(
+        stats
+            .per_drive
+            .iter()
+            .all(|drive| drive.reclaimable_bytes == 0),
+        "post-compaction stats must not report healthy data as reclaimable"
     );
-    // A fresh inspector reports cleanly.
-    let fresh = ErasureBlobStore::open_read_only(
-        ErasureConfig::new("test-leg", roots, K, M, STRIPE).unwrap(),
-    )
-    .unwrap();
-    assert!(fresh.stats().await.is_ok());
+    assert!(stats.per_drive.iter().all(|drive| drive.live_bytes > 0));
 }

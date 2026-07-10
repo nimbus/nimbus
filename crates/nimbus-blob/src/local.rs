@@ -613,24 +613,6 @@ impl LocalPackStore {
         ))
     }
 
-    /// Whether any pack file referenced by THIS handle's in-memory index is
-    /// no longer present on disk — true only after another process's
-    /// compaction restructured the root (appends never remove packs).
-    /// Read-only inspection handles use this to distinguish a stale frozen
-    /// snapshot from real errors.
-    pub fn frozen_packs_missing_on_disk(&self) -> Result<bool> {
-        let state = lock(&self.state)?;
-        let mut pack_ids: Vec<u64> = state.index.values().map(|entry| entry.pack_id).collect();
-        pack_ids.sort_unstable();
-        pack_ids.dedup();
-        for pack_id in pack_ids {
-            if !pack_path(&state.packs_dir, pack_id).exists() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
     /// Records the most recent GC sweep summary for [`Self::stats`].
     pub(crate) fn set_last_gc(&self, summary: GcSummary) -> Result<()> {
         lock(&self.state)?.last_gc = Some(summary);
