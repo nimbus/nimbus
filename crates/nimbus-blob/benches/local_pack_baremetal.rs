@@ -142,13 +142,19 @@ async fn bench_lane(lane: &Lane) {
     // final (possibly degenerate) stripe of every layout is exercised —
     // e.g. 12+4's floored width puts a fifth stripe at 4,194,240, past an
     // exclusive-endpoint schedule (review fix, rounds 1+2).
+    // Each object is sampled RANGE_ITERS / objects times; the PER-OBJECT
+    // sample index (iteration / objects) drives the offset so sample 0 is
+    // offset 0 and the LAST sample is exactly the object's span end —
+    // every object's final stripe (including 12+4's floored fifth stripe)
+    // is provably exercised.
+    let per_object_samples = (RANGE_ITERS / large_hashes.len()).max(2) as u64;
     let start = Instant::now();
     for iteration in 0..RANGE_ITERS {
         let object = iteration % large_hashes.len();
+        let sample = (iteration / large_hashes.len()) as u64;
         let hash = &large_hashes[object];
         let object_span = (large[object].len() as u64) - RANGE_LEN;
-        let stride = (object_span / (RANGE_ITERS as u64 - 1)).max(2);
-        let offset = (iteration as u64 * stride).min(object_span) & !1;
+        let offset = (sample * object_span / (per_object_samples - 1)).min(object_span) & !1;
         let slice = lane
             .store
             .get_range(hash, offset..offset + RANGE_LEN)
@@ -171,9 +177,9 @@ async fn bench_lane(lane: &Lane) {
     }
     for iteration in 0..RANGE_ITERS {
         let object = iteration % large_hashes.len();
+        let sample = (iteration / large_hashes.len()) as u64;
         let object_span = (large[object].len() as u64) - RANGE_LEN;
-        let stride = (object_span / (RANGE_ITERS as u64 - 1)).max(2);
-        let offset = (iteration as u64 * stride).min(object_span) & !1;
+        let offset = (sample * object_span / (per_object_samples - 1)).min(object_span) & !1;
         let slice = lane
             .store
             .get_range(&large_hashes[object], offset..offset + RANGE_LEN)
@@ -184,6 +190,26 @@ async fn bench_lane(lane: &Lane) {
             large[object].slice(offset as usize..(offset + RANGE_LEN) as usize),
             "range window content mismatch"
         );
+    }
+
+    // Explicit coverage assertion: the last per-object sample's window must
+    // START inside the object's FINAL stripe (erasure lanes), proving the
+    // degenerate tail stripe is exercised — a schedule regression fails
+    // loudly instead of silently shrinking coverage.
+    if let Some(width) = lane.stripe_width {
+        for bytes in &large {
+            let object_span = (bytes.len() as u64) - RANGE_LEN;
+            let last_offset =
+                ((per_object_samples - 1) * object_span / (per_object_samples - 1)) & !1;
+            let final_stripe_start = ((bytes.len() - 1) / width) as u64 * width as u64;
+            assert!(
+                last_offset + RANGE_LEN > final_stripe_start,
+                "range schedule must reach the final stripe (last window {}..{} vs final stripe start {})",
+                last_offset,
+                last_offset + RANGE_LEN,
+                final_stripe_start
+            );
+        }
     }
 
     let small_bytes = (SMALL_ITERS * SMALL_LEN) as u64;
