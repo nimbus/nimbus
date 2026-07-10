@@ -107,6 +107,7 @@ enum RetentionClass {
 fn classify(
     entry: &LocalBlobEntry,
     roots: &BTreeSet<BlobHash>,
+    snapshot_millis: u64,
     now_millis: u64,
     grace_millis: u64,
     pins: &BlobPinRegistry,
@@ -120,6 +121,15 @@ fn classify(
         RetentionClass::BackupHeld
     } else if entry.quarantined {
         RetentionClass::Quarantined
+    } else if entry.written_at_millis >= snapshot_millis {
+        // Root-snapshot boundary: the root set was enumerated at
+        // `snapshot_millis`, so it can say nothing about entries written
+        // after it. An entry that landed mid-sweep (e.g. a concurrent put
+        // whose roots/pins resolve after our snapshot) is retained
+        // UNCONDITIONALLY — even at zero grace — and re-judged by the next
+        // sweep. Without this, roots-at-t0 + pins-dropped-at-t1 +
+        // classify-at-t2 can reclaim a just-committed blob.
+        RetentionClass::Grace
     } else if now_millis.saturating_sub(entry.written_at_millis) < grace_millis {
         // Age-based grace: an entry stamped at or after `now` (clock
         // regression) has age 0 and is retained by any positive grace window.
@@ -207,13 +217,25 @@ where
     /// [`RetentionClass::Reclaim`] arm releases a blob. The resulting summary
     /// is recorded on the store for [`LocalPackStore::stats`].
     pub async fn sweep(&self) -> Result<BlobGcReport> {
+        // Snapshot BEFORE enumerating roots: entries written after this
+        // instant are outside the root set's authority and classify() keeps
+        // them unconditionally (see the snapshot-boundary arm).
+        let snapshot = self.clock.now_millis();
         let roots = self.roots.live_blob_hashes().await?;
         let now = self.clock.now_millis();
         let grace_millis = self.grace_window.as_millis() as u64;
         let mut report = BlobGcReport::default();
 
         for entry in self.store.live_entries()? {
-            match classify(&entry, &roots, now, grace_millis, &self.pins, &self.backups) {
+            match classify(
+                &entry,
+                &roots,
+                snapshot,
+                now,
+                grace_millis,
+                &self.pins,
+                &self.backups,
+            ) {
                 RetentionClass::Rooted => report.referenced_retained += 1,
                 RetentionClass::Pinned => report.intent_retained += 1,
                 RetentionClass::BackupHeld => report.backup_retained += 1,
@@ -670,5 +692,61 @@ mod tests {
         assert!(store.has(&snapshot_root).await.unwrap());
         assert!(store.has(&pinned).await.unwrap());
         assert!(!store.has(&doomed).await.unwrap());
+    }
+
+    /// Roots provider that writes an UNROOTED blob into the store during
+    /// enumeration — deterministically reproducing the mid-sweep-write
+    /// TOCTOU (roots snapshotted at t0, blob committed at t1 > t0,
+    /// classification at t2).
+    struct WritesDuringEnumeration {
+        store: LocalPackStore,
+        payload: Bytes,
+        written: std::sync::Mutex<Option<BlobHash>>,
+    }
+
+    #[async_trait::async_trait]
+    impl BlobGcRoots for WritesDuringEnumeration {
+        async fn live_blob_hashes(&self) -> Result<BTreeSet<BlobHash>> {
+            let hash = self.store.put(self.payload.clone()).await?;
+            *self.written.lock().unwrap() = Some(hash);
+            Ok(BTreeSet::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn blob_written_during_root_enumeration_survives_zero_grace_sweep() {
+        // Snapshot-boundary rule: the root set has no authority over
+        // entries written after it was enumerated, so a just-committed
+        // blob survives even a ZERO-grace sweep and is re-judged next time.
+        let (_dir, store) = open_temp(64 * 1024);
+        let roots = std::sync::Arc::new(WritesDuringEnumeration {
+            store: store.clone(),
+            payload: Bytes::from_static(b"committed mid-sweep"),
+            written: std::sync::Mutex::new(None),
+        });
+        let gc = BlobGc::new(
+            store.clone(),
+            CompositeBlobRoots::new().with(roots.clone() as std::sync::Arc<dyn BlobGcRoots>),
+            Duration::ZERO,
+        );
+
+        let report = gc.sweep().await.unwrap();
+        let hash = roots.written.lock().unwrap().expect("provider wrote");
+
+        assert_eq!(report.swept, 0, "mid-sweep write must not be reclaimed");
+        assert_eq!(
+            report.grace_retained, 1,
+            "retained by the snapshot boundary"
+        );
+        assert!(store.has(&hash).await.unwrap());
+
+        // The NEXT sweep (fresh snapshot, blob now pre-snapshot and
+        // unrooted past zero grace) reclaims it — the boundary defers,
+        // never leaks.
+        let noop_roots = CompositeBlobRoots::new();
+        let gc2 = BlobGc::new(store.clone(), noop_roots, Duration::ZERO);
+        let report2 = gc2.sweep().await.unwrap();
+        assert_eq!(report2.swept, 1);
+        assert!(!store.has(&hash).await.unwrap());
     }
 }
