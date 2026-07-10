@@ -9,6 +9,7 @@ use nimbus_core::{Error, StorageErrorKind};
 use tempfile::TempDir;
 
 use super::config::ErasureConfig;
+use super::heal::ErasureHealer;
 use super::manifest::{self, ErasureManifest, ShardRef};
 use super::store::ErasureBlobStore;
 use super::stripe;
@@ -373,6 +374,44 @@ async fn erasure_release_removes_manifest_everywhere() {
     );
     for root in store.drive_roots() {
         assert_eq!(manifest_file_count(&root), 0);
+    }
+}
+
+#[tokio::test]
+async fn erasure_read_only_open_serves_stats_and_refuses_writes() {
+    let (_dir, store, roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(STRIPE + 19);
+    let hash = store.put(bytes.clone()).await.unwrap();
+    let inspector = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("test-leg", roots, K, M, STRIPE).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(inspector.get(&hash).await.unwrap(), bytes);
+    assert!(inspector.has(&hash).await.unwrap());
+    let stats = inspector.stats().await.unwrap();
+    assert_eq!(stats.blob_count, 1);
+    assert_eq!(stats.per_drive.len(), K + M);
+
+    store.poison_for_test();
+    assert_eq!(inspector.get(&hash).await.unwrap(), bytes);
+    assert!(inspector.has(&hash).await.unwrap());
+    assert_eq!(inspector.stats().await.unwrap().blob_count, 1);
+
+    for error in [
+        inspector.put(payload(7)).await.unwrap_err(),
+        inspector
+            .put_stream(Box::new(std::io::Cursor::new(payload(9))))
+            .await
+            .unwrap_err(),
+        inspector.release(&hash).await.unwrap_err(),
+        ErasureHealer::new(inspector.clone())
+            .heal()
+            .await
+            .unwrap_err(),
+    ] {
+        assert_eq!(error.storage_kind(), Some(StorageErrorKind::Busy));
+        assert!(error.to_string().contains("read-only inspection handle"));
     }
 }
 

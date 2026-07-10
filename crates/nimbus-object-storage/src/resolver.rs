@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use nimbus_blob::{
-    BlobCloudConfig, BlobHash, BlobS3Credentials, BlobStore, EncryptedBlobStore, LocalPackStore,
-    LocalPackStoreOptions, ObjectStoreBlobStore, PlacementBlobStore, PlacementMode,
+    BlobCloudConfig, BlobHash, BlobS3Credentials, BlobStore, EncryptedBlobStore, ErasureBlobStore,
+    ErasureConfig, LocalPackStore, LocalPackStoreOptions, ObjectStoreBlobStore, PlacementBlobStore,
+    PlacementMode,
 };
 use nimbus_core::{Error, Result, StorageErrorKind, TenantId};
 use nimbus_crypto::{
@@ -20,7 +21,7 @@ use nimbus_storage::{
 };
 use rand::RngCore;
 
-use crate::config::ObjectStorageConfig;
+use crate::config::{LocalLeg, ObjectStorageConfig};
 use crate::credentials::{NoObjectStoreCredentialResolver, ObjectStoreCredentialResolver};
 
 const DEFAULT_MASTER_KEY_FILE: &str = "object-storage.master.key";
@@ -131,7 +132,7 @@ impl ObjectStorageResolver {
             let stores = self.local_stores.lock().map_err(|_| {
                 Error::storage(
                     StorageErrorKind::Other,
-                    "object-storage local pack store cache lock poisoned",
+                    "object-storage local store cache lock poisoned",
                 )
             })?;
             if let Some(store) = stores.get(tenant) {
@@ -139,23 +140,48 @@ impl ObjectStorageResolver {
             }
         }
 
-        // Bind the pack root to this tenant: a root provisioned for tenant A
-        // refuses to open as tenant B (format-marker identity), and the
-        // exclusive root lock makes any second live writable handle Busy.
-        let store: Arc<dyn BlobStore> = Arc::new(EncryptedBlobStore::new(
-            LocalPackStore::open_with_options(
-                self.object_blob_root(tenant),
-                LocalPackStoreOptions {
-                    identity: Some(tenant_root_identity(tenant)),
-                    ..LocalPackStoreOptions::default()
-                },
-            )?,
-            self.tenant_blob_key(tenant)?,
-        ));
+        let store: Arc<dyn BlobStore> = match self.config.local_leg() {
+            LocalLeg::Pack => Arc::new(EncryptedBlobStore::new(
+                LocalPackStore::open_with_options(
+                    self.object_blob_root(tenant),
+                    LocalPackStoreOptions {
+                        identity: Some(tenant_root_identity(tenant)),
+                        ..LocalPackStoreOptions::default()
+                    },
+                )?,
+                self.tenant_blob_key(tenant)?,
+            )),
+            LocalLeg::Erasure(erasure) => {
+                let tenant_leaf = self
+                    .object_blob_root(tenant)
+                    .file_name()
+                    .ok_or_else(|| {
+                        Error::InvalidInput(format!(
+                            "object blob root for tenant {tenant} has no directory-name component"
+                        ))
+                    })?
+                    .to_os_string();
+                let roots = erasure
+                    .drives
+                    .iter()
+                    .map(|drive| drive.join(&tenant_leaf))
+                    .collect();
+                Arc::new(EncryptedBlobStore::new(
+                    ErasureBlobStore::open(ErasureConfig::new(
+                        tenant.as_str(),
+                        roots,
+                        erasure.data_shards,
+                        erasure.parity_shards,
+                        erasure.stripe_width,
+                    )?)?,
+                    self.tenant_blob_key(tenant)?,
+                ))
+            }
+        };
         let mut stores = self.local_stores.lock().map_err(|_| {
             Error::storage(
                 StorageErrorKind::Other,
-                "object-storage local pack store cache lock poisoned",
+                "object-storage local store cache lock poisoned",
             )
         })?;
         if let Some(existing) = stores.get(tenant) {

@@ -76,15 +76,19 @@ fn local_lane() -> Lane {
     }
 }
 
-fn erasure_lane(name: &'static str, data: usize, parity: usize) -> Lane {
+fn erasure_lane(name: &'static str, data: usize, parity: usize, stripe_target: usize) -> Lane {
     let dirs: Vec<tempfile::TempDir> = (0..data + parity)
         .map(|_| tempfile::tempdir().expect("tempdir"))
         .collect();
     let roots: Vec<PathBuf> = dirs.iter().map(|dir| dir.path().to_path_buf()).collect();
     // Stripe width must be a multiple of data_shards * 2 (even shard
-    // lengths); floor the 1 MiB target to each layout's alignment.
+    // lengths); floor the requested target to each layout's alignment.
     let unit = data * 2;
-    let stripe_width = (STRIPE_WIDTH / unit) * unit;
+    let stripe_width = (stripe_target / unit) * unit;
+    assert!(
+        stripe_width > 0,
+        "stripe target {stripe_target} is smaller than the {unit}-byte alignment for {name}"
+    );
     let config =
         ErasureConfig::new(name, roots, data, parity, stripe_width).expect("erasure config");
     let store = ErasureBlobStore::open(config).expect("open erasure store");
@@ -231,20 +235,58 @@ async fn bench_lane(lane: &Lane) {
 }
 
 fn main() {
+    let stripe_targets = std::env::var_os("NIMBUS_BENCH_STRIPE_WIDTHS").map(|raw| {
+        let raw = raw
+            .into_string()
+            .expect("NIMBUS_BENCH_STRIPE_WIDTHS must be valid UTF-8");
+        let targets = raw
+            .split(',')
+            .map(str::trim)
+            .map(|value| {
+                value
+                    .parse::<usize>()
+                    .unwrap_or_else(|error| panic!("invalid stripe width {value:?}: {error}"))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !targets.is_empty() && targets.iter().all(|target| *target > 0),
+            "NIMBUS_BENCH_STRIPE_WIDTHS must contain positive comma-separated widths"
+        );
+        targets
+    });
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("tokio runtime");
     runtime.block_on(async {
-        println!(
-            "workloads: {SMALL_ITERS}x{SMALL_LEN}B put/get, {LARGE_ITERS}x(~{LARGE_LEN}B, +8KiB/obj) put/get, {RANGE_ITERS}x{RANGE_LEN}B ranged reads striding the full span (stripe target {STRIPE_WIDTH}B, floored per lane)"
-        );
-        for lane in [
-            local_lane(),
-            erasure_lane("erasure-4p2", 4, 2),
-            erasure_lane("erasure-12p4", 12, 4),
-        ] {
-            bench_lane(&lane).await;
+        match stripe_targets {
+            None => {
+                println!(
+                    "workloads: {SMALL_ITERS}x{SMALL_LEN}B put/get, {LARGE_ITERS}x(~{LARGE_LEN}B, +8KiB/obj) put/get, {RANGE_ITERS}x{RANGE_LEN}B ranged reads striding the full span (stripe target {STRIPE_WIDTH}B, floored per lane)"
+                );
+                for lane in [
+                    local_lane(),
+                    erasure_lane("erasure-4p2", 4, 2, STRIPE_WIDTH),
+                    erasure_lane("erasure-12p4", 12, 4, STRIPE_WIDTH),
+                ] {
+                    bench_lane(&lane).await;
+                }
+            }
+            Some(targets) => {
+                let target_list = targets
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                println!(
+                    "workloads: {SMALL_ITERS}x{SMALL_LEN}B put/get, {LARGE_ITERS}x(~{LARGE_LEN}B, +8KiB/obj) put/get, {RANGE_ITERS}x{RANGE_LEN}B ranged reads striding the full span (stripe targets [{target_list}]B, floored per lane)"
+                );
+                bench_lane(&local_lane()).await;
+                for target in targets {
+                    bench_lane(&erasure_lane("erasure-4p2", 4, 2, target)).await;
+                    bench_lane(&erasure_lane("erasure-12p4", 12, 4, target)).await;
+                }
+            }
         }
     });
 }

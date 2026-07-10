@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use nimbus_blob::{BlobStore, LocalPackStore};
+use nimbus_blob::{BlobStore, ErasureBlobStore, ErasureConfig, LocalPackStore};
 use nimbus_core::TenantId;
 use nimbus_engine::Engine;
 use nimbus_storage::{
@@ -13,8 +13,14 @@ use nimbus_storage::{
 };
 use tempfile::tempdir;
 
-use crate::config::{BUCKET_ENV, MASTER_KEY_FILE_ENV, MODE_ENV, PROVIDER_ENV};
-use crate::{ObjectStorageConfig, ObjectStorageEnv, ObjectStorageResolver, object_backup_roots};
+use crate::config::{
+    BUCKET_ENV, ERASURE_DATA_ENV, ERASURE_DRIVES_ENV, ERASURE_PARITY_ENV, ERASURE_STRIPE_ENV,
+    LOCAL_LEG_ENV, MASTER_KEY_FILE_ENV, MODE_ENV, PROVIDER_ENV,
+};
+use crate::{
+    ErasureLegConfig, LocalLeg, ObjectStorageConfig, ObjectStorageEnv, ObjectStorageResolver,
+    object_backup_roots,
+};
 
 struct MapEnv(BTreeMap<String, String>);
 
@@ -76,6 +82,41 @@ fn env_default_is_overridden_by_programmatic_config() {
         programmatic.master_key_file(),
         Some(Path::new("/secure/object.master"))
     );
+}
+
+#[test]
+fn erasure_env_config_round_trips_and_rejects_bad_stripe() {
+    let temp = tempdir().unwrap();
+    let drives = (0..3)
+        .map(|index| temp.path().join(format!("drive-{index}")))
+        .collect::<Vec<_>>();
+    let drive_list = drives
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let base = BTreeMap::from([
+        (LOCAL_LEG_ENV.to_string(), "erasure".to_string()),
+        (ERASURE_DRIVES_ENV.to_string(), drive_list),
+        (ERASURE_DATA_ENV.to_string(), "2".to_string()),
+        (ERASURE_PARITY_ENV.to_string(), "1".to_string()),
+        (ERASURE_STRIPE_ENV.to_string(), "64".to_string()),
+    ]);
+
+    let config = ObjectStorageConfig::from_sources(None, &MapEnv(base.clone())).unwrap();
+    let LocalLeg::Erasure(erasure) = config.local_leg() else {
+        panic!("erasure env must select the erasure local leg");
+    };
+    assert_eq!(erasure.drives, drives);
+    assert_eq!(erasure.data_shards, 2);
+    assert_eq!(erasure.parity_shards, 1);
+    assert_eq!(erasure.stripe_width, 64);
+
+    let mut bad = base;
+    bad.insert(ERASURE_STRIPE_ENV.to_string(), "65".to_string());
+    let error = ObjectStorageConfig::from_sources(None, &MapEnv(bad)).unwrap_err();
+    assert!(error.to_string().contains("stripe width"), "{error}");
+    assert!(error.to_string().contains("multiple"), "{error}");
 }
 
 #[test]
@@ -147,6 +188,105 @@ async fn resolver_builds_local_blob_store() {
         nimbus_crypto::KeyManifest::manifest_path(&resolver.object_blob_key_path(&tenant)).exists(),
         "resolver creates the tenant blob DEK sidecar"
     );
+}
+
+fn erasure_config(drives: Vec<std::path::PathBuf>) -> ObjectStorageConfig {
+    ObjectStorageConfig::local_only().with_local_leg(LocalLeg::Erasure(ErasureLegConfig {
+        drives,
+        data_shards: 2,
+        parity_shards: 1,
+        stripe_width: 64,
+    }))
+}
+
+#[tokio::test]
+async fn resolver_builds_erasure_local_leg_per_tenant() {
+    let temp = tempdir().unwrap();
+    let drives = (0..3)
+        .map(|index| temp.path().join(format!("erasure-drive-{index}")))
+        .collect::<Vec<_>>();
+    let engine = Arc::new(Engine::new(temp.path().join("engine")).unwrap());
+    let resolver = ObjectStorageResolver::with_config(engine, erasure_config(drives.clone()));
+    let tenant_a = TenantId::new("tenant-a").unwrap();
+    let tenant_b = TenantId::new("tenant-b").unwrap();
+
+    let store_a = resolver.blob_store(&tenant_a).unwrap();
+    store_a
+        .put(Bytes::from_static(b"tenant a bytes"))
+        .await
+        .unwrap();
+    let store_b = resolver.blob_store(&tenant_b).unwrap();
+    store_b
+        .put(Bytes::from_static(b"tenant b bytes"))
+        .await
+        .unwrap();
+
+    let roots_a = drives
+        .iter()
+        .map(|drive| drive.join("tenant-a"))
+        .collect::<Vec<_>>();
+    let roots_b = drives
+        .iter()
+        .map(|drive| drive.join("tenant-b"))
+        .collect::<Vec<_>>();
+    assert!(roots_a.iter().all(|root| root.exists()));
+    assert!(roots_b.iter().all(|root| root.exists()));
+    assert!(roots_a.iter().zip(&roots_b).all(|(a, b)| a != b));
+
+    drop(store_a);
+    drop(store_b);
+    drop(resolver);
+    let error = ErasureBlobStore::open(ErasureConfig::new("tenant-b", roots_a, 2, 1, 64).unwrap())
+        .unwrap_err();
+    assert_eq!(
+        error.storage_kind(),
+        Some(nimbus_core::StorageErrorKind::Corruption),
+        "per-tenant erasure leg identity must reject a foreign tenant"
+    );
+}
+
+#[tokio::test]
+async fn resolver_erasure_leg_is_encrypted_below_placement() {
+    const MARKER: &[u8] = b"nimbus-erasure-encryption-plaintext-marker-7d5f8b3c";
+
+    let temp = tempdir().unwrap();
+    let drives = (0..3)
+        .map(|index| temp.path().join(format!("erasure-drive-{index}")))
+        .collect::<Vec<_>>();
+    let engine = Arc::new(Engine::new(temp.path().join("engine")).unwrap());
+    let resolver = ObjectStorageResolver::with_config(engine, erasure_config(drives.clone()));
+    let tenant = tenant();
+    let store = resolver.blob_store(&tenant).unwrap();
+    let plaintext = Bytes::from_static(MARKER);
+    let hash = store.put(plaintext.clone()).await.unwrap();
+
+    assert_eq!(store.get(&hash).await.unwrap(), plaintext);
+    for root in drives.iter().map(|drive| drive.join("tenant-a")) {
+        assert!(
+            !tree_contains_bytes(&root, MARKER),
+            "raw erasure drive {} must not contain the plaintext marker",
+            root.display()
+        );
+    }
+}
+
+fn tree_contains_bytes(root: &Path, needle: &[u8]) -> bool {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if tree_contains_bytes(&path, needle) {
+                return true;
+            }
+        } else if let Ok(bytes) = std::fs::read(path)
+            && bytes.windows(needle.len()).any(|window| window == needle)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 #[tokio::test]

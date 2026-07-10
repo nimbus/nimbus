@@ -30,6 +30,7 @@ pub struct ErasureBlobStore {
     pub(super) stores: Vec<LocalPackStore>,
     observer: Arc<dyn SyncObserver>,
     shared: Arc<LegSharedState>,
+    read_only: bool,
     /// Serializes manifest mutations (put's read-modify-publish, release's
     /// multi-file removal) for the LEG, shared process-wide via a canonical
     /// drive-0 registry — same-process instances over the same roots alias
@@ -66,34 +67,54 @@ impl std::fmt::Debug for ErasureBlobStore {
 
 impl ErasureBlobStore {
     pub fn open(config: ErasureConfig) -> Result<Self> {
+        Self::open_inner(config, false)
+    }
+
+    /// Opens a lock-free, read-only inspection handle over every drive.
+    ///
+    /// The handle takes no per-drive flock and never mutates roots, so it can
+    /// inspect an erasure leg while its writable owner is running. Mutations
+    /// fail with [`StorageErrorKind::Busy`], matching
+    /// [`LocalPackStore::open_read_only`].
+    pub fn open_read_only(config: ErasureConfig) -> Result<Self> {
+        Self::open_inner(config, true)
+    }
+
+    fn open_inner(config: ErasureConfig, read_only: bool) -> Result<Self> {
         let mut stores = Vec::with_capacity(config.drives.len());
         let mut drive_roots = Vec::with_capacity(config.drives.len());
         let observer: Arc<dyn SyncObserver> = Arc::new(NoopSyncObserver);
 
         for (index, root) in config.drives.iter().enumerate() {
-            let store = LocalPackStore::open_with_options(
-                root,
-                LocalPackStoreOptions {
-                    identity: Some(drive_identity(&config.leg_id, index)),
-                    ..LocalPackStoreOptions::default()
-                },
-            )?;
+            let store = if read_only {
+                LocalPackStore::open_read_only(root)?
+            } else {
+                LocalPackStore::open_with_options(
+                    root,
+                    LocalPackStoreOptions {
+                        identity: Some(drive_identity(&config.leg_id, index)),
+                        ..LocalPackStoreOptions::default()
+                    },
+                )?
+            };
             let canonical = root.canonicalize().map_err(|err| {
                 Error::storage(
                     StorageErrorKind::Io,
                     format!("canonicalize erasure drive root {}: {err}", root.display()),
                 )
             })?;
-            let manifest_dir = manifest::manifest_dir(&canonical);
-            disk::create_dir_all_durable(&manifest_dir, &*observer).map_err(|err| {
-                Error::storage(
-                    StorageErrorKind::Io,
-                    format!(
-                        "create erasure manifest dir {}: {err}",
-                        manifest_dir.display()
-                    ),
-                )
-            })?;
+            if !read_only {
+                let manifest_dir = manifest::manifest_dir(&canonical);
+                disk::create_dir_all_durable(&manifest_dir, &*observer).map_err(|err| {
+                    Error::storage(
+                        StorageErrorKind::Io,
+                        format!(
+                            "create erasure manifest dir {}: {err}",
+                            manifest_dir.display()
+                        ),
+                    )
+                })?;
+            }
             stores.push(store);
             drive_roots.push(canonical);
         }
@@ -105,6 +126,7 @@ impl ErasureBlobStore {
             stores,
             observer,
             shared: Arc::clone(&shared),
+            read_only,
             mutation: Arc::clone(&shared.mutation),
             leg_pins: shared.leg_pins.clone(),
             poisoned: Arc::clone(&shared.poisoned),
@@ -114,7 +136,7 @@ impl ErasureBlobStore {
     }
 
     pub(super) fn ensure_live(&self) -> Result<()> {
-        if self.poisoned.load(std::sync::atomic::Ordering::SeqCst) {
+        if !self.read_only && self.poisoned.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(Error::storage(
                 StorageErrorKind::Io,
                 "erasure store poisoned: a publish rollback could not be made durable; \
@@ -122,6 +144,20 @@ impl ErasureBlobStore {
             ));
         }
         Ok(())
+    }
+
+    pub(super) fn ensure_writable(&self, operation: &str) -> Result<()> {
+        if self.read_only {
+            return Err(Error::storage(
+                StorageErrorKind::Busy,
+                format!("read-only inspection handle refuses {operation}"),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     pub(super) async fn load_manifest(&self, hash: &BlobHash) -> Result<Option<ErasureManifest>> {
@@ -404,6 +440,7 @@ impl ErasureBlobStore {
 #[async_trait]
 impl BlobStore for ErasureBlobStore {
     async fn put(&self, bytes: Bytes) -> Result<BlobHash> {
+        self.ensure_writable("put")?;
         self.ensure_live()?;
         let hash = BlobHash::of(&bytes);
         // Mutations are serialized per leg: without this, an idempotent put
@@ -472,6 +509,7 @@ impl BlobStore for ErasureBlobStore {
     }
 
     async fn put_stream(&self, mut src: ByteStream) -> Result<BlobHash> {
+        self.ensure_writable("put_stream")?;
         let mut buf = Vec::new();
         src.read_to_end(&mut buf).await.map_err(|err| {
             Error::storage(StorageErrorKind::Io, format!("read blob stream: {err}"))
@@ -557,6 +595,7 @@ impl BlobStore for ErasureBlobStore {
     }
 
     async fn release(&self, hash: &BlobHash) -> Result<()> {
+        self.ensure_writable("release")?;
         self.ensure_live()?;
         let _mutation = self.mutation.lock().await;
         // Same post-lock recheck as put/heal/sweep_drive.

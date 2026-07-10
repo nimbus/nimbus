@@ -5,12 +5,15 @@ use std::sync::Arc;
 use clap::{Args, Subcommand, ValueEnum};
 use nimbus::{
     BackupBundle, BackupRequest, EmbeddedProviderKind, Engine, EnginePersistenceConfig,
-    Error as NimbusError, KeyEscrow, LocalPackStore, ObjectBackup, ObjectPlacement,
+    ErasureBlobStore, ErasureConfig, ErasureHealer, Error as NimbusError, HealPacing, HealReport,
+    HealSummary, KeyEscrow, LocalLeg, LocalPackStore, ObjectBackup, ObjectPlacement,
     ObjectStorageConfig, ObjectStorageResolver, ObjectStorePlacementTarget,
     ObjectStoreProviderCredentials, ObjectStoreProviderKind, PlacementPolicy,
     PointInTimeRestoreArchive, TenantId, object_backup_roots, object_blob_root,
 };
+use nimbus_core::StorageErrorKind;
 use rand::RngCore;
+use serde::Serialize;
 
 use crate::cli_ux;
 
@@ -31,6 +34,12 @@ pub(crate) enum ObjectStorageCommand {
     /// Inspect local byte-plane GC status for a tenant.
     #[command(name = "gc-status")]
     GcStatus(GcStatusCommand),
+    /// Inspect one tenant's erasure leg without taking its drive locks.
+    #[command(name = "erasure-status")]
+    ErasureStatus(ErasureStatusCommand),
+    /// Heal one tenant's erasure leg as offline maintenance.
+    #[command(name = "erasure-heal")]
+    ErasureHeal(ErasureHealCommand),
     /// Tenant object-storage lifecycle commands.
     #[command(subcommand)]
     Tenant(TenantObjectStorageCommand),
@@ -188,6 +197,34 @@ pub(crate) struct GcStatusCommand {
 
 #[derive(Debug, Args)]
 #[command(help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE)]
+pub(crate) struct ErasureStatusCommand {
+    /// Tenant whose deployment-level erasure leg is being inspected.
+    #[arg(long)]
+    pub(crate) tenant: String,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = "Exit codes:\n  0  Heal completed with no beyond-repair blobs\n  1  Operational error\n  2  One or more blobs are beyond repair"
+)]
+pub(crate) struct ErasureHealCommand {
+    /// Tenant whose deployment-level erasure leg is being healed.
+    #[arg(long)]
+    pub(crate) tenant: String,
+    /// Maximum erasure payload bytes repaired during this run.
+    #[arg(long)]
+    pub(crate) max_bytes: Option<u64>,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE)]
 pub(crate) struct TenantRemoveCommand {
     #[arg(long, default_value = "./data")]
     pub(crate) data_dir: PathBuf,
@@ -211,6 +248,8 @@ pub(crate) async fn run_object_storage_command(
         }
         ObjectStorageCommand::BootstrapMasterKey(command) => run_bootstrap_master_key(command),
         ObjectStorageCommand::GcStatus(command) => run_gc_status(command),
+        ObjectStorageCommand::ErasureStatus(command) => run_erasure_status(command).await,
+        ObjectStorageCommand::ErasureHeal(command) => run_erasure_heal(command).await,
         ObjectStorageCommand::Tenant(TenantObjectStorageCommand::Rm(command)) => {
             run_tenant_rm(command).await
         }
@@ -322,6 +361,236 @@ fn run_gc_status(command: GcStatusCommand) -> Result<(), Box<dyn Error>> {
         root.display()
     ));
     Ok(())
+}
+
+async fn run_erasure_status(command: ErasureStatusCommand) -> Result<(), Box<dyn Error>> {
+    let tenant = TenantId::new(command.tenant)?;
+    let config = erasure_config_from_env(&tenant)?;
+    let roots = config.drives.clone();
+    let stats = ErasureBlobStore::open_read_only(config)?.stats().await?;
+    let view = ErasureStatusView::new(&tenant, &roots, &stats);
+    if command.json {
+        println!("{}", serde_json::to_string_pretty(&view)?);
+    } else {
+        println!(
+            "erasure-status tenant={} blob_count={} last_heal={}",
+            tenant,
+            stats.blob_count,
+            format_heal_summary(stats.last_heal)
+        );
+        let rows = view
+            .drives
+            .iter()
+            .map(|drive| {
+                vec![
+                    drive.index.to_string(),
+                    drive.root.clone(),
+                    drive.live_bytes.to_string(),
+                    drive.reclaimable_bytes.to_string(),
+                    drive.quarantined_bytes.to_string(),
+                    drive.pack_count.to_string(),
+                ]
+            })
+            .collect::<Vec<_>>();
+        println!(
+            "{}",
+            cli_ux::render_table_with_options(
+                &[
+                    cli_ux::TableColumn::right("DRIVE", 5),
+                    cli_ux::TableColumn::left("ROOT", 10),
+                    cli_ux::TableColumn::right("LIVE_BYTES", 10),
+                    cli_ux::TableColumn::right("RECLAIMABLE_BYTES", 17),
+                    cli_ux::TableColumn::right("QUARANTINED_BYTES", 17),
+                    cli_ux::TableColumn::right("PACKS", 5),
+                ],
+                &rows,
+                cli_ux::TableRenderOptions::default(),
+            )
+        );
+    }
+    Ok(())
+}
+
+async fn run_erasure_heal(command: ErasureHealCommand) -> Result<(), Box<dyn Error>> {
+    let tenant = TenantId::new(command.tenant)?;
+    let config = erasure_config_from_env(&tenant)?;
+    let store = match ErasureBlobStore::open(config) {
+        Ok(store) => store,
+        Err(error) if error.storage_kind() == Some(StorageErrorKind::Busy) => {
+            return Err(format!(
+                "{error}; stop the server or run via the server; erasure heal is offline maintenance"
+            )
+            .into());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let mut healer = ErasureHealer::new(store);
+    if let Some(max_bytes) = command.max_bytes {
+        healer = healer.with_pacing(HealPacing::max_bytes_per_run(max_bytes)?);
+    }
+    let report = healer.heal().await?;
+    let view = HealReportView::from(&report);
+    if command.json {
+        println!("{}", serde_json::to_string_pretty(&view)?);
+    } else {
+        println!(
+            "erasure-heal tenant={} blobs_examined={} stripes_repaired={} shards_rewritten={} degraded={} beyond_repair={} exhausted={} at_millis={}",
+            tenant,
+            report.blobs_examined,
+            report.stripes_repaired,
+            report.shards_rewritten,
+            report.degraded,
+            report.beyond_repair.len(),
+            report.exhausted,
+            report.at_millis,
+        );
+        for hash in &report.beyond_repair {
+            println!("beyond_repair={}", hash.to_hex());
+        }
+    }
+    if !report.beyond_repair.is_empty() {
+        std::io::Write::flush(&mut std::io::stdout())?;
+        std::process::exit(2);
+    }
+    Ok(())
+}
+
+fn erasure_config_from_env(tenant: &TenantId) -> Result<ErasureConfig, Box<dyn Error>> {
+    let config = ObjectStorageConfig::from_env(None)?;
+    let LocalLeg::Erasure(erasure) = config.local_leg() else {
+        return Err(
+            "object-storage local leg is not erasure; set NIMBUS_OBJECT_STORAGE_LOCAL_LEG=erasure"
+                .into(),
+        );
+    };
+    let tenant_leaf = object_blob_root(Path::new(""), tenant)
+        .file_name()
+        .ok_or("tenant object blob root has no directory-name component")?
+        .to_os_string();
+    let roots = erasure
+        .drives
+        .iter()
+        .map(|drive| drive.join(&tenant_leaf))
+        .collect();
+    Ok(ErasureConfig::new(
+        tenant.as_str(),
+        roots,
+        erasure.data_shards,
+        erasure.parity_shards,
+        erasure.stripe_width,
+    )?)
+}
+
+#[derive(Serialize)]
+struct ErasureStatusView {
+    tenant: String,
+    blob_count: usize,
+    drives: Vec<ErasureDriveStatusView>,
+    last_heal: Option<HealSummaryView>,
+}
+
+impl ErasureStatusView {
+    fn new(tenant: &TenantId, roots: &[PathBuf], stats: &nimbus::ErasureStats) -> Self {
+        let drives = roots
+            .iter()
+            .zip(&stats.per_drive)
+            .enumerate()
+            .map(|(index, (root, drive))| ErasureDriveStatusView {
+                index,
+                root: root.display().to_string(),
+                live_bytes: drive.live_bytes,
+                reclaimable_bytes: drive.reclaimable_bytes,
+                quarantined_bytes: drive.quarantined_bytes,
+                pack_count: drive.pack_count,
+            })
+            .collect();
+        Self {
+            tenant: tenant.to_string(),
+            blob_count: stats.blob_count,
+            drives,
+            last_heal: stats.last_heal.map(HealSummaryView::from),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ErasureDriveStatusView {
+    index: usize,
+    root: String,
+    live_bytes: u64,
+    reclaimable_bytes: u64,
+    quarantined_bytes: u64,
+    pack_count: usize,
+}
+
+#[derive(Serialize)]
+struct HealSummaryView {
+    blobs_examined: usize,
+    stripes_repaired: usize,
+    shards_rewritten: usize,
+    degraded_blobs: usize,
+    beyond_repair_blobs: usize,
+    exhausted: bool,
+    at_millis: u64,
+}
+
+impl From<HealSummary> for HealSummaryView {
+    fn from(summary: HealSummary) -> Self {
+        Self {
+            blobs_examined: summary.blobs_examined,
+            stripes_repaired: summary.stripes_repaired,
+            shards_rewritten: summary.shards_rewritten,
+            degraded_blobs: summary.degraded_blobs,
+            beyond_repair_blobs: summary.beyond_repair_blobs,
+            exhausted: summary.exhausted,
+            at_millis: summary.at_millis,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct HealReportView {
+    blobs_examined: usize,
+    stripes_repaired: usize,
+    shards_rewritten: usize,
+    degraded: usize,
+    beyond_repair: Vec<String>,
+    exhausted: bool,
+    at_millis: u64,
+}
+
+impl From<&HealReport> for HealReportView {
+    fn from(report: &HealReport) -> Self {
+        Self {
+            blobs_examined: report.blobs_examined,
+            stripes_repaired: report.stripes_repaired,
+            shards_rewritten: report.shards_rewritten,
+            degraded: report.degraded,
+            beyond_repair: report
+                .beyond_repair
+                .iter()
+                .map(|hash| hash.to_hex())
+                .collect(),
+            exhausted: report.exhausted,
+            at_millis: report.at_millis,
+        }
+    }
+}
+
+fn format_heal_summary(summary: Option<HealSummary>) -> String {
+    match summary {
+        Some(summary) => format!(
+            "blobs_examined={},stripes_repaired={},shards_rewritten={},degraded={},beyond_repair={},exhausted={},at_millis={}",
+            summary.blobs_examined,
+            summary.stripes_repaired,
+            summary.shards_rewritten,
+            summary.degraded_blobs,
+            summary.beyond_repair_blobs,
+            summary.exhausted,
+            summary.at_millis,
+        ),
+        None => "none".to_string(),
+    }
 }
 
 async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error>> {
@@ -586,6 +855,34 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::ObjectStorage(ObjectStorageCommand::GcStatus(_))
+        ));
+
+        let cli = Cli::parse_from([
+            "nimbus",
+            "object-storage",
+            "erasure-status",
+            "--tenant",
+            "tenant-a",
+            "--json",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Command::ObjectStorage(ObjectStorageCommand::ErasureStatus(_))
+        ));
+
+        let cli = Cli::parse_from([
+            "nimbus",
+            "object-storage",
+            "erasure-heal",
+            "--tenant",
+            "tenant-a",
+            "--max-bytes",
+            "1048576",
+            "--json",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Command::ObjectStorage(ObjectStorageCommand::ErasureHeal(_))
         ));
 
         let cli = Cli::parse_from([

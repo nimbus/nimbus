@@ -271,12 +271,18 @@ required_tests=(
   erasure_heal_preserves_evidence_when_a_later_stripe_is_beyond_repair
   erasure_paced_heal_still_counts_planned_degraded_blobs
   erasure_paced_heal_skips_over_budget_blob_without_starving_successors
+  erasure_read_only_open_serves_stats_and_refuses_writes
+  erasure_env_config_round_trips_and_rejects_bad_stripe
+  resolver_builds_erasure_local_leg_per_tenant
+  resolver_erasure_leg_is_encrypted_below_placement
+  cli_surface_exposes_erasure_status
+  cli_surface_exposes_erasure_heal_and_exit_codes
 )
 for t in "${required_tests[@]}"; do
-  if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then
+  if grep -rq "fn ${t}(" crates/nimbus-blob/src/ crates/nimbus-object-storage/src/ crates/nimbus-cli/src/; then
     pass "test ${t} exists"
   else
-    fail "test ${t} missing from crates/nimbus-blob"
+    fail "test ${t} missing from required crate sources"
   fi
 done
 if [ "${RUN_TESTS:-0}" = "1" ]; then
