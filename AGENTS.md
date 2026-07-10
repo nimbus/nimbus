@@ -84,10 +84,17 @@ Using gpt-5.6-sol inside workflows and subagents:
 - Subagents and automated workflows should call the plugin's native slash
   commands or its exposed `codex-cli-runtime` skills to delegate tasks directly,
   omitting the need for raw terminal wrappers.
-- For closed-loop quality assurance, keep the review gate turned on via
-  `/codex:setup --enable-review-gate`. This ensures a stop hook automatically
-  challenges Claude's outputs using Codex before finalizing, preventing broken
-  code or weak design assumptions from reaching the main session unvetted.
+- Closed-loop quality assurance runs through the user-level stop-gate
+  wrapper at `~/.claude/hooks/stop-review-triage.mjs` (registered in
+  `~/.claude/settings.json`), which replaces the plugin's own
+  `/codex:setup --enable-review-gate` gate (keep that plugin gate OFF or
+  both will run). The wrapper fingerprints the repo (`HEAD` + status +
+  diff) at every stop: turns with no edits ALLOW instantly with zero API
+  calls; turns that edited code get the full Codex stop-review
+  (model/effort from `~/.codex/config.toml`). Reviewer outages block once
+  per edit state, then allow with a loud warning instead of looping.
+  Disable temporarily by creating
+  `~/.claude/hooks-state/stop-triage/disabled`.
 
 ## Pre-Launch Status
 
