@@ -1282,3 +1282,40 @@ async fn erasure_misnamed_manifest_is_not_served_or_exported() {
     // The real blob is unaffected.
     assert_eq!(store.get(&real).await.unwrap(), real_bytes);
 }
+
+#[tokio::test]
+async fn erasure_read_only_stable_loss_stays_corruption() {
+    // Review fix (EOW round 3, P2): beyond-parity STABLE damage on a
+    // read-only handle must stay a Corruption verdict — only a provably
+    // newer on-disk index (a writer since our snapshot) reports Busy.
+    let (_dir, store, roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(STRIPE + 15);
+    let hash = store.put(bytes).await.unwrap();
+    let manifest = store.load_manifest_for_test(&hash).await.unwrap();
+
+    // Stable damage: release m+1 shards of stripe 0 BEFORE the inspector
+    // opens (the frozen snapshot and the disk agree the shards are gone).
+    for shard_index in 0..=M {
+        let reference = manifest.stripes[0]
+            .iter()
+            .find(|candidate| candidate.shard_index as usize == shard_index)
+            .unwrap();
+        let drive = stripe::drive_for(shard_index, 0, K + M);
+        store
+            .drive_store(drive)
+            .release(&reference.shard_hash)
+            .await
+            .unwrap();
+    }
+
+    let inspector = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("test-leg", roots, K, M, STRIPE).unwrap(),
+    )
+    .unwrap();
+    let err = inspector.get(&hash).await.unwrap_err();
+    assert_eq!(
+        err.storage_kind(),
+        Some(StorageErrorKind::Corruption),
+        "stable beyond-parity loss must not hide behind a Busy retry hint: {err}"
+    );
+}

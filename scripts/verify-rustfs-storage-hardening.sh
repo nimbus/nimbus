@@ -277,6 +277,7 @@ required_tests=(
   erasure_visible_blob_hashes_lists_committed_blobs_read_only
   erasure_read_only_open_tolerates_absent_drive_root
   erasure_read_only_stale_snapshot_reports_busy_not_corruption
+  erasure_read_only_stable_loss_stays_corruption
   erasure_misnamed_manifest_is_not_served_or_exported
   erasure_env_config_round_trips_and_rejects_bad_stripe
   resolver_builds_erasure_local_leg_per_tenant

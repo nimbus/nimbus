@@ -362,11 +362,18 @@ impl ErasureBlobStore {
             // pack indexes are frozen at open, while manifests are read
             // live — a put completed AFTER the inspector opened is visible
             // by manifest but its shards are absent from the frozen
-            // indexes. That is a stale snapshot, not data corruption:
-            // report Busy with a re-open hint instead of a false
-            // Corruption verdict. (Content addressing means a stale index
-            // can never serve WRONG bytes — only fail to find new ones.)
-            if self.read_only && missing_from_snapshot {
+            // indexes. PROVE staleness before reporting Busy: freshly
+            // re-read the affected drives' on-disk indexes; a shard the
+            // FRESH index has is a stale snapshot (Busy + re-open hint),
+            // while a shard absent from disk too is stable damage and must
+            // stay a Corruption verdict — beyond-parity loss must never
+            // hide behind a retry hint. (Content addressing means a stale
+            // index can never serve WRONG bytes — only fail to find new
+            // ones.)
+            if self.read_only
+                && missing_from_snapshot
+                && self.snapshot_lags_disk(manifest, stripe_index).await?
+            {
                 return Err(Error::storage(
                     StorageErrorKind::Busy,
                     format!(
@@ -383,6 +390,43 @@ impl ErasureBlobStore {
             )));
         }
         stripe::decode_stripe(manifest.data_shards, manifest.parity_shards, &present)
+    }
+
+    /// Proof of read-only snapshot staleness: re-reads the on-disk indexes
+    /// (fresh read-only opens) for this stripe's drives and reports whether
+    /// any manifest-referenced shard our FROZEN index cannot find is
+    /// present on disk now — i.e. a writer committed it after this handle
+    /// opened. Slow path: only runs when a read-only quorum failure
+    /// involved NotFound shards.
+    async fn snapshot_lags_disk(
+        &self,
+        manifest: &ErasureManifest,
+        stripe_index: usize,
+    ) -> Result<bool> {
+        let Some(stripe) = manifest.stripes.get(stripe_index) else {
+            return Ok(false);
+        };
+        let total = manifest.data_shards + manifest.parity_shards;
+        for shard in stripe {
+            let shard_index = shard.shard_index as usize;
+            let drive = stripe::drive_for(shard_index, stripe_index, total);
+            let root = &self.drive_roots[drive];
+            if !root.exists() {
+                continue;
+            }
+            // Frozen view: OUR store's in-memory index.
+            if self.stores[drive].has(&shard.shard_hash).await? {
+                continue;
+            }
+            let fresh = LocalPackStore::open_read_only_with_identity(
+                root,
+                Some(drive_identity(&self.config.leg_id, drive)),
+            )?;
+            if fresh.has(&shard.shard_hash).await? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub(super) async fn read_shard(

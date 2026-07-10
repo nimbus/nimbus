@@ -594,14 +594,15 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
                 .collect()
         }
     };
-    if let LocalLeg::Erasure(_) = &local_leg {
-        let existing: Vec<PathBuf> = erasure_trees
-            .iter()
-            .filter(|tree| tree.exists())
-            .cloned()
-            .collect();
-        if !existing.is_empty() {
-            let ownership = ErasureBlobStore::open(erasure_config_from_env(&tenant)?).map_err(
+    // Ownership is HELD through the deletion (not probe-and-drop): a
+    // server starting between a released probe and remove_dir_all would
+    // race the unlink. Unlinking directories whose flocks our own process
+    // holds is safe on Unix; the guard drops after the trees are gone.
+    let _erasure_ownership = if matches!(&local_leg, LocalLeg::Erasure(_))
+        && erasure_trees.iter().any(|tree| tree.exists())
+    {
+        Some(
+            ErasureBlobStore::open(erasure_config_from_env(&tenant)?).map_err(
                 |err| -> Box<dyn Error> {
                     format!(
                         "tenant rm requires exclusive ownership of the erasure drives \
@@ -609,10 +610,11 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
                     )
                     .into()
                 },
-            )?;
-            drop(ownership);
-        }
-    }
+            )?,
+        )
+    } else {
+        None
+    };
     let engine = open_engine(&command.data_dir, command.provider).await?;
     engine.delete_tenant_async(tenant.clone()).await?;
     if root.exists() {
