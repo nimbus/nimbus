@@ -613,21 +613,22 @@ impl LocalPackStore {
         ))
     }
 
-    /// Whether every pack file referenced by THIS handle's in-memory index
-    /// is still present on disk. Read-only stats uses this as a STABILITY
-    /// check around a stats computation: a pack that vanished mid-call
-    /// means a writer restructured the root while we read it.
-    pub fn index_packs_present_on_disk(&self) -> Result<bool> {
+    /// Snapshot of the root's ON-DISK pack layout: (pack id, byte size)
+    /// pairs in id order. Read-only stats brackets its computation with two
+    /// of these — inequality means a writer appended, added, or removed
+    /// packs mid-call (torn-accounting risk), regardless of whether the
+    /// affected packs are referenced by this handle's frozen index.
+    pub fn disk_pack_listing(&self) -> Result<Vec<(u64, u64)>> {
         let state = lock(&self.state)?;
-        let mut pack_ids: Vec<u64> = state.index.values().map(|entry| entry.pack_id).collect();
-        pack_ids.sort_unstable();
-        pack_ids.dedup();
-        for pack_id in pack_ids {
-            if !pack_path(&state.packs_dir, pack_id).exists() {
-                return Ok(false);
-            }
+        let mut listing = Vec::new();
+        for pack_id in pack_ids_on_disk(&state.packs_dir)? {
+            let path = pack_path(&state.packs_dir, pack_id);
+            let size = fs::metadata(&path)
+                .map(|meta| meta.len())
+                .map_err(|err| io_error(err, format!("stat pack {}", path.display())))?;
+            listing.push((pack_id, size));
         }
-        Ok(true)
+        Ok(listing)
     }
 
     /// Records the most recent GC sweep summary for [`Self::stats`].

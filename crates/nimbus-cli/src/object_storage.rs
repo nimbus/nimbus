@@ -617,22 +617,22 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
     } else {
         None
     };
-    // Destruction happens as CONTENTS-deletion UNDER the held flocks: the
-    // root directories, their lock files, and markers stay in place for
-    // the whole operation, so the original paths never become recreatable
-    // mid-deletion (the earlier rename design moved the locked inode away
-    // and left the live path free for a racing server). Ordering:
+    // Destruction holds every ownership guard THROUGH the deletion:
     //
-    // 1. Ownership guards already held (erasure) — pack mode acquires one
-    //    below for the same reason.
-    // 2. Delete the control-plane tenant (NotFound tolerated: a re-run
-    //    after a partial prior failure is the recovery path).
-    // 3. Delete every root's CONTENTS except the lock file, locks held.
-    // 4. Drop the guards, then remove the (empty) root directories. A
-    //    failure anywhere leaves a state a plain re-run finishes:
-    //    control-plane deletion is idempotent and content deletion is
-    //    resumable.
-    let _pack_ownership = if matches!(&local_leg, LocalLeg::Pack) && root.exists() {
+    // - Both legs lock UNCONDITIONALLY (opening creates absent roots and
+    //   locks them, closing the create-after-check window a running server
+    //   could exploit).
+    // - The control-plane tenant is deleted first (TenantNotFound is
+    //   tolerated: re-running after a partial prior failure is the
+    //   recovery path) — once it is gone, no request can route to these
+    //   roots, so nothing new can be written to them through the engine.
+    // - remove_dir_all runs WHILE the flocks are held (unlinking our own
+    //   held lock files is safe on Unix; the flock stays valid on the
+    //   unlinked inode until the guard drops). A pathological external
+    //   recreation after deletion yields an empty, unroutable directory —
+    //   benign residue, no data.
+    // Every failure mode is resumable by a plain re-run.
+    let _pack_ownership = if matches!(&local_leg, LocalLeg::Pack) {
         Some(
             LocalPackStore::open_with_options(
                 &root,
@@ -657,7 +657,7 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
     match engine.delete_tenant_async(tenant.clone()).await {
         Ok(()) => {}
         // Idempotent re-run after a partial prior failure.
-        Err(NimbusError::NotFound(_)) => {}
+        Err(NimbusError::TenantNotFound(_)) => {}
         Err(err) => return Err(err.into()),
     }
 
@@ -669,42 +669,18 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
         if !path.exists() {
             continue;
         }
-        remove_root_contents_except_lock(path)?;
+        std::fs::remove_dir_all(path)?;
         if index > 0 {
             erasure_trees_removed += 1;
         }
     }
     drop(_erasure_ownership);
     drop(_pack_ownership);
-    for path in std::iter::once(&root).chain(erasure_trees.iter()) {
-        if path.exists() {
-            std::fs::remove_dir_all(path)?;
-        }
-    }
     engine.quiesce().await;
     emit_object_storage_info(format!(
         "tenant rm tenant={} object_blobs_removed=true erasure_trees_removed={}",
         tenant, erasure_trees_removed
     ));
-    Ok(())
-}
-
-/// Deletes everything under a byte-plane root EXCEPT the advisory lock
-/// file, so the root stays lock-owned (non-recreatable by a racing server)
-/// for the whole destruction. Resumable: a re-run deletes whatever remains.
-fn remove_root_contents_except_lock(root: &Path) -> Result<(), Box<dyn Error>> {
-    for entry in std::fs::read_dir(root)? {
-        let entry = entry?;
-        if entry.file_name() == std::ffi::OsStr::new(nimbus::LOCK_FILE) {
-            continue;
-        }
-        let path = entry.path();
-        if entry.file_type()?.is_dir() {
-            std::fs::remove_dir_all(&path)?;
-        } else {
-            std::fs::remove_file(&path)?;
-        }
-    }
     Ok(())
 }
 

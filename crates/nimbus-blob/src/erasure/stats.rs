@@ -82,15 +82,17 @@ impl ErasureBlobStore {
             // and a success is at worst an append-lag approximation
             // (documented). Writable handles never take this path.
             if self.is_read_only() {
-                // Read-only status: FRESH per-drive open per attempt, with a
-                // STABILITY check bracketing the computation — if any pack
-                // the fresh index references vanished while stats ran, a
-                // writer restructured the drive mid-call (torn accounting
-                // risk) and we retry; three unstable attempts in a row
-                // report Busy. Errors observed while the snapshot IS stable
-                // are real (Corruption/Io keep their kind); a torn window
-                // cannot produce silent wrong numbers because acceptance
-                // requires post-computation stability.
+                // Read-only status: FRESH per-drive open per attempt, with
+                // the computation BRACKETED by two full on-disk pack
+                // listings (ids + sizes) — inequality means a writer
+                // appended, added, or removed packs mid-call (torn
+                // accounting risk, including packs the frozen index never
+                // referenced) and we retry; three unstable attempts in a
+                // row report Busy. Errors observed while the bracket IS
+                // stable are real (Corruption/Io keep their kind);
+                // accepted numbers can never be silently torn because the
+                // index and the pack files provably did not change across
+                // the computation.
                 let mut accepted = None;
                 let mut last_unstable_err: Option<Error> = None;
                 for _ in 0..3 {
@@ -98,8 +100,9 @@ impl ErasureBlobStore {
                         &self.drive_roots[index],
                         Some(super::store::drive_identity(&self.config.leg_id, index)),
                     )?;
+                    let before = fresh.disk_pack_listing()?;
                     let outcome = fresh.stats().await;
-                    let stable = fresh.index_packs_present_on_disk()?;
+                    let stable = fresh.disk_pack_listing()? == before;
                     match (outcome, stable) {
                         (Ok(stats), true) => {
                             accepted = Some(stats);
