@@ -345,7 +345,11 @@ impl HealBudget {
     }
 
     fn can_spend(&self, bytes: u64) -> bool {
-        self.max == u64::MAX || self.spent == 0 || self.spent.saturating_add(bytes) <= self.max
+        // Strict cap: max_bytes_per_run is a MAXIMUM, never exceeded — a
+        // single stripe larger than the whole budget is refused (the run
+        // reports exhausted with zero progress, signaling the operator to
+        // raise the budget above stripe_width).
+        self.max == u64::MAX || self.spent.saturating_add(bytes) <= self.max
     }
 
     fn spend(&mut self, bytes: u64) {

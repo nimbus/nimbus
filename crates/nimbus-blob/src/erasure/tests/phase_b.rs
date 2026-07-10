@@ -74,7 +74,7 @@ fn manifest_shard_indices(
 async fn sweep_all(store: &ErasureBlobStore, grace: Duration) -> usize {
     let mut swept = 0usize;
     for drive in 0..K + M {
-        let report = store.shard_gc(drive, grace).unwrap().sweep().await.unwrap();
+        let report = store.sweep_drive(drive, grace).await.unwrap();
         swept += report.swept;
     }
     swept
@@ -83,7 +83,7 @@ async fn sweep_all(store: &ErasureBlobStore, grace: Duration) -> usize {
 async fn sweep_all_reports(store: &ErasureBlobStore, grace: Duration) -> Vec<crate::BlobGcReport> {
     let mut reports = Vec::new();
     for drive in 0..K + M {
-        reports.push(store.shard_gc(drive, grace).unwrap().sweep().await.unwrap());
+        reports.push(store.sweep_drive(drive, grace).await.unwrap());
     }
     reports
 }
@@ -443,7 +443,13 @@ async fn erasure_poisoned_leg_refuses_shard_gc() {
     assert!(err.to_string().contains("poisoned"));
     assert!(store.drive_store(0).has(&orphan).await.unwrap());
 
-    // New construction refuses outright.
+    // New construction refuses outright — via the public sweep_drive path
+    // and the crate-private constructor alike.
+    let err = store
+        .sweep_drive(0, std::time::Duration::ZERO)
+        .await
+        .expect_err("poisoned leg must refuse sweep_drive");
+    assert!(err.to_string().contains("poisoned"));
     let err = match store.shard_gc(0, std::time::Duration::ZERO) {
         Ok(_) => panic!("poisoned leg must refuse shard_gc construction"),
         Err(err) => err,
@@ -529,8 +535,10 @@ async fn erasure_gc_never_sweeps_inflight_put_shards() {
         let gc_store = store.clone();
         let gc_task = tokio::spawn(async move {
             for drive in 0..3 {
-                let gc = gc_store.shard_gc(drive, std::time::Duration::ZERO).unwrap();
-                let _ = gc.sweep().await.unwrap();
+                let _ = gc_store
+                    .sweep_drive(drive, std::time::Duration::ZERO)
+                    .await
+                    .unwrap();
             }
         });
 
@@ -652,4 +660,37 @@ async fn erasure_sweep_fails_closed_when_leg_poisons_mid_enumeration() {
     let mut perms = fs::metadata(&blocked).unwrap().permissions();
     perms.set_mode(0o700);
     fs::set_permissions(&blocked, perms).unwrap();
+}
+
+#[tokio::test]
+async fn erasure_heal_pacing_never_exceeds_the_byte_cap() {
+    // Review fix (Phase B round 6, P3): max_bytes_per_run is a strict
+    // MAXIMUM — a budget smaller than one stripe repairs nothing and
+    // reports exhausted-without-progress (the operator signal to raise the
+    // budget), instead of silently overshooting on the first stripe.
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload_with_seed(STRIPE, 21);
+    let hash = store.put(bytes.clone()).await.unwrap();
+    let manifest = store.load_manifest_for_test(&hash).await.unwrap();
+    release_shard(&store, &manifest, 0, 0).await;
+
+    let tiny = HealPacing::max_bytes_per_run(STRIPE as u64 - 1).unwrap();
+    let report = ErasureHealer::new(store.clone())
+        .with_pacing(tiny)
+        .heal()
+        .await
+        .unwrap();
+    assert!(report.exhausted, "cap smaller than the stripe: exhausted");
+    assert_eq!(report.stripes_repaired, 0, "strict cap: zero overshoot");
+    assert_eq!(report.shards_rewritten, 0);
+
+    // Raising the budget to one stripe completes the repair.
+    let enough = HealPacing::max_bytes_per_run(STRIPE as u64).unwrap();
+    let report = ErasureHealer::new(store.clone())
+        .with_pacing(enough)
+        .heal()
+        .await
+        .unwrap();
+    assert_eq!(report.stripes_repaired, 1);
+    assert_eq!(store.get(&hash).await.unwrap(), bytes);
 }

@@ -115,12 +115,35 @@ impl BlobGcRoots for ManifestShardRoots {
 }
 
 impl ErasureBlobStore {
+    /// Sweeps one drive's shard store under the LEG MUTATION LOCK.
+    ///
+    /// Holding the lock for the whole mark-and-sweep serializes GC against
+    /// put/release/heal manifest mutations, which kills the entire
+    /// put-vs-sweep race family structurally (stale root snapshots,
+    /// pin-lifetime windows, publish interleavings — four review rounds of
+    /// variants). GC is background maintenance; briefly blocking writes
+    /// during a drive sweep is the right trade for a durability leg. The
+    /// position-snapshot boundary, in-flight pins, and poison release
+    /// guard remain as defense in depth.
+    pub async fn sweep_drive(
+        &self,
+        drive_index: usize,
+        grace: Duration,
+    ) -> Result<crate::BlobGcReport> {
+        self.ensure_live()?;
+        let gc = self.shard_gc(drive_index, grace)?;
+        let _mutation = self.mutation.lock().await;
+        self.ensure_live()?;
+        gc.sweep().await
+    }
+
     /// Builds the RFS6 sweep for one drive. Fails while the leg is
     /// poisoned, and the returned sweep ALSO fails at enumeration time if
     /// the leg poisons after construction — the fail-stop covers GC end to
-    /// end (review round: a sweep against an ambiguous manifest view is a
-    /// data-loss path, not a cleanup).
-    pub fn shard_gc(
+    /// end (a sweep against an ambiguous manifest view is a data-loss
+    /// path, not a cleanup). Crate-private: external callers go through
+    /// [`Self::sweep_drive`], which holds the leg mutation lock.
+    pub(crate) fn shard_gc(
         &self,
         drive_index: usize,
         grace: Duration,
