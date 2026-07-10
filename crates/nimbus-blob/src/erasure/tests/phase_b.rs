@@ -694,3 +694,59 @@ async fn erasure_heal_pacing_never_exceeds_the_byte_cap() {
     assert_eq!(report.stripes_repaired, 1);
     assert_eq!(store.get(&hash).await.unwrap(), bytes);
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn erasure_put_and_release_recheck_poison_under_the_mutation_lock() {
+    // Review fix (Phase B round 7, P1): put and release queued behind a
+    // poisoning mutation must fail-stop after acquiring the lock, exactly
+    // like heal and sweep_drive. FIFO-fair tokio Mutex gives the
+    // deterministic interleaving.
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let committed = store.put(payload(STRIPE + 51)).await.unwrap();
+
+    let blocked = manifest::manifest_dir(&store.drive_root(K + M - 1));
+    let mut perms = fs::metadata(&blocked).unwrap().permissions();
+    perms.set_mode(0o500);
+    fs::set_permissions(&blocked, perms).unwrap();
+    store.arm_nondurable_rollback();
+
+    let guard = store.mutation_lock().lock_owned().await;
+    let poisoner = store.clone();
+    let poison_task = tokio::spawn(async move { poisoner.put(payload(2 * STRIPE + 7)).await });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let putter = store.clone();
+    let put_task = tokio::spawn(async move { putter.put(payload(3 * STRIPE + 5)).await });
+    let releaser = store.clone();
+    let release_task = tokio::spawn(async move { releaser.release(&committed).await });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    drop(guard);
+
+    poison_task.await.unwrap().unwrap_err();
+    assert!(store.is_poisoned());
+    let put_err = put_task
+        .await
+        .unwrap()
+        .expect_err("queued put must fail-stop");
+    assert!(put_err.to_string().contains("poisoned"));
+    let release_err = release_task
+        .await
+        .unwrap()
+        .expect_err("queued release must fail-stop");
+    assert!(release_err.to_string().contains("poisoned"));
+
+    // The committed blob's manifests were NOT touched by the refused
+    // release.
+    for index in 0..(K + M) {
+        assert!(
+            manifest::manifest_path(&store.drive_root(index), &committed).exists(),
+            "refused release must not remove replica {index}"
+        );
+    }
+
+    let mut perms = fs::metadata(&blocked).unwrap().permissions();
+    perms.set_mode(0o700);
+    fs::set_permissions(&blocked, perms).unwrap();
+}

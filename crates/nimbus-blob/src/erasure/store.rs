@@ -402,6 +402,10 @@ impl BlobStore for ErasureBlobStore {
         // race a concurrent release into returning Ok with the manifests
         // gone (LocalPackStore gets the equivalent from its state lock).
         let _mutation = self.mutation.lock().await;
+        // Recheck the fail-stop UNDER the lock: a mutation queued ahead of
+        // us can poison the leg while we waited (heal and sweep_drive do
+        // the same).
+        self.ensure_live()?;
         if let Some(existing) = self.load_manifest(&hash).await? {
             // Idempotent path REPAIRS replication: a crash mid-publish or a
             // partially completed release can leave the manifest on a subset
@@ -546,6 +550,8 @@ impl BlobStore for ErasureBlobStore {
     async fn release(&self, hash: &BlobHash) -> Result<()> {
         self.ensure_live()?;
         let _mutation = self.mutation.lock().await;
+        // Same post-lock recheck as put/heal/sweep_drive.
+        self.ensure_live()?;
         let hash = *hash;
         let drive_roots = self.drive_roots.clone();
         let observer = Arc::clone(&self.observer);
