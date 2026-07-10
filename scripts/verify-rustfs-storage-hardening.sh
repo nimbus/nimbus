@@ -269,6 +269,7 @@ required_tests=(
   erasure_heal_pacing_never_exceeds_the_byte_cap
   erasure_put_and_release_recheck_poison_under_the_mutation_lock
   erasure_heal_preserves_evidence_when_a_later_stripe_is_beyond_repair
+  erasure_paced_heal_still_counts_planned_degraded_blobs
 )
 for t in "${required_tests[@]}"; do
   if grep -rq "fn ${t}(" crates/nimbus-blob/src/; then

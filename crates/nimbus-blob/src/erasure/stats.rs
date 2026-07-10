@@ -13,14 +13,17 @@ use super::store::ErasureBlobStore;
 /// global transaction across drives: this keeps monitoring cheap and avoids
 /// serializing the hot path on a cross-drive stats lock.
 ///
-/// `degraded_blobs` and `beyond_repair_blobs` intentionally come from the most
-/// recent heal summary. `stats()` does not re-probe shard contents.
+/// The health counters are prefixed `last_heal_` because that is exactly
+/// what they are: the most recent heal run's findings, NOT a live probe —
+/// `stats()` never re-reads shard contents (it must stay cheap). A blob
+/// repaired since that run still appears in `last_heal_degraded_blobs`
+/// until the next heal.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ErasureStats {
     pub per_drive: Vec<LocalPackStats>,
     pub blob_count: usize,
-    pub degraded_blobs: usize,
-    pub beyond_repair_blobs: usize,
+    pub last_heal_degraded_blobs: usize,
+    pub last_heal_beyond_repair_blobs: usize,
     pub last_heal: Option<HealSummary>,
 }
 
@@ -51,10 +54,10 @@ impl ErasureBlobStore {
         Ok(ErasureStats {
             per_drive,
             blob_count: manifests.len(),
-            degraded_blobs: last_heal
+            last_heal_degraded_blobs: last_heal
                 .map(|summary| summary.degraded_blobs)
                 .unwrap_or_default(),
-            beyond_repair_blobs: last_heal
+            last_heal_beyond_repair_blobs: last_heal
                 .map(|summary| summary.beyond_repair_blobs)
                 .unwrap_or_default(),
             last_heal,

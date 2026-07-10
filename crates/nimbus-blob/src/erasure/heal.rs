@@ -196,6 +196,10 @@ impl ErasureHealer {
         if planned.is_empty() {
             return Ok(false);
         }
+        // The blob IS degraded (repairs are planned) regardless of whether
+        // the budget lets this run perform them — under-counting under
+        // normal pacing would make the operator stats lie.
+        report.degraded += 1;
         // Whole-blob budget check BEFORE any write: pacing never leaves a
         // blob half-repaired.
         if !budget.can_spend(blob_cost) {
@@ -204,7 +208,6 @@ impl ErasureHealer {
 
         // PHASE 2 — mutate: every stripe verified repairable; perform the
         // staged writes, then publish the generation bump.
-        report.degraded += 1;
         for plan in &planned {
             self.apply_stripe_repair(plan).await?;
             report.stripes_repaired += 1;
@@ -248,7 +251,14 @@ impl ErasureHealer {
                     bad.push((shard_index, true));
                 }
                 Err(Error::NotFound(_)) => bad.push((shard_index, false)),
-                Err(err) => return Err(err),
+                // Any other read failure (Io, etc.): the shard cannot serve,
+                // which is exactly the condition heal repairs. The record may
+                // still be indexed, so release-first applies. Aborting the
+                // whole run here would leave a recoverable loss class
+                // unhealed; if the failure is systemic, the repair WRITE
+                // surfaces it, and beyond-repair classification never
+                // deletes.
+                Err(_) => bad.push((shard_index, true)),
             }
         }
         Ok(StripeProbe { healthy, bad })

@@ -391,8 +391,8 @@ async fn erasure_stats_aggregates_per_drive_and_heal() {
     assert_eq!(report.beyond_repair, vec![beyond_hash]);
     assert_eq!(stats.per_drive.len(), K + M);
     assert_eq!(stats.blob_count, 2);
-    assert_eq!(stats.degraded_blobs, 1);
-    assert_eq!(stats.beyond_repair_blobs, 1);
+    assert_eq!(stats.last_heal_degraded_blobs, 1);
+    assert_eq!(stats.last_heal_beyond_repair_blobs, 1);
     let summary = stats.last_heal.expect("heal summary recorded");
     assert_eq!(summary.blobs_examined, report.blobs_examined);
     assert_eq!(summary.stripes_repaired, report.stripes_repaired);
@@ -768,4 +768,29 @@ async fn erasure_heal_preserves_evidence_when_a_later_stripe_is_beyond_repair() 
     // And no generation bump was published.
     let after = store.load_manifest_for_test(&hash).await.unwrap();
     assert_eq!(after.generation, manifest.generation);
+}
+
+#[tokio::test]
+async fn erasure_paced_heal_still_counts_planned_degraded_blobs() {
+    // Review fix (Phase B round 10, P3): a blob whose repairs are planned
+    // but deferred by the byte budget still counts as degraded — paced
+    // heals must not under-report cluster health.
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload_with_seed(STRIPE, 31);
+    let hash = store.put(bytes.clone()).await.unwrap();
+    let manifest = store.load_manifest_for_test(&hash).await.unwrap();
+    release_shard(&store, &manifest, 0, 0).await;
+
+    let tiny = HealPacing::max_bytes_per_run(STRIPE as u64 - 1).unwrap();
+    let report = ErasureHealer::new(store.clone())
+        .with_pacing(tiny)
+        .heal()
+        .await
+        .unwrap();
+    assert!(report.exhausted);
+    assert_eq!(report.stripes_repaired, 0);
+    assert_eq!(
+        report.degraded, 1,
+        "budget-deferred blob still reported degraded"
+    );
 }
