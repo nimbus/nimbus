@@ -37,3 +37,10 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 futures.workspace = true
+
+[[bench]]
+# RFS7 Phase C: LocalPackStore baseline vs ErasureBlobStore throughput.
+# Custom harness (see benches/local_pack_baremetal.rs); run with
+# `cargo bench -p nimbus-blob --bench local_pack_baremetal`.
+name = "local_pack_baremetal"
+harness = false
