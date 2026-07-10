@@ -30,9 +30,9 @@ use nimbus_core::{Error, Result, StorageErrorKind};
 use crate::disk::{self, SyncObserver};
 
 /// File name of the root format marker.
-pub(crate) const FORMAT_FILE: &str = "format.nblfmt";
+pub const FORMAT_FILE: &str = "format.nblfmt";
 /// File name of the advisory root lock.
-pub(crate) const LOCK_FILE: &str = "lock";
+pub const LOCK_FILE: &str = "lock";
 
 const FORMAT_MAGIC: &[u8] = b"NBLFMT1\n";
 const FORMAT_VERSION: u32 = 1;

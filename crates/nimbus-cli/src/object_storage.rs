@@ -617,38 +617,51 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
     } else {
         None
     };
-    // Destruction is rename-then-delete with a RECOVERABLE ordering:
+    // Destruction happens as CONTENTS-deletion UNDER the held flocks: the
+    // root directories, their lock files, and markers stay in place for
+    // the whole operation, so the original paths never become recreatable
+    // mid-deletion (the earlier rename design moved the locked inode away
+    // and left the live path free for a racing server). Ordering:
     //
-    // 1. Sweep tombstones a previous partially-failed run left behind
-    //    (deterministic suffix — re-runs are the recovery path).
-    // 2. Atomically rename every live tree to its tombstone WHILE our
-    //    flocks are authoritative (remove_dir_all on a live path would
-    //    unlink the flock file and let a racing server recreate the root
-    //    and take a fresh lock mid-deletion). Any rename failure rolls the
-    //    completed renames BACK and errors with the control plane intact.
-    // 3. Only then delete the control-plane tenant (rollback on failure).
-    // 4. Drop the locks and delete the tombstones; a failure here names
-    //    the leftover paths, and a RE-RUN of tenant rm sweeps them (step
-    //    1) even though the control plane already reports the tenant gone.
-    const TOMBSTONE_SUFFIX: &str = ".rm-tombstone";
-    let mut leftover_sweep: Vec<PathBuf> = Vec::new();
-    for path in std::iter::once(&root).chain(erasure_trees.iter()) {
-        let tomb = tombstone_path(path, TOMBSTONE_SUFFIX)?;
-        if tomb.exists() {
-            leftover_sweep.push(tomb);
-        }
-    }
-    for tomb in &leftover_sweep {
-        std::fs::remove_dir_all(tomb)?;
-        emit_object_storage_info(format!(
-            "tenant rm swept leftover tombstone {}",
-            tomb.display()
-        ));
+    // 1. Ownership guards already held (erasure) — pack mode acquires one
+    //    below for the same reason.
+    // 2. Delete the control-plane tenant (NotFound tolerated: a re-run
+    //    after a partial prior failure is the recovery path).
+    // 3. Delete every root's CONTENTS except the lock file, locks held.
+    // 4. Drop the guards, then remove the (empty) root directories. A
+    //    failure anywhere leaves a state a plain re-run finishes:
+    //    control-plane deletion is idempotent and content deletion is
+    //    resumable.
+    let _pack_ownership = if matches!(&local_leg, LocalLeg::Pack) && root.exists() {
+        Some(
+            LocalPackStore::open_with_options(
+                &root,
+                nimbus::LocalPackStoreOptions {
+                    identity: Some(nimbus::tenant_root_identity(&tenant)),
+                    ..nimbus::LocalPackStoreOptions::default()
+                },
+            )
+            .map_err(|err| -> Box<dyn Error> {
+                format!(
+                    "tenant rm requires exclusive ownership of the tenant blob root \
+                     (stop the server first — this is offline maintenance): {err}"
+                )
+                .into()
+            })?,
+        )
+    } else {
+        None
+    };
+
+    let engine = open_engine(&command.data_dir, command.provider).await?;
+    match engine.delete_tenant_async(tenant.clone()).await {
+        Ok(()) => {}
+        // Idempotent re-run after a partial prior failure.
+        Err(NimbusError::NotFound(_)) => {}
+        Err(err) => return Err(err.into()),
     }
 
-    let mut tombstones: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut erasure_trees_removed = 0usize;
-    let mut rename_failure: Option<Box<dyn Error>> = None;
     for (index, path) in std::iter::once(&root)
         .chain(erasure_trees.iter())
         .enumerate()
@@ -656,63 +669,17 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
         if !path.exists() {
             continue;
         }
-        let tomb = tombstone_path(path, TOMBSTONE_SUFFIX)?;
-        match std::fs::rename(path, &tomb) {
-            Ok(()) => {
-                if index > 0 {
-                    erasure_trees_removed += 1;
-                }
-                tombstones.push((path.clone(), tomb));
-            }
-            Err(err) => {
-                rename_failure = Some(
-                    format!(
-                        "tenant rm rename {} -> tombstone failed: {err}",
-                        path.display()
-                    )
-                    .into(),
-                );
-                break;
-            }
+        remove_root_contents_except_lock(path)?;
+        if index > 0 {
+            erasure_trees_removed += 1;
         }
     }
-    if let Some(err) = rename_failure {
-        // Roll back: restore every completed rename; the control plane is
-        // untouched, so a plain re-run retries cleanly.
-        for (original, tomb) in tombstones.iter().rev() {
-            let _ = std::fs::rename(tomb, original);
-        }
-        return Err(err);
-    }
-
-    let engine = open_engine(&command.data_dir, command.provider).await?;
-    match engine.delete_tenant_async(tenant.clone()).await {
-        Ok(()) => {}
-        // Idempotent re-run after a partial prior failure: the control
-        // plane may already be clean while tombstones remained.
-        Err(NimbusError::NotFound(_)) => {}
-        Err(err) => {
-            for (original, tomb) in tombstones.iter().rev() {
-                let _ = std::fs::rename(tomb, original);
-            }
-            return Err(err.into());
-        }
-    }
-
     drop(_erasure_ownership);
-    let mut leftovers: Vec<String> = Vec::new();
-    for (_, tomb) in &tombstones {
-        if let Err(err) = std::fs::remove_dir_all(tomb) {
-            leftovers.push(format!("{} ({err})", tomb.display()));
+    drop(_pack_ownership);
+    for path in std::iter::once(&root).chain(erasure_trees.iter()) {
+        if path.exists() {
+            std::fs::remove_dir_all(path)?;
         }
-    }
-    if !leftovers.is_empty() {
-        return Err(format!(
-            "tenant rm removed the control-plane tenant but could not delete \
-             tombstoned data: {} — re-run `tenant rm` to sweep them",
-            leftovers.join(", ")
-        )
-        .into());
     }
     engine.quiesce().await;
     emit_object_storage_info(format!(
@@ -722,15 +689,23 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
     Ok(())
 }
 
-/// Sibling tombstone path for rename-then-delete destruction.
-fn tombstone_path(path: &Path, suffix: &str) -> Result<PathBuf, Box<dyn Error>> {
-    let name = path
-        .file_name()
-        .ok_or("destruction target has no directory-name component")?
-        .to_os_string();
-    let mut tomb_name = name;
-    tomb_name.push(suffix);
-    Ok(path.with_file_name(tomb_name))
+/// Deletes everything under a byte-plane root EXCEPT the advisory lock
+/// file, so the root stays lock-owned (non-recreatable by a racing server)
+/// for the whole destruction. Resumable: a re-run deletes whatever remains.
+fn remove_root_contents_except_lock(root: &Path) -> Result<(), Box<dyn Error>> {
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        if entry.file_name() == std::ffi::OsStr::new(nimbus::LOCK_FILE) {
+            continue;
+        }
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
 }
 
 fn placement_policy_from_command(
