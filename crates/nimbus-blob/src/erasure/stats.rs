@@ -96,13 +96,17 @@ impl ErasureBlobStore {
                 let mut accepted = None;
                 let mut last_unstable_err: Option<Error> = None;
                 for _ in 0..3 {
+                    // The bracket opens BEFORE the index load: a writer
+                    // appending between index.log replay and a post-open
+                    // listing would otherwise be invisible to the check.
+                    let before = LocalPackStore::disk_pack_listing(&self.drive_roots[index])?;
                     let fresh = LocalPackStore::open_read_only_with_identity(
                         &self.drive_roots[index],
                         Some(super::store::drive_identity(&self.config.leg_id, index)),
                     )?;
-                    let before = fresh.disk_pack_listing()?;
                     let outcome = fresh.stats().await;
-                    let stable = fresh.disk_pack_listing()? == before;
+                    let stable =
+                        LocalPackStore::disk_pack_listing(&self.drive_roots[index])? == before;
                     match (outcome, stable) {
                         (Ok(stats), true) => {
                             accepted = Some(stats);

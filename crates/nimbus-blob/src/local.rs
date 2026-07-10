@@ -613,16 +613,18 @@ impl LocalPackStore {
         ))
     }
 
-    /// Snapshot of the root's ON-DISK pack layout: (pack id, byte size)
-    /// pairs in id order. Read-only stats brackets its computation with two
-    /// of these — inequality means a writer appended, added, or removed
-    /// packs mid-call (torn-accounting risk), regardless of whether the
-    /// affected packs are referenced by this handle's frozen index.
-    pub fn disk_pack_listing(&self) -> Result<Vec<(u64, u64)>> {
-        let state = lock(&self.state)?;
+    /// Snapshot of a root's ON-DISK pack layout: (pack id, byte size)
+    /// pairs in id order, read directly from the filesystem WITHOUT
+    /// opening a store (no index load, no locks). Read-only stats brackets
+    /// its whole open+compute sequence with two of these — inequality
+    /// means a writer appended, added, or removed packs anywhere in the
+    /// window (torn-accounting risk), regardless of whether the affected
+    /// packs are referenced by any frozen index.
+    pub fn disk_pack_listing(root: impl AsRef<Path>) -> Result<Vec<(u64, u64)>> {
+        let packs_dir = root.as_ref().join("packs");
         let mut listing = Vec::new();
-        for pack_id in pack_ids_on_disk(&state.packs_dir)? {
-            let path = pack_path(&state.packs_dir, pack_id);
+        for pack_id in pack_ids_on_disk(&packs_dir)? {
+            let path = pack_path(&packs_dir, pack_id);
             let size = fs::metadata(&path)
                 .map(|meta| meta.len())
                 .map_err(|err| io_error(err, format!("stat pack {}", path.display())))?;
