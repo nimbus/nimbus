@@ -306,6 +306,12 @@ fn install_escrow_sidecar(sidecar_path: &Path, escrow_bytes: &[u8]) -> Result<()
         .parent()
         .ok_or("tenant blob-key sidecar path has no parent directory")?;
     std::fs::create_dir_all(parent)?;
+    // Clear any crash-leftover stage entry FIRST: a publish interrupted
+    // between hard_link and stage removal legitimately leaves the sidecar
+    // with two links, and the link-count guard below must not wedge the
+    // retry on our own residue.
+    let stage_path = parent.join(".blob-key.restore-stage");
+    let _ = std::fs::remove_file(&stage_path);
     // Verifies an existing sidecar on a HELD DESCRIPTOR: open first, then
     // prove the handle IS the path's regular file (lstat type + dev/ino
     // identity on unix), and do the read and chmod through the handle. A
@@ -337,6 +343,19 @@ fn install_escrow_sidecar(sidecar_path: &Path, escrow_bytes: &[u8]) -> Result<()
             if handle_meta.dev() != path_meta.dev() || handle_meta.ino() != path_meta.ino() {
                 return Err(not_regular());
             }
+            // The key material must be an INDEPENDENT inode the deployment
+            // owns: a pre-planted byte-identical hard link with a retained
+            // link elsewhere would let that link's owner rewrite the
+            // manifest after restore. (A crash-leftover stage link was
+            // already removed at function entry.)
+            if handle_meta.nlink() > 1 {
+                return Err(format!(
+                    "tenant blob-key sidecar {} has {} directory links; refusing key material with links outside the deployment{context}",
+                    sidecar_path.display(),
+                    handle_meta.nlink()
+                )
+                .into());
+            }
         }
         let mut existing = Vec::new();
         file.read_to_end(&mut existing)?;
@@ -366,8 +385,6 @@ fn install_escrow_sidecar(sidecar_path: &Path, escrow_bytes: &[u8]) -> Result<()
         Err(err) => return Err(err.into()),
     }
     // Stage privately (0600 at open), sync, then publish no-replace.
-    let stage_path = parent.join(".blob-key.restore-stage");
-    let _ = std::fs::remove_file(&stage_path);
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -405,14 +422,27 @@ fn install_escrow_sidecar(sidecar_path: &Path, escrow_bytes: &[u8]) -> Result<()
         }
         Err(err) => return Err(err.into()),
     }
-    // No post-publish chmod: the staged descriptor was created 0600 and
-    // hard_link publishes that same inode — reopening the final PATH here
-    // would reintroduce the symlink-follow window the staged publish
-    // exists to close.
-    // Durably link the directory entry: without this a crash after a
-    // reported-successful restore can lose the sidecar.
-    #[cfg(unix)]
-    std::fs::File::open(parent)?.sync_all()?;
+    // Verify the PUBLISHED entry through the same handle-based check
+    // (type, inode identity, single link, exact bytes) — a swapped stage
+    // pathname or foreign inode fails closed here — and let its match
+    // path enforce 0600 on the held descriptor and fsync the parent
+    // directory entry durable. Beyond this point an actor who can still
+    // mutate the tenant directory owns the deployment's data dir outright
+    // (packs, index, master key included); that boundary cannot be
+    // defended from inside it and later swaps are out of scope.
+    if !existing_regular_file_matches(" (verifying the published sidecar)")? {
+        return Err(format!(
+            "tenant blob-key sidecar {} changed during publication; refusing",
+            sidecar_path.display()
+        )
+        .into());
+    }
+    #[cfg(not(unix))]
+    {
+        // The unix verification path fsyncs the parent inside the match
+        // arm; elsewhere directory fsync is unavailable.
+        super::set_private_file_permissions(sidecar_path)?;
+    }
     Ok(())
 }
 
@@ -833,5 +863,50 @@ mod tests {
         let err = install_escrow_sidecar(&sidecar_path, &std::fs::read(&matching_copy).unwrap())
             .expect_err("a matching symlinked sidecar must still be refused");
         assert!(err.to_string().contains("not a regular file"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_refuses_a_hard_linked_sidecar_and_tolerates_stage_leftovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("tenant-root");
+        std::fs::create_dir_all(&root).unwrap();
+        let sidecar_path = root.join("blob-key.nimbus-enc");
+        let escrow = b"escrowed manifest bytes".to_vec();
+
+        // A pre-planted byte-identical file with a RETAINED outside hard
+        // link is not independent key material — its other link's owner
+        // could rewrite it after restore. Refuse.
+        std::fs::write(&sidecar_path, &escrow).unwrap();
+        let outside_link = dir.path().join("attacker-retained-link");
+        std::fs::hard_link(&sidecar_path, &outside_link).unwrap();
+        let err = install_escrow_sidecar(&sidecar_path, &escrow)
+            .expect_err("a multiply-linked sidecar must be refused");
+        assert!(err.to_string().contains("directory links"), "{err}");
+
+        // A crash-leftover STAGE link (same inode, our own staging name)
+        // must not wedge the retry: entry cleanup removes it first and the
+        // idempotent path then accepts the single-linked sidecar.
+        std::fs::remove_file(&outside_link).unwrap();
+        let stage_leftover = root.join(".blob-key.restore-stage");
+        std::fs::hard_link(&sidecar_path, &stage_leftover).unwrap();
+        install_escrow_sidecar(&sidecar_path, &escrow)
+            .expect("crash-leftover stage link must be cleaned and tolerated");
+        assert!(
+            !stage_leftover.exists(),
+            "the stage leftover must be removed"
+        );
+
+        // Fresh install still works and publishes a single-linked 0600
+        // regular file.
+        std::fs::remove_file(&sidecar_path).unwrap();
+        install_escrow_sidecar(&sidecar_path, &escrow).expect("fresh install must succeed");
+        use std::os::unix::fs::MetadataExt;
+        use std::os::unix::fs::PermissionsExt;
+        let meta = std::fs::symlink_metadata(&sidecar_path).unwrap();
+        assert!(meta.is_file());
+        assert_eq!(meta.nlink(), 1);
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::read(&sidecar_path).unwrap(), escrow);
     }
 }
