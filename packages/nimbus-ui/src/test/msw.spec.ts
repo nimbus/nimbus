@@ -99,7 +99,7 @@ describe("msw handlers", () => {
       "build_feature_disabled",
     );
     expect(bunLane?.execution_adapter_artifact?.expected?.source_ref).toBe(
-      "nimbus-bun-jsc-proof-main-20260708",
+      "nimbus-bun-jsc-proof-main-20260709",
     );
   });
 });

@@ -248,7 +248,7 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
     );
     assert_eq!(
         bun_lane["execution_adapter_artifact"]["expected"]["source_ref"],
-        json!("nimbus-bun-jsc-proof-main-20260708")
+        json!("nimbus-bun-jsc-proof-main-20260709")
     );
     assert!(bun_lane["execution_adapter_artifact"]["manifest"].is_null());
 }
