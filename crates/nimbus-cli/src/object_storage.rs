@@ -598,9 +598,11 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
     // server starting between a released probe and remove_dir_all would
     // race the unlink. Unlinking directories whose flocks our own process
     // holds is safe on Unix; the guard drops after the trees are gone.
-    let _erasure_ownership = if matches!(&local_leg, LocalLeg::Erasure(_))
-        && erasure_trees.iter().any(|tree| tree.exists())
-    {
+    // Unconditional in erasure mode: locking only EXISTING trees leaves a
+    // window where a running server creates and writes the tenant's roots
+    // after the check — opening writable creates AND locks every drive
+    // path before any destructive step.
+    let _erasure_ownership = if matches!(&local_leg, LocalLeg::Erasure(_)) {
         Some(
             ErasureBlobStore::open(erasure_config_from_env(&tenant)?).map_err(
                 |err| -> Box<dyn Error> {

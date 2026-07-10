@@ -1319,3 +1319,82 @@ async fn erasure_read_only_stable_loss_stays_corruption() {
         "stable beyond-parity loss must not hide behind a Busy retry hint: {err}"
     );
 }
+
+#[tokio::test]
+async fn erasure_read_only_survives_concurrent_compaction_as_busy() {
+    // Review fix (EOW round 4, P1): a writer's compaction can REMOVE packs
+    // a read-only handle's frozen index still points at — those reads fail
+    // with Io, not NotFound. The staleness proof covers every failed read:
+    // the fresh on-disk view serves the relocated shard, so the inspector
+    // reports Busy (re-open), never false Corruption for a healthy blob.
+    let (_dir, store, roots) = open_temp(K, M, STRIPE);
+    let keep_bytes = payload(STRIPE + 21);
+    let keep = store.put(keep_bytes.clone()).await.unwrap();
+    // Dead weight so compaction has packs to drop on every drive.
+    let dead = store.put(payload(STRIPE + 23)).await.unwrap();
+
+    let inspector = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("test-leg", roots.clone(), K, M, STRIPE).unwrap(),
+    )
+    .unwrap();
+
+    // Writer releases the dead blob and compacts every drive, relocating
+    // the kept blob's shards into fresh packs.
+    store.release(&dead).await.unwrap();
+    for drive in 0..(K + M) {
+        store
+            .sweep_drive(drive, std::time::Duration::ZERO)
+            .await
+            .unwrap();
+    }
+
+    match inspector.get(&keep).await {
+        // Frozen index happened to still resolve (pack survived): fine.
+        Ok(bytes) => assert_eq!(bytes, keep_bytes),
+        // Otherwise the verdict must be Busy — never Corruption.
+        Err(err) => assert_eq!(
+            err.storage_kind(),
+            Some(StorageErrorKind::Busy),
+            "compaction-relocated shards are staleness, not corruption: {err}"
+        ),
+    }
+    // A fresh inspector serves the blob.
+    let fresh = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("test-leg", roots, K, M, STRIPE).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(fresh.get(&keep).await.unwrap(), keep_bytes);
+}
+
+#[tokio::test]
+async fn erasure_read_only_stats_tolerate_fresh_and_absent_roots() {
+    // Review fix (EOW round 4, P2): erasure-status must work for a
+    // blob-less tenant (no roots yet) and for a leg with an absent drive.
+    let empty_dir = tempfile::tempdir().unwrap();
+    let empty_roots = (0..K + M)
+        .map(|index| empty_dir.path().join(format!("drive-{index}")))
+        .collect::<Vec<_>>();
+    let fresh = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("fresh-leg", empty_roots, K, M, STRIPE).unwrap(),
+    )
+    .unwrap();
+    let stats = fresh.stats().await.unwrap();
+    assert_eq!(stats.per_drive.len(), K + M);
+    assert_eq!(stats.blob_count, 0);
+    assert!(stats.per_drive.iter().all(|drive| drive.live_bytes == 0));
+
+    let (_dir, store, roots) = open_temp(K, M, STRIPE);
+    store.put(payload(STRIPE + 25)).await.unwrap();
+    fs::remove_dir_all(&roots[1]).unwrap();
+    let inspector = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("test-leg", roots, K, M, STRIPE).unwrap(),
+    )
+    .unwrap();
+    let stats = inspector.stats().await.unwrap();
+    assert_eq!(stats.per_drive.len(), K + M);
+    assert_eq!(stats.blob_count, 1);
+    assert_eq!(
+        stats.per_drive[1].live_bytes, 0,
+        "absent drive reports empty"
+    );
+}

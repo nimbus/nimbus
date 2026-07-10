@@ -330,21 +330,16 @@ impl ErasureBlobStore {
         stripe_index: usize,
     ) -> Result<Vec<Bytes>> {
         let mut present = Vec::new();
-        let mut degraded = false;
-        let mut missing_from_snapshot = false;
+        let mut failed_shards: Vec<usize> = Vec::new();
 
         for shard_index in 0..manifest.data_shards {
             match self.read_shard(manifest, stripe_index, shard_index).await {
                 Ok(bytes) => present.push((shard_index, bytes)),
-                Err(Error::NotFound(_)) => {
-                    degraded = true;
-                    missing_from_snapshot = true;
-                }
-                Err(_) => degraded = true,
+                Err(_) => failed_shards.push(shard_index),
             }
         }
 
-        if !degraded {
+        if failed_shards.is_empty() {
             present.sort_by_key(|(index, _)| *index);
             return Ok(present.into_iter().map(|(_, bytes)| bytes).collect());
         }
@@ -352,8 +347,7 @@ impl ErasureBlobStore {
         for shard_index in manifest.data_shards..manifest.data_shards + manifest.parity_shards {
             match self.read_shard(manifest, stripe_index, shard_index).await {
                 Ok(bytes) => present.push((shard_index, bytes)),
-                Err(Error::NotFound(_)) => missing_from_snapshot = true,
-                Err(_) => {}
+                Err(_) => failed_shards.push(shard_index),
             }
         }
 
@@ -371,8 +365,9 @@ impl ErasureBlobStore {
             // index can never serve WRONG bytes — only fail to find new
             // ones.)
             if self.read_only
-                && missing_from_snapshot
-                && self.snapshot_lags_disk(manifest, stripe_index).await?
+                && self
+                    .snapshot_lags_disk(manifest, stripe_index, &failed_shards)
+                    .await?
             {
                 return Err(Error::storage(
                     StorageErrorKind::Busy,
@@ -392,16 +387,18 @@ impl ErasureBlobStore {
         stripe::decode_stripe(manifest.data_shards, manifest.parity_shards, &present)
     }
 
-    /// Proof of read-only snapshot staleness: re-reads the on-disk indexes
-    /// (fresh read-only opens) for this stripe's drives and reports whether
-    /// any manifest-referenced shard our FROZEN index cannot find is
-    /// present on disk now — i.e. a writer committed it after this handle
-    /// opened. Slow path: only runs when a read-only quorum failure
-    /// involved NotFound shards.
+    /// Proof of read-only snapshot staleness: for each shard THIS handle
+    /// failed to read, freshly re-open that drive's on-disk index — if the
+    /// fresh view serves the shard, a writer changed the drive after our
+    /// snapshot (a later put, or compaction relocating packs our frozen
+    /// index still points at), so the failure is staleness (Busy), not
+    /// damage. A shard the fresh view also cannot serve is stable loss and
+    /// stays Corruption. Slow path: runs only on read-only quorum failure.
     async fn snapshot_lags_disk(
         &self,
         manifest: &ErasureManifest,
         stripe_index: usize,
+        failed_shards: &[usize],
     ) -> Result<bool> {
         let Some(stripe) = manifest.stripes.get(stripe_index) else {
             return Ok(false);
@@ -409,20 +406,19 @@ impl ErasureBlobStore {
         let total = manifest.data_shards + manifest.parity_shards;
         for shard in stripe {
             let shard_index = shard.shard_index as usize;
+            if !failed_shards.contains(&shard_index) {
+                continue;
+            }
             let drive = stripe::drive_for(shard_index, stripe_index, total);
             let root = &self.drive_roots[drive];
             if !root.exists() {
-                continue;
-            }
-            // Frozen view: OUR store's in-memory index.
-            if self.stores[drive].has(&shard.shard_hash).await? {
                 continue;
             }
             let fresh = LocalPackStore::open_read_only_with_identity(
                 root,
                 Some(drive_identity(&self.config.leg_id, drive)),
             )?;
-            if fresh.has(&shard.shard_hash).await? {
+            if fresh.get(&shard.shard_hash).await.is_ok() {
                 return Ok(true);
             }
         }

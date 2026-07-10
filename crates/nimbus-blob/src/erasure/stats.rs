@@ -62,7 +62,15 @@ impl ErasureBlobStore {
     pub async fn stats(&self) -> Result<ErasureStats> {
         self.ensure_live()?;
         let mut per_drive = Vec::with_capacity(self.stores.len());
-        for store in &self.stores {
+        for (index, store) in self.stores.iter().enumerate() {
+            // An absent drive root (fresh tenant, failed/unmounted drive
+            // within parity tolerance) reports empty stats instead of
+            // failing the whole status view — both are supported read-only
+            // states.
+            if !self.drive_roots[index].exists() {
+                per_drive.push(LocalPackStats::default());
+                continue;
+            }
             per_drive.push(store.stats().await?);
         }
 
