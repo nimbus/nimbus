@@ -622,6 +622,12 @@ impl LocalPackStore {
     /// packs are referenced by any frozen index.
     pub fn disk_pack_listing(root: impl AsRef<Path>) -> Result<Vec<(u64, u64)>> {
         let packs_dir = root.as_ref().join("packs");
+        // An existing-but-uninitialized root (no packs/ yet — e.g. created
+        // by an ownership guard that never wrote) is an EMPTY layout, not
+        // an inspection error.
+        if !packs_dir.exists() {
+            return Ok(Vec::new());
+        }
         let mut listing = Vec::new();
         for pack_id in pack_ids_on_disk(&packs_dir)? {
             let path = pack_path(&packs_dir, pack_id);

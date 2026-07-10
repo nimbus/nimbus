@@ -427,15 +427,21 @@ impl ErasureBlobStore {
             if !root.exists() {
                 continue;
             }
-            let fresh = LocalPackStore::open_read_only_with_identity(
-                root,
-                Some(drive_identity(&self.config.leg_id, drive)),
-            )?;
-            if fresh.get(&shard.shard_hash).await.is_ok() {
-                fresh_recoverable += 1;
-                if healthy + fresh_recoverable >= manifest.data_shards {
-                    return Ok(true);
+            // Two attempts per shard: a compaction racing the FRESH check
+            // itself can fail a get that a re-opened view serves — a
+            // single torn attempt must not tip the verdict to Corruption.
+            for _ in 0..2 {
+                let fresh = LocalPackStore::open_read_only_with_identity(
+                    root,
+                    Some(drive_identity(&self.config.leg_id, drive)),
+                )?;
+                if fresh.get(&shard.shard_hash).await.is_ok() {
+                    fresh_recoverable += 1;
+                    break;
                 }
+            }
+            if healthy + fresh_recoverable >= manifest.data_shards {
+                return Ok(true);
             }
         }
         Ok(false)

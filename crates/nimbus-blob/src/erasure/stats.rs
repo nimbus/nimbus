@@ -68,8 +68,21 @@ impl ErasureBlobStore {
             // failing the whole status view — both are supported read-only
             // states.
             if !self.drive_roots[index].exists() {
-                per_drive.push(LocalPackStats::default());
-                continue;
+                if self.is_read_only() {
+                    // Supported inspection states: fresh tenant, failed/
+                    // unmounted drive within parity tolerance.
+                    per_drive.push(LocalPackStats::default());
+                    continue;
+                }
+                // A WRITABLE handle's drive root disappearing under its
+                // held flock is catastrophic state, never a soft default.
+                return Err(Error::storage(
+                    StorageErrorKind::Io,
+                    format!(
+                        "erasure drive {index} root {} disappeared under a writable handle",
+                        self.drive_roots[index].display()
+                    ),
+                ));
             }
             // Read-only coherence: a frozen index over a compacted drive
             // yields either a torn-but-SUCCESSFUL accounting (old entries
