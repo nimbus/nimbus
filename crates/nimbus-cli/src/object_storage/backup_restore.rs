@@ -19,7 +19,7 @@ use nimbus_core::StorageErrorKind;
 
 use super::{
     BackupObjectStoreCommand, RestoreObjectStoreCommand, emit_object_storage_info,
-    erasure_config_from_env, local_leg_from_env, open_engine, set_private_file_permissions,
+    erasure_config_from_env, local_leg_from_env, open_engine,
 };
 
 pub(super) async fn run_backup_object_store(
@@ -72,6 +72,29 @@ pub(super) async fn run_backup_object_store(
             sidecar_path.display()
         )
         .into());
+    }
+    // Prove the escrowed DEK actually decrypts the archived ciphertext:
+    // a corrupted or regenerated sidecar (a valid same-tenant manifest
+    // whose DEK is unrelated to the stored data) must fail the BACKUP,
+    // not surface later as an unrestorable bundle. One probe suffices —
+    // every blob is sealed under the single tenant DEK, and export's
+    // content-hash verification covers per-chunk integrity. The probe
+    // plaintext is discarded; nothing but ciphertext enters the bundle.
+    if let Some(probe_root) = roots.first() {
+        let data_key = unwrap_escrowed_data_key(
+            &command.data_dir,
+            &tenant,
+            key_escrow.wrapped_key_material(),
+            &command.key_escrow_file,
+        )?;
+        let framed = source.get(probe_root).await?;
+        nimbus_crypto::open_framed_blob(&nimbus_crypto::FramedBlobKey::new(data_key), &framed)
+            .map_err(|err| -> Box<dyn Error> {
+                format!(
+                    "escrowed key material does not decrypt the tenant's stored ciphertext (blob {probe_root}) — the sidecar was likely regenerated after this data was written; this deployment's objects are not recoverable with this key: {err}"
+                )
+                .into()
+            })?;
     }
     let request = BackupRequest::new(
         roots,
@@ -136,45 +159,12 @@ pub(super) async fn run_restore_object_store(
     // tenant's blob-key subject — proving key bytes, tenant binding, and
     // manifest integrity in one step. Parse the SAME captured bytes that
     // will be installed — never a second read of the escrow path.
-    let escrow_manifest =
-        nimbus_crypto::KeyManifest::from_bytes(escrow_bytes, &command.key_escrow_file).map_err(
-            |err| -> Box<dyn Error> {
-                format!(
-                    "key escrow file {} is not a valid key manifest — escrow the tenant's blob-key sidecar ({}): {err}",
-                    command.key_escrow_file.display(),
-                    sidecar_path.display()
-                )
-                .into()
-            },
-        )?;
-    let master_key_path = master_key_path_from_env(&command.data_dir)?;
-    let provider =
-        nimbus_crypto::MasterKeyFileProvider::new(master_key_path.clone()).map_err(|err| {
-            format!(
-                "open master key file {} (install the source deployment's master key before restore): {err}",
-                master_key_path.display()
-            )
-        })?;
-    // Subject naming matches the resolver's blob-key sidecar subject.
-    let subject = nimbus_crypto::LocalKeySubject::object_blob_store(tenant.clone(), "blob-key");
-    let protected_path = nimbus::object_blob_key_path(&command.data_dir, &tenant);
-    // Full validation in one step: subject + cipher + provider-identity
-    // checks, then an actual unwrap under the LOCAL master key — proving
-    // key bytes, tenant binding, layout, and manifest integrity before any
-    // bytes land in the target deployment.
-    nimbus_crypto::unwrap_key_manifest(
-        &escrow_manifest,
-        &provider,
-        &subject,
-        nimbus_crypto::ManifestCipher::FramedBlobAes256GcmSiv,
-        &protected_path,
-    )
-    .map_err(|err| -> Box<dyn Error> {
-        format!(
-            "escrowed key manifest is not usable by this deployment for tenant {tenant} — wrong escrow, wrong tenant, different data-dir/master-key layout, or wrong master key: {err}"
-        )
-        .into()
-    })?;
+    drop(unwrap_escrowed_data_key(
+        &command.data_dir,
+        &tenant,
+        escrow_bytes,
+        &command.key_escrow_file,
+    )?);
     let archive = serde_json::from_slice(bundle.manifest_snapshot())?;
     // Everything validated — now mutate, under exclusive byte-plane
     // ownership FIRST: the raw-leg flocks exclude a live server (and its
@@ -247,6 +237,55 @@ fn master_key_path_from_env(data_dir: &Path) -> Result<PathBuf, Box<dyn Error>> 
         .master_key_file()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| nimbus::object_master_key_path(data_dir)))
+}
+
+/// Unwraps escrowed blob-key material under THIS deployment's master
+/// key, proving — in one step — that the escrow parses as a key
+/// manifest and that its subject, cipher, provider identity (data-dir/
+/// master-key layout), and wrapping key all match this deployment and
+/// tenant. Returns the tenant DEK; callers either prove it against
+/// stored ciphertext (backup) or discard it after validation (restore).
+fn unwrap_escrowed_data_key(
+    data_dir: &Path,
+    tenant: &TenantId,
+    escrow_bytes: &[u8],
+    escrow_origin: &Path,
+) -> Result<nimbus_crypto::DataEncryptionKey, Box<dyn Error>> {
+    let sidecar_path =
+        nimbus::KeyManifest::manifest_path(&nimbus::object_blob_key_path(data_dir, tenant));
+    let escrow_manifest = nimbus_crypto::KeyManifest::from_bytes(escrow_bytes, escrow_origin)
+        .map_err(|err| -> Box<dyn Error> {
+            format!(
+                "key escrow file {} is not a valid key manifest — escrow the tenant's blob-key sidecar ({}): {err}",
+                escrow_origin.display(),
+                sidecar_path.display()
+            )
+            .into()
+        })?;
+    let master_key_path = master_key_path_from_env(data_dir)?;
+    let provider =
+        nimbus_crypto::MasterKeyFileProvider::new(master_key_path.clone()).map_err(|err| {
+            format!(
+                "open master key file {} (the deployment's master key must be installed): {err}",
+                master_key_path.display()
+            )
+        })?;
+    // Subject naming matches the resolver's blob-key sidecar subject.
+    let subject = nimbus_crypto::LocalKeySubject::object_blob_store(tenant.clone(), "blob-key");
+    let protected_path = nimbus::object_blob_key_path(data_dir, tenant);
+    nimbus_crypto::unwrap_key_manifest(
+        &escrow_manifest,
+        &provider,
+        &subject,
+        nimbus_crypto::ManifestCipher::FramedBlobAes256GcmSiv,
+        &protected_path,
+    )
+    .map_err(|err| -> Box<dyn Error> {
+        format!(
+            "escrowed key manifest is not usable by this deployment for tenant {tenant} — wrong escrow, wrong tenant, different data-dir/master-key layout, or wrong master key: {err}"
+        )
+        .into()
+    })
 }
 
 /// Publishes the escrowed wrapped-DEK sidecar fail-closed and durably:
@@ -366,7 +405,10 @@ fn install_escrow_sidecar(sidecar_path: &Path, escrow_bytes: &[u8]) -> Result<()
         }
         Err(err) => return Err(err.into()),
     }
-    set_private_file_permissions(sidecar_path)?;
+    // No post-publish chmod: the staged descriptor was created 0600 and
+    // hard_link publishes that same inode — reopening the final PATH here
+    // would reintroduce the symlink-follow window the staged publish
+    // exists to close.
     // Durably link the directory entry: without this a crash after a
     // reported-successful restore can lose the sidecar.
     #[cfg(unix)]
@@ -591,6 +633,53 @@ mod tests {
             !nimbus::object_blob_root(target_dir.path(), &tenant).exists(),
             "restore must not leave partial state behind on validation failure"
         );
+    }
+
+    #[tokio::test]
+    async fn backup_rejects_a_regenerated_sidecar_that_cannot_decrypt_the_data() {
+        // A lost-and-regenerated sidecar is a VALID same-tenant manifest
+        // whose DEK is unrelated to the stored ciphertext. The escrow
+        // byte-compare alone would pass; the export-time decrypt probe
+        // must fail the backup instead of emitting an unrestorable bundle.
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Engine::new(dir.path()).unwrap());
+        let tenant = TenantId::new("rekeyed-tenant").unwrap();
+        engine.create_tenant(tenant.clone()).unwrap();
+        let resolver = ObjectStorageResolver::new(engine.clone());
+        let store = resolver.blob_store(&tenant).unwrap();
+        store
+            .put(Bytes::from_static(b"sealed under the ORIGINAL key"))
+            .await
+            .unwrap();
+        drop(store);
+        drop(resolver);
+        engine.quiesce().await;
+
+        // Simulate sidecar loss: the resolver mints a fresh DEK on next
+        // open, valid for the tenant but unrelated to the existing data.
+        let sidecar_path =
+            nimbus::KeyManifest::manifest_path(&nimbus::object_blob_key_path(dir.path(), &tenant));
+        std::fs::remove_file(&sidecar_path).unwrap();
+        let resolver = ObjectStorageResolver::new(engine.clone());
+        let _store = resolver.blob_store(&tenant).unwrap();
+        drop(_store);
+        drop(resolver);
+        engine.quiesce().await;
+        drop(engine);
+
+        let escrow_file = dir.path().join("escrow.bin");
+        std::fs::copy(&sidecar_path, &escrow_file).unwrap();
+        let err = run_backup_object_store(BackupObjectStoreCommand {
+            tenant: tenant.as_str().to_string(),
+            data_dir: dir.path().to_path_buf(),
+            out: dir.path().join("backup.nobb"),
+            key_escrow_id: "rekeyed-tenant".to_string(),
+            key_escrow_file: escrow_file,
+            provider: ObjectStorageProvider::Sqlite,
+        })
+        .await
+        .expect_err("a regenerated sidecar must fail the backup");
+        assert!(err.to_string().contains("does not decrypt"), "{err}");
     }
 
     #[tokio::test]
