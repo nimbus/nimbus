@@ -71,25 +71,39 @@ impl ErasureBlobStore {
                 per_drive.push(LocalPackStats::default());
                 continue;
             }
-            match store.stats().await {
-                Ok(stats) => per_drive.push(stats),
-                // Read-only status races a live writer (its frozen index vs
-                // current pack files — compaction can remove a pack between
-                // dir listing and metadata): surface Busy with a re-open
-                // hint, not a spurious hard failure. Writable handles keep
-                // real errors. NOTE: read-only per-drive numbers are
-                // point-in-time approximations under concurrent writers.
-                Err(err) if self.is_read_only() => {
+            // Read-only coherence: a frozen index over a compacted drive
+            // yields either a torn-but-SUCCESSFUL accounting (old entries
+            // counted live, replacement packs counted reclaimable) or an
+            // error. Both are discriminated by comparing the frozen
+            // compaction epoch against a fresh on-disk view: an epoch bump
+            // means the writer restructured packs since our snapshot →
+            // Busy with a re-open hint. Without an epoch bump, an error is
+            // REAL (stable corruption / Io) and keeps its original kind,
+            // and a success is at worst an append-lag approximation
+            // (documented). Writable handles never take this path.
+            let outcome = store.stats().await;
+            if self.is_read_only() {
+                // Compaction is the state change that makes a frozen index
+                // produce torn-but-successful accounting (old entries
+                // counted live against replacement packs counted
+                // reclaimable): it REMOVES pack files the frozen index
+                // still references — plain appends never remove packs. If
+                // any frozen-referenced pack is gone from disk, the
+                // snapshot predates a restructure: Busy with a re-open
+                // hint. Real errors without a restructure keep their
+                // original kind; successes are at worst append-lag
+                // approximations (documented).
+                if store.frozen_packs_missing_on_disk()? {
                     return Err(Error::storage(
                         StorageErrorKind::Busy,
                         format!(
-                            "erasure status raced a concurrent writer on drive {index} \
-                             (re-open to inspect): {err}"
+                            "erasure status snapshot predates a pack restructure on \
+                             drive {index} (re-open to inspect)"
                         ),
                     ));
                 }
-                Err(err) => return Err(err),
             }
+            per_drive.push(outcome?);
         }
 
         let drive_roots = self.drive_roots.clone();

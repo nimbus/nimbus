@@ -1474,3 +1474,40 @@ async fn erasure_read_only_handle_does_not_pin_writable_leg_state() {
     );
     drop(inspector);
 }
+
+#[tokio::test]
+async fn erasure_read_only_stats_report_busy_after_writer_compaction() {
+    // Review fix (EOW round 6, P2): a frozen read-only index over a
+    // compacted drive must not return torn-but-successful accounting
+    // (healthy data counted reclaimable) — the epoch compare reports Busy.
+    let (_dir, store, roots) = open_temp(K, M, STRIPE);
+    store.put(payload(STRIPE + 31)).await.unwrap();
+    let dead = store.put(payload(STRIPE + 33)).await.unwrap();
+
+    let inspector = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("test-leg", roots.clone(), K, M, STRIPE).unwrap(),
+    )
+    .unwrap();
+    assert!(inspector.stats().await.is_ok(), "pre-compaction stats fine");
+
+    store.release(&dead).await.unwrap();
+    for drive in 0..(K + M) {
+        store
+            .sweep_drive(drive, std::time::Duration::ZERO)
+            .await
+            .unwrap();
+    }
+
+    let err = inspector.stats().await.unwrap_err();
+    assert_eq!(
+        err.storage_kind(),
+        Some(StorageErrorKind::Busy),
+        "post-compaction frozen stats must report Busy, not torn numbers: {err}"
+    );
+    // A fresh inspector reports cleanly.
+    let fresh = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("test-leg", roots, K, M, STRIPE).unwrap(),
+    )
+    .unwrap();
+    assert!(fresh.stats().await.is_ok());
+}

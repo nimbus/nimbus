@@ -19,7 +19,22 @@ where
     F: Fn(&str) -> Option<String>,
 {
     fn get(&self, key: &str) -> nimbus::Result<Option<String>> {
-        Ok((self.lookup)(key))
+        match (self.lookup)(key) {
+            Some(value) => Ok(Some(value)),
+            // The start-command lookup closure is built over
+            // `std::env::var(..).ok()`, which erases the set-but-non-UTF-8
+            // case. Recover the distinction here: a variable that IS set in
+            // the process environment but did not survive the lossy lookup
+            // must fail configuration closed (a mangled
+            // `..._LOCAL_LEG=erasure` would otherwise silently start
+            // against the pack root).
+            None => match std::env::var(key) {
+                Err(std::env::VarError::NotUnicode(_)) => Err(nimbus::Error::InvalidInput(
+                    format!("environment variable {key} is set but not valid UTF-8"),
+                )),
+                _ => Ok(None),
+            },
+        }
     }
 }
 

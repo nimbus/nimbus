@@ -283,7 +283,7 @@ async fn run_backup_object_store(command: BackupObjectStoreCommand) -> Result<()
     let engine = open_engine(&command.data_dir, command.provider).await?;
     let archive = engine.export_latest_point_in_time_restore_archive(&tenant)?;
     let archive_bytes = serde_json::to_vec(&archive)?;
-    let roots = backup_roots_from_archive_or_local(&archive, &command.data_dir, &tenant)?;
+    let roots = backup_roots_from_archive_or_local(&archive, &command.data_dir, &tenant).await?;
     let source = object_storage_resolver(engine.clone())?.blob_store(&tenant)?;
     let key_escrow = read_key_escrow(&command.key_escrow_id, &command.key_escrow_file)?;
     let request = BackupRequest::new(
@@ -715,7 +715,7 @@ fn read_key_escrow(id: &str, path: &Path) -> Result<KeyEscrow, Box<dyn Error>> {
     Ok(KeyEscrow::new(id, std::fs::read(path)?.into())?)
 }
 
-fn backup_roots_from_archive_or_local(
+async fn backup_roots_from_archive_or_local(
     archive: &PointInTimeRestoreArchive,
     data_dir: &Path,
     tenant: &TenantId,
@@ -730,17 +730,7 @@ fn backup_roots_from_archive_or_local(
             // empty backup root sets.
             if matches!(local_leg_from_env()?, LocalLeg::Erasure(_)) {
                 let erasure = ErasureBlobStore::open_read_only(erasure_config_from_env(tenant)?)?;
-                let runtime = tokio::runtime::Handle::try_current();
-                let hashes = match runtime {
-                    Ok(handle) => tokio::task::block_in_place(|| {
-                        handle.block_on(erasure.visible_blob_hashes())
-                    }),
-                    Err(_) => tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()?
-                        .block_on(erasure.visible_blob_hashes()),
-                };
-                return Ok(hashes?);
+                return Ok(erasure.visible_blob_hashes().await?);
             }
             let local = LocalPackStore::open_read_only(object_blob_root(data_dir, tenant))?;
             Ok(local
