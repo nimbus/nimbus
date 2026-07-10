@@ -631,7 +631,16 @@ impl SqliteWriteTransaction {
             load_scheduled_jobs_from_conn(self.connection_mut()?, "running_scheduled_jobs")?;
         for mut job in running_jobs {
             self.check_cancel()?;
-            job.run_at = now;
+            // A recovered running job was already DUE when it was claimed
+            // (claim only takes run_at <= now), so keep its original due
+            // time instead of re-stamping the recovery instant: stamping
+            // `now` artificially delays the job and — under wall-clock
+            // regression (e.g. NTP slew) between recovery and the next
+            // tick — can push it past that tick's `now`, silently
+            // deferring recovery (flaked scheduler_recovery_campaign on
+            // CI). min() keeps any older due time intact and never moves
+            // a job into the future.
+            job.run_at = job.run_at.min(now);
             self.connection_mut()?
                 .execute(
                     "INSERT INTO scheduled_jobs (id, run_at, data_json) VALUES (?1, ?2, ?3)",

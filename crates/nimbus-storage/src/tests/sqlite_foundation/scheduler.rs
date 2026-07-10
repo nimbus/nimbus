@@ -192,7 +192,10 @@ fn sqlite_scheduler_state_round_trips_results_crons_and_recovery() {
         .expect("pending jobs should read");
     assert_eq!(recovered.len(), 1);
     assert_eq!(recovered[0].id, job.id);
-    assert_eq!(recovered[0].run_at, Timestamp(2_000));
+    // Recovery preserves the ORIGINAL due time (min with recovery-now);
+    // re-stamping the recovery instant delayed recovered work and flaked
+    // under wall-clock regression.
+    assert_eq!(recovered[0].run_at, Timestamp(1_000));
 
     let claimed = store
         .claim_due_jobs(Timestamp(2_000), usize::MAX)

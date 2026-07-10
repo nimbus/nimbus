@@ -180,7 +180,37 @@ fn recover_running_jobs_moves_orphaned_work_back_to_pending() {
         .expect("pending list should succeed");
     assert_eq!(recovered.len(), 1);
     assert_eq!(recovered[0].id, job.id);
-    assert_eq!(recovered[0].run_at, Timestamp(2_000));
+    // The job was DUE at 1_000 when it was claimed; recovery preserves that
+    // original due time (min with recovery-now) instead of re-stamping the
+    // recovery instant — re-stamping delayed recovered work and, under
+    // wall-clock regression, deferred it past the next tick entirely.
+    assert_eq!(recovered[0].run_at, Timestamp(1_000));
+}
+
+#[test]
+fn recovered_job_stays_claimable_under_clock_regression() {
+    // CI-flake regression (scheduler_recovery_campaign): recovery at T,
+    // then a tick whose clock reads T' < T (NTP slew) must STILL claim the
+    // recovered job — its original due time governs, not the recovery
+    // instant.
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let job = scheduled_insert_job(Timestamp(1_000), "regress");
+    store
+        .insert_scheduled_job(&job)
+        .expect("scheduled insert should succeed");
+    store
+        .claim_due_jobs(Timestamp(1_000), usize::MAX)
+        .expect("claim should succeed");
+
+    store
+        .recover_running_jobs(Timestamp(2_000))
+        .expect("recovery should succeed");
+    // The post-recovery tick observes an EARLIER wall clock than recovery.
+    let claimed = store
+        .claim_due_jobs(Timestamp(1_500), usize::MAX)
+        .expect("claim should succeed");
+    assert_eq!(claimed.len(), 1, "regressed-clock tick must claim");
+    assert_eq!(claimed[0].id, job.id);
 }
 
 #[test]

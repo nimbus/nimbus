@@ -866,7 +866,16 @@ impl LibsqlReplicaWriteTransaction {
         )?;
         for mut job in running_jobs {
             self.check_cancel()?;
-            job.run_at = now;
+            // A recovered running job was already DUE when it was claimed
+            // (claim only takes run_at <= now), so keep its original due
+            // time instead of re-stamping the recovery instant: stamping
+            // `now` artificially delays the job and — under wall-clock
+            // regression (e.g. NTP slew) between recovery and the next
+            // tick — can push it past that tick's `now`, silently
+            // deferring recovery (flaked scheduler_recovery_campaign on
+            // CI). min() keeps any older due time intact and never moves
+            // a job into the future.
+            job.run_at = job.run_at.min(now);
             let data_json = serialize_json(&job)?;
             self.store.block_on(async {
                 self.session()?
