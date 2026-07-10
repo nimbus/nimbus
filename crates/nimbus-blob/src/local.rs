@@ -631,10 +631,19 @@ impl LocalPackStore {
         let mut listing = Vec::new();
         for pack_id in pack_ids_on_disk(&packs_dir)? {
             let path = pack_path(&packs_dir, pack_id);
-            let size = fs::metadata(&path)
-                .map(|meta| meta.len())
-                .map_err(|err| io_error(err, format!("stat pack {}", path.display())))?;
-            listing.push((pack_id, size));
+            match fs::metadata(&path) {
+                Ok(meta) => listing.push((pack_id, meta.len())),
+                // A pack that vanishes between the directory listing and
+                // its stat was removed by a concurrent compaction: record
+                // the instability (the caller's bracket comparison will
+                // differ and retry) instead of failing the probe with Io.
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    listing.push((pack_id, u64::MAX));
+                }
+                Err(err) => {
+                    return Err(io_error(err, format!("stat pack {}", path.display())));
+                }
+            }
         }
         Ok(listing)
     }
