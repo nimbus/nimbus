@@ -35,7 +35,16 @@ impl TenantStore {
                 .open_table(SCHEDULED_JOBS)
                 .map_err(map_redb_error)?;
             for (running_key, mut job) in running_jobs {
-                job.run_at = now;
+                // A recovered running job was already DUE when it was claimed
+                // (claim only takes run_at <= now), so keep its original due
+                // time instead of re-stamping the recovery instant: stamping
+                // `now` artificially delays the job and — under wall-clock
+                // regression (e.g. NTP slew) between recovery and the next
+                // tick — can push it past that tick's `now`, silently
+                // deferring recovery (flaked scheduler_recovery_campaign on
+                // CI). min() keeps any older due time intact and never moves
+                // a job into the future.
+                job.run_at = job.run_at.min(now);
                 let payload = serialize_job(&job)?;
                 let pending_key = scheduled_job_key(job.run_at, &job.id);
                 scheduled

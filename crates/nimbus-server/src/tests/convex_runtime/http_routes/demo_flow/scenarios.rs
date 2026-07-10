@@ -270,9 +270,12 @@ async fn convex_http_demo_action_then_http_post_and_follow_up_action_all_complet
     wait_for_message(&api, author, http_body).await;
 
     let second_action = timeout(
-        // Match the sibling scenario's 5s action-resolution deadline (line ~420):
-        // 1s is brittle for a V8 runtime action under full-parallel CI load.
-        Duration::from_secs(5),
+        // Liveness guard only (fail instead of hang): V8 runtime actions
+        // under full-parallel CI load have exceeded 5s (this scenario's
+        // sibling flaked on a shard whose neighbors ran 12s+), so these
+        // deadlines are deliberately generous — they cannot mask a bug,
+        // they only bound how long a genuine hang takes to fail.
+        Duration::from_secs(60),
         api.convex_named_action(
             "demo",
             "messages:sendViaAction",
@@ -335,7 +338,9 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
         }
     });
 
-    timeout(Duration::from_secs(1), faults.wait_until_entered())
+    // Liveness guard (see the 60s note above): entering the fault gate is
+    // scheduling-dependent under CI load.
+    timeout(Duration::from_secs(30), faults.wait_until_entered())
         .await
         .expect("journal worker should block after durable append");
     assert!(
@@ -390,13 +395,13 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
 
     faults.release();
 
-    let action = timeout(Duration::from_secs(5), action)
+    let action = timeout(Duration::from_secs(60), action)
         .await
         .expect("plan-backed action should resolve after apply resumes")
         .expect("action task should join");
     assert_eq!(action.status(), StatusCode::OK);
 
-    let blocked_query = timeout(Duration::from_secs(5), blocked_query)
+    let blocked_query = timeout(Duration::from_secs(60), blocked_query)
         .await
         .expect("blocked query should resolve after apply resumes")
         .expect("blocked query task should join");
@@ -414,7 +419,7 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
         "{blocked_query_body}"
     );
 
-    let http_post = timeout(Duration::from_secs(5), &mut http_post)
+    let http_post = timeout(Duration::from_secs(60), &mut http_post)
         .await
         .expect("follow-up httpAction post should resolve after apply resumes")
         .expect("httpAction post task should join");
@@ -422,7 +427,8 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
     wait_for_message(&api, author, http_body).await;
 
     let second_action = timeout(
-        Duration::from_secs(5),
+        // Liveness guard only — see the 60s rationale above.
+        Duration::from_secs(60),
         api.convex_named_action(
             "demo",
             "messages:sendViaAction",
