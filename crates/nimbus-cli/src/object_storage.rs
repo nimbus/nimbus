@@ -289,7 +289,13 @@ async fn run_backup_object_store(command: BackupObjectStoreCommand) -> Result<()
     // addresses, which can never verify (and would leak plaintext into the
     // backup artifact if it did). Chunks therefore stay ciphertext and the
     // bundle is unreadable without the escrowed key material.
-    let source = raw_local_leg_read_only(&command.data_dir, &tenant)?;
+    //
+    // The open is WRITABLE for exclusive ownership, not for writing:
+    // export_bundle requires its roots to stay live for the whole export,
+    // and only exclusive ownership guarantees no concurrent release/GC/
+    // compaction reclaims one mid-export. Offline maintenance — a running
+    // server holds the flocks and this fails closed with Busy.
+    let source = raw_local_leg_writable(&command.data_dir, &tenant)?;
     let key_escrow = read_key_escrow(&command.key_escrow_id, &command.key_escrow_file)?;
     // Fail EARLY if the operator escrowed the wrong material: the escrow
     // must be the tenant's wrapped-DEK sidecar, or the restored ciphertext
@@ -358,7 +364,6 @@ async fn run_restore_object_store(
         )
         .into());
     }
-    let engine = open_engine(&command.data_dir, command.provider).await?;
     // Install the escrowed wrapped-DEK sidecar BEFORE restoring bytes: the
     // bundle's chunks are ciphertext sealed under that key, and a fresh
     // tenant would otherwise mint a NEW DEK and never be able to read
@@ -377,18 +382,17 @@ async fn run_restore_object_store(
     // tenant's blob-key subject — proving key bytes, tenant binding, and
     // manifest integrity in one step. Parse the SAME captured bytes that
     // will be installed — never a second read of the escrow path.
-    let escrow_manifest = nimbus_crypto::KeyManifest::from_bytes(
-        escrow_bytes,
-        &command.key_escrow_file,
-    )
-    .map_err(|err| -> Box<dyn Error> {
-        format!(
-            "key escrow file {} is not a valid key manifest — escrow the tenant's blob-key sidecar ({}): {err}",
-            command.key_escrow_file.display(),
-            sidecar_path.display()
-        )
-        .into()
-    })?;
+    let escrow_manifest =
+        nimbus_crypto::KeyManifest::from_bytes(escrow_bytes, &command.key_escrow_file).map_err(
+            |err| -> Box<dyn Error> {
+                format!(
+                    "key escrow file {} is not a valid key manifest — escrow the tenant's blob-key sidecar ({}): {err}",
+                    command.key_escrow_file.display(),
+                    sidecar_path.display()
+                )
+                .into()
+            },
+        )?;
     let master_key_path = master_key_path_from_env(&command.data_dir)?;
     let provider =
         nimbus_crypto::MasterKeyFileProvider::new(master_key_path.clone()).map_err(|err| {
@@ -417,38 +421,28 @@ async fn run_restore_object_store(
         )
         .into()
     })?;
-    match std::fs::read(&sidecar_path) {
-        Ok(existing) if existing.as_slice() == escrow_bytes => {}
-        Ok(_) => {
-            return Err(format!(
-                "tenant blob-key sidecar {} already exists with DIFFERENT key material; \
-                 refusing to overwrite a live tenant's key",
-                sidecar_path.display()
-            )
-            .into());
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            if let Some(parent) = sidecar_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(&sidecar_path, escrow_bytes)?;
-            set_private_file_permissions(&sidecar_path)?;
-        }
-        Err(err) => return Err(err.into()),
-    }
-    // Restore writes the RAW leg: chunk bytes are ciphertext under their
-    // own content addresses, and restore_bundle verifies target.put
-    // round-trips each address — only the raw domain satisfies that.
-    let target = raw_local_leg_writable(&command.data_dir, &tenant)?;
-    let report = ObjectBackup::restore_bundle(target.as_ref(), &bundle, Some(&key_escrow)).await?;
-    drop(target);
     let archive = serde_json::from_slice(bundle.manifest_snapshot())?;
+    // Everything validated — now mutate, under exclusive byte-plane
+    // ownership FIRST: the raw-leg flocks exclude a live server (and its
+    // resolver, which acquires the leg before it touches key material),
+    // so no reader can hold a DEK this install would contradict. Held
+    // through metadata import + quiesce so no other process can acquire
+    // the byte plane while bytes and metadata are at different restore
+    // points. Restore writes the RAW leg: chunk bytes are ciphertext
+    // under their own content addresses, and restore_bundle verifies
+    // target.put round-trips each address — only the raw domain
+    // satisfies that.
+    let target = raw_local_leg_writable(&command.data_dir, &tenant)?;
+    install_escrow_sidecar(&sidecar_path, escrow_bytes)?;
+    let report = ObjectBackup::restore_bundle(target.as_ref(), &bundle, Some(&key_escrow)).await?;
+    let engine = open_engine(&command.data_dir, command.provider).await?;
     match engine.create_tenant(tenant.clone()) {
         Ok(()) | Err(NimbusError::AlreadyExists(_)) => {}
         Err(error) => return Err(error.into()),
     }
     engine.import_point_in_time_restore_archive(&tenant, &archive)?;
     engine.quiesce().await;
+    drop(target);
     emit_object_storage_info(format!(
         "restore-object-store tenant={} chunks={} bytes={} input={}",
         tenant,
@@ -841,41 +835,82 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
 /// (`lock`, `format.nblfmt`), which stay until their guards drop — some
 /// filesystems refuse deleting open/locked files, and the ownership
 /// protocol keeps the root identity authoritative through the deletion.
-/// The tenant's RAW byte-plane leg, read-only (backup export source):
-/// content addresses are ciphertext hashes and export verification only
-/// holds in the raw domain.
-fn raw_local_leg_read_only(
-    data_dir: &Path,
-    tenant: &TenantId,
-) -> Result<Box<dyn nimbus::BlobStore>, Box<dyn Error>> {
-    match local_leg_from_env()? {
-        LocalLeg::Pack => Ok(Box::new(LocalPackStore::open_read_only_with_identity(
-            object_blob_root(data_dir, tenant),
-            Some(nimbus::tenant_root_identity(tenant)),
-        )?)),
-        LocalLeg::Erasure(_) => Ok(Box::new(ErasureBlobStore::open_read_only(
-            erasure_config_from_env(tenant)?,
-        )?)),
+/// Publishes the escrowed wrapped-DEK sidecar with create-new/no-follow
+/// semantics: O_EXCL never follows a symlink at the final component, so
+/// a planted `blob-key.nimbus-enc` link cannot redirect a privileged
+/// restore. An existing byte-identical sidecar is tolerated (idempotent
+/// re-restore); anything else fails closed. Caller holds exclusive
+/// raw-leg ownership, so no live resolver can race this install.
+fn install_escrow_sidecar(sidecar_path: &Path, escrow_bytes: &[u8]) -> Result<(), Box<dyn Error>> {
+    use std::io::Write;
+    if let Some(parent) = sidecar_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(sidecar_path) {
+        Ok(mut file) => {
+            file.write_all(escrow_bytes)?;
+            file.sync_all()?;
+            set_private_file_permissions(sidecar_path)?;
+            Ok(())
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            // Dangling symlinks also land here (O_EXCL sees the link) and
+            // then fail the read below — fail-closed either way.
+            let existing = std::fs::read(sidecar_path).map_err(|err| {
+                format!(
+                    "tenant blob-key sidecar path {} exists but is unreadable (symlink?): {err}",
+                    sidecar_path.display()
+                )
+            })?;
+            if existing.as_slice() == escrow_bytes {
+                return Ok(());
+            }
+            Err(format!(
+                "tenant blob-key sidecar {} already exists with DIFFERENT key material; refusing to overwrite a live tenant's key",
+                sidecar_path.display()
+            )
+            .into())
+        }
+        Err(err) => Err(err.into()),
     }
 }
 
-/// The tenant's RAW byte-plane leg, writable (restore target): offline
-/// maintenance — the flocks fail closed with Busy while a server runs.
+/// The tenant's RAW byte-plane leg with exclusive ownership (backup
+/// source / restore target): offline maintenance — the flocks fail
+/// closed with Busy while a server runs.
 fn raw_local_leg_writable(
     data_dir: &Path,
     tenant: &TenantId,
 ) -> Result<Box<dyn nimbus::BlobStore>, Box<dyn Error>> {
+    let busy_hint = |error: NimbusError| -> Box<dyn Error> {
+        if error.storage_kind() == Some(StorageErrorKind::Busy) {
+            format!("{error}; stop the server first; backup and restore are offline maintenance")
+                .into()
+        } else {
+            error.into()
+        }
+    };
     match local_leg_from_env()? {
-        LocalLeg::Pack => Ok(Box::new(LocalPackStore::open_with_options(
-            object_blob_root(data_dir, tenant),
-            nimbus::LocalPackStoreOptions {
-                identity: Some(nimbus::tenant_root_identity(tenant)),
-                ..nimbus::LocalPackStoreOptions::default()
-            },
-        )?)),
-        LocalLeg::Erasure(_) => Ok(Box::new(ErasureBlobStore::open(erasure_config_from_env(
-            tenant,
-        )?)?)),
+        LocalLeg::Pack => Ok(Box::new(
+            LocalPackStore::open_with_options(
+                object_blob_root(data_dir, tenant),
+                nimbus::LocalPackStoreOptions {
+                    identity: Some(nimbus::tenant_root_identity(tenant)),
+                    ..nimbus::LocalPackStoreOptions::default()
+                },
+            )
+            .map_err(busy_hint)?,
+        )),
+        LocalLeg::Erasure(_) => Ok(Box::new(
+            ErasureBlobStore::open(erasure_config_from_env(tenant)?).map_err(busy_hint)?,
+        )),
     }
 }
 
@@ -1460,6 +1495,66 @@ mod tests {
         assert!(
             !nimbus::object_blob_root(dir.path(), &tenant_a).exists(),
             "refusal must install nothing for the target tenant"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn restore_refuses_a_symlinked_sidecar_path() {
+        // A planted dangling symlink at the sidecar path must not redirect
+        // the privileged install to an arbitrary target.
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Engine::new(dir.path()).unwrap());
+        let tenant = TenantId::new("symlink-tenant").unwrap();
+        engine.create_tenant(tenant.clone()).unwrap();
+        let resolver = ObjectStorageResolver::new(engine.clone());
+        let store = resolver.blob_store(&tenant).unwrap();
+        store
+            .put(Bytes::from_static(b"symlink payload"))
+            .await
+            .unwrap();
+        drop(store);
+        drop(resolver);
+        engine.quiesce().await;
+        drop(engine);
+
+        let sidecar_path =
+            nimbus::KeyManifest::manifest_path(&nimbus::object_blob_key_path(dir.path(), &tenant));
+        let escrow_file = dir.path().join("escrow.bin");
+        std::fs::copy(&sidecar_path, &escrow_file).unwrap();
+        let bundle_path = dir.path().join("backup.nobb");
+        run_backup_object_store(BackupObjectStoreCommand {
+            tenant: tenant.as_str().to_string(),
+            data_dir: dir.path().to_path_buf(),
+            out: bundle_path.clone(),
+            key_escrow_id: "symlink-tenant".to_string(),
+            key_escrow_file: escrow_file.clone(),
+            provider: ObjectStorageProvider::Sqlite,
+        })
+        .await
+        .unwrap();
+
+        // Wipe the byte plane, then plant a dangling symlink where the
+        // sidecar would be installed.
+        std::fs::remove_dir_all(dir.path().join("object-blobs")).unwrap();
+        let attack_target = dir.path().join("attacker-controlled");
+        std::fs::create_dir_all(sidecar_path.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&attack_target, &sidecar_path).unwrap();
+
+        let err = run_restore_object_store(RestoreObjectStoreCommand {
+            tenant: tenant.as_str().to_string(),
+            data_dir: dir.path().to_path_buf(),
+            input: bundle_path,
+            key_escrow_id: "symlink-tenant".to_string(),
+            key_escrow_file: escrow_file,
+            provider: ObjectStorageProvider::Sqlite,
+        })
+        .await
+        .expect_err("a symlinked sidecar path must be refused");
+        assert!(err.to_string().contains("unreadable"), "{err}");
+        assert!(
+            !attack_target.exists(),
+            "the symlink target must never be created"
         );
     }
 }
