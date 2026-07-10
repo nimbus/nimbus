@@ -54,8 +54,9 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   DLP parity, and QUIC/UDP bypass denial. This must land before Nimbus claims
   HTTPS credential injection for agents.
 - `examples-and-target-resolution-plan.md` - `active`. Owns the user-facing
-  examples tree (`demos/` → `examples/` rename, adapter-first root index,
-  shared app specs, tier-1 `tasks` parity apps, agent examples, and the smoke
+  examples tree (`demos/` → `examples/` rename, adapter-first layout with a
+  README at every directory level, shared app specs, tier-1 `tasks` apps
+  across all six public adapter surfaces, agent examples, and the smoke
   verification lane), the unified target-resolution CLI UX (one optional
   positional `TARGET` = URL or configured name, local default, no node/cluster
   distinction, riding the existing `TargetSelector` seam), and the public docs

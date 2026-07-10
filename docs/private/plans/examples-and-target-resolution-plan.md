@@ -47,9 +47,14 @@ released version pins (EX7.6) — never a hand-maintained second copy.
 ### XD2 — Tree shape: adapter-first with a root nav index, renamed to `examples/`
 
 `examples/README.md` explains the adapter surfaces and is the root nav index;
-`examples/convex/*`, `examples/firebase/*`, `examples/mongodb/*`,
-`examples/nimbus/*` (native), later `examples/dynamodb/*` and `examples/s3/*`,
-hold the apps. This matches how developers arrive ("I'm a Firebase dev").
+`examples/nimbus/*` (native), `examples/convex/*`, `examples/firebase/*`,
+`examples/cloud-functions/*`, `examples/mongodb/*`, and `examples/dynamodb/*`
+hold the apps — one directory per public adapter surface (the six documented
+under `docs/developers/`), later joined by `examples/s3/*` for the S3 surface.
+Every directory level carries a `README.md` that explains its section: the
+root nav index, each adapter directory (what the surface is, its examples, the
+supported subset, a link to its docs page), `examples/specs/`, and each
+example app. This matches how developers arrive ("I'm a Firebase dev").
 The tree is renamed from `demos/` because these are the user-facing product and
 "demos" reads as internal; pre-launch, the rename is free (breaking changes
 preferred). Internal parity fixtures that are not user-worthy stay but move out
@@ -101,10 +106,12 @@ README ends with the same run story: `nimbus dev` for the local loop, then
 2. Every user-facing example has: README (what it shows, run story), a spec
    mapping, and a headless smoke script asserting observable behavior — not
    just compilation.
-3. No `--node`/`--cluster` vocabulary anywhere: CLI help, example READMEs,
+3. Every directory level under `examples/` has a `README.md` explaining that
+   section: root index, per-adapter directories, `specs/`, and each app.
+4. No `--node`/`--cluster` vocabulary anywhere: CLI help, example READMEs,
    docs pages.
-4. Docs claims are source-verified; supported-subset caveats stated honestly.
-5. Fail-closed or gate-adding changes run the full workspace suite, not a
+5. Docs claims are source-verified; supported-subset caveats stated honestly.
+6. Fail-closed or gate-adding changes run the full workspace suite, not a
    name-filtered subset.
 
 ## Band Ledgers
@@ -140,11 +147,15 @@ the Appendix.
 | EX2.1 | Rename `demos/` → `examples/` and update every reference from EX0.1: npm workspaces + scripts, Makefile overlay, server static route `/demos/` → `/examples/` + route tests, `index.html`, compose/container files | `git grep -n "demos/"` clean or each residual justified; route tests green; every `npm run *:example:*` command exercised | ~300 (mostly mechanical) | todo |
 | EX2.2 | Rewrite `examples/README.md` as the user-facing root nav index: explains each adapter surface, tables the examples, states the uniform run story (`nimbus dev`; `nimbus deploy [TARGET]`); internal parity/status notes moved out (to EX8.1 destination) | README contains no compiled-subset changelog notes; run story uses only the XD4 pattern | ~150 doc | todo |
 | EX2.3 | Seed `examples/specs/` with `tasks.md` (schema, flows, observable assertions, per-adapter supported-subset table) | Spec reviewed against each tier-1 adapter's real surface; assertions are smoke-checkable | ~120 doc | todo |
+| EX2.4 | Per-directory `README.md` for every section: each `examples/<adapter>/` dir (what the surface is, its examples, supported subset, link to its docs page) and `examples/specs/` (what a spec is, how smokes consume it) | Every directory level under `examples/` has a README; adapter READMEs link to the matching `docs/developers/<adapter>/` page | ~60 doc/dir | todo |
 
-### Band EX3 — Tier-1 canonical app: `tasks` across adapters
+### Band EX3 — Tier-1 canonical app: `tasks` across all public adapter surfaces
 
-Promote/reshape existing demos where sensible rather than writing parallel
-apps; parity-fixture behavior that is not user-worthy stays internal.
+Tier 1 covers every adapter surface documented under `docs/developers/`:
+native, Convex, Firebase, Cloud Functions, MongoDB, DynamoDB. Promote/reshape
+existing demos where sensible rather than writing parallel apps
+(cloud-functions and dynamodb have no demo today and are written fresh);
+parity-fixture behavior that is not user-worthy stays internal.
 
 | ID | Item | Acceptance | Size | Status |
 | --- | --- | --- | --- | --- |
@@ -152,6 +163,8 @@ apps; parity-fixture behavior that is not user-worthy stays internal.
 | EX3.2 | `examples/convex/tasks` (from the React demo): clean tasks app authored via `convex/_generated/server` + schema | Same acceptance; parity-only exercises moved out of the user-facing app | ~250 | todo |
 | EX3.3 | `examples/firebase/tasks` (from `demos/firebase/html`): stock `firebase/app`+`firebase/firestore` imports against Nimbus | Same acceptance; exercises live `onSnapshot` per spec | ~200 | todo |
 | EX3.4 | `examples/mongodb/tasks` (from `demos/mongodb/node`): stock driver CRUD; spec table marks the no-live-query subset honestly | Same acceptance for the supported subset | ~150 | todo |
+| EX3.5 | `examples/dynamodb/tasks` (new): stock AWS SDK client via `packages/dynamodb` against Nimbus; spec table marks the supported subset | Same acceptance for the supported subset | ~150 | todo |
+| EX3.6 | `examples/cloud-functions/tasks` (new): `firebase-functions/v2` handlers on the tasks data — an HTTP/callable endpoint plus an `onDocumentCreated` Firestore trigger with durable retry (per `docs/developers/cloud-functions/`) | Smoke asserts the trigger's observable side effect (derived write lands after a task insert) and the HTTP handler response | ~200 | todo |
 
 ### Band EX4 — Agent examples (scope fixed by EX0.3)
 
@@ -181,12 +194,12 @@ apps; parity-fixture behavior that is not user-worthy stays internal.
 | ID | Item | Acceptance | Size | Status |
 | --- | --- | --- | --- | --- |
 | EX7.1 | `nimbus init --example <adapter>/<app>` scaffolder sourcing from the monorepo tree | Scaffolded app runs its smoke; or decision recorded | ~250 | todo |
-| EX7.2 | `examples/dynamodb/tasks` | Spec-subset acceptance as EX3.4; or decision recorded | ~150 | todo |
-| EX7.3 | `examples/s3/filedrop` (blob plane + S3 surface, upload URLs) | Spec + smoke; or decision recorded | ~250 | todo |
-| EX7.4 | `examples/nimbus/jobs` (cron/scheduled functions — the old "planned next demos") | Spec + smoke; or decision recorded | ~200 | todo |
-| EX7.5 | Docs pages generated from example READMEs (NATS-by-example style) instead of hand-written | Generation wired into docs gates; or decision recorded | ~200 | todo |
-| EX7.6 | `nimbus/examples` mirror repo as automated one-way publish with released pins | Default decision: defer until launch; record it (with trigger condition) unless implemented | n/a | todo |
-| EX7.7 | `chat` spec + one implementation (subscriptions, presence, pagination) | Spec + smoke; or decision recorded | ~300 | todo |
+| EX7.2 | `examples/s3/filedrop` (blob plane + S3 surface, upload URLs) | Spec + smoke; or decision recorded | ~250 | todo |
+| EX7.3 | `examples/nimbus/jobs` (cron/scheduled functions — the old "planned next demos") | Spec + smoke; or decision recorded | ~200 | todo |
+| EX7.4 | Docs pages generated from example READMEs (NATS-by-example style) instead of hand-written | Generation wired into docs gates; or decision recorded | ~200 | todo |
+| EX7.5 | `nimbus/examples` mirror repo as automated one-way publish with released pins | Default decision: defer until launch; record it (with trigger condition) unless implemented | n/a | todo |
+| EX7.6 | `chat` spec + one implementation (subscriptions, presence, pagination) | Spec + smoke; or decision recorded | ~300 | todo |
+| EX7.7 | Not-yet-public surfaces (KV/RESP, Cloudflare adapters): record the decision for when each gets an examples directory (trigger = its public docs page landing) | Decision recorded per surface with trigger condition | n/a | todo |
 
 ### Band EX8 — Cleanup
 
