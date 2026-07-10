@@ -376,6 +376,15 @@ impl ErasureBlobStore {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
+    /// Sets the leg poison directly (tests): lets interleaving tests
+    /// trip the fail-stop deterministically while holding the mutation
+    /// lock, with no scheduler-order dependence.
+    #[cfg(test)]
+    pub(crate) fn poison_for_test(&self) {
+        self.poisoned
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     #[cfg(test)]
     pub(crate) fn is_poisoned(&self) -> bool {
         self.poisoned.load(std::sync::atomic::Ordering::SeqCst)

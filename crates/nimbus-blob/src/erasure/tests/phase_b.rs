@@ -553,17 +553,15 @@ async fn erasure_gc_never_sweeps_inflight_put_shards() {
     }
 }
 
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn erasure_heal_rechecks_poison_under_the_mutation_lock() {
-    // Review fix (Phase B round 4, P1): a healer that passed its initial
-    // liveness check and then waited behind a put must re-check the
-    // fail-stop AFTER acquiring the leg mutation lock — the put ahead of
-    // it can poison the leg (nondurable rollback), and healing against the
-    // ambiguous manifest view would violate the poison contract. Relies on
-    // tokio::sync::Mutex fairness (FIFO waiters) for the interleaving.
-    use std::os::unix::fs::PermissionsExt;
-
+    // Review fix (Phase B round 4, P1; determinized round 8): a healer
+    // that passed its initial liveness check and then waited on the leg
+    // mutation lock must re-check the fail-stop AFTER acquiring it. The
+    // test holds the lock, queues the healer, poisons the leg WHILE the
+    // lock is held, then releases — whatever order the scheduler polls,
+    // the waiter can only acquire after the poison is set. No sleeps, no
+    // FIFO assumption.
     let (_dir, store, _roots) = open_temp(K, M, STRIPE);
     let bytes = payload(STRIPE + 17);
     let hash = store.put(bytes.clone()).await.unwrap();
@@ -579,46 +577,23 @@ async fn erasure_heal_rechecks_poison_under_the_mutation_lock() {
         .await
         .unwrap();
 
-    // Arm a poisoning put (fresh blob, nondurable rollback on the last
-    // drive), then interleave: hold the lock, queue the put (waiter 1),
-    // queue the heal (waiter 2), release.
-    let blocked = manifest::manifest_dir(&store.drive_root(K + M - 1));
-    let mut perms = fs::metadata(&blocked).unwrap().permissions();
-    perms.set_mode(0o500);
-    fs::set_permissions(&blocked, perms).unwrap();
-    store.arm_nondurable_rollback();
-
     let guard = store.mutation_lock().lock_owned().await;
-    let put_store = store.clone();
-    let put_task = tokio::spawn(async move { put_store.put(payload(2 * STRIPE + 23)).await });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let heal_store = store.clone();
     let heal_task = tokio::spawn(async move { ErasureHealer::new(heal_store).heal().await });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    store.poison_for_test();
     drop(guard);
 
-    put_task.await.unwrap().unwrap_err();
-    assert!(store.is_poisoned(), "the queued put poisoned the leg");
     let heal_err = heal_task
         .await
         .unwrap()
-        .expect_err("heal behind the poisoning put must fail-stop");
+        .expect_err("heal queued behind the poison must fail-stop");
     assert!(heal_err.to_string().contains("poisoned"));
 
     // No generation bump was published over the ambiguous view.
-    let after = manifest::load_newest(
-        &hash,
-        &store.drive_roots(),
-        // parity+1 quorum for K=4, M=2
-        M + 1,
-    )
-    .unwrap()
-    .expect("committed blob still visible");
+    let after = manifest::load_newest(&hash, &store.drive_roots(), M + 1)
+        .unwrap()
+        .expect("committed blob still visible");
     assert_eq!(after.generation, manifest.generation, "no heal publish");
-
-    let mut perms = fs::metadata(&blocked).unwrap().permissions();
-    perms.set_mode(0o700);
-    fs::set_permissions(&blocked, perms).unwrap();
 }
 
 #[cfg(unix)]
@@ -695,37 +670,24 @@ async fn erasure_heal_pacing_never_exceeds_the_byte_cap() {
     assert_eq!(store.get(&hash).await.unwrap(), bytes);
 }
 
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn erasure_put_and_release_recheck_poison_under_the_mutation_lock() {
-    // Review fix (Phase B round 7, P1): put and release queued behind a
-    // poisoning mutation must fail-stop after acquiring the lock, exactly
-    // like heal and sweep_drive. FIFO-fair tokio Mutex gives the
-    // deterministic interleaving.
-    use std::os::unix::fs::PermissionsExt;
-
+    // Review fix (Phase B round 7, P1; determinized round 8): put and
+    // release queued on the mutation lock must fail-stop when the leg
+    // poisons before they acquire it. Same deterministic shape as the heal
+    // variant: poison while holding the lock — no sleeps, no FIFO
+    // assumption.
     let (_dir, store, _roots) = open_temp(K, M, STRIPE);
     let committed = store.put(payload(STRIPE + 51)).await.unwrap();
 
-    let blocked = manifest::manifest_dir(&store.drive_root(K + M - 1));
-    let mut perms = fs::metadata(&blocked).unwrap().permissions();
-    perms.set_mode(0o500);
-    fs::set_permissions(&blocked, perms).unwrap();
-    store.arm_nondurable_rollback();
-
     let guard = store.mutation_lock().lock_owned().await;
-    let poisoner = store.clone();
-    let poison_task = tokio::spawn(async move { poisoner.put(payload(2 * STRIPE + 7)).await });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let putter = store.clone();
     let put_task = tokio::spawn(async move { putter.put(payload(3 * STRIPE + 5)).await });
     let releaser = store.clone();
     let release_task = tokio::spawn(async move { releaser.release(&committed).await });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    store.poison_for_test();
     drop(guard);
 
-    poison_task.await.unwrap().unwrap_err();
-    assert!(store.is_poisoned());
     let put_err = put_task
         .await
         .unwrap()
@@ -745,8 +707,4 @@ async fn erasure_put_and_release_recheck_poison_under_the_mutation_lock() {
             "refused release must not remove replica {index}"
         );
     }
-
-    let mut perms = fs::metadata(&blocked).unwrap().permissions();
-    perms.set_mode(0o700);
-    fs::set_permissions(&blocked, perms).unwrap();
 }
