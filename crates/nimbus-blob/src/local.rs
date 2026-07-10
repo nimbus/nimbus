@@ -621,14 +621,25 @@ impl LocalPackStore {
     /// window (torn-accounting risk), regardless of whether the affected
     /// packs are referenced by any frozen index.
     pub fn disk_pack_listing(root: impl AsRef<Path>) -> Result<Vec<(u64, u64)>> {
-        let packs_dir = root.as_ref().join("packs");
+        let root = root.as_ref();
+        let packs_dir = root.join("packs");
+        // index.log participates in the stability signature: a release
+        // appends ONLY an index tombstone (no pack change), and a bracket
+        // blind to it would accept torn released-vs-live accounting. The
+        // log is append-only, so its size is a monotonic change marker;
+        // it rides in the listing as a reserved (u64::MAX, size) entry.
+        let index_size = match fs::metadata(root.join("index.log")) {
+            Ok(meta) => meta.len(),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(err) => return Err(io_error(err, "stat index.log".to_string())),
+        };
         // An existing-but-uninitialized root (no packs/ yet — e.g. created
         // by an ownership guard that never wrote) is an EMPTY layout, not
         // an inspection error.
         if !packs_dir.exists() {
-            return Ok(Vec::new());
+            return Ok(vec![(u64::MAX, index_size)]);
         }
-        let mut listing = Vec::new();
+        let mut listing = vec![(u64::MAX, index_size)];
         for pack_id in pack_ids_on_disk(&packs_dir)? {
             let path = pack_path(&packs_dir, pack_id);
             match fs::metadata(&path) {
