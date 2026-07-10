@@ -669,6 +669,14 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
         Err(err) => return Err(err.into()),
     }
 
+    // Contents first (locks + markers retained), roots last (guards
+    // dropped): deleting an flock'd file is refused on some filesystems
+    // (Windows), and unlinking held locks violates the ownership protocol
+    // — so everything EXCEPT `lock` and `format.nblfmt` is deleted while
+    // the guards are authoritative, then the guards drop and the
+    // near-empty roots are removed. The post-drop window is benign: the
+    // control-plane tenant is already gone, so a recreated root is empty,
+    // unroutable residue.
     let mut erasure_trees_removed = 0usize;
     for (index, path) in std::iter::once(&root)
         .chain(erasure_trees.iter())
@@ -677,18 +685,46 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
         if !path.exists() {
             continue;
         }
-        std::fs::remove_dir_all(path)?;
+        remove_root_contents_except_ownership(path)?;
         if index > 0 {
             erasure_trees_removed += 1;
         }
     }
     drop(_erasure_ownership);
     drop(_pack_ownership);
+    for path in std::iter::once(&root).chain(erasure_trees.iter()) {
+        if path.exists() {
+            std::fs::remove_dir_all(path)?;
+        }
+    }
     engine.quiesce().await;
     emit_object_storage_info(format!(
         "tenant rm tenant={} object_blobs_removed=true erasure_trees_removed={}",
         tenant, erasure_trees_removed
     ));
+    Ok(())
+}
+
+/// Deletes everything under a byte-plane root EXCEPT the ownership files
+/// (`lock`, `format.nblfmt`), which stay until their guards drop — some
+/// filesystems refuse deleting open/locked files, and the ownership
+/// protocol keeps the root identity authoritative through the deletion.
+fn remove_root_contents_except_ownership(root: &Path) -> Result<(), Box<dyn Error>> {
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name == std::ffi::OsStr::new(nimbus::LOCK_FILE)
+            || name == std::ffi::OsStr::new(nimbus::FORMAT_FILE)
+        {
+            continue;
+        }
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
     Ok(())
 }
 
