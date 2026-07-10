@@ -283,6 +283,14 @@ pub(crate) fn load_newest(
             Ok(manifest) => manifest,
             Err(_) => continue,
         };
+        if manifest.blob_hash != *hash {
+            // The file's NAME is the content address callers asked for; a
+            // checksum-valid manifest embedding a different blob_hash is
+            // misplaced/forged and must not be served under this name
+            // (backup-root enumeration would otherwise substitute another
+            // blob's hash for the requested one).
+            continue;
+        }
         let digest = blake3::hash(&bytes);
         match groups.iter_mut().find(|(existing, ..)| *existing == digest) {
             Some((_, _, count, _)) => *count += 1,

@@ -572,9 +572,49 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
         return Err("tenant rm requires --yes".into());
     }
     let tenant = TenantId::new(command.tenant)?;
+    // Resolve configuration and PROVE exclusive ownership of every byte-
+    // plane root BEFORE any destructive step: config errors must not strike
+    // after partial deletion, and unlinking a tree a running server still
+    // owns (per-drive flocks) would corrupt its live state. Opening the
+    // stores writable takes the same flocks the server holds — Busy here
+    // means offline maintenance is required.
+    let local_leg = local_leg_from_env()?;
+    let root = object_blob_root(&command.data_dir, &tenant);
+    let erasure_trees: Vec<PathBuf> = match &local_leg {
+        LocalLeg::Pack => Vec::new(),
+        LocalLeg::Erasure(erasure) => {
+            let tenant_leaf = root
+                .file_name()
+                .ok_or("tenant object blob root has no directory-name component")?
+                .to_os_string();
+            erasure
+                .drives
+                .iter()
+                .map(|drive| drive.join(&tenant_leaf))
+                .collect()
+        }
+    };
+    if let LocalLeg::Erasure(_) = &local_leg {
+        let existing: Vec<PathBuf> = erasure_trees
+            .iter()
+            .filter(|tree| tree.exists())
+            .cloned()
+            .collect();
+        if !existing.is_empty() {
+            let ownership = ErasureBlobStore::open(erasure_config_from_env(&tenant)?).map_err(
+                |err| -> Box<dyn Error> {
+                    format!(
+                        "tenant rm requires exclusive ownership of the erasure drives \
+                         (stop the server first — this is offline maintenance): {err}"
+                    )
+                    .into()
+                },
+            )?;
+            drop(ownership);
+        }
+    }
     let engine = open_engine(&command.data_dir, command.provider).await?;
     engine.delete_tenant_async(tenant.clone()).await?;
-    let root = object_blob_root(&command.data_dir, &tenant);
     if root.exists() {
         std::fs::remove_dir_all(&root)?;
     }
@@ -582,17 +622,10 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
     // <drive_i>/<tenant leaf>; removing only the sidecar root while
     // reporting success would leave every shard and manifest behind.
     let mut erasure_trees_removed = 0usize;
-    if let LocalLeg::Erasure(erasure) = local_leg_from_env()? {
-        let tenant_leaf = root
-            .file_name()
-            .ok_or("tenant object blob root has no directory-name component")?
-            .to_os_string();
-        for drive in &erasure.drives {
-            let tree = drive.join(&tenant_leaf);
-            if tree.exists() {
-                std::fs::remove_dir_all(&tree)?;
-                erasure_trees_removed += 1;
-            }
+    for tree in &erasure_trees {
+        if tree.exists() {
+            std::fs::remove_dir_all(tree)?;
+            erasure_trees_removed += 1;
         }
     }
     engine.quiesce().await;

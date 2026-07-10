@@ -32,6 +32,10 @@ impl ErasureBlobStore {
     /// order. Read-only-safe; used by backup-root enumeration for erasure
     /// legs (the pack-leg equivalent walks live pack entries).
     pub async fn visible_blob_hashes(&self) -> Result<Vec<crate::BlobHash>> {
+        // Poisoned WRITABLE handles refuse (fail-stop contract); read-only
+        // inspectors pass (ensure_live ignores shared poison when
+        // read-only).
+        self.ensure_live()?;
         let drive_roots = self.drive_roots.clone();
         let quorum = self.visibility_quorum();
         let manifests =
@@ -43,7 +47,14 @@ impl ErasureBlobStore {
                         format!("erasure visible-blob task: {err}"),
                     )
                 })??;
-        let mut hashes: Vec<crate::BlobHash> = manifests.into_iter().map(|m| m.blob_hash).collect();
+        let mut hashes = Vec::with_capacity(manifests.len());
+        for manifest in &manifests {
+            // Layout must match THIS store's configuration; a stray quorum
+            // of foreign-layout manifests must fail closed rather than be
+            // exported as backup roots.
+            self.validate_manifest(&manifest.blob_hash, manifest)?;
+            hashes.push(manifest.blob_hash);
+        }
         hashes.sort();
         Ok(hashes)
     }

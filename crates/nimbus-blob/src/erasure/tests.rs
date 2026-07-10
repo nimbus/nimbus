@@ -1192,3 +1192,93 @@ async fn erasure_visible_blob_hashes_lists_committed_blobs_read_only() {
     expected.sort();
     assert_eq!(inspector.visible_blob_hashes().await.unwrap(), expected);
 }
+
+#[tokio::test]
+async fn erasure_read_only_open_tolerates_absent_drive_root() {
+    // Review fix (EOW round 2, P2): an inspector may point at a tenant with
+    // no blobs yet, or a leg with one absent drive within parity tolerance
+    // — inspect what remains instead of refusing the whole leg.
+    let (_dir, store, roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(STRIPE + 7);
+    let hash = store.put(bytes.clone()).await.unwrap();
+
+    // Remove one drive root entirely (m = 2 tolerates it).
+    fs::remove_dir_all(&roots[0]).unwrap();
+    let inspector = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("test-leg", roots.clone(), K, M, STRIPE).unwrap(),
+    )
+    .expect("read-only open must tolerate an absent drive root");
+    assert!(inspector.has(&hash).await.unwrap());
+    assert_eq!(inspector.get(&hash).await.unwrap(), bytes);
+
+    // A tenant with NO roots at all inspects as empty.
+    let empty_dir = tempfile::tempdir().unwrap();
+    let empty_roots = (0..K + M)
+        .map(|index| empty_dir.path().join(format!("drive-{index}")))
+        .collect::<Vec<_>>();
+    let empty = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("fresh-leg", empty_roots, K, M, STRIPE).unwrap(),
+    )
+    .expect("read-only open of a blob-less tenant must succeed");
+    assert!(empty.visible_blob_hashes().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn erasure_read_only_stale_snapshot_reports_busy_not_corruption() {
+    // Review fix (EOW round 2, P2): a put completed AFTER the inspector
+    // opened is manifest-visible but its shards are absent from the frozen
+    // pack indexes — that is a stale snapshot (Busy + re-open hint), never
+    // a false Corruption verdict.
+    let (_dir, store, roots) = open_temp(K, M, STRIPE);
+    store.put(payload(STRIPE + 3)).await.unwrap();
+    let inspector = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("test-leg", roots, K, M, STRIPE).unwrap(),
+    )
+    .unwrap();
+
+    // Writer commits a NEW blob after the inspector's snapshot.
+    let late_bytes = payload(2 * STRIPE + 9);
+    let late = store.put(late_bytes.clone()).await.unwrap();
+
+    assert!(inspector.has(&late).await.unwrap(), "manifest is visible");
+    let err = inspector.get(&late).await.unwrap_err();
+    assert_eq!(
+        err.storage_kind(),
+        Some(StorageErrorKind::Busy),
+        "stale snapshot must report Busy, not Corruption: {err}"
+    );
+    // A FRESH inspector serves it.
+    let fresh = ErasureBlobStore::open_read_only(
+        ErasureConfig::new("test-leg", store.drive_roots(), K, M, STRIPE).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(fresh.get(&late).await.unwrap(), late_bytes);
+}
+
+#[tokio::test]
+async fn erasure_misnamed_manifest_is_not_served_or_exported() {
+    // Review fix (EOW round 2, P2): a checksum-valid manifest sitting under
+    // a DIFFERENT blob's filename must not be served under that name nor
+    // exported as a backup root under its embedded hash.
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let real_bytes = payload(STRIPE + 11);
+    let real = store.put(real_bytes.clone()).await.unwrap();
+    let victim = store.put(payload(STRIPE + 13)).await.unwrap();
+
+    // Copy the REAL blob's manifest over the victim's filename on every
+    // drive (checksum-valid, embedded hash != filename).
+    for index in 0..(K + M) {
+        let src = manifest::manifest_path(&store.drive_root(index), &real);
+        let dst = manifest::manifest_path(&store.drive_root(index), &victim);
+        fs::copy(&src, &dst).unwrap();
+    }
+
+    // The victim's name no longer resolves (its manifests were replaced by
+    // misnamed copies, which are skipped) — clean absence, not the wrong
+    // blob's bytes.
+    assert!(!store.has(&victim).await.unwrap());
+    // Root enumeration exports only the real blob, once.
+    assert_eq!(store.visible_blob_hashes().await.unwrap(), vec![real]);
+    // The real blob is unaffected.
+    assert_eq!(store.get(&real).await.unwrap(), real_bytes);
+}

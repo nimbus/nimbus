@@ -103,12 +103,20 @@ impl ErasureBlobStore {
                     },
                 )?
             };
-            let canonical = root.canonicalize().map_err(|err| {
-                Error::storage(
-                    StorageErrorKind::Io,
-                    format!("canonicalize erasure drive root {}: {err}", root.display()),
-                )
-            })?;
+            let canonical = match root.canonicalize() {
+                Ok(canonical) => canonical,
+                // A read-only inspector may legitimately point at a drive
+                // root that does not exist yet (tenant with no blobs) or is
+                // currently absent (failed drive within parity tolerance):
+                // inspect what remains instead of refusing the whole leg.
+                Err(err) if read_only && err.kind() == std::io::ErrorKind::NotFound => root.clone(),
+                Err(err) => {
+                    return Err(Error::storage(
+                        StorageErrorKind::Io,
+                        format!("canonicalize erasure drive root {}: {err}", root.display()),
+                    ));
+                }
+            };
             if !read_only {
                 let manifest_dir = manifest::manifest_dir(&canonical);
                 disk::create_dir_all_durable(&manifest_dir, &*observer).map_err(|err| {
@@ -323,10 +331,15 @@ impl ErasureBlobStore {
     ) -> Result<Vec<Bytes>> {
         let mut present = Vec::new();
         let mut degraded = false;
+        let mut missing_from_snapshot = false;
 
         for shard_index in 0..manifest.data_shards {
             match self.read_shard(manifest, stripe_index, shard_index).await {
                 Ok(bytes) => present.push((shard_index, bytes)),
+                Err(Error::NotFound(_)) => {
+                    degraded = true;
+                    missing_from_snapshot = true;
+                }
                 Err(_) => degraded = true,
             }
         }
@@ -337,12 +350,32 @@ impl ErasureBlobStore {
         }
 
         for shard_index in manifest.data_shards..manifest.data_shards + manifest.parity_shards {
-            if let Ok(bytes) = self.read_shard(manifest, stripe_index, shard_index).await {
-                present.push((shard_index, bytes));
+            match self.read_shard(manifest, stripe_index, shard_index).await {
+                Ok(bytes) => present.push((shard_index, bytes)),
+                Err(Error::NotFound(_)) => missing_from_snapshot = true,
+                Err(_) => {}
             }
         }
 
         if present.len() < manifest.data_shards {
+            // Read-only snapshot coherence: a read-only handle's per-drive
+            // pack indexes are frozen at open, while manifests are read
+            // live — a put completed AFTER the inspector opened is visible
+            // by manifest but its shards are absent from the frozen
+            // indexes. That is a stale snapshot, not data corruption:
+            // report Busy with a re-open hint instead of a false
+            // Corruption verdict. (Content addressing means a stale index
+            // can never serve WRONG bytes — only fail to find new ones.)
+            if self.read_only && missing_from_snapshot {
+                return Err(Error::storage(
+                    StorageErrorKind::Busy,
+                    format!(
+                        "erasure stripe {stripe_index}: read-only snapshot lags a \
+                         concurrent writer (shards newer than this handle); re-open \
+                         to inspect the current state"
+                    ),
+                ));
+            }
             return Err(corruption(format!(
                 "erasure stripe {stripe_index} has {} healthy shards, need {}",
                 present.len(),
