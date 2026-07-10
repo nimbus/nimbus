@@ -163,9 +163,13 @@ impl ErasureHealer {
             .leg_pins
             .pin_all(manifest_shard_hashes(&manifest));
 
-        let mut repaired_any = false;
-        let mut degraded = false;
-        let mut exhausted = false;
+        // PHASE 1 — read-only planning: probe and fully verify EVERY
+        // stripe before any mutation. A blob that turns out beyond repair
+        // (or fails verification) in a later stripe must not have earlier
+        // stripes' corrupt-but-indexed shards released — beyond-repair
+        // blobs are reported with their evidence intact.
+        let mut planned: Vec<PlannedStripeRepair> = Vec::new();
+        let mut blob_cost: u64 = 0;
         for stripe_index in 0..manifest.stripes.len() {
             let probe = self.probe_stripe(&manifest, stripe_index).await?;
             if probe.bad.len() > manifest.parity_shards {
@@ -175,41 +179,46 @@ impl ErasureHealer {
             if probe.bad.is_empty() {
                 continue;
             }
-
-            let stripe_len = ErasureBlobStore::stripe_true_len(&manifest, stripe_index)? as u64;
-            if !budget.can_spend(stripe_len) {
-                exhausted = true;
-                break;
-            }
-
-            match self.repair_stripe(&manifest, stripe_index, &probe).await? {
-                RepairOutcome::Rewritten(shards) => {
-                    degraded = true;
-                    repaired_any = true;
-                    report.stripes_repaired += 1;
-                    report.shards_rewritten += shards;
-                    budget.spend(stripe_len);
+            match self.plan_stripe_repair(&manifest, stripe_index, &probe)? {
+                Some(plan) => {
+                    blob_cost = blob_cost
+                        .saturating_add(
+                            ErasureBlobStore::stripe_true_len(&manifest, stripe_index)? as u64,
+                        );
+                    planned.push(plan);
                 }
-                RepairOutcome::VerificationFailed => {
+                None => {
                     push_beyond(report, manifest.blob_hash);
                     return Ok(false);
                 }
             }
         }
+        if planned.is_empty() {
+            return Ok(false);
+        }
+        // Whole-blob budget check BEFORE any write: pacing never leaves a
+        // blob half-repaired.
+        if !budget.can_spend(blob_cost) {
+            return Ok(true);
+        }
 
-        if degraded {
-            report.degraded += 1;
+        // PHASE 2 — mutate: every stripe verified repairable; perform the
+        // staged writes, then publish the generation bump.
+        report.degraded += 1;
+        for plan in &planned {
+            self.apply_stripe_repair(plan).await?;
+            report.stripes_repaired += 1;
+            report.shards_rewritten += plan.writes.len();
         }
-        if repaired_any {
-            manifest.generation = manifest.generation.checked_add(1).ok_or_else(|| {
-                Error::storage(
-                    StorageErrorKind::Corruption,
-                    "erasure manifest generation overflow",
-                )
-            })?;
-            self.store.publish_manifest(manifest).await?;
-        }
-        Ok(exhausted)
+        budget.spend(blob_cost);
+        manifest.generation = manifest.generation.checked_add(1).ok_or_else(|| {
+            Error::storage(
+                StorageErrorKind::Corruption,
+                "erasure manifest generation overflow",
+            )
+        })?;
+        self.store.publish_manifest(manifest).await?;
+        Ok(false)
     }
 
     async fn probe_stripe(
@@ -245,12 +254,17 @@ impl ErasureHealer {
         Ok(StripeProbe { healthy, bad })
     }
 
-    async fn repair_stripe(
+    /// Read-only planning for one damaged stripe: decode from healthy
+    /// shards, verify the reassembled stripe against its manifest hash and
+    /// every re-encoded shard against its content address. Returns None on
+    /// verification failure (caller reports beyond-repair with all
+    /// evidence intact) — NOTHING is written or released here.
+    fn plan_stripe_repair(
         &self,
         manifest: &ErasureManifest,
         stripe_index: usize,
         probe: &StripeProbe,
-    ) -> Result<RepairOutcome> {
+    ) -> Result<Option<PlannedStripeRepair>> {
         let decoded =
             stripe::decode_stripe(manifest.data_shards, manifest.parity_shards, &probe.healthy)?;
         let true_len = ErasureBlobStore::stripe_true_len(manifest, stripe_index)?;
@@ -261,11 +275,12 @@ impl ErasureHealer {
             ))
         })?;
         if BlobHash::of(&stripe_bytes) != *expected_stripe {
-            return Ok(RepairOutcome::VerificationFailed);
+            return Ok(None);
         }
 
         let encoded =
             stripe::encode_stripe(&stripe_bytes, manifest.data_shards, manifest.parity_shards)?;
+        let total = manifest.data_shards + manifest.parity_shards;
         let mut writes = Vec::with_capacity(probe.bad.len());
         for (shard_index, present_but_corrupt) in &probe.bad {
             let shard = shard_ref(manifest, stripe_index, *shard_index)?;
@@ -273,47 +288,60 @@ impl ErasureHealer {
                 corruption(format!("erasure encoder omitted shard {shard_index}"))
             })?;
             if BlobHash::of(shard_bytes) != shard.shard_hash {
-                return Ok(RepairOutcome::VerificationFailed);
+                return Ok(None);
             }
-            writes.push((
-                *shard_index,
-                shard.shard_hash,
-                shard_bytes.clone(),
-                *present_but_corrupt,
-            ));
+            writes.push(PlannedShardWrite {
+                drive: stripe::drive_for(*shard_index, stripe_index, total),
+                shard_index: *shard_index,
+                expected_hash: shard.shard_hash,
+                bytes: shard_bytes.clone(),
+                release_first: *present_but_corrupt,
+            });
         }
-
-        let total = manifest.data_shards + manifest.parity_shards;
-        for (shard_index, expected_hash, shard_bytes, present_but_corrupt) in &writes {
-            let drive = stripe::drive_for(*shard_index, stripe_index, total);
-            let store = &self.store.stores[drive];
-            if *present_but_corrupt {
-                // A corrupt record can still be indexed; put would be an
-                // idempotent no-op leaving the bad bytes in place. Release
-                // the claim first so the rewrite appends fresh bytes (this
-                // also clears an orphaned quarantine per RFS5). The shard
-                // was already unreadable, so no reader regresses during the
-                // release->put window.
-                store.release(expected_hash).await?;
-            }
-            let actual = store.put(shard_bytes.clone()).await?;
-            if actual != *expected_hash {
-                return Err(corruption(format!(
-                    "healed erasure shard {shard_index} wrote {actual}, expected {expected_hash}"
-                )));
-            }
-            // Read back: the repair only counts if the drive actually
-            // serves the healed bytes (guards any further idempotent-no-op
-            // class in the underlying store).
-            let served = store.get(expected_hash).await?;
-            if served != *shard_bytes {
-                return Err(corruption(format!(
-                    "healed erasure shard {shard_index} does not serve the rewritten bytes"
-                )));
-            }
-        }
-        Ok(RepairOutcome::Rewritten(writes.len()))
+        Ok(Some(PlannedStripeRepair { writes }))
     }
+
+    /// Executes one staged stripe repair (release-first for
+    /// corrupt-but-indexed records, write, read-back verify).
+    async fn apply_stripe_repair(&self, plan: &PlannedStripeRepair) -> Result<()> {
+        for write in &plan.writes {
+            let store = &self.store.stores[write.drive];
+            if write.release_first {
+                // A corrupt record can still be indexed; put would be an
+                // idempotent no-op leaving the bad bytes in place. The
+                // shard was already unreadable, so no reader regresses in
+                // the release->put window.
+                store.release(&write.expected_hash).await?;
+            }
+            let actual = store.put(write.bytes.clone()).await?;
+            if actual != write.expected_hash {
+                return Err(corruption(format!(
+                    "healed erasure shard {} wrote {actual}, expected {}",
+                    write.shard_index, write.expected_hash
+                )));
+            }
+            let served = store.get(&write.expected_hash).await?;
+            if served != write.bytes {
+                return Err(corruption(format!(
+                    "healed erasure shard {} does not serve the rewritten bytes",
+                    write.shard_index
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+struct PlannedShardWrite {
+    drive: usize,
+    shard_index: usize,
+    expected_hash: BlobHash,
+    bytes: Bytes,
+    release_first: bool,
+}
+
+struct PlannedStripeRepair {
+    writes: Vec<PlannedShardWrite>,
 }
 
 struct StripeProbe {
@@ -323,11 +351,6 @@ struct StripeProbe {
     /// idempotent no-op for an indexed hash, so a bare re-put would count
     /// as repaired while the corrupt bytes stay on disk.
     bad: Vec<(usize, bool)>,
-}
-
-enum RepairOutcome {
-    Rewritten(usize),
-    VerificationFailed,
 }
 
 #[derive(Clone, Copy)]

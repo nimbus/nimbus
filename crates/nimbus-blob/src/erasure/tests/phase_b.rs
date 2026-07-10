@@ -708,3 +708,64 @@ async fn erasure_put_and_release_recheck_poison_under_the_mutation_lock() {
         );
     }
 }
+
+#[tokio::test]
+async fn erasure_heal_preserves_evidence_when_a_later_stripe_is_beyond_repair() {
+    // Review fix (Phase B round 9, P1): heal plans read-only across the
+    // WHOLE blob before mutating anything — a repairable corrupt shard in
+    // stripe 0 must remain untouched (still corrupt, still indexed: the
+    // evidence) when stripe 1 turns out beyond repair.
+    let (_dir, store, _roots) = open_temp(K, M, STRIPE);
+    let bytes = payload(2 * STRIPE);
+    let hash = store.put(bytes.clone()).await.unwrap();
+    let manifest = store.load_manifest_for_test(&hash).await.unwrap();
+
+    // Stripe 0: one corrupt-but-indexed shard (repairable in isolation).
+    let shard0 = manifest.stripes[0]
+        .iter()
+        .find(|candidate| candidate.shard_index == 0)
+        .unwrap();
+    let drive0 = stripe::drive_for(0, 0, K + M);
+    flip_shard_body_byte(&store.drive_root(drive0), &shard0.shard_hash);
+
+    // Stripe 1: m+1 shards removed (beyond repair).
+    for shard_index in 0..=M {
+        let reference = manifest.stripes[1]
+            .iter()
+            .find(|candidate| candidate.shard_index as usize == shard_index)
+            .unwrap();
+        let drive = stripe::drive_for(shard_index, 1, K + M);
+        store
+            .drive_store(drive)
+            .release(&reference.shard_hash)
+            .await
+            .unwrap();
+    }
+
+    let report = ErasureHealer::new(store.clone()).heal().await.unwrap();
+    assert_eq!(report.beyond_repair, vec![hash]);
+    assert_eq!(report.stripes_repaired, 0, "no partial repair");
+    assert_eq!(report.shards_rewritten, 0);
+
+    // Stripe 0's corrupt shard is UNTOUCHED: still indexed, still corrupt.
+    assert!(
+        store
+            .drive_store(drive0)
+            .has(&shard0.shard_hash)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        store
+            .drive_store(drive0)
+            .get(&shard0.shard_hash)
+            .await
+            .unwrap_err()
+            .storage_kind(),
+        Some(StorageErrorKind::Corruption),
+        "evidence preserved: the corrupt record was not released/rewritten"
+    );
+    // And no generation bump was published.
+    let after = store.load_manifest_for_test(&hash).await.unwrap();
+    assert_eq!(after.generation, manifest.generation);
+}
