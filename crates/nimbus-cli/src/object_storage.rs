@@ -209,7 +209,7 @@ pub(crate) struct ErasureStatusCommand {
 #[derive(Debug, Args)]
 #[command(
     help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE,
-    after_help = "Exit codes:\n  0  Heal completed with no beyond-repair blobs\n  1  Operational error\n  2  One or more blobs are beyond repair"
+    after_help = "Exit codes:\n  0  Heal completed with no beyond-repair blobs\n  1  Operational error\n  3  One or more blobs are beyond repair (2 is reserved by the CLI parser for usage errors)"
 )]
 pub(crate) struct ErasureHealCommand {
     /// Tenant whose deployment-level erasure leg is being healed.
@@ -459,7 +459,7 @@ async fn run_erasure_heal(command: ErasureHealCommand) -> Result<(), Box<dyn Err
     }
     if !report.beyond_repair.is_empty() {
         std::io::Write::flush(&mut std::io::stdout())?;
-        std::process::exit(2);
+        std::process::exit(3);
     }
     Ok(())
 }
@@ -617,38 +617,102 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
     } else {
         None
     };
-    let engine = open_engine(&command.data_dir, command.provider).await?;
-    engine.delete_tenant_async(tenant.clone()).await?;
-    // Destruction is rename-then-delete: remove_dir_all on a live path
-    // unlinks the flock file our ownership guard holds, letting a racing
-    // server recreate the root and acquire a NEW lock mid-deletion. An
-    // atomic rename to a tombstone (same directory) moves the whole tree
-    // out of the server's path WHILE our flocks are still authoritative;
-    // deleting the tombstone afterwards races nothing (a server that
-    // recreates the now-empty path creates a fresh blob-less tenant root,
-    // and the tenant was already deleted from the control plane above).
-    let tombstone_suffix = format!(".rm.{}", std::process::id());
-    let mut tombstones: Vec<PathBuf> = Vec::new();
-    if root.exists() {
-        let tomb = tombstone_path(&root, &tombstone_suffix)?;
-        std::fs::rename(&root, &tomb)?;
-        tombstones.push(tomb);
-    }
-    // Erasure deployments keep the tenant's byte plane under
-    // <drive_i>/<tenant leaf>; removing only the sidecar root while
-    // reporting success would leave every shard and manifest behind.
-    let mut erasure_trees_removed = 0usize;
-    for tree in &erasure_trees {
-        if tree.exists() {
-            let tomb = tombstone_path(tree, &tombstone_suffix)?;
-            std::fs::rename(tree, &tomb)?;
-            tombstones.push(tomb);
-            erasure_trees_removed += 1;
+    // Destruction is rename-then-delete with a RECOVERABLE ordering:
+    //
+    // 1. Sweep tombstones a previous partially-failed run left behind
+    //    (deterministic suffix — re-runs are the recovery path).
+    // 2. Atomically rename every live tree to its tombstone WHILE our
+    //    flocks are authoritative (remove_dir_all on a live path would
+    //    unlink the flock file and let a racing server recreate the root
+    //    and take a fresh lock mid-deletion). Any rename failure rolls the
+    //    completed renames BACK and errors with the control plane intact.
+    // 3. Only then delete the control-plane tenant (rollback on failure).
+    // 4. Drop the locks and delete the tombstones; a failure here names
+    //    the leftover paths, and a RE-RUN of tenant rm sweeps them (step
+    //    1) even though the control plane already reports the tenant gone.
+    const TOMBSTONE_SUFFIX: &str = ".rm-tombstone";
+    let mut leftover_sweep: Vec<PathBuf> = Vec::new();
+    for path in std::iter::once(&root).chain(erasure_trees.iter()) {
+        let tomb = tombstone_path(path, TOMBSTONE_SUFFIX)?;
+        if tomb.exists() {
+            leftover_sweep.push(tomb);
         }
     }
-    drop(_erasure_ownership);
-    for tomb in &tombstones {
+    for tomb in &leftover_sweep {
         std::fs::remove_dir_all(tomb)?;
+        emit_object_storage_info(format!(
+            "tenant rm swept leftover tombstone {}",
+            tomb.display()
+        ));
+    }
+
+    let mut tombstones: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut erasure_trees_removed = 0usize;
+    let mut rename_failure: Option<Box<dyn Error>> = None;
+    for (index, path) in std::iter::once(&root)
+        .chain(erasure_trees.iter())
+        .enumerate()
+    {
+        if !path.exists() {
+            continue;
+        }
+        let tomb = tombstone_path(path, TOMBSTONE_SUFFIX)?;
+        match std::fs::rename(path, &tomb) {
+            Ok(()) => {
+                if index > 0 {
+                    erasure_trees_removed += 1;
+                }
+                tombstones.push((path.clone(), tomb));
+            }
+            Err(err) => {
+                rename_failure = Some(
+                    format!(
+                        "tenant rm rename {} -> tombstone failed: {err}",
+                        path.display()
+                    )
+                    .into(),
+                );
+                break;
+            }
+        }
+    }
+    if let Some(err) = rename_failure {
+        // Roll back: restore every completed rename; the control plane is
+        // untouched, so a plain re-run retries cleanly.
+        for (original, tomb) in tombstones.iter().rev() {
+            let _ = std::fs::rename(tomb, original);
+        }
+        return Err(err);
+    }
+
+    let engine = open_engine(&command.data_dir, command.provider).await?;
+    match engine.delete_tenant_async(tenant.clone()).await {
+        Ok(()) => {}
+        // Idempotent re-run after a partial prior failure: the control
+        // plane may already be clean while tombstones remained.
+        Err(NimbusError::NotFound(_)) => {}
+        Err(err) => {
+            for (original, tomb) in tombstones.iter().rev() {
+                let _ = std::fs::rename(tomb, original);
+            }
+            return Err(err.into());
+        }
+    }
+
+    drop(_erasure_ownership);
+    let mut leftovers: Vec<String> = Vec::new();
+    for (_, tomb) in &tombstones {
+        if let Err(err) = std::fs::remove_dir_all(tomb) {
+            leftovers.push(format!("{} ({err})", tomb.display()));
+        }
+    }
+    if !leftovers.is_empty() {
+        return Err(format!(
+            "tenant rm removed the control-plane tenant but could not delete \
+             tombstoned data: {} — re-run `tenant rm` to sweep them",
+            leftovers.join(", ")
+        )
+        .into());
     }
     engine.quiesce().await;
     emit_object_storage_info(format!(

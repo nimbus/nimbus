@@ -258,9 +258,9 @@ fn cli_surface_exposes_erasure_heal_and_exit_codes() {
     let rendered = error.to_string();
     assert!(rendered.contains("--tenant"));
     assert!(rendered.contains("--max-bytes"));
+    assert!(rendered.contains("3  One or more blobs are beyond repair"));
     assert!(rendered.contains("0  Heal completed"));
     assert!(rendered.contains("1  Operational error"));
-    assert!(rendered.contains("2  One or more blobs are beyond repair"));
 }
 
 #[test]

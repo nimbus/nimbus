@@ -82,20 +82,52 @@ impl ErasureBlobStore {
             // and a success is at worst an append-lag approximation
             // (documented). Writable handles never take this path.
             if self.is_read_only() {
-                // Read-only status uses a FRESH per-drive read-only open for
-                // each stats call: a frozen index over a live drive can
-                // produce torn-but-successful accounting after compaction
-                // (and no pathname heuristic reliably detects restructures —
-                // quarantine-retained packs survive compaction, and stable
-                // pack loss would false-positive forever). A fresh open
-                // reads a consistent on-disk snapshot (index.log is
-                // durably replaced atomically), so real errors keep their
-                // original kind and numbers are coherent-at-read.
-                let fresh = LocalPackStore::open_read_only_with_identity(
-                    &self.drive_roots[index],
-                    Some(super::store::drive_identity(&self.config.leg_id, index)),
-                )?;
-                per_drive.push(fresh.stats().await?);
+                // Read-only status: FRESH per-drive open per attempt, with a
+                // STABILITY check bracketing the computation — if any pack
+                // the fresh index references vanished while stats ran, a
+                // writer restructured the drive mid-call (torn accounting
+                // risk) and we retry; three unstable attempts in a row
+                // report Busy. Errors observed while the snapshot IS stable
+                // are real (Corruption/Io keep their kind); a torn window
+                // cannot produce silent wrong numbers because acceptance
+                // requires post-computation stability.
+                let mut accepted = None;
+                let mut last_unstable_err: Option<Error> = None;
+                for _ in 0..3 {
+                    let fresh = LocalPackStore::open_read_only_with_identity(
+                        &self.drive_roots[index],
+                        Some(super::store::drive_identity(&self.config.leg_id, index)),
+                    )?;
+                    let outcome = fresh.stats().await;
+                    let stable = fresh.index_packs_present_on_disk()?;
+                    match (outcome, stable) {
+                        (Ok(stats), true) => {
+                            accepted = Some(stats);
+                            break;
+                        }
+                        (Err(err), true) => return Err(err),
+                        (_, false) => {
+                            last_unstable_err = Some(Error::storage(
+                                StorageErrorKind::Busy,
+                                format!(
+                                    "erasure status raced a writer restructure on drive \
+                                     {index} (re-open or retry to inspect)"
+                                ),
+                            ));
+                        }
+                    }
+                }
+                match accepted {
+                    Some(stats) => per_drive.push(stats),
+                    None => {
+                        return Err(last_unstable_err.unwrap_or_else(|| {
+                            Error::storage(
+                                StorageErrorKind::Busy,
+                                "erasure status could not obtain a stable snapshot".to_string(),
+                            )
+                        }));
+                    }
+                }
             } else {
                 per_drive.push(store.stats().await?);
             }

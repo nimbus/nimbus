@@ -613,6 +613,23 @@ impl LocalPackStore {
         ))
     }
 
+    /// Whether every pack file referenced by THIS handle's in-memory index
+    /// is still present on disk. Read-only stats uses this as a STABILITY
+    /// check around a stats computation: a pack that vanished mid-call
+    /// means a writer restructured the root while we read it.
+    pub fn index_packs_present_on_disk(&self) -> Result<bool> {
+        let state = lock(&self.state)?;
+        let mut pack_ids: Vec<u64> = state.index.values().map(|entry| entry.pack_id).collect();
+        pack_ids.sort_unstable();
+        pack_ids.dedup();
+        for pack_id in pack_ids {
+            if !pack_path(&state.packs_dir, pack_id).exists() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Records the most recent GC sweep summary for [`Self::stats`].
     pub(crate) fn set_last_gc(&self, summary: GcSummary) -> Result<()> {
         lock(&self.state)?.last_gc = Some(summary);
