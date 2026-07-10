@@ -90,9 +90,14 @@ Using gpt-5.6-sol inside workflows and subagents:
   `/codex:setup --enable-review-gate` gate (keep that plugin gate OFF or
   both will run). The wrapper fingerprints the repo (`HEAD` + status + tracked
   diff + untracked-file size/mtime identity) at every stop: turns with no edits ALLOW instantly with zero API
-  calls; turns that edited code get a triage-grade Codex
-  stop-review at LOW reasoning effort (model from `~/.codex/config.toml`;
-  explicit autoreview loops keep high effort). Reviewer outages block once
+  calls; docs-only turns
+  (every changed path `.md`/`.mdx`/`.markdown`/`.txt`, worktree and
+  commits alike) also skip the engine; turns that edited code get a
+  triage-grade Codex stop-review at LOW reasoning effort (model from
+  `~/.codex/config.toml`; explicit autoreview loops keep high effort).
+  Engine failures block once with a probed diagnosis (credit exhaustion
+  vs stale daemons vs unresponsive CLI) that states it is an outage, not
+  a verdict. Reviewer outages block once
   per edit state, then allow with a loud warning instead of looping.
   Disable temporarily by creating
   `~/.claude/hooks-state/stop-triage/disabled`.
