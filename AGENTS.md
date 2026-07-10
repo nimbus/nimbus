@@ -95,9 +95,11 @@ Using gpt-5.6-sol inside workflows and subagents:
   commits alike) also skip the engine; turns that edited code get a
   triage-grade Codex stop-review at LOW reasoning effort (model from
   `~/.codex/config.toml`; explicit autoreview loops keep high effort).
-  Engine failures block once with a probed diagnosis (credit exhaustion
-  vs stale daemons vs unresponsive CLI) that states it is an outage, not
-  a verdict. Reviewer outages block once
+  Engine failures block once per 30-minute outage window
+  (per session, not per edit state — concurrent sessions in one checkout
+  churn the fingerprint) with a probed diagnosis (credit exhaustion vs
+  stale daemons vs unresponsive CLI) that states it is an outage, not a
+  verdict; further stops in the window warn-allow. Reviewer outages block once
   per edit state, then allow with a loud warning instead of looping.
   Disable temporarily by creating
   `~/.claude/hooks-state/stop-triage/disabled`.
