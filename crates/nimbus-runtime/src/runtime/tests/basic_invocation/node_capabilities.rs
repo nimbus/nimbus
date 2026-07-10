@@ -719,6 +719,58 @@ export {};
     );
 }
 
+#[tokio::test]
+async fn application_node22_denies_process_lifetime_near_heap_snapshot_callbacks() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(
+        r#"
+import { setHeapSnapshotNearHeapLimit } from "node:v8";
+
+globalThis.__nimbusInvoke = function () {
+  try {
+    setHeapSnapshotNearHeapLimit(1);
+    return { denied: null };
+  } catch (error) {
+    return {
+      denied: error?.message ?? String(error),
+      name: error?.name ?? null,
+    };
+  }
+};
+
+export {};
+"#,
+    );
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let result = runtime
+        .invoke_bundle_for_tenant(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:list".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+            "tenant-a",
+        )
+        .await
+        .expect("bundle should execute far enough to prove near-heap callback denial");
+
+    assert_eq!(result["name"], serde_json::json!("Error"));
+    assert_eq!(
+        result["denied"],
+        serde_json::json!("v8.setHeapSnapshotNearHeapLimit is disabled by the runtime embedder")
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn application_node22_confines_symlink_stat_and_readlink_targets() {

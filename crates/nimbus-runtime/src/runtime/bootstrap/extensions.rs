@@ -280,6 +280,7 @@ impl NodeBootstrapExtensionSlot {
                     &context.limits.node_conditions,
                 )),
                 context.fs.clone(),
+                deno_node::HeapSnapshotNearHeapLimitPolicy::Deny,
             ),
             Self::NodeRuntimeBootstrap => node22_runtime_bootstrap_extension(),
         }

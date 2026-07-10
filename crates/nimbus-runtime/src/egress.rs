@@ -714,6 +714,115 @@ export {{}};
     }
 
     #[tokio::test]
+    async fn isolate_fetch_transport_failure_has_node_compatible_cause() {
+        #[derive(Default)]
+        struct NoopHost;
+
+        impl crate::HostBridge for NoopHost {
+            fn call(&self, _request: crate::HostCallRequest) -> crate::Result<Value> {
+                Ok(Value::Null)
+            }
+        }
+
+        struct AllowLocalGateway {
+            port: u16,
+        }
+
+        impl EgressGateway for AllowLocalGateway {
+            fn authorize(&self, request: &EgressRequest) -> EgressAuthorization {
+                if request.host == "127.0.0.1" && request.port == self.port {
+                    EgressAuthorization::allow("local transport-error test")
+                } else {
+                    EgressAuthorization::deny("unexpected transport-error destination")
+                }
+            }
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener
+                .accept()
+                .await
+                .expect("fetch should connect to the local listener");
+            drop(socket);
+        });
+
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            format!(
+                r#"
+globalThis.__nimbusInvoke = async function () {{
+  try {{
+    await fetch("http://127.0.0.1:{port}/transport-error");
+    return {{ rejected: false }};
+  }} catch (error) {{
+    return {{
+      rejected: true,
+      name: error && error.name,
+      message: error && error.message,
+      causeName: error && error.cause && error.cause.name,
+      causeMessage: error && error.cause && error.cause.message,
+    }};
+  }}
+}};
+
+export {{}};
+"#
+            ),
+        )
+        .expect("bundle should write");
+
+        let runtime = crate::NimbusRuntime::with_policy(
+            Arc::new(NoopHost),
+            Arc::new(crate::RuntimePolicy::new(
+                crate::RuntimeLimits::application_node22(),
+            )),
+            RuntimeEgressPosture::Gateway(Arc::new(AllowLocalGateway { port })),
+        );
+        let request = crate::InvocationRequest {
+            kind: crate::InvocationKind::Query,
+            function_name: "messages:fetchTransportError".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: Default::default(),
+        };
+
+        let result = runtime
+            .invoke_bundle_for_tenant(
+                &crate::RuntimeBundle::new(&bundle_path),
+                &request,
+                "tenant-a",
+            )
+            .await
+            .expect("bundle should catch and report the fetch transport error");
+
+        tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .expect("server should finish after accepting fetch")
+            .expect("server task should not panic");
+        assert_eq!(result["rejected"], true);
+        assert_eq!(result["name"], "TypeError");
+        assert_eq!(result["message"], "fetch failed");
+        assert_eq!(result["causeName"], "Error");
+        assert!(
+            result["causeMessage"]
+                .as_str()
+                .is_some_and(|message| !message.is_empty()),
+            "fetch transport failure should retain a non-empty cause: {result}"
+        );
+    }
+
+    #[tokio::test]
     async fn isolate_fetch_denied_by_gateway_rejects_end_to_end() {
         // L17: end-to-end isolate-fetch DENY. A gateway that denies every request
         // must make `fetch()` reject inside the guest — the deny verdict at the
