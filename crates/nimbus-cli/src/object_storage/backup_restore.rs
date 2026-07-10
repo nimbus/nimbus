@@ -73,20 +73,23 @@ pub(super) async fn run_backup_object_store(
         )
         .into());
     }
-    // Prove the escrowed DEK actually decrypts the archived ciphertext:
-    // a corrupted or regenerated sidecar (a valid same-tenant manifest
-    // whose DEK is unrelated to the stored data) must fail the BACKUP,
-    // not surface later as an unrestorable bundle. One probe suffices —
-    // every blob is sealed under the single tenant DEK, and export's
-    // content-hash verification covers per-chunk integrity. The probe
-    // plaintext is discarded; nothing but ciphertext enters the bundle.
+    // Cryptographically validate the escrow UNCONDITIONALLY (even a
+    // zero-blob tenant must not emit a bundle whose escrow restore will
+    // reject), then prove the DEK actually decrypts the archived
+    // ciphertext when any exists: a corrupted or regenerated sidecar (a
+    // valid same-tenant manifest whose DEK is unrelated to the stored
+    // data) must fail the BACKUP, not surface later as an unrestorable
+    // bundle. One probe suffices — every blob is sealed under the single
+    // tenant DEK, and export's content-hash verification covers
+    // per-chunk integrity. The probe plaintext is discarded; nothing but
+    // ciphertext enters the bundle.
+    let data_key = unwrap_escrowed_data_key(
+        &command.data_dir,
+        &tenant,
+        key_escrow.wrapped_key_material(),
+        &command.key_escrow_file,
+    )?;
     if let Some(probe_root) = roots.first() {
-        let data_key = unwrap_escrowed_data_key(
-            &command.data_dir,
-            &tenant,
-            key_escrow.wrapped_key_material(),
-            &command.key_escrow_file,
-        )?;
         let framed = source.get(probe_root).await?;
         nimbus_crypto::open_framed_blob(&nimbus_crypto::FramedBlobKey::new(data_key), &framed)
             .map_err(|err| -> Box<dyn Error> {
@@ -372,14 +375,26 @@ fn install_escrow_sidecar(sidecar_path: &Path, escrow_bytes: &[u8]) -> Result<()
     };
     match std::fs::symlink_metadata(sidecar_path) {
         Ok(_) => {
-            if existing_regular_file_matches("")? {
-                return Ok(());
-            }
+            // Off unix the inode-identity and single-link invariants
+            // cannot be proven with stable std APIs — fail closed instead
+            // of accepting key material that might be externally linked.
+            #[cfg(not(unix))]
             return Err(format!(
-                "tenant blob-key sidecar {} already exists with DIFFERENT key material; refusing to overwrite a live tenant's key",
+                "tenant blob-key sidecar {} already exists and this platform cannot prove it is an independent single-linked file; remove it manually if this re-restore is intentional",
                 sidecar_path.display()
             )
             .into());
+            #[cfg(unix)]
+            {
+                if existing_regular_file_matches("")? {
+                    return Ok(());
+                }
+                return Err(format!(
+                    "tenant blob-key sidecar {} already exists with DIFFERENT key material; refusing to overwrite a live tenant's key",
+                    sidecar_path.display()
+                )
+                .into());
+            }
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(err) => return Err(err.into()),
@@ -710,6 +725,55 @@ mod tests {
         .await
         .expect_err("a regenerated sidecar must fail the backup");
         assert!(err.to_string().contains("does not decrypt"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn backup_of_an_empty_tenant_still_validates_the_escrow() {
+        // Zero live blobs means no decrypt probe — but a foreign or
+        // corrupted sidecar escrow must STILL fail the backup, or the
+        // emitted bundle is guaranteed to be rejected at restore.
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Engine::new(dir.path()).unwrap());
+        let tenant_a = TenantId::new("empty-tenant").unwrap();
+        let tenant_b = TenantId::new("donor-tenant").unwrap();
+        engine.create_tenant(tenant_a.clone()).unwrap();
+        engine.create_tenant(tenant_b.clone()).unwrap();
+        let resolver = ObjectStorageResolver::new(engine.clone());
+        let _store_a = resolver.blob_store(&tenant_a).unwrap();
+        let _store_b = resolver.blob_store(&tenant_b).unwrap();
+        drop(_store_a);
+        drop(_store_b);
+        drop(resolver);
+        engine.quiesce().await;
+        drop(engine);
+
+        // Replace tenant A's sidecar with tenant B's manifest and escrow
+        // those same bytes: byte-compare passes, crypto validation must
+        // not.
+        let sidecar_a = nimbus::KeyManifest::manifest_path(&nimbus::object_blob_key_path(
+            dir.path(),
+            &tenant_a,
+        ));
+        let sidecar_b = nimbus::KeyManifest::manifest_path(&nimbus::object_blob_key_path(
+            dir.path(),
+            &tenant_b,
+        ));
+        std::fs::remove_file(&sidecar_a).unwrap();
+        std::fs::copy(&sidecar_b, &sidecar_a).unwrap();
+        let escrow_file = dir.path().join("escrow.bin");
+        std::fs::copy(&sidecar_a, &escrow_file).unwrap();
+
+        let err = run_backup_object_store(BackupObjectStoreCommand {
+            tenant: tenant_a.as_str().to_string(),
+            data_dir: dir.path().to_path_buf(),
+            out: dir.path().join("backup.nobb"),
+            key_escrow_id: "empty-tenant".to_string(),
+            key_escrow_file: escrow_file,
+            provider: ObjectStorageProvider::Sqlite,
+        })
+        .await
+        .expect_err("a foreign sidecar escrow must fail even with zero blobs");
+        assert!(err.to_string().contains("not usable"), "{err}");
     }
 
     #[tokio::test]
