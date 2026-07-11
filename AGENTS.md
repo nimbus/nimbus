@@ -40,7 +40,7 @@ covers UI/UX, code quality, API design, and copy.
 
 | model | cost | intelligence | taste |
 | --- | --- | --- | --- |
-| gpt-5.6-sol | 9 | 9 | 5 |
+| gpt-5.6-sol | 9 | 9 | 9 |
 | sonnet-5 | 5 | 5 | 7 |
 | opus-4.8 | 4 | 7 | 8 |
 | fable-5 | 2 | 9 | 9 |
