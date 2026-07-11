@@ -1,6 +1,5 @@
 import { v } from "convex/values";
 
-import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 
 export const list = query({
@@ -38,7 +37,7 @@ export const toggle = mutation({
   },
   returns: v.null(),
   handler: async (ctx, { id }) => {
-    const task = await ctx.db.get(id) as Doc<"tasks"> | null;
+    const task = await ctx.db.get(id);
     if (task === null) {
       throw new Error("Task not found");
     }

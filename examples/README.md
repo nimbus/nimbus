@@ -45,12 +45,13 @@ its apps, and stating exactly which of the surface's features it supports.
 **The shared `tasks` example.** Every adapter directory above has a `tasks/`
 app implementing the shared [`tasks` spec](specs/tasks.md) for its supported
 subset, each with a smoke script that asserts the spec's flow anchors. Five of
-the six verify green against a live server today; the Convex app's smoke is
-blocked by a pre-existing server-side gate unrelated to this app (see
-[`convex/README.md`](convex/README.md)) and is tracked separately. The
-per-surface demos that predate `tasks` (the Convex apps' `messages`
-collection, and so on) are left in place alongside it — see each adapter's
-`README.md` for its full app list.
+the six verify fully green against a live server today; the Convex app's smoke
+is partially verified — `tasks.create`/`tasks.list` PASS anonymously, while
+`tasks.toggle`/`tasks.delete` are blocked by pre-existing, unrelated
+`nimbus dev` runtime bugs (not this app, not a gate) tracked separately (see
+[`convex/README.md`](convex/README.md)). The per-surface demos that predate
+`tasks` (the Convex apps' `messages` collection, and so on) are left in place
+alongside it — see each adapter's `README.md` for its full app list.
 
 Run these examples in place, from a checkout of this repository. Copy-out
 behavior varies by app until the `nimbus init --example` scaffolder ships:

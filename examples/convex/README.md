@@ -50,8 +50,8 @@ compiled/runtime subset these apps exercise lives in [`DEVNOTES.md`](DEVNOTES.md
   type-hover). See its [README](showcase/README.md).
 - **[`tasks/`](tasks/)** — the shared [`tasks`](../specs/tasks.md) app, authored
   with `convex/_generated/server` and `schema.ts` against a reactive query for
-  `tasks.live-update`. Built to spec and typechecks/builds clean, but its live
-  smoke is currently **blocked**, not verified — see the note below.
+  `tasks.live-update`. Built to spec and typechecks/builds clean; live smoke is
+  **partially verified** — see the note below.
 
 ## `tasks` spec support
 
@@ -63,21 +63,24 @@ compiled/runtime subset these apps exercise lives in [`DEVNOTES.md`](DEVNOTES.md
 | `tasks.delete` | yes (by spec) | Deleting removes the task from subsequent reads. |
 | `tasks.live-update` | yes (by spec, reactive query) | A subscription opened before `tasks.create` delivers the new task with no explicit re-read. |
 
-**Live verification is blocked.** Every application-Convex request — including
-plain anonymous local-dev traffic, which is what every example and demo script
-in this directory already sends — passes through a fail-closed team-binding
-gate (`crates/nimbus-convex/src/tenancy.rs`, enforced unconditionally in
-`crates/nimbus-server/src/adapters/convex/handlers/registry_auth.rs`). The gate
-only admits a request when the URL's silo *and* the caller's verified JWT
-`subject`/`issuer` both resolve to the same team via
-`NIMBUS_CONVEX_SILO_TEAMS` / `NIMBUS_CONVEX_PRINCIPAL_TEAMS`; anonymous
-principals can never pass. None of today's Convex examples set those env vars
-or send a signed JWT, so `tasks/`'s live smoke — and any equivalent live check
-against the other Convex apps in this directory — cannot currently reach a
-running server. This is a repo-wide local-dev gap, not specific to the `tasks`
-app; see the EX3.2 row in
-`docs/private/plans/examples-and-target-resolution-plan.md` for the tracked
-evidence and resolution options. Full [`tasks`](../specs/tasks.md) spec. See
+**Live verification is partial.** The team-binding gate that used to block
+every anonymous application-Convex request outright
+(`crates/nimbus-convex/src/tenancy.rs`, enforced in
+`crates/nimbus-server/src/adapters/convex/handlers/registry_auth.rs`) now has
+dev-mode defaults: `nimbus dev` auto-provisions anonymous local traffic with
+zero env config, and `start` accepts an explicit opt-in
+(`NIMBUS_CONVEX_SILO_TEAMS`/`NIMBUS_CONVEX_PRINCIPAL_TEAMS`/`NIMBUS_CONVEX_ANONYMOUS_TEAM`).
+Confirmed live against a real `nimbus dev` boot: `ensureTenant()`,
+`tasks.create`, and `tasks.list` all PASS anonymously. What remains blocked is
+unrelated to the gate — two separate, pre-existing runtime bugs in `nimbus
+dev`'s Convex bundle pipeline: running the standard `npm run codegen`/`test`/
+`build` client command while a `nimbus dev` server for the same app is live
+corrupts that server's served bundle (no coordination between the two
+processes), and any mutation or query with a `v.id(...)`-typed argument
+(`tasks.toggle`, `tasks.delete`) fails server-side with a deserialization
+error. Both are root-caused and tracked, not fixed, in the EX3.2 row of
+`docs/private/plans/examples-and-target-resolution-plan.md`, which also has
+the full evidence. Full [`tasks`](../specs/tasks.md) spec. See
 [`tasks/README.md`](tasks/README.md).
 
 ## Running
