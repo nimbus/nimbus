@@ -9,7 +9,7 @@
 //   notifications:announce (fallback-no-validator)
 
 import { makeMutationReference, makeQueryReference } from "convex/browser";
-import type { Doc, Id, JsonValue } from "./dataModel";
+import type { Doc, Id, JsonValue } from "./dataModel.js";
 
 export const api = {
   messages: {
