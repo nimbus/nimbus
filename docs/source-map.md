@@ -45,6 +45,8 @@ sources exist.
 | `agents/index.md`, `agents/sandbox-quickstart.md` | `Nimbus` client options, endpoint/credential discovery, sandbox create/get/stop, session open/close, ready-state gating | `packages/nimbus/src/index.ts` |
 | `agents/sandboxes.md`, `agents/services.md`, `agents/sessions.md` | services/sandboxes/sessions CRUD + lifecycle, `waitUntil`/`wait` polling, `ifMatchGeneration` checks, session channels/TTLs, session state via `status.lifecycleState` (`open`/`closed`/`expired`) + `state` list filter, generation re-read after update, launch-input redaction | `packages/nimbus/src/index.ts` |
 | `agents/index.md`, `agents/sandbox-quickstart.md`, `agents/sandboxes.md` | Linux-host sandbox execution, container vs krun posture, `nimbus machine` on macOS/WSL2 (restates the verified rows for the pages below) | `docs/reference/current-capabilities.md`, `docs/concepts/resource-model.md` |
+| `agents/agent-chat.md` | Durable chat agent: `messages`/`agentMemory` tables, plain-text `remember`/`recall` tools, and a `ctx.scheduler.runAfter` reminder delivered by a single-insert scheduled target | `examples/nimbus/agent-chat/`, `packages/nimbus/` |
+| `agents/agent-worker.md` | Headless worker: `runWorker` schedules one `processJob` hop per job id via `ctx.scheduler.runAfter`; jobs run `pending`→`done` server-side; a scheduled target cannot reschedule itself | `examples/nimbus/agent-worker/`, `packages/nimbus/` |
 
 ## Developers + Reference — Convex
 
@@ -66,6 +68,7 @@ sources exist.
 | `reference/convex/compatibility.md` | React hook list; reconnection behavior | `packages/convex/src/react.ts`, `packages/nimbus/src/browser.ts` |
 | `reference/convex/project-layout.md` | Scaffold file contents; `_generated/` files; `.nimbus/convex/` artifacts; `NIMBUS_CODEGEN_RUNNER` | `crates/nimbus-assets/embedded/templates/convex/`, `packages/codegen/src/main.mjs`, `crates/nimbus-cli/src/codegen.rs` |
 | `reference/convex/usage-rules.md` | Function syntax, validators, id-first db calls, `withIndex` over `filter`, pagination, run-* placement | `packages/codegen/src/planner/context_api.mjs`, `packages/nimbus/src/server.ts`, `packages/convex/src/server.ts` |
+| `developers/convex/examples.md` | Example apps: React/browser/Node clients, scheduled mutations, `httpAction` routes, live subscriptions, the reactive `tasks` list, and the console source view; the `"convex": "*"` copy-out resolves to the official package and fails at `convex codegen --app .` | `examples/convex/html/`, `examples/convex/http/`, `examples/convex/node/`, `examples/convex/tasks/`, `examples/convex/showcase/`, `packages/convex/`, `packages/codegen/` |
 
 ## Developers + Reference — Firestore
 
@@ -79,6 +82,7 @@ sources exist.
 | `reference/firebase/compatibility.md` | Drop-in `firebase` package wired by `nimbus dev` (scan-gated) or `nimbus packages provision firebase` | `crates/nimbus-cli/src/dev/firebase_scan.rs`, `crates/nimbus-cli/src/dev/wire.rs`, `crates/nimbus-cli/src/provision.rs` |
 | `reference/firebase/websocket-listen.md` | Listen route, subprotocols, close codes, loopback origin policy | `crates/nimbus-server/src/adapters/firebase/grpc/listen_websocket.rs`, `crates/nimbus-server/src/router.rs` |
 | `reference/firebase/auth.md` | `experimentalAuthToken`, `mockUserToken` opt-in, accepted headers | `packages/firebase/src/firestore.ts`, `packages/firebase/src/internal/auth.ts`, `crates/nimbus-firebase/src/lib.rs` |
+| `developers/firebase/examples.md` | Example apps: browser playground exercising `onSnapshot`/`writeBatch`/`runTransaction`/`FieldValue` over REST and gRPC-Web, and the `tasks` list with live `onSnapshot` through the Listen bridge | `examples/firebase/html/`, `examples/firebase/tasks/`, `packages/firebase/` |
 
 ## Developers + Reference — Cloud Functions
 
@@ -92,6 +96,7 @@ sources exist.
 | `developers/cloud-functions/migrate.md` | `nimbus deploy` positional `TARGET`/`--token` + env vars | `crates/nimbus-cli/src/deploy.rs` |
 | `reference/cloud-functions/compatibility.md` | Path rules; at-least-once delivery, replay, chain-depth limit | `packages/codegen/src/cloud_functions/runtime_sources.mjs`, `crates/nimbus-engine/src/triggers/execution.rs`, `crates/nimbus-server/src/adapters/cloud_functions/execution.rs` |
 | `reference/cloud-functions/compatibility.md` | Admin slice coverage; options matrix; callable envelope | `crates/nimbus-cloud-functions/src/runtime_api/firebase_admin/firestore.rs`, `crates/nimbus-server/src/adapters/cloud_functions/http/callable.rs` |
+| `developers/cloud-functions/examples.md` | Example bundle: an `onDocumentCreated` trigger writing an idempotent source-keyed derived document, and an HTTP `taskDetails` handler; at-least-once delivery | `examples/cloud-functions/tasks/`, `crates/nimbus-cloud-functions/src/lib.rs` |
 
 ## Developers + Reference — MongoDB
 
@@ -101,6 +106,7 @@ sources exist.
 | `developers/mongodb/index.md` | `MongoDbAuthConfig` SCRAM-SHA-256; `MongoDbConfig::localhost` | `crates/nimbus-server/src/adapters/mongodb/mod.rs`, `crates/nimbus-mongodb/src/auth.rs` |
 | `developers/mongodb/index.md` | Single-host direct connection (`directConnection=true` optional); tenant/collection auto-create | `packages/mongodb/src/uri.ts`, `crates/nimbus-mongodb/src/commands/tenant.rs`, `crates/nimbus-mongodb/src/commands/handshake.rs` |
 | `developers/mongodb/examples.md` | `mongoUri()` defaults; filter/update operator surface; transactions + `WriteConflict`; change streams unsupported | `packages/mongodb/src/uri.ts`, `crates/nimbus-mongodb/src/commands/crud/filter.rs`, `crates/nimbus-mongodb/src/commands/session.rs`, `crates/nimbus-mongodb/src/commands/aggregation/mod.rs` |
+| `developers/mongodb/examples.md` | Runnable example apps: stock `mongodb` driver CRUD over a `messages` collection and the `tasks` list; live-update polled because change streams are unavailable | `examples/mongodb/node/`, `examples/mongodb/tasks/`, `packages/mongodb/` |
 | `reference/mongodb/drivers.md` | OP_MSG, server version 7.0.0, wire versions, SCRAM-only, pre-auth handshake set; single-host direct connection (`directConnection=true` accepted, not required) | `crates/nimbus-mongodb/src/commands/handshake.rs`, `crates/nimbus-mongodb/src/auth.rs`, `crates/nimbus-mongodb/src/commands/mod.rs` |
 | `reference/mongodb/operations.md` | Command dispatch table; update operators; aggregation stages; size/session limits | `crates/nimbus-mongodb/src/commands/mod.rs`, `crates/nimbus-mongodb/src/commands/crud/update.rs`, `crates/nimbus-mongodb/src/commands/aggregation/mod.rs`, `crates/nimbus-mongodb/src/commands/handshake.rs`, `crates/nimbus-mongodb/src/commands/session.rs` |
 | `reference/mongodb/tenant-isolation.md` | db→tenant 1:1 mapping; `default` tenant rules; tenant-name constraints | `crates/nimbus-mongodb/src/commands/tenant.rs`, `crates/nimbus-core/src/types.rs` |
@@ -116,6 +122,7 @@ sources exist.
 | `reference/dynamodb/divergences.md` | Key-size cap, sortable encoding, `_ddb_` reserved, stream semantics, TTL/GSI divergences | `crates/nimbus-core/src/types.rs`, `crates/nimbus-dynamodb/src/key.rs`, `crates/nimbus-dynamodb/src/commands/` |
 | `reference/dynamodb/sdk-compatibility.md` | Rust SDK parity suite; 16 MiB request cap | `crates/nimbus-server/tests/dynamodb_spec/main.rs`, `crates/nimbus-server/src/adapters/dynamodb/listener.rs` |
 | `reference/dynamodb/readiness.md` | SigV4 strictness; `_nimbus_*` refusal; redacted key listings; plain-HTTP posture | `crates/nimbus-dynamodb/src/auth/sigv4/verify.rs`, `crates/nimbus-dynamodb/src/tenant.rs`, `crates/nimbus-dynamodb/src/key_management.rs` |
+| `developers/dynamodb/examples.md` | Example app: the `tasks` list via `PutItem`/`Scan`/`UpdateItem`/`DeleteItem` with the stock AWS SDK and `@nimbus/dynamodb`; unordered `Scan` sorted client-side; live-update polled | `examples/dynamodb/tasks/`, `packages/dynamodb/` |
 
 ## Developers + Reference — Native API
 
@@ -123,6 +130,7 @@ sources exist.
 | --- | --- | --- |
 | `developers/native/index.md` | Admin token requirement, header forms, 401 behavior, token file locations | `crates/nimbus-operator/src/access_policy.rs`, `crates/nimbus-operator/src/paths.rs`, `crates/nimbus-operator/src/token.rs` |
 | `developers/native/index.md` | Tenant/document/query endpoints + status codes | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/http/` |
+| `developers/native/examples.md` | Example apps: a browser playground (schema install, `ctx.scheduler.runAfter`, live subscription) and the `tasks` list over HTTP writes and WebSocket reads | `examples/nimbus/html/`, `examples/nimbus/tasks/`, `packages/nimbus/` |
 | `reference/native/http-api.md` | Loopback origin rule; system fields; query/schema/scheduling shapes; service-control routes | `crates/nimbus-operator/src/access_policy.rs`, `crates/nimbus-core/src/document.rs`, `crates/nimbus-core/src/query.rs`, `crates/nimbus-core/src/schema.rs`, `crates/nimbus-core/src/scheduled.rs`, `crates/nimbus-server/src/router.rs` |
 | `reference/native/http-api.md` | Journal routes `GET …/journal` (`after`/`limit`, default 100; `records`/`next_cursor`/`latest_sequence`/`cursor_floor`/`has_more`) and `…/journal/bootstrap` (snapshot + resume/cut/floor sequences); SDK `readJournal`/`bootstrapJournal` | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/protocol.rs`, `crates/nimbus-server/src/http/queries.rs`, `crates/nimbus-storage/src/store/journal_stream.rs`, `packages/nimbus/src/rest.ts` |
 | `reference/native/websocket-protocol.md` | `nimbus.v2` negotiation, handshake, frame catalog, close codes | `crates/nimbus-server/src/ws/`, `crates/nimbus-server/src/protocol.rs`, `crates/nimbus-server/src/error_envelope.rs` |

@@ -247,6 +247,27 @@ with a `CommandNotSupported` error rather than emulating a partial feature.
 Poll with `find` where you need to observe changes through the MongoDB
 endpoint.
 
+## Runnable example apps
+
+Two complete apps live under
+[`examples/mongodb/`](https://github.com/nimbus/nimbus/tree/main/examples/mongodb)
+in the source repository. Run them in place from a checkout, against a Nimbus
+server serving the MongoDB endpoint:
+
+- **[Node (`node`)](https://github.com/nimbus/nimbus/tree/main/examples/mongodb/node)**
+  — a script using the stock `mongodb` driver and the `@nimbus/mongodb` URI
+  helper to run create, read, update, and read-again over a `messages`
+  collection.
+- **[Tasks](https://github.com/nimbus/nimbus/tree/main/examples/mongodb/tasks)**
+  — the shared [tasks](https://github.com/nimbus/nimbus/blob/main/examples/specs/tasks.md)
+  task list: create, list, toggle, and delete over a `tasks` collection, sorted
+  newest-first by `createdAt`. Because change streams are unavailable on this
+  surface, the live-update flow degrades to polling — the example re-reads the
+  list until a change appears rather than emulating a subscription.
+
+Both apps set `NIMBUS_MONGODB_USERNAME` and `NIMBUS_MONGODB_PASSWORD` (host and
+port default to `127.0.0.1:27017`); see each README for the exact run command.
+
 ## Related pages
 
 - [Supported operations](/reference/mongodb/operations/) — the exact

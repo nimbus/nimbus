@@ -36,6 +36,17 @@ nouns is explained in
 - [Open sessions](/agents/sessions/) — channels, TTLs, and target
   snapshots.
 
+## Example agents
+
+Not every agent needs a sandbox. Two runnable examples build agents purely on
+the native SDK's document store and scheduler — durable state and self-driven
+follow-ups, all inside your own deployment:
+
+- [Build a durable chat agent](/agents/agent-chat/) — a chat agent that
+  persists its conversation, remembers facts, and schedules its own reminders.
+- [Run a headless agent worker](/agents/agent-worker/) — an unattended worker
+  that runs a batch of jobs to completion server-side.
+
 ## Where sandboxes actually run
 
 Sandbox execution runs on Linux hosts: workloads launch as OCI containers

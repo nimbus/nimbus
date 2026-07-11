@@ -129,6 +129,8 @@ environment variables. Omit `TARGET` to deploy to the running local server.
 
 ## Where next
 
+- [Example bundle](/developers/cloud-functions/examples/) — a runnable v2
+  bundle with a Firestore trigger and an HTTP handler.
 - [Migrate Cloud Functions](/developers/cloud-functions/migrate/) — the
   step-by-step path for Firebase v2 and Functions Framework codebases.
 - [Cloud Functions compatibility](/reference/cloud-functions/compatibility/)
