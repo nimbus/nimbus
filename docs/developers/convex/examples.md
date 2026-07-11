@@ -1,6 +1,6 @@
 ---
 title: Convex example apps
-description: Runnable Convex apps on Nimbus — a React client, a browser client without React, a Node script, the shared tasks list, and a developer-console showcase.
+description: Runnable Convex apps on Nimbus — a React client, a browser client without React, a Node script, the shared tasks list, a developer-console showcase, and a two-runtime demo.
 sidebar:
   label: Examples
   order: 3
@@ -65,10 +65,18 @@ server paired with a `convex:example:*` dev server — listed in its README.
   syntax-highlighted source, a symbol strip with `DEFINES`/`CALLS` navigation,
   and type-hover tooltips. Deploy it, then open a function's **Source** tab in
   the console.
+- **[Runtimes](https://github.com/nimbus/nimbus/tree/main/examples/convex/runtimes)**
+  — the two-runtime story side by side. `digests.ts` (default runtime) hashes
+  with `crypto.subtle.digest`; `nodeDigests.ts` (`"use node"`) hashes the same
+  input with `node:crypto`, and both agree. `shareIds.ts` uses the browser-safe
+  npm package `nanoid` from a default-runtime function. See
+  [the two Convex runtimes](/developers/convex/runtimes/) for what each runtime
+  guarantees.
 
 ## Run these in place, not copied out
 
-React, the browser client, Node, and Tasks depend on `"convex": "*"`. Inside
+React, the browser client, Node, Tasks, and Runtimes depend on
+`"convex": "*"`. Inside
 this repository that resolves to Nimbus's Convex compatibility package, which
 deliberately takes the official `convex` package name and `convex` binary so
 your code runs unchanged. Copy one of those apps out of the repository and
