@@ -329,6 +329,7 @@ const entryContracts = {
   "@nimbus/nimbus/server": {
     path: "packages/nimbus/src/server.ts",
     exports: [
+      "ActionCtx",
       "Auth",
       "AuthConfig",
       "AuthProvider",
@@ -346,11 +347,13 @@ const entryContracts = {
       "HttpRouteSpec",
       "HttpRouter",
       "IndexRangeBuilder",
+      "MutationCtx",
       "PaginationOptions",
       "PaginationResult",
       "PaginationStatus",
       "PublicHttpAction",
       "QueryBuilder",
+      "QueryCtx",
       "QueryOrder",
       "RegisteredAction",
       "RegisteredMutation",

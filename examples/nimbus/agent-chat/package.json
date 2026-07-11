@@ -1,0 +1,26 @@
+{
+  "name": "nimbus-agent-chat",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "codegen": "nimbus-codegen --app .",
+    "dev": "npm run codegen && vite",
+    "build": "npm run codegen && vite build",
+    "smoke": "npm run codegen && node --experimental-strip-types ./smoke.ts",
+    "typecheck": "npm run codegen && tsc -p tsconfig.json --noEmit",
+    "test": "npm run codegen && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@nimbus/nimbus": "*",
+    "react": "19.2.5",
+    "react-dom": "19.2.5"
+  },
+  "devDependencies": {
+    "@nimbus/codegen": "*",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.1",
+    "typescript": "6.0.3",
+    "vite": "8.0.9"
+  }
+}

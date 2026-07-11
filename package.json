@@ -23,7 +23,8 @@
     "examples/mongodb/node",
     "examples/mongodb/tasks",
     "examples/nimbus/html",
-    "examples/nimbus/tasks"
+    "examples/nimbus/tasks",
+    "examples/nimbus/agent-chat"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
@@ -46,7 +47,9 @@
     "convex:demo:http": "npm run dev --workspace convex-http",
     "firebase:server:html": "cargo run -p nimbus-bin -- start --port 8080",
     "firebase:demo:html": "npm run dev --workspace firebase-html",
-    "nimbus:demo:html": "npm run dev --workspace nimbus-html"
+    "nimbus:demo:html": "npm run dev --workspace nimbus-html",
+    "nimbus:server:agent-chat": "NIMBUS_CONVEX_SILO_TEAMS=demo:demo-team NIMBUS_CONVEX_ANONYMOUS_TEAM=demo-team cargo run -p nimbus-bin -- start --port 8080 --app-dir ./examples/nimbus/agent-chat",
+    "nimbus:demo:agent-chat": "npm run dev --workspace nimbus-agent-chat"
   },
   "devDependencies": {
     "@playwright/cli": "^0.1.13"

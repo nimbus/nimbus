@@ -338,12 +338,14 @@ export type GenericQueryCtx = {
   readonly db: GenericDatabaseReader;
   readonly auth: Auth;
 };
+export type QueryCtx = GenericQueryCtx;
 
 export type GenericMutationCtx = {
   readonly db: GenericDatabaseWriter;
   readonly scheduler: Scheduler;
   readonly auth: Auth;
 };
+export type MutationCtx = GenericMutationCtx;
 
 export type GenericActionCtx = {
   readonly scheduler: Scheduler;
@@ -361,6 +363,7 @@ export type GenericActionCtx = {
     args?: Args,
   ): Promise<Returns>;
 };
+export type ActionCtx = GenericActionCtx;
 
 export function query<
   Args extends ArgValidators | undefined = undefined,

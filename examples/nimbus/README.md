@@ -14,6 +14,10 @@ Docs: [Native API](../../docs/developers/native/index.md).
   and watches live subscription results update in place.
 - **[`tasks/`](tasks/)** — the shared [`tasks`](../specs/tasks.md) app: CRUD
   plus a live WebSocket subscription via the native SDK.
+- **[`agent-chat/`](agent-chat/)** — a durable chat agent: query/mutation +
+  `ctx.scheduler.runAfter` + the database, no hosted inference. See the
+  [`agent-chat` spec](../specs/agent-chat.md) and
+  [`agent-chat/README.md`](agent-chat/README.md).
 
 ## `tasks` spec support
 
