@@ -89,3 +89,11 @@ agent needs are already yours.
 The browser code creates its tenant with an unauthenticated `POST /api/tenants`,
 which is a local-development convenience. Provision tenants separately before
 deploying beyond your own environment.
+
+**This is a single-user local demo with no auth.** The `list`, `listMemory`,
+and `send` functions are public and take a plain `conversationId` string with
+no identity or ownership check — the UI hardcodes a single shared
+conversation id, so every browser tab talks to the same conversation, by
+design. Add identity and ownership checks (see
+[authenticate users](/developers/auth/)) before deploying this beyond your
+own machine; this example does not demonstrate that.

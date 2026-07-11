@@ -61,6 +61,16 @@ Tenant creation in browser code (`src/main.tsx`'s unauthenticated
 `POST /api/tenants`) is a local-development convenience. Provision tenants
 separately before deploying beyond your own environment.
 
+**This is a single-user local demo with no auth.** `list`, `listMemory`, and
+`send` (`nimbus/agent.ts`) are public functions that take a plain
+`conversationId` string and read or write whatever conversation that id
+names, with no identity or ownership check — the UI hardcodes one shared id
+(`CONVERSATION_ID` in `src/App.tsx`), so every browser tab is the same
+conversation, by design. Identity and ownership checks are required before
+deploying this beyond your own machine; this example does not add them. See
+[authenticate users](../../../docs/developers/auth.md) for how to wire a
+provider and check `ctx.auth` in your own functions.
+
 ## Smoke verification
 
 With Nimbus running at `http://localhost:8080`:
