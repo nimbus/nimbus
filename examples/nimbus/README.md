@@ -18,6 +18,9 @@ Docs: [Native API](../../docs/developers/native/index.md).
   `ctx.scheduler.runAfter` + the database, no hosted inference. See the
   [`agent-chat` spec](../specs/agent-chat.md) and
   [`agent-chat/README.md`](agent-chat/README.md).
+- **[`agent-worker/`](agent-worker/)** — a headless, autonomous worker: no UI,
+  `ctx.scheduler.runAfter` schedules a batch of jobs that run to completion
+  entirely server-side. See [`agent-worker/README.md`](agent-worker/README.md).
 
 ## `tasks` spec support
 

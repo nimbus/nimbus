@@ -1,0 +1,19 @@
+{
+  "name": "nimbus-agent-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "codegen": "nimbus-codegen --app .",
+    "run": "npm run codegen && node --experimental-strip-types ./run.ts",
+    "smoke": "npm run codegen && node --experimental-strip-types ./smoke.ts",
+    "typecheck": "npm run codegen && tsc -p tsconfig.json --noEmit",
+    "test": "npm run codegen && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@nimbus/nimbus": "*"
+  },
+  "devDependencies": {
+    "@nimbus/codegen": "*",
+    "typescript": "6.0.3"
+  }
+}
