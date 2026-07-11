@@ -17,6 +17,7 @@
     "examples/convex/tasks",
     "examples/firebase/html",
     "examples/firebase/tasks",
+    "examples/dynamodb/tasks",
     "examples/mongodb/node",
     "examples/mongodb/tasks",
     "examples/nimbus/html",

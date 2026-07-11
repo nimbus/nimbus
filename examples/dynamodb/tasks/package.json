@@ -1,0 +1,17 @@
+{
+  "name": "dynamodb-tasks",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --experimental-strip-types ./script.ts",
+    "smoke": "node --experimental-strip-types ./smoke.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.600.0",
+    "@nimbus/dynamodb": "0.1.45"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  }
+}
