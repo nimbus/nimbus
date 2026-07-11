@@ -1,15 +1,17 @@
 # Spec: `tasks`
 
 The industry hello-world: a task list with create, read, update, and delete,
-plus a live view that updates without re-polling. Every adapter's `tasks`
-example implements this spec for its supported subset and its smoke script
-asserts the flows below.
+plus a live view that updates without re-polling. This is the contract each
+adapter's `tasks` example will implement for its supported subset, with a
+smoke script asserting the flows below.
 
 > **Target state, not current coverage.** This spec is the contract the `tasks`
 > apps and their smoke scripts will meet — the per-surface `tasks` apps and the
 > anchor-asserting smokes are still being built. The apps checked in under
-> `examples/<adapter>/` today are different per-surface demos (they operate on a
-> `messages` collection), and no smoke references the `tasks.*` anchors yet.
+> `examples/<adapter>/` today are different per-surface demos — most operate on
+> a `messages` collection, and the Nimbus playground writes to whichever table
+> you name (`tasks` by default) without implementing these flows — and no smoke
+> references the `tasks.*` anchors yet.
 > Everything below — the flows, the anchors, and the supported-subset table —
 > describes what those deliverables will satisfy, so treat it as the spec to
 > build against, not a claim of what ships today.

@@ -21,17 +21,19 @@ compiled/runtime subset these apps exercise lives in [`DEVNOTES.md`](DEVNOTES.md
 > - The app's scripts run `convex codegen --app .`, but `--app` is a
 >   Nimbus-only flag; the official `convex` CLI rejects it, so `npm run dev`,
 >   `build`, and `codegen` fail loudly at codegen.
-> - Even past that, the client still points at
->   `http://localhost:8080/convex/demo` (it sets `skipConvexDeploymentUrlCheck`),
->   so it targets your local Nimbus server — it does not quietly talk to Convex
->   Cloud.
+> - Even past that, none of the apps quietly talks to Convex Cloud: the React
+>   app pins `http://localhost:8080/convex/demo` (setting
+>   `skipConvexDeploymentUrlCheck`), and the http and node apps use their own
+>   local-server defaults — a copied-out app keeps targeting your local Nimbus
+>   server.
 >
 > Until the `nimbus init --example` scaffolder ships (it rewrites the `convex`
 > workspace dependency to a published Nimbus pin), run these examples in place,
-> from a checkout of this repository. The other adapter examples import stock
-> upstream clients (`firebase`, `mongodb`, the AWS SDK), so their copy-out
-> failure is the same kind of visible error: an unresolved workspace
-> dependency.
+> from a checkout of this repository. The other adapter examples don't share
+> this hazard: unpublished `@nimbus/*` workspace deps fail resolution with a
+> visible install error, and the Firebase app's stock `firebase` dependency
+> installs the real upstream SDK from the registry (the app still expects a
+> Nimbus server to talk to).
 
 ## Examples
 

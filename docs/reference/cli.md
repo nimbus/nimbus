@@ -124,14 +124,16 @@ environments (`$CI` or `$NO_BROWSER` set, or stdout is not a TTY).
 ## nimbus deploy
 
 ```bash
-nimbus deploy [flags]
+nimbus deploy [TARGET] [flags]
 ```
 
-Packages generated app artifacts and pushes them to an explicit self-hosted
-Nimbus instance, printing a diff of functions, HTTP routes, schema, and
-runtime-bundle changes. The target URL and token resolve from flags first,
-then environment variables; tokens stored by `nimbus auth login` are used
-when `NIMBUS_DEPLOY_TOKEN` is unset. The deploy route also requires the
+Packages generated app artifacts and pushes them to a self-hosted Nimbus
+instance, printing a diff of functions, HTTP routes, schema, and
+runtime-bundle changes. The target resolves from the positional `TARGET` (a
+URL or a configured target name) first, then the `NIMBUS_TARGET` /
+`NIMBUS_TARGET_URL` environment variables, and defaults to the running local
+server when omitted; the token resolves from `--token`, then
+`NIMBUS_DEPLOY_TOKEN`, then tokens stored by `nimbus auth login`. The deploy route also requires the
 server's local admin token: when the target URL is a loopback address on
 the same machine, `nimbus deploy` reads it from the local token file
 automatically; for a remote server, pass `--admin-token` or set

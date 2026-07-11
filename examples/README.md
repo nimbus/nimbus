@@ -52,9 +52,12 @@ spec's flow anchors — is not built yet. Until it lands, each adapter README's
 current coverage, and the DynamoDB and Cloud Functions directories (marked
 _coming soon_) do not exist yet.
 
-Run these examples in place, from a checkout of this repository — they import
-this repo's workspace packages, so a copied-out app will not resolve its
-dependencies until the `nimbus init --example` scaffolder ships. The Convex
+Run these examples in place, from a checkout of this repository. Copy-out
+behavior varies by app until the `nimbus init --example` scaffolder ships:
+apps importing unpublished workspace packages (`@nimbus/nimbus`,
+`@nimbus/mongodb`) fail dependency resolution with a visible install error,
+while the Firebase app's stock `firebase` dependency installs the real
+upstream SDK from the registry but still expects a Nimbus server. The Convex
 examples carry an extra wrinkle: because Nimbus's compatibility package takes
 the official `convex` name, a copied-out Convex app's `"convex": "*"` resolves
 to the real Convex Cloud package instead, which then breaks at codegen (the

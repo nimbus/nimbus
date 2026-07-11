@@ -235,7 +235,7 @@ parity-fixture behavior that is not user-worthy stays internal.
 
 | ID | Item | Acceptance | Size | Status |
 | --- | --- | --- | --- | --- |
-| EX5.1 | Headless smoke script per example (seed → exercise spec flows → assert observable behavior), deterministic, runnable by one command per example | Each smoke red/green demonstrated locally at least once | ~80/example | todo |
+| EX5.1 | Headless smoke script per example (seed → exercise spec flows → assert observable behavior), deterministic, runnable by one command per example; at least one smoke runs the real `nimbus run` binary with stdout and stderr captured separately and asserts the stream contract (stdout alone parses as the result JSON; the resolved-target banner appears on stderr) — the process-level guard the 2026-07-11 review noted unit tests cannot provide | Each smoke red/green demonstrated locally at least once; the stdio-contract assertion present and green | ~80/example | todo |
 | EX5.2 | `make examples-verify` (single-flight wrapped) that boots a fresh local server and runs all smokes; wire into `make ci` or a dedicated required lane per EX0 findings | Target green locally; wiring decision recorded with reason | ~120 | todo |
 | EX5.3 | CI lane for examples-verify; prove fail-closed once by inducing a breakage locally and observing red, then reverting | Induced-red evidence recorded; lane green on branch; full-suite run for the gate addition (blast-radius rule) | ~60 CI | todo |
 
