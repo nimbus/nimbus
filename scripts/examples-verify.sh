@@ -30,7 +30,21 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
 NIMBUS_BIN="${NIMBUS_EXAMPLES_VERIFY_BIN:-${REPO_ROOT}/target/debug/nimbus}"
-PORT="${NIMBUS_EXAMPLES_VERIFY_PORT:-8080}"
+# A fixed port (8080 was the previous default) risks a pre-existing,
+# unrelated local server already answering /health on that port — the lane
+# would then read green without ever exercising the binary under test. Bind
+# to an OS-assigned ephemeral port per run instead (same pattern as
+# scripts/nimbus-kv-conformance.sh); NIMBUS_EXAMPLES_VERIFY_PORT still
+# overrides it for anyone who wants a fixed port.
+PORT="${NIMBUS_EXAMPLES_VERIFY_PORT:-$(python3 - <<'PY'
+import socket
+sock = socket.socket()
+sock.bind(("127.0.0.1", 0))
+print(sock.getsockname()[1])
+sock.close()
+PY
+)}"
+NIMBUS_URL="http://127.0.0.1:${PORT}"
 DATA_ROOT="$(mktemp -d -t nimbus-examples-verify.XXXXXX)"
 
 # Manifest fields, pipe-delimited:
@@ -48,7 +62,15 @@ DATA_ROOT="$(mktemp -d -t nimbus-examples-verify.XXXXXX)"
 # cloud-functions/tasks it both registers the functions bundle and gets the
 # same auto-tenant as a side effect (dev always sets one, defaulting to
 # "demo" for any non-Firestore-client adapter).
-# boot_env / smoke_env: comma-separated KEY=VAL pairs, or "-" for none.
+# boot_env / smoke_env: comma-separated KEY=VAL pairs, or "-" for none. Every
+# app whose smoke talks to the main HTTP listener carries an explicit
+# NIMBUS_NATIVE_URL/NIMBUS_FIRESTORE_URL/NIMBUS_CLOUD_FUNCTIONS_URL entry
+# pinned to ${NIMBUS_URL} (built from the resolved ephemeral PORT above) —
+# each smoke.ts's own "http://localhost:8080" fallback default only matched
+# by coincidence when PORT was hardcoded to 8080; it does not track PORT now
+# that PORT is resolved per run. mongodb/tasks and dynamodb/tasks are
+# unaffected: their smokes talk to separate wire-protocol listener ports
+# (27017/8000 by default), not the main HTTP PORT.
 # boot_flags: a single space-free extra CLI argument (KEY=VAL form), or "-".
 # boot_mode: "start" (default, no Compose auto-discovery, no sideline
 # needed) or "dev". firebase/tasks and cloud-functions/tasks are "dev"
@@ -72,14 +94,14 @@ DATA_ROOT="$(mktemp -d -t nimbus-examples-verify.XXXXXX)"
 CONVEX_DEV_TENANCY_ENV="NIMBUS_CONVEX_SILO_TEAMS=demo:demo-team,NIMBUS_CONVEX_ANONYMOUS_TEAM=demo-team"
 
 APPS=(
-  "nimbus/tasks|nimbus-tasks|examples/nimbus/tasks|0|0|-|-|-|start"
-  "nimbus/agent-chat|nimbus-agent-chat|examples/nimbus/agent-chat|1|1|${CONVEX_DEV_TENANCY_ENV}|-|-|start"
-  "nimbus/agent-worker|nimbus-agent-worker|examples/nimbus/agent-worker|1|1|${CONVEX_DEV_TENANCY_ENV}|-|-|start"
-  "convex/tasks|convex-tasks|examples/convex/tasks|1|1|${CONVEX_DEV_TENANCY_ENV}|-|-|start"
-  "firebase/tasks|firebase-tasks|examples/firebase/tasks|0|1|-|-|-|dev"
+  "nimbus/tasks|nimbus-tasks|examples/nimbus/tasks|0|0|-|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
+  "nimbus/agent-chat|nimbus-agent-chat|examples/nimbus/agent-chat|1|1|${CONVEX_DEV_TENANCY_ENV}|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
+  "nimbus/agent-worker|nimbus-agent-worker|examples/nimbus/agent-worker|1|1|${CONVEX_DEV_TENANCY_ENV}|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
+  "convex/tasks|convex-tasks|examples/convex/tasks|1|1|${CONVEX_DEV_TENANCY_ENV}|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
+  "firebase/tasks|firebase-tasks|examples/firebase/tasks|0|1|-|-|NIMBUS_FIRESTORE_URL=${NIMBUS_URL}|dev"
   "mongodb/tasks|mongodb-tasks|examples/mongodb/tasks|0|0|NIMBUS_MONGODB_PASSWORD=nimbus|--mongodb-username=nimbus|NIMBUS_MONGODB_USERNAME=nimbus,NIMBUS_MONGODB_PASSWORD=nimbus|start"
   "dynamodb/tasks|dynamodb-tasks|examples/dynamodb/tasks|0|0|-|--dynamodb-access-key=nimbus:nimbus:default|-|start"
-  "cloud-functions/tasks|cloud-functions-tasks|examples/cloud-functions/tasks|0|1|-|-|-|dev"
+  "cloud-functions/tasks|cloud-functions-tasks|examples/cloud-functions/tasks|0|1|-|-|NIMBUS_CLOUD_FUNCTIONS_URL=${NIMBUS_URL}|dev"
 )
 
 SERVER_PID=""
@@ -115,6 +137,26 @@ cleanup_server() {
 }
 trap cleanup_server EXIT
 
+# SIGKILL bypasses the EXIT trap above, so a prior run killed mid-`dev`-boot
+# (e.g. an operator's Ctrl-\, a CI job timeout using SIGKILL, or a `kill -9`)
+# can leave compose.yaml.smoke-bak on disk with compose.yaml missing. A
+# checkout in that state silently changes the meaning of every subsequent
+# `nimbus dev`/`compose` invocation in the repo, not just this lane. Heal it
+# at lane start, before anything else runs, rather than only guarding the
+# happy-path exit. The real fix is the recorded product follow-up (an
+# opt-out so `nimbus dev` skips Compose auto-discovery for a plain example
+# boot instead of needing this sideline dance at all — see the
+# "compose-auto-discovery-on-app-boot DX question" follow-up in
+# docs/private/plans/examples-and-target-resolution-plan.md); this is a
+# lane-local recovery, not that fix.
+heal_stranded_compose_sideline() {
+  if [ -f "${COMPOSE_SIDELINE_PATH}.smoke-bak" ] && [ ! -f "${COMPOSE_SIDELINE_PATH}" ]; then
+    echo "==> found compose.yaml.smoke-bak with no compose.yaml (a prior run was likely killed mid-boot); restoring compose.yaml before proceeding"
+    mv "${COMPOSE_SIDELINE_PATH}.smoke-bak" "${COMPOSE_SIDELINE_PATH}"
+  fi
+}
+heal_stranded_compose_sideline
+
 ensure_nimbus_binary() {
   if [ -x "${NIMBUS_BIN}" ]; then
     return
@@ -131,11 +173,23 @@ wait_for_health() {
   local port="$1"
   local attempt
   for attempt in $(seq 1 60); do
-    if curl -fsS "http://127.0.0.1:${port}/health" 2>/dev/null | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'; then
-      return 0
-    fi
     if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
+      echo "server process (pid ${SERVER_PID}) for port ${port} exited before becoming healthy" >&2
       return 1
+    fi
+    if curl -fsS "http://127.0.0.1:${port}/health" 2>/dev/null | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'; then
+      # The port was ephemeral-assigned to be free at bind-test time, but a
+      # TOCTOU race (or a leftover process on an operator-pinned
+      # NIMBUS_EXAMPLES_VERIFY_PORT) could still let something other than
+      # our own launched binary answer /health. Re-check the pid right
+      # after a successful curl: if it's already gone, the response did not
+      # come from the server this run just launched — treat that as a hard
+      # failure rather than a silent pass.
+      if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
+        echo "health check on port ${port} succeeded but pid ${SERVER_PID} is no longer running — a different process answered /health on this port, not the binary under test" >&2
+        return 1
+      fi
+      return 0
     fi
     sleep 0.5
   done
@@ -319,13 +373,29 @@ ensure_nimbus_binary
 # Restrict to a single app by name for local debugging, e.g.
 # NIMBUS_EXAMPLES_VERIFY_ONLY=nimbus/tasks bash scripts/examples-verify.sh
 ONLY="${NIMBUS_EXAMPLES_VERIFY_ONLY:-}"
+ONLY_MATCHED=0
 
 for entry in "${APPS[@]}"; do
   IFS='|' read -r name workspace app_dir needs_codegen needs_app_dir_boot boot_env boot_flags smoke_env boot_mode <<<"${entry}"
   if [ -n "${ONLY}" ] && [ "${name}" != "${ONLY}" ]; then
     continue
   fi
+  ONLY_MATCHED=1
   run_one "${name}" "${workspace}" "${app_dir}" "${needs_codegen}" "${needs_app_dir_boot}" "${boot_env}" "${boot_flags}" "${smoke_env}" "${boot_mode}"
 done
+
+# An ONLY value that matches nothing used to fall straight through the loop
+# body zero times and exit 0 from the script's last statement, reporting
+# "all examples verified" without ever booting a single app — a silent
+# false green for a typo'd app name. Fail loudly instead, and name the valid
+# selectors so the fix is obvious.
+if [ -n "${ONLY}" ] && [ "${ONLY_MATCHED}" -eq 0 ]; then
+  echo "NIMBUS_EXAMPLES_VERIFY_ONLY=${ONLY} matched no app in the manifest; valid names are:" >&2
+  for entry in "${APPS[@]}"; do
+    IFS='|' read -r name _ <<<"${entry}"
+    echo "  ${name}" >&2
+  done
+  exit 1
+fi
 
 echo "==> all examples verified"
