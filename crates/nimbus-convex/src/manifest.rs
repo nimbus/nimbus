@@ -448,6 +448,7 @@ pub enum ConvexSchemaValidator {
         inner: Box<ConvexSchemaValidator>,
     },
     Union {
+        #[serde(rename = "members")]
         _members: Vec<ConvexSchemaValidator>,
     },
 }
@@ -541,6 +542,31 @@ impl ConvexSchemaValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn convex_schema_manifest_parses_union_validator_members() {
+        let manifest = serde_json::from_value::<ConvexSchemaManifest>(serde_json::json!({
+            "tables": {
+                "runs": {
+                    "fields": {
+                        "runtime": {
+                            "kind": "union",
+                            "members": [
+                                { "kind": "literal", "value": "default" },
+                                { "kind": "literal", "value": "node" }
+                            ]
+                        }
+                    },
+                    "indexes": []
+                }
+            }
+        }))
+        .expect("union validator should deserialize from its generated 'members' key");
+
+        manifest
+            .into_schema()
+            .expect("schema with a union field should convert");
+    }
 
     #[test]
     fn convex_schema_manifest_preserves_composite_indexes() {
