@@ -15,7 +15,7 @@ third_party/** linguist-vendored
 packages/nimbus-ui/public/assets/axe.min.js linguist-vendored
 
 # Checked-in generated artifacts.
-demos/convex/*/.neovex/** linguist-generated
-demos/convex/*/convex/_generated/** linguist-generated
+examples/convex/*/.neovex/** linguist-generated
+examples/convex/*/convex/_generated/** linguist-generated
 packages/nimbus-ui/convex/_generated/** linguist-generated
 packages/nimbus-ui/src/route-tree.gen.ts linguist-generated

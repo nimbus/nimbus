@@ -1,7 +1,7 @@
 <!-- convex-ai-start -->
 This project implements a [Convex](https://convex.dev)-compatible backend server.
 
-When working on Convex-compatible code (`packages/convex/`, `demos/convex/`, or any Convex API surface), **always read `docs/private/adapters/convex/ai-guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
+When working on Convex-compatible code (`packages/convex/`, `examples/convex/`, or any Convex API surface), **always read `docs/private/adapters/convex/ai-guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
 <!-- convex-ai-end -->
 
 # Nimbus

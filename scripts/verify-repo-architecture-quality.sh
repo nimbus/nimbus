@@ -97,7 +97,7 @@ line_count() {
 }
 
 source_files() {
-  find "${REPO_ROOT}/crates" "${REPO_ROOT}/packages" "${REPO_ROOT}/demos" \
+  find "${REPO_ROOT}/crates" "${REPO_ROOT}/packages" "${REPO_ROOT}/examples" \
     \( \
       -path '*/node_modules' -o \
       -path '*/target' -o \
@@ -107,7 +107,7 @@ source_files() {
       -path '*/_generated' -o \
       -path '*/src/gen' -o \
       -path "${REPO_ROOT}/crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures" -o \
-      -path "${REPO_ROOT}/demos/convex/vendor" \
+      -path "${REPO_ROOT}/examples/convex/vendor" \
     \) -prune -o -type f -print
 }
 

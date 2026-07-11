@@ -563,14 +563,14 @@ fn is_reserved_cloud_functions_http_path(path: &str) -> bool {
             | "/api"
             | "/convex"
             | "/debug"
-            | "/demos"
+            | "/examples"
             | "/ui"
             | "/v1"
             | "/google.firestore.v1.Firestore"
     ) || path.starts_with("/api/")
         || path.starts_with("/convex/")
         || path.starts_with("/debug/")
-        || path.starts_with("/demos/")
+        || path.starts_with("/examples/")
         || path.starts_with("/ui/")
         || path.starts_with("/v1/")
         || path.starts_with("/google.firestore.v1.Firestore/")

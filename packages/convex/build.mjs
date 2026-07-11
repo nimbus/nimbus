@@ -7,7 +7,7 @@ import { build } from "esbuild";
 const packageRoot = fileURLToPath(new URL("./", import.meta.url));
 const entryPoint = fileURLToPath(new URL("./src/browser.ts", import.meta.url));
 const distDir = path.join(packageRoot, "dist");
-const servedDir = path.resolve(packageRoot, "../../demos/convex/vendor");
+const servedDir = path.resolve(packageRoot, "../../examples/convex/vendor");
 const distFile = path.join(distDir, "browser.bundle.js");
 const servedFile = path.join(servedDir, "browser.bundle.js");
 

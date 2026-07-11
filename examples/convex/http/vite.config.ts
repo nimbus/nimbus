@@ -5,7 +5,7 @@ export default defineConfig(({ command, mode }) => {
   const backend = env.NIMBUS_DEV_BACKEND ?? "http://localhost:8080";
 
   return {
-    base: command === "build" ? "/demos/convex/http/dist/" : "/",
+    base: command === "build" ? "/examples/convex/http/dist/" : "/",
     server: {
       proxy: {
         "/api": backend,

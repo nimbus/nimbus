@@ -39,7 +39,7 @@ Examples:
   nimbus dev
   nimbus run exec -- npm test
   nimbus deploy http://localhost:3210
-  nimbus codegen --app ./demos/convex/html
+  nimbus codegen --app ./examples/convex/html
   nimbus token rotate
   nimbus machine start
   nimbus node install --systemd --dry-run
@@ -49,8 +49,8 @@ pub(crate) const DEV_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus dev                  # auto-opens the operator console
   nimbus dev --no-open        # print the launch URL instead of opening
-  nimbus dev --app-dir ./demos/convex/html
-  nimbus dev --app-dir ./demos/convex/html --skip-codegen
+  nimbus dev --app-dir ./examples/convex/html
+  nimbus dev --app-dir ./examples/convex/html --skip-codegen
   nimbus dev --data-dir ./.nimbus/dev
 
 P3 scope:
@@ -67,7 +67,7 @@ Examples:
   nimbus deploy                                 # local server (like nimbus dev)
   nimbus deploy http://localhost:3210
   NIMBUS_DEPLOY_URL=http://localhost:3210 nimbus deploy
-  nimbus deploy --app-dir ./demos/convex/html --dry-run
+  nimbus deploy --app-dir ./examples/convex/html --dry-run
 
 Deploy target:
   TARGET is a URL or a configured target name; omitted = local. A URL deploys to
@@ -83,16 +83,16 @@ Deploy target:
 pub(crate) const START_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus start
-  nimbus start --app-dir ./demos/convex/html
-  nimbus start --app-dir ./demos/convex/html --skip-codegen
+  nimbus start --app-dir ./examples/convex/html
+  nimbus start --app-dir ./examples/convex/html --skip-codegen
   nimbus start --compose-file ./compose.yaml
   nimbus start --tenant-provider postgres --postgres-url postgres://localhost/nimbus";
 
 pub(crate) const CODEGEN_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus codegen
-  nimbus codegen --app ./demos/convex/html
-  nimbus codegen --app ./demos/convex/node";
+  nimbus codegen --app ./examples/convex/html
+  nimbus codegen --app ./examples/convex/node";
 
 pub(crate) const TOKEN_ROTATE_HELP_EXAMPLES: &str = "\
 Examples:

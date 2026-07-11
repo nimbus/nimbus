@@ -36,7 +36,7 @@ sources exist.
 | `developers/index.md` | Adapter surfaces served by default; `nimbus dev` detects the app's adapter and wires it automatically | `crates/nimbus-cli/src/start/adapters/mod.rs`, `crates/nimbus-cli/src/dev/adapter.rs`, `crates/nimbus-cli/src/dev/wire.rs` |
 | `developers/first-app.md` | Scaffold contents, schema/messages templates | `crates/nimbus-assets/embedded/templates/convex/` |
 | `developers/first-app.md` | Dev loop: auto npm install, codegen, `demo` tenant, port 3210, watch-and-activate | `crates/nimbus-cli/src/dev.rs` |
-| `developers/first-app.md` | `ConvexClient.onUpdate` live subscriptions, `ConvexHttpClient` | `packages/convex/src/browser.ts`, `demos/convex/node/script.ts` |
+| `developers/first-app.md` | `ConvexClient.onUpdate` live subscriptions, `ConvexHttpClient` | `packages/convex/src/browser.ts`, `examples/convex/node/script.ts` |
 | `developers/first-app.md` | Query builder: `withIndex`, `order`, `take`, `collect` | `packages/nimbus/src/server.ts` |
 | `developers/auth.md` | `auth.config.ts`/`.js` exactly one; OIDC `{domain, applicationID}`; `customJwt {issuer, jwks, algorithm RS256\|ES256, applicationID?}`; `process.env.*` at codegen time | `packages/codegen/src/auth_config.mjs` |
 | `developers/auth.md` | OIDC discovery; `aud` must equal `applicationID`; multi-audience rejected; `tokenIdentifier` = `issuer\|subject` | `crates/nimbus-convex/src/auth/verifier/metadata.rs`, `crates/nimbus-convex/src/auth/verifier/identity.rs`, `crates/nimbus-convex/src/auth/jwt/models/parsed_claims.rs` |
@@ -306,7 +306,7 @@ sources exist.
 | --- | --- | --- |
 | `concepts/architecture/server-transport.md` | `RouterOptions`/`build_router`, opt-in builder surface, route families, CORS layer, loopback + configured exact-origin predicates, middleware layering | `crates/nimbus-server/src/router.rs` |
 | `concepts/architecture/server-transport.md` | `ServeOptions`/`serve`, pre-bound listener, graceful shutdown, MongoDB/DynamoDB sibling listeners + abort-on-exit, listener-state recording, TTL sweeper spawn | `crates/nimbus-server/src/construction.rs` |
-| `concepts/architecture/server-transport.md` | Route lists: native `/api/*`, `/ws`, `/debug/*`, `/ui/*`, `/health`, `/demos`, Convex `/convex/{tenant}/*` + `/convex/{tenant}/ws`, Firestore REST + `/google.firestore.v1.Firestore/*`, gRPC-Web layer, shared `Listen` service instance, Cloud Functions fallback | `crates/nimbus-server/src/router.rs` |
+| `concepts/architecture/server-transport.md` | Route lists: native `/api/*`, `/ws`, `/debug/*`, `/ui/*`, `/health`, `/examples`, Convex `/convex/{tenant}/*` + `/convex/{tenant}/ws`, Firestore REST + `/google.firestore.v1.Firestore/*`, gRPC-Web layer, shared `Listen` service instance, Cloud Functions fallback | `crates/nimbus-server/src/router.rs` |
 | `concepts/architecture/server-transport.md` | Admin gate: origin allowlist → credential extraction → route-family gate, audit on every decision, credential modes (standard vs deploy admin-header-only) | `crates/nimbus-server/src/local_server/middleware.rs`, `crates/nimbus-server/src/local_server/mod.rs`, `crates/nimbus-operator/src/access_policy.rs` |
 | `concepts/architecture/server-transport.md` | Admin token minted on disk at first boot, rotatable | `crates/nimbus-server/src/local_server/mod.rs`, `crates/nimbus-server/src/router.rs` |
 | `concepts/architecture/server-transport.md` | Service-control routes authorize per-handler via principal-class checks | `crates/nimbus-server/src/http/authz.rs`, `crates/nimbus-server/src/http/sessions.rs` |

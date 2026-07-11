@@ -24,7 +24,7 @@ async fn nimbus_demo_html_is_served_without_convex_support() {
 
     let response = server
         .client()
-        .get(server.http_url("/demos/nimbus/html/"))
+        .get(server.http_url("/examples/nimbus/html/"))
         .send()
         .await
         .expect("demo request should succeed");

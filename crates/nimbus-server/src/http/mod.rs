@@ -53,7 +53,7 @@ pub(crate) use machines::{
     create_machine, delete_machine, restart_machine, start_machine, stop_machine, update_machine,
 };
 pub(crate) use metadata::{
-    demos_redirect, encryption_status, health, license_status, runtime_diagnostics,
+    encryption_status, examples_redirect, health, license_status, runtime_diagnostics,
     tenant_consistency_report, tenant_engine_diagnostics,
 };
 pub(crate) use queries::{

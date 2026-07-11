@@ -15,8 +15,11 @@ Modules (`convex/`):
 
 ## Deploy
 
+Start the local server with `nimbus dev`, then deploy to it (omit TARGET for
+local; pass a URL or configured target name to deploy elsewhere):
+
 ```bash
-nimbus deploy --url http://127.0.0.1:8080 --app-dir demos/convex/showcase
+nimbus deploy --app-dir examples/convex/showcase
 ```
 
 Then open the console (`nimbus auth url`) → Developer → Compute and open a

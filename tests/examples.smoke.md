@@ -1,9 +1,9 @@
-# Demos Smoke Notes
+# Examples Smoke Notes
 
-Manual smoke path for the browser demo:
+Manual smoke path for the browser example:
 
 1. `cargo run -p nimbus-bin -- serve --port 8080`
-2. Open `http://localhost:8080/demos/nimbus/html/`
+2. Open `http://localhost:8080/examples/nimbus/html/`
 3. Click `Create tenant`
 4. Click `Install schema`
 5. Click `Connect`
