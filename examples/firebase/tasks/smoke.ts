@@ -80,6 +80,12 @@ async function main(): Promise<void> {
     { name: projectId },
   );
   const firestore = initializeFirestore(app, { experimentalUnaryTransport: "rest" });
+  // `mockUserToken` is required: Firestore requests must carry a verified
+  // Firebase project claim (the #24 admission gate,
+  // crates/nimbus-firebase/src/project_tenant_registry.rs) — an anonymous
+  // (no-token) request has no verified project and is always refused. Only
+  // `nimbus dev`'s Firestore-client auto-tenant bypass verifies this mock
+  // token locally; there is no equivalent on `nimbus start`.
   connectFirestoreEmulator(
     firestore,
     baseUrl.hostname,

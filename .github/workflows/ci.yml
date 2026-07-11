@@ -2419,6 +2419,40 @@ jobs:
       - name: Test
         run: npm run test --workspaces --if-present
 
+  examples-verify:
+    name: Examples Verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    if: github.event_name != 'schedule'
+    needs: [nimbus-bin-build]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Download nimbus-bin binary
+        uses: actions/download-artifact@v8
+        with:
+          name: nimbus-bin
+          path: target/ci-archive
+
+      - name: Mark nimbus-bin executable
+        run: chmod +x target/ci-archive/nimbus
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run examples-verify
+        env:
+          NIMBUS_EXAMPLES_VERIFY_BIN: ${{ github.workspace }}/target/ci-archive/nimbus
+        run: make examples-verify
+
   proof-helpers:
     name: Proof Helper Checks
     runs-on: ubuntu-24.04
