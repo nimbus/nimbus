@@ -1,0 +1,12 @@
+{
+  "name": "cloud-functions-tasks",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke": "node --experimental-strip-types ./smoke.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  }
+}

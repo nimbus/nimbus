@@ -15,6 +15,8 @@
     "examples/convex/http",
     "examples/convex/node",
     "examples/convex/tasks",
+    "examples/cloud-functions/tasks",
+    "examples/cloud-functions/tasks/functions",
     "examples/firebase/html",
     "examples/firebase/tasks",
     "examples/dynamodb/tasks",
