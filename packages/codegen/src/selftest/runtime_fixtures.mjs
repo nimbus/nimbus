@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import vm from "node:vm";
@@ -23,6 +24,7 @@ async function runRuntimeFixtures() {
   await testRuntimeOnlyPaginatedQueryFixture();
   await testRuntimeOnlyMutationImportedScheduledFunctionsFixture();
   await testRuntimeOnlyMutationImportedScheduledFunctionsWithJsExtensionFixture();
+  await testMixedDefaultAndNodeRuntimeSharedBundleFixture();
   await testRuntimeProgramBundleCandidateFixture();
   await testBunRuntimeProgramBundleFixture();
   testRuntimeProgramBundleRejectsNodeRuntimeImports();
@@ -316,6 +318,90 @@ export const sendAndSchedule = mutation({
       reference_kind: "mutation",
     },
   });
+}
+
+// Regression fixture for a real bug found while building the convex/runtimes
+// example: crates/nimbus-convex loads exactly one bundle.mjs per app and
+// shares it across every V8-based runtime lane (the default web-standard
+// isolate and every node* lane alike). The codegen bundle template used to
+// emit a static top-level `import ... from "node:x"` for every Node builtin
+// used ANYWHERE in the app, unconditionally — so an app mixing one
+// default-runtime function with one "use node" function importing a Node
+// builtin failed module linking for the *default* function too, even though
+// it never touches that builtin. Node imports must resolve lazily (only when
+// the function that actually uses them is invoked) so a default-runtime
+// function sharing the bundle is never asked to resolve them at all.
+async function testMixedDefaultAndNodeRuntimeSharedBundleFixture() {
+  const appDir = await createAppFixture({
+    "actions.ts": `
+import { action } from "./_generated/server";
+import { v } from "convex/values";
+
+export const runDefault = action({
+  args: { text: v.string() },
+  returns: v.string(),
+  handler: async (_ctx, { text }) => \`default:\${text.toUpperCase()}\`,
+});
+`,
+    "nodeActions.ts": `
+"use node";
+
+import crypto from "node:crypto";
+import { action } from "./_generated/server";
+import { v } from "convex/values";
+
+export const runNode = action({
+  args: { text: v.string() },
+  returns: v.string(),
+  handler: async (_ctx, { text }) =>
+    crypto.createHash("sha256").update(text, "utf8").digest("hex"),
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
+  assert.doesNotMatch(runtimeBundle, /^import .* from "node:/m);
+  assert.match(runtimeBundle, /"actions:runDefault"/);
+  assert.match(runtimeBundle, /"nodeActions:runNode"/);
+
+  const bundleUrl =
+    `${pathToFileURL(path.join(appDir, ".nimbus", "convex", "bundle.mjs")).href}?mixedRuntime=1`;
+  const previousInvoke = globalThis.__nimbusInvoke;
+  const previousCreateContext = globalThis.__nimbusCreateContext;
+  globalThis.__nimbusCreateContext = () => ({});
+
+  try {
+    await import(bundleUrl);
+
+    const defaultResponse = await globalThis.__nimbusInvoke({
+      kind: "action",
+      function_name: "actions:runDefault",
+      args: { text: "world" },
+    });
+    assert.deepEqual(defaultResponse, { status: "ok", value: "default:WORLD" });
+
+    const expectedHash = createHash("sha256").update("hello", "utf8").digest("hex");
+    const nodeResponse = await globalThis.__nimbusInvoke({
+      kind: "action",
+      function_name: "nodeActions:runNode",
+      args: { text: "hello" },
+    });
+    assert.deepEqual(nodeResponse, { status: "ok", value: expectedHash });
+  } finally {
+    if (previousInvoke === undefined) {
+      delete globalThis.__nimbusInvoke;
+    } else {
+      globalThis.__nimbusInvoke = previousInvoke;
+    }
+    if (previousCreateContext === undefined) {
+      delete globalThis.__nimbusCreateContext;
+    } else {
+      globalThis.__nimbusCreateContext = previousCreateContext;
+    }
+  }
 }
 
 async function testRuntimeProgramBundleCandidateFixture() {

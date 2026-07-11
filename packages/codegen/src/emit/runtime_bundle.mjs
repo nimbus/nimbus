@@ -1,25 +1,38 @@
 import { buildRuntimeBundleSource } from "./runtime_bundle_parts.mjs";
 
+// The generated bundle resolves Node builtin/external-package bindings lazily,
+// via dynamic import() inside compileRuntimeHandler (see
+// runtime_bundle_preamble.mjs), rather than static top-level imports. This
+// matters because crates/nimbus-convex loads exactly one bundle.mjs per app
+// and shares it across every V8-based runtime lane (the default web-standard
+// isolate and every node* lane alike) — a static top-level `import ... from
+// "node:x"` emitted for one function's Node dependency would fail module
+// linking for the whole bundle, including default-runtime functions that
+// never touch Node builtins at all. Lazy resolution means a function only
+// ever triggers resolution of the specifiers it actually uses.
 function generateRuntimeBundle(manifest) {
-  const { importPreamble } = collectNodeRuntimeImports(manifest);
-  return buildRuntimeBundleSource(JSON.stringify(manifest, null, 2), importPreamble, {
+  return buildRuntimeBundleSource(JSON.stringify(manifest, null, 2), {
     module: true,
   });
 }
 
+// The Bun/JSC program bundle is a flat, non-module script (no import/export
+// statements, see the `module: false` option below), so it cannot rely on
+// dynamic import() the way the default module bundle does; Node runtime
+// imports remain unsupported there and are rejected loudly at codegen time.
 function generateRuntimeProgramBundle(manifest) {
-  const { importSpecifiers } = collectNodeRuntimeImports(manifest);
+  const importSpecifiers = collectNodeRuntimeSpecifiers(manifest);
   if (importSpecifiers.length > 0) {
     throw new Error(
       `runtime program bundle cannot materialize Node runtime imports: ${importSpecifiers.join(", ")}`,
     );
   }
-  return buildRuntimeBundleSource(JSON.stringify(manifest, null, 2), "", {
+  return buildRuntimeBundleSource(JSON.stringify(manifest, null, 2), {
     module: false,
   });
 }
 
-function collectNodeRuntimeImports(manifest) {
+function collectNodeRuntimeSpecifiers(manifest) {
   const builtinSpecifiers = new Set();
   const externalPackageSpecifiers = new Set();
   for (const fn of manifest.functions ?? []) {
@@ -28,35 +41,7 @@ function collectNodeRuntimeImports(manifest) {
       externalPackageSpecifiers,
     });
   }
-  return {
-    importSpecifiers: [
-      ...[...builtinSpecifiers].sort(),
-      ...[...externalPackageSpecifiers].sort(),
-    ],
-    importPreamble: [
-      ...createImportMapPreamble({
-        importNamePrefix: "__nimbusNodeBuiltin",
-        mapName: "__nimbusNodeBuiltinModules",
-        specifiers: builtinSpecifiers,
-      }),
-      ...createImportMapPreamble({
-        importNamePrefix: "__nimbusNodeExternalPackage",
-        mapName: "__nimbusNodeExternalPackages",
-        specifiers: externalPackageSpecifiers,
-      }),
-    ].join("\n"),
-  };
-}
-
-function createImportMapPreamble({ importNamePrefix, mapName, specifiers }) {
-  const sorted = [...specifiers].sort();
-  const importNames = new Map(sorted.map((specifier, index) => [specifier, `${importNamePrefix}${index}`]));
-  const imports = sorted.map((specifier) => `import * as ${importNames.get(specifier)} from ${JSON.stringify(specifier)};`);
-  const entries = sorted.map((specifier) => `[${JSON.stringify(specifier)}, ${importNames.get(specifier)}]`);
-  const bindings = entries.length === 0
-    ? `const ${mapName} = new Map();`
-    : `const ${mapName} = new Map([\n  ${entries.join(",\n  ")}\n]);`;
-  return [...imports, bindings];
+  return [...[...builtinSpecifiers].sort(), ...[...externalPackageSpecifiers].sort()];
 }
 
 function collectNodeRuntimeDescriptors(value, { builtinSpecifiers, externalPackageSpecifiers }) {

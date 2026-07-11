@@ -19,6 +19,8 @@ async function runActionFixtures() {
   await testNodeRuntimeConfigFixture();
   await testNodeRuntimeCurrentConfigFixture();
   await testNodeExternalPackagesMetadataFixture();
+  await testDefaultRuntimeExternalPackageRequiresExternalizationFixture();
+  await testDefaultRuntimeExternalPackageFixture();
   await testNodeExternalPackagesStarFixture();
   await testNodePackageImportRequiresExternalizationFixture();
   await testNodeExternalPackageRequiresLocalInstallFixture();
@@ -26,6 +28,10 @@ async function runActionFixtures() {
   await testUseNodeActionFixture();
   await testUseNodeRejectsQueriesFixture();
   await testDefaultRuntimeRejectsNodeBuiltinsFixture();
+  await testDefaultRuntimeRejectsUnusedUseNodeImportFixture();
+  await testDefaultRuntimeRejectsUsedUseNodeImportFixture();
+  await testDefaultRuntimeAllowsTypeOnlyUseNodeImportFixture();
+  await testDefaultRuntimeAllowsGeneratedApiReferenceToUseNodeActionFixture();
   await testDebugNodeApisFixture();
   await testInvalidNodeVersionFixture();
 }
@@ -102,10 +108,91 @@ export const read = action({
   );
 
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
-  assert.match(runtimeBundle, /from "sharp"/);
-  assert.match(runtimeBundle, /from "@scope\/pkg\/subpath"/);
+  // External package bindings resolve via dynamic import() at first
+  // invocation, not a static top-level import — see
+  // packages/codegen/src/emit/runtime_bundle.mjs.
+  assert.doesNotMatch(runtimeBundle, /^import .* from "sharp"/m);
+  assert.doesNotMatch(runtimeBundle, /^import .* from "@scope\/pkg\/subpath"/m);
+  assert.match(runtimeBundle, /nodeExternalPackage\(specifier\)/);
   assert.match(runtimeBundle, /node_external_package_default/);
   assert.match(runtimeBundle, /node_external_package_named/);
+}
+
+// A default-runtime module (no "use node") importing a bare npm package
+// specifier must be rejected the same way a Node-lane module importing an
+// unexternalized package is -- Nimbus never implicitly bundles npm packages
+// into either lane's runtime bundle.
+async function testDefaultRuntimeExternalPackageRequiresExternalizationFixture() {
+  const appDir = await createAppFixture(
+    {
+      "widgets.ts": `
+import { greet } from "greetlib";
+import { mutation } from "./_generated/server";
+
+export const create = mutation({
+  args: {},
+  handler: async () => greet(),
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "node_modules/greetlib/package.json": `{"name":"greetlib","version":"1.0.0","main":"index.js"}`,
+        "node_modules/greetlib/index.js": `export const greet = () => "hi";`,
+      },
+    },
+  );
+
+  const result = runCli(appDir);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /imports package "greetlib", but that package is not externalized/);
+  assert.match(result.stderr, /node\.externalPackages/);
+}
+
+// A real, browser-compatible npm package (no Node builtins) works from a
+// default-runtime module once externalized in convex.json, exactly like the
+// Node-lane case -- same staging root, same dynamic-import() resolution at
+// runtime (see emit/runtime_bundle_preamble.mjs), just reached from a module
+// without "use node" at the top.
+async function testDefaultRuntimeExternalPackageFixture() {
+  const appDir = await createAppFixture(
+    {
+      "widgets.ts": `
+import { greet } from "greetlib";
+import { mutation } from "./_generated/server";
+
+export const create = mutation({
+  args: {},
+  handler: async () => greet(),
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "node_modules/greetlib/package.json": `{"name":"greetlib","version":"1.0.0","main":"index.js"}`,
+        "node_modules/greetlib/index.js": `export const greet = () => "hi";`,
+        "convex.json": `{ "node": { "externalPackages": ["greetlib"] } }\n`,
+      },
+    },
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.equal(manifest.functions[0].runtime_environment, "default");
+  assert.equal(manifest.functions[0].runtime_bindings.greet.type, "node_external_package_named");
+
+  const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
+  assert.doesNotMatch(runtimeBundle, /^import .* from "greetlib"/m);
+  assert.match(runtimeBundle, /node_external_package_named/);
+
+  assert.match(
+    await readConvexFile(appDir, "node_modules/greetlib/index.js"),
+    /greet = \(\) => "hi"/,
+  );
 }
 
 async function testNodeExternalPackagesStarFixture() {
@@ -166,7 +253,7 @@ export const read = action({
 
   const result = runCli(appDir);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /package "pkg" from a Node action module/);
+  assert.match(result.stderr, /imports package "pkg", but that package is not externalized/);
   assert.match(result.stderr, /does not yet bundle npm packages/);
   assert.match(result.stderr, /node\.externalPackages/);
 }
@@ -608,7 +695,14 @@ export const runInternal = internalAction({
   });
 
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
-  assert.match(runtimeBundle, /from "node:fs"/);
+  // Node builtin bindings resolve via dynamic import() at first invocation,
+  // not a static top-level import — the bundle carries no compile-time
+  // dependency on "node:fs" that would break module linking for a
+  // default-runtime function sharing the same bundle. See
+  // packages/codegen/src/emit/runtime_bundle.mjs.
+  assert.doesNotMatch(runtimeBundle, /^import .* from "node:fs"/m);
+  assert.match(runtimeBundle, /nodeBuiltinModule\(specifier\)/);
+  assert.match(runtimeBundle, /return import\(specifier\)/);
   assert.match(runtimeBundle, /"type": "node_builtin_default"/);
   assert.match(runtimeBundle, /"type": "node_builtin_named"/);
 }
@@ -650,6 +744,146 @@ export const read = action({
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /imports Node\.js builtin module/);
   assert.match(result.stderr, /--debug-node-apis/);
+}
+
+// A default-runtime module cannot import a "use node" module directly, even
+// if the import is never referenced anywhere — the two modules execute on
+// separate runtime lanes (see emit/runtime_bundle_preamble.mjs) and codegen
+// must reject the cross-runtime import outright rather than let it through
+// silently. See parser.mjs's validateCrossModuleRuntimeImports.
+async function testDefaultRuntimeRejectsUnusedUseNodeImportFixture() {
+  const appDir = await createAppFixture({
+    "nodeHelpers.ts": `
+"use node";
+
+import { createHash } from "node:crypto";
+import { action } from "./_generated/server";
+
+export const hashIt = action({
+  args: {},
+  handler: async () => createHash("sha256").update("x").digest("hex"),
+});
+`,
+    "widgets.ts": `
+import { hashIt } from "./nodeHelpers";
+import { query } from "./_generated/server";
+
+export const list = query({
+  args: {},
+  handler: async () => [],
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /widgets\.ts imports "\.\/nodeHelpers"/);
+  assert.match(result.stderr, /begins with "use node"/);
+  assert.match(result.stderr, /cannot import a "use node" module directly/);
+  assert.match(result.stderr, /ctx\.runAction\(internal\.nodeHelpers\.<exportName>, args\)/);
+}
+
+// The same clear cross-runtime-import error must fire even when the import
+// is actually referenced in a handler body — previously this case surfaced a
+// generic, implementation-detail "Phase 4C ... unsupported export shape"
+// error out of the compile-time plan resolver instead.
+async function testDefaultRuntimeRejectsUsedUseNodeImportFixture() {
+  const appDir = await createAppFixture({
+    "nodeHelpers.ts": `
+"use node";
+
+import { createHash } from "node:crypto";
+import { action } from "./_generated/server";
+
+export const hashIt = action({
+  args: {},
+  handler: async () => createHash("sha256").update("x").digest("hex"),
+});
+`,
+    "widgets.ts": `
+import { hashIt } from "./nodeHelpers";
+import { query } from "./_generated/server";
+
+export const list = query({
+  args: {},
+  handler: async () => {
+    return typeof hashIt;
+  },
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /widgets\.ts imports "\.\/nodeHelpers"/);
+  assert.match(result.stderr, /begins with "use node"/);
+  assert.doesNotMatch(result.stderr, /Phase 4C/);
+}
+
+// A whole-statement `import type ... from "./useNodeModule"` is erased by
+// the TypeScript compiler and never reaches the runtime bundle, so it must
+// not trip the cross-runtime import rule.
+async function testDefaultRuntimeAllowsTypeOnlyUseNodeImportFixture() {
+  const appDir = await createAppFixture({
+    "nodeHelpers.ts": `
+"use node";
+
+import { createHash } from "node:crypto";
+import { action } from "./_generated/server";
+
+export const hashIt = action({
+  args: {},
+  handler: async () => createHash("sha256").update("x").digest("hex"),
+});
+`,
+    "widgets.ts": `
+import type { hashIt } from "./nodeHelpers";
+import { query } from "./_generated/server";
+
+export const list = query({
+  args: {},
+  handler: async () => [],
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+}
+
+// The supported way to call a "use node" action from a default-runtime
+// function is through the generated API reference (internal.<module>.<name>)
+// passed to ctx.runAction — this must continue to work unaffected by the
+// cross-runtime import rule, since it never imports the "use node" module's
+// file directly.
+async function testDefaultRuntimeAllowsGeneratedApiReferenceToUseNodeActionFixture() {
+  const appDir = await createAppFixture({
+    "nodeHelpers.ts": `
+"use node";
+
+import { createHash } from "node:crypto";
+import { action } from "./_generated/server";
+
+export const hashIt = action({
+  args: {},
+  handler: async () => createHash("sha256").update("x").digest("hex"),
+});
+`,
+    "widgets.ts": `
+import { internal } from "./_generated/api";
+import { action } from "./_generated/server";
+
+export const runIt = action({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.runAction(internal.nodeHelpers.hashIt, {});
+  },
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
 }
 
 async function testDebugNodeApisFixture() {
