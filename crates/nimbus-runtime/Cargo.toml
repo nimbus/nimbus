@@ -44,6 +44,7 @@ futures.workspace = true
 libc.workspace = true
 libloading.workspace = true
 node_resolver.workspace = true
+rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

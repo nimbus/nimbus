@@ -298,6 +298,37 @@ mod tests {
     }
 
     #[test]
+    fn convex_default_lane_carries_convex_guest_semantics_and_node_lanes_stay_host() {
+        let registry = ConvexRegistry::empty();
+        assert_eq!(
+            registry.runtime_limits().guest_semantics,
+            nimbus_runtime::RuntimeGuestSemantics::ConvexDefault,
+            "the default Convex lane must opt into the Convex default-runtime guest semantics"
+        );
+        for (lane_label, lane) in [
+            ("node20", &registry.node20_runtime_lane),
+            ("node22", &registry.node22_runtime_lane),
+            ("node24", &registry.node24_runtime_lane),
+            ("node26", &registry.node26_runtime_lane),
+        ] {
+            assert_eq!(
+                lane.limits().guest_semantics,
+                nimbus_runtime::RuntimeGuestSemantics::Host,
+                "{lane_label} lane must stay on Host semantics (the upstream Node runtime is \
+                 exempt from the default-runtime determinism contract)"
+            );
+        }
+        // A server-supplied V8 base-limits override must not strip the
+        // semantics opt-in.
+        let overridden = ConvexRegistry::empty().with_runtime_limits(RuntimeLimits::default());
+        assert_eq!(
+            overridden.runtime_limits().guest_semantics,
+            nimbus_runtime::RuntimeGuestSemantics::ConvexDefault,
+            "base-limits overrides must not lose the ConvexDefault opt-in"
+        );
+    }
+
+    #[test]
     fn convex_registry_applies_runtime_host_resource_budget_to_runtime_policy() {
         let budget = two_seat_runtime_host_budget();
         let registry = ConvexRegistry::empty().with_runtime_host_governor(

@@ -30,6 +30,10 @@ delete globalThis.__bootstrap;
 delete globalThis.bootstrap;
 __nimbusInstallRuntimeContractGlobals(__nimbusRuntimeContract);
 __nimbusInstallSideChannelHardening();
+// Guest-semantics install must FOLLOW hardening: its host-mode fallbacks
+// capture the coarsened clocks, and its dispatchers carry the hardening
+// marker so the pass above stays idempotent.
+__nimbusInstallGuestSemantics(__nimbusRuntimeContract);
 const __nimbusNodeVersion =
   __nimbusRuntimeContract?.node_api_contract?.version_number;
 const __nimbusNodeRuntimeMajor = __nimbusCompatibilityMatch

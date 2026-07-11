@@ -57,7 +57,14 @@ fn convex_registry_from_app_dir_uses_product_runtime_defaults() {
 
     let registry = ConvexRegistry::from_app_dir(tempdir.path())
         .expect("convex registry should load using product defaults");
-    assert_eq!(registry.runtime_limits(), RuntimeLimits::default());
+    // Product defaults plus the Convex default-runtime guest-semantics
+    // opt-in the default lane always carries (seeded Math.random, frozen
+    // invocation clock, fetch-in-actions-only, process.env/async_hooks).
+    let expected = RuntimeLimits {
+        guest_semantics: nimbus_runtime::RuntimeGuestSemantics::ConvexDefault,
+        ..RuntimeLimits::default()
+    };
+    assert_eq!(registry.runtime_limits(), expected);
 }
 
 #[test]

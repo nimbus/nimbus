@@ -193,14 +193,20 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
       kind,
       host_call_session_id: hostCallSessionId,
     });
-    return await localInvoker({
-      kind,
-      function_name: normalized.name,
-      args,
-      visibility: normalized.visibility,
-      hostCallSessionId,
-      ...(nestedAuthContext ? { auth: nestedAuthContext } : {}),
-    });
+    const invokeLocal = () =>
+      localInvoker({
+        kind,
+        function_name: normalized.name,
+        args,
+        visibility: normalized.visibility,
+        hostCallSessionId,
+        ...(nestedAuthContext ? { auth: nestedAuthContext } : {}),
+      });
+    // Start the nested handler from the root async context (as the host
+    // dispatch path below does) so caller AsyncLocalStorage state never
+    // propagates into ctx.run* callees.
+    const detached = globalThis.__nimbusCallDetachedFromInvocationContext;
+    return await (typeof detached === "function" ? detached(invokeLocal) : invokeLocal());
   }
   return globalThis.__nimbusAsyncHostValue(asyncOpName, {
     ...normalized,

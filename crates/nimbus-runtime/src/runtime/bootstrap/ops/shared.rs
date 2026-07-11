@@ -10,7 +10,7 @@ use crate::execution_plan::RuntimeEffectClass;
 use crate::executor::SharedInvocationPermit;
 use crate::host::{HostCallOperation, HostCallRequest};
 use crate::limits::{
-    RuntimeCompatibilityTarget, RuntimeGrants, RuntimeLanguage, RuntimeMode,
+    RuntimeCompatibilityTarget, RuntimeGrants, RuntimeGuestSemantics, RuntimeLanguage, RuntimeMode,
     RuntimeNodeSupportPhase, RuntimePreset,
 };
 use crate::runtime_capabilities::RuntimeContractPathsDescriptor;
@@ -26,6 +26,7 @@ use super::super::state::{
 #[serde(rename_all = "snake_case")]
 pub(super) struct RuntimeContractDescriptor {
     compatibility_target: RuntimeCompatibilityTarget,
+    guest_semantics: RuntimeGuestSemantics,
     node_api_contract: Option<RuntimeNodeApiContractDescriptor>,
     runtime_mode: RuntimeMode,
     runtime_language: RuntimeLanguage,
@@ -54,6 +55,7 @@ pub(super) fn op_nimbus_runtime_contract(state: &mut OpState) -> RuntimeContract
     let limits = &contract.limits;
     RuntimeContractDescriptor {
         compatibility_target: limits.compatibility_target,
+        guest_semantics: limits.guest_semantics,
         node_api_contract: limits
             .compatibility_target
             .node_lts_metadata()
@@ -71,6 +73,59 @@ pub(super) fn op_nimbus_runtime_contract(state: &mut OpState) -> RuntimeContract
         runtime_preset: limits.preset,
         runtime_grants: limits.grants.clone(),
         paths: capability_policy.paths.descriptor(),
+    }
+}
+
+/// Per-invocation determinism inputs for the guest semantics controller.
+/// `enabled` is false unless the lane runs under
+/// `RuntimeGuestSemantics::ConvexDefault` and a live invocation is bound.
+/// `now_ms` is the invocation-start wall clock (the frozen `Date.now()` value
+/// for queries/mutations) and `seed_hex` is fresh per-invocation entropy for
+/// the seeded `Math.random()` stream.
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) struct RuntimeInvocationDeterminismDescriptor {
+    enabled: bool,
+    kind: Option<&'static str>,
+    now_ms: u64,
+    seed_hex: String,
+}
+
+#[op2]
+#[serde]
+pub(super) fn op_nimbus_runtime_invocation_determinism(
+    state: &mut OpState,
+) -> RuntimeInvocationDeterminismDescriptor {
+    let contract = state.borrow::<InstalledRuntimeContract>();
+    let binding = state.borrow::<super::super::state::RuntimeInvocationHostCallBinding>();
+    let kind = binding.invocation_kind();
+    let enabled = matches!(
+        contract.limits.guest_semantics,
+        crate::limits::RuntimeGuestSemantics::ConvexDefault
+    ) && kind.is_some();
+    if !enabled {
+        return RuntimeInvocationDeterminismDescriptor {
+            enabled: false,
+            kind,
+            now_ms: 0,
+            seed_hex: String::new(),
+        };
+    }
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(0);
+    let seed: [u8; 32] = rand::random();
+    let mut seed_hex = String::with_capacity(64);
+    for byte in seed {
+        use std::fmt::Write;
+        let _ = write!(seed_hex, "{byte:02x}");
+    }
+    RuntimeInvocationDeterminismDescriptor {
+        enabled: true,
+        kind,
+        now_ms,
+        seed_hex,
     }
 }
 

@@ -450,6 +450,30 @@ const __nimbusInstallRuntimeContractGlobals = function __nimbusInstallRuntimeCon
   delete globalThis.Buffer;
   delete globalThis.global;
   delete globalThis.process;
+  if (contract.guest_semantics === "convex_default") {
+    // Convex default runtime Node-API subset: `process.env` only (backed by
+    // the same capability-gated env proxy as the Node lanes). No versions,
+    // release, cwd, or Buffer — this is not a Node environment.
+    const convexProcess = {};
+    Object.defineProperty(convexProcess, "env", {
+      value: __nimbusCreateProcessEnvProxy(),
+      configurable: true,
+      enumerable: true,
+      writable: false,
+    });
+    Object.defineProperty(convexProcess, Symbol.toStringTag, {
+      value: "process",
+      configurable: false,
+      enumerable: false,
+      writable: true,
+    });
+    Object.defineProperty(globalThis, "process", {
+      value: convexProcess,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+  }
 };
 
 Object.freeze(__nimbusInstallRuntimeContractGlobals);

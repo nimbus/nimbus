@@ -82,7 +82,7 @@ pub use limits::{
     RuntimeExecutionAdapterArtifactDiagnostics, RuntimeExecutionAdapterArtifactSource,
     RuntimeExecutionAdapterArtifactStatus, RuntimeExecutionAdapterExpectedArtifact,
     RuntimeExecutionAdapterManifestArtifact, RuntimeExecutionAdapterState, RuntimeExecutionModel,
-    RuntimeGrants, RuntimeHostAdmissionAction, RuntimeHostAdmissionDecision,
+    RuntimeGrants, RuntimeGuestSemantics, RuntimeHostAdmissionAction, RuntimeHostAdmissionDecision,
     RuntimeHostPressureLevel, RuntimeHostPressureSample, RuntimeHostPressureSource,
     RuntimeHostPressureSourceStatus, RuntimeHostResourceBudget, RuntimeHostResourceDecision,
     RuntimeHostWorkClass, RuntimeIsolateGroupFfiStatus, RuntimeJavaScriptEvaluationFormat,

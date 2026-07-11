@@ -80,6 +80,7 @@ pub(super) struct InstalledRuntimeContract {
 pub(super) struct RuntimeInvocationHostCallBinding {
     session_id: Option<String>,
     invocation_id: Option<u64>,
+    invocation_kind: Option<&'static str>,
     tenant_label: Option<String>,
 }
 
@@ -88,6 +89,7 @@ impl RuntimeInvocationHostCallBinding {
         Self {
             session_id: None,
             invocation_id: None,
+            invocation_kind: None,
             tenant_label: None,
         }
     }
@@ -96,6 +98,7 @@ impl RuntimeInvocationHostCallBinding {
         Self {
             session_id: Some(format!("{}:{}", context.kind, context.function_name)),
             invocation_id: Some(context.invocation_id),
+            invocation_kind: Some(context.kind),
             tenant_label: context.tenant_label.clone(),
         }
     }
@@ -106,6 +109,10 @@ impl RuntimeInvocationHostCallBinding {
 
     pub(super) fn invocation_id(&self) -> Option<u64> {
         self.invocation_id
+    }
+
+    pub(super) fn invocation_kind(&self) -> Option<&'static str> {
+        self.invocation_kind
     }
 
     pub(super) fn tenant_label(&self) -> Option<&str> {

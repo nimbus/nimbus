@@ -1,5 +1,7 @@
 #[path = "runtime_queries/get_and_query/mod.rs"]
 mod get_and_query;
+#[path = "runtime_queries/guest_semantics.rs"]
+mod guest_semantics;
 #[path = "runtime_queries/single_result.rs"]
 mod single_result;
 #[path = "runtime_queries/tracking.rs"]

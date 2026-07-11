@@ -17,6 +17,39 @@ Object.defineProperty(globalThis, "__nimbusDrainImmediates", {
   enumerable: false,
   writable: true,
 });
+// Nested-call context detachment: a locally-dispatched nested invocation
+// (globalThis.__nimbusInvokeNamedLocal) must start from the same async
+// context a host-dispatched one would — the root frame captured here at
+// bootstrap — so AsyncLocalStorage data never propagates into
+// ctx.runQuery/runMutation/runAction (the documented Convex default-runtime
+// caveat, and dispatch-path parity between the local and host paths).
+{
+  const nimbusGetAsyncContext = Deno.core.getAsyncContext;
+  const nimbusSetAsyncContext = Deno.core.setAsyncContext;
+  const supported =
+    typeof nimbusGetAsyncContext === "function" &&
+    typeof nimbusSetAsyncContext === "function";
+  const rootAsyncContext = supported ? nimbusGetAsyncContext() : undefined;
+  Object.defineProperty(globalThis, "__nimbusCallDetachedFromInvocationContext", {
+    value: supported
+      ? function __nimbusCallDetachedFromInvocationContext(fn) {
+          const previous = nimbusGetAsyncContext();
+          nimbusSetAsyncContext(rootAsyncContext);
+          try {
+            return fn();
+          } finally {
+            nimbusSetAsyncContext(previous);
+          }
+        }
+      : function __nimbusCallDetachedFromInvocationContext(fn) {
+          return fn();
+        },
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+}
+
 const __nimbusContextHostCallOps = new Set([
   "op_nimbus_ctx_query_start",
   "op_nimbus_ctx_query_with_index",

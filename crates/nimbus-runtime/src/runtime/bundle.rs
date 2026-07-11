@@ -11,9 +11,10 @@ use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
-    RuntimeExecutionModel, RuntimeJavaScriptEvaluationFormat, RuntimeLanguage, RuntimeLimits,
-    RuntimeMemoryEnforcement, RuntimeMode, RuntimeNodeFullRealmReusePolicy, RuntimePoolKind,
-    RuntimePreset, RuntimeProfile, RuntimeRoutingAffinity,
+    RuntimeExecutionModel, RuntimeGuestSemantics, RuntimeJavaScriptEvaluationFormat,
+    RuntimeLanguage, RuntimeLimits, RuntimeMemoryEnforcement, RuntimeMode,
+    RuntimeNodeFullRealmReusePolicy, RuntimePoolKind, RuntimePreset, RuntimeProfile,
+    RuntimeRoutingAffinity,
 };
 use crate::module_loader::BundleModuleCodeCache;
 
@@ -105,6 +106,20 @@ struct RuntimeBundleShared {
     expected_sha256: Option<String>,
     identity: RuntimeBundleIdentity,
     module_code_caches: Mutex<HashMap<RuntimeBundleEngineCacheKey, Arc<BundleModuleCodeCache>>>,
+    deploy_stamp: std::sync::OnceLock<RuntimeBundleDeployStamp>,
+}
+
+/// Deploy-stable identity for guest determinism semantics: the timestamp the
+/// bundle was deployed (entrypoint mtime — deploys rewrite the bundle file —
+/// falling back to first-observation time) and a content-derived seed (the
+/// bundle SHA-256). Both survive server restarts for the same deployed bundle,
+/// so import-time `Date.now()` / `Math.random()` values and
+/// `performance.timeOrigin` stay stable across runs per the Convex default
+/// runtime contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeBundleDeployStamp {
+    pub timestamp_ms: u64,
+    pub seed_hex: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -116,6 +131,7 @@ struct RuntimeBundleEngineCacheKey {
     content_kind: RuntimeBundleContentKind,
     javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat,
     compatibility_target: RuntimeCompatibilityTarget,
+    guest_semantics: RuntimeGuestSemantics,
     runtime_profile: Option<RuntimeProfile>,
     node_conditions: Vec<String>,
     execution_model: RuntimeExecutionModel,
@@ -161,6 +177,7 @@ impl RuntimeBundleEngineCacheKey {
             content_kind: limits.bundle_content_kind,
             javascript_evaluation_format: limits.javascript_evaluation_format,
             compatibility_target: limits.compatibility_target,
+            guest_semantics: limits.guest_semantics,
             runtime_profile: RuntimeProfile::for_limits(limits),
             node_conditions: limits.node_conditions.clone(),
             execution_model: limits.execution_model,
@@ -539,8 +556,41 @@ impl RuntimeBundle {
                 expected_sha256,
                 identity,
                 module_code_caches: Mutex::new(HashMap::new()),
+                deploy_stamp: std::sync::OnceLock::new(),
             }),
         }
+    }
+
+    /// The bundle's deploy stamp (see [`RuntimeBundleDeployStamp`]). Computed
+    /// once per bundle handle and cached; reading the file for the seed hash
+    /// only happens when no expected SHA-256 was recorded.
+    pub(crate) fn deploy_stamp(&self) -> RuntimeBundleDeployStamp {
+        self.shared
+            .deploy_stamp
+            .get_or_init(|| {
+                let entrypoint = self
+                    .shared
+                    .canonical_entrypoint
+                    .as_deref()
+                    .unwrap_or(&self.shared.entrypoint);
+                let timestamp_ms = std::fs::metadata(entrypoint)
+                    .and_then(|metadata| metadata.modified())
+                    .unwrap_or_else(|_| std::time::SystemTime::now())
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|elapsed| elapsed.as_millis().min(u64::MAX as u128) as u64)
+                    .unwrap_or(0);
+                let seed_hex = match &self.shared.expected_sha256 {
+                    Some(sha256) => sha256.clone(),
+                    None => Self::compute_sha256_for_path(entrypoint).unwrap_or_else(|_| {
+                        compute_sha256_hex(entrypoint.to_string_lossy().as_bytes())
+                    }),
+                };
+                RuntimeBundleDeployStamp {
+                    timestamp_ms,
+                    seed_hex,
+                }
+            })
+            .clone()
     }
 
     pub(crate) fn module_code_cache(

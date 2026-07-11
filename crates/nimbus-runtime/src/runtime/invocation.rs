@@ -66,7 +66,13 @@ impl InvocationRequest {
                     "globalThis.__nimbusInvokeCloudflareWorkerFetch(import({module_specifier_json}), {request_json})"
                 ))
             }
-            _ => Ok(format!("globalThis.__nimbusInvoke({request_json})")),
+            // The prelude reconfigures the guest-semantics surface (frozen
+            // clock / seeded PRNG) for this invocation; it is a no-op on
+            // Host-semantics lanes. The comma expression still evaluates to
+            // the __nimbusInvoke result.
+            _ => Ok(format!(
+                "(globalThis.__nimbusBeginGuestInvocation?.(), globalThis.__nimbusInvoke({request_json}))"
+            )),
         }
     }
 }

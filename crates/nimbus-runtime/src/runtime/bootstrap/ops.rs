@@ -51,7 +51,7 @@ use self::runtime_local::{
 };
 use self::shared::{
     op_nimbus_runtime_contract, op_nimbus_runtime_host_call_session_id,
-    op_nimbus_runtime_wait_until_pending,
+    op_nimbus_runtime_invocation_determinism, op_nimbus_runtime_wait_until_pending,
 };
 use self::sync_query_builder::{
     op_nimbus_ctx_query_filter, op_nimbus_ctx_query_order, op_nimbus_ctx_query_start,
@@ -109,6 +109,7 @@ extension!(
         op_nimbus_ctx_run_action,
         op_nimbus_runtime_contract,
         op_nimbus_runtime_host_call_session_id,
+        op_nimbus_runtime_invocation_determinism,
         op_nimbus_runtime_wait_until_pending,
         op_nimbus_runtime_fs_read_file,
         op_nimbus_runtime_fs_write_file,

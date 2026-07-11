@@ -6,6 +6,7 @@ pub(super) const NODE_MODULE_SPECIFIER: &str = "node:module";
 pub(super) const NIMBUS_NODE_MODULE_SPECIFIER: &str = "node:nimbus/module";
 pub(super) const INTERNAL_READLINE_UTILS_SPECIFIER: &str = "internal/readline/utils";
 pub(super) const NIMBUS_INTERNAL_READLINE_UTILS_SPECIFIER: &str = "nimbus:internal/readline/utils";
+pub(super) const NODE_ASYNC_HOOKS_SPECIFIER: &str = "node:async_hooks";
 
 const NODE_PERF_HOOKS_SPECIFIER: &str = "node:perf_hooks";
 const NODE_TLS_SPECIFIER: &str = "node:tls";
@@ -21,6 +22,32 @@ const NODE_MODULE_MODULE_SOURCE: &str = concat!(
     include_str!("builtins/module_fs_modules.js"),
     include_str!("builtins/module_wiring.js"),
 );
+
+const WEB_ASYNC_HOOKS_MODULE_SOURCE: &str = include_str!("builtins/web_async_hooks.js");
+
+/// Builtins served to WebStandardIsolate lanes that opt into the Convex
+/// default-runtime guest semantics (the documented Node-API subset). Node
+/// lanes never reach this: their `node:async_hooks` stays the full
+/// extension-backed deno_node surface.
+pub(super) fn source_for_supported_web_guest_builtin(
+    specifier: &str,
+    compatibility_target: crate::limits::RuntimeCompatibilityTarget,
+    guest_semantics: crate::limits::RuntimeGuestSemantics,
+) -> Option<&'static str> {
+    if !matches!(
+        compatibility_target,
+        crate::limits::RuntimeCompatibilityTarget::WebStandardIsolate
+    ) || !matches!(
+        guest_semantics,
+        crate::limits::RuntimeGuestSemantics::ConvexDefault
+    ) {
+        return None;
+    }
+    match specifier {
+        NODE_ASYNC_HOOKS_SPECIFIER => Some(WEB_ASYNC_HOOKS_MODULE_SOURCE),
+        _ => None,
+    }
+}
 
 pub(super) fn source_for_supported_node_builtin(
     specifier: &str,

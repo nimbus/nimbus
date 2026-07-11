@@ -30,9 +30,10 @@ pub use adaptive_controller::{
 pub use axes::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
-    RuntimeExecutionModel, RuntimeJavaScriptEvaluationFormat, RuntimeMemoryEnforcement,
-    RuntimeModuleStateSemantics, RuntimeNodeFullRealmReusePolicy, RuntimeNodeLtsLane,
-    RuntimeNodeSupportPhase, RuntimePoolKind, RuntimeResetCapabilities, RuntimeRoutingAffinity,
+    RuntimeExecutionModel, RuntimeGuestSemantics, RuntimeJavaScriptEvaluationFormat,
+    RuntimeMemoryEnforcement, RuntimeModuleStateSemantics, RuntimeNodeFullRealmReusePolicy,
+    RuntimeNodeLtsLane, RuntimeNodeSupportPhase, RuntimePoolKind, RuntimeResetCapabilities,
+    RuntimeRoutingAffinity,
 };
 pub use controller_replay::{
     RuntimeControllerReplayAuthorityInput, RuntimeControllerReplayAuthorityKey,

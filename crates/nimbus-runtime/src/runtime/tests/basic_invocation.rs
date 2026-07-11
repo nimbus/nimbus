@@ -2,6 +2,7 @@ use super::*;
 use crate::RuntimeLimits;
 
 mod cloudflare_workers;
+mod guest_semantics;
 mod node_bootstrap;
 mod node_capabilities;
 mod package_resolution;

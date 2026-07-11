@@ -15,7 +15,7 @@ use crate::backends::v8::embedder::{
     ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, RequestedModuleType,
     ResolutionKind, SourceCodeCacheInfo, resolve_import, v8,
 };
-use crate::limits::RuntimeCompatibilityTarget;
+use crate::limits::{RuntimeCompatibilityTarget, RuntimeGuestSemantics};
 use crate::node_compat::{
     ResolvedNodeModuleKind, ResolvedNodeTarget, build_package_json_resolver,
     classify_resolved_module_kind, resolve_node_target_with_conditions,
@@ -85,14 +85,16 @@ pub(crate) use code_cache::BundleModuleCodeCache;
 use embedded_builtins::{
     INTERNAL_READLINE_UTILS_SPECIFIER, NIMBUS_INTERNAL_READLINE_UTILS_SPECIFIER,
     NIMBUS_NODE_FS_PROMISES_SPECIFIER, NIMBUS_NODE_FS_SPECIFIER, NIMBUS_NODE_MODULE_SPECIFIER,
-    NODE_FS_PROMISES_SPECIFIER, NODE_FS_SPECIFIER, NODE_MODULE_SPECIFIER,
-    source_for_supported_node_builtin, supports_extension_backed_node_builtin,
+    NODE_ASYNC_HOOKS_SPECIFIER, NODE_FS_PROMISES_SPECIFIER, NODE_FS_SPECIFIER,
+    NODE_MODULE_SPECIFIER, source_for_supported_node_builtin,
+    source_for_supported_web_guest_builtin, supports_extension_backed_node_builtin,
 };
 
 #[derive(Clone)]
 pub struct RestrictedModuleLoader {
     path_policy: RuntimePathPolicy,
     compatibility_target: RuntimeCompatibilityTarget,
+    guest_semantics: RuntimeGuestSemantics,
     node_conditions: Vec<String>,
     code_cache: Arc<BundleModuleCodeCache>,
     loader_hook_registry: Option<LoaderHookRegistry>,
@@ -102,6 +104,7 @@ impl RestrictedModuleLoader {
     pub fn new(
         path_policy: RuntimePathPolicy,
         compatibility_target: RuntimeCompatibilityTarget,
+        guest_semantics: RuntimeGuestSemantics,
         node_conditions: Vec<String>,
         code_cache: Arc<BundleModuleCodeCache>,
         loader_hook_registry: Option<LoaderHookRegistry>,
@@ -109,6 +112,7 @@ impl RestrictedModuleLoader {
         let loader = Self {
             path_policy,
             compatibility_target,
+            guest_semantics,
             node_conditions,
             code_cache,
             loader_hook_registry,
@@ -272,6 +276,13 @@ impl RestrictedModuleLoader {
     }
 
     fn supported_node_builtin_source(&self, specifier: &str) -> Option<&'static str> {
+        if let Some(source) = source_for_supported_web_guest_builtin(
+            specifier,
+            self.compatibility_target,
+            self.guest_semantics,
+        ) {
+            return Some(source);
+        }
         source_for_supported_node_builtin(specifier, self.compatibility_target.is_node())
     }
 
@@ -366,6 +377,19 @@ impl RestrictedModuleLoader {
         }
         if specifier == INTERNAL_READLINE_UTILS_SPECIFIER {
             return ModuleSpecifier::parse(NIMBUS_INTERNAL_READLINE_UTILS_SPECIFIER)
+                .map_err(JsErrorBox::from_err);
+        }
+        // Convex default-runtime lanes accept the bare `async_hooks` form the
+        // upstream docs use; it aliases the node:async_hooks web builtin.
+        if specifier == "async_hooks"
+            && source_for_supported_web_guest_builtin(
+                NODE_ASYNC_HOOKS_SPECIFIER,
+                self.compatibility_target,
+                self.guest_semantics,
+            )
+            .is_some()
+        {
+            return ModuleSpecifier::parse(NODE_ASYNC_HOOKS_SPECIFIER)
                 .map_err(JsErrorBox::from_err);
         }
         if is_bare_package_specifier(specifier) {
