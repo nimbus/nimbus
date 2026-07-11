@@ -10,13 +10,13 @@ Docs: [Convex](../../docs/developers/convex/index.md). Contributor status on the
 compiled/runtime subset these apps exercise lives in [`DEVNOTES.md`](DEVNOTES.md).
 
 > **⚠️ Monorepo-only — do not copy this directory out of the repo yet.**
-> These apps depend on `"convex": "*"`, which inside this workspace resolves to
-> Nimbus's Convex compatibility package — the one that deliberately takes the
-> official `convex` name and `convex` bin so your code runs unchanged. Copy an
-> app out of the monorepo and `npm install`, and `"convex": "*"` instead
-> resolves to the **official Convex Cloud** package from the npm registry,
-> replacing Nimbus's — including its `convex` binary. What breaks then is
-> visible, not silent:
+> `html`, `http`, `node`, and `tasks` depend on `"convex": "*"`, which inside
+> this workspace resolves to Nimbus's Convex compatibility package — the one
+> that deliberately takes the official `convex` name and `convex` bin so your
+> code runs unchanged. Copy one of those apps out of the monorepo and
+> `npm install`, and `"convex": "*"` instead resolves to the **official Convex
+> Cloud** package from the npm registry, replacing Nimbus's — including its
+> `convex` binary. What breaks then is visible, not silent:
 >
 > - The app's scripts run `convex codegen --app .`, but `--app` is a
 >   Nimbus-only flag; the official `convex` CLI rejects it, so `npm run dev`,
@@ -26,6 +26,11 @@ compiled/runtime subset these apps exercise lives in [`DEVNOTES.md`](DEVNOTES.md
 >   `skipConvexDeploymentUrlCheck`), and the http and node apps use their own
 >   local-server defaults — a copied-out app keeps targeting your local Nimbus
 >   server.
+>
+> `showcase` is different: it pins `"convex": "file:./.nimbus/packages/convex"`,
+> a workspace-relative local-file dependency, not `"convex": "*"`. Copy it out
+> and `npm install` fails at dependency resolution — a missing local path, not
+> a silent swap to Convex Cloud.
 >
 > Until the `nimbus init --example` scaffolder ships (it rewrites the `convex`
 > workspace dependency to a published Nimbus pin), run these examples in place,

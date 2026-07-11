@@ -68,18 +68,27 @@ server paired with a `convex:example:*` dev server — listed in its README.
 
 ## Run these in place, not copied out
 
-The Convex apps depend on `"convex": "*"`. Inside this repository that resolves
-to Nimbus's Convex compatibility package, which deliberately takes the official
-`convex` package name and `convex` binary so your code runs unchanged. Copy an
-app out of the repository and `npm install`, and `"convex": "*"` instead
-resolves to the official Convex Cloud package from the npm registry, replacing
-Nimbus's — including its `convex` binary.
+React, the browser client, Node, and Tasks depend on `"convex": "*"`. Inside
+this repository that resolves to Nimbus's Convex compatibility package, which
+deliberately takes the official `convex` package name and `convex` binary so
+your code runs unchanged. Copy one of those apps out of the repository and
+`npm install`, and `"convex": "*"` instead resolves to the official Convex
+Cloud package from the npm registry, replacing Nimbus's — including its
+`convex` binary.
 
-The breakage is visible, not silent. The apps' scripts run
+That breakage is visible, not silent. The apps' scripts run
 `convex codegen --app .`, but `--app` is a Nimbus-only flag that the official
 `convex` CLI rejects, so codegen fails loudly. And nothing quietly talks to
 Convex Cloud: the React client pins `http://localhost:8080/convex/demo` (with
 `skipConvexDeploymentUrlCheck` set), and the other apps keep their own
-local-server defaults. Until a scaffolder that rewrites the `convex` dependency
-to a published Nimbus package ships, run these examples from a checkout of the
+local-server defaults.
+
+Showcase is different: it pins `"convex": "file:./.nimbus/packages/convex"`,
+a workspace-relative local-file dependency, not `"convex": "*"`. Copy it out
+and `npm install` fails at dependency resolution — a missing local path, not
+a silent swap to the Convex Cloud package — because that path only exists
+inside a built monorepo checkout.
+
+Until a scaffolder that rewrites the `convex` dependency to a published
+Nimbus package ships, run every app in this directory from a checkout of the
 repository.
