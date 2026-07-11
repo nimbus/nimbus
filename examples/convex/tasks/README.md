@@ -42,6 +42,11 @@ The app implements the full shared [`tasks` spec](../../specs/tasks.md).
 | `tasks.delete` | yes | Deleting a task removes it from the list. |
 | `tasks.live-update` | yes | A reactive query pushes list changes without polling. |
 
+The app is built and typechecks/builds to this spec, but live verification
+against a running server is currently **blocked** by a repo-wide gate — see the
+"Live verification is blocked" note in [`../README.md`](../README.md) before
+running the smoke below.
+
 ## Running
 
 ```bash

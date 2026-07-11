@@ -14,20 +14,21 @@ Docs: [Firestore](../../docs/developers/firebase/index.md).
   `connectFirestoreEmulator`, `addDoc`, `getDocs`, `onSnapshot`, `writeBatch`,
   `runTransaction`, `deleteDoc`, and the supported `FieldValue` sentinels, and
   can switch unary calls between REST and gRPC-Web.
+- **[`tasks/`](tasks/)** — the shared [`tasks`](../specs/tasks.md) app: stock
+  `firebase/app` + `firebase/firestore` CRUD plus a live `onSnapshot`
+  subscription.
 
 ## `tasks` spec support
 
-_Planned, not yet in this directory._ The `tasks` app and its anchor-asserting
-smoke are still being built; the app here today is a different Firestore demo
-(see **Examples** above). The table below is the target subset that `tasks` app
-will cover — see the [target-state note](../specs/tasks.md) in the spec.
+| Flow anchor | Supported | Observable behavior |
+| --- | --- | --- |
+| `tasks.create` | yes | Inserted tasks are retrievable with a stable id and `createdAt`. |
+| `tasks.list` | yes | Tasks are returned newest-first by `createdAt`. |
+| `tasks.toggle` | yes | Toggling persists `completed`. |
+| `tasks.delete` | yes | Deleting removes the task from subsequent reads. |
+| `tasks.live-update` | yes (`onSnapshot`) | A listener attached before `tasks.create` delivers the new task with no explicit re-read. |
 
-| Create / List / Toggle / Delete | Live view |
-| --- | --- |
-| yes | yes (`onSnapshot`) |
-
-Target: the full [`tasks`](../specs/tasks.md) spec; the live view is delivered
-through the `Listen` bridge.
+Full [`tasks`](../specs/tasks.md) spec. See [`tasks/README.md`](tasks/README.md).
 
 ## Running
 

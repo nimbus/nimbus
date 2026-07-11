@@ -48,20 +48,37 @@ compiled/runtime subset these apps exercise lives in [`DEVNOTES.md`](DEVNOTES.md
 - **[`showcase/`](showcase/)** — a small app used to exercise the developer
   console's function source visibility (source view, symbol navigation, and
   type-hover). See its [README](showcase/README.md).
+- **[`tasks/`](tasks/)** — the shared [`tasks`](../specs/tasks.md) app, authored
+  with `convex/_generated/server` and `schema.ts` against a reactive query for
+  `tasks.live-update`. Built to spec and typechecks/builds clean, but its live
+  smoke is currently **blocked**, not verified — see the note below.
 
 ## `tasks` spec support
 
-_Planned, not yet in this directory._ The `tasks` app and its anchor-asserting
-smoke are still being built; the apps here today are `messages`-collection demos
-(see **Examples** above). The table below is the target subset that `tasks` app
-will cover — see the [target-state note](../specs/tasks.md) in the spec.
+| Flow anchor | Supported | Observable behavior |
+| --- | --- | --- |
+| `tasks.create` | yes (by spec) | Inserted tasks are retrievable with a stable id and `createdAt`. |
+| `tasks.list` | yes (by spec) | Tasks are returned newest-first by `createdAt`. |
+| `tasks.toggle` | yes (by spec) | Toggling persists `completed`. |
+| `tasks.delete` | yes (by spec) | Deleting removes the task from subsequent reads. |
+| `tasks.live-update` | yes (by spec, reactive query) | A subscription opened before `tasks.create` delivers the new task with no explicit re-read. |
 
-| CRUD anchors | `tasks.live-update` |
-| --- | --- |
-| yes | yes (reactive query) |
-
-Target: the full [`tasks`](../specs/tasks.md) spec via `convex/react` /
-`convex/browser`.
+**Live verification is blocked.** Every application-Convex request — including
+plain anonymous local-dev traffic, which is what every example and demo script
+in this directory already sends — passes through a fail-closed team-binding
+gate (`crates/nimbus-convex/src/tenancy.rs`, enforced unconditionally in
+`crates/nimbus-server/src/adapters/convex/handlers/registry_auth.rs`). The gate
+only admits a request when the URL's silo *and* the caller's verified JWT
+`subject`/`issuer` both resolve to the same team via
+`NIMBUS_CONVEX_SILO_TEAMS` / `NIMBUS_CONVEX_PRINCIPAL_TEAMS`; anonymous
+principals can never pass. None of today's Convex examples set those env vars
+or send a signed JWT, so `tasks/`'s live smoke — and any equivalent live check
+against the other Convex apps in this directory — cannot currently reach a
+running server. This is a repo-wide local-dev gap, not specific to the `tasks`
+app; see the EX3.2 row in
+`docs/private/plans/examples-and-target-resolution-plan.md` for the tracked
+evidence and resolution options. Full [`tasks`](../specs/tasks.md) spec. See
+[`tasks/README.md`](tasks/README.md).
 
 ## Running
 

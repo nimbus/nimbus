@@ -11,21 +11,24 @@ Docs: [MongoDB](../../docs/developers/mongodb/index.md).
 - **[`node/`](node/)** — a Node app using the `@nimbus/mongodb` URI helper with
   the stock `mongodb` driver for create, read, update, and delete against the
   Nimbus wire-protocol listener.
+- **[`tasks/`](tasks/)** — the shared [`tasks`](../specs/tasks.md) app: stock
+  `mongodb` driver CRUD, with `tasks.live-update` satisfied by polling since
+  change streams are unavailable on this surface.
 
 ## `tasks` spec support
 
-_Planned, not yet in this directory._ The `tasks` app and its anchor-asserting
-smoke are still being built; the app here today is a different `messages` CRUD
-demo (see **Examples** above). The table below is the target subset that `tasks`
-app will cover — see the [target-state note](../specs/tasks.md) in the spec.
+| Flow anchor | Supported | Observable behavior |
+| --- | --- | --- |
+| `tasks.create` | yes | A new incomplete task has a stable id and creation time. |
+| `tasks.list` | yes | Tasks are returned newest-first by `createdAt`. |
+| `tasks.toggle` | yes | Updating a task persists `completed: true`. |
+| `tasks.delete` | yes | Deleting a task removes it from the list. |
+| `tasks.live-update` | polled | Repeated `tasks.list` reads observe changes; this is polling, not a live subscription. |
 
-| Create / List / Toggle / Delete | Live view |
-| --- | --- |
-| yes | no |
-
-Target: full CRUD from the [`tasks`](../specs/tasks.md) spec. The live view is
-**not** supported — change streams are unavailable on this surface, so the
-example's live assertion degrades to polling the list.
+MongoDB change streams are not supported by Nimbus, so this surface cannot meet
+the spec's no-polling live-subscription behavior — the example records that gap
+directly. Full [`tasks`](../specs/tasks.md) spec. See
+[`tasks/README.md`](tasks/README.md).
 
 ## Running
 

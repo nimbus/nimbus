@@ -36,21 +36,21 @@ single server, or a cluster — the resource kind is invisible to the command.
 | Convex | Drop-in Convex surface — author functions with `convex/_generated/server`, `convex/values`, and a `convex/schema.ts`; run `convex/react` and `convex/browser` clients unchanged. | [`convex/`](convex/) | [Convex](../docs/developers/convex/index.md) |
 | Firebase / Firestore | Stock `firebase/app` + `firebase/firestore` imports over Nimbus's REST, gRPC-Web, and WebSocket `Listen` surfaces. | [`firebase/`](firebase/) | [Firestore](../docs/developers/firebase/index.md) |
 | MongoDB | Stock `mongodb` driver against the Nimbus wire-protocol listener via the `@nimbus/mongodb` URI helper. | [`mongodb/`](mongodb/) | [MongoDB](../docs/developers/mongodb/index.md) |
-| DynamoDB | Stock AWS SDK client against the Nimbus DynamoDB surface via `@nimbus/dynamodb`. | _coming soon_ | [DynamoDB](../docs/developers/dynamodb/index.md) |
-| Cloud Functions | `firebase-functions/v2` handlers — HTTP/callable endpoints and Firestore triggers with durable retry. | _coming soon_ | [Cloud Functions](../docs/developers/cloud-functions/index.md) |
+| DynamoDB | Stock AWS SDK client against the Nimbus DynamoDB surface via `@nimbus/dynamodb`. | [`dynamodb/`](dynamodb/) | [DynamoDB](../docs/developers/dynamodb/index.md) |
+| Cloud Functions | `firebase-functions/v2` handlers — HTTP/callable endpoints and Firestore triggers with durable retry. | [`cloud-functions/`](cloud-functions/) | [Cloud Functions](../docs/developers/cloud-functions/index.md) |
 
 Each adapter directory has its own `README.md` explaining the surface, listing
 its apps, and stating exactly which of the surface's features it supports.
 
-**What exists today vs. what is still being built.** The linked directories above
-hold per-surface demos that run against the current build today — the Convex
-apps operate on a `messages` collection, the native and Firestore apps on their
-own shapes, and so on. The shared `tasks` example that the [specs](specs/tasks.md)
-describe — one `tasks` app per surface plus a smoke script that asserts the
-spec's flow anchors — is not built yet. Until it lands, each adapter README's
-`tasks` support table describes the target subset that app will meet, not
-current coverage, and the DynamoDB and Cloud Functions directories (marked
-_coming soon_) do not exist yet.
+**The shared `tasks` example.** Every adapter directory above has a `tasks/`
+app implementing the shared [`tasks` spec](specs/tasks.md) for its supported
+subset, each with a smoke script that asserts the spec's flow anchors. Five of
+the six verify green against a live server today; the Convex app's smoke is
+blocked by a pre-existing server-side gate unrelated to this app (see
+[`convex/README.md`](convex/README.md)) and is tracked separately. The
+per-surface demos that predate `tasks` (the Convex apps' `messages`
+collection, and so on) are left in place alongside it — see each adapter's
+`README.md` for its full app list.
 
 Run these examples in place, from a checkout of this repository. Copy-out
 behavior varies by app until the `nimbus init --example` scaffolder ships:

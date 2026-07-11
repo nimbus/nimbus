@@ -12,21 +12,20 @@ Docs: [Native API](../../docs/developers/native/index.md).
   `@nimbus/nimbus/transports/rest`. It creates a tenant, installs a schema,
   inserts documents, schedules a mutation with `ctx.scheduler.runAfter(...)`,
   and watches live subscription results update in place.
+- **[`tasks/`](tasks/)** — the shared [`tasks`](../specs/tasks.md) app: CRUD
+  plus a live WebSocket subscription via the native SDK.
 
 ## `tasks` spec support
 
-_Planned, not yet in this directory._ The `tasks` app and its anchor-asserting
-smoke are still being built; the app here today is a different native-SDK
-playground (see **Examples** above). The table below is the target subset that
-`tasks` app will cover — see the [target-state note](../specs/tasks.md) in the
-spec.
+| Flow anchor | Supported | Observable behavior |
+| --- | --- | --- |
+| `tasks.create` | yes | Inserted tasks are retrievable with a stable id and `createdAt`. |
+| `tasks.list` | yes | Tasks are returned newest-first by `createdAt`. |
+| `tasks.toggle` | yes | Toggling persists `completed`. |
+| `tasks.delete` | yes | Deleting removes the task from subsequent reads. |
+| `tasks.live-update` | yes (WebSocket subscription) | A subscription opened before `tasks.create` delivers the new task with no explicit re-read. |
 
-| Create / List / Toggle / Delete | Live view |
-| --- | --- |
-| yes | yes (WebSocket subscription) |
-
-Target: the full [`tasks`](../specs/tasks.md) spec: CRUD plus a live view that
-updates without polling.
+Full [`tasks`](../specs/tasks.md) spec. See [`tasks/README.md`](tasks/README.md).
 
 ## Running
 
