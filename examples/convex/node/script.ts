@@ -11,11 +11,15 @@ declare const process: {
 const nativeUrl = process.env.NIMBUS_NATIVE_URL ?? "http://localhost:8080";
 const convexUrl = process.env.NIMBUS_CONVEX_URL ?? "http://localhost:8080/convex/demo";
 const author = process.env.NIMBUS_NODE_DEMO_AUTHOR ?? "Node Demo";
+const adminToken = process.env.NIMBUS_ADMIN_TOKEN;
 
 async function ensureTenant() {
   const response = await fetch(`${nativeUrl}/api/tenants`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+    },
     body: JSON.stringify({ id: "demo" }),
   });
   if (!response.ok && response.status !== 409) {
