@@ -19,12 +19,12 @@ import {
   collectNodeApiDiagnostics,
   formatNodeApiDiagnostics,
 } from "./node_api_diagnostics.mjs";
-import { assertTenantBundleAdmission } from "./module_specifiers.mjs";
+import { assertTenantBundleAdmission, packageNameFromSpecifier } from "./module_specifiers.mjs";
 import {
   createNodeExternalPackageReport,
   stageNodeExternalPackages,
 } from "./node_external_packages.mjs";
-import { parseHttpRoutes, parseModule } from "./parser.mjs";
+import { parseHttpRoutes, parseModule, validateCrossModuleRuntimeImports } from "./parser.mjs";
 import { loadProjectConfig } from "./project_config.mjs";
 import {
   runtimeLaneMetadata,
@@ -81,6 +81,58 @@ function assertRuntimeHandlerSyntax(fn, moduleInfo) {
   }
 }
 
+const NODE_EXTERNAL_PACKAGE_BINDING_TYPES = new Set([
+  "node_external_package_default",
+  "node_external_package_namespace",
+  "node_external_package_named",
+]);
+
+// Nimbus's default runtime is a web-standard V8 isolate with no Node
+// builtins; its dynamic import() resolves a bare package specifier the same
+// way "use node" lane imports do (plain node_modules resolution, no
+// "browser" export condition applied), so a default-lane import of a package
+// whose main entry uses a Node builtin (e.g. nanoid's `index.js` imports
+// `crypto`) fails at invocation time even though the package also ships a
+// browser-safe build. createNodeExternalPackageReport already resolved each
+// package's browser-safe entry point, if any (see resolveBrowserEntry in
+// node_external_packages.mjs); this rewrites only *default-lane, bare
+// package-root* binding specifiers to reference that entry file directly by
+// its staged relative path -- a plain relative import, which bypasses
+// package.json "exports" subpath gating entirely, unlike a rewritten bare
+// specifier would. "use node" lane bindings and subpath imports (e.g.
+// "nanoid/async") are left untouched: a subpath import already names a
+// specific file the developer chose, not the package's ambiguous main entry.
+function rewriteDefaultLaneExternalPackageSpecifiers(manifest, nodeExternalPackageReport, internalDir, appDir) {
+  const browserEntryByPackageName = new Map(
+    nodeExternalPackageReport.packages
+      .filter((entry) => entry.browserEntry !== null && entry.stagedPackageRoot !== null)
+      .map((entry) => [entry.packageName, entry]),
+  );
+  if (browserEntryByPackageName.size === 0) {
+    return;
+  }
+  for (const fn of manifest) {
+    if (fn.runtime_environment !== "default" || fn.runtime_bindings === undefined) {
+      continue;
+    }
+    for (const descriptor of Object.values(fn.runtime_bindings)) {
+      if (!NODE_EXTERNAL_PACKAGE_BINDING_TYPES.has(descriptor.type)) {
+        continue;
+      }
+      if (packageNameFromSpecifier(descriptor.specifier) !== descriptor.specifier) {
+        continue; // a subpath specifier (e.g. "nanoid/async"), not a bare package root import
+      }
+      const entry = browserEntryByPackageName.get(descriptor.specifier);
+      if (entry === undefined) {
+        continue;
+      }
+      const browserFileAbs = path.join(appDir, entry.stagedPackageRoot, entry.browserEntry);
+      const relFromBundle = path.relative(internalDir, browserFileAbs).replaceAll(path.sep, "/");
+      descriptor.specifier = relFromBundle.startsWith(".") ? relFromBundle : `./${relFromBundle}`;
+    }
+  }
+}
+
 async function generateConvexArtifacts({
   appDir,
   sourceRoot,
@@ -104,6 +156,7 @@ async function generateConvexArtifacts({
   const authConfig = await loadAuthConfig(sourceDir);
 
   const moduleFiles = await collectModuleFiles(sourceDir);
+  await validateCrossModuleRuntimeImports(sourceDir, moduleFiles);
   const modules = [];
   const manifest = [];
 
@@ -152,6 +205,7 @@ async function generateConvexArtifacts({
     projectConfig,
     sourceDir,
   });
+  rewriteDefaultLaneExternalPackageSpecifiers(manifest, nodeExternalPackageReport, internalDir, appDir);
 
   const httpRoutes = await parseHttpRoutes(sourceDir, schema, modules);
   if (debugNodeApis) {
