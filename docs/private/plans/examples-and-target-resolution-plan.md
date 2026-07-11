@@ -60,8 +60,10 @@ Cloud. Consequences bound into this plan: the convex example's README carries a
 loud "monorepo-only until the scaffolder ships" warning naming this failure
 mode accurately (EX3.2 acceptance); the EX7.1 scaffolder must rewrite the
 `convex` workspace dep to a published pin as its core job, not an afterthought;
-the other adapter examples (stock upstream clients: `firebase`, `mongodb`, AWS
-SDK) fail the same visible way — an unresolved workspace dependency.
+the other adapter examples do not share the collision: unpublished `@nimbus/*`
+workspace deps fail resolution with a visible install error, while the
+Firebase app's stock `firebase` dependency installs the real upstream SDK from
+the registry (the app still expects a Nimbus server to talk to).
 
 ### XD2 — Tree shape: adapter-first with a root nav index, renamed to `examples/`
 
@@ -303,7 +305,7 @@ after EX2; EX8 after EX3/EX4 settle what is user-facing; EX9 last.
 
 Paste after `/goal`:
 
-/goal Execute docs/private/plans/examples-and-target-resolution-plan.md bands EX0 through EX9 in the documented order. For each ledger item: do its exploration first, implement to the acceptance line, run the named verification, and update its Status cell to done with one evidence line (test names+counts, command output summary, or SHA); mark wrong or already-satisfied items no-action(reason), EX7 rows may close decision-recorded(reason), and truly blocked items blocked(reason) — then continue. All code and public-docs changes go on branch examples-and-target-resolution (never direct to main); plan-ledger and plans-README updates commit direct to main. Binding constraints: one optional positional TARGET (URL or configured name; omitted = local) with no node/cluster distinction anywhere in CLI help, examples, or docs; examples import workspace packages; example smokes assert observable behavior per examples/specs/; docs pages follow the docs skill rules and both docs gates must pass; gate-adding or fail-closed changes run the full workspace suite. Decide rather than ask. The goal is met when every EX0–EX8 ledger row is done, no-action(reason), decision-recorded(reason) (EX7 only), or blocked(reason) with evidence; make ci, the JS suite, and both docs gates are green locally; the PR to nimbus/nimbus is open with its CI verdict CONFIRMED green by checking PR state and it is squash-merged with the post-merge routine and EX9 rows done with evidence; and the plans README entry reflects completion — or stop after 70 turns and record the blocking state in this plan.
+/goal Execute docs/private/plans/examples-and-target-resolution-plan.md bands EX0 through EX9 in the documented order. For each ledger item: do its exploration first, implement to the acceptance line, run the named verification, and update its Status cell to done with one evidence line (test names+counts, command output summary, or SHA); mark wrong or already-satisfied items no-action(reason), EX7 rows may close decision-recorded(reason), and truly blocked items blocked(reason) — then continue. All code and public-docs changes go on branch examples-and-target-resolution (never direct to main); this plan file and its ledger ride the same branch (they are tracked and merge with the PR); only the plans-README entry on main is updated direct-to-main, at closeout. Binding constraints: one optional positional TARGET (URL or configured name; omitted = local) with no node/cluster distinction anywhere in CLI help, examples, or docs; examples import workspace packages; example smokes assert observable behavior per examples/specs/; docs pages follow the docs skill rules and both docs gates must pass; gate-adding or fail-closed changes run the full workspace suite. Decide rather than ask. The goal is met when every EX0–EX8 ledger row is done, no-action(reason), decision-recorded(reason) (EX7 only), or blocked(reason) with evidence; make ci, the JS suite, and both docs gates are green locally; the PR to nimbus/nimbus is open with its CI verdict CONFIRMED green by checking PR state and it is squash-merged with the post-merge routine and EX9 rows done with evidence; and the plans README entry reflects completion — or stop after 70 turns and record the blocking state in this plan.
 
 ## Appendix — EX0 Inventory (filled during EX0)
 
