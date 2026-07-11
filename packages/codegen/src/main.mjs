@@ -58,6 +58,29 @@ function handlerOriginLine(moduleSource, handlerText) {
   return line;
 }
 
+// Runtime handlers are emitted verbatim into the bundle, where the preamble
+// compiles every handler eagerly at module evaluation — one handler that is
+// not valid JavaScript (e.g. TypeScript-only syntax such as `as` casts or
+// type annotations, which codegen does not strip) would disable the entire
+// bundle. Reject it here, at codegen time, naming the offending handler.
+function assertRuntimeHandlerSyntax(fn, moduleInfo) {
+  if (typeof fn.runtimeHandler !== "string" || fn.runtimeHandler.length === 0) {
+    return;
+  }
+  try {
+    // Mirrors the bundle preamble's compileRuntimeHandler expression shape.
+    new Function(`return (${fn.runtimeHandler});`);
+  } catch (error) {
+    const line = handlerOriginLine(moduleInfo.source, fn.runtimeHandler);
+    const location =
+      line === null ? moduleInfo.moduleName : `${moduleInfo.moduleName}:${line}`;
+    throw new Error(
+      `convex function ${fn.name} has a handler that is not valid JavaScript (${location}): ${error.message}. ` +
+        "TypeScript-only syntax (type annotations, `as` casts, generics) is not stripped from runtime handlers — rewrite the handler without it.",
+    );
+  }
+}
+
 async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = false, onInfo } = {}) {
   const resolvedSourceRoot = sourceRoot ?? await resolveSourceRoot(appDir);
   const sourceDir = resolvedSourceRoot.sourceDirPath;
@@ -82,6 +105,7 @@ async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = fal
       if (fn.kind === "http_action") {
         continue;
       }
+      assertRuntimeHandlerSyntax(fn, moduleInfo);
       const runtimeMetadata = runtimeMetadataForFunction({
         runtimeEnvironment: fn.runtimeEnvironment,
         projectConfig,

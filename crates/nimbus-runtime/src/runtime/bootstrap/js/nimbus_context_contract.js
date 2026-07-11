@@ -136,6 +136,25 @@ const __nimbusCreateQueryBuilder = function __nimbusCreateQueryBuilder(syncHostV
   });
 };
 
+// Single-argument ctx.db calls receive a table-scoped document id
+// (`<table>:<key>`), the protocol contract shared with the host bridge. The
+// table derived here is advisory only: the bridge re-resolves the scoped id
+// and rejects any mismatch, so a forged prefix cannot redirect the operation.
+const __nimbusTableFromScopedId = function __nimbusTableFromScopedId(id, label) {
+  if (typeof id !== "string") {
+    throw new TypeError(
+      `ctx.${label}(...) requires a table-scoped document id string`,
+    );
+  }
+  const separator = id.indexOf(":");
+  if (separator <= 0 || separator >= id.length - 1) {
+    throw new TypeError(
+      `ctx.${label}(...) requires a table-scoped document id like "tasks:...", got "${id}"`,
+    );
+  }
+  return id.slice(0, separator);
+};
+
 const __nimbusNormalizeFunctionReference = function __nimbusNormalizeFunctionReference(functionRef, label) {
   if (!functionRef || typeof functionRef !== "object") {
     throw new Error(`ctx.${label}(...) requires a generated function reference`);
@@ -342,9 +361,11 @@ globalThis.__nimbusCreateContext = function(options = {}) {
                 host_call_session_id: hostCallSessionId,
               });
             }
-            throw new Error(
-              "Nimbus runtime ctx.db.get currently requires table and id at runtime",
-            );
+            return globalThis.__nimbusAsyncHostValue("op_nimbus_document_get", {
+              table: __nimbusTableFromScopedId(tableOrId, "db.get"),
+              id: tableOrId,
+              host_call_session_id: hostCallSessionId,
+            });
           }
           return globalThis.__nimbusAsyncHostValue("op_nimbus_document_get", {
             table: tableOrId,
@@ -365,23 +386,36 @@ globalThis.__nimbusCreateContext = function(options = {}) {
             fields,
           });
         },
-        patch(table, id, patch) {
+        patch(tableOrId, idOrPatch, maybePatch) {
           if (!capabilities.dbWrite) {
             unsupported("db.patch");
           }
+          if (maybePatch === undefined) {
+            return asyncHostValue("op_nimbus_document_patch", {
+              table: __nimbusTableFromScopedId(tableOrId, "db.patch"),
+              id: tableOrId,
+              patch: idOrPatch,
+            });
+          }
           return asyncHostValue("op_nimbus_document_patch", {
-            table,
-            id,
-            patch,
+            table: tableOrId,
+            id: idOrPatch,
+            patch: maybePatch,
           });
         },
-        delete(table, id) {
+        delete(tableOrId, maybeId) {
           if (!capabilities.dbWrite) {
             unsupported("db.delete");
           }
+          if (maybeId === undefined) {
+            return asyncHostValue("op_nimbus_document_delete", {
+              table: __nimbusTableFromScopedId(tableOrId, "db.delete"),
+              id: tableOrId,
+            });
+          }
           return asyncHostValue("op_nimbus_document_delete", {
-            table,
-            id,
+            table: tableOrId,
+            id: maybeId,
           });
         },
       }

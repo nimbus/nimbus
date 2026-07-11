@@ -1060,6 +1060,162 @@ export {};
 }
 
 #[tokio::test]
+async fn runtime_db_ops_accept_single_table_scoped_id_convention() {
+    let _guard = acquire_runtime_suite_lock().await;
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function () {
+  const ctx = globalThis.__nimbusCreateContext();
+  const get = await ctx.db.get("messages:doc-1");
+  const patch = await ctx.db.patch("messages:doc-1", { body: "updated" });
+  const deletion = await ctx.db.delete("messages:doc-1");
+  return { get, patch, deletion };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let result = runtime
+        .invoke_bundle_for_tenant(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Mutation,
+                function_name: "messages:write".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+            "tenant-a",
+        )
+        .await
+        .expect("single table-scoped id db ops should reach the host bridge");
+
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "get": {
+                "operation": "document_get",
+                "payload": {
+                    "table": "messages",
+                    "id": "messages:doc-1",
+                    "host_call_session_id": "mutation:messages:write",
+                }
+            },
+            "patch": {
+                "operation": "document_patch",
+                "payload": {
+                    "table": "messages",
+                    "id": "messages:doc-1",
+                    "patch": { "body": "updated" },
+                    "host_call_session_id": "mutation:messages:write",
+                }
+            },
+            "deletion": {
+                "operation": "document_delete",
+                "payload": {
+                    "table": "messages",
+                    "id": "messages:doc-1",
+                    "host_call_session_id": "mutation:messages:write",
+                }
+            }
+        })
+    );
+}
+
+#[tokio::test]
+async fn runtime_db_single_id_ops_reject_ids_without_table_scope() {
+    let _guard = acquire_runtime_suite_lock().await;
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function () {
+  const ctx = globalThis.__nimbusCreateContext();
+  const capture = async (fn) => {
+    try {
+      await fn();
+      return null;
+    } catch (error) {
+      return String(error && error.message ? error.message : error);
+    }
+  };
+  return {
+    getError: await capture(() => ctx.db.get("doc-1")),
+    getNonStringError: await capture(() => ctx.db.get(42)),
+    patchError: await capture(() => ctx.db.patch("doc-1", { body: "updated" })),
+    deleteError: await capture(() => ctx.db.delete(":doc-1")),
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let host = Arc::new(RecordingHost::default());
+    let runtime = NimbusRuntime::with_policy(
+        host.clone(),
+        run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let result = runtime
+        .invoke_bundle_for_tenant(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Mutation,
+                function_name: "messages:write".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+            "tenant-a",
+        )
+        .await
+        .expect("malformed single-id db calls should fail in the contract shim");
+
+    assert_eq!(
+        result["getError"],
+        "ctx.db.get(...) requires a table-scoped document id like \"tasks:...\", got \"doc-1\""
+    );
+    assert_eq!(
+        result["getNonStringError"],
+        "ctx.db.get(...) requires a table-scoped document id string"
+    );
+    assert_eq!(
+        result["patchError"],
+        "ctx.db.patch(...) requires a table-scoped document id like \"tasks:...\", got \"doc-1\""
+    );
+    assert_eq!(
+        result["deleteError"],
+        "ctx.db.delete(...) requires a table-scoped document id like \"tasks:...\", got \":doc-1\""
+    );
+    let calls = host
+        .calls
+        .lock()
+        .expect("recording host lock should not be poisoned")
+        .clone();
+    assert!(
+        calls.is_empty(),
+        "malformed ids must never reach the host bridge, got {calls:?}"
+    );
+}
+
+#[tokio::test]
 async fn runtime_extension_call_uses_async_host_bridge_path() {
     let _guard = acquire_runtime_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");

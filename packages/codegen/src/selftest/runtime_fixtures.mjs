@@ -27,6 +27,39 @@ async function runRuntimeFixtures() {
   testRuntimeProgramBundleRejectsNodeRuntimeImports();
   await testImportedServerValidatorsFixture();
   await testUnsupportedPatchWithoutIdValidatorFixture();
+  await testRuntimeHandlerWithTypeScriptSyntaxFailsLoudly();
+}
+
+async function testRuntimeHandlerWithTypeScriptSyntaxFailsLoudly() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+import { mutation } from "./_generated/server";
+import { v } from "convex/values";
+
+export const toggle = mutation({
+  args: { id: v.id("messages") },
+  handler: async (ctx, { id }) => {
+    const message = (await ctx.db.get(id)) as { pinned: boolean } | null;
+    if (message === null) {
+      throw new Error("message not found");
+    }
+    await ctx.db.patch(id, { pinned: !message.pinned });
+    return null;
+  },
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.notEqual(
+    result.status,
+    0,
+    "TypeScript-only syntax in a runtime handler must fail codegen loudly",
+  );
+  assert.match(result.stderr, /messages:toggle/);
+  assert.match(result.stderr, /not valid JavaScript/);
+  assert.match(result.stderr, /messages:\d+/);
+  assert.match(result.stderr, /TypeScript-only syntax/);
 }
 
 async function testUnsupportedMultiOperationFixture() {

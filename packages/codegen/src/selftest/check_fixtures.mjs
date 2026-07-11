@@ -10,6 +10,12 @@ const evalCallPattern = new RegExp("\\beval\\s*\\(", "g");
 
 const allowedNewFunctionCounts = new Map([
   ["emit/runtime_bundle_preamble.mjs", 1],
+  // Syntax-validates each extracted runtime handler with the same
+  // Function-constructor expression shape the preamble compiles, so an
+  // invalid handler fails codegen loudly instead of disabling the whole
+  // bundle at module evaluation. Parse-only; the constructed function is
+  // never invoked.
+  ["main.mjs", 1],
   // The remap selftest replicates the preamble's Function-constructor wrapper to
   // verify real V8 line numbering; this is test scaffolding, not emitted code.
   ["selftest/runtime_remap_fixtures.mjs", 1],
