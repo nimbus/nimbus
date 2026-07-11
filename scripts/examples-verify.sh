@@ -169,6 +169,31 @@ ensure_nimbus_binary() {
   fi
 }
 
+# firebase/tasks depends on "firebase": "file:./.nimbus/packages/firebase",
+# which `nimbus dev` provisions back into packages/firebase in this
+# monorepo. That package's src/internal/protobuf.ts imports generated
+# protobuf stubs under packages/firebase/src/gen/, which are gitignored
+# build output (see packages/firebase/package.json's codegen:proto script)
+# and are only ever produced as a side effect of running `npm run build` (or
+# `codegen:proto` directly) for the firebase workspace. Plain `npm ci` does
+# not generate them, so a fresh checkout's firebase/tasks smoke fails with
+# ERR_MODULE_NOT_FOUND unless something upstream happened to run the
+# firebase package's build (e.g. `npm run build:embedded-packages`) first.
+# Generate them here so this script is self-contained rather than depending
+# on an incidental prior step.
+ensure_firebase_protobuf_stubs() {
+  local gen_marker="${REPO_ROOT}/packages/firebase/src/gen/google/firestore/v1/firestore_pb.ts"
+  if [ -f "${gen_marker}" ]; then
+    return
+  fi
+  printf 'firebase protobuf stubs not found at %s; running codegen:proto\n' "${gen_marker}"
+  npm run codegen:proto -w firebase
+  if [ ! -f "${gen_marker}" ]; then
+    printf 'ran codegen:proto for firebase, but %s is still missing\n' "${gen_marker}" >&2
+    exit 1
+  fi
+}
+
 wait_for_health() {
   local port="$1"
   local attempt
@@ -375,6 +400,7 @@ run_one() {
 }
 
 ensure_nimbus_binary
+ensure_firebase_protobuf_stubs
 
 # Restrict to a single app by name for local debugging, e.g.
 # NIMBUS_EXAMPLES_VERIFY_ONLY=nimbus/tasks bash scripts/examples-verify.sh
