@@ -363,6 +363,12 @@ run_one() {
 
   if [ "${smoke_status}" -ne 0 ]; then
     echo "FAIL ${name}" >&2
+    # A request-level smoke failure is invisible without the server's side of
+    # the story; dump its log tail like the health-failure path already does.
+    if [ -f "${SERVER_LOG}" ]; then
+      echo "server log tail for ${name}:" >&2
+      tail -n 60 "${SERVER_LOG}" >&2
+    fi
     exit "${smoke_status}"
   fi
   echo "PASS ${name}"
