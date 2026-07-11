@@ -75,6 +75,9 @@ nimbus deploy [TARGET]
 server. For the headless driver, run `npm run nimbus:example:agent-worker` (or
 `npm run run -w nimbus-agent-worker` directly) with Nimbus running.
 
+Requires Node.js >=22 <25 (`run.ts`/`smoke.ts` run via
+`--experimental-strip-types`).
+
 ## Smoke verification
 
 With Nimbus running at `http://localhost:8080`:

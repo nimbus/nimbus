@@ -31,6 +31,9 @@ nimbus deploy [TARGET]
 
 `TARGET` is a URL or configured target name; omit it to use the local target.
 
+Requires Node.js >=22 <25 (`script.ts`/`smoke.ts` run via
+`--experimental-strip-types`).
+
 ## Run the script directly (development loop)
 
 Set `NIMBUS_MONGODB_USERNAME` and `NIMBUS_MONGODB_PASSWORD`. Host and port

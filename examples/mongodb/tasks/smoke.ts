@@ -1,11 +1,6 @@
 import { mongoUri } from "@nimbus/mongodb";
 import { MongoClient, type Collection, type WithId } from "mongodb";
 
-declare const process: {
-  env: Record<string, string | undefined>;
-  exitCode?: number;
-};
-
 interface TaskDocument {
   text: string;
   completed: boolean;

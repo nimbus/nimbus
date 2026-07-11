@@ -1,8 +1,3 @@
-declare const process: {
-  env: Record<string, string | undefined>;
-  exitCode?: number;
-};
-
 const baseUrl = new URL(process.env.NIMBUS_CLOUD_FUNCTIONS_URL ?? "http://localhost:8080");
 const tenantId = process.env.NIMBUS_TENANT_ID ?? "demo";
 const adminToken = process.env.NIMBUS_ADMIN_TOKEN;

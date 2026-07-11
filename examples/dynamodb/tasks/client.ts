@@ -8,10 +8,6 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { clientConfig } from "@nimbus/dynamodb";
 
-declare const process: {
-  env: Record<string, string | undefined>;
-};
-
 export const TABLE_NAME = "tasks";
 
 export interface Task {

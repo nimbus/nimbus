@@ -135,7 +135,14 @@ function normalizeNodeBuiltinSpecifier(specifier) {
   return specifier.startsWith("node:") ? specifier : `node:${specifier}`;
 }
 
-function createKnownImportBindingRecord(sourcePath, importedName) {
+function createKnownImportBindingRecord(rawSourcePath, importedName) {
+  // TS NodeNext moduleResolution requires relative specifiers to carry an
+  // explicit extension (e.g. "./_generated/api.js"), but that extension is a
+  // TypeScript/Node module-resolution artifact, not part of the logical
+  // module identity this function matches against. Strip it so recognition
+  // is agnostic to whether the app's tsconfig uses NodeNext or Bundler
+  // resolution.
+  const sourcePath = rawSourcePath.replace(/\.m?jsx?$/, "");
   if (sourcePath === "convex/server" || sourcePath === "@nimbus/nimbus/server") {
     if (importedName === "paginationOptsValidator") {
       return { compileValue: createPaginationOptionsValidator() };

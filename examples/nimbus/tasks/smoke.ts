@@ -6,11 +6,6 @@ import {
 } from "@nimbus/nimbus/transports/rest";
 import WebSocket from "ws";
 
-declare const process: {
-  env: Record<string, string | undefined>;
-  exitCode?: number;
-};
-
 interface Task {
   _id: string;
   text: string;

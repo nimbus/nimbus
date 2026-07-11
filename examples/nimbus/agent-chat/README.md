@@ -57,6 +57,8 @@ nimbus deploy [TARGET]
 `TARGET` is a URL or a configured target name; omit it to target your local
 server. For the standalone Vite dev server, run `npm run nimbus:example:agent-chat`.
 
+`smoke.ts` requires Node.js >=22 <25 (runs via `--experimental-strip-types`).
+
 Tenant creation in browser code (`src/main.tsx`'s unauthenticated
 `POST /api/tenants`) is a local-development convenience. Provision tenants
 separately before deploying beyond your own environment.

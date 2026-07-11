@@ -1,5 +1,5 @@
-import { internalScheduledFunctions } from "./_generated/scheduled_functions";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalScheduledFunctions } from "./_generated/scheduled_functions.js";
+import { internalMutation, mutation, query } from "./_generated/server.js";
 import { v } from "@nimbus/nimbus/values";
 
 // Raw reads from ctx.db are returned as-is; formatting and field access on

@@ -10,5 +10,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["nimbus/**/*.ts", "run.ts", "smoke.ts"]
+  "include": ["smoke.ts", "convex/**/*.ts"]
 }

@@ -38,6 +38,9 @@ variables the app uses `clientConfig()`'s local defaults: `127.0.0.1:8000`,
 synchronously, so the app does not use a waiter; a repeated run reuses the
 existing table.
 
+Requires Node.js >=22 <25 (`script.ts`/`smoke.ts` run via
+`--experimental-strip-types`).
+
 ## Smoke verification
 
 With Nimbus running and the matching `NIMBUS_DYNAMODB_*` credentials set:

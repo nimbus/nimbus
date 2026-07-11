@@ -60,6 +60,8 @@ nimbus deploy [TARGET]
 Tenant creation in browser code is a local-development convenience. Provision
 tenants separately before deploying beyond your own environment.
 
+`smoke.ts` requires Node.js >=22 <25 (runs via `--experimental-strip-types`).
+
 ## Smoke verification
 
 With Nimbus running at `http://localhost:8080`:

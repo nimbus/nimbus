@@ -2,7 +2,7 @@ export interface RequestOptions extends Omit<RequestInit, "headers"> {
   headers?: Record<string, string>;
 }
 
-export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+export type FetchLike = (input: Request | string | URL, init?: RequestInit) => Promise<Response>;
 
 export interface NimbusRestClientOptions {
   fetch?: FetchLike;

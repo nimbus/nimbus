@@ -13,10 +13,6 @@ import {
   taskItem,
 } from "./client.ts";
 
-declare const process: {
-  exitCode?: number;
-};
-
 async function main(): Promise<void> {
   const client = createClient();
   try {

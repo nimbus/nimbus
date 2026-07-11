@@ -18,6 +18,8 @@ npm run demo --workspace mongodb-node
 Run in place from a checkout of this repository (it imports this repo's
 workspace packages).
 
+Requires Node.js >=22 <25 (`script.ts` runs via `--experimental-strip-types`).
+
 ## Spec
 
 This app is a per-surface CRUD demo, not the shared `tasks` example. See the

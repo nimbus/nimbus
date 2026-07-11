@@ -2,6 +2,9 @@
   "name": "nimbus-agent-worker",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22 <25"
+  },
   "scripts": {
     "codegen": "nimbus-codegen --app .",
     "run": "npm run codegen && node --experimental-strip-types ./run.ts",
@@ -10,10 +13,11 @@
     "test": "npm run codegen && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@nimbus/nimbus": "*"
+    "@nimbus/nimbus": "file:./.nimbus/packages/@nimbus/nimbus"
   },
   "devDependencies": {
     "@nimbus/codegen": "*",
+    "@types/node": "^22.20.1",
     "typescript": "6.0.3"
   }
 }

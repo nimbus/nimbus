@@ -1,11 +1,6 @@
 import { MongoClient } from "mongodb";
 import { mongoUri } from "@nimbus/mongodb";
 
-declare const process: {
-  env: Record<string, string | undefined>;
-  exit(code: number): never;
-};
-
 const host = process.env.NIMBUS_MONGODB_HOST ?? "127.0.0.1";
 const port = process.env.NIMBUS_MONGODB_PORT
   ? Number(process.env.NIMBUS_MONGODB_PORT)

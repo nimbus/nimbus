@@ -29,6 +29,9 @@ nimbus deploy [TARGET]
 The Firestore project id is `demo`, which maps directly to the same-named
 Nimbus tenant.
 
+`smoke.ts` requires Node.js >=22 <25 — it runs via `--experimental-strip-types
+--experimental-transform-types`, and Node 25 dropped `transform-types`.
+
 ## Smoke verification
 
 With Nimbus running at `http://localhost:8080`:

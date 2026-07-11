@@ -15,10 +15,6 @@ import {
   taskItem,
 } from "./client.ts";
 
-declare const process: {
-  exitCode?: number;
-};
-
 let activeAnchor = "setup";
 
 function assert(condition: unknown, message: string): asserts condition {

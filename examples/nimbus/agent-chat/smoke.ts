@@ -3,11 +3,6 @@ import { NimbusClient, NimbusHttpClient } from "@nimbus/nimbus/browser";
 import { api } from "./nimbus/_generated/api.ts";
 import type { Doc } from "./nimbus/_generated/dataModel.d.ts";
 
-declare const process: {
-  env: Record<string, string | undefined>;
-  exitCode?: number;
-};
-
 type Message = Doc<"messages">;
 
 const nativeUrl = process.env.NIMBUS_NATIVE_URL ?? "http://localhost:8080";

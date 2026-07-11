@@ -354,11 +354,11 @@ export const add = mutation({
   assert.doesNotMatch(generatedScheduled, /^type JsonValue = /m);
   assert.match(
     generatedApi,
-    /import type \{ Doc, Id, JsonValue \} from "\.\/dataModel";/,
+    /import type \{ Doc, Id, JsonValue \} from "\.\/dataModel\.js";/,
   );
   assert.match(
     generatedScheduled,
-    /import type \{ Doc, Id, JsonValue \} from "\.\/dataModel";/,
+    /import type \{ Doc, Id, JsonValue \} from "\.\/dataModel\.js";/,
   );
 }
 

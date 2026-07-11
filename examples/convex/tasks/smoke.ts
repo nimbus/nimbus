@@ -3,11 +3,6 @@ import { ConvexClient, ConvexHttpClient } from "convex/browser";
 import { api } from "./convex/_generated/api.ts";
 import type { Doc, Id } from "./convex/_generated/dataModel.d.ts";
 
-declare const process: {
-  env: Record<string, string | undefined>;
-  exitCode?: number;
-};
-
 type Task = Doc<"tasks">;
 
 const nativeUrl = process.env.NIMBUS_NATIVE_URL ?? "http://localhost:8080";

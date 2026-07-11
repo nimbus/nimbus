@@ -38,6 +38,8 @@ Run from this directory. `TARGET` is a URL or configured target name; omit it
 to use the local target. Nimbus generates the functions bundle under
 `.nimbus/firebase/`.
 
+`smoke.ts` requires Node.js >=22 <25 (runs via `--experimental-strip-types`).
+
 Once a task exists, call the HTTP export on the main Nimbus port:
 
 ```bash

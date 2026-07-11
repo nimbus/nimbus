@@ -2,6 +2,9 @@
   "name": "convex-node",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22 <25"
+  },
   "scripts": {
     "codegen": "convex codegen --app .",
     "demo": "npm run codegen && node --experimental-strip-types ./script.ts",
@@ -11,6 +14,7 @@
     "convex": "*"
   },
   "devDependencies": {
+    "@types/node": "^22.20.1",
     "typescript": "6.0.3"
   }
 }

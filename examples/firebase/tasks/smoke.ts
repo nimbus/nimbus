@@ -15,11 +15,6 @@ import {
   type QuerySnapshot,
 } from "firebase/firestore";
 
-declare const process: {
-  env: Record<string, string | undefined>;
-  exitCode?: number;
-};
-
 interface Task {
   id: string;
   text: string;

@@ -2,12 +2,6 @@ import { ConvexClient, ConvexHttpClient } from "convex/browser";
 
 import { api } from "./convex/_generated/api.ts";
 
-declare const process: {
-  env: Record<string, string | undefined>;
-  exit(code: number): never;
-  once(event: "SIGINT" | "SIGTERM", listener: () => void): void;
-};
-
 const nativeUrl = process.env.NIMBUS_NATIVE_URL ?? "http://localhost:8080";
 const convexUrl = process.env.NIMBUS_CONVEX_URL ?? "http://localhost:8080/convex/demo";
 const author = process.env.NIMBUS_NODE_DEMO_AUTHOR ?? "Node Demo";

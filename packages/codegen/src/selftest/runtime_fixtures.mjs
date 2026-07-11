@@ -22,6 +22,7 @@ async function runRuntimeFixtures() {
   await testRuntimeOnlyQueryFixture();
   await testRuntimeOnlyPaginatedQueryFixture();
   await testRuntimeOnlyMutationImportedScheduledFunctionsFixture();
+  await testRuntimeOnlyMutationImportedScheduledFunctionsWithJsExtensionFixture();
   await testRuntimeProgramBundleCandidateFixture();
   await testBunRuntimeProgramBundleFixture();
   testRuntimeProgramBundleRejectsNodeRuntimeImports();
@@ -262,6 +263,59 @@ export const sendAndSchedule = mutation({
       globalThis.__nimbusCreateContext = previousCreateContext;
     }
   }
+}
+
+// Regression test for a NodeNext-moduleResolution app whose relative
+// imports carry an explicit ".js" extension (required by NodeNext, optional
+// under Bundler resolution). createKnownImportBindingRecord in
+// parser/compile_bindings.mjs must recognize "./_generated/scheduled_functions.js"
+// the same way it recognizes the extensionless form, or the scheduled-target
+// reference silently drops out of runtime_bindings and the handler throws a
+// ReferenceError the first time the scheduling branch actually executes.
+async function testRuntimeOnlyMutationImportedScheduledFunctionsWithJsExtensionFixture() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+import { internalMutation, mutation } from "./_generated/server.js";
+import { internalScheduledFunctions } from "./_generated/scheduled_functions.js";
+import { v } from "convex/values";
+
+export const sendInternal = internalMutation({
+  args: {
+    body: v.string(),
+  },
+  handler: async (ctx, { body }) => await ctx.db.insert("messages", { body }),
+});
+
+export const sendAndSchedule = mutation({
+  args: {
+    body: v.string(),
+  },
+  handler: async (ctx, { body }) => {
+    const id = await ctx.db.insert("messages", { body });
+    await ctx.scheduler.runAfter(
+      1_000,
+      internalScheduledFunctions.messages.sendInternal,
+      { body: \`\${body} later\` },
+    );
+    return id;
+  },
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.equal(manifest.functions[1].plan, null);
+  assert.match(manifest.functions[1].runtime_handler, /internalScheduledFunctions/);
+  assert.deepEqual(manifest.functions[1].runtime_bindings, {
+    internalScheduledFunctions: {
+      type: "generated_reference_tree",
+      visibility: "internal",
+      reference_kind: "mutation",
+    },
+  });
 }
 
 async function testRuntimeProgramBundleCandidateFixture() {

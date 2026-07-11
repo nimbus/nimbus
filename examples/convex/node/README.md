@@ -21,6 +21,8 @@ back to an unauthenticated `POST /api/tenants` when it is not — a
 local-development convenience, not a pattern to carry past your own
 environment.
 
+Requires Node.js >=22 <25 (`script.ts` runs via `--experimental-strip-types`).
+
 ## Spec
 
 This app is a per-surface demo, not the shared `tasks` example. See the Convex
