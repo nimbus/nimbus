@@ -37,8 +37,8 @@ pub(crate) const ROOT_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus start
   nimbus dev
-  nimbus run --local -- npm test
-  nimbus deploy --url http://localhost:3210
+  nimbus run exec -- npm test
+  nimbus deploy http://localhost:3210
   nimbus codegen --app ./demos/convex/html
   nimbus token rotate
   nimbus machine start
@@ -64,13 +64,15 @@ the launch URL is printed on a single line you can copy / paste.";
 
 pub(crate) const DEPLOY_HELP_EXAMPLES: &str = "\
 Examples:
-  nimbus deploy --url http://localhost:3210
+  nimbus deploy                                 # local server (like nimbus dev)
+  nimbus deploy http://localhost:3210
   NIMBUS_DEPLOY_URL=http://localhost:3210 nimbus deploy
   nimbus deploy --app-dir ./demos/convex/html --dry-run
 
 Deploy target:
-  nimbus deploy requires an explicit self-hosted target URL via --url or
-  NIMBUS_DEPLOY_URL. Authenticate via one of:
+  TARGET is a URL or a configured target name; omitted = local. A URL deploys to
+  that self-hosted server; omitting TARGET deploys to the running local server
+  (NIMBUS_DEPLOY_URL is the env fallback). Authenticate via one of:
     --token <value>             explicit CLI flag (wins)
     NIMBUS_DEPLOY_TOKEN env     CI / automation path
     nimbus auth login --url <daemon> --bearer <value>

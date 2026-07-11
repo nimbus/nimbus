@@ -14,10 +14,7 @@ use crate::function_scaling::{
     load_config, load_optional_policy, resolve_function_scaling_intent,
 };
 use crate::local_server_client::LocalServerHttpClient;
-use crate::target_context::{
-    DEPLOY_URL_ENV, TARGET_ENV, TargetContext, TargetContextKind, TargetContextSource,
-    TargetSelector,
-};
+use crate::target_context::{TargetContext, TargetContextKind, TargetSelector};
 
 #[derive(Debug, Args)]
 #[command(
@@ -129,21 +126,7 @@ fn resolve_run_target_with_env(
     command: &RunCommand,
     env_lookup: impl Fn(&str) -> Option<String>,
 ) -> Result<TargetContext, Error> {
-    command
-        .target
-        .resolve("run", |name| env_lookup(name))
-        .or_else(|error| {
-            if has_explicit_run_target(&command.target)
-                || env_lookup(TARGET_ENV).is_some()
-                || env_lookup(DEPLOY_URL_ENV).is_some()
-            {
-                return Err(error);
-            }
-            Ok(TargetContext {
-                kind: TargetContextKind::LocalDiscovery,
-                source: TargetContextSource::ImplicitLocalDefault,
-            })
-        })
+    command.target.resolve("run", |name| env_lookup(name))
 }
 
 async fn run_function_command(
@@ -179,10 +162,6 @@ async fn run_function_command(
         )))?
     );
     Ok(())
-}
-
-fn has_explicit_run_target(target: &TargetSelector) -> bool {
-    target.local || target.target.is_some() || target.url.is_some()
 }
 
 fn parse_json_args(command: &RunFunctionsCommand) -> Result<Value, Error> {
@@ -279,7 +258,7 @@ async fn invoke_run_function(
             let client = LocalServerHttpClient::discover(&paths, reqwest::Client::new())?
                 .ok_or_else(|| {
                     Error::InvalidInput(
-                        "no running local Nimbus server was found; start one with `nimbus dev` or `nimbus start`, or pass --url".to_string(),
+                        "no running local Nimbus server was found; start one with `nimbus dev` or `nimbus start`, or pass a TARGET URL".to_string(),
                     )
                 })?;
             client.post_json(&path, payload).await
@@ -288,7 +267,7 @@ async fn invoke_run_function(
             invoke_remote_run_function(base_url, &path, payload).await
         }
         TargetContextKind::NamedTarget(target) => Err(Error::InvalidInput(format!(
-            "named target `{target}` is not yet backed by a target registry; pass --local or --url"
+            "named target `{target}` is not yet backed by a target registry; pass a TARGET URL or omit TARGET for local"
         ))),
     }
 }
@@ -355,9 +334,7 @@ mod tests {
 
     #[test]
     fn run_command_resolves_target() {
-        let cli = Cli::parse_from([
-            "nimbus", "run", "--target", "dev", "exec", "--", "npm", "test",
-        ]);
+        let cli = Cli::parse_from(["nimbus", "run", "dev", "exec", "--", "npm", "test"]);
         let Command::Run(command) = cli.command else {
             panic!("run command should parse");
         };
@@ -380,7 +357,6 @@ mod tests {
         let cli = Cli::parse_from([
             "nimbus",
             "run",
-            "--local",
             "functions",
             "messages:send",
             "{\"body\":\"hello\"}",
@@ -532,7 +508,7 @@ workloads:
         .expect("policy fixture should write");
         let target = crate::target_context::TargetContext {
             kind: crate::target_context::TargetContextKind::LocalDiscovery,
-            source: crate::target_context::TargetContextSource::ExplicitLocalFlag,
+            source: crate::target_context::TargetContextSource::ImplicitLocalDefault,
         };
 
         let error = super::run_function_command(
