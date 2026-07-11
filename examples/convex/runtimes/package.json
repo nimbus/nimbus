@@ -1,0 +1,22 @@
+{
+  "name": "convex-runtimes",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "scripts": {
+    "codegen": "node ./scripts/vendor-external-packages.mjs && convex codegen --app .",
+    "smoke": "npm run codegen && node --experimental-strip-types ./smoke.ts",
+    "typecheck": "npm run codegen && tsc -p convex/tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit",
+    "test": "npm run typecheck"
+  },
+  "dependencies": {
+    "convex": "file:./.nimbus/packages/convex",
+    "nanoid": "^3.3.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "6.0.3"
+  }
+}

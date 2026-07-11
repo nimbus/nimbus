@@ -98,6 +98,7 @@ APPS=(
   "nimbus/agent-chat|nimbus-agent-chat|examples/nimbus/agent-chat|1|1|${CONVEX_DEV_TENANCY_ENV}|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
   "nimbus/agent-worker|nimbus-agent-worker|examples/nimbus/agent-worker|1|1|${CONVEX_DEV_TENANCY_ENV}|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
   "convex/tasks|convex-tasks|examples/convex/tasks|1|1|${CONVEX_DEV_TENANCY_ENV}|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
+  "convex/runtimes|convex-runtimes|examples/convex/runtimes|1|1|${CONVEX_DEV_TENANCY_ENV}|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
   "firebase/tasks|firebase-tasks|examples/firebase/tasks|0|1|-|-|NIMBUS_FIRESTORE_URL=${NIMBUS_URL}|dev"
   "mongodb/tasks|mongodb-tasks|examples/mongodb/tasks|0|0|NIMBUS_MONGODB_PASSWORD=nimbus|--mongodb-username=nimbus|NIMBUS_MONGODB_USERNAME=nimbus,NIMBUS_MONGODB_PASSWORD=nimbus|start"
   "dynamodb/tasks|dynamodb-tasks|examples/dynamodb/tasks|0|0|-|--dynamodb-access-key=nimbus:nimbus:default|-|start"

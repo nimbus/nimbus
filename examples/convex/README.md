@@ -50,6 +50,10 @@ compiled/runtime subset these apps exercise lives in [`DEVNOTES.md`](DEVNOTES.md
   delegates to an internal mutation.
 - **[`node/`](node/)** — a Node app using generated refs, an injected WebSocket
   implementation, point-in-time reads, and live subscriptions.
+- **[`runtimes/`](runtimes/)** — a two-runtime app: one action runs on the
+  default V8-based runtime, a `"use node"` action runs on the Node-compatible
+  runtime, and both write to a shared table so the results can be compared.
+  See its [README](runtimes/README.md).
 - **[`showcase/`](showcase/)** — a small app used to exercise the developer
   console's function source visibility (source view, symbol navigation, and
   type-hover). See its [README](showcase/README.md).
