@@ -2439,6 +2439,24 @@ jobs:
       - name: Mark nimbus-bin executable
         run: chmod +x target/ci-archive/nimbus
 
+      # nimbus-bin-build's ci-archive profile inherits from `dev`, so
+      # nimbus-assets' rust-embed compiles with debug-assertions on and reads
+      # embedded/packages/manifest.json from disk at runtime instead of baking
+      # it into the binary (rust-embed only embeds bytes at compile time under
+      # release-style, non-debug-assertions builds). Every other job that
+      # boots this binary already re-stages the payload for that reason; this
+      # job needs the same step so app-dir preflight (agent-chat, convex,
+      # firebase, cloud-functions) can find the manifest instead of panicking
+      # at crates/nimbus-assets/src/js_packages.rs:84.
+      - name: Download embedded package payload
+        uses: actions/download-artifact@v8
+        with:
+          name: embedded-packages
+          path: crates/nimbus-assets/embedded/packages
+
+      - name: Refresh embedded package payload mtimes
+        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
+
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
