@@ -63,22 +63,26 @@ compiled/runtime subset these apps exercise lives in [`DEVNOTES.md`](DEVNOTES.md
 | `tasks.delete` | yes (by spec) | Deleting removes the task from subsequent reads. |
 | `tasks.live-update` | yes (by spec, reactive query) | A subscription opened before `tasks.create` delivers the new task with no explicit re-read. |
 
-**Live verification is partial.** The team-binding gate that used to block
-every anonymous application-Convex request outright
-(`crates/nimbus-convex/src/tenancy.rs`, enforced in
+**Live verification is partial. The team-binding gate is no longer the
+blocker** — the gate that used to refuse every anonymous application-Convex
+request outright (`crates/nimbus-convex/src/tenancy.rs`, enforced in
 `crates/nimbus-server/src/adapters/convex/handlers/registry_auth.rs`) now has
 dev-mode defaults: `nimbus dev` auto-provisions anonymous local traffic with
 zero env config, and `start` accepts an explicit opt-in
 (`NIMBUS_CONVEX_SILO_TEAMS`/`NIMBUS_CONVEX_PRINCIPAL_TEAMS`/`NIMBUS_CONVEX_ANONYMOUS_TEAM`).
 Confirmed live against a real `nimbus dev` boot: `ensureTenant()`,
 `tasks.create`, and `tasks.list` all PASS anonymously. What remains blocked is
-unrelated to the gate — two separate, pre-existing runtime bugs in `nimbus
-dev`'s Convex bundle pipeline: running the standard `npm run codegen`/`test`/
-`build` client command while a `nimbus dev` server for the same app is live
-corrupts that server's served bundle (no coordination between the two
-processes), and any mutation or query with a `v.id(...)`-typed argument
-(`tasks.toggle`, `tasks.delete`) fails server-side with a deserialization
-error. Both are root-caused and tracked, not fixed, in the EX3.2 row of
+three separate, pre-existing, unrelated `nimbus dev`/`nimbus-runtime` defects:
+(1) running the standard `npm run codegen`/`test`/`build` client command while
+a `nimbus dev` server for the same app is live silently corrupts that server's
+served bundle (no coordination between the two processes); (2) `ctx.db.get`,
+`ctx.db.patch`, and `ctx.db.delete` reject the single combined `"table:id"`
+string every generated `Doc`/`Id` type and every real Convex handler passes
+them (`tasks.toggle`'s `ctx.db.get(id)`, `tasks.delete`'s `ctx.db.delete(id)`)
+— the host contract only accepts `(table, id)` two-arg or `{table, id}`
+object-arg calls. All three (plus an intermittent boot-time bundle-hash race)
+are root-caused with exact file/line and live repro, tracked as flagged
+follow-ups, not fixed, in the EX3.2 row of
 `docs/private/plans/examples-and-target-resolution-plan.md`, which also has
 the full evidence. Full [`tasks`](../specs/tasks.md) spec. See
 [`tasks/README.md`](tasks/README.md).

@@ -45,9 +45,10 @@ The app implements the full shared [`tasks` spec](../../specs/tasks.md).
 The app is built and typechecks/builds to this spec. Live verification against
 a running server is **partial**: `tasks.create` and `tasks.list` have real PASS
 evidence against anonymous local traffic; `tasks.toggle` and `tasks.delete` are
-blocked by an unrelated, pre-existing runtime bug (not this app, not the
-team-binding gate) — see the "Live verification is partial" note in
-[`../README.md`](../README.md) before running the smoke below.
+blocked by unrelated, pre-existing `nimbus dev`/`nimbus-runtime` defects (not
+this app, not the team-binding gate — that gate is now verified working) —
+see the "Live verification is partial" note in [`../README.md`](../README.md)
+before running the smoke below.
 
 ## Running
 
