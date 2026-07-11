@@ -55,7 +55,30 @@ async function readUtf8FileIfExists(filePath) {
   }
 }
 
-async function resolveSourceRoot(appDir) {
+async function resolveSourceRoot(appDir, { functionsOverride } = {}) {
+  // convex.json's "functions" setting relocates the source directory (e.g.
+  // Create React App projects that cannot import from outside src/). It is
+  // a Convex-specific setting, so an override always resolves to the
+  // "convex" package namespace rather than re-running the nimbus/convex
+  // dual-root heuristic below.
+  if (functionsOverride != null) {
+    const overrideDir = path.resolve(appDir, functionsOverride);
+    if (!await directoryExists(overrideDir)) {
+      const relativeOverride = path.relative(appDir, overrideDir) || ".";
+      throw new Error(
+        `convex.json declares "functions": ${JSON.stringify(functionsOverride)}, but ` +
+        `${relativeOverride} is not a directory in ${appDir}. Create that directory with ` +
+        `your Convex functions inside it, or remove "functions" from convex.json.`,
+      );
+    }
+    return {
+      sourceDirName: path.basename(overrideDir),
+      sourceDirPath: overrideDir,
+      packageNamespace: "convex",
+      detectedBothRoots: false,
+    };
+  }
+
   const nimbusDir = path.join(appDir, "nimbus");
   const convexDir = path.join(appDir, "convex");
   const nimbusExists = await directoryExists(nimbusDir);
@@ -94,9 +117,9 @@ async function resolveSourceRoot(appDir) {
   );
 }
 
-async function tryResolveSourceRoot(appDir) {
+async function tryResolveSourceRoot(appDir, options) {
   try {
-    return await resolveSourceRoot(appDir);
+    return await resolveSourceRoot(appDir, options);
   } catch (error) {
     if (
       error instanceof Error
@@ -104,6 +127,9 @@ async function tryResolveSourceRoot(appDir) {
     ) {
       return null;
     }
+    // A declared-but-missing "functions" override is a real misconfiguration,
+    // not "no Convex app here" — surface it rather than silently falling
+    // through to Cloud Functions detection.
     throw error;
   }
 }

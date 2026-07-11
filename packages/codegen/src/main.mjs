@@ -10,7 +10,7 @@ import {
 } from "./app.mjs";
 import { loadAuthConfig } from "./auth_config.mjs";
 import { generateCloudFunctionsArtifacts } from "./cloud_functions.mjs";
-import { generateApiFile, generateDataModelFile, generateScheduledFunctionsFile, generateServerFile } from "./emit/generated_files.mjs";
+import { generateApiCjsFile, generateApiFile, generateDataModelFile, generateScheduledFunctionsFile, generateServerFile } from "./emit/generated_files.mjs";
 import {
   generateRuntimeBundle,
   generateRuntimeProgramBundle,
@@ -81,13 +81,25 @@ function assertRuntimeHandlerSyntax(fn, moduleInfo) {
   }
 }
 
-async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = false, onInfo } = {}) {
-  const resolvedSourceRoot = sourceRoot ?? await resolveSourceRoot(appDir);
+async function generateConvexArtifacts({
+  appDir,
+  sourceRoot,
+  projectConfig: providedProjectConfig,
+  debugNodeApis = false,
+  onInfo,
+} = {}) {
+  // Loaded before source-root resolution: convex.json's "functions" setting
+  // can relocate the source directory, so the config that decides where to
+  // look must come first — and both reads should be the same read, not two
+  // separate convex.json parses that could race a concurrent edit under
+  // `nimbus dev`'s watch loop.
+  const projectConfig = providedProjectConfig ?? await loadProjectConfig(appDir);
+  const resolvedSourceRoot =
+    sourceRoot ?? await resolveSourceRoot(appDir, { functionsOverride: projectConfig.functions });
   const sourceDir = resolvedSourceRoot.sourceDirPath;
   const packageNamespace = resolvedSourceRoot.packageNamespace;
   const generatedDir = path.join(sourceDir, "_generated");
   const internalDir = path.join(appDir, ".nimbus", "convex");
-  const projectConfig = await loadProjectConfig(appDir);
   const schema = await loadSchemaDefinition(sourceDir);
   const authConfig = await loadAuthConfig(sourceDir);
 
@@ -154,6 +166,12 @@ async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = fal
     generateApiFile(modules, schema, packageNamespace),
     "utf8",
   );
+  const apiCjsPath = path.join(generatedDir, "api_cjs.cjs");
+  if (projectConfig.generateCommonJSApi) {
+    await fs.writeFile(apiCjsPath, generateApiCjsFile(modules, packageNamespace), "utf8");
+  } else {
+    await fs.rm(apiCjsPath, { force: true });
+  }
   await fs.writeFile(
     path.join(generatedDir, "server.ts"),
     generateServerFile(packageNamespace),
@@ -242,7 +260,10 @@ async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = fal
 async function runCliFromArgs(args = process.argv.slice(2), { onInfo } = {}) {
   const appDir = resolveAppDirectory(args);
   const debugNodeApis = args.includes("--debug-node-apis");
-  const sourceRoot = await tryResolveSourceRoot(appDir);
+  const projectConfig = await loadProjectConfig(appDir);
+  const sourceRoot = await tryResolveSourceRoot(appDir, {
+    functionsOverride: projectConfig.functions,
+  });
   const cloudFunctions = await generateCloudFunctionsArtifacts({ appDir, onInfo });
 
   if (sourceRoot?.detectedBothRoots) {
@@ -250,11 +271,11 @@ async function runCliFromArgs(args = process.argv.slice(2), { onInfo } = {}) {
   }
 
   if (sourceRoot === null && cloudFunctions === null) {
-    await resolveSourceRoot(appDir);
+    await resolveSourceRoot(appDir, { functionsOverride: projectConfig.functions });
   }
 
   const convex = sourceRoot
-    ? await generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis, onInfo })
+    ? await generateConvexArtifacts({ appDir, sourceRoot, projectConfig, debugNodeApis, onInfo })
     : null;
   return { appDir, cloudFunctions, convex };
 }
