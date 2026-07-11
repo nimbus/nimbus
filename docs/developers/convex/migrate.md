@@ -96,13 +96,16 @@ set those variables in the environment where `nimbus dev` executes.
 - **Scheduling** — `ctx.scheduler.runAfter` and `runAt` targeting mutations.
 - **HTTP actions** — `httpRouter` routes in `convex/http.ts`, served under
   `{deploymentUrl}/http/...`.
-- **Node actions** — `"use node"` modules and `convex.json` settings
-  (`node.nodeVersion`, `node.externalPackages`).
+- **Node actions** — `"use node"` action modules run on Nimbus's
+  Node-compatible runtime.
 - **Clients** — the `convex/react` hooks and the `convex/browser` HTTP and
   WebSocket clients, including reactive query subscriptions.
 
 ## What to check
 
+- **`convex.json`** — not read. Nimbus runs one Node-compatible runtime, so
+  the `node.nodeVersion` and `node.externalPackages` settings have no
+  effect (Convex's own self-hosted backend also ignores `nodeVersion`).
 - **File storage** — `ctx.storage` and the `_storage` system table are not
   available.
 - **Search** — full-text and vector search (`withSearchIndex`) are not

@@ -57,6 +57,7 @@ sources exist.
 | `developers/convex/index.md` | Deployment URL `http://localhost:3210/convex/demo` | `crates/nimbus-server/src/router.rs`, `crates/nimbus-cli/src/dev/plan.rs` |
 | `developers/convex/index.md` | ctx capability split (query read / mutation write+scheduler / action run-only) | `packages/codegen/src/planner/context_api.mjs` |
 | `developers/convex/index.md` | React/HTTP client surface (`ConvexProvider`, `useQuery`, `ConvexHttpClient`) | `packages/convex/src/react.ts`, `packages/convex/src/browser.ts` |
+| `developers/convex/migrate.md` | `"use node"` action modules run on the Node-compatible runtime; `convex.json` is not read (`node.nodeVersion`/`node.externalPackages` have no effect) | `packages/codegen/src/parser.mjs`, `crates/nimbus-cli/src/codegen.rs`, `crates/nimbus-runtime/src/runtime/bootstrap/js/deno_runtime_globals.js` |
 | `developers/convex/migrate.md` | Dev provisions packages for detected Convex apps and rewires the `convex` dependency to `file:./.nimbus/packages/convex` | `crates/nimbus-cli/src/dev.rs`, `crates/nimbus-cli/src/provision.rs`, `crates/nimbus-cli/src/node_runtime.rs` |
 | `developers/convex/migrate.md` | Generated files import from `convex/server`/`browser`/`values` | `packages/codegen/src/emit/generated_files.mjs`, `packages/codegen/src/app.mjs` |
 | `developers/convex/migrate.md` | `.env.local` `NIMBUS_DEPLOYMENT=local:<slug>`; `nimbus codegen --app .` | `crates/nimbus-cli/src/dev/env_file.rs`, `crates/nimbus-cli/src/codegen.rs` |
