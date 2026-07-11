@@ -11,6 +11,16 @@ the code compiled. A spec also carries a per-adapter supported-subset table, so
 a surface that cannot do part of the spec (for example a driver with no live
 queries) says so explicitly instead of pretending.
 
+## Flow anchors
+
+Every flow in a spec has a stable anchor name (`tasks.create`,
+`tasks.live-update`, …). Anchors are the contract keys between a spec and the
+smokes that implement it: a smoke references the anchor of each flow it
+exercises, so a checker can confirm every anchor is covered and catch drift
+when a spec adds a flow a smoke has not implemented (or a smoke names an anchor
+the spec no longer defines). Anchors are append-only — never rename or reuse
+one, because a smoke elsewhere may already reference it by name.
+
 ## Specs
 
 - [`tasks.md`](tasks.md) — CRUD plus a live task list; the hello-world every

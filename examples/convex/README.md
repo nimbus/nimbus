@@ -9,6 +9,20 @@ official Convex demos running as-is.
 Docs: [Convex](../../docs/developers/convex/index.md). Contributor status on the
 compiled/runtime subset these apps exercise lives in [`DEVNOTES.md`](DEVNOTES.md).
 
+> **⚠️ Monorepo-only — do not copy this directory out of the repo yet.**
+> These apps import the workspace `convex` package, which is Nimbus's Convex
+> compatibility package. It deliberately takes the official `convex` name and
+> `convex` bin so your code runs unchanged — but that also means if you copy an
+> app out of this monorepo and run `npm install`, npm silently pulls the **real
+> Convex Cloud** `convex` package instead of Nimbus's, and your app quietly
+> talks to Convex's hosted service rather than your Nimbus server. There is no
+> error; the substitution is invisible. Until the `nimbus init --example`
+> scaffolder ships (it rewrites workspace deps to published pins), run these
+> examples in place, from a checkout of this repository. The other adapter
+> examples import stock upstream clients (`firebase`, `mongodb`, the AWS SDK)
+> and have no such name collision — a copied-out app there fails loudly with an
+> unresolved workspace dependency instead.
+
 ## Examples
 
 - **[`html/`](html/)** — a React app using `convex/react` and generated
@@ -25,7 +39,7 @@ compiled/runtime subset these apps exercise lives in [`DEVNOTES.md`](DEVNOTES.md
 
 ## `tasks` spec support
 
-| Create / List / Toggle / Delete | Live view |
+| CRUD anchors | `tasks.live-update` |
 | --- | --- |
 | yes | yes (reactive query) |
 

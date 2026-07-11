@@ -20,39 +20,35 @@ task. Examples never assume a specific id encoding beyond "stable and unique".
 
 ## Flows
 
-1. **Create** — insert a task with `text` and `completed: false`. The created
-   task is retrievable and carries a stable id and a `createdAt`.
-2. **List** — read all tasks, newest first by `createdAt`.
-3. **Toggle** — set `completed` to the opposite of its current value for one
-   task by id. The change is visible on the next read.
-4. **Delete** — remove one task by id. It no longer appears in the list.
-5. **Live** *(surfaces that support subscriptions)* — an open subscription to
-   the task list receives the create/toggle/delete above as pushed updates,
-   with no polling.
+Each flow has a stable **anchor** (`tasks.create`, `tasks.list`, …). The anchor
+is the contract key: a smoke script references the flow it exercises by anchor
+name, so a checker can confirm every anchor is covered and flag spec/smoke
+drift mechanically. Anchors are append-only — never renamed or reused.
 
-## Observable assertions (smoke-checkable)
+| Anchor | Flow | Observable assertion (what the smoke asserts) |
+| --- | --- | --- |
+| `tasks.create` | Insert a task with `text` and `completed: false`. | The created task is retrievable, carries a stable id and a `createdAt`, and a `tasks.list` right after contains exactly one task with the inserted `text` and `completed === false`. |
+| `tasks.list` | Read all tasks. | After a second `tasks.create`, the read returns both tasks ordered newest-first by `createdAt`. |
+| `tasks.toggle` | Set `completed` to the opposite value for one task by id. | A `tasks.list` after the toggle shows that task's `completed === true`. |
+| `tasks.delete` | Remove one task by id. | A `tasks.list` after the delete no longer contains that task. |
+| `tasks.live-update` | Open a subscription to the task list before `tasks.create`. | The subscription delivers the new task with no explicit re-read (no polling). Adapters without live queries satisfy this anchor by polling `tasks.list` instead and record the gap in the supported-subset table below. |
 
-A smoke script must assert behavior, not just that code ran:
-
-- After **Create**, a **List** contains exactly one task with the inserted
-  `text` and `completed === false`.
-- After **Toggle** on that task, a **List** shows `completed === true`.
-- After a second **Create**, **List** returns both tasks ordered newest-first.
-- After **Delete** of the first task, **List** no longer contains it.
-- **Live**: with a subscription open before **Create**, the subscription
-  delivers the new task without an explicit re-read. Adapters that do not
-  support live queries assert this by polling **List** instead and record the
-  gap in their supported-subset table.
+A smoke script must assert the observable outcome in the third column, not just
+that the flow's code ran. Every anchor above is asserted by every adapter's
+`tasks` smoke for its supported subset.
 
 ## Supported subset by adapter
 
-| Adapter | Create / List / Toggle / Delete | Live view | Notes |
+The CRUD column covers `tasks.create` / `tasks.list` / `tasks.toggle` /
+`tasks.delete`; the live column is the `tasks.live-update` anchor.
+
+| Adapter | CRUD anchors | `tasks.live-update` | Notes |
 | --- | --- | --- | --- |
 | Native (`@nimbus/nimbus`) | yes | yes (WebSocket subscription) | Full spec. |
 | Convex | yes | yes (reactive query) | Full spec via `convex/react` / `convex/browser`. |
 | Firebase / Firestore | yes | yes (`onSnapshot`) | Full spec; live view uses the `Listen` bridge. |
-| MongoDB | yes | no | Stock driver CRUD. Change streams are not supported, so the live view degrades to polling **List**. |
-| DynamoDB | yes | no | Stock AWS SDK CRUD. No live view; polls **List**. |
-| Cloud Functions | via triggers | n/a | Not a client; an `onDocumentCreated` trigger performs a derived write, asserted as an observable side effect after **Create**. |
+| MongoDB | yes | polled | Stock driver CRUD. Change streams are not supported, so `tasks.live-update` is satisfied by polling `tasks.list`. |
+| DynamoDB | yes | polled | Stock AWS SDK CRUD. No live view; `tasks.live-update` polls `tasks.list`. |
+| Cloud Functions | via triggers | n/a | Not a client; an `onDocumentCreated` trigger performs a derived write, asserted as an observable side effect after `tasks.create`. |
 
 Each example's README repeats its own row and links back to this spec.

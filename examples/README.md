@@ -42,6 +42,13 @@ single server, or a cluster — the resource kind is invisible to the command.
 Each adapter directory has its own `README.md` explaining the surface, listing
 its apps, and stating exactly which of the surface's features it supports.
 
+Run these examples in place, from a checkout of this repository — they import
+this repo's workspace packages, so a copied-out app will not resolve its
+dependencies until the `nimbus init --example` scaffolder ships. The Convex
+examples carry an extra, quieter hazard because Nimbus's compatibility package
+takes the official `convex` name: read the warning in
+[`convex/README.md`](convex/README.md) before copying one out.
+
 ## Shared behavior specs
 
 Apps that implement the same canonical app (for example `tasks`) share one
