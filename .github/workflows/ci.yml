@@ -2511,6 +2511,11 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Fetch vendored deno JS/TS sources
+        # The workflow-level RUSTC_WRAPPER=sccache (CC2) breaks even
+        # `cargo fetch`'s rustc -vV probe on this deliberately
+        # toolchain-light job, which never installs sccache.
+        env:
+          RUSTC_WRAPPER: ""
         run: cargo fetch --locked
 
       - name: Set up Node.js
