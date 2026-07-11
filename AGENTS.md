@@ -40,10 +40,16 @@ covers UI/UX, code quality, API design, and copy.
 
 | model | cost | intelligence | taste |
 | --- | --- | --- | --- |
-| gpt-5.6-sol | 9 | 9 | 9 |
+| gpt-5.6-sol | 9 | 9 | 7 |
 | sonnet-5 | 5 | 5 | 7 |
 | opus-4.8 | 4 | 7 | 8 |
 | fable-5 | 2 | 9 | 9 |
+
+gpt-5.6-sol's taste is axis-uneven (benchmark research, 2026-07-10): UI/UX ≈ 8
+(level with opus-4.8 — the one axis where above-opus is defensible), code
+quality ≈ 7, writing/copy ≈ 6 (EQ-Bench prose has the GPT line well behind
+Claude). Prefer Claude models for prose, docs, and copy; sol is fine for UI
+prototyping. Re-rate when WebDev/Design Arena publish sol Elos.
 
 How to apply:
 
