@@ -89,7 +89,7 @@ sources exist.
 | `developers/cloud-functions/index.md` | Artifact set `artifact.json`/`targets.json`/`bundle.mjs`/`bundle.sha256` | `crates/nimbus-cloud-functions/src/lib.rs` |
 | `developers/cloud-functions/index.md` | Authoring needs Node 22 or newer: external Node major below 22 rejected, 22 exact, newer majors allowed with a warning | `crates/nimbus-cli/src/node_runtime.rs` |
 | `developers/cloud-functions/migrate.md` | Version-1 `targets.json` schema; service-account execution for Firestore bindings | `crates/nimbus-cloud-functions/src/lib.rs`, `packages/codegen/src/selftest/cloud_functions_fixtures.mjs` |
-| `developers/cloud-functions/migrate.md` | `nimbus deploy --url/--token` + env vars | `crates/nimbus-cli/src/deploy.rs` |
+| `developers/cloud-functions/migrate.md` | `nimbus deploy` positional `TARGET`/`--token` + env vars | `crates/nimbus-cli/src/deploy.rs` |
 | `reference/cloud-functions/compatibility.md` | Path rules; at-least-once delivery, replay, chain-depth limit | `packages/codegen/src/cloud_functions/runtime_sources.mjs`, `crates/nimbus-engine/src/triggers/execution.rs`, `crates/nimbus-server/src/adapters/cloud_functions/execution.rs` |
 | `reference/cloud-functions/compatibility.md` | Admin slice coverage; options matrix; callable envelope | `crates/nimbus-cloud-functions/src/runtime_api/firebase_admin/firestore.rs`, `crates/nimbus-server/src/adapters/cloud_functions/http/callable.rs` |
 

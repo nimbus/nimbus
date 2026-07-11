@@ -14,13 +14,18 @@ Docs: [MongoDB](../../docs/developers/mongodb/index.md).
 
 ## `tasks` spec support
 
+_Planned, not yet in this directory._ The `tasks` app and its anchor-asserting
+smoke are still being built; the app here today is a different `messages` CRUD
+demo (see **Examples** above). The table below is the target subset that `tasks`
+app will cover — see the [target-state note](../specs/tasks.md) in the spec.
+
 | Create / List / Toggle / Delete | Live view |
 | --- | --- |
 | yes | no |
 
-Full CRUD from the [`tasks`](../specs/tasks.md) spec. The live view is **not**
-supported — change streams are unavailable on this surface, so the example's
-live assertion degrades to polling the list.
+Target: full CRUD from the [`tasks`](../specs/tasks.md) spec. The live view is
+**not** supported — change streams are unavailable on this surface, so the
+example's live assertion degrades to polling the list.
 
 ## Running
 

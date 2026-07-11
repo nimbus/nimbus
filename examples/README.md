@@ -42,11 +42,24 @@ single server, or a cluster — the resource kind is invisible to the command.
 Each adapter directory has its own `README.md` explaining the surface, listing
 its apps, and stating exactly which of the surface's features it supports.
 
+**What exists today vs. what is still being built.** The linked directories above
+hold per-surface demos that run against the current build today — the Convex
+apps operate on a `messages` collection, the native and Firestore apps on their
+own shapes, and so on. The shared `tasks` example that the [specs](specs/tasks.md)
+describe — one `tasks` app per surface plus a smoke script that asserts the
+spec's flow anchors — is not built yet. Until it lands, each adapter README's
+`tasks` support table describes the target subset that app will meet, not
+current coverage, and the DynamoDB and Cloud Functions directories (marked
+_coming soon_) do not exist yet.
+
 Run these examples in place, from a checkout of this repository — they import
 this repo's workspace packages, so a copied-out app will not resolve its
 dependencies until the `nimbus init --example` scaffolder ships. The Convex
-examples carry an extra, quieter hazard because Nimbus's compatibility package
-takes the official `convex` name: read the warning in
+examples carry an extra wrinkle: because Nimbus's compatibility package takes
+the official `convex` name, a copied-out Convex app's `"convex": "*"` resolves
+to the real Convex Cloud package instead, which then breaks at codegen (the
+app's `convex codegen --app .` uses a Nimbus-only flag) rather than failing on
+an unresolved dependency. Read the warning in
 [`convex/README.md`](convex/README.md) before copying one out.
 
 ## Shared behavior specs

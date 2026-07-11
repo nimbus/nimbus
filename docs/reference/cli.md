@@ -178,14 +178,16 @@ path.
 ## nimbus sandbox
 
 ```bash
-nimbus sandbox create [--local|--target TARGET|--url URL] --template NAME
-nimbus sandbox list [--local|--target TARGET|--url URL]
+nimbus sandbox create [TARGET] --template NAME
+nimbus sandbox list [TARGET]
 ```
 
 Reserves the top-level sandbox resource namespace and target-resolution contract.
-The commands parse and resolve targets through the same `TargetContext` seam as
-`nimbus run`, then fail actionably until sandbox lifecycle execution is owned by
-the service/sandbox/node workload-control path.
+`TARGET` is one optional positional — a URL or a configured target name; omitted
+resolves the running local server — exactly like `nimbus run`. The commands
+parse and resolve targets through the same `TargetContext` seam as `nimbus run`,
+then fail actionably until sandbox lifecycle execution is owned by the
+service/sandbox/node workload-control path.
 
 ## nimbus codegen
 

@@ -278,6 +278,7 @@ impl DeployDiff {
 /// The deploy target after resolution: the concrete base URL every downstream
 /// step keys off, plus the prominent banner naming the destination and how it
 /// resolved (printed before the deploy acts, per XD4).
+#[derive(Debug)]
 struct ResolvedDeployTarget {
     url: String,
     banner: String,
@@ -1033,25 +1034,30 @@ mod tests {
             named.banner
         );
 
+        // Unconfigured named target: resolve through a temp registry (never the
+        // machine's real ~/.config/nimbus/targets) so the assertion is
+        // deterministic and always runs.
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let targets_path = temp.path().join("targets");
+        crate::targets::write_targets_file(&targets_path, &crate::targets::TargetsFile::default())
+            .expect("empty registry should write");
         let unconfigured = resolve_deploy_target_url_with(
             &TargetSelector {
                 target: Some("ghost".to_string()),
             },
             |_| None,
-            crate::targets::resolve_named_target_url,
+            |name| crate::targets::resolve_named_target_url_at(&targets_path, name),
+        )
+        .expect_err("an unconfigured named target must fail");
+        let message = unconfigured.to_string();
+        assert!(
+            message.contains("nimbus target add ghost"),
+            "unconfigured-name error should point at `nimbus target add`: {message}"
         );
-        // The real resolver reads the machine's targets file; if `ghost` is not
-        // configured it must fail with an error naming the file and the add
-        // command. (A machine that happens to configure `ghost` would resolve
-        // it — acceptable, since the injected happy path above already proves
-        // resolution.)
-        if let Err(error) = unconfigured {
-            let message = error.to_string();
-            assert!(
-                message.contains("nimbus target add"),
-                "unconfigured-name error should point at `nimbus target add`: {message}"
-            );
-        }
+        assert!(
+            message.contains("targets"),
+            "unconfigured-name error should name the targets file: {message}"
+        );
 
         let missing_token =
             resolve_deploy_token(None, "http://localhost:3210", |_| None, |_| Ok(None))

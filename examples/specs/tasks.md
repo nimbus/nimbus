@@ -5,6 +5,15 @@ plus a live view that updates without re-polling. Every adapter's `tasks`
 example implements this spec for its supported subset and its smoke script
 asserts the flows below.
 
+> **Target state, not current coverage.** This spec is the contract the `tasks`
+> apps and their smoke scripts will meet — the per-surface `tasks` apps and the
+> anchor-asserting smokes are still being built. The apps checked in under
+> `examples/<adapter>/` today are different per-surface demos (they operate on a
+> `messages` collection), and no smoke references the `tasks.*` anchors yet.
+> Everything below — the flows, the anchors, and the supported-subset table —
+> describes what those deliverables will satisfy, so treat it as the spec to
+> build against, not a claim of what ships today.
+
 ## Schema
 
 One collection, `tasks`, with documents shaped:
@@ -39,8 +48,10 @@ that the flow's code ran. Every anchor above is asserted by every adapter's
 
 ## Supported subset by adapter
 
-The CRUD column covers `tasks.create` / `tasks.list` / `tasks.toggle` /
-`tasks.delete`; the live column is the `tasks.live-update` anchor.
+This table is the target subset each `tasks` app will cover once built (see the
+target-state note above); it is not a report of current app coverage. The CRUD
+column covers `tasks.create` / `tasks.list` / `tasks.toggle` / `tasks.delete`;
+the live column is the `tasks.live-update` anchor.
 
 | Adapter | CRUD anchors | `tasks.live-update` | Notes |
 | --- | --- | --- | --- |

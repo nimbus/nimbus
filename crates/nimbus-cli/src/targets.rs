@@ -168,7 +168,7 @@ pub(crate) fn resolve_named_target_url(name: &str) -> Result<String, Error> {
     resolve_named_target_url_at(&default_targets_path()?, name)
 }
 
-fn resolve_named_target_url_at(path: &Path, name: &str) -> Result<String, Error> {
+pub(crate) fn resolve_named_target_url_at(path: &Path, name: &str) -> Result<String, Error> {
     let file = read_targets_file(path)?;
     match find_target(&file, name) {
         Some(entry) => Ok(entry.url.trim_end_matches('/').to_owned()),
@@ -247,38 +247,64 @@ pub(crate) struct TargetRemoveCommand {
 
 pub(crate) fn run_target_command(command: TargetCommand) -> Result<(), Error> {
     let path = default_targets_path()?;
+    let mut out = std::io::stdout().lock();
+    run_target_command_at(command, &path, &mut out)
+}
+
+/// Execute a `target` subcommand against an explicit registry path, writing all
+/// human output to `out`. The path and sink are injected so tests exercise the
+/// real registry read/write and assert stdout without touching the machine's
+/// `~/.config/nimbus/targets`.
+fn run_target_command_at(
+    command: TargetCommand,
+    path: &Path,
+    out: &mut impl Write,
+) -> Result<(), Error> {
+    let emit = |out: &mut dyn Write, line: &str| -> Result<(), Error> {
+        writeln!(out, "{line}")
+            .map_err(|error| Error::Internal(format!("failed to write target output: {error}")))
+    };
     match command {
         TargetCommand::Add(add) => {
-            let mut file = read_targets_file(&path)?;
+            let mut file = read_targets_file(path)?;
             upsert_target(&mut file, &add.name, &add.url)?;
-            write_targets_file(&path, &file)?;
+            write_targets_file(path, &file)?;
             let name = validate_target_name(&add.name)?;
             let url = validate_target_url(&add.url)?;
-            println!("Added target {name} -> {url} in {}", path.display());
-            Ok(())
+            emit(
+                out,
+                &format!("Added target {name} -> {url} in {}", path.display()),
+            )
         }
         TargetCommand::List(_) => {
-            let file = read_targets_file(&path)?;
+            let file = read_targets_file(path)?;
             if file.target.is_empty() {
-                println!(
-                    "No targets configured in {}. Add one with `nimbus target add <name> <url>`.",
-                    path.display()
+                return emit(
+                    out,
+                    &format!(
+                        "No targets configured in {}. Add one with `nimbus target add <name> <url>`.",
+                        path.display()
+                    ),
                 );
-                return Ok(());
             }
             let width = file.target.keys().map(String::len).max().unwrap_or(0);
             for (name, entry) in &file.target {
-                println!("{name:<width$}  {}", entry.url, width = width);
+                emit(
+                    out,
+                    &format!("{name:<width$}  {}", entry.url, width = width),
+                )?;
             }
             Ok(())
         }
         TargetCommand::Remove(remove) => {
             let name = remove.name.trim().to_owned();
-            let mut file = read_targets_file(&path)?;
+            let mut file = read_targets_file(path)?;
             if remove_target(&mut file, &name) {
-                write_targets_file(&path, &file)?;
-                println!("Removed target {name} from {}", path.display());
-                Ok(())
+                write_targets_file(path, &file)?;
+                emit(
+                    out,
+                    &format!("Removed target {name} from {}", path.display()),
+                )
             } else {
                 Err(Error::InvalidInput(format!(
                     "target `{name}` is not configured in {}",
@@ -395,6 +421,99 @@ mod tests {
         assert!(
             message.contains("targets"),
             "error should name the targets file: {message}"
+        );
+    }
+
+    #[test]
+    fn target_command_writes_toml_shape_and_stdout() {
+        let (_dir, path) = temp_path();
+
+        // list on an empty registry names the file and the add command.
+        let mut empty = Vec::new();
+        run_target_command_at(TargetCommand::List(TargetListCommand {}), &path, &mut empty)
+            .expect("list of an empty registry should succeed");
+        let empty = String::from_utf8(empty).unwrap();
+        assert_eq!(
+            empty.trim_end(),
+            format!(
+                "No targets configured in {}. Add one with `nimbus target add <name> <url>`.",
+                path.display()
+            )
+        );
+
+        // add writes the on-disk TOML shape and confirms on stdout.
+        let mut added = Vec::new();
+        run_target_command_at(
+            TargetCommand::Add(TargetAddCommand {
+                name: "prod".to_owned(),
+                url: "https://nimbus.example.com/".to_owned(),
+            }),
+            &path,
+            &mut added,
+        )
+        .expect("add should succeed");
+        let added = String::from_utf8(added).unwrap();
+        assert_eq!(
+            added.trim_end(),
+            format!(
+                "Added target prod -> https://nimbus.example.com in {}",
+                path.display()
+            )
+        );
+        let toml = fs::read_to_string(&path).expect("targets file should exist after add");
+        assert!(
+            toml.contains("[target.prod]"),
+            "registry TOML must carry a [target.<name>] table: {toml}"
+        );
+        assert!(
+            toml.contains("url = \"https://nimbus.example.com\""),
+            "registry TOML must store the normalized url: {toml}"
+        );
+
+        // list prints the name/url row.
+        let mut listed = Vec::new();
+        run_target_command_at(
+            TargetCommand::List(TargetListCommand {}),
+            &path,
+            &mut listed,
+        )
+        .expect("list should succeed");
+        let listed = String::from_utf8(listed).unwrap();
+        assert_eq!(listed.trim_end(), "prod  https://nimbus.example.com");
+
+        // remove deletes the entry and confirms on stdout.
+        let mut removed = Vec::new();
+        run_target_command_at(
+            TargetCommand::Remove(TargetRemoveCommand {
+                name: "prod".to_owned(),
+            }),
+            &path,
+            &mut removed,
+        )
+        .expect("remove should succeed");
+        let removed = String::from_utf8(removed).unwrap();
+        assert_eq!(
+            removed.trim_end(),
+            format!("Removed target prod from {}", path.display())
+        );
+        assert!(
+            read_targets_file(&path).unwrap().target.is_empty(),
+            "registry should be empty after removing the only target"
+        );
+
+        // removing a missing name is an error that names the file.
+        let mut missing = Vec::new();
+        let error = run_target_command_at(
+            TargetCommand::Remove(TargetRemoveCommand {
+                name: "ghost".to_owned(),
+            }),
+            &path,
+            &mut missing,
+        )
+        .expect_err("removing an unconfigured name must fail");
+        assert!(
+            error.to_string().contains("is not configured in"),
+            "{error}"
         );
     }
 

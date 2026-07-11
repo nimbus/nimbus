@@ -15,12 +15,18 @@ Docs: [Native API](../../docs/developers/native/index.md).
 
 ## `tasks` spec support
 
+_Planned, not yet in this directory._ The `tasks` app and its anchor-asserting
+smoke are still being built; the app here today is a different native-SDK
+playground (see **Examples** above). The table below is the target subset that
+`tasks` app will cover — see the [target-state note](../specs/tasks.md) in the
+spec.
+
 | Create / List / Toggle / Delete | Live view |
 | --- | --- |
 | yes | yes (WebSocket subscription) |
 
-Full [`tasks`](../specs/tasks.md) spec: CRUD plus a live view that updates
-without polling.
+Target: the full [`tasks`](../specs/tasks.md) spec: CRUD plus a live view that
+updates without polling.
 
 ## Running
 

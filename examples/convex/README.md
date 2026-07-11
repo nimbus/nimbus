@@ -10,18 +10,28 @@ Docs: [Convex](../../docs/developers/convex/index.md). Contributor status on the
 compiled/runtime subset these apps exercise lives in [`DEVNOTES.md`](DEVNOTES.md).
 
 > **⚠️ Monorepo-only — do not copy this directory out of the repo yet.**
-> These apps import the workspace `convex` package, which is Nimbus's Convex
-> compatibility package. It deliberately takes the official `convex` name and
-> `convex` bin so your code runs unchanged — but that also means if you copy an
-> app out of this monorepo and run `npm install`, npm silently pulls the **real
-> Convex Cloud** `convex` package instead of Nimbus's, and your app quietly
-> talks to Convex's hosted service rather than your Nimbus server. There is no
-> error; the substitution is invisible. Until the `nimbus init --example`
-> scaffolder ships (it rewrites workspace deps to published pins), run these
-> examples in place, from a checkout of this repository. The other adapter
-> examples import stock upstream clients (`firebase`, `mongodb`, the AWS SDK)
-> and have no such name collision — a copied-out app there fails loudly with an
-> unresolved workspace dependency instead.
+> These apps depend on `"convex": "*"`, which inside this workspace resolves to
+> Nimbus's Convex compatibility package — the one that deliberately takes the
+> official `convex` name and `convex` bin so your code runs unchanged. Copy an
+> app out of the monorepo and `npm install`, and `"convex": "*"` instead
+> resolves to the **official Convex Cloud** package from the npm registry,
+> replacing Nimbus's — including its `convex` binary. What breaks then is
+> visible, not silent:
+>
+> - The app's scripts run `convex codegen --app .`, but `--app` is a
+>   Nimbus-only flag; the official `convex` CLI rejects it, so `npm run dev`,
+>   `build`, and `codegen` fail loudly at codegen.
+> - Even past that, the client still points at
+>   `http://localhost:8080/convex/demo` (it sets `skipConvexDeploymentUrlCheck`),
+>   so it targets your local Nimbus server — it does not quietly talk to Convex
+>   Cloud.
+>
+> Until the `nimbus init --example` scaffolder ships (it rewrites the `convex`
+> workspace dependency to a published Nimbus pin), run these examples in place,
+> from a checkout of this repository. The other adapter examples import stock
+> upstream clients (`firebase`, `mongodb`, the AWS SDK), so their copy-out
+> failure is the same kind of visible error: an unresolved workspace
+> dependency.
 
 ## Examples
 
@@ -39,11 +49,17 @@ compiled/runtime subset these apps exercise lives in [`DEVNOTES.md`](DEVNOTES.md
 
 ## `tasks` spec support
 
+_Planned, not yet in this directory._ The `tasks` app and its anchor-asserting
+smoke are still being built; the apps here today are `messages`-collection demos
+(see **Examples** above). The table below is the target subset that `tasks` app
+will cover — see the [target-state note](../specs/tasks.md) in the spec.
+
 | CRUD anchors | `tasks.live-update` |
 | --- | --- |
 | yes | yes (reactive query) |
 
-Full [`tasks`](../specs/tasks.md) spec via `convex/react` / `convex/browser`.
+Target: the full [`tasks`](../specs/tasks.md) spec via `convex/react` /
+`convex/browser`.
 
 ## Running
 

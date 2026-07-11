@@ -8,8 +8,16 @@ use sha2::{Digest, Sha256};
 const SLUG_HASH_HEX_LEN: usize = 8;
 
 pub(crate) fn global_config_dir() -> Result<PathBuf, Error> {
-    if let Some(path) = env::var_os("XDG_CONFIG_HOME") {
-        return Ok(PathBuf::from(path).join("nimbus"));
+    if let Some(value) = env::var_os("XDG_CONFIG_HOME") {
+        // XDG Base Directory spec: a value that is empty or not an absolute
+        // path is invalid and must be ignored, falling back to $HOME/.config.
+        // A relative value must never be honored — this directory feeds both
+        // the credentials and targets registries, so a CI-set empty or
+        // relative XDG would otherwise write them under the process CWD.
+        let path = PathBuf::from(value);
+        if path.is_absolute() {
+            return Ok(path.join("nimbus"));
+        }
     }
     Ok(resolve_home_dir()?.join(".config").join("nimbus"))
 }
@@ -214,6 +222,40 @@ mod tests {
         let dir = global_config_dir().unwrap();
         let home = env::var_os("HOME").unwrap();
         assert_eq!(dir, PathBuf::from(home).join(".config").join("nimbus"));
+    }
+
+    #[test]
+    fn global_config_dir_ignores_empty_xdg() {
+        let _lock = env_lock().lock().expect("env lock should not be poisoned");
+        let _guard = EnvGuard::new("XDG_CONFIG_HOME", "");
+        let dir = global_config_dir().unwrap();
+        let home = env::var_os("HOME").unwrap();
+        assert_eq!(
+            dir,
+            PathBuf::from(home).join(".config").join("nimbus"),
+            "an empty XDG_CONFIG_HOME must be ignored per the XDG spec"
+        );
+    }
+
+    #[test]
+    fn global_config_dir_ignores_relative_xdg() {
+        let _lock = env_lock().lock().expect("env lock should not be poisoned");
+        let _guard = EnvGuard::new("XDG_CONFIG_HOME", "relative/config");
+        let dir = global_config_dir().unwrap();
+        let home = env::var_os("HOME").unwrap();
+        assert_eq!(
+            dir,
+            PathBuf::from(home).join(".config").join("nimbus"),
+            "a relative XDG_CONFIG_HOME must be ignored so config never lands under the CWD"
+        );
+    }
+
+    #[test]
+    fn global_config_dir_honors_absolute_xdg() {
+        let _lock = env_lock().lock().expect("env lock should not be poisoned");
+        let _guard = EnvGuard::new("XDG_CONFIG_HOME", "/custom/xdg");
+        let dir = global_config_dir().unwrap();
+        assert_eq!(dir, PathBuf::from("/custom/xdg/nimbus"));
     }
 
     #[test]
