@@ -18,6 +18,7 @@
     "examples/firebase/html",
     "examples/firebase/tasks",
     "examples/mongodb/node",
+    "examples/mongodb/tasks",
     "examples/nimbus/html",
     "examples/nimbus/tasks"
   ],

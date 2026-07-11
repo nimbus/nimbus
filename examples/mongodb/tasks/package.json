@@ -1,0 +1,17 @@
+{
+  "name": "mongodb-tasks",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "node --experimental-strip-types ./script.ts",
+    "smoke": "node --experimental-strip-types ./smoke.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@nimbus/mongodb": "0.1.45",
+    "mongodb": "^6.16.0"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  }
+}
