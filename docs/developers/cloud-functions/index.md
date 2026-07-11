@@ -120,11 +120,12 @@ file format.
 ## Deploy
 
 ```bash
-nimbus deploy --url <server-url> --token <deploy-token>
+nimbus deploy <server-url> --token <deploy-token>
 ```
 
-`--url` and `--token` can also come from the `NIMBUS_DEPLOY_URL` and
-`NIMBUS_DEPLOY_TOKEN` environment variables.
+`TARGET` (the positional server URL or a configured target name) and `--token`
+can also come from the `NIMBUS_TARGET_URL` and `NIMBUS_DEPLOY_TOKEN`
+environment variables. Omit `TARGET` to deploy to the running local server.
 
 ## Where next
 

@@ -2,7 +2,7 @@ use clap::Args;
 use nimbus::Error;
 
 pub(crate) const TARGET_ENV: &str = "NIMBUS_TARGET";
-pub(crate) const DEPLOY_URL_ENV: &str = "NIMBUS_DEPLOY_URL";
+pub(crate) const TARGET_URL_ENV: &str = "NIMBUS_TARGET_URL";
 
 /// One shared vocabulary for every target-taking command's positional help.
 pub(crate) const TARGET_ARG_HELP: &str =
@@ -38,14 +38,14 @@ pub(crate) enum TargetContextSource {
     PositionalName,
     PositionalUrl,
     EnvironmentTarget,
-    EnvironmentDeployUrl,
+    EnvironmentTargetUrl,
 }
 
 impl TargetSelector {
     /// Resolve the positional target to a concrete [`TargetContext`].
     ///
     /// Precedence: an explicit positional wins outright; otherwise the
-    /// `NIMBUS_TARGET` / `NIMBUS_DEPLOY_URL` env fallbacks apply (exactly one,
+    /// `NIMBUS_TARGET` / `NIMBUS_TARGET_URL` env fallbacks apply (exactly one,
     /// or an ambiguity error if both are set); otherwise the command targets
     /// the local server.
     pub(crate) fn resolve(
@@ -58,17 +58,17 @@ impl TargetSelector {
         }
 
         let env_target = env_lookup(TARGET_ENV);
-        let env_url = env_lookup(DEPLOY_URL_ENV);
+        let env_url = env_lookup(TARGET_URL_ENV);
         match (env_target, env_url) {
             (Some(_), Some(_)) => Err(Error::InvalidInput(format!(
-                "nimbus {command_name} found both {TARGET_ENV} and {DEPLOY_URL_ENV}; set exactly one, or pass TARGET explicitly"
+                "nimbus {command_name} found both {TARGET_ENV} and {TARGET_URL_ENV}; set exactly one, or pass TARGET explicitly"
             ))),
             (Some(name), None) => {
                 TargetCandidate::named(&name, TargetContextSource::EnvironmentTarget)
                     .map(|candidate| candidate.context)
             }
             (None, Some(url)) => {
-                TargetCandidate::url(&url, TargetContextSource::EnvironmentDeployUrl)
+                TargetCandidate::url(&url, TargetContextSource::EnvironmentTargetUrl)
                     .map(|candidate| candidate.context)
             }
             (None, None) => Ok(TargetContext {
@@ -228,25 +228,25 @@ mod tests {
     }
 
     #[test]
-    fn env_deploy_url_resolves_remote_url_when_positional_absent() {
+    fn env_target_url_resolves_remote_url_when_positional_absent() {
         let context = selector(None)
             .resolve("deploy", |name| {
-                (name == DEPLOY_URL_ENV).then(|| "http://localhost:3210".to_owned())
+                (name == TARGET_URL_ENV).then(|| "http://localhost:3210".to_owned())
             })
-            .expect("env deploy url should resolve");
+            .expect("env target url should resolve");
 
         assert_eq!(
             context.kind,
             TargetContextKind::RemoteUrl("http://localhost:3210/".to_owned())
         );
-        assert_eq!(context.source, TargetContextSource::EnvironmentDeployUrl);
+        assert_eq!(context.source, TargetContextSource::EnvironmentTargetUrl);
     }
 
     #[test]
     fn positional_wins_over_env_fallbacks() {
         let context = selector(Some("prod"))
             .resolve("deploy", |name| {
-                (name == DEPLOY_URL_ENV).then(|| "http://localhost:3210".to_owned())
+                (name == TARGET_URL_ENV).then(|| "http://localhost:3210".to_owned())
             })
             .expect("explicit positional should override env");
 
@@ -262,7 +262,7 @@ mod tests {
         let error = selector(None)
             .resolve("run", |name| match name {
                 TARGET_ENV => Some("prod".to_owned()),
-                DEPLOY_URL_ENV => Some("http://localhost:3210".to_owned()),
+                TARGET_URL_ENV => Some("http://localhost:3210".to_owned()),
                 _ => None,
             })
             .expect_err("both env sources set should fail");

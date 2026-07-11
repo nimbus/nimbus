@@ -66,13 +66,15 @@ pub(crate) const DEPLOY_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus deploy                                 # local server (like nimbus dev)
   nimbus deploy http://localhost:3210
-  NIMBUS_DEPLOY_URL=http://localhost:3210 nimbus deploy
+  nimbus deploy prod                            # a name from `nimbus target add`
+  NIMBUS_TARGET_URL=http://localhost:3210 nimbus deploy
   nimbus deploy --app-dir ./examples/convex/html --dry-run
 
 Deploy target:
   TARGET is a URL or a configured target name; omitted = local. A URL deploys to
-  that self-hosted server; omitting TARGET deploys to the running local server
-  (NIMBUS_DEPLOY_URL is the env fallback). Authenticate via one of:
+  that self-hosted server; a name resolves through `nimbus target add`; omitting
+  TARGET deploys to the running local server (NIMBUS_TARGET_URL is the env
+  fallback). Authenticate via one of:
     --token <value>             explicit CLI flag (wins)
     NIMBUS_DEPLOY_TOKEN env     CI / automation path
     nimbus auth login --url <daemon> --bearer <value>

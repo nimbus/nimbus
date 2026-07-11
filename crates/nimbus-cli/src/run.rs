@@ -261,15 +261,26 @@ async fn invoke_run_function(
                         "no running local Nimbus server was found; start one with `nimbus dev` or `nimbus start`, or pass a TARGET URL".to_string(),
                     )
                 })?;
+            emit_run_target_banner(target, client.base_url());
             client.post_json(&path, payload).await
         }
         TargetContextKind::RemoteUrl(base_url) => {
+            emit_run_target_banner(target, base_url);
             invoke_remote_run_function(base_url, &path, payload).await
         }
-        TargetContextKind::NamedTarget(target) => Err(Error::InvalidInput(format!(
-            "named target `{target}` is not yet backed by a target registry; pass a TARGET URL or omit TARGET for local"
-        ))),
+        TargetContextKind::NamedTarget(name) => {
+            let base_url = crate::targets::resolve_named_target_url(name)?;
+            emit_run_target_banner(target, &base_url);
+            invoke_remote_run_function(&base_url, &path, payload).await
+        }
     }
+}
+
+/// Print the resolved-target banner to stderr (never stdout, which carries the
+/// function result JSON) so the destination is explicit even when implicit.
+fn emit_run_target_banner(target: &TargetContext, resolved_url: &str) {
+    let banner = crate::targets::resolved_target_banner("Running against", target, resolved_url);
+    let _ = crate::cli_ux::write_stderr_line(&banner);
 }
 
 async fn invoke_remote_run_function(

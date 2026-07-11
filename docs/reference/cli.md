@@ -138,9 +138,9 @@ automatically; for a remote server, pass `--admin-token` or set
 `NIMBUS_ADMIN_TOKEN`. The server-side contract is documented in
 [Deploy & admin API](/reference/deploy-admin-api/).
 
-| Flag | Env var | Default | What it does |
+| Argument / Flag | Env var | Default | What it does |
 | --- | --- | --- | --- |
-| `--url` | `NIMBUS_DEPLOY_URL` | required | Target Nimbus server URL. |
+| `TARGET` (positional) | `NIMBUS_TARGET` / `NIMBUS_TARGET_URL` | local server | URL or configured target name; omitted deploys to the running local server. |
 | `--token` | `NIMBUS_DEPLOY_TOKEN` | credentials file | Deploy admin bearer token. |
 | `--admin-token` | `NIMBUS_ADMIN_TOKEN` | local token file (loopback targets) | Local admin token sent as `X-Nimbus-Admin-Token`. |
 | `--app-dir` | — | auto-detected | App directory containing a `nimbus/` or `convex/` source root. |
@@ -151,21 +151,19 @@ automatically; for a remote server, pass `--admin-token` or set
 ## nimbus run
 
 ```bash
-nimbus run [--local|--target TARGET|--url URL] functions <selector> [jsonArgs] [flags]
+nimbus run [TARGET] functions <selector> [jsonArgs] [flags]
 ```
 
-Invokes a Nimbus function on a selected target. `--local`, `--target`, and
-`--url` are mutually exclusive target sources. If none is provided, `nimbus run
-functions` discovers a running local Nimbus server. `NIMBUS_TARGET` and
-`NIMBUS_DEPLOY_URL` are also accepted as target sources.
+Invokes a Nimbus function on a selected target. `TARGET` is one optional
+positional: a URL (`http`/`https`), a configured target name (see
+`nimbus target`), or omitted to discover the running local server.
+`NIMBUS_TARGET` and `NIMBUS_TARGET_URL` are accepted as env fallbacks.
 
 Most-used flags:
 
-| Flag | Env var | Default | What it does |
+| Argument / Flag | Env var | Default | What it does |
 | --- | --- | --- | --- |
-| `--local` | — | `false` | Resolve against the currently running local Nimbus server. |
-| `--target` | `NIMBUS_TARGET` | unset | Named Nimbus target configured for this machine. |
-| `--url` | `NIMBUS_DEPLOY_URL` | unset | Explicit Nimbus server URL. |
+| `TARGET` (positional) | `NIMBUS_TARGET` / `NIMBUS_TARGET_URL` | local server | URL or configured target name; omitted resolves the running local server. |
 | `--kind` | — | inferred | Function kind: `query`, `paginated-query`, `mutation`, or `action`. |
 | `--tenant` | — | `demo` | Tenant id to invoke. |
 | `--app` | — | current directory | App directory used for generated function-kind inference. |

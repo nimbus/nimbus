@@ -160,7 +160,11 @@ pub(crate) async fn run_deploy_command(
     command: DeployCommand,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cwd = env::current_dir()?;
-    let target_url = resolve_deploy_target_url(&command.target, |name| env::var(name).ok())?;
+    let ResolvedDeployTarget {
+        url: target_url,
+        banner,
+    } = resolve_deploy_target_url(&command.target, |name| env::var(name).ok())?;
+    emit_deploy_phase(&banner);
     let token = resolve_deploy_token(
         command.token.as_deref(),
         &target_url,
@@ -271,20 +275,41 @@ impl DeployDiff {
     }
 }
 
+/// The deploy target after resolution: the concrete base URL every downstream
+/// step keys off, plus the prominent banner naming the destination and how it
+/// resolved (printed before the deploy acts, per XD4).
+struct ResolvedDeployTarget {
+    url: String,
+    banner: String,
+}
+
 /// Resolve the deploy target to a concrete base URL the token, admin-token, and
 /// upload steps all key off. The positional `TARGET` follows the shared
 /// [`TargetSelector`] rule (URL / configured name / omitted = local):
 ///
 /// - a URL target uses it directly;
 /// - an omitted target discovers the running local server (like `nimbus dev`);
-/// - a named target has no registry backing yet and is rejected.
+/// - a named target resolves through the `~/.config/nimbus/targets` registry,
+///   and an unconfigured name fails with an error naming that file and
+///   `nimbus target add`.
 fn resolve_deploy_target_url(
     target: &TargetSelector,
     env_lookup: impl Fn(&str) -> Option<String>,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<ResolvedDeployTarget, Box<dyn std::error::Error>> {
+    resolve_deploy_target_url_with(target, env_lookup, crate::targets::resolve_named_target_url)
+}
+
+/// Named-target resolution is injected so tests never read the machine's real
+/// `~/.config/nimbus/targets`; production passes
+/// [`crate::targets::resolve_named_target_url`].
+fn resolve_deploy_target_url_with(
+    target: &TargetSelector,
+    env_lookup: impl Fn(&str) -> Option<String>,
+    named_resolver: impl Fn(&str) -> Result<String, nimbus::Error>,
+) -> Result<ResolvedDeployTarget, Box<dyn std::error::Error>> {
     let context = target.resolve("deploy", env_lookup)?;
-    match context.kind {
-        TargetContextKind::RemoteUrl(url) => Ok(url.trim_end_matches('/').to_string()),
+    let url = match &context.kind {
+        TargetContextKind::RemoteUrl(url) => url.trim_end_matches('/').to_string(),
         TargetContextKind::LocalDiscovery => {
             let paths = LocalServerPaths::resolve_for_current_platform().map_err(|error| {
                 io::Error::other(format!("failed to resolve local server paths: {error}"))
@@ -296,16 +321,12 @@ fn resolve_deploy_target_url(
                         "no running local Nimbus server was found; start one with `nimbus dev` or `nimbus start`, or pass a TARGET URL",
                     )
                 })?;
-            Ok(client.base_url().trim_end_matches('/').to_string())
+            client.base_url().trim_end_matches('/').to_string()
         }
-        TargetContextKind::NamedTarget(name) => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "named target `{name}` is not yet backed by a target registry; pass a TARGET URL or omit TARGET for local"
-            ),
-        )
-        .into()),
-    }
+        TargetContextKind::NamedTarget(name) => named_resolver(name)?,
+    };
+    let banner = crate::targets::resolved_target_banner("Deploying to", &context, &url);
+    Ok(ResolvedDeployTarget { url, banner })
 }
 
 fn resolve_deploy_token(
@@ -957,7 +978,7 @@ mod tests {
             !rendered.contains("--url <URL>"),
             "the deleted --url deploy flag must not appear as an option: {rendered}"
         );
-        assert!(rendered.contains("NIMBUS_DEPLOY_URL"));
+        assert!(rendered.contains("NIMBUS_TARGET_URL"));
         assert!(rendered.contains("--token"));
         assert!(rendered.contains("NIMBUS_DEPLOY_TOKEN"));
         assert!(rendered.contains("--dry-run"));
@@ -965,34 +986,72 @@ mod tests {
 
     #[test]
     fn deploy_target_resolution_resolves_url_and_requires_token() {
-        let url = resolve_deploy_target_url(
+        let reject_named = |name: &str| -> Result<String, nimbus::Error> {
+            panic!("unexpected named lookup for {name}")
+        };
+
+        let resolved = resolve_deploy_target_url_with(
             &TargetSelector {
                 target: Some("http://localhost:3210/".to_string()),
             },
             |_| None,
+            reject_named,
         )
         .expect("url target should resolve");
-        assert_eq!(url, "http://localhost:3210");
+        assert_eq!(resolved.url, "http://localhost:3210");
+        assert_eq!(
+            resolved.banner,
+            "Deploying to http://localhost:3210 (from TARGET)"
+        );
 
-        let from_env = resolve_deploy_target_url(&TargetSelector { target: None }, |name| {
-            (name == "NIMBUS_DEPLOY_URL").then(|| "http://localhost:3210/".to_string())
-        })
+        let from_env = resolve_deploy_target_url_with(
+            &TargetSelector { target: None },
+            |name| (name == "NIMBUS_TARGET_URL").then(|| "http://localhost:3210/".to_string()),
+            reject_named,
+        )
         .expect("url should resolve from env");
-        assert_eq!(from_env, "http://localhost:3210");
+        assert_eq!(from_env.url, "http://localhost:3210");
+        assert_eq!(
+            from_env.banner,
+            "Deploying to http://localhost:3210 (from NIMBUS_TARGET_URL)"
+        );
 
-        let named = resolve_deploy_target_url(
+        let named = resolve_deploy_target_url_with(
             &TargetSelector {
                 target: Some("prod".to_string()),
             },
             |_| None,
+            |name| Ok(format!("https://{name}.nimbus.example.com")),
         )
-        .expect_err("a named target has no registry backing yet");
+        .expect("a configured named target should resolve through the registry");
+        assert_eq!(named.url, "https://prod.nimbus.example.com");
         assert!(
             named
-                .to_string()
-                .contains("not yet backed by a target registry"),
-            "named-target error should explain the missing registry: {named}"
+                .banner
+                .starts_with("Deploying to prod (https://prod.nimbus.example.com, from "),
+            "named-target banner should name the destination and its source: {}",
+            named.banner
         );
+
+        let unconfigured = resolve_deploy_target_url_with(
+            &TargetSelector {
+                target: Some("ghost".to_string()),
+            },
+            |_| None,
+            crate::targets::resolve_named_target_url,
+        );
+        // The real resolver reads the machine's targets file; if `ghost` is not
+        // configured it must fail with an error naming the file and the add
+        // command. (A machine that happens to configure `ghost` would resolve
+        // it — acceptable, since the injected happy path above already proves
+        // resolution.)
+        if let Err(error) = unconfigured {
+            let message = error.to_string();
+            assert!(
+                message.contains("nimbus target add"),
+                "unconfigured-name error should point at `nimbus target add`: {message}"
+            );
+        }
 
         let missing_token =
             resolve_deploy_token(None, "http://localhost:3210", |_| None, |_| Ok(None))

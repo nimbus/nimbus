@@ -30,6 +30,7 @@ mod sandbox;
 mod sandbox_supervisor;
 mod start;
 mod target_context;
+mod targets;
 #[cfg(test)]
 mod test_support;
 mod token;
@@ -60,6 +61,7 @@ use crate::run::{RunCommand, run_run_command};
 use crate::sandbox::{SandboxCommand, run_sandbox_command};
 use crate::sandbox_supervisor::{SandboxSupervisorCommand, run_sandbox_supervisor_command};
 use crate::start::{StartCommand, persistence_config_from_start_command, run_start_command};
+use crate::targets::{TargetCommand, run_target_command};
 use crate::token::{TokenCommand, run_token_command};
 use crate::ui::{UiCommand, run_ui_command};
 use crate::validate::{ValidateCommand, run_validate_command};
@@ -88,6 +90,9 @@ enum Command {
     Deploy(DeployCommand),
     /// Run a workload against an explicit Nimbus target.
     Run(RunCommand),
+    /// Manage the named-target registry (`~/.config/nimbus/targets`).
+    #[command(subcommand)]
+    Target(TargetCommand),
     /// Explain effective Nimbus configuration and runtime admission.
     Explain(ExplainCommand),
     /// Validate Nimbus project config or policy.
@@ -157,6 +162,7 @@ async fn run_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Command::Dev(command) => run_dev_command(*command).await?,
         Command::Deploy(command) => run_deploy_command(command).await?,
         Command::Run(command) => run_run_command(command).await?,
+        Command::Target(command) => run_target_command(command)?,
         Command::Explain(command) => run_explain_command(command).await?,
         Command::Validate(command) => run_validate_command(command).await?,
         Command::List(command) => run_list_command(command).await?,
