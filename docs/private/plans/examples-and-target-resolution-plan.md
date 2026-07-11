@@ -42,7 +42,20 @@ structurally cannot do. Exemplar precedent: Supabase/Next.js (in-monorepo
 `examples/` + scaffolder fetch), Cloudflare (canonical templates + CI that runs
 each one), versus Firebase's fragmented sample repos (the anti-pattern). A
 `nimbus/examples` mirror, if ever needed, is an automated one-way publish with
-released version pins (EX7.6) — never a hand-maintained second copy.
+released version pins (EX7.5) — never a hand-maintained second copy.
+
+Copy-out hazard (2026-07-10 DX review finding): workspace imports mean a
+copied-out example's deps don't resolve — and for Convex specifically it is
+worse than a resolution error. `packages/convex/package.json` deliberately
+names itself `convex` with a `convex` bin (that is the compat point), which
+collides with the official npm package: an example copied out of the repo and
+`npm install`ed silently substitutes the real Convex Cloud package and CLI.
+Consequences bound into this plan: the convex example's README carries a loud
+"monorepo-only until the scaffolder ships" warning naming the substitution
+failure mode (EX3.2 acceptance); the EX7.1 scaffolder must rewrite workspace
+deps to published pins as its core job, not an afterthought; the other adapter
+examples (stock upstream clients: `firebase`, `mongodb`, AWS SDK) do not have
+this collision — their copy-out failure is a visible resolution error.
 
 ### XD2 — Tree shape: adapter-first with a root nav index, renamed to `examples/`
 
@@ -81,13 +94,36 @@ Commands that act on a Nimbus resource take one optional positional `TARGET`:
 - Omitted → local discovery, exactly like `nimbus dev`'s local default.
 
 Whether the resolved resource is a single node or a cluster is invisible to the
-UX — it is just "a Nimbus resource." `nimbus dev` remains the watch-mode local
-development loop; `nimbus deploy` with no argument targets local. This rides
-the existing `TargetSelector` seam (`crates/nimbus-cli/src/target_context.rs`:
-`LocalDiscovery | NamedTarget | RemoteUrl`, env fallbacks `NIMBUS_TARGET` /
-`NIMBUS_DEPLOY_URL`, single-source ambiguity rule). `deploy` migrates onto it
-(today `deploy.rs` hard-requires `--url`/`NIMBUS_DEPLOY_URL`). Pre-launch:
-replace flags with the positional; do not keep alias flags.
+UX — it is just "a Nimbus resource." The rationale (recorded so this is
+auditable when HS lands): a Nimbus resource presents one external endpoint
+regardless of topology — the kubectl/Fly precedent — so the CLI never needs
+node-vs-cluster awareness; cluster-internal concerns are HS-plan territory.
+`nimbus dev` remains the watch-mode local development loop; `nimbus deploy`
+with no argument targets local.
+
+This rides the `TargetSelector` seam (`crates/nimbus-cli/src/target_context.rs`:
+`LocalDiscovery | NamedTarget | RemoteUrl`, single-source ambiguity rule) —
+but `NamedTarget` is today an unbacked stub (`run.rs` hard-errors "not yet
+backed by a target registry", and `credentials.rs` keys connections by daemon
+URL only). Named targets therefore need a real backend, scoped here as EX1.5:
+`~/.config/nimbus/targets` (TOML, name → URL — mirroring the credentials-file
+precedent) with `nimbus target add/list/remove`; a name resolves to its URL,
+then credentials look up by URL exactly as today. `deploy` migrates onto the
+seam (today `deploy.rs` hard-requires `--url`/`NIMBUS_DEPLOY_URL`).
+Pre-launch: replace flags with the positional and rename the generic env
+fallback `NIMBUS_DEPLOY_URL` → `NIMBUS_TARGET_URL` (it already applies to
+run/sandbox, not just deploy); no alias flags, no alias env vars.
+
+Reviewer dissent, recorded: the 2026-07-10 gpt-5.6-sol DX review recommended
+keeping `deploy` fail-closed (explicit target source required) because a bare
+`nimbus deploy` next to a running `nimbus dev` server silently activates a
+generation locally when the user may have meant a remote. Owner decision
+stands — omitted TARGET means local everywhere, deploy included — with a
+required mitigation: every target-taking command prints a prominent
+resolved-target line before acting (e.g. `Deploying to LOCAL
+http://127.0.0.1:PORT (no TARGET given)` / `Deploying to prod
+(https://…, from ~/.config/nimbus/targets)`), so the destination is never
+implicit in the output even when it was implicit in the invocation.
 
 ### XD5 — Docs display, explain, and link each example
 
@@ -136,9 +172,10 @@ the Appendix.
 | ID | Item | Acceptance | Size | Status |
 | --- | --- | --- | --- | --- |
 | EX1.1 | Extend `TargetSelector` with positional resolver-string parsing: URL-shaped → `RemoteUrl`, else `NamedTarget`; keep validation and the exactly-one-source rule; absent → `LocalDiscovery` implicit default for all consumers | Unit tests cover url/name/whitespace/empty/ambiguous/default-local paths; test names + counts recorded | ~150 + tests | todo |
-| EX1.2 | Migrate `nimbus deploy` onto `TargetSelector`: optional positional `TARGET`, remove required `--url` (delete, no alias), keep env fallbacks, local default uses the same local discovery as `run` | `nimbus deploy` (no args) resolves local; `nimbus deploy https://…` and `nimbus deploy prod` resolve correctly; deploy tests updated and green | ~200 + tests | todo |
+| EX1.2 | Migrate `nimbus deploy` onto `TargetSelector`: optional positional `TARGET`, remove required `--url` (delete, no alias), local default uses the same local discovery as `run`; every target-taking command prints the prominent resolved-target line (destination + how it was resolved) before acting | `nimbus deploy` (no args) resolves local and says so loudly; `nimbus deploy https://…` and `nimbus deploy prod` resolve correctly (the latter via EX1.5); an unconfigured name fails with an error naming the targets file and `nimbus target add`; deploy tests updated and green | ~200 + tests | todo |
 | EX1.3 | Unify `run`/`sandbox` (and any other `TargetSelector` consumer found in EX0.2) onto the positional form with one shared help-text vocabulary: "TARGET is a URL or a configured target name; omitted = local" | Help output for each command shows the shared vocabulary; no per-command drift | ~100 | todo |
 | EX1.4 | No node/cluster distinction audit: sweep CLI help, errors, and this repo's docs for `--node`/`--cluster`-style target vocabulary | `git grep` sweep recorded clean (or each hit justified as non-target usage) | n/a | todo |
+| EX1.5 | Minimal target registry backing `NamedTarget` (today an unbacked stub): `~/.config/nimbus/targets` TOML (name → URL, mirroring `credentials.rs`'s DEP2 precedent), `nimbus target add/list/remove`, name→URL resolution feeding the existing URL-keyed credential lookup; rename env fallback `NIMBUS_DEPLOY_URL` → `NIMBUS_TARGET_URL` everywhere (delete old name) | `nimbus target add prod https://…` then `nimbus run/deploy prod` works end-to-end; `run.rs`'s "not yet backed by a target registry" error is gone; unit tests cover add/list/remove/resolve/missing-name; `git grep NIMBUS_DEPLOY_URL` clean | ~250 + tests | todo |
 
 ### Band EX2 — Tree restructure (`demos/` → `examples/`)
 
@@ -146,7 +183,7 @@ the Appendix.
 | --- | --- | --- | --- | --- |
 | EX2.1 | Rename `demos/` → `examples/` and update every reference from EX0.1: npm workspaces + scripts, Makefile overlay, server static route `/demos/` → `/examples/` + route tests, `index.html`, compose/container files | `git grep -n "demos/"` clean or each residual justified; route tests green; every `npm run *:example:*` command exercised | ~300 (mostly mechanical) | todo |
 | EX2.2 | Rewrite `examples/README.md` as the user-facing root nav index: explains each adapter surface, tables the examples, states the uniform run story (`nimbus dev`; `nimbus deploy [TARGET]`); internal parity/status notes moved out (to EX8.1 destination) | README contains no compiled-subset changelog notes; run story uses only the XD4 pattern | ~150 doc | todo |
-| EX2.3 | Seed `examples/specs/` with `tasks.md` (schema, flows, observable assertions, per-adapter supported-subset table) | Spec reviewed against each tier-1 adapter's real surface; assertions are smoke-checkable | ~120 doc | todo |
+| EX2.3 | Seed `examples/specs/` with `tasks.md` (schema, flows, observable assertions, per-adapter supported-subset table); flows are a named-anchor checklist (`tasks.create`, `tasks.live-update`, …) that smoke scripts reference by anchor name, so spec/smoke drift is mechanically detectable | Spec reviewed against each tier-1 adapter's real surface; every assertion has an anchor; smokes reference anchors by name | ~120 doc | todo |
 | EX2.4 | Per-directory `README.md` for every section: each `examples/<adapter>/` dir (what the surface is, its examples, supported subset, link to its docs page) and `examples/specs/` (what a spec is, how smokes consume it) | Every directory level under `examples/` has a README; adapter READMEs link to the matching `docs/developers/<adapter>/` page | ~60 doc/dir | todo |
 
 ### Band EX3 — Tier-1 canonical app: `tasks` across all public adapter surfaces
@@ -160,7 +197,7 @@ parity-fixture behavior that is not user-worthy stays internal.
 | ID | Item | Acceptance | Size | Status |
 | --- | --- | --- | --- | --- |
 | EX3.1 | `examples/nimbus/tasks` (from `demos/nimbus/html` or new): CRUD + live subscription via the native SDK | Runs against a `nimbus dev`-started server; smoke asserts spec flows; README complete | ~250 | todo |
-| EX3.2 | `examples/convex/tasks` (from the React demo): clean tasks app authored via `convex/_generated/server` + schema | Same acceptance; parity-only exercises moved out of the user-facing app | ~250 | todo |
+| EX3.2 | `examples/convex/tasks` (from the React demo): clean tasks app authored via `convex/_generated/server` + schema | Same acceptance; parity-only exercises moved out of the user-facing app; README carries the loud copy-out warning (XD1: `convex` npm name collision — copied out of the monorepo, `npm install` silently substitutes the real Convex Cloud package; monorepo-only until EX7.1) | ~250 | todo |
 | EX3.3 | `examples/firebase/tasks` (from `demos/firebase/html`): stock `firebase/app`+`firebase/firestore` imports against Nimbus | Same acceptance; exercises live `onSnapshot` per spec | ~200 | todo |
 | EX3.4 | `examples/mongodb/tasks` (from `demos/mongodb/node`): stock driver CRUD; spec table marks the no-live-query subset honestly | Same acceptance for the supported subset | ~150 | todo |
 | EX3.5 | `examples/dynamodb/tasks` (new): stock AWS SDK client via `packages/dynamodb` against Nimbus; spec table marks the supported subset | Same acceptance for the supported subset | ~150 | todo |
@@ -193,7 +230,7 @@ parity-fixture behavior that is not user-worthy stays internal.
 
 | ID | Item | Acceptance | Size | Status |
 | --- | --- | --- | --- | --- |
-| EX7.1 | `nimbus init --example <adapter>/<app>` scaffolder sourcing from the monorepo tree | Scaffolded app runs its smoke; or decision recorded | ~250 | todo |
+| EX7.1 | `nimbus init --example <adapter>/<app>` scaffolder sourcing from the monorepo tree; its core job is rewriting workspace deps to published pins (this is what closes the XD1 copy-out hazard, including the `convex` name collision) | Scaffolded app `npm install`s cleanly outside the repo and runs its smoke; or decision recorded | ~250 | todo |
 | EX7.2 | `examples/s3/filedrop` (blob plane + S3 surface, upload URLs) | Spec + smoke; or decision recorded | ~250 | todo |
 | EX7.3 | `examples/nimbus/jobs` (cron/scheduled functions — the old "planned next demos") | Spec + smoke; or decision recorded | ~200 | todo |
 | EX7.4 | Docs pages generated from example READMEs (NATS-by-example style) instead of hand-written | Generation wired into docs gates; or decision recorded | ~200 | todo |
