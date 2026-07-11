@@ -11,12 +11,16 @@ behavior for query errors.
 
 ```bash
 npm run convex:server:html   # support server
-npm run convex:demo:html     # Vite dev server for this app
+npm run convex:example:html  # Vite dev server for this app
 ```
 
 Run in place from a checkout of this repository — see the
 [copy-out warning](../README.md) in the Convex examples README before copying
 this directory out.
+
+Tenant creation in browser code (`src/App.tsx`'s unauthenticated
+`POST /api/tenants`) is a local-development convenience. Provision tenants
+separately before deploying beyond your own environment.
 
 ## Spec
 

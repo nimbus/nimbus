@@ -97,5 +97,5 @@ nimbus deploy [TARGET]
 
 `TARGET` is a URL or a configured target name; omit it to target your local
 server. The individual apps also have standalone dev-server scripts —
-`npm run convex:demo:html`, `convex:demo:http`, `convex:demo:node`, each paired
+`npm run convex:example:html`, `convex:example:http`, `convex:example:node`, each paired
 with the matching `npm run convex:server:*` support server.

@@ -10,7 +10,7 @@ sentinels, and can switch unary calls between REST and gRPC-Web.
 
 ```bash
 npm run firebase:server:html   # support server
-npm run firebase:demo:html     # Vite dev server for this app
+npm run firebase:example:html  # Vite dev server for this app
 ```
 
 Run in place from a checkout of this repository (it imports this repo's

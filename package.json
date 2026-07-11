@@ -43,16 +43,16 @@
     "convex:server:html": "NIMBUS_CONVEX_SILO_TEAMS=demo:demo-team NIMBUS_CONVEX_ANONYMOUS_TEAM=demo-team cargo run -p nimbus-bin -- start --port 8080 --app-dir ./examples/convex/html",
     "convex:server:http": "NIMBUS_CONVEX_SILO_TEAMS=demo:demo-team NIMBUS_CONVEX_ANONYMOUS_TEAM=demo-team cargo run -p nimbus-bin -- start --port 8080 --app-dir ./examples/convex/http",
     "convex:server:tasks": "NIMBUS_CONVEX_SILO_TEAMS=demo:demo-team NIMBUS_CONVEX_ANONYMOUS_TEAM=demo-team cargo run -p nimbus-bin -- start --port 8080 --app-dir ./examples/convex/tasks",
-    "convex:demo:node": "npm run demo --workspace convex-node",
-    "convex:demo:html": "npm run dev --workspace convex-html",
-    "convex:demo:http": "npm run dev --workspace convex-http",
+    "convex:example:node": "npm run demo --workspace convex-node",
+    "convex:example:html": "npm run dev --workspace convex-html",
+    "convex:example:http": "npm run dev --workspace convex-http",
     "firebase:server:html": "cargo run -p nimbus-bin -- start --port 8080",
-    "firebase:demo:html": "npm run dev --workspace firebase-html",
-    "nimbus:demo:html": "npm run dev --workspace nimbus-html",
+    "firebase:example:html": "npm run dev --workspace firebase-html",
+    "nimbus:example:html": "npm run dev --workspace nimbus-html",
     "nimbus:server:agent-chat": "NIMBUS_CONVEX_SILO_TEAMS=demo:demo-team NIMBUS_CONVEX_ANONYMOUS_TEAM=demo-team cargo run -p nimbus-bin -- start --port 8080 --app-dir ./examples/nimbus/agent-chat",
-    "nimbus:demo:agent-chat": "npm run dev --workspace nimbus-agent-chat",
+    "nimbus:example:agent-chat": "npm run dev --workspace nimbus-agent-chat",
     "nimbus:server:agent-worker": "NIMBUS_CONVEX_SILO_TEAMS=demo:demo-team NIMBUS_CONVEX_ANONYMOUS_TEAM=demo-team cargo run -p nimbus-bin -- start --port 8080 --app-dir ./examples/nimbus/agent-worker",
-    "nimbus:demo:agent-worker": "npm run run --workspace nimbus-agent-worker"
+    "nimbus:example:agent-worker": "npm run run --workspace nimbus-agent-worker"
   },
   "devDependencies": {
     "@playwright/cli": "^0.1.13"

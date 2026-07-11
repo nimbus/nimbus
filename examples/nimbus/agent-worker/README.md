@@ -72,7 +72,7 @@ nimbus deploy [TARGET]
 ```
 
 `TARGET` is a URL or a configured target name; omit it to target your local
-server. For the headless driver, run `npm run nimbus:demo:agent-worker` (or
+server. For the headless driver, run `npm run nimbus:example:agent-worker` (or
 `npm run run -w nimbus-agent-worker` directly) with Nimbus running.
 
 ## Smoke verification

@@ -42,4 +42,4 @@ nimbus deploy [TARGET]
 ```
 
 `TARGET` is a URL or a configured target name; omit it to target your local
-server. For the standalone Vite dev server, run `npm run nimbus:demo:html`.
+server. For the standalone Vite dev server, run `npm run nimbus:example:html`.

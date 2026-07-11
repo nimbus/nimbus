@@ -39,4 +39,4 @@ nimbus deploy [TARGET]
 
 `TARGET` is a URL or a configured target name; omit it to target your local
 server. For the standalone dev server, run `npm run firebase:server:html` and
-`npm run firebase:demo:html`.
+`npm run firebase:example:html`.

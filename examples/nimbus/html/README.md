@@ -9,7 +9,7 @@ update in place.
 ## Run
 
 ```bash
-npm run nimbus:demo:html   # Vite dev server for this app
+npm run nimbus:example:html   # Vite dev server for this app
 ```
 
 Run in place from a checkout of this repository (it imports this repo's

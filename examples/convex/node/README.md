@@ -9,12 +9,17 @@ collection and prints subscription updates as they land.
 
 ```bash
 npm run convex:server:node   # support server
-npm run convex:demo:node     # runs the script
+npm run convex:example:node  # runs the script
 ```
 
 Run in place from a checkout of this repository — see the
 [copy-out warning](../README.md) in the Convex examples README before copying
 this directory out.
+
+`script.ts`'s `ensureTenant()` sends `NIMBUS_ADMIN_TOKEN` when set, but falls
+back to an unauthenticated `POST /api/tenants` when it is not — a
+local-development convenience, not a pattern to carry past your own
+environment.
 
 ## Spec
 
