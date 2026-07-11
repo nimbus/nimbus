@@ -322,12 +322,15 @@ interface ActiveSubscription {
 
 export interface SubscriptionClientOptions {
   onLog?: (message: string) => void;
+  /** Override WebSocket construction, for example to attach server-side upgrade headers. */
+  webSocketFactory?: (url: string, protocols: string[]) => WebSocket;
 }
 
 export class NimbusSubscriptionClient {
   readonly baseUrl: string;
   readonly tenantId: string;
   private readonly onLog: (message: string) => void;
+  private readonly webSocketFactory: (url: string, protocols: string[]) => WebSocket;
   private pending = new Map<string, PendingRequest>();
   private subscriptions = new Map<string, ActiveSubscription>();
   private requestCounter = 0;
@@ -337,6 +340,7 @@ export class NimbusSubscriptionClient {
     this.baseUrl = stripTrailingSlash(baseUrl);
     this.tenantId = tenantId;
     this.onLog = options.onLog ?? (() => {});
+    this.webSocketFactory = options.webSocketFactory ?? ((url, protocols) => new WebSocket(url, protocols));
   }
 
   async connect(): Promise<void> {
@@ -348,7 +352,7 @@ export class NimbusSubscriptionClient {
     wsUrl.searchParams.set("tenant_id", this.tenantId);
     const wsUrlString = wsUrl.toString();
 
-    const socket = new WebSocket(wsUrlString, ["nimbus.v2"]);
+    const socket = this.webSocketFactory(wsUrlString, ["nimbus.v2"]);
     this.socket = socket;
 
     await new Promise<void>((resolve, reject) => {

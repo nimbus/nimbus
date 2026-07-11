@@ -16,7 +16,8 @@
     "examples/convex/node",
     "examples/firebase/html",
     "examples/mongodb/node",
-    "examples/nimbus/html"
+    "examples/nimbus/html",
+    "examples/nimbus/tasks"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
