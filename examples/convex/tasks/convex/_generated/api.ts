@@ -10,6 +10,7 @@ export const api = {
 }, Id<"tasks">>("tasks:create", "public"),
     toggle: makeMutationReference<{
   "id": Id<"tasks">;
+  "completed": boolean;
 }, null>("tasks:toggle", "public"),
     remove: makeMutationReference<{
   "id": Id<"tasks">;

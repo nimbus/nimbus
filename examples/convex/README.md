@@ -50,42 +50,43 @@ compiled/runtime subset these apps exercise lives in [`DEVNOTES.md`](DEVNOTES.md
   type-hover). See its [README](showcase/README.md).
 - **[`tasks/`](tasks/)** — the shared [`tasks`](../specs/tasks.md) app, authored
   with `convex/_generated/server` and `schema.ts` against a reactive query for
-  `tasks.live-update`. Built to spec and typechecks/builds clean; live smoke is
-  **partially verified** — see the note below.
+  `tasks.live-update`. Built to spec, typechecks/builds clean, and all five
+  flow anchors have real live PASS evidence — see the note below.
 
 ## `tasks` spec support
 
 | Flow anchor | Supported | Observable behavior |
 | --- | --- | --- |
-| `tasks.create` | yes (by spec) | Inserted tasks are retrievable with a stable id and `createdAt`. |
-| `tasks.list` | yes (by spec) | Tasks are returned newest-first by `createdAt`. |
-| `tasks.toggle` | yes (by spec) | Toggling persists `completed`. |
-| `tasks.delete` | yes (by spec) | Deleting removes the task from subsequent reads. |
-| `tasks.live-update` | yes (by spec, reactive query) | A subscription opened before `tasks.create` delivers the new task with no explicit re-read. |
+| `tasks.create` | yes | Inserted tasks are retrievable with a stable id and `createdAt`. |
+| `tasks.list` | yes | Tasks are returned newest-first by `createdAt`. |
+| `tasks.toggle` | yes | Toggling persists `completed`. |
+| `tasks.delete` | yes | Deleting removes the task from subsequent reads. |
+| `tasks.live-update` | yes (reactive query) | A subscription opened before `tasks.create` delivers the new task with no explicit re-read. |
 
-**Live verification is partial. The team-binding gate is no longer the
-blocker** — the gate that used to refuse every anonymous application-Convex
-request outright (`crates/nimbus-convex/src/tenancy.rs`, enforced in
+**Live verification: 5/5 anchors PASS.** The team-binding gate that used to
+refuse every anonymous application-Convex request outright
+(`crates/nimbus-convex/src/tenancy.rs`, enforced in
 `crates/nimbus-server/src/adapters/convex/handlers/registry_auth.rs`) now has
 dev-mode defaults: `nimbus dev` auto-provisions anonymous local traffic with
 zero env config, and `start` accepts an explicit opt-in
 (`NIMBUS_CONVEX_SILO_TEAMS`/`NIMBUS_CONVEX_PRINCIPAL_TEAMS`/`NIMBUS_CONVEX_ANONYMOUS_TEAM`).
-Confirmed live against a real `nimbus dev` boot: `ensureTenant()`,
-`tasks.create`, and `tasks.list` all PASS anonymously. What remains blocked is
-three separate, pre-existing, unrelated `nimbus dev`/`nimbus-runtime` defects:
-(1) running the standard `npm run codegen`/`test`/`build` client command while
-a `nimbus dev` server for the same app is live silently corrupts that server's
-served bundle (no coordination between the two processes); (2) `ctx.db.get`,
-`ctx.db.patch`, and `ctx.db.delete` reject the single combined `"table:id"`
-string every generated `Doc`/`Id` type and every real Convex handler passes
-them (`tasks.toggle`'s `ctx.db.get(id)`, `tasks.delete`'s `ctx.db.delete(id)`)
-— the host contract only accepts `(table, id)` two-arg or `{table, id}`
-object-arg calls. All three (plus an intermittent boot-time bundle-hash race)
-are root-caused with exact file/line and live repro, tracked as flagged
-follow-ups, not fixed, in the EX3.2 row of
-`docs/private/plans/examples-and-target-resolution-plan.md`, which also has
-the full evidence. Full [`tasks`](../specs/tasks.md) spec. See
-[`tasks/README.md`](tasks/README.md).
+A runtime-bridge fix (`ctx.db.get`/`patch`/`delete` now accept the public
+SDK's single table-scoped-id calling convention, plus faithful compiled-plan
+subscription replay) and an app-level fix (`toggle` now takes the next value
+from the client instead of reading-then-negating server-side, avoiding a
+generic-`{}`-typed `ctx.db.get` narrowing conflict in the compile-time
+planner) together closed every remaining blocker. Confirmed live against a
+real `nimbus dev` boot: `ensureTenant()`, `tasks.create`, `tasks.list`,
+`tasks.toggle`, `tasks.delete`, and `tasks.live-update` all PASS anonymously.
+The underlying product gap (a DataModel-typed `ctx.db` in the compat package,
+or planner tolerance for JS narrowing) remains a recorded follow-up owned by
+EX9.1, not a live blocker. Two unrelated, pre-existing defects are still open
+and tracked as flagged follow-ups, not fixed: an intermittent boot-time
+bundle-hash race, and a codegen/live-server bundle race triggered by running
+client codegen against a live `nimbus dev` server for the same app. Full
+detail and evidence in the EX3.2 row of
+`docs/private/plans/examples-and-target-resolution-plan.md`. Full
+[`tasks`](../specs/tasks.md) spec. See [`tasks/README.md`](tasks/README.md).
 
 ## Running
 

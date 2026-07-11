@@ -37,7 +37,7 @@ export default function App() {
   async function handleToggle(task: Task) {
     setError(null);
     try {
-      await toggleTask({ id: task._id });
+      await toggleTask({ id: task._id, completed: !task.completed });
     } catch (caught) {
       setError((caught as Error).message);
     }

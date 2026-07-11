@@ -107,7 +107,7 @@ async function main() {
 
   // tasks.toggle
   activeAnchor = "tasks.toggle";
-  await http.mutation(api.tasks.toggle, { id: firstId });
+  await http.mutation(api.tasks.toggle, { id: firstId, completed: true });
   const afterToggle = await http.query(api.tasks.list, {});
   assert(
     afterToggle.find((task) => task._id === firstId)?.completed === true,

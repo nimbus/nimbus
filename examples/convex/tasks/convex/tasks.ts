@@ -34,15 +34,11 @@ export const create = mutation({
 export const toggle = mutation({
   args: {
     id: v.id("tasks"),
+    completed: v.boolean(),
   },
   returns: v.null(),
-  handler: async (ctx, { id }) => {
-    const task = await ctx.db.get(id);
-    if (task === null) {
-      throw new Error("Task not found");
-    }
-
-    await ctx.db.patch(id, { completed: !task.completed });
+  handler: async (ctx, { id, completed }) => {
+    await ctx.db.patch(id, { completed });
     return null;
   },
 });
