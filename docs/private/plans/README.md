@@ -55,14 +55,17 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   HTTPS credential injection for agents.
 - `runtime-guest-trust-global-hardening-plan.md` - `proposed` (security).
   Owns the systematic hardening of guest-reassignable `globalThis.__nimbus*`
-  trust globals (HG1 `__nimbusCreateContext` cross-invocation/tenant exposure
-  via warm-pool reuse, HG2 `__nimbusInvokeNamedLocal`, HG3 `__nimbusCoreOps`
-  native-sealing, HG4 lane-oracle visibility) plus a structural test that fails
-  if a future trust global ships unhardened. Surfaced by the adversarial review
-  of the examples/Convex-parity work (archived
-  `archive/examples-and-target-resolution-plan.md`, EX10R3); the
-  reassignable-globals class is largely pre-existing on `main`. Promote when
-  scheduled as launch-relevant security.
+  trust globals (HG0 `__nimbusInvoke` host entrypoint, HG1
+  `__nimbusCreateContext`, HG2 `__nimbusInvokeNamedLocal`, HG3 `__nimbusCoreOps`
+  op-table, HG5 Cloudflare entrypoint, HG6 waitUntil hooks, HG8/HG9 mutable
+  lexical state + object graphs, HG4 lane-oracle metadata) plus a structural
+  test that fails if a future trust global ships unhardened. Impact is
+  **same-tenant cross-invocation/cross-user** exposure via warm-pool reuse
+  (NOT cross-tenant — warm-pool keys on tenant-scoped bundle identity).
+  Surfaced by the adversarial review of the examples/Convex-parity work
+  (archived `archive/examples-and-target-resolution-plan.md`, EX10R3), then
+  verified + corrected by a Codex source-trace (2026-07-12). Largely
+  pre-existing on `main`. Promote when scheduled as launch-relevant security.
 - `distribution-plan.md` - `in_progress`. Owns binary release, Homebrew/cask,
   Linux package mirror, release-owned OCI images, and channel cutover. It should
   consume launch safety decisions rather than define them.
