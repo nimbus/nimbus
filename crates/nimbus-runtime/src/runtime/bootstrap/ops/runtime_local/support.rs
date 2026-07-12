@@ -49,10 +49,10 @@ pub(super) fn describe_fs_stat(stat: &FsStat) -> RuntimeFsStatDescriptor {
         is_directory: stat.is_directory,
         is_symlink: stat.is_symlink,
         size: stat.size,
-        mtime_ms: fs_time_ms(stat.mtime),
-        atime_ms: fs_time_ms(stat.atime),
-        birthtime_ms: fs_time_ms(stat.birthtime),
-        ctime_ms: fs_time_ms(stat.ctime),
+        mtime_ms: stat.mtime,
+        atime_ms: stat.atime,
+        birthtime_ms: stat.birthtime,
+        ctime_ms: stat.ctime,
         mode: unix_u32(stat.mode),
         dev: unix_u64(stat.dev),
         ino: stat.ino,
@@ -67,10 +67,6 @@ pub(super) fn describe_fs_stat(stat: &FsStat) -> RuntimeFsStatDescriptor {
         is_fifo: stat.is_fifo,
         is_socket: stat.is_socket,
     }
-}
-
-fn fs_time_ms(value: Option<u64>) -> Option<i64> {
-    value.and_then(|value| i64::try_from(value).ok())
 }
 
 #[cfg(unix)]
@@ -121,5 +117,44 @@ fn raw_os_error(error: &FsError) -> Option<i32> {
     match error {
         FsError::Io(error) => error.raw_os_error(),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn describe_fs_stat_preserves_pre_epoch_timestamps() {
+        let stat = FsStat {
+            is_file: true,
+            is_directory: false,
+            is_symlink: false,
+            size: 17,
+            mtime: Some(-4_000),
+            atime: Some(-3_000),
+            birthtime: Some(-2_000),
+            ctime: Some(-1_000),
+            dev: 1,
+            ino: Some(2),
+            mode: 0o644,
+            nlink: Some(1),
+            uid: 3,
+            gid: 4,
+            rdev: 5,
+            blksize: 4_096,
+            blocks: Some(1),
+            is_block_device: false,
+            is_char_device: false,
+            is_fifo: false,
+            is_socket: false,
+        };
+
+        let descriptor = describe_fs_stat(&stat);
+
+        assert_eq!(descriptor.mtime_ms, Some(-4_000));
+        assert_eq!(descriptor.atime_ms, Some(-3_000));
+        assert_eq!(descriptor.birthtime_ms, Some(-2_000));
+        assert_eq!(descriptor.ctime_ms, Some(-1_000));
     }
 }

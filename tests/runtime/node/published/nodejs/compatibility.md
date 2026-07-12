@@ -39,7 +39,7 @@ The default-support posture separates the full official fixture corpus from the 
 
 | Target | Role | Full official corpus | Current passed | V8-isolate required passed/total | Required gaps | Optional gaps | Diagnostic non-isolate | Test-harness-only | Upstream/platform |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Node20 | Legacy | 4248 | 917 | 917 / 1643 | 726 | 360 | 1671 | 512 | 62 |
+| Node20 | Legacy | 4248 | 919 | 919 / 1643 | 724 | 360 | 1671 | 512 | 62 |
 | Node22 | Supported | 4748 | 2363 | 2363 / 2363 | 0 | 421 | 1347 | 537 | 80 |
 | Node24 | Default | 5198 | 2400 | 2400 / 2400 | 0 | 477 | 1435 | 800 | 86 |
 | Node26 | Current | 5578 | 2092 | 2092 / 2092 | 0 | 512 | 2069 | 814 | 91 |
@@ -77,7 +77,7 @@ See [shim and boundary inventory](reference/shims-and-boundaries.md) for source 
 ## Canary Summary
 
 - package/framework canary claims: `79`
-- package/framework canary checks: `0`
+- package/framework canary checks: `99`
 - diagnostic canary claims: `11`
 - required canary gaps: `0`
 

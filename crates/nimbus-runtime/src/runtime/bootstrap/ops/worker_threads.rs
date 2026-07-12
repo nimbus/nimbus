@@ -11,7 +11,9 @@ use deno_core::futures::channel::mpsc::{
     TryRecvError, UnboundedReceiver, UnboundedSender, unbounded,
 };
 use deno_core::futures::{StreamExt, future::poll_fn};
-use deno_web::{JsMessageData, MessagePort, MessagePortError, create_entangled_message_port};
+use deno_web::{
+    JsMessageData, MessagePort, MessagePortError, RecvMessageData, create_entangled_message_port,
+};
 use serde::Deserialize;
 use serde_json::json;
 use tempfile::TempDir;
@@ -139,10 +141,9 @@ pub(super) fn op_nimbus_worker_parent_post_message_raw(
 }
 
 #[op2]
-#[serde]
 pub(super) async fn op_nimbus_worker_parent_recv_message(
     state: Rc<RefCell<OpState>>,
-) -> Result<Option<JsMessageData>, MessagePortError> {
+) -> Result<Option<RecvMessageData>, MessagePortError> {
     let port = {
         let state = state.borrow();
         state
@@ -278,11 +279,10 @@ pub(super) fn op_host_recv_ctrl_sync(
 }
 
 #[op2]
-#[serde]
 pub(super) async fn op_host_recv_message(
     state: Rc<RefCell<OpState>>,
     #[smi] id: u32,
-) -> Result<Option<JsMessageData>, MessagePortError> {
+) -> Result<Option<RecvMessageData>, MessagePortError> {
     let port = {
         let state_ref = state.borrow();
         match state_ref.borrow::<WorkersTable>().get(&id) {

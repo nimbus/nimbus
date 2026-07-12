@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-06-16T16:16:12.554380+00:00",
+  "generated_at": "2026-07-10T18:59:53.561209+00:00",
   "report_kind": "node_compat_trend_snapshot",
   "baseline_available": true,
   "current_sources": {
@@ -18,12 +18,12 @@
       "baseline_upstream_tag": "v20.20.2",
       "vendored_test_file_count": 4248,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 917,
-      "documented_manifested_green_count_delta": 0,
+      "documented_manifested_green_count": 919,
+      "documented_manifested_green_count_delta": 2,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.215866,
-      "documented_manifested_green_ratio_delta": 0.0
+      "documented_manifested_green_ratio": 0.216337,
+      "documented_manifested_green_ratio_delta": 0.0004709999999999992
     },
     {
       "lane": "node22",
@@ -58,28 +58,28 @@
       "vendored_test_file_count": 5578,
       "vendored_test_file_count_delta": 0,
       "documented_manifested_green_count": 2092,
-      "documented_manifested_green_count_delta": 3,
+      "documented_manifested_green_count_delta": 0,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
       "documented_manifested_green_ratio": 0.375045,
-      "documented_manifested_green_ratio_delta": 0.0005380000000000384
+      "documented_manifested_green_ratio_delta": 0.0
     }
   ],
   "evidence_trends": {
     "canary_report_count": {
-      "current": 0,
+      "current": 5,
       "baseline": 0,
-      "delta": 0
+      "delta": 5
     },
     "expectation_catalog_entry_count": {
-      "current": 154,
+      "current": 150,
       "baseline": 154,
-      "delta": 0
+      "delta": -4
     },
     "oracle_report_count": {
-      "current": 0,
+      "current": 4,
       "baseline": 0,
-      "delta": 0
+      "delta": 4
     },
     "required_canary_gap_count": {
       "current": 0,
@@ -87,9 +87,9 @@
       "delta": 0
     },
     "rust_ignore_count": {
-      "current": 154,
+      "current": 150,
       "baseline": 154,
-      "delta": 0
+      "delta": -4
     },
     "slice_report_count": {
       "current": 0,

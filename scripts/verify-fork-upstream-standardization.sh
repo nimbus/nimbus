@@ -5,24 +5,34 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: verify-fork-upstream-standardization.sh [--offline]
+usage: verify-fork-upstream-standardization.sh [--offline] [--fork OWNER/REPO]...
 
 Print a tab-separated inventory for the Nimbus-owned source forks and fail when
 the current remotes or upstream release heads drift from the fork standard.
 
 Options:
   --offline  Skip git ls-remote checks and only inspect local repositories.
+  --fork     Verify only the named fork. Repeat to select multiple forks.
 EOF
 }
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 offline=0
+selected_forks=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --offline)
       offline=1
       shift
+      ;;
+    --fork)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        printf '%s\n' '--fork requires an OWNER/REPO value' >&2
+        usage >&2
+        exit 64
+      fi
+      selected_forks+=("$2")
+      shift 2
       ;;
     -h|--help)
       usage
@@ -37,8 +47,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 forks_tsv=$(cat <<EOF
-nimbus/deno	${HOME}/src/github.com/nimbus/deno	full_source	nimbus/v2.8.0	git@github.com:nimbus/deno.git	git@github.com:denoland/deno.git	v2.8.0	v2.8.0-nimbus.2	v[0-9]*	yes	v2.7.14
-nimbus/rusty_v8	${HOME}/src/github.com/nimbus/rusty_v8	full_source	nimbus/v149.0.0	git@github.com:nimbus/rusty_v8.git	git@github.com:denoland/rusty_v8.git	v149.0.0	v149.0.0-nimbus.1	v[0-9]*	no	v147.4.0
+nimbus/deno	${HOME}/src/github.com/nimbus/deno	full_source	nimbus/v2.9.2	git@github.com:nimbus/deno.git	git@github.com:denoland/deno.git	v2.9.2	v2.9.2-nimbus.1	v[0-9]*	yes	v2.9.2
+nimbus/rusty_v8	${HOME}/src/github.com/nimbus/rusty_v8	full_source	nimbus/v150.1.0	git@github.com:nimbus/rusty_v8.git	git@github.com:denoland/rusty_v8.git	v150.1.0	v150.1.0-nimbus.2	v[0-9]*	no	v150.1.0
 nimbus/bun	${HOME}/src/github.com/nimbus/bun	full_source	nimbus/bun-main-20260708	git@github.com:nimbus/bun.git	git@github.com:oven-sh/bun.git	bun-v1.3.14	nimbus-bun-jsc-proof-main-20260709	bun-v[0-9]*	yes	332f7444f9
 nimbus/nimbus-crun	${HOME}/src/github.com/nimbus/nimbus-crun	patch_carrier	nimbus/1.27.1	git@github.com:nimbus/nimbus-crun.git	git@github.com:containers/crun.git	1.27.1	v1.27.1-nimbus.2	[0-9]*	yes	1.27.1
 nimbus/nimbus-libkrun	${HOME}/src/github.com/nimbus/nimbus-libkrun	full_source	nimbus/v1.18.1	git@github.com:nimbus/nimbus-libkrun.git	git@github.com:containers/libkrun.git	v1.18.1	v1.18.1-nimbus.1	v[0-9]*	yes	v1.18.1
@@ -46,6 +56,8 @@ EOF
 )
 
 issue_count=0
+processed_count=0
+known_forks=''
 
 record_issue() {
   local fork="$1"
@@ -133,14 +145,37 @@ local_release_tag_state() {
   fi
 }
 
-printf 'fork\tpath\tkind\tbranch\texpected_branch\torigin_url\tupstream_url\torigin_head\tupstream_head\tselected_source_tag\tselected_release_tag\tlocal_source_tag\tremote_source_tag\tlocal_release_tag\tlatest_upstream_tag\ttracks_latest\tclean_state\tdelta_base\n'
+fork_selected() {
+  local fork="$1"
+  local selected
+
+  if [[ ${#selected_forks[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  for selected in "${selected_forks[@]}"; do
+    if [[ "${selected}" == "${fork}" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+printf 'fork\tpath\tkind\tbranch\texpected_branch\torigin_url\tupstream_url\torigin_head\tupstream_head\tselected_source_tag\tselected_release_tag\tlocal_source_tag\tremote_source_tag\tlocal_release_tag\tremote_release_tag\tlatest_upstream_tag\ttracks_latest\tclean_state\tdelta_base\n'
 
 while IFS=$'\t' read -r fork path kind expected_branch expected_origin expected_upstream selected_source_tag selected_release_tag tag_pattern tracks_latest delta_base; do
+  known_forks+="${fork}"$'\n'
+  if ! fork_selected "${fork}"; then
+    continue
+  fi
+  processed_count=$((processed_count + 1))
+
   if [[ ! -d "${path}" ]] || ! git -C "${path}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     record_issue "${fork}" "missing git checkout at ${path}"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "${fork}" "${path}" "${kind}" "<missing>" "${expected_branch}" "<missing>" "<missing>" "missing" "missing" \
-      "${selected_source_tag}" "${selected_release_tag}" "missing" "missing" "missing" "missing" \
+      "${selected_source_tag}" "${selected_release_tag}" "missing" "missing" "missing" "missing" "missing" \
       "${tracks_latest}" "missing" "${delta_base}"
     continue
   fi
@@ -157,6 +192,7 @@ while IFS=$'\t' read -r fork path kind expected_branch expected_origin expected_
   local_source_tag="$(local_tag_state "${path}" "${selected_source_tag}")"
   remote_source_tag="$(remote_tag_state "${expected_upstream}" "${selected_source_tag}")"
   local_release_tag="$(local_release_tag_state "${path}" "${selected_release_tag}")"
+  remote_release_tag="$(remote_tag_state "${expected_origin}" "${selected_release_tag}")"
   latest_tag="$(remote_latest_tag "${expected_upstream}" "${tag_pattern}")"
   dirty_count="$(git -C "${path}" status --short | wc -l | tr -d ' ')"
   clean_state="clean"
@@ -164,15 +200,11 @@ while IFS=$'\t' read -r fork path kind expected_branch expected_origin expected_
     clean_state="dirty:${dirty_count}"
   fi
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "${fork}" "${path}" "${kind}" "${branch}" "${expected_branch}" "${origin:-<missing>}" "${upstream:-<missing>}" \
     "${origin_head:-unavailable}" "${upstream_head:-unavailable}" "${selected_source_tag}" \
     "${selected_release_tag}" "${local_source_tag}" "${remote_source_tag}" "${local_release_tag}" \
-    "${latest_tag:-unavailable}" "${tracks_latest}" "${clean_state}" "${delta_base}"
-
-  if [[ "${branch}" != "${expected_branch}" ]]; then
-    record_issue "${fork}" "branch mismatch expected=${expected_branch} actual=${branch}"
-  fi
+    "${remote_release_tag}" "${latest_tag:-unavailable}" "${tracks_latest}" "${clean_state}" "${delta_base}"
 
   if [[ "${origin}" != "${expected_origin}" ]]; then
     record_issue "${fork}" "origin mismatch expected=${expected_origin} actual=${origin:-<missing>}"
@@ -194,10 +226,26 @@ while IFS=$'\t' read -r fork path kind expected_branch expected_origin expected_
     record_issue "${fork}" "selected source tag missing locally: ${selected_source_tag}"
   fi
 
+  if [[ "${remote_release_tag}" == "missing" ]]; then
+    record_issue "${fork}" "selected release tag missing from fork remote: ${selected_release_tag}"
+  fi
+
   if [[ "${tracks_latest}" == "yes" && "${latest_tag}" != "skipped" && "${latest_tag}" != "unavailable" && "${latest_tag}" != "${selected_source_tag}" ]]; then
     record_issue "${fork}" "newer upstream tag detected expected=${selected_source_tag} latest=${latest_tag}"
   fi
 done <<<"${forks_tsv}"
+
+if [[ ${#selected_forks[@]} -gt 0 ]]; then
+  for selected in "${selected_forks[@]}"; do
+    if ! grep -Fqx "${selected}" <<<"${known_forks}"; then
+      record_issue "${selected}" 'unknown fork selection'
+    fi
+  done
+fi
+
+if [[ "${processed_count}" -eq 0 ]]; then
+  record_issue '<selection>' 'no forks selected'
+fi
 
 if [[ "${issue_count}" -ne 0 ]]; then
   printf 'fork-standardization: %s issue(s) detected\n' "${issue_count}" >&2

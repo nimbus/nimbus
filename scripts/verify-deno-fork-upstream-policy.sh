@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
-# Verifies the Deno-family fork upstream-first operating policy is documented.
+# Verifies the tracked, upstream-first Deno/rusty_v8 fork policy.
 
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${REPO_ROOT}"
+cd "${REPO_ROOT}" || exit
 
-OPERATING_DOC="docs/private/operating/deno-fork-workflow.md"
-LEDGER_DOC="docs/private/architecture/runtime/deno-fork-bump-ledger.md"
+# shellcheck source=scripts/deno-fork-pins.sh
+source "${REPO_ROOT}/scripts/deno-fork-pins.sh"
+deno_fork_load_consumed_pins
 
-EXPECTED_DENO_TAG="v2.9.1-nimbus.1"
-EXPECTED_DENO_SHA="8c55c871bd1fcc59a5406034ecfa50e0eeff7cd4"
-EXPECTED_V8_TAG="v149.4.0-nimbus.10"
-EXPECTED_V8_SHA="f9457373150679d9db9eb577dcd3a687a3ec25ef"
+POLICY_DOC="scripts/deno-fork-policy.md"
 
 PASS=0
 FAIL=0
@@ -41,7 +39,7 @@ step() {
 contains() {
   local file="$1"
   local pattern="$2"
-  grep -Eq "${pattern}" "${file}" 2>/dev/null
+  grep -Eq -- "${pattern}" "${file}" 2>/dev/null
 }
 
 require_contains() {
@@ -59,46 +57,48 @@ require_contains() {
 printf '\033[1mDeno fork upstream policy verifier\033[0m\n'
 printf 'Repo: %s\n' "${REPO_ROOT}"
 
-step 1 "Operating workflow exists and names canonical fork sources"
-if [ -f "${OPERATING_DOC}" ] && [ -f "${LEDGER_DOC}" ]; then
-  pass "Operating workflow and bump ledger files exist"
+step 1 "Tracked policy exists and names canonical fork sources"
+if [ -f "${POLICY_DOC}" ]; then
+  pass "Tracked fork policy exists"
 else
-  fail "Missing operating workflow or ledger" "Expected ${OPERATING_DOC} and ${LEDGER_DOC}"
+  fail "Missing tracked fork policy" "Expected ${POLICY_DOC}"
 fi
-require_contains "${OPERATING_DOC}" '/Users/jack/src/github.com/nimbus/deno' "Workflow names canonical local nimbus/deno checkout"
-require_contains "${OPERATING_DOC}" '/Users/jack/src/github.com/nimbus/rusty_v8' "Workflow names canonical local nimbus/rusty_v8 checkout"
-require_contains "${OPERATING_DOC}" 'Do not use `/private/tmp` checkouts' "Workflow forbids temporary checkouts as progress state"
+require_contains "${POLICY_DOC}" '/Users/jack/src/github.com/nimbus/deno' "Policy names canonical local nimbus/deno checkout"
+require_contains "${POLICY_DOC}" '/Users/jack/src/github.com/nimbus/rusty_v8' "Policy names canonical local nimbus/rusty_v8 checkout"
+# shellcheck disable=SC2016 # Backticks are literal policy text.
+require_contains "${POLICY_DOC}" 'Do not use `/private/tmp` checkouts' "Policy forbids temporary checkouts as progress state"
+require_contains "${POLICY_DOC}" 'preserve unrelated dirty' "Policy preserves unrelated dirty worktrees"
 
-step 2 "Workflow requires publish, tag, repin, and verification proof"
-require_contains "${OPERATING_DOC}" 'Unpin Nimbus' "Workflow includes the unpin-to-local-fork step"
-require_contains "${OPERATING_DOC}" 'Commit, tag, and push' "Workflow includes commit/tag/push before repin"
-require_contains "${OPERATING_DOC}" 'Repin Nimbus' "Workflow includes repinning Cargo.toml and Cargo.lock"
-require_contains "${OPERATING_DOC}" 'scripts/verify-deno-fork-provenance.sh' "Workflow requires Deno fork provenance verifier"
-require_contains "${OPERATING_DOC}" 'scripts/verify-deno-fork-upstream-policy.sh' "Workflow requires this upstream-policy verifier"
+step 2 "Policy requires candidate proof, publication, immutable repin, and verification"
+require_contains "${POLICY_DOC}" 'Temporarily unpin Nimbus' "Policy includes candidate consumer proof"
+require_contains "${POLICY_DOC}" 'Commit, tag, and push' "Policy includes explicit commit/tag/push"
+require_contains "${POLICY_DOC}" 'Repin Nimbus to published tags' "Policy includes immutable published-tag repin"
+require_contains "${POLICY_DOC}" 'scripts/verify-deno-fork-provenance.sh' "Policy requires Deno fork provenance verifier"
+require_contains "${POLICY_DOC}" 'scripts/verify-deno-fork-upstream-policy.sh' "Policy requires this upstream-policy verifier"
+require_contains "${POLICY_DOC}" '--no-follow-tags' "Policy prevents accidental upstream tag publication"
 
 step 3 "Patch disposition taxonomy is explicit"
-require_contains "${OPERATING_DOC}" 'Upstream Deno-family' "Workflow defines upstream Deno-family disposition"
-require_contains "${OPERATING_DOC}" 'Nimbus-only host integration' "Workflow defines Nimbus-only host-integration disposition"
-require_contains "${OPERATING_DOC}" 'Temporary carry' "Workflow defines temporary-carry disposition"
-require_contains "${OPERATING_DOC}" 'Removal or upstream trigger' "Workflow requires removal or upstream trigger"
+require_contains "${POLICY_DOC}" 'Upstream Deno-family' "Policy defines upstream Deno-family disposition"
+require_contains "${POLICY_DOC}" 'Nimbus-only host integration' "Policy defines Nimbus-only host-integration disposition"
+require_contains "${POLICY_DOC}" 'Temporary carry' "Policy defines temporary-carry disposition"
+require_contains "${POLICY_DOC}" 'Removal or upstream trigger' "Policy requires removal or upstream trigger"
+require_contains "${POLICY_DOC}" 'Prefer wrappers around upstream logic' "Policy minimizes copied fork logic"
 
-step 4 "Current fork pins and carried patch dispositions are ledgered"
-require_contains "${LEDGER_DOC}" "${EXPECTED_DENO_TAG}" "Ledger records expected nimbus/deno tag"
-require_contains "${LEDGER_DOC}" "${EXPECTED_DENO_SHA}" "Ledger records expected nimbus/deno commit SHA"
-require_contains "${LEDGER_DOC}" "${EXPECTED_V8_TAG}" "Ledger records expected nimbus/rusty_v8 tag"
-require_contains "${LEDGER_DOC}" "${EXPECTED_V8_SHA}" "Ledger records expected nimbus/rusty_v8 commit SHA"
-require_contains "${LEDGER_DOC}" 'c8c7ea5167941e123d2fad9b116863d960fefd76' "Ledger records current nimbus/deno locker lifecycle carry"
-require_contains "${LEDGER_DOC}" '14088864a5d2ed2c2355ada17bfe3c70a88af1ce' "Ledger records current nimbus/deno shared RO heap carry"
-require_contains "${LEDGER_DOC}" 'fac81573e481c1a5fad71e60abe8e347f8463aee' "Ledger records current nimbus/rusty_v8 locker API carry"
-require_contains "${LEDGER_DOC}" 'f9457373150679d9db9eb577dcd3a687a3ec25ef' "Ledger records latest current nimbus/rusty_v8 carried patch"
-require_contains "${LEDGER_DOC}" 'Upstream Deno-family' "Ledger uses upstream Deno-family disposition"
-require_contains "${LEDGER_DOC}" 'Nimbus-only host integration' "Ledger uses Nimbus-only host-integration disposition"
-require_contains "${LEDGER_DOC}" 'Temporary carry' "Ledger uses temporary-carry disposition"
+step 4 "Consumed pins are derived and recorded separately from forward releases"
+require_contains "${POLICY_DOC}" "consumed.*nimbus/deno.*${DENO_FORK_PATCH_TAG}.*${DENO_FORK_SHA}" "Policy records derived consumed nimbus/deno tag and SHA"
+require_contains "${POLICY_DOC}" "consumed.*nimbus/rusty_v8.*${RUSTY_V8_PATCH_TAG}.*${RUSTY_V8_SHA}" "Policy records derived consumed nimbus/rusty_v8 tag and SHA"
+require_contains "${POLICY_DOC}" 'published, not consumed.*nimbus/rusty_v8.*-nimbus\.' "Policy distinguishes a published forward rusty_v8 release"
+require_contains "${POLICY_DOC}" 'silently change Nimbus.s V8' "Policy prohibits implicit V8-line coupling"
 
-step 5 "Release proof checklist is present"
-require_contains "${LEDGER_DOC}" 'Release Proof Checklist' "Ledger includes release proof checklist"
-require_contains "${LEDGER_DOC}" 'repinned to published tags' "Ledger requires published-tag repin proof"
-require_contains "${LEDGER_DOC}" 'generated Node evidence' "Ledger ties fork bumps to generated Node evidence when claims move"
+step 5 "Release proof checklist covers the durable safety gates"
+require_contains "${POLICY_DOC}" 'Release Proof Checklist' "Policy includes release proof checklist"
+require_contains "${POLICY_DOC}" 'peeled annotated tag' "Policy requires tag-to-candidate identity proof"
+require_contains "${POLICY_DOC}" 'branch and tag CI are green' "Policy requires exact-commit branch/tag CI"
+require_contains "${POLICY_DOC}" 'new default branch' "Policy requires remote default-branch proof"
+require_contains "${POLICY_DOC}" 'assets and SHA-256 sidecars' "Policy requires rusty_v8 asset-manifest proof"
+# shellcheck disable=SC2016 # Backticks are literal policy text.
+require_contains "${POLICY_DOC}" 'resolved `v8` crate version matches' "Policy requires Deno/rusty_v8 coupling proof"
+require_contains "${POLICY_DOC}" 'Generated Node evidence' "Policy ties fork bumps to generated Node evidence when claims move"
 
 printf '\n\033[1mSummary:\033[0m %s passed, %s failed\n' "${PASS}" "${FAIL}"
 if [ "${FAIL}" -ne 0 ]; then

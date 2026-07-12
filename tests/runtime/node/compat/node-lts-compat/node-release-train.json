@@ -1,7 +1,7 @@
 {
   "as_of": "2026-05-28",
   "dashboard_summary": {
-    "canary_check_count": 0,
+    "canary_check_count": 99,
     "canary_claim_count": 79,
     "required_canary_gap_count": 0
   },
@@ -105,11 +105,11 @@
     },
     {
       "path": "tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json",
-      "sha256": "54ac905da8a7afcc6bc2d8f36080d3d630ad9711fb5b78473f6d0b032da1bc4f"
+      "sha256": "0730329a63cf745ce351c3344ad71c4625994758e5ab5e112a735ccdfb3098d4"
     },
     {
       "path": "tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json",
-      "sha256": "e2a4eab4979600c73823c1430a0b40bdb87294122ebc01be1e351ea7a83ea18e"
+      "sha256": "f1e2e9b69880128fea7f8dedc8213bafd38804145074bceec76cd4ac03a98b74"
     }
   ],
   "source_urls": [

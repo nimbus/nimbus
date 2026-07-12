@@ -3,7 +3,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Mutex;
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir as CapDir, Metadata as CapMetadata, OpenOptions as CapOpenOptions};
@@ -293,22 +293,17 @@ fn cap_open_options(options: OpenOptions) -> CapOpenOptions {
 
 fn cap_metadata_to_fs_stat(metadata: CapMetadata) -> FsStat {
     #[inline(always)]
-    fn to_msec(maybe_time: io::Result<CapSystemTime>) -> Option<u64> {
+    fn to_msec(maybe_time: io::Result<CapSystemTime>) -> Option<i64> {
         match maybe_time {
-            Ok(time) => Some(
-                time.into_std()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|time| time.as_millis() as u64)
-                    .unwrap_or_else(|error| error.duration().as_millis() as u64),
-            ),
+            Ok(time) => Some(system_time_millis(time.into_std())),
             Err(_) => None,
         }
     }
 
     #[inline(always)]
-    fn get_ctime(ctime_or_0: i64) -> Option<u64> {
-        if ctime_or_0 > 0 {
-            Some(ctime_or_0 as u64 * 1_000)
+    fn get_ctime(ctime_secs: i64) -> Option<i64> {
+        if ctime_secs != 0 {
+            Some(ctime_secs * 1_000)
         } else {
             None
         }
@@ -375,6 +370,13 @@ fn cap_metadata_to_fs_stat(metadata: CapMetadata) -> FsStat {
         is_char_device: unix_or_false!(is_char_device),
         is_fifo: unix_or_false!(is_fifo),
         is_socket: unix_or_false!(is_socket),
+    }
+}
+
+fn system_time_millis(time: SystemTime) -> i64 {
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis() as i64,
+        Err(error) => -(error.duration().as_millis() as i64),
     }
 }
 
@@ -946,4 +948,23 @@ fn ensure_relative_symlink_target(path: &Path) -> io::Result<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn system_time_millis_preserves_both_sides_of_the_epoch() {
+        assert_eq!(
+            system_time_millis(UNIX_EPOCH + Duration::from_millis(1_500)),
+            1_500
+        );
+        assert_eq!(
+            system_time_millis(UNIX_EPOCH - Duration::from_millis(1_500)),
+            -1_500
+        );
+    }
 }

@@ -43,8 +43,8 @@ struct FileNode {
     data: Vec<u8>,
     mode: u32,
     ino: u64,
-    atime: Option<u64>,
-    mtime: Option<u64>,
+    atime: Option<i64>,
+    mtime: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -1276,8 +1276,7 @@ fn dir_entry(name: String, node: &Node) -> FsDirEntry {
     }
 }
 
-fn timestamp_millis(secs: i64, nanos: u32) -> u64 {
-    let secs = secs.max(0) as u64;
+fn timestamp_millis(secs: i64, nanos: u32) -> i64 {
     secs.saturating_mul(1000)
-        .saturating_add((nanos / 1_000_000) as u64)
+        .saturating_add(i64::from(nanos / 1_000_000))
 }

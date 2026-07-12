@@ -29,6 +29,15 @@ fn runtime_builds_locker_jsruntime_from_snapshot() {
 #[ignore = "runs in a subprocess to isolate locker V8 state"]
 fn runtime_builds_locker_jsruntime_from_snapshot_subprocess() {
     let _guard = acquire_runtime_suite_lock_blocking();
+    // Deno 2.9.2 schedules delayed V8 foreground tasks through Tokio during
+    // isolate construction. Keep the runtime entered for the full JsRuntime
+    // lifetime so the Locker path exercises the same owner context as Nimbus's
+    // production worker loops.
+    let tokio_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("locker test tokio runtime should build");
+    let _tokio_enter = tokio_runtime.enter();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(&bundle_path, "export {};").expect("bundle should write");
@@ -84,6 +93,13 @@ fn runtime_snapshot_backed_locker_runtimes_interleave_on_same_thread() {
 #[ignore = "runs in a subprocess to isolate locker V8 state"]
 fn runtime_snapshot_backed_locker_runtimes_interleave_on_same_thread_subprocess() {
     let _guard = acquire_runtime_suite_lock_blocking();
+    // Keep the Deno foreground-task scheduler alive while both Locker-backed
+    // runtimes exist; see the single-runtime case above.
+    let tokio_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("locker test tokio runtime should build");
+    let _tokio_enter = tokio_runtime.enter();
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
     std::fs::write(&bundle_path, "export {};").expect("bundle should write");

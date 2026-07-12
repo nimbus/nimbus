@@ -1,0 +1,16 @@
+# Crate	Expected source	Reason
+deno_ast	crates.io	Parser/transpiler utility used by Nimbus for TypeScript/JavaScript source handling; no Nimbus host authority, permission, process, or Node metadata patch is carried today.
+deno_error	crates.io	Shared error type crate used by Deno-family packages; no runtime authority or host behavior lives here.
+deno_error_macro	crates.io	Proc macro companion to deno_error; compile-time only and no runtime host behavior.
+deno_graph	crates.io	Module graph analysis utility consumed by the forked resolver stack; current Nimbus host/package policy is enforced in forked resolver/runtime crates and Nimbus admission layers.
+deno_media_type	crates.io	Media-type classifier utility; no host authority, permission, or Node metadata behavior.
+deno_native_certs	crates.io	Native certificate loading helper used through forked Deno TLS/Node layers; no Nimbus-specific patch is carried today, and TLS policy changes must be proven in forked Deno/Nimbus runtime gates.
+deno_path_util	crates.io	Path and URL normalization utility; current Nimbus path authority is enforced in forked Deno crates and runtime permission/admission code.
+deno_semver	crates.io	Semver parser utility used by npm/package-resolution code; no host authority or Node metadata behavior.
+deno_terminal	crates.io	Terminal formatting/detection utility; no production runtime authority is granted here.
+deno_tunnel	crates.io	Tunnel helper consumed below forked network crates; Nimbus network authority is enforced in forked deno_net/deno_permissions and tenant/runtime admission.
+deno_unsync	crates.io	Async interior-mutability utility; no host authority or Node compatibility metadata.
+deno_whoami	crates.io	Identity lookup helper used below forked deno_node; any Nimbus host-identity policy change must be enforced in forked deno_node or Nimbus admission before this helper becomes patch-sensitive.
+sys_traits	crates.io	Deno system abstraction trait crate; API contract only, with concrete authority controlled by forked Deno crates and Nimbus runtime policy.
+sys_traits_macros	crates.io	Proc macro companion to sys_traits; compile-time only and no runtime host behavior.
+urlpattern	crates.io	URLPattern parser used by deno_web; no host authority, permission, or Node metadata behavior.

@@ -30,6 +30,8 @@ import * as nodeTimersBuiltin from "node:timers";
 import "ext:deno_websocket/01_websocket.js";
 import "ext:deno_websocket/02_websocketstream.js";
 
+const loadNodeStream = core.createLazyLoader("node:stream");
+
 core.loadExtScript("ext:deno_fetch/20_headers.js");
 core.loadExtScript("ext:deno_fetch/22_http_client.js");
 core.loadExtScript("ext:deno_fetch/23_request.js");
@@ -1148,8 +1150,7 @@ function seedNodeProcessStdio(nodeProcess) {
   // properties at module top-level, and expects
   // `internals.__bootstrapNodeProcess` to replace them with real lazy-stream
   // accessors (`defineLazyStream`). Nimbus's FaaS bootstrap does not run
-  // `__bootstrapNodeProcess`, so we materialize the real streams here,
-  // mirroring that bootstrap's warmup branch.
+  // `__bootstrapNodeProcess`, so we materialize safe streams here.
   //
   // The overwrite MUST be unconditional. The placeholder is a data property
   // holding the Proxy (never `undefined`, so the previous `=== undefined`
@@ -1159,11 +1160,40 @@ function seedNodeProcessStdio(nodeProcess) {
   // Maximum call stack size exceeded`). Pointing the property at the real
   // stream fixes both `process.stdout` and the exported `stdout` binding (the
   // latter delegates through `process[name]` in a single, terminating hop).
-  // The marker keeps the two call sites (nodeGlobals + globalThis) idempotent
-  // so we construct each stream once.
-  nodeProcess.stdin = initStdin(false);
-  nodeProcess.stdout = createWritableStdioStream(io.stdout, "stdout");
-  nodeProcess.stderr = createWritableStdioStream(io.stderr, "stderr");
+  // Nimbus isolates do not receive interactive-terminal authority. Deno's
+  // snapshot warmup deliberately avoids constructing a TTY stdin because its
+  // cppgc/libuv handle cannot be serialized safely. Keep that guarantee after
+  // deserialization too: expose a Node-compatible, contentless Readable rather
+  // than binding the tenant isolate to the host TTY. Besides preserving the
+  // capability boundary, this prevents an active stdin handle from keeping a
+  // parked isolate alive. stdout/stderr use Deno's snapshot-safe warmup form;
+  // their writers still target Nimbus's configured Deno I/O resources.
+  const warmupStdin = initStdin(true);
+  const stdin = warmupStdin ?? new (loadNodeStream().Readable)({
+    read() {
+      this.push(null);
+    },
+  });
+  stdin.fd = -1;
+  stdin.isTTY = false;
+  stdin._isStdio = true;
+  nodeProcess.stdin = stdin;
+  nodeProcess.stdout = createWritableStdioStream(io.stdout, "stdout", true);
+  nodeProcess.stderr = createWritableStdioStream(io.stderr, "stderr", true);
+  for (const stream of [nodeProcess.stdout, nodeProcess.stderr]) {
+    if (stream.isTTY !== true) {
+      // Deno's warmup form installs these methods unconditionally so
+      // snapshot-time feature detection can proceed. Deno replaces the
+      // warmup streams during its CLI bootstrap; Nimbus keeps these streams
+      // live, so remove the TTY-only surface when the configured writer is
+      // not a terminal. Otherwise user code can mistake captured output for a
+      // TTY and emit cursor-control escapes into tenant logs.
+      delete stream.cursorTo;
+      delete stream.moveCursor;
+      delete stream.clearLine;
+      delete stream.clearScreenDown;
+    }
+  }
 
   Object.defineProperty(nodeProcess, nimbusProcessStdioPatched, {
     value: true,

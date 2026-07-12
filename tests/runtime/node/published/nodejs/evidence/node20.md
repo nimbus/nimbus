@@ -11,8 +11,8 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 - upstream fixture line: `v20.20.2`
 - runtime execution target: `Node20`
 - vendored official fixtures: `4248`
-- passed official fixtures: `917`
-- expected failure / known gap fixtures: `3318`
+- passed official fixtures: `919`
+- expected failure / known gap fixtures: `3316`
 - skipped / excluded fixtures: `13`
 - unclassified fixtures: `0`
 - official fixture pass rate: `21.6%`
@@ -24,7 +24,7 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 
 | Expectation | Count |
 | --- | ---: |
-| Expected failure | 22 |
+| Expected failure | 20 |
 | Known gap | 3296 |
 | Skipped / excluded | 13 |
 

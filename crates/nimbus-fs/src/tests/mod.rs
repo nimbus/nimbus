@@ -11,6 +11,7 @@ mod caps;
 mod cas_ro;
 mod delegation;
 mod grants;
+mod memfs;
 mod mount;
 mod object;
 mod passthrough;

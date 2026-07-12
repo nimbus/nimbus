@@ -1,20 +1,20 @@
 {
   "schema_version": 2,
-  "generated_at": "2026-06-16T16:16:12.310134+00:00",
+  "generated_at": "2026-07-10T18:59:53.275575+00:00",
   "report_kind": "node_compat_suite_status",
   "status_contract": "Counts every official vendored lane-local test-* JS/CJS/MJS fixture, then compares that denominator to the documented manifested passed subset plus explicit lane classification catalogs. Supported lanes use non-ignored Rust tests that execute node-compat fixtures for the matching lane minus explicit expected-failure, known-gap, and skipped classifications as the passed numerator. Ignored watchpoints never count as passed. Expected failures, known gaps, and skipped/excluded entries are not pass claims; the remaining remainder is intentionally reported as unmanifested_or_unclassified, not as pass or fail. Supplementary, regression, canary, watchpoint, and diagnostic evidence is reported in separate evidence tiers and never changes official pass denominators.",
   "lane_count": 4,
   "family_count": 5,
-  "rust_ignore_count": 154,
+  "rust_ignore_count": 150,
   "expectation_catalog": {
     "catalog_path": "tests/runtime/node/expectations/rust-watchpoints.json",
     "catalog_present": true,
-    "catalog_entry_count": 154,
+    "catalog_entry_count": 150,
     "by_expectation": {
-      "expected_failure": 154
+      "expected_failure": 150
     },
     "by_classification": {
-      "watchpoint": 154
+      "watchpoint": 150
     },
     "validation_errors": [],
     "observed_results_path": null,
@@ -26,7 +26,7 @@
       "source": "vendored_official_fixture_corpus",
       "primary_count_label": "fixture_count",
       "primary_count": 19772,
-      "passed_count": 7772,
+      "passed_count": 7774,
       "counts_in_official_denominator": true,
       "notes": "Byte-identical Node upstream test-* fixtures under lane-local nodeNN/test roots; pass percentages use only this denominator."
     },
@@ -61,7 +61,7 @@
       "tier": "watchpoint",
       "source": "tests/runtime/node/expectations/rust-watchpoints.json",
       "primary_count_label": "catalog_entry_count",
-      "primary_count": 154,
+      "primary_count": 150,
       "counts_in_official_denominator": false,
       "notes": "Ignored Rust watchpoints and expectation catalog entries used to preserve known failures and unexpected-pass diagnostics."
     },
@@ -76,7 +76,7 @@
     }
   ],
   "total_vendored_test_file_count": 19772,
-  "total_documented_manifested_green_count": 7772,
+  "total_documented_manifested_green_count": 7774,
   "lane_summaries": [
     {
       "lane": "node20",
@@ -96,23 +96,23 @@
       "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node20/test",
       "denominator_kind": "vendored_fixture_root_test_files",
       "vendored_test_file_count": 4248,
-      "documented_manifested_green_count": 917,
+      "documented_manifested_green_count": 919,
       "documented_manifested_green_source": "rust_nonignored_execution_fixture_inventory_minus_classified_red_skip",
       "documented_family_green_count": 909,
-      "path_owned_manifested_green_count": 917,
-      "classified_red_skip_count": 3331,
-      "classified_total_count": 3331,
-      "known_red_or_gap_count": 3318,
+      "path_owned_manifested_green_count": 919,
+      "classified_red_skip_count": 3329,
+      "classified_total_count": 3329,
+      "known_red_or_gap_count": 3316,
       "skipped_or_excluded_count": 13,
       "documented_or_classified_count": 4248,
       "unmanifested_or_unclassified_count": 0,
-      "documented_manifested_green_ratio": 0.215866,
+      "documented_manifested_green_ratio": 0.216337,
       "classification_catalog": {
         "catalog_path": "tests/runtime/node/classifications/node20.json",
         "catalog_present": true,
-        "classified_red_skip_count": 3331,
+        "classified_red_skip_count": 3329,
         "by_expectation": {
-          "expected_failure": 22,
+          "expected_failure": 20,
           "expected_gap": 3296,
           "expected_skip": 13
         },
@@ -123,7 +123,7 @@
           "requires_sequential_host_state_harness": 119,
           "requires_unpromoted_node_surface": 3025,
           "requires_wpt_harness": 20,
-          "rust_watchpoint_expected_failure": 22,
+          "rust_watchpoint_expected_failure": 20,
           "support_fixture_not_top_level_test": 13,
           "upstream_known_issue_or_platform_boundary": 20
         },
@@ -142,20 +142,6 @@
             "classification": "rust_watchpoint_expected_failure",
             "owner": "node-compat/unpromoted-surface",
             "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_async_local_storage_exit_does_not_leak_watchpoint"
-          },
-          {
-            "test_path": "test/parallel/test-buffer-isascii.js",
-            "expectation": "expected_failure",
-            "classification": "rust_watchpoint_expected_failure",
-            "owner": "core-semantics/buffer",
-            "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_buffer_isascii_watchpoint"
-          },
-          {
-            "test_path": "test/parallel/test-buffer-isutf8.js",
-            "expectation": "expected_failure",
-            "classification": "rust_watchpoint_expected_failure",
-            "owner": "core-semantics/buffer",
-            "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_buffer_isutf8_watchpoint"
           },
           {
             "test_path": "test/parallel/test-buffer-slow.js",
@@ -97173,70 +97159,46 @@
       "source_line": 6194
     },
     {
-      "test_name": "node22_buffer_isascii_watchpoint",
-      "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers",
-      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6204
-    },
-    {
-      "test_name": "node20_buffer_isascii_watchpoint",
-      "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers",
-      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6214
-    },
-    {
-      "test_name": "node22_buffer_isutf8_watchpoint",
-      "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers",
-      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6224
-    },
-    {
-      "test_name": "node20_buffer_isutf8_watchpoint",
-      "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers",
-      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6234
-    },
-    {
       "test_name": "node20_buffer_slow_watchpoint",
       "reason": "Pinned Node20 divergence: official v20.20.2 test-buffer-slow.js still exercises SlowBuffer(buffer.kMaxLength), and the embedded runtime hits its 128 MB heap ceiling before Node-style range semantics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6244
+      "source_line": 6240
     },
     {
       "test_name": "node22_path_normalize_watchpoint",
       "reason": "Pinned Node22-only path gap: official v22.15.0 expects the post-CVE path.win32.normalize() semantics that preserve the test segment in \\\\\\\\? and \\\\\\\\. device paths",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6254
+      "source_line": 6250
     },
     {
       "test_name": "node22_path_makelong_watchpoint",
       "reason": "Pinned Node22 path gap: official v22.15.0 expects path.win32.toNamespacedPath('\\\\\\\\?\\\\\\\\foo') to retain the trailing slash, but the current runtime still returns the older Node20 shape",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6264
+      "source_line": 6260
     },
     {
       "test_name": "node22_path_resolve_watchpoint",
       "reason": "Pinned shared path gap: official Node20/Node22 test-path-resolve.js currently fails because win32.resolve rejects drive-letter-less inputs without a CWD",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6274
+      "source_line": 6270
     },
     {
       "test_name": "node20_path_resolve_watchpoint",
       "reason": "Pinned shared path gap: official Node20/Node22 test-path-resolve.js currently fails because win32.resolve rejects drive-letter-less inputs without a CWD",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6284
+      "source_line": 6280
     },
     {
       "test_name": "node22_url_parse_deprecation_watchpoint",
       "reason": "Pinned vendored fixture tracks post-22 url.parse deprecation semantics; official Node22 v22.15.0 has no counterpart",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6294
+      "source_line": 6290
     },
     {
       "test_name": "node26_current_lane_broad_residual_watchpoint",
       "reason": "NDS3 node26 broad pre-run: Current-lane residual batch from Node26 broad pre-run; classify crypto, fs, stream, http2, loader, process, url, and util root causes before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6381
+      "source_line": 6377
     }
   ],
   "warnings": []
