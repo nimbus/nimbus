@@ -137,11 +137,54 @@ function browserExportCondition(manifest) {
   if (rootExport === null || typeof rootExport !== "object" || Array.isArray(rootExport)) {
     return null;
   }
-  return typeof rootExport.browser === "string" ? rootExport.browser : null;
+  if (!Object.prototype.hasOwnProperty.call(rootExport, "browser")) {
+    return null;
+  }
+  return resolveConditionEntry(rootExport.browser);
+}
+
+// A package.json "exports" condition value is either a plain string (the
+// resolved file) or, for packages that ship both ESM and CJS browser builds,
+// a further nested object of sub-conditions -- e.g.
+// `"browser": { "import": "./browser.mjs", "require": "./browser.cjs" }`.
+// Nimbus's runtime always resolves external-package bindings via ESM
+// dynamic import() (see emit/runtime_bundle_preamble.mjs's
+// nodeExternalPackage), so "import" is preferred; "default" is the other
+// condition name real packages commonly nest a single universal entry under.
+// Anything else falls back to the first string leaf found, so a package
+// nesting under an unrecognized condition name still resolves to *some*
+// browser-safe file rather than silently falling through to the Node entry.
+function resolveConditionEntry(condition) {
+  if (typeof condition === "string") {
+    return condition;
+  }
+  if (condition === null || typeof condition !== "object" || Array.isArray(condition)) {
+    return null;
+  }
+  for (const preferredKey of ["import", "default"]) {
+    if (Object.prototype.hasOwnProperty.call(condition, preferredKey)) {
+      const resolved = resolveConditionEntry(condition[preferredKey]);
+      if (resolved !== null) {
+        return resolved;
+      }
+    }
+  }
+  for (const value of Object.values(condition)) {
+    const resolved = resolveConditionEntry(value);
+    if (resolved !== null) {
+      return resolved;
+    }
+  }
+  return null;
 }
 
 function legacyBrowserField(manifest) {
   const browserField = manifest.browser;
+  // The common form: a bare string wholesale-replaces the package's main
+  // entry with a browser-safe file, independent of "main"/"module".
+  if (typeof browserField === "string") {
+    return browserField;
+  }
   if (browserField === null || typeof browserField !== "object" || Array.isArray(browserField)) {
     return null;
   }
@@ -177,24 +220,67 @@ async function stageNodeExternalPackages(appDir, report) {
     // behavior here regardless: the staged tree is a self-contained artifact
     // read by a sandboxed runtime scoped to the app's own directory, and a
     // preserved symlink pointing outside that scope would be unreadable
-    // there even if this copy could preserve it.
-    await copyPackageTree(packageRoot, stagedPackageRoot);
+    // there even if this copy could preserve it. But dereferencing on its own
+    // is not safe to do unconditionally -- see copyPackageTree's containment
+    // and cycle guards below.
+    const packageRootReal = await fs.realpath(packageRoot);
+    await copyPackageTree(packageRoot, stagedPackageRoot, {
+      containmentRoot: packageRootReal,
+      visitedRealPaths: new Set([packageRootReal]),
+    });
   }
 }
 
-async function copyPackageTree(sourceDir, destDir) {
+// Copies a package's files into the staged tree, dereferencing symlinks (see
+// the containment-boundary rationale in stageNodeExternalPackages above).
+// Two guards keep that dereferencing from turning into a containment break
+// or an unbounded walk:
+//
+// - Containment: a symlink whose real target resolves outside the package's
+//   own root -- e.g. a dependency shipping `secrets -> ../../.env` -- is
+//   skipped rather than copied. Without this, staging would copy arbitrary
+//   files reachable from the package directory (up to and including host
+//   credentials) into the deployment artifact.
+// - Cycles: a symlink whose real target has already been visited on this
+//   walk (including the package root itself, e.g. `self -> .`) is skipped
+//   rather than recursed into again, so a symlink cycle terminates instead
+//   of recursing unboundedly.
+async function copyPackageTree(sourceDir, destDir, { containmentRoot, visitedRealPaths }) {
   await fs.mkdir(destDir, { recursive: true });
   const entries = await fs.readdir(sourceDir, { withFileTypes: true });
   for (const entry of entries) {
     const sourcePath = path.join(sourceDir, entry.name);
     const destPath = path.join(destDir, entry.name);
-    const stat = entry.isSymbolicLink() ? await fs.stat(sourcePath) : entry;
+    if (!entry.isSymbolicLink()) {
+      if (entry.isDirectory()) {
+        await copyPackageTree(sourcePath, destPath, { containmentRoot, visitedRealPaths });
+      } else if (entry.isFile()) {
+        await fs.copyFile(sourcePath, destPath);
+      }
+      continue;
+    }
+    let realPath;
+    try {
+      realPath = await fs.realpath(sourcePath);
+    } catch {
+      continue; // dangling symlink target -- nothing to copy
+    }
+    if (!isPathWithinRoot(realPath, containmentRoot) || visitedRealPaths.has(realPath)) {
+      continue;
+    }
+    visitedRealPaths.add(realPath);
+    const stat = await fs.stat(sourcePath);
     if (stat.isDirectory()) {
-      await copyPackageTree(sourcePath, destPath);
+      await copyPackageTree(sourcePath, destPath, { containmentRoot, visitedRealPaths });
     } else if (stat.isFile()) {
       await fs.copyFile(sourcePath, destPath);
     }
   }
+}
+
+function isPathWithinRoot(candidatePath, root) {
+  const relative = path.relative(root, candidatePath);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
 }
 
 // Despite the "node" in the name, this covers external package usage on

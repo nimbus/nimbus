@@ -25,6 +25,7 @@ async function runRuntimeFixtures() {
   await testRuntimeOnlyMutationImportedScheduledFunctionsFixture();
   await testRuntimeOnlyMutationImportedScheduledFunctionsWithJsExtensionFixture();
   await testMixedDefaultAndNodeRuntimeSharedBundleFixture();
+  await testSingleRuntimeNodeBundleImportsEagerlyAtLoadFixture();
   await testRuntimeProgramBundleCandidateFixture();
   await testBunRuntimeProgramBundleFixture();
   testRuntimeProgramBundleRejectsNodeRuntimeImports();
@@ -391,6 +392,95 @@ export const runNode = action({
     });
     assert.deepEqual(nodeResponse, { status: "ok", value: expectedHash });
   } finally {
+    if (previousInvoke === undefined) {
+      delete globalThis.__nimbusInvoke;
+    } else {
+      globalThis.__nimbusInvoke = previousInvoke;
+    }
+    if (previousCreateContext === undefined) {
+      delete globalThis.__nimbusCreateContext;
+    } else {
+      globalThis.__nimbusCreateContext = previousCreateContext;
+    }
+  }
+}
+
+// EX10R.4: a bundle whose functions are entirely "use node" must import its
+// Node/external-package bindings eagerly, at bundle load, not lazily at
+// first invocation -- so a dependency that throws or captures state at
+// module-init time fails at deploy, not mid-request. This drives the
+// dependency's own top-level side effect and asserts it has already fired
+// once the bundle module is loaded, before any function is ever invoked.
+async function testSingleRuntimeNodeBundleImportsEagerlyAtLoadFixture() {
+  const appDir = await createAppFixture(
+    {
+      "messages.ts": `
+"use node";
+
+import sideEffectPackage from "eager-side-effect-package";
+import { action } from "./_generated/server";
+import { v } from "convex/values";
+
+export const run = action({
+  args: { text: v.string() },
+  returns: v.string(),
+  handler: async (_ctx, { text }) => \`\${sideEffectPackage.marker}:\${text}\`,
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "node_modules/eager-side-effect-package/package.json":
+          `{"name":"eager-side-effect-package","version":"1.0.0","main":"index.js"}`,
+        "node_modules/eager-side-effect-package/index.js":
+          "globalThis.__nimbusCodegenEagerImportFired = "
+          + "(globalThis.__nimbusCodegenEagerImportFired ?? 0) + 1;\n"
+          + 'export default { marker: "loaded" };\n',
+        "convex.json": `{ "node": { "externalPackages": ["eager-side-effect-package"] } }\n`,
+      },
+    },
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
+  assert.match(runtimeBundle, /^import "eager-side-effect-package";/m);
+
+  const bundleUrl = pathToFileURL(
+    path.join(appDir, ".nimbus", "convex", "bundle.mjs"),
+  ).href;
+  const previousInvoke = globalThis.__nimbusInvoke;
+  const previousCreateContext = globalThis.__nimbusCreateContext;
+  const previousFired = globalThis.__nimbusCodegenEagerImportFired;
+  delete globalThis.__nimbusCodegenEagerImportFired;
+  globalThis.__nimbusCreateContext = () => ({});
+
+  try {
+    await import(bundleUrl);
+    assert.equal(
+      globalThis.__nimbusCodegenEagerImportFired,
+      1,
+      "single-runtime Node bundle must import its dependency's side effects at load, before any invocation",
+    );
+
+    const response = await globalThis.__nimbusInvoke({
+      kind: "action",
+      function_name: "messages:run",
+      args: { text: "hello" },
+    });
+    assert.deepEqual(response, { status: "ok", value: "loaded:hello" });
+    assert.equal(
+      globalThis.__nimbusCodegenEagerImportFired,
+      1,
+      "the lazy per-function dynamic import() at first invocation must resolve from the module cache, not re-run init side effects",
+    );
+  } finally {
+    delete globalThis.__nimbusCodegenEagerImportFired;
+    if (previousFired !== undefined) {
+      globalThis.__nimbusCodegenEagerImportFired = previousFired;
+    }
     if (previousInvoke === undefined) {
       delete globalThis.__nimbusInvoke;
     } else {

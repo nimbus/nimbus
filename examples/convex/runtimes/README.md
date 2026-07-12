@@ -32,24 +32,26 @@ string, but the identical, correct one.
   stored id has nanoid's default shape (21 URL-safe characters).
 
 > **⚠️ Monorepo-only — do not copy this directory out of the repo yet.**
-> This app depends on `"convex": "*"`, which inside this workspace resolves to
-> Nimbus's Convex compatibility package — the one that deliberately takes the
-> official `convex` name and `convex` bin so your code runs unchanged. Copy the
-> app out of the monorepo and `npm install`, and `"convex": "*"` instead
-> resolves to the **official Convex Cloud** package from the npm registry,
-> replacing Nimbus's — including its `convex` binary. What breaks then is
-> visible, not silent:
+> This app depends on `"convex": "file:./.nimbus/packages/convex"` — a local
+> path dependency on Nimbus's Convex compatibility package, staged into the
+> gitignored `.nimbus/packages/convex` directory by `nimbus`'s provisioning
+> step the first time you run `nimbus dev` or `nimbus deploy` in this
+> directory. That staged package is what gives you the official `convex` name
+> and `convex` bin, unmodified, running Nimbus's implementation underneath.
 >
-> - The app's scripts run `convex codegen --app .`, but `--app` is a
->   Nimbus-only flag; the official `convex` CLI rejects it, so `npm run
->   codegen`, `typecheck`, and `smoke` fail loudly at codegen.
-> - Even past that, the app does not quietly talk to Convex Cloud: `smoke.ts`
->   uses its own local-server default, so a copied-out app keeps targeting
->   your local Nimbus server.
+> Copy this directory out of the monorepo on its own and `npm install`, and
+> there is no `.nimbus/packages/convex` to stage — the `file:` path doesn't
+> resolve. `npm install` still exits successfully, but it leaves
+> `node_modules/convex` as a dangling symlink, which `npm ls` reports as
+> `invalid`. Every script that touches `convex` after that — `codegen`,
+> `typecheck`, `smoke` — fails with a module-resolution error (`Cannot find
+> module 'convex/...'`), or, if some unrelated `convex` binary happens to be on
+> your `PATH`, a confusing error from that CLI instead. It is not the official
+> Convex Cloud package silently taking over.
 >
 > Until the `nimbus init --example` scaffolder ships (it rewrites the `convex`
-> workspace dependency to a published Nimbus pin), run this example in place,
-> from a checkout of this repository.
+> dependency to a published Nimbus pin instead of a local staged path), run
+> this example in place, from a checkout of this repository.
 
 ## Running
 

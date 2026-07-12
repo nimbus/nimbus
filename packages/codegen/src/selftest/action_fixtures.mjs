@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 import {
   createAppFixture,
@@ -21,6 +23,10 @@ async function runActionFixtures() {
   await testNodeExternalPackagesMetadataFixture();
   await testDefaultRuntimeExternalPackageRequiresExternalizationFixture();
   await testDefaultRuntimeExternalPackageFixture();
+  await testDefaultRuntimeExternalPackageStringBrowserFieldFixture();
+  await testDefaultRuntimeExternalPackageNestedBrowserConditionFixture();
+  await testNodeExternalPackageSymlinkContainmentFixture();
+  await testNodeExternalPackageSymlinkCycleFixture();
   await testNodeExternalPackagesStarFixture();
   await testNodePackageImportRequiresExternalizationFixture();
   await testNodeExternalPackageRequiresLocalInstallFixture();
@@ -108,11 +114,13 @@ export const read = action({
   );
 
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
-  // External package bindings resolve via dynamic import() at first
-  // invocation, not a static top-level import — see
-  // packages/codegen/src/emit/runtime_bundle.mjs.
-  assert.doesNotMatch(runtimeBundle, /^import .* from "sharp"/m);
-  assert.doesNotMatch(runtimeBundle, /^import .* from "@scope\/pkg\/subpath"/m);
+  // This manifest has exactly one function and it's "use node", so the whole
+  // bundle is single-runtime Node — never shared with a default-lane
+  // function — and external package bindings are imported eagerly at the
+  // top of the bundle for their load-time side effects, not deferred to
+  // first invocation. See packages/codegen/src/emit/runtime_bundle.mjs.
+  assert.match(runtimeBundle, /^import "sharp";/m);
+  assert.match(runtimeBundle, /^import "@scope\/pkg\/subpath";/m);
   assert.match(runtimeBundle, /nodeExternalPackage\(specifier\)/);
   assert.match(runtimeBundle, /node_external_package_default/);
   assert.match(runtimeBundle, /node_external_package_named/);
@@ -193,6 +201,197 @@ export const create = mutation({
     await readConvexFile(appDir, "node_modules/greetlib/index.js"),
     /greet = \(\) => "hi"/,
   );
+}
+
+// EX10R.5: the common `"browser": "./browser.js"` string form of the legacy
+// browser field must resolve, not just the object-shaped
+// `{ "./main.js": "./browser.js" }` form legacyBrowserField already handled.
+async function testDefaultRuntimeExternalPackageStringBrowserFieldFixture() {
+  const appDir = await createAppFixture(
+    {
+      "widgets.ts": `
+import { label } from "strbrowser";
+import { mutation } from "./_generated/server";
+
+export const create = mutation({
+  args: {},
+  handler: async () => label,
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "node_modules/strbrowser/package.json":
+          `{"name":"strbrowser","version":"1.0.0","main":"index.node.js","browser":"./index.browser.js"}`,
+        "node_modules/strbrowser/index.node.js": `export const label = "node";`,
+        "node_modules/strbrowser/index.browser.js": `export const label = "browser";`,
+        "convex.json": `{ "node": { "externalPackages": ["strbrowser"] } }\n`,
+      },
+    },
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const packageReport = await readConvexJson(appDir, "node_external_packages.json");
+  const entry = packageReport.packages.find((candidate) => candidate.packageName === "strbrowser");
+  assert.equal(entry.browserEntry, "./index.browser.js");
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.match(manifest.functions[0].runtime_bindings.label.specifier, /index\.browser\.js$/);
+  assert.match(
+    await readConvexFile(appDir, "node_modules/strbrowser/index.browser.js"),
+    /label = "browser"/,
+  );
+}
+
+// EX10R.5: a package that nests its browser export condition further by
+// module format (`"browser": { "import": ..., "require": ... }`, common for
+// dual ESM/CJS packages) must still resolve -- not just a bare
+// `"browser": "./browser.js"` condition string.
+async function testDefaultRuntimeExternalPackageNestedBrowserConditionFixture() {
+  const appDir = await createAppFixture(
+    {
+      "widgets.ts": `
+import { label } from "nestedbrowser";
+import { mutation } from "./_generated/server";
+
+export const create = mutation({
+  args: {},
+  handler: async () => label,
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "node_modules/nestedbrowser/package.json": JSON.stringify({
+          name: "nestedbrowser",
+          version: "1.0.0",
+          main: "index.js",
+          exports: {
+            ".": {
+              browser: { import: "./browser.mjs", require: "./browser.cjs" },
+              default: "./index.js",
+            },
+          },
+        }),
+        "node_modules/nestedbrowser/index.js": `export const label = "node";`,
+        "node_modules/nestedbrowser/browser.mjs": `export const label = "browser-esm";`,
+        "node_modules/nestedbrowser/browser.cjs": `module.exports = { label: "browser-cjs" };`,
+        "convex.json": `{ "node": { "externalPackages": ["nestedbrowser"] } }\n`,
+      },
+    },
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const packageReport = await readConvexJson(appDir, "node_external_packages.json");
+  const entry = packageReport.packages.find((candidate) => candidate.packageName === "nestedbrowser");
+  assert.equal(entry.browserEntry, "./browser.mjs");
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.match(manifest.functions[0].runtime_bindings.label.specifier, /browser\.mjs$/);
+}
+
+// EX10R.6: a dependency shipping a symlink whose real target resolves
+// outside the package's own root (e.g. `secrets -> ../../.env`) must not
+// have that target's contents copied into the staged deployment artifact.
+async function testNodeExternalPackageSymlinkContainmentFixture() {
+  const appDir = await createAppFixture(
+    {
+      "messages.ts": `
+"use node";
+
+import { action } from "./_generated/server";
+import pkg from "leakypkg";
+
+export const read = action({
+  args: {},
+  handler: async () => pkg.ok,
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "secret.txt": "top-secret-value",
+        "node_modules/leakypkg/package.json": `{"name":"leakypkg","version":"1.0.0","main":"index.js"}`,
+        "node_modules/leakypkg/index.js": `export default { ok: true };`,
+        "convex.json": `{ "node": { "externalPackages": ["leakypkg"] } }\n`,
+      },
+    },
+  );
+
+  await fs.symlink(
+    path.join(appDir, "secret.txt"),
+    path.join(appDir, "node_modules", "leakypkg", "leaked.txt"),
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const stagedDir = path.join(appDir, ".nimbus", "convex", "node_modules", "leakypkg");
+  await assert.rejects(
+    fs.readFile(path.join(stagedDir, "leaked.txt")),
+    (error) => error.code === "ENOENT",
+    "a symlink escaping the package root must not be copied into the staged deployment artifact",
+  );
+  assert.match(
+    await readConvexFile(appDir, "node_modules/leakypkg/index.js"),
+    /ok: true/,
+    "legitimate package files must still stage normally",
+  );
+}
+
+// EX10R.6: a symlink cycle inside a staged package must terminate the copy
+// instead of recursing unboundedly.
+async function testNodeExternalPackageSymlinkCycleFixture() {
+  const appDir = await createAppFixture(
+    {
+      "messages.ts": `
+"use node";
+
+import { action } from "./_generated/server";
+import pkg from "cyclicpkg";
+
+export const read = action({
+  args: {},
+  handler: async () => pkg.ok,
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "node_modules/cyclicpkg/package.json": `{"name":"cyclicpkg","version":"1.0.0","main":"index.js"}`,
+        "node_modules/cyclicpkg/index.js": `export default { ok: true };`,
+        "convex.json": `{ "node": { "externalPackages": ["cyclicpkg"] } }\n`,
+      },
+    },
+  );
+
+  // node_modules/cyclicpkg/loop -> node_modules/cyclicpkg (the package's own
+  // root): a naive recursive copy would walk loop/loop/loop/... forever.
+  await fs.symlink(
+    path.join(appDir, "node_modules", "cyclicpkg"),
+    path.join(appDir, "node_modules", "cyclicpkg", "loop"),
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(
+    await readConvexFile(appDir, "node_modules/cyclicpkg/index.js"),
+    /ok: true/,
+  );
+
+  const stagedLoopExists = await fs
+    .stat(path.join(appDir, ".nimbus", "convex", "node_modules", "cyclicpkg", "loop"))
+    .then(() => true)
+    .catch(() => false);
+  assert.equal(stagedLoopExists, false, "a symlink cycle must be skipped, not recursively expanded");
 }
 
 async function testNodeExternalPackagesStarFixture() {
@@ -695,12 +894,13 @@ export const runInternal = internalAction({
   });
 
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
-  // Node builtin bindings resolve via dynamic import() at first invocation,
-  // not a static top-level import — the bundle carries no compile-time
-  // dependency on "node:fs" that would break module linking for a
-  // default-runtime function sharing the same bundle. See
+  // This manifest has exactly one function and it's "use node", so the whole
+  // bundle is single-runtime Node — never shared with a default-lane
+  // function, so there's no risk a static top-level "node:fs" import breaks
+  // module linking for one — and it is imported eagerly at the top of the
+  // bundle for its load-time side effects. See
   // packages/codegen/src/emit/runtime_bundle.mjs.
-  assert.doesNotMatch(runtimeBundle, /^import .* from "node:fs"/m);
+  assert.match(runtimeBundle, /^import "node:fs";/m);
   assert.match(runtimeBundle, /nodeBuiltinModule\(specifier\)/);
   assert.match(runtimeBundle, /return import\(specifier\)/);
   assert.match(runtimeBundle, /"type": "node_builtin_default"/);

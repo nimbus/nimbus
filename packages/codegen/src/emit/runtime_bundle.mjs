@@ -10,10 +10,42 @@ import { buildRuntimeBundleSource } from "./runtime_bundle_parts.mjs";
 // linking for the whole bundle, including default-runtime functions that
 // never touch Node builtins at all. Lazy resolution means a function only
 // ever triggers resolution of the specifiers it actually uses.
+//
+// That cross-lane risk only exists when the bundle is genuinely mixed: some
+// functions on the default lane, others on the node lane, sharing one
+// bundle.mjs. A bundle whose functions are ALL "node" has no such risk —
+// every function invoked against it already requires the node lane, so the
+// bundle is never loaded anywhere else. For that case we also emit bare
+// top-level imports of every Node binding specifier the manifest uses,
+// purely for their load-time side effects (see collectEagerNodeRuntimeImports
+// below): ES module semantics evaluate that module graph once, before the
+// rest of the bundle runs, and the later dynamic import() of the same
+// specifier inside compileRuntimeHandler (at first invocation) resolves from
+// that same cached module record instead of re-running its top-level code.
+// This restores "a package that throws or captures state at init does so at
+// deploy" for single-runtime Node bundles, while leaving genuinely mixed
+// bundles on the fully lazy path.
 function generateRuntimeBundle(manifest) {
-  return buildRuntimeBundleSource(JSON.stringify(manifest, null, 2), {
+  const bundleSource = buildRuntimeBundleSource(JSON.stringify(manifest, null, 2), {
     module: true,
   });
+  const eagerImports = collectEagerNodeRuntimeImports(manifest);
+  if (eagerImports.length === 0) {
+    return bundleSource;
+  }
+  const importStatements = eagerImports
+    .map((specifier) => `import ${JSON.stringify(specifier)};`)
+    .join("\n");
+  return `${importStatements}\n${bundleSource}`;
+}
+
+function collectEagerNodeRuntimeImports(manifest) {
+  return isSingleRuntimeNodeManifest(manifest) ? collectNodeRuntimeSpecifiers(manifest) : [];
+}
+
+function isSingleRuntimeNodeManifest(manifest) {
+  const functions = manifest.functions ?? [];
+  return functions.length > 0 && functions.every((fn) => fn.runtime_environment === "node");
 }
 
 // The Bun/JSC program bundle is a flat, non-module script (no import/export
