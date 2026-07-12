@@ -67,11 +67,41 @@ globalThis.__nimbusLocalFunctionRuntimeEnvironment = function (name) {
     : null;
 };
 
+// Generated-bundle parity (invokeNamedDefinitionLocally in
+// runtime_bundle_dispatch_invocation.mjs): both bundle entry points gate on
+// the caller's reference visibility exactly the way emitted bundles do, so
+// this harness reproduces what a real codegen app observes. Keep this in
+// sync with the emitted gate: an explicit request.visibility is the
+// reference tree of a same-isolate nested ctx.run* call and must match the
+// definition; a host-constructed request (client traffic or a cross-lane
+// nested call re-entering through host dispatch) omits it because the host
+// already enforced visibility.
+const assertReferenceVisibility = (request) => {
+  const definition = definitions.get(request.function_name);
+  if (!definition) {
+    return;
+  }
+  if (
+    typeof request.visibility === "string"
+    && definition.visibility !== request.visibility
+  ) {
+    throw new Error(
+      "nimbus function "
+        + request.function_name
+        + " is "
+        + definition.visibility
+        + ", not "
+        + request.visibility,
+    );
+  }
+};
+
 globalThis.__nimbusInvokeNamedLocal = async function (request) {
   const handler = handlers[request.function_name];
   if (!handler) {
     throw new Error("missing local handler: " + request.function_name);
   }
+  assertReferenceVisibility(request);
   const ctx = globalThis.__nimbusCreateContext({
     request,
     hostCallSessionId: request.hostCallSessionId,
@@ -88,6 +118,7 @@ globalThis.__nimbusInvoke = async function (request) {
         error: { kind: "internal", message: "missing handler " + request.function_name },
       };
     }
+    assertReferenceVisibility(request);
     const ctx = globalThis.__nimbusCreateContext({ request });
     const value = await handler(ctx, request.args ?? {});
     return { status: "ok", value };
@@ -229,5 +260,58 @@ async fn convex_nested_calls_cross_runtime_lanes_execute_on_the_callee_lane() {
     assert_eq!(
         body["digest"]["clock"]["first"], body["digest"]["clock"]["second"],
         "node->default nested mutation must observe the frozen ConvexDefault clock: {body}"
+    );
+}
+
+/// The relaxed bundle-side gate (host-constructed requests carry no reference
+/// visibility) must not open internal functions to clients: the client-facing
+/// boundary is host-side registry resolution, which rejects an internal
+/// target before any runtime dispatch happens.
+#[tokio::test]
+async fn convex_client_calls_to_internal_functions_stay_rejected() {
+    let app = build_convex_mixed_lane_app();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
+    let server = ServerFixture::start(router_for_convex_team(service, app.registry.clone())).await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+
+    // Internal default-lane mutation: exactly the function the node action is
+    // allowed to reach through nested host dispatch.
+    let response = api
+        .convex_named_mutation("demo", "clock:probe", json!({}))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("internal mutation rejection should parse");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .expect("internal mutation rejection should carry a message")
+            .contains("not public"),
+        "{body}"
+    );
+
+    // Internal "use node" action: same rejection on the action route.
+    let response = api
+        .convex_named_action("demo", "nodeside:digest", json!({ "body": "x" }))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("internal action rejection should parse");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .expect("internal action rejection should carry a message")
+            .contains("not public"),
+        "{body}"
     );
 }

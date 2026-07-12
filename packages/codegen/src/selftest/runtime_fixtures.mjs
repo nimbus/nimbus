@@ -24,6 +24,7 @@ async function runRuntimeFixtures() {
   await testRuntimeOnlyPaginatedQueryFixture();
   await testRuntimeOnlyMutationImportedScheduledFunctionsFixture();
   await testRuntimeOnlyMutationImportedScheduledFunctionsWithJsExtensionFixture();
+  await testHostDispatchedInternalMutationInvocationFixture();
   await testMixedDefaultAndNodeRuntimeSharedBundleFixture();
   await testSingleRuntimeNodeBundleImportsEagerlyAtLoadFixture();
   await testRuntimeProgramBundleCandidateFixture();
@@ -259,6 +260,112 @@ export const sendAndSchedule = mutation({
       delete globalThis.__nimbusInvoke;
     } else {
       globalThis.__nimbusInvoke = previousInvoke;
+    }
+    if (previousCreateContext === undefined) {
+      delete globalThis.__nimbusCreateContext;
+    } else {
+      globalThis.__nimbusCreateContext = previousCreateContext;
+    }
+  }
+}
+
+// Regression fixture for the cross-lane-internal-call bug found via the
+// convex/runtimes example: a host-constructed invocation of the bundle (a
+// cross-lane nested ctx.run* re-entering through host dispatch, or top-level
+// scheduler/client traffic) carries no request.visibility — the host has
+// already resolved and enforced visibility against its registry. The
+// generated invokeNamedDefinitionLocally gate used to default a missing
+// visibility to "public" and reject every internal function on those paths
+// ("nimbus function x is internal, not public"), while an explicit
+// reference-tree visibility (supplied only by same-isolate nested ctx.run*
+// dispatch) must keep being enforced.
+async function testHostDispatchedInternalMutationInvocationFixture() {
+  const appDir = await createAppFixture({
+    "digests.ts": `
+import { internalMutation } from "./_generated/server";
+import { v } from "convex/values";
+
+export const store = internalMutation({
+  args: {
+    body: v.string(),
+  },
+  handler: async (ctx, { body }) =>
+    await ctx.db.insert("digests", { body, createdAt: Date.now() }),
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.equal(manifest.functions[0].name, "digests:store");
+  assert.equal(manifest.functions[0].visibility, "internal");
+  assert.equal(manifest.functions[0].plan, null);
+  assert.match(manifest.functions[0].runtime_handler, /Date\.now/);
+
+  const bundleUrl =
+    `${pathToFileURL(path.join(appDir, ".nimbus", "convex", "bundle.mjs")).href}?hostDispatchedInternal=1`;
+  const previousInvoke = globalThis.__nimbusInvoke;
+  const previousInvokeNamedLocal = globalThis.__nimbusInvokeNamedLocal;
+  const previousCreateContext = globalThis.__nimbusCreateContext;
+
+  const insertedDocuments = [];
+  globalThis.__nimbusCreateContext = () => ({
+    db: {
+      insert: async (table, document) => {
+        insertedDocuments.push({ table, document });
+        return `id-${insertedDocuments.length}`;
+      },
+    },
+  });
+
+  try {
+    await import(bundleUrl);
+
+    // Host-constructed request (no visibility): must invoke the internal
+    // mutation — the host already enforced visibility before dispatching.
+    const hostDispatched = await globalThis.__nimbusInvoke({
+      kind: "mutation",
+      function_name: "digests:store",
+      args: { body: "cross-lane" },
+    });
+    assert.deepEqual(hostDispatched, { status: "ok", value: "id-1" });
+    assert.equal(insertedDocuments[0]?.table, "digests");
+    assert.equal(insertedDocuments[0]?.document?.body, "cross-lane");
+
+    // Same-isolate nested dispatch with the matching internal reference tree
+    // keeps working.
+    const localInternal = await globalThis.__nimbusInvokeNamedLocal({
+      kind: "mutation",
+      function_name: "digests:store",
+      visibility: "internal",
+      args: { body: "local" },
+    });
+    assert.equal(localInternal, "id-2");
+
+    // An explicit public reference aimed at an internal function is still a
+    // reference-selection error.
+    await assert.rejects(
+      globalThis.__nimbusInvokeNamedLocal({
+        kind: "mutation",
+        function_name: "digests:store",
+        visibility: "public",
+        args: { body: "mismatched" },
+      }),
+      /digests:store is internal, not public/,
+    );
+    assert.equal(insertedDocuments.length, 2);
+  } finally {
+    if (previousInvoke === undefined) {
+      delete globalThis.__nimbusInvoke;
+    } else {
+      globalThis.__nimbusInvoke = previousInvoke;
+    }
+    if (previousInvokeNamedLocal === undefined) {
+      delete globalThis.__nimbusInvokeNamedLocal;
+    } else {
+      globalThis.__nimbusInvokeNamedLocal = previousInvokeNamedLocal;
     }
     if (previousCreateContext === undefined) {
       delete globalThis.__nimbusCreateContext;

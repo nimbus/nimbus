@@ -362,16 +362,21 @@ async function invokeNamedDefinitionLocally(request) {
   if (!definition) {
     throw new Error("convex function not found: " + request.function_name);
   }
-  const requestVisibility =
-    typeof request.visibility === "string" ? request.visibility : "public";
-  if (definition.visibility !== requestVisibility) {
+  // Emitted-gate parity (runtime_bundle_dispatch_invocation.mjs): an
+  // explicit request.visibility is a same-isolate nested reference and must
+  // match; a host-constructed request omits it because the host already
+  // enforced visibility.
+  if (
+    typeof request.visibility === "string"
+    && definition.visibility !== request.visibility
+  ) {
     throw new Error(
       "convex function "
         + request.function_name
         + " is "
         + definition.visibility
         + ", not "
-        + requestVisibility,
+        + request.visibility,
     );
   }
   if (definition.kind !== request.kind) {

@@ -38,4 +38,28 @@ impl ConvexRegistry {
             ))
         })
     }
+
+    /// The visibility half of `resolve_typed`, for runtime-backed named
+    /// invocations that have no plan to resolve: client-origin traffic must
+    /// enforce `Public` against the registry before any runtime bundle is
+    /// invoked — the generated bundle only checks the reference tree of
+    /// same-isolate nested calls, never client visibility.
+    pub fn ensure_function_visibility(
+        &self,
+        name: &str,
+        required_visibility: ConvexFunctionVisibility,
+    ) -> Result<(), Error> {
+        let definition = self
+            .functions
+            .get(name)
+            .ok_or_else(|| Error::InvalidInput(format!("convex function not found: {name}")))?;
+        if definition.visibility != required_visibility {
+            return Err(Error::InvalidInput(format!(
+                "convex function {name} is {}, not {}",
+                definition.visibility.as_str(),
+                required_visibility.as_str()
+            )));
+        }
+        Ok(())
+    }
 }

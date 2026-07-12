@@ -72,6 +72,17 @@ impl<'a> RuntimeInvocationContext<'a> {
         cancellation: HostCallCancellation,
         server_request_id: Option<String>,
     ) -> Result<(Value, RuntimeReadSet), Error> {
+        // Every consumer of this context is client-origin named traffic (HTTP
+        // function routes, WebSocket subscription bootstrap and re-eval), so
+        // internal functions are rejected here, before any runtime dispatch —
+        // the plan-backed equivalent of resolve_typed's visibility gate.
+        // Trusted server-side paths (nested ctx.run*, the scheduler) do not
+        // route through this context; they enforce the caller's reference
+        // visibility on their own dispatch paths.
+        self.registry.ensure_function_visibility(
+            &request.function_name,
+            nimbus_convex::ConvexFunctionVisibility::Public,
+        )?;
         let bundle = self.required_runtime_bundle_for_function(&request.function_name)?;
         let invocation_kind = request.kind.clone();
         let (runtime_executor, runtime_policy) = self

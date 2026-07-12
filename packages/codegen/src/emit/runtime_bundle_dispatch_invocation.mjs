@@ -38,16 +38,26 @@ async function invokeNamedDefinitionLocally(request) {
   if (!definition) {
     throw new Error("nimbus function not found: " + request.function_name);
   }
-  const requestVisibility =
-    typeof request.visibility === "string" ? request.visibility : "public";
-  if (definition.visibility !== requestVisibility) {
+  // request.visibility is only supplied by same-isolate nested ctx.run*
+  // dispatch, where it carries the generated reference tree the caller used
+  // (api.* vs internal.*) and the host never sees the call — so the
+  // reference-selection check must run here. A host-constructed invocation
+  // (client traffic, the scheduler, or a cross-lane nested ctx.run*
+  // re-entering this bundle through host dispatch) omits it: the host has
+  // already resolved and enforced visibility against its registry, and an
+  // internal function reached that way is a trusted server-side call, not a
+  // public one.
+  if (
+    typeof request.visibility === "string"
+    && definition.visibility !== request.visibility
+  ) {
     throw new Error(
       "nimbus function "
         + request.function_name
         + " is "
         + definition.visibility
         + ", not "
-        + requestVisibility,
+        + request.visibility,
     );
   }
   if (definition.kind !== request.kind) {
