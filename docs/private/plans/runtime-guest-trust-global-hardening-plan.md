@@ -113,6 +113,41 @@ test consume that ledger.
 | HG4 | lane-oracle metadata | LOW | `runtime_environment_for_function` — no visibility check (`runtime_access.rs:90`; bridge `runtime_calls.rs:140`). NOT a strict subset of the error oracle (`selection.rs:14`) — adds `default`/`node`/`bun`. **Threat-model decision, not "add visibility"** (guests construct `{name,visibility}`; internal fns are app-callable). No exemplar informs this | see cells |
 | HGx | stale `__nimbusNextHostCallSessionId` | cleanup | Undeclared assignment, unused; remove or justify | `reset_bootstrap_invocation_state.js:1` |
 
+## Band status
+
+- **Band A (classification ledger): DONE** — `proof/runtime-guest-trust-globals/classification-ledger.md`.
+- **Band B (HG0 + HG5 + HG1): DONE** — host-held capture landed in
+  `crates/nimbus-runtime/src/runtime/captured_dispatch.rs`.
+  - **HG0/HG5:** the Rust host no longer reads `globalThis.__nimbusInvoke` /
+    `__nimbusInvokeCloudflareWorkerFetch` by name at call time. Each entrypoint
+    is captured ONCE at bundle load (post-eval) into a per-realm well-known
+    `v8::Private` on the realm global (guest-unreachable) and the host calls the
+    captured reference. **The isolate-slot / off-graph-authority mechanism the
+    plan prescribed WORKS** against the pinned deno_core `0.407` /
+    rusty_v8 `149.4` fork — this determines the approach for the remaining bands.
+    Capture wired at both load sites (`load_bundle_without_post_return_settle`
+    main realm, `invoke_recycled_context` fresh realm); all three call sites
+    converted (`invoke_loaded_bundle`, `invoke_recycled_context`, cooperative
+    non-recycling); the dead `InvocationRequest::runtime_invoke_expression` removed.
+    The public `__nimbusInvoke` global remains present as the guest's own inert
+    handle (capture-then-delete deliberately not taken — see ledger).
+  - **HG1:** `__nimbusCreateContext` installed non-writable + non-configurable at
+    bootstrap (`nimbus_context_contract.js`), replacing plain-assign + function
+    freeze.
+  - Red-then-green: `captured_dispatch::captured_invoke_survives_guest_reassignment_and_delete`
+    (identity-stability; RED verified by reverting the captured read to a name
+    lookup), `guest_semantics::convex_semantics_guest_cannot_replace_create_context_factory`.
+    `make test-rust-runtime` green (465 passed, 0 failed, 123 ignored);
+    `make test-rust-workspace` excludes nimbus-runtime and compiles/passes clean.
+- **NOT started (later dispatches):** HG2, HG3, HG4, HG6, HG7, HG8, HG9, HGx, the
+  full structural regression-gate test, and the threat-model deliverable. The
+  Cloud Functions `globalThis.__nimbusInvoke` emit site
+  (`cloud_functions/runtime_sources.mjs:35`) is captured by the SAME host path
+  (no codegen change needed for HG0 there); the codegen preamble module-capture
+  for HG1 (Convex fresh-ctx-as-argument, defense-in-depth atop the hardened slot)
+  was left for a codegen-touching pass to avoid an embedded-package rebuild in
+  this band.
+
 **HG3 lane split (Codex-2):** on the default/web lane `post_bootstrap.js:26`
 does `delete globalThis.Deno` (guarded by `__nimbusRetainDenoForNodeLazyScripts
 !== true`), so `Deno.core.ops` is NOT directly guest-reachable by name there —
