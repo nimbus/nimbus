@@ -53,7 +53,7 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   lifecycle, observability, selective HTTPS interception, credential injection,
   DLP parity, and QUIC/UDP bypass denial. This must land before Nimbus claims
   HTTPS credential injection for agents.
-- `runtime-guest-trust-global-hardening-plan.md` - `proposed` (security).
+- `runtime-guest-trust-global-hardening-plan.md` - `active` (security, in implementation).
   Owns the systematic hardening of guest-reassignable `globalThis.__nimbus*`
   trust globals (HG0 `__nimbusInvoke` host entrypoint, HG1
   `__nimbusCreateContext`, HG2 `__nimbusInvokeNamedLocal`, HG3 `__nimbusCoreOps`
@@ -65,7 +65,7 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   Surfaced by the adversarial review of the examples/Convex-parity work
   (archived `archive/examples-and-target-resolution-plan.md`, EX10R3), then
   verified + corrected by a Codex source-trace (2026-07-12). Largely
-  pre-existing on `main`. Promote when scheduled as launch-relevant security.
+  pre-existing on `main`. IN IMPLEMENTATION (branch runtime-guest-trust-global-hardening, 2026-07-12).
 - `distribution-plan.md` - `in_progress`. Owns binary release, Homebrew/cask,
   Linux package mirror, release-owned OCI images, and channel cutover. It should
   consume launch safety decisions rather than define them.

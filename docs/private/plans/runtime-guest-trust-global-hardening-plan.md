@@ -1,7 +1,7 @@
 # Runtime Guest Trust-Global Hardening — Security Plan
 
-Status: `proposed` (security; promote to `active` when scheduled)
-Owner branch: TBD (own PR, not the examples PR)
+Status: `active` (security; implementation started 2026-07-12, branch runtime-guest-trust-global-hardening)
+Owner branch: `runtime-guest-trust-global-hardening` (own PR)
 Origin: surfaced by the adversarial review of the Convex-runtimes-parity work in
 `archive/examples-and-target-resolution-plan.md` (Band EX10R/EX10R2/EX10R3),
 then verified + corrected by two independent Codex source-traces (2026-07-12,
