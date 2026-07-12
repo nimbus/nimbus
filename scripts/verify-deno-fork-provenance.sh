@@ -4,21 +4,24 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${REPO_ROOT}"
+cd "${REPO_ROOT}" || exit
 
-ALLOWLIST="docs/private/architecture/runtime/deno-fork-provenance-allowlist.tsv"
+# shellcheck source=scripts/deno-fork-pins.sh
+source "${REPO_ROOT}/scripts/deno-fork-pins.sh"
+deno_fork_load_consumed_pins
+
+ALLOWLIST="scripts/deno-fork-provenance-allowlist.tsv"
 TREE_OUT="/tmp/nimbus-deno-fork-runtime-tree.out"
-LOCK_TABLE="/tmp/nimbus-deno-fork-lock-table.tsv"
 RUNTIME_CRATES="/tmp/nimbus-deno-fork-runtime-crates.txt"
 
 EXPECTED_DENO_REPO="https://github.com/nimbus/deno"
-EXPECTED_DENO_TAG="v2.9.1-nimbus.1"
-EXPECTED_DENO_SHA="8c55c871bd1fcc59a5406034ecfa50e0eeff7cd4"
+EXPECTED_DENO_TAG="${DENO_FORK_PATCH_TAG}"
+EXPECTED_DENO_SHA="${DENO_FORK_SHA}"
 EXPECTED_DENO_SOURCE="git+${EXPECTED_DENO_REPO}?tag=${EXPECTED_DENO_TAG}#${EXPECTED_DENO_SHA}"
 
 EXPECTED_V8_REPO="https://github.com/nimbus/rusty_v8"
-EXPECTED_V8_TAG="v149.4.0-nimbus.10"
-EXPECTED_V8_SHA="f9457373150679d9db9eb577dcd3a687a3ec25ef"
+EXPECTED_V8_TAG="${RUSTY_V8_PATCH_TAG}"
+EXPECTED_V8_SHA="${RUSTY_V8_SHA}"
 EXPECTED_V8_SOURCE="git+${EXPECTED_V8_REPO}?tag=${EXPECTED_V8_TAG}#${EXPECTED_V8_SHA}"
 
 PATCHED_DENO_CRATES="
@@ -80,61 +83,10 @@ step() {
   printf '\n\033[1m[%s]\033[0m %s\n' "$1" "$2"
 }
 
-lock_package_table() {
-  awk '
-    function emit() {
-      if (name != "") {
-        print name "\t" version "\t" source
-      }
-    }
-    $0 == "[[package]]" {
-      emit()
-      name = ""
-      version = ""
-      source = ""
-      next
-    }
-    /^name = / {
-      name = $3
-      gsub(/"/, "", name)
-      next
-    }
-    /^version = / {
-      version = $3
-      gsub(/"/, "", version)
-      next
-    }
-    /^source = / {
-      source = $0
-      sub(/^source = "/, "", source)
-      sub(/"$/, "", source)
-      next
-    }
-    END {
-      emit()
-    }
-  ' Cargo.lock
-}
-
 lock_field() {
   local crate="$1"
   local field="$2"
-  awk -F '\t' -v crate="${crate}" -v field="${field}" '
-    $1 == crate {
-      if (field == "version") {
-        print $2
-      } else if (field == "source") {
-        print $3
-      }
-      found = 1
-      exit
-    }
-    END {
-      if (!found) {
-        exit 1
-      }
-    }
-  ' "${LOCK_TABLE}"
+  deno_fork_lock_field "${crate}" "${field}"
 }
 
 allowlist_reason() {
@@ -183,8 +135,17 @@ printf 'Expected nimbus/rusty_v8: %s#%s\n' "${EXPECTED_V8_TAG}" "${EXPECTED_V8_S
 
 cargo tree -p nimbus-runtime --prefix none --charset ascii >"${TREE_OUT}" 2>/tmp/nimbus-deno-fork-cargo-tree.err
 TREE_STATUS=$?
-lock_package_table >"${LOCK_TABLE}"
 runtime_deno_family_crates >"${RUNTIME_CRATES}"
+
+step 0 "Consumed fork pins are derived coherently from Cargo.toml and Cargo.lock"
+if [ "${DENO_FORK_REPO}" = "${EXPECTED_DENO_REPO}" ] \
+   && [ "${DENO_FORK_PATCH_TAG}" = "${DENO_FORK_LOCK_TAG}" ] \
+   && [ "${RUSTY_V8_REPO}" = "${EXPECTED_V8_REPO}" ] \
+   && [ "${RUSTY_V8_PATCH_TAG}" = "${RUSTY_V8_LOCK_TAG}" ]; then
+  pass "Patch tags, lock tags, and canonical Nimbus repositories agree"
+else
+  fail "Derived pin mismatch" "Expected Cargo.toml and Cargo.lock to agree on canonical Nimbus repos/tags"
+fi
 
 step 1 "Cargo tree for nimbus-runtime is available"
 if [ "${TREE_STATUS}" -eq 0 ] && [ -s "${TREE_OUT}" ] && grep -q '^deno_core ' "${TREE_OUT}"; then
@@ -276,6 +237,15 @@ if [ -f "${ALLOWLIST}" ] \
   pass "Allowlist exists with reasons for crates.io Deno-family exceptions"
 else
   fail "Allowlist incomplete" "Expected ${ALLOWLIST} to include crates, sources, and reasons"
+fi
+
+step 6 "Consumed Deno closure and rusty_v8 release line are coupled"
+EXPECTED_V8_VERSION="${EXPECTED_V8_TAG#v}"
+EXPECTED_V8_VERSION="${EXPECTED_V8_VERSION%%-nimbus.*}"
+if [ "${RUSTY_V8_VERSION}" = "${EXPECTED_V8_VERSION}" ]; then
+  pass "Resolved v8 crate version ${RUSTY_V8_VERSION} matches consumed rusty_v8 tag ${EXPECTED_V8_TAG}"
+else
+  fail "Deno/rusty_v8 coupling mismatch" "Resolved v8 ${RUSTY_V8_VERSION}; consumed tag ${EXPECTED_V8_TAG}"
 fi
 
 printf '\n\033[1mSummary:\033[0m %s passed, %s failed\n' "${PASS}" "${FAIL}"

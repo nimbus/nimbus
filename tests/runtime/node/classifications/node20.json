@@ -19,20 +19,6 @@
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_async_local_storage_exit_does_not_leak_watchpoint"
     },
     {
-      "test_path": "test/parallel/test-buffer-isascii.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "core-semantics/buffer",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_buffer_isascii_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-buffer-isutf8.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "core-semantics/buffer",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_buffer_isutf8_watchpoint"
-    },
-    {
       "test_path": "test/parallel/test-buffer-slow.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",

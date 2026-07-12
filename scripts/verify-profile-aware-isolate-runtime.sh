@@ -78,7 +78,11 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${REPO_ROOT}"
+cd "${REPO_ROOT}" || exit
+
+# shellcheck source=scripts/deno-fork-pins.sh
+source "${REPO_ROOT}/scripts/deno-fork-pins.sh"
+deno_fork_load_consumed_pins
 
 PLAN_ACTIVE="docs/private/plans/profile-aware-isolate-runtime-plan.md"
 PLAN_ARCHIVED="docs/private/plans/archive/profile-aware-isolate-runtime-plan.md"
@@ -1050,11 +1054,11 @@ if [ -f "${PIR5_POINTER_COMPRESSION_PROOF}" ] &&
   [ "${retained_density_ptrcomp_rows}" -ge 5 ] &&
   contains 'v8-pointer-compression = \["deno_core/v8_enable_pointer_compression"\]' "crates/nimbus-runtime/Cargo.toml" &&
   ! grep -E 'deno_core.*v8_enable_pointer_compression' Cargo.toml >/dev/null 2>&1 &&
-	  contains 'v2.8.3-nimbus.80' Cargo.toml &&
-	  contains 'v149.4.0-nimbus.10' Cargo.toml &&
-	  contains 'RUSTY_V8_VERSION = "149.4.0-nimbus.10"' ".cargo/config.toml" &&
-	  contains 'v2.8.3-nimbus.80#5414432bfe59346f442e81d8c50d04e39d4f1611' Cargo.lock &&
-	  contains 'v149.4.0-nimbus.10#f9457373150679d9db9eb577dcd3a687a3ec25ef' Cargo.lock &&
+	  contains "${DENO_FORK_PATCH_TAG}" Cargo.toml &&
+	  contains "${RUSTY_V8_PATCH_TAG}" Cargo.toml &&
+	  contains "RUSTY_V8_VERSION = \"${RUSTY_V8_PATCH_TAG#v}\"" ".cargo/config.toml" &&
+	  contains "${DENO_FORK_LOCK_TAG}#${DENO_FORK_SHA}" Cargo.lock &&
+	  contains "${RUSTY_V8_LOCK_TAG}#${RUSTY_V8_SHA}" Cargo.lock &&
   contains_all "${PIR5_RETAINED_DENSITY_PTRCOMP_TRACE}" \
     '"profile":"web_standard"' \
     '"profile":"node20"' \

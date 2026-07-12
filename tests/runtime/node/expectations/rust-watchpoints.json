@@ -1579,50 +1579,6 @@
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
-      "id": "node22_buffer_isascii_watchpoint",
-      "test_name": "node22_buffer_isascii_watchpoint",
-      "lane": "node22",
-      "expectation": "expected_failure",
-      "classification": "watchpoint",
-      "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers",
-      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6204,
-      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
-    },
-    {
-      "id": "node20_buffer_isascii_watchpoint",
-      "test_name": "node20_buffer_isascii_watchpoint",
-      "lane": "node20",
-      "expectation": "expected_failure",
-      "classification": "watchpoint",
-      "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers",
-      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6214,
-      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
-    },
-    {
-      "id": "node22_buffer_isutf8_watchpoint",
-      "test_name": "node22_buffer_isutf8_watchpoint",
-      "lane": "node22",
-      "expectation": "expected_failure",
-      "classification": "watchpoint",
-      "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers",
-      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6224,
-      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
-    },
-    {
-      "id": "node20_buffer_isutf8_watchpoint",
-      "test_name": "node20_buffer_isutf8_watchpoint",
-      "lane": "node20",
-      "expectation": "expected_failure",
-      "classification": "watchpoint",
-      "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers",
-      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6234,
-      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
-    },
-    {
       "id": "node20_buffer_slow_watchpoint",
       "test_name": "node20_buffer_slow_watchpoint",
       "lane": "node20",
@@ -1630,7 +1586,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node20 divergence: official v20.20.2 test-buffer-slow.js still exercises SlowBuffer(buffer.kMaxLength), and the embedded runtime hits its 128 MB heap ceiling before Node-style range semantics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6244,
+      "source_line": 6240,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1641,7 +1597,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node22-only path gap: official v22.15.0 expects the post-CVE path.win32.normalize() semantics that preserve the test segment in \\\\\\\\? and \\\\\\\\. device paths",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6254,
+      "source_line": 6250,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1652,7 +1608,7 @@
       "classification": "watchpoint",
       "reason": "Pinned Node22 path gap: official v22.15.0 expects path.win32.toNamespacedPath('\\\\\\\\?\\\\\\\\foo') to retain the trailing slash, but the current runtime still returns the older Node20 shape",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6264,
+      "source_line": 6260,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1663,7 +1619,7 @@
       "classification": "watchpoint",
       "reason": "Pinned shared path gap: official Node20/Node22 test-path-resolve.js currently fails because win32.resolve rejects drive-letter-less inputs without a CWD",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6274,
+      "source_line": 6270,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1674,7 +1630,7 @@
       "classification": "watchpoint",
       "reason": "Pinned shared path gap: official Node20/Node22 test-path-resolve.js currently fails because win32.resolve rejects drive-letter-less inputs without a CWD",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6284,
+      "source_line": 6280,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1685,7 +1641,7 @@
       "classification": "watchpoint",
       "reason": "Pinned vendored fixture tracks post-22 url.parse deprecation semantics; official Node22 v22.15.0 has no counterpart",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6294,
+      "source_line": 6290,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -1696,7 +1652,7 @@
       "classification": "watchpoint",
       "reason": "NDS3 node26 broad pre-run: Current-lane residual batch from Node26 broad pre-run; classify crypto, fs, stream, http2, loader, process, url, and util root causes before focused fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 6381,
+      "source_line": 6377,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     }
   ]

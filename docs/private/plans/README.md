@@ -76,6 +76,12 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
 
 ### Phase 2 - Runtime, Filesystem, And WASM Substrates
 
+- `deno-2.9.2-rusty-v8-150.1-fork-update-plan.md` - `in_progress`. Owns the
+  coordinated maintenance campaign for the Deno 2.9.2 and rusty_v8 150.1.0
+  forks: upstream/carry audits, candidate-first proof, fork branches/tags/
+  releases/default branches, release-asset and CI cleanup, the Deno-only
+  Nimbus repin while rusty_v8 150.1 remains published but unconsumed, isolate
+  and Node-compatibility proof, and the green merged Nimbus PR.
 - `archive/wasmtime-backend-plan.md` - `complete, archived` (W0-W7 reconciled 2026-07-04; verifier 10/0). Owned the Wasmtime backend alongside the
   V8 backend: runtime-engine seam hardening, component model support, WIT
   interfaces, cooperative scheduling, module cache, and bundle-format extension.
