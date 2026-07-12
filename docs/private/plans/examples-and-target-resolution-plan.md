@@ -299,6 +299,23 @@ defer decision for the example half.
 | EX9.4 | Post-merge: verify every docs GitHub source link resolves against merged main; docs site deploy green | Link-check output recorded | n/a | todo |
 | EX9.5 | Archive this plan, remove its plans-README entry (fold provenance into the archive header), update agent memory | README shows no archived entry; archive committed direct to main | n/a | todo |
 
+### EX9.1 refresh after Band EX10 (2026-07-11)
+
+Post-EX10 local gate, lane-by-lane: Rust workspace nextest green on this exact
+code (first post-EX10 `make ci` run completed test-rust-workspace green before
+being externally killed mid-JS; specialist run 4268/4268; runtime lane 451/0;
+fmt/clippy clean). JS `npm run typecheck` / `test` / `build` all green
+post-EX10. `check-docs` PASS 100 pages; site build 101 pages. Full `make ci`
+end-to-end reruns on this loaded laptop hit one DIFFERENT timing/perf flake
+per run, each in a crate with zero branch delta, each green solo (10/10) or
+on rerun — flake registry for follow-up tickets [owner: each crate]:
+`nimbus-engine scheduler_recovery_campaign_survives_claim_and_completion_restart_boundaries`,
+`nimbus-engine full_scan_queries_warm_materialized_surface_and_follow_up_full_scans_reuse_it`,
+`nimbus-storage redb_storage_engine_quality_performance_budget_covers_latest_historical_cdc_pitr_and_gc`,
+`nimbus-server verification_harness_required_transport_liveness_campaigns`,
+`nimbus-runtime cooperative_execution_model_startup_snapshot_handles_multiple_parked_runtimes`.
+Hosted CI on unloaded runners remains the merge source of truth per repo policy.
+
 ## Execution Order And Dependencies
 
 EX0 first (it fixes EX1 flag decisions, EX2 rename surface, EX4 scope, EX6
