@@ -13,8 +13,8 @@
   ],
   "lanes": {
     "node20": {
-      "current_pass_rate": 0.215866,
-      "current_passed": 917,
+      "current_pass_rate": 0.216337,
+      "current_passed": 919,
       "diagnostic_only_non_isolate": {
         "gaps": 1671
       },
@@ -42,30 +42,6 @@
           "source_expectation": "expected_failure",
           "support_denominator": "v8_isolate_required",
           "test_path": "test/parallel/test-async-local-storage-exit-does-not-leak.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node20.json",
-          "owner": "core-semantics/buffer",
-          "reason": "ignored Rust watchpoint marks this as a measured required red path until fixed or explicitly reclassified",
-          "reason_code": "watchpoint_required_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "rust_watchpoint_expected_failure",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-buffer-isascii.js"
-        },
-        {
-          "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
-          "evidence_path": "tests/runtime/node/classifications/node20.json",
-          "owner": "core-semantics/buffer",
-          "reason": "ignored Rust watchpoint marks this as a measured required red path until fixed or explicitly reclassified",
-          "reason_code": "watchpoint_required_surface",
-          "shim_classification": "unsupported",
-          "source_classification": "rust_watchpoint_expected_failure",
-          "source_expectation": "expected_failure",
-          "support_denominator": "v8_isolate_required",
-          "test_path": "test/parallel/test-buffer-isutf8.js"
         },
         {
           "docs_cross_check": "public Application support docs must either green this fixture or provide a per-fixture proof that it tests host-owned behavior",
@@ -39993,10 +39969,10 @@
         }
       ],
       "feasibility": {
-        "current_passed": 917,
+        "current_passed": 919,
         "estimated_reachable_pass_ceiling": 2003,
         "optional_promotable_gap_count": 360,
-        "required_gap_count": 726,
+        "required_gap_count": 724,
         "target_pass_count": null,
         "target_reachable_in_this_plan": null
       },
@@ -40011,7 +39987,7 @@
         "requires_sequential_host_state_harness": 119,
         "requires_unpromoted_node_surface": 3025,
         "requires_wpt_harness": 20,
-        "rust_watchpoint_expected_failure": 22,
+        "rust_watchpoint_expected_failure": 20,
         "support_fixture_not_top_level_test": 13,
         "upstream_known_issue_or_platform_boundary": 20
       },
@@ -40021,7 +39997,7 @@
         "test_harness_only": 512,
         "upstream_or_platform_boundary": 62,
         "v8_isolate_optional": 360,
-        "v8_isolate_required": 726
+        "v8_isolate_required": 724
       },
       "test_harness_only": {
         "gaps": 512
@@ -40041,9 +40017,9 @@
         "gaps": 360
       },
       "v8_isolate_required": {
-        "gaps": 726,
-        "pass_rate_percent": 55.81,
-        "passed": 917,
+        "gaps": 724,
+        "pass_rate_percent": 55.93,
+        "passed": 919,
         "total": 1643
       }
     },
