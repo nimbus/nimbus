@@ -295,6 +295,26 @@ const __nimbusInstallRuntimeContractGlobals = function __nimbusInstallRuntimeCon
     return;
   }
   const compatibilityTarget = contract.compatibility_target;
+  // The manifest-vocabulary runtime lane this isolate executes
+  // ("default" | "node" | "bun"), matching per-function
+  // `runtime_environment` values in generated bundle manifests. The nested
+  // ctx.run* dispatcher compares callee metadata against this to decide
+  // between same-isolate local dispatch and host (engine-path) dispatch.
+  // Host-held and frozen so guest code cannot redirect lane routing; a
+  // repeat install (fresh realm) redefines with the identical value, which
+  // the property model permits.
+  const runtimeEnvironmentLane =
+    typeof compatibilityTarget === "string" && /^node\d+$/.test(compatibilityTarget)
+      ? "node"
+      : compatibilityTarget === "bun_jsc"
+        ? "bun"
+        : "default";
+  Object.defineProperty(globalThis, "__nimbusRuntimeEnvironmentLane", {
+    value: runtimeEnvironmentLane,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
   const nodeApiContract =
     contract.node_api_contract && typeof contract.node_api_contract === "object"
       ? contract.node_api_contract

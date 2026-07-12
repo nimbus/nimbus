@@ -30,6 +30,10 @@ Object.defineProperty(globalThis, "__nimbusDrainImmediates", {
     typeof nimbusGetAsyncContext === "function" &&
     typeof nimbusSetAsyncContext === "function";
   const rootAsyncContext = supported ? nimbusGetAsyncContext() : undefined;
+  // Non-writable, non-configurable: the context contract captures this
+  // reference at bootstrap, and the global itself must also be immune to
+  // guest reassignment so no name-based caller can be redirected to a
+  // version that leaks caller ALS context into callees.
   Object.defineProperty(globalThis, "__nimbusCallDetachedFromInvocationContext", {
     value: supported
       ? function __nimbusCallDetachedFromInvocationContext(fn) {
@@ -44,9 +48,9 @@ Object.defineProperty(globalThis, "__nimbusDrainImmediates", {
       : function __nimbusCallDetachedFromInvocationContext(fn) {
           return fn();
         },
-    configurable: true,
+    configurable: false,
     enumerable: false,
-    writable: true,
+    writable: false,
   });
 }
 

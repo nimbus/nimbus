@@ -579,12 +579,21 @@ impl RuntimeBundle {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|elapsed| elapsed.as_millis().min(u64::MAX as u128) as u64)
                     .unwrap_or(0);
-                let seed_hex = match &self.shared.expected_sha256 {
+                let content_hash = match &self.shared.expected_sha256 {
                     Some(sha256) => sha256.clone(),
                     None => Self::compute_sha256_for_path(entrypoint).unwrap_or_else(|_| {
                         compute_sha256_hex(entrypoint.to_string_lossy().as_bytes())
                     }),
                 };
+                // The deploy timestamp is mixed into the seed so redeploying
+                // byte-identical content still establishes a fresh import-time
+                // random stream (the import seed is a most-recent-DEPLOYMENT
+                // value, not a content property). This inherits the same
+                // mtime-as-deploy-time caveat as `timestamp_ms`: a redeploy
+                // that preserves the entrypoint mtime is indistinguishable
+                // from no deploy at all.
+                let seed_hex =
+                    compute_sha256_hex(format!("{content_hash}:{timestamp_ms}").as_bytes());
                 RuntimeBundleDeployStamp {
                     timestamp_ms,
                     seed_hex,

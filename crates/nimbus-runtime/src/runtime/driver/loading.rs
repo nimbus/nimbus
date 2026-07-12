@@ -909,7 +909,10 @@ impl NimbusRuntime {
         } else {
             None
         };
-        let expression = request.runtime_invoke_expression(module_specifier.as_deref())?;
+        let expression = request.runtime_invoke_expression(
+            module_specifier.as_deref(),
+            self.policy.limits().guest_semantics,
+        )?;
         trace_snapshot_seeded_runtime_phase(
             construction_mode,
             bundle,
@@ -1032,7 +1035,10 @@ impl NimbusRuntime {
             (true, Some(bundle)) => Some(bundle.module_specifier()?.to_string()),
             (true, None) | (false, _) => None,
         };
-        let expression = request.runtime_invoke_expression(module_specifier.as_deref())?;
+        let expression = request.runtime_invoke_expression(
+            module_specifier.as_deref(),
+            self.policy.limits().guest_semantics,
+        )?;
         trace_snapshot_seeded_runtime_phase_with_optional_bundle(
             construction_mode,
             bundle,

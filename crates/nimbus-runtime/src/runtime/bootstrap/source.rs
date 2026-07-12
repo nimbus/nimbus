@@ -71,6 +71,21 @@ const RESET_BOOTSTRAP_SCRIPT: BootstrapScript = BootstrapScript {
     source: RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE,
 };
 
+/// (name, source) of every bootstrap-affecting script, for the embedded
+/// NodeFull anchor-snapshot provenance hash. BOOTSTRAP_SCRIPTS are executed
+/// DURING snapshot creation, so their definitions are baked into the blob: a
+/// snapshot built from older script text keeps serving the old definitions
+/// even though the binary carries new ones. The finalize/reset scripts run
+/// per isolate with fresh text, but they close over snapshot-baked
+/// definitions, so their text is included conservatively as well.
+pub(crate) fn bootstrap_script_provenance_inputs() -> Vec<(&'static str, &'static str)> {
+    BOOTSTRAP_SCRIPTS
+        .iter()
+        .chain([FINALIZE_BOOTSTRAP_SCRIPT, RESET_BOOTSTRAP_SCRIPT].iter())
+        .map(|script| (script.name, script.source))
+        .collect()
+}
+
 pub(crate) fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
     execute_runtime_scripts(runtime, BOOTSTRAP_SCRIPTS)
 }

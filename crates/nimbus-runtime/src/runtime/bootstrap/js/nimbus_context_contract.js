@@ -1,3 +1,10 @@
+// Captured at bootstrap, before any guest code evaluates: the transport
+// script (which runs earlier in BOOTSTRAP_SCRIPTS) defines this helper, and
+// binding it here means a guest that later shadows or tampers with the
+// global name cannot re-attach caller AsyncLocalStorage context to locally
+// dispatched ctx.run* callees.
+const __nimbusDetachedNestedCall = globalThis.__nimbusCallDetachedFromInvocationContext;
+
 const __nimbusNormalizeFieldName = function __nimbusNormalizeFieldName(field) {
   if (typeof field === "string" && field.length > 0) {
     return field;
@@ -186,7 +193,35 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
         throw_on_missing_identity: false,
       }
     : null;
-  if (typeof localInvoker === "function") {
+  // Same-isolate local dispatch is an optimization that is only correct when
+  // the callee executes on this isolate's runtime lane. Generated bundles are
+  // shared across every V8 lane of an app (default web-standard isolate and
+  // "use node" isolates alike), so a nested call whose callee is declared for
+  // a different lane must go through HOST dispatch: the engine path resolves
+  // the callee's own lane, semantics profile, and capability set. Running it
+  // locally would execute e.g. a default-lane mutation under Node/Host
+  // semantics (unfrozen clock, unseeded random) or make a "use node" action
+  // import node builtins inside the web isolate.
+  const useLocalDispatch = (() => {
+    if (typeof localInvoker !== "function") {
+      return false;
+    }
+    const calleeLaneLookup = globalThis.__nimbusLocalFunctionRuntimeEnvironment;
+    if (typeof calleeLaneLookup !== "function") {
+      // Bundle without lane metadata (hand-rolled harness bundles): the
+      // pre-lane behavior, local dispatch whenever a dispatcher exists.
+      return true;
+    }
+    const currentLane = globalThis.__nimbusRuntimeEnvironmentLane;
+    if (typeof currentLane !== "string") {
+      return true;
+    }
+    const calleeLane = calleeLaneLookup(normalized.name);
+    // Unknown callee (not in this bundle's manifest) also goes to the host,
+    // which can resolve registry-native functions the bundle cannot.
+    return typeof calleeLane === "string" && calleeLane === currentLane;
+  })();
+  if (useLocalDispatch) {
     syncHostValue("op_nimbus_ctx_runtime_enter_nested_call", {
       name: normalized.name,
       visibility: normalized.visibility,
@@ -204,9 +239,11 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
       });
     // Start the nested handler from the root async context (as the host
     // dispatch path below does) so caller AsyncLocalStorage state never
-    // propagates into ctx.run* callees.
-    const detached = globalThis.__nimbusCallDetachedFromInvocationContext;
-    return await (typeof detached === "function" ? detached(invokeLocal) : invokeLocal());
+    // propagates into ctx.run* callees. The helper reference was captured at
+    // bootstrap; guest reassignment of the global cannot bypass detachment.
+    return await (typeof __nimbusDetachedNestedCall === "function"
+      ? __nimbusDetachedNestedCall(invokeLocal)
+      : invokeLocal());
   }
   return globalThis.__nimbusAsyncHostValue(asyncOpName, {
     ...normalized,

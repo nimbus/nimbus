@@ -29,7 +29,18 @@ function runtimeBundleDispatchGlobalInvoke({ module = true } = {}) {
   }
 };
 
-globalThis.__nimbusInvokeNamedLocal = invokeNamedDefinitionLocally;${moduleSentinel}`;
+globalThis.__nimbusInvokeNamedLocal = invokeNamedDefinitionLocally;
+
+// Per-function runtime lane metadata for the nested ctx.run* dispatcher: the
+// host-owned context contract compares the callee's runtime_environment
+// against the lane this isolate executes and routes cross-lane calls through
+// host dispatch (the engine path) instead of same-isolate local dispatch.
+globalThis.__nimbusLocalFunctionRuntimeEnvironment = function (name) {
+  const definition = functionsByName.get(name);
+  return definition && typeof definition.runtime_environment === "string"
+    ? definition.runtime_environment
+    : null;
+};${moduleSentinel}`;
 }
 
 export { runtimeBundleDispatchGlobalInvoke };

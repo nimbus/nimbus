@@ -10,8 +10,9 @@ mod web_standard_runtime;
 pub(crate) use self::extensions::{execution_extensions, snapshot_extensions};
 pub(crate) use self::ops::worker_threads_state_extension;
 pub(crate) use self::source::{
-    finalize_bootstrap, finalize_bootstrap_in_realm, install_bootstrap, install_bootstrap_in_realm,
-    reset_bootstrap_invocation_state, reset_bootstrap_invocation_state_in_realm,
+    bootstrap_script_provenance_inputs, finalize_bootstrap, finalize_bootstrap_in_realm,
+    install_bootstrap, install_bootstrap_in_realm, reset_bootstrap_invocation_state,
+    reset_bootstrap_invocation_state_in_realm,
 };
 pub(crate) use self::state::{
     InstalledRuntimeWorkerBootstrapState, RuntimeCancellationState,

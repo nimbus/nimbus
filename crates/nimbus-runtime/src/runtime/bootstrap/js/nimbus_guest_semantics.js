@@ -226,10 +226,16 @@
       });
     }
   };
+  // All three controller entry points are host-invoked by name (post
+  // bootstrap, driver import-phase script, and the invoke-expression
+  // prelude). They are non-writable and non-configurable so guest code can
+  // neither replace them (which would let a query keep import-phase state or
+  // re-enable time/randomness nondeterminism) nor define its own on lanes
+  // where the host would then call it.
   Object.defineProperty(globalThis, "__nimbusInstallGuestSemantics", {
-    configurable: true,
+    configurable: false,
     enumerable: false,
-    writable: true,
+    writable: false,
     value: Object.freeze(__nimbusInstallGuestSemantics),
   });
 
@@ -237,9 +243,9 @@
   // lanes: module-scope code observes the deploy-stamped clock and the
   // deploy-seeded PRNG, making import-time values stable across runs.
   Object.defineProperty(globalThis, "__nimbusEnterGuestImportPhase", {
-    configurable: true,
+    configurable: false,
     enumerable: false,
-    writable: true,
+    writable: false,
     value: Object.freeze(function __nimbusEnterGuestImportPhase(stamp) {
       if (!__nimbusGuestState.installed || !stamp || typeof stamp !== "object") {
         return;
@@ -258,9 +264,9 @@
   // that is about to run (frozen clock + fresh seed for deterministic kinds,
   // host clock for actions).
   Object.defineProperty(globalThis, "__nimbusBeginGuestInvocation", {
-    configurable: true,
+    configurable: false,
     enumerable: false,
-    writable: true,
+    writable: false,
     value: Object.freeze(function __nimbusBeginGuestInvocation() {
       if (!__nimbusGuestState.installed) {
         return;

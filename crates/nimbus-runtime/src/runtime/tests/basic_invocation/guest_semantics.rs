@@ -411,6 +411,195 @@ export {};
 }
 
 #[tokio::test]
+async fn convex_semantics_identical_content_redeploy_reseeds_import_stream() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(IMPORT_STABILITY_BUNDLE);
+
+    let invoke_fresh = |bundle_path: std::path::PathBuf| async move {
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(RecordingHost::default()),
+            convex_semantics_policy(),
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        );
+        runtime
+            .invoke_bundle_for_tenant(
+                &RuntimeBundle::new(&bundle_path),
+                &query_request("messages:list"),
+                "tenant-a",
+            )
+            .await
+            .expect("redeploy-reseed invocation should succeed")
+    };
+
+    let before = invoke_fresh(bundle_path.clone()).await;
+
+    // Simulate a redeploy of byte-identical content: deploys rewrite the
+    // bundle file, so its mtime moves even when nothing changed. Advance it
+    // explicitly (rather than rewriting) so the test cannot be defeated by
+    // coarse filesystem timestamp granularity.
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&bundle_path)
+        .expect("bundle should reopen for mtime update");
+    let new_mtime = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+    file.set_times(std::fs::FileTimes::new().set_modified(new_mtime))
+        .expect("bundle mtime should update");
+    drop(file);
+
+    let after = invoke_fresh(bundle_path.clone()).await;
+
+    assert_ne!(
+        before["importNow"], after["importNow"],
+        "a redeploy must move the deploy timestamp module code observes"
+    );
+    assert_ne!(
+        before["importRandom"], after["importRandom"],
+        "a new deployment must establish a new import-time random stream even for identical content"
+    );
+}
+
+#[tokio::test]
+async fn convex_semantics_guest_cannot_replace_determinism_hooks() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let bundle = r#"
+let assignError = null;
+let defineError = null;
+let detachAssignError = null;
+try {
+  globalThis.__nimbusBeginGuestInvocation = () => {};
+} catch (error) {
+  assignError = String(error);
+}
+try {
+  Object.defineProperty(globalThis, "__nimbusBeginGuestInvocation", { value: () => {} });
+} catch (error) {
+  defineError = String(error);
+}
+try {
+  globalThis.__nimbusCallDetachedFromInvocationContext = (fn) => fn();
+} catch (error) {
+  detachAssignError = String(error);
+}
+
+globalThis.__nimbusInvoke = async function () {
+  const first = Date.now();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const second = Date.now();
+  return { first, second, assignError, defineError, detachAssignError };
+};
+
+export {};
+"#;
+    let result = invoke_convex_semantics_bundle(bundle, &query_request("messages:list")).await;
+
+    // Module code is strict mode: writes to the non-writable hooks throw and
+    // leave the host-held functions in place.
+    for field in ["assignError", "defineError", "detachAssignError"] {
+        assert!(
+            result[field]
+                .as_str()
+                .is_some_and(|message| message.contains("TypeError")),
+            "guest attempt to replace hook must fail ({field}): {result}"
+        );
+    }
+    // The real hook still ran: the query clock stays frozen across the await.
+    assert_eq!(
+        result["first"], result["second"],
+        "determinism must survive a guest hook-replacement attempt: {result}"
+    );
+}
+
+#[tokio::test]
+async fn host_semantics_lane_never_invokes_guest_defined_begin_invocation_hook() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let bundle = r#"
+try {
+  globalThis.__nimbusBeginGuestInvocation = () => {
+    globalThis.__nimbusGuestHookRan = true;
+  };
+} catch (_error) {
+  // non-writable on every lane
+}
+try {
+  Object.defineProperty(globalThis, "__nimbusBeginGuestInvocation", {
+    configurable: true,
+    value: () => {
+      globalThis.__nimbusGuestHookRan = true;
+    },
+  });
+} catch (_error) {
+  // non-configurable on every lane
+}
+
+globalThis.__nimbusInvoke = async function () {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "__nimbusBeginGuestInvocation");
+  return {
+    guestHookRan: globalThis.__nimbusGuestHookRan === true,
+    hookStaysHostFrozen: descriptor?.writable === false && descriptor?.configurable === false,
+  };
+};
+
+export {};
+"#;
+    let (_tempdir, bundle_path) = write_app_style_bundle(bundle);
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let result = runtime
+        .invoke_bundle_for_tenant(
+            &RuntimeBundle::new(&bundle_path),
+            &query_request("messages:list"),
+            "tenant-a",
+        )
+        .await
+        .expect("Host-lane bundle invocation should succeed");
+
+    assert_eq!(
+        result["guestHookRan"], false,
+        "a Host-semantics lane must never invoke a guest-defined begin-invocation hook: {result}"
+    );
+    assert_eq!(result["hookStaysHostFrozen"], true, "{result}");
+}
+
+#[tokio::test]
+async fn convex_semantics_als_detachment_survives_guest_tampering() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let bundle = r#"
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const storage = new AsyncLocalStorage();
+
+try {
+  globalThis.__nimbusCallDetachedFromInvocationContext = (fn) => fn();
+} catch (_error) {
+  // non-writable: the tamper attempt must not change routing behavior
+}
+
+globalThis.__nimbusInvokeNamedLocal = async function () {
+  return storage.getStore()?.tag ?? "detached";
+};
+
+globalThis.__nimbusInvoke = async function (request) {
+  const ctx = globalThis.__nimbusCreateContext({ request });
+  const observed = await storage.run({ tag: "caller" }, () =>
+    ctx.runQuery({ name: "child:read", visibility: "public" }, {}),
+  );
+  return { observed };
+};
+
+export {};
+"#;
+    let result = invoke_convex_semantics_bundle(bundle, &query_request("messages:list")).await;
+    assert_eq!(
+        result["observed"], "detached",
+        "caller ALS context must not leak into locally dispatched ctx.run* callees \
+         even after a guest tamper attempt: {result}"
+    );
+}
+
+#[tokio::test]
 async fn convex_semantics_webassembly_api_available_with_shared_memory_hardening() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     // (module (func (export "add") (param i32 i32) (result i32)

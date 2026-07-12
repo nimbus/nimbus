@@ -82,6 +82,7 @@ export const send = defineMutation("messages:send", ({ body }) => ({
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
   assert.match(runtimeBundle, /globalThis\.__nimbusInvoke = async function/);
   assert.match(runtimeBundle, /globalThis\.__nimbusInvokeNamedLocal = invokeNamedDefinitionLocally/);
+  assert.match(runtimeBundle, /globalThis\.__nimbusLocalFunctionRuntimeEnvironment = function/);
   assert.doesNotMatch(runtimeBundle, /__nimbusRawHostCall/);
   assert.match(runtimeBundle, /__nimbusCreateContext/);
   assert.match(runtimeBundle, /"messages:list"/);
