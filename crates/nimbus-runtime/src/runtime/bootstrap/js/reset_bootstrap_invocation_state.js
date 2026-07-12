@@ -1,5 +1,8 @@
 __nimbusNextHostCallSessionId = 1;
-__nimbusInvocationGeneration++;
+// HG8: the generation counter is closure-private (nimbus_context_contract.js);
+// this trusted host-issued reset script advances it through the
+// slot-hardened global instead of bare-name arithmetic on a shared binding.
+__nimbusAdvanceInvocationGeneration();
 __nimbusResetWaitUntil();
 if (typeof globalThis.__nimbusRefreshNodeProcessCwd === "function") {
   globalThis.__nimbusRefreshNodeProcessCwd();

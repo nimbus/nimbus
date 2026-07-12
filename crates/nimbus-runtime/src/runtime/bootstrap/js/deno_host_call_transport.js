@@ -218,36 +218,59 @@ Object.defineProperty(globalThis, "__nimbusAsyncHostValue", {
   },
 });
 
-let __nimbusWaitUntilQueue = [];
-
-globalThis.__nimbusWaitUntil = function(promise) {
-  if (promise === null || promise === undefined || typeof promise.then !== "function") {
-    throw new TypeError("Nimbus waitUntil requires a Promise-like value");
-  }
-  const markPending = __nimbusCoreOps.op_nimbus_runtime_wait_until_pending;
-  if (typeof markPending === "function") {
-    markPending();
-  }
-  const tracked = Promise.resolve(promise);
-  tracked.catch(() => {});
-  __nimbusWaitUntilQueue.push(tracked);
-};
-
-globalThis.__nimbusDrainWaitUntil = async function() {
-  let rejected = 0;
-  while (__nimbusWaitUntilQueue.length > 0) {
-    const batch = __nimbusWaitUntilQueue;
-    __nimbusWaitUntilQueue = [];
-    const settled = await Promise.allSettled(batch);
-    for (const result of settled) {
-      if (result.status === "rejected") {
-        rejected++;
+// HG6: __nimbusWaitUntilQueue used to be a bare top-level `let` — writable
+// AND readable by bare name from guest MODULE code (same global-lexical
+// reachability class as HG3's op-table alias above), and the three hooks
+// below were plain `globalThis.X = ...` assignments — guest-reassignable
+// slots. A guest could either replace the queue outright (silently dropping
+// promises the host believes are tracked for wait-until draining —
+// background work vanishes without ever rejecting) or swap in an impostor
+// hook. The queue is now private to this block; only the three hooks cross
+// out, installed as non-writable, non-configurable slots.
+{
+  let queue = [];
+  Object.defineProperty(globalThis, "__nimbusWaitUntil", {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: function __nimbusWaitUntil(promise) {
+      if (promise === null || promise === undefined || typeof promise.then !== "function") {
+        throw new TypeError("Nimbus waitUntil requires a Promise-like value");
       }
-    }
-  }
-  return { rejected };
-};
-
-globalThis.__nimbusResetWaitUntil = function() {
-  __nimbusWaitUntilQueue = [];
-};
+      const markPending = __nimbusCoreOps.op_nimbus_runtime_wait_until_pending;
+      if (typeof markPending === "function") {
+        markPending();
+      }
+      const tracked = Promise.resolve(promise);
+      tracked.catch(() => {});
+      queue.push(tracked);
+    },
+  });
+  Object.defineProperty(globalThis, "__nimbusDrainWaitUntil", {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: async function __nimbusDrainWaitUntil() {
+      let rejected = 0;
+      while (queue.length > 0) {
+        const batch = queue;
+        queue = [];
+        const settled = await Promise.allSettled(batch);
+        for (const result of settled) {
+          if (result.status === "rejected") {
+            rejected++;
+          }
+        }
+      }
+      return { rejected };
+    },
+  });
+  Object.defineProperty(globalThis, "__nimbusResetWaitUntil", {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: function __nimbusResetWaitUntil() {
+      queue = [];
+    },
+  });
+}

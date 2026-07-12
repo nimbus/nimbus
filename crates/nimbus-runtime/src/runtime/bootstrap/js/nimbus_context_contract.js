@@ -267,10 +267,36 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
   });
 };
 
-let __nimbusInvocationGeneration = 0;
+// HG8: __nimbusInvocationGeneration used to be a bare top-level `let` in the
+// global lexical environment — writable AND readable by bare name from guest
+// MODULE code (same global-lexical reachability class as HG3/HG6 above),
+// which could defeat this stale-ctx guard entirely: a guest handler could
+// reset the counter to match any generation it captured earlier, keeping a
+// ctx object from a previous invocation permanently "fresh" across
+// warm-pool reuse cycles. The counter itself is now private to this
+// closure; only a `const`-bound getter crosses out (bare-name readable, but
+// never reassignable — `const` throws on any reassignment attempt
+// regardless of strict/sloppy mode), and the increment step is exposed as a
+// separate slot-hardened global the trusted host-issued reset script
+// (reset_bootstrap_invocation_state.js) calls, instead of doing bare-name
+// arithmetic on a shared binding guest code could equally perform.
+const __nimbusReadInvocationGeneration = (() => {
+  let generation = 0;
+  Object.defineProperty(globalThis, "__nimbusAdvanceInvocationGeneration", {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: function __nimbusAdvanceInvocationGeneration() {
+      generation++;
+    },
+  });
+  return function __nimbusReadInvocationGeneration() {
+    return generation;
+  };
+})();
 
 const __nimbusCreateContextImpl = function(options = {}) {
-  const myGeneration = __nimbusInvocationGeneration;
+  const myGeneration = __nimbusReadInvocationGeneration();
   // HG2: the trusted bundle preamble passes its module-private
   // invokeNamedDefinitionLocally straight through as a call argument (no
   // globalThis bridge for guest code to reassign). A caller that omits it
@@ -282,7 +308,7 @@ const __nimbusCreateContextImpl = function(options = {}) {
     typeof options.invokeNamedLocal === "function" ? options.invokeNamedLocal : null;
 
   const guardStale = () => {
-    if (__nimbusInvocationGeneration !== myGeneration) {
+    if (__nimbusReadInvocationGeneration() !== myGeneration) {
       throw new Error(
         "This ctx object is from a previous invocation and cannot be reused"
       );

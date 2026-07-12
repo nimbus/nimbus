@@ -243,7 +243,60 @@ test consume that ledger.
     passed, 0 failed, 123 ignored — +3 for the new tests, up from HG2's 466);
     `make test-rust-workspace` green (4274 passed (1 leaky), 31 skipped, 0
     failed, `EXIT_CODE=0` confirmed directly, not through a piped `tail`).
-- **NOT started (later dispatches):** HG4, HG6, HG7, HG8, HG9, HGx, the
+- **Band E (HG6/HG8): DONE** — both surfaces moved off the shared global-lexical
+  environment (method note 2's finding — a `defineProperty` on `globalThis`
+  alone would not have addressed either, since neither is guest-reachable via
+  a `globalThis` property in the first place; both were bare-name-writable
+  classic-script `let` bindings).
+  - **HG6:** `__nimbusWaitUntilQueue` in `deno_host_call_transport.js` is no
+    longer a bare top-level `let`. The queue now lives inside a block scope
+    (`{ let queue = []; ... }`, `:230-276`) that installs only the three hooks
+    (`__nimbusWaitUntil`/`__nimbusDrainWaitUntil`/`__nimbusResetWaitUntil`) on
+    `globalThis` via `Object.defineProperty` (`writable:false,
+    configurable:false`) — the queue itself is never installed under any name,
+    bare or property, so it is unreachable from outside the block; the three
+    hooks are closures over it.
+  - **HG8:** `__nimbusInvocationGeneration` in `nimbus_context_contract.js` is
+    no longer a bare top-level `let`. The counter now lives inside an IIFE
+    closure (`const __nimbusReadInvocationGeneration = (() => { let
+    generation = 0; ... })()`, `:283+`) that installs a frozen
+    `__nimbusAdvanceInvocationGeneration` increment slot on `globalThis` and
+    returns a private getter function; `guardStale()` and the ctx factory's
+    `myGeneration` capture both call the getter instead of reading the bare
+    binding. The trusted host-issued reset script
+    (`reset_bootstrap_invocation_state.js:5`) advances the counter through the
+    same hardened slot instead of bare-name arithmetic.
+  - Red-then-green:
+    `pir4_wait_until_hook_tampering_cannot_hide_unreferenced_pending_background_work_from_system_timeout`
+    (`timeout_cancellation.rs`) — a sloppy-mode handler body reassigns the
+    bare `__nimbusWaitUntil` name to a no-op impostor before calling it with a
+    never-resolving promise; RED verified against the reverted plain-assign
+    hooks (invocation returns `{"ok":true}`, no timeout — the background work
+    is hidden), GREEN against the fix (still resolves as
+    `NimbusRuntimeError::SystemTimeout`, `timed_out_invocations` metric
+    incremented — the real hook still tracked the promise).
+    `guest_generation_forgery_cannot_defeat_stale_ctx_reuse_guard`
+    (`nested_dispatch.rs`) — a sloppy-mode handler body captures the bare
+    generation value, drives the same advance step the host's real
+    per-invocation reset performs (feature-detected, so the bundle exercises
+    the real attack against either code state), then forges the bare binding
+    back to the captured value and tries to keep using its ctx; RED verified
+    against the reverted bare `let` (`staleCtxUsable: true` — the guard is
+    defeated), GREEN against the fix (`staleCtxUsable: false`,
+    `staleCtxErrorMessage: "This ctx object is from a previous invocation and
+    cannot be reused"` — the guard still fires).
+  - Verification: `cargo fmt --all --check` clean; `clippy -p nimbus-runtime
+    --all-targets` clean (run without `--all-features` — a shared-target-dir
+    V8 pointer-compression build-config conflict unrelated to this change,
+    not a code defect); `make test-rust-runtime` green (471 passed, 0 failed,
+    123 ignored — +2 for the new tests, up from HG3's 469); `make
+    test-rust-workspace` green (4274 tests run: 4274 passed (2 leaky), 31
+    skipped, `EXIT_CODE=0` confirmed directly; this lane excludes
+    `nimbus-runtime` by design, so its own coverage is carried entirely by
+    `test-rust-runtime` above). `pool_reuse.rs` full-module rerun (67 passed,
+    0 failed, 76 ignored) confirms no regression in the pre-existing warm-pool
+    reuse suite from either fix.
+- **NOT started (later dispatches):** HG4, HG7, HG9, HGx, the
   full structural regression-gate test, and the threat-model deliverable. The
   Cloud Functions `globalThis.__nimbusInvoke` emit site
   (`cloud_functions/runtime_sources.mjs:35`) is captured by the SAME host path
@@ -275,6 +328,11 @@ captured privately), `__nimbusSyncHostValue`/`__nimbusAsyncHostValue`
 hardened, `nimbus_guest_semantics.js:26,235`), and the callee-lane lookup was
 REMOVED (host-side, `runtime_calls.rs:133`). Caveat: transports are hardened at
 the SLOT but still read the unhardened ops table (HG3) — not end-to-end.
+`__nimbusWaitUntil`/`__nimbusDrainWaitUntil`/`__nimbusResetWaitUntil`
+(`deno_host_call_transport.js:232,249,268`, slot-hardened, queue closure-private,
+Band E/HG6) and `__nimbusAdvanceInvocationGeneration`
+(`nimbus_context_contract.js`, slot-hardened, counter closure-private, Band
+E/HG8).
 
 ## Fix approach — strongest available boundary per finding
 

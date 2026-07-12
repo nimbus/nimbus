@@ -618,3 +618,112 @@ async fn guest_core_ops_table_tampering_leaves_same_lane_local_dispatch_intact()
         "same-lane local dispatch must not fall back to host dispatch: {operations:?}"
     );
 }
+
+/// Answers every host call with a generic ok/null response. Used only by the
+/// HG8 test below, where the only thing that should ever fail the invocation
+/// is the stale-ctx guard itself (`guardStale` in nimbus_context_contract.js)
+/// — not this stand-in host.
+struct GenericOkHost;
+
+impl HostBridge for GenericOkHost {
+    fn call(&self, _request: HostCallRequest) -> Result<Value> {
+        Ok(serde_json::json!({ "status": "ok", "value": Value::Null }))
+    }
+}
+
+/// HG8: `__nimbusInvocationGeneration` used to be a bare top-level `let` —
+/// writable AND readable by bare name from guest MODULE code (the same
+/// global-lexical reachability class as HG3/HG6 above), which the stale-ctx
+/// guard (`guardStale` in `__nimbusCreateContextImpl`) relies on being
+/// host-authoritative. A guest handler could read the current generation
+/// before it captured a ctx, let the (simulated) host reset advance the real
+/// counter for what would be the "next" invocation, then reassign the bare
+/// binding back to the captured value — keeping its stale ctx object usable
+/// past the invocation it was created for. Post-fix the counter is
+/// closure-private (an IIFE, never installed under any name at all); the
+/// bare identifier does not exist, so a sloppy-mode read/write against it
+/// either throws (caught) or auto-vivifies an unrelated decoy `globalThis`
+/// property, and the real guard keeps enforcing staleness.
+///
+/// This simulates cross-invocation staleness within a single
+/// `__nimbusInvoke` call by driving the same generation-advance step the
+/// host's real per-invocation reset script runs, rather than standing up
+/// warm-pool reuse machinery — the generation counter does not care which
+/// side advances it. The advance step feature-detects the hardened slot so
+/// this bundle exercises the real attack (the forged reassignment below)
+/// against either code state instead of assuming the fix is already applied.
+const STALE_CTX_GENERATION_FORGERY_BUNDLE: &str = r#"
+globalThis.__nimbusInvoke = async function (request) {
+  const ctx = globalThis.__nimbusCreateContext({ request });
+  const captureCurrentGeneration = new Function(
+    "try { return __nimbusInvocationGeneration; } catch (_e) { return undefined; }"
+  );
+  const capturedGeneration = captureCurrentGeneration();
+  // What the host's reset_bootstrap_invocation_state.js does between real
+  // invocations, driven here to simulate the "next" invocation starting
+  // without a second Rust-level invoke.
+  const advanceGeneration = new Function(
+    "if (typeof globalThis.__nimbusAdvanceInvocationGeneration === 'function') {\n" +
+    "  globalThis.__nimbusAdvanceInvocationGeneration();\n" +
+    "} else {\n" +
+    "  try { __nimbusInvocationGeneration++; } catch (_e) {}\n" +
+    "}"
+  );
+  advanceGeneration();
+  // The attack: a sloppy-mode handler body (the shape real guest handlers
+  // run in) tries to force the counter back to the value `ctx` captured, to
+  // keep using it past its real lifetime.
+  const attack = new Function(
+    "try { __nimbusInvocationGeneration = arguments[0]; } catch (_e) {}"
+  );
+  attack(capturedGeneration);
+  let staleCtxUsable = false;
+  let staleCtxErrorMessage = null;
+  try {
+    await ctx.db.get("messages", "doc-1");
+    staleCtxUsable = true;
+  } catch (error) {
+    staleCtxErrorMessage = error?.message ?? String(error);
+  }
+  return { staleCtxUsable, staleCtxErrorMessage };
+};
+
+export {};
+"#;
+
+#[tokio::test]
+async fn guest_generation_forgery_cannot_defeat_stale_ctx_reuse_guard() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(STALE_CTX_GENERATION_FORGERY_BUNDLE);
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(GenericOkHost),
+        Arc::new(RuntimePolicy::new(convex_default_lane_limits())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let result = runtime
+        .invoke_bundle_for_tenant(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:get".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+            "tenant-a",
+        )
+        .await
+        .expect("generation-forgery bundle invocation should succeed");
+
+    assert_eq!(
+        result["staleCtxUsable"], false,
+        "generation forgery must not keep a stale ctx object usable: {result}"
+    );
+    assert_eq!(
+        result["staleCtxErrorMessage"],
+        "This ctx object is from a previous invocation and cannot be reused",
+        "the stale ctx guard must still fire after generation-forgery tampering: {result}"
+    );
+}

@@ -62,9 +62,9 @@ isolate; blast radius is SAME-TENANT cross-invocation, not cross-tenant
 | `globalThis.__nimbusCreateContext` | (1) global prop | `nimbus_context_contract.js:272,599`; read fresh per invocation by trusted preamble `runtime_bundle_preamble.mjs:41`, entrypoints `runtime_bundle_execution_entrypoints.mjs:3,15,42,53` | `Object.freeze(value)` only — slot writable | **HG1** (builds the whole ctx incl. auth/db/scheduler capabilities) | **Band B (this)** |
 | ~~`globalThis.__nimbusInvokeNamedLocal`~~ (REMOVED — see "Already-hardened") | (1) global prop | baseline: emit `runtime_bundle_dispatch_global_invoke.mjs:32`; read fresh into `localInvoker` per nested `ctx.run*` `nimbus_context_contract.js:195`, invoked `:246` | baseline: plain assign, NOT hardened | **HG2** | **Band C — DONE** |
 | ~~`Deno.core.ops` table + `const __nimbusCoreOps` alias~~ (HARDENED — see "Already-hardened") | (2)+(3) | baseline: live table `deno_host_call_transport.js:1`; read fresh `:91,131,166,188`; also `reset_bootstrap_invocation_state.js:8`, `post_bootstrap.js:2` | baseline: op slots writable; alias `const` (readable by bare name, web-lane reachable post-`delete Deno`) | **HG3** (+ discovered web-lane bare-name alias, closed by the same fix; lane-conditional red test per plan) | **Band D — DONE** |
-| `globalThis.__nimbusWaitUntil` / `__nimbusDrainWaitUntil` / `__nimbusResetWaitUntil` + `let __nimbusWaitUntilQueue` | (1)+(2) | hooks `deno_host_call_transport.js:184,197,212`; queue `:182`; host drains via `driver/loading.rs:619-635` | plain assign; queue bare-name writable | **HG6** | HG6 band (later) |
+| ~~`globalThis.__nimbusWaitUntil` / `__nimbusDrainWaitUntil` / `__nimbusResetWaitUntil` + `let __nimbusWaitUntilQueue`~~ (HARDENED — see "Already-hardened") | (1)+(2) | baseline: hooks `deno_host_call_transport.js:184,197,212`; queue `:182`; host drains via `driver/loading.rs:619-635` | baseline: plain assign; queue bare-name writable | **HG6** | **Band E — DONE** |
 | `globalThis.__nimbusRefreshNodeProcessCwd` | (1) global prop | `node22_runtime_bootstrap.js:4113` (`writable:true, configurable:true`); host/reset-called `reset_bootstrap_invocation_state.js:4-5` | NOT hardened (writable slot) | **HG7** | HG7 band (later) |
-| `let __nimbusInvocationGeneration` | (2) global-lexical | `nimbus_context_contract.js:270`; read as stale-guard trust state `:273,276`; host reset writes `reset_bootstrap_invocation_state.js:2` | bare-name writable from guest modules | **HG8** (guest desyncs generation → defeats "ctx from previous invocation" guard) | HG8 band (later) |
+| ~~`let __nimbusInvocationGeneration`~~ (HARDENED — see "Already-hardened") | (2) global-lexical | baseline: `nimbus_context_contract.js:270`; read as stale-guard trust state `:273,276`; host reset writes `reset_bootstrap_invocation_state.js:2` | baseline: bare-name writable from guest modules | **HG8** (guest desyncs generation → defeats "ctx from previous invocation" guard) | **Band E — DONE** |
 | `globalThis.__nimbusHiddenDenoGlobals` / `__nimbusHiddenNodeGlobals` | (1) global prop, mutable VALUE | `node22_runtime_bootstrap.js:3430,3436` (slot `writable:false` but value object mutable); consumed by trusted transpiled scripts `transpile.rs:33,37,45` | slot hardened, VALUE graph mutable | **HG9** (frozen slot does not protect a mutable value) | HG9 band (later) |
 
 ## INTENTIONALLY-MUTABLE — app-singleton / guest-owned state (documented safe; do NOT harden)
@@ -154,6 +154,46 @@ isolate; blast radius is SAME-TENANT cross-invocation, not cross-tenant
   `guest_core_ops_table_tampering_leaves_same_lane_local_dispatch_intact`
   (over-correction guard) — all three in
   `crates/nimbus-runtime/src/runtime/tests/basic_invocation/nested_dispatch.rs`.
+- `let __nimbusWaitUntilQueue` (HG6, Band E) — **no longer a bare top-level
+  `let`.** The queue now lives inside a block scope
+  (`deno_host_call_transport.js:230-276`, `{ let queue = []; ... }`) that is
+  never installed under any name, bare or property — a strictly stronger
+  reachability closure than a `const` would give, since there is no binding
+  at all outside the block for guest module code to resolve. The three hooks
+  (`__nimbusWaitUntil`/`__nimbusDrainWaitUntil`/`__nimbusResetWaitUntil`) are
+  closures over `queue`, installed on `globalThis` via `Object.defineProperty`
+  (`writable:false, configurable:false`), replacing the baseline's plain
+  `globalThis.X = function(){}` assignments. Red/green exploit test:
+  `pir4_wait_until_hook_tampering_cannot_hide_unreferenced_pending_background_work_from_system_timeout`
+  in `crates/nimbus-runtime/src/runtime/tests/timeout_cancellation.rs` — a
+  sloppy-mode reassignment of the bare `__nimbusWaitUntil` name to a no-op
+  impostor is now a harmless decoy-property write; the real hook still tracks
+  the promise and the system timeout still bounds it.
+- `let __nimbusInvocationGeneration` (HG8, Band E) — **no longer a bare
+  top-level `let`.** The counter now lives inside an IIFE closure
+  (`nimbus_context_contract.js`,
+  `const __nimbusReadInvocationGeneration = (() => { let generation = 0;
+  ... })()`) that installs only a frozen `__nimbusAdvanceInvocationGeneration`
+  increment slot on `globalThis`; the getter function itself is private to
+  the closure. `guardStale()` and the ctx factory's `myGeneration` capture
+  both call the returned getter instead of reading the bare binding, and the
+  trusted host-issued reset script (`reset_bootstrap_invocation_state.js:5`)
+  advances the counter through the same hardened slot instead of bare-name
+  arithmetic on a shared binding. Red/green exploit test:
+  `guest_generation_forgery_cannot_defeat_stale_ctx_reuse_guard` in
+  `crates/nimbus-runtime/src/runtime/tests/basic_invocation/nested_dispatch.rs`
+  — a sloppy-mode attempt to forge the bare binding back to a captured
+  earlier value (to keep a stale `ctx` object usable) is now a harmless decoy-
+  property write; the real guard still fires
+  (`"This ctx object is from a previous invocation and cannot be reused"`).
+  **Follow-up (not a regression, tracked for HG7):**
+  `__nimbusAdvanceInvocationGeneration` is itself guest-callable (frozen
+  slot, but any caller may invoke it) — a guest could self-advance the
+  counter to prematurely invalidate its OWN ctx objects. This is a
+  self-inflicted-DoS-class concern only (no cross-invocation or cross-tenant
+  authority impact — a guest can already make its own invocation fail in
+  arbitrarily many other ways), not part of HG8's guest-desync-the-guard
+  scope, and left for HG7/HGx triage.
 
 ## Structural-test allowlist (consumed by the regression gate)
 
@@ -174,14 +214,18 @@ exactly one bucket below; a new unlisted property fails the test.
   invoke path carries regression risk for no additional authority guarantee.)
   `__nimbusInvokeCloudflareWorkerFetch` (same treatment as HG0, Band B),
   `__nimbusCreateContext` (slot-hardened non-writable/non-configurable, Band B),
-  `__nimbusWaitUntil`/`__nimbusDrainWaitUntil`/
-  `__nimbusResetWaitUntil` (HG6), `__nimbusRefreshNodeProcessCwd` (HG7),
+  `__nimbusRefreshNodeProcessCwd` (HG7),
   `__nimbusHiddenDenoGlobals`/`__nimbusHiddenNodeGlobals` (HG9, value-freeze).
 - **TRUST already-hardened (assert descriptor stays `writable:false,
   configurable:false`):** `__nimbusSyncHostValue`, `__nimbusAsyncHostValue`,
   `__nimbusCallDetachedFromInvocationContext`, `__nimbusRuntimeEnvironmentLane`,
   `__nimbusBeginGuestInvocation`, `__nimbusInstallGuestSemantics`,
-  `__nimbusEnterGuestImportPhase`.
+  `__nimbusEnterGuestImportPhase`, `__nimbusWaitUntil`/
+  `__nimbusDrainWaitUntil`/`__nimbusResetWaitUntil` (HG6, Band E — queue
+  itself is closure-private, never installed under any name),
+  `__nimbusAdvanceInvocationGeneration` (HG8, Band E — counter itself is
+  closure-private, never installed under any name; see the guest-callable
+  follow-up noted above for HG7/HGx triage).
 - **TRUST removed entirely (assert ABSENCE from `Reflect.ownKeys(globalThis)`
   after bootstrap and after bundle load, Band C):** `__nimbusInvokeNamedLocal`
   (HG2) — the module-private `invokeNamedDefinitionLocally` now passes as a
@@ -194,15 +238,20 @@ exactly one bucket below; a new unlisted property fails the test.
   `__nimbusRetainDenoForNodeLazyScripts`; present → `__nimbusNodeRuntimeMajor`,
   `__nimbusDrainImmediates`, `__nimbusFlushEmbeddedTests`, the Node/worker
   plumbing hooks.
-- **Global-lexical (separate from ownKeys — assert bare-name write is
-  neutralized after the owning band):** `__nimbusInvocationGeneration` (HG8),
-  `__nimbusWaitUntilQueue` (HG6).
 - **Global-lexical, already neutralized (Band D, HG3 — DONE):**
   `__nimbusCoreOps`. The binding is still bare-name readable (unavoidable, see
   method note 2), but it is now a frozen private clone with no shared identity
   to the live `Deno.core.ops` table, so a write through either reach path
   (bare name on any lane, or `Deno.core.ops` directly on Node-compat lanes)
   cannot affect the trusted transports.
+- **Global-lexical, already neutralized (Band E, HG6/HG8 — DONE):**
+  `__nimbusInvocationGeneration`, `__nimbusWaitUntilQueue`. Neither binding
+  exists under either name anymore, bare or property — both moved to
+  closure-private storage (a block scope for the queue, an IIFE for the
+  counter) with no name at all left for a bare-identifier read or write to
+  resolve to. A sloppy-mode assignment attempt against either name now
+  auto-vivifies an unrelated, harmless decoy `globalThis` property instead of
+  touching any real state.
 
 ## Findings beyond the plan's starting inventory
 
