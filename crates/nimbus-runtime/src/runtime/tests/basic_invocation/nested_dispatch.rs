@@ -190,6 +190,75 @@ globalThis.__nimbusInvoke = async function (request) {
 export {};
 "#;
 
+/// HG3, web/default lane: `post_bootstrap.js` deletes `globalThis.Deno` on this
+/// lane, so the only surviving reach to the op-functions table the trusted
+/// transports read from is the bare-name `__nimbusCoreOps` realm-lexical
+/// binding a sloppy-mode handler body can still resolve. Pre-fix that binding
+/// pointed at the SAME live object as `Deno.core.ops`; overwriting the
+/// callee-lane op slot on it forged the lane oracle's answer. Post-fix the
+/// transports read from a private frozen clone taken before any guest code
+/// ran, so this overwrite (however it's reached) never lands on their path.
+const CORE_OPS_TABLE_TAMPER_BUNDLE_WEB: &str = r#"
+const invokeNamedLocal = async function (request) {
+  return { dispatched: "local", name: request.function_name };
+};
+
+globalThis.__nimbusInvoke = async function (request) {
+  const attack = new Function(
+    "try {\n" +
+    "  __nimbusCoreOps.op_nimbus_ctx_resolve_callee_lane = function () {\n" +
+    "    return { status: 'ok', value: globalThis.__nimbusRuntimeEnvironmentLane };\n" +
+    "  };\n" +
+    "} catch (_e) {}\n"
+  );
+  attack();
+  const ctx = globalThis.__nimbusCreateContext({ request, invokeNamedLocal });
+  const nested =
+    request.args.nested_kind === "mutation"
+      ? await ctx.runMutation({ name: request.args.target, visibility: "public" }, {})
+      : await ctx.runQuery({ name: request.args.target, visibility: "public" }, {});
+  return {
+    currentLane: globalThis.__nimbusRuntimeEnvironmentLane ?? null,
+    nested,
+  };
+};
+
+export {};
+"#;
+
+/// HG3, Node-compat lane: same vector as [`CORE_OPS_TABLE_TAMPER_BUNDLE_WEB`],
+/// but through the more direct path available here — `post_bootstrap.js`
+/// retains `globalThis.Deno` on Node-compat lanes (guarded by
+/// `__nimbusRetainDenoForNodeLazyScripts`), so the op-functions table is
+/// reachable straight off `Deno.core.ops` with no bare-name alias needed.
+const CORE_OPS_TABLE_TAMPER_BUNDLE_NODE: &str = r#"
+const invokeNamedLocal = async function (request) {
+  return { dispatched: "local", name: request.function_name };
+};
+
+globalThis.__nimbusInvoke = async function (request) {
+  const attack = new Function(
+    "try {\n" +
+    "  Deno.core.ops.op_nimbus_ctx_resolve_callee_lane = function () {\n" +
+    "    return { status: 'ok', value: globalThis.__nimbusRuntimeEnvironmentLane };\n" +
+    "  };\n" +
+    "} catch (_e) {}\n"
+  );
+  attack();
+  const ctx = globalThis.__nimbusCreateContext({ request, invokeNamedLocal });
+  const nested =
+    request.args.nested_kind === "mutation"
+      ? await ctx.runMutation({ name: request.args.target, visibility: "public" }, {})
+      : await ctx.runQuery({ name: request.args.target, visibility: "public" }, {});
+  return {
+    currentLane: globalThis.__nimbusRuntimeEnvironmentLane ?? null,
+    nested,
+  };
+};
+
+export {};
+"#;
+
 fn caller_request(target: &str, nested_kind: &str) -> InvocationRequest {
     InvocationRequest {
         kind: InvocationKind::Action,
@@ -448,6 +517,97 @@ async fn guest_tampering_leaves_same_lane_local_dispatch_intact() {
     assert_eq!(
         result["nested"]["dispatched"], "local",
         "a same-lane callee must still use local dispatch after tampering: {result}"
+    );
+    assert!(
+        operations.contains(&HostCallOperation::CtxRuntimeEnterNestedCall),
+        "same-lane local dispatch must announce the nested call: {operations:?}"
+    );
+    assert!(
+        !operations.contains(&HostCallOperation::CtxRunQuery),
+        "same-lane local dispatch must not fall back to host dispatch: {operations:?}"
+    );
+}
+
+#[tokio::test]
+async fn guest_core_ops_table_tampering_via_bare_binding_cannot_force_cross_lane_local_dispatch() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    // Third-layer vector (HG3): even with the transport globals frozen
+    // (`__nimbusSyncHostValue`/`__nimbusAsyncHostValue`), those transports
+    // still dereference the callee-lane op function fresh out of the
+    // op-functions table on every call. See CORE_OPS_TABLE_TAMPER_BUNDLE_WEB's
+    // doc comment for the exact reach path on this lane.
+    let (result, operations) = invoke_lane_routing_bundle(
+        CORE_OPS_TABLE_TAMPER_BUNDLE_WEB,
+        convex_default_lane_limits(),
+        &caller_request("child:nodeLane", "query"),
+        APP_LANES,
+    )
+    .await;
+
+    assert_eq!(result["currentLane"], "default");
+    assert_ne!(
+        result["nested"]["dispatched"], "local",
+        "op-table tampering via the bare binding must not force a node callee onto local dispatch: {result}"
+    );
+    assert!(
+        operations.contains(&HostCallOperation::CtxRunQuery),
+        "post-tamper cross-lane call must go through host dispatch: {operations:?}"
+    );
+    assert!(
+        !operations.contains(&HostCallOperation::CtxRuntimeEnterNestedCall),
+        "post-tamper cross-lane call must not enter the local-dispatch protocol: {operations:?}"
+    );
+}
+
+#[tokio::test]
+async fn guest_core_ops_table_tampering_via_retained_deno_cannot_force_cross_lane_local_dispatch() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    // Same vector as the bare-binding test above, but the most direct form of
+    // it: on Node-compat lanes Deno is retained, so the op-functions table is
+    // reachable straight off `Deno.core.ops` with no alias needed at all. Same
+    // fix, same result: the frozen private clone the transports actually read
+    // from was taken before any guest code ran and is unaffected.
+    let (result, operations) = invoke_lane_routing_bundle(
+        CORE_OPS_TABLE_TAMPER_BUNDLE_NODE,
+        RuntimeLimits::application_node22(),
+        &caller_request("child:defaultLane", "mutation"),
+        APP_LANES,
+    )
+    .await;
+
+    assert_eq!(result["currentLane"], "node");
+    assert_ne!(
+        result["nested"]["dispatched"], "local",
+        "op-table tampering via retained Deno must not force a default-lane callee onto local dispatch: {result}"
+    );
+    assert!(
+        operations.contains(&HostCallOperation::CtxRunMutation),
+        "post-tamper cross-lane call must go through host dispatch: {operations:?}"
+    );
+    assert!(
+        !operations.contains(&HostCallOperation::CtxRuntimeEnterNestedCall),
+        "post-tamper cross-lane call must not enter the local-dispatch protocol: {operations:?}"
+    );
+}
+
+#[tokio::test]
+async fn guest_core_ops_table_tampering_leaves_same_lane_local_dispatch_intact() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    // The fix must not over-correct: a genuine same-lane callee still takes
+    // the local-dispatch optimization even after the guest tampers with the
+    // op table, because the frozen private clone still holds the real op.
+    let (result, operations) = invoke_lane_routing_bundle(
+        CORE_OPS_TABLE_TAMPER_BUNDLE_WEB,
+        convex_default_lane_limits(),
+        &caller_request("child:defaultLane", "query"),
+        APP_LANES,
+    )
+    .await;
+
+    assert_eq!(result["currentLane"], "default");
+    assert_eq!(
+        result["nested"]["dispatched"], "local",
+        "a same-lane callee must still use local dispatch after op-table tampering: {result}"
     );
     assert!(
         operations.contains(&HostCallOperation::CtxRuntimeEnterNestedCall),

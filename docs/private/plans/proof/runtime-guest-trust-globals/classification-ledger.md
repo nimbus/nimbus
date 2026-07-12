@@ -61,7 +61,7 @@ isolate; blast radius is SAME-TENANT cross-invocation, not cross-tenant
 | `globalThis.__nimbusInvokeCloudflareWorkerFetch` | (1) global prop | `cloudflare_workers_runtime.js:278,295`; **Rust host string-evals by name** `invocation.rs:68` | `Object.freeze(value)` only — slot writable | **HG5** (bootstrap-stable entrypoint, same class as HG0) | **Band B (this)** |
 | `globalThis.__nimbusCreateContext` | (1) global prop | `nimbus_context_contract.js:272,599`; read fresh per invocation by trusted preamble `runtime_bundle_preamble.mjs:41`, entrypoints `runtime_bundle_execution_entrypoints.mjs:3,15,42,53` | `Object.freeze(value)` only — slot writable | **HG1** (builds the whole ctx incl. auth/db/scheduler capabilities) | **Band B (this)** |
 | ~~`globalThis.__nimbusInvokeNamedLocal`~~ (REMOVED — see "Already-hardened") | (1) global prop | baseline: emit `runtime_bundle_dispatch_global_invoke.mjs:32`; read fresh into `localInvoker` per nested `ctx.run*` `nimbus_context_contract.js:195`, invoked `:246` | baseline: plain assign, NOT hardened | **HG2** | **Band C — DONE** |
-| `Deno.core.ops` table + `const __nimbusCoreOps` alias | (2)+(3) | live table `deno_host_call_transport.js:1`; read fresh `:91,131,166,188`; also `reset_bootstrap_invocation_state.js:8`, `post_bootstrap.js:2` | op slots writable; alias `const` (readable by bare name, web-lane reachable post-`delete Deno`) | **HG3** (+ discovered web-lane bare-name alias; lane-conditional per plan) | HG3 band (later) |
+| ~~`Deno.core.ops` table + `const __nimbusCoreOps` alias~~ (HARDENED — see "Already-hardened") | (2)+(3) | baseline: live table `deno_host_call_transport.js:1`; read fresh `:91,131,166,188`; also `reset_bootstrap_invocation_state.js:8`, `post_bootstrap.js:2` | baseline: op slots writable; alias `const` (readable by bare name, web-lane reachable post-`delete Deno`) | **HG3** (+ discovered web-lane bare-name alias, closed by the same fix; lane-conditional red test per plan) | **Band D — DONE** |
 | `globalThis.__nimbusWaitUntil` / `__nimbusDrainWaitUntil` / `__nimbusResetWaitUntil` + `let __nimbusWaitUntilQueue` | (1)+(2) | hooks `deno_host_call_transport.js:184,197,212`; queue `:182`; host drains via `driver/loading.rs:619-635` | plain assign; queue bare-name writable | **HG6** | HG6 band (later) |
 | `globalThis.__nimbusRefreshNodeProcessCwd` | (1) global prop | `node22_runtime_bootstrap.js:4113` (`writable:true, configurable:true`); host/reset-called `reset_bootstrap_invocation_state.js:4-5` | NOT hardened (writable slot) | **HG7** | HG7 band (later) |
 | `let __nimbusInvocationGeneration` | (2) global-lexical | `nimbus_context_contract.js:270`; read as stale-guard trust state `:273,276`; host reset writes `reset_bootstrap_invocation_state.js:2` | bare-name writable from guest modules | **HG8** (guest desyncs generation → defeats "ctx from previous invocation" guard) | HG8 band (later) |
@@ -124,6 +124,36 @@ isolate; blast radius is SAME-TENANT cross-invocation, not cross-tenant
   HG0/HG1/HG5, the global itself no longer exists after this band. The
   structural test's HG2 assertion is **absence**: `Reflect.ownKeys(globalThis)`
   must NOT contain `__nimbusInvokeNamedLocal` after bootstrap or bundle load.
+- `const __nimbusCoreOps` (HG3, Band D) — **no longer an alias to the live
+  `Deno.core.ops` table.** It is rebound to
+  `Object.freeze(Object.assign(Object.create(null), Deno.core.ops))`
+  (`deno_host_call_transport.js:36-38`), a private null-prototype clone taken
+  as the very first bootstrap script runs, strictly before any guest code —
+  and before deno_core's lazy `ensure_fast_ops_upgraded` pass could ever fire
+  (that pass only triggers from residual ext-module/Node-polyfill lazy
+  loading, never during static bootstrap; verified against the pinned
+  deno_core fork's `bindings.rs`). The transports
+  (`__nimbusCurrentHostCallSessionId:130`, `__nimbusSyncHostValue:170`,
+  `__nimbusAsyncHostValue:205`, `__nimbusWaitUntil:227`) all read this frozen
+  clone, never the live table, on both lanes. The bare-name binding itself is
+  still guest-readable (that cannot be closed — see method note 2 above), but
+  writes through it or through `Deno.core.ops` directly no longer reach
+  anything the trusted path consults, because the clone is a distinct frozen
+  object with no shared identity to the live table. Documented tradeoff:
+  `op_nimbus_runtime_wait_until_pending` is the one op reached through this
+  table that is `#[op2(fast)]`-eligible; if a lazy fast-call upgrade ever does
+  fire later in this isolate's life it will not be reflected in the frozen
+  clone, so that op stays on its slow-path snapshot function for the rest of
+  the isolate's lifetime — accepted, since wait-until tracking is not a hot
+  per-dispatch path and every other op reached through this table is a plain
+  (non-fast) op that can never go stale. Red/green exploit tests, lane-
+  conditional per the plan: `guest_core_ops_table_tampering_via_bare_binding_
+  cannot_force_cross_lane_local_dispatch` (web/default lane, bare-name reach)
+  and `guest_core_ops_table_tampering_via_retained_deno_cannot_force_cross_
+  lane_local_dispatch` (Node-compat lane, direct `Deno.core.ops` reach), plus
+  `guest_core_ops_table_tampering_leaves_same_lane_local_dispatch_intact`
+  (over-correction guard) — all three in
+  `crates/nimbus-runtime/src/runtime/tests/basic_invocation/nested_dispatch.rs`.
 
 ## Structural-test allowlist (consumed by the regression gate)
 
@@ -166,7 +196,13 @@ exactly one bucket below; a new unlisted property fails the test.
   plumbing hooks.
 - **Global-lexical (separate from ownKeys — assert bare-name write is
   neutralized after the owning band):** `__nimbusInvocationGeneration` (HG8),
-  `__nimbusWaitUntilQueue` (HG6), and the `__nimbusCoreOps` bare-name alias (HG3).
+  `__nimbusWaitUntilQueue` (HG6).
+- **Global-lexical, already neutralized (Band D, HG3 — DONE):**
+  `__nimbusCoreOps`. The binding is still bare-name readable (unavoidable, see
+  method note 2), but it is now a frozen private clone with no shared identity
+  to the live `Deno.core.ops` table, so a write through either reach path
+  (bare name on any lane, or `Deno.core.ops` directly on Node-compat lanes)
+  cannot affect the trusted transports.
 
 ## Findings beyond the plan's starting inventory
 
@@ -187,3 +223,23 @@ exactly one bucket below; a new unlisted property fails the test.
    default `runtime_bundle_dispatch_global_invoke.mjs` emit and this Cloud
    Functions emit (the structural test's "normal AND Cloud Functions codegen"
    coverage axis).
+4. **`node22_runtime_bootstrap.js` has its own, separate, un-hardened
+   `core.ops` surface — out of scope for Band D/HG3, follow-up for HG7.**
+   Unlike every other bootstrap file, this one is an ES **module**
+   (`import { core, ... } from "ext:core/mod.js"` at line 1), not a classic
+   script. Its `core` import binding is therefore a **module-environment
+   binding**, not a global-lexical one — it does NOT share scope with the
+   `__nimbusCoreOps` const from `deno_host_call_transport.js`, so Band D's fix
+   does not reach it. Dozens of call sites read `core.ops.op_nimbus_*` fresh
+   (e.g. `op_nimbus_runtime_cwd`, the `op_nimbus_worker_*` family,
+   `op_nimbus_runtime_shared_env_{set,delete,get,snapshot,seed}`) alongside
+   deno_core's own internal ops (`op_worker_close`, `op_uid`, …), spanning
+   roughly lines 177–3670+. A guest overwrite of any of these op slots on the
+   live table (reachable the same way HG3's Node-lane vector is, since this
+   file only runs on Node-compat lanes) is unaudited. This needs its own
+   band-scoped fix — most naturally HG7, since it is a much larger surface
+   than a single-line capture swap (a module-scope const capturing `core.ops`
+   analogous to Band D's fix is the likely shape, but every call site's op
+   name would need enumerating or the same full-table-clone approach reused).
+   Do not fold this into Band D — it is a distinct file, a distinct binding
+   kind, and a distinct blast radius.

@@ -167,7 +167,83 @@ test consume that ledger.
     `nimbus-server` fairness/websocket test was confirmed transient
     full-suite contention via a clean isolated rerun, then a clean full-suite
     rerun).
-- **NOT started (later dispatches):** HG3, HG4, HG6, HG7, HG8, HG9, HGx, the
+- **Band D (HG3): DONE** — `const __nimbusCoreOps` in
+  `deno_host_call_transport.js:1` no longer aliases the live `Deno.core.ops`
+  table. It is rebound to
+  `Object.freeze(Object.assign(Object.create(null), Deno.core.ops))`
+  (`:36-38`), a private null-prototype clone taken as the very first
+  bootstrap script runs — before any guest code, and before deno_core's lazy
+  `ensure_fast_ops_upgraded` fast-call pass could ever fire (verified against
+  the pinned deno_core fork: that pass only triggers from residual
+  ext-module/Node-polyfill lazy loading, never during static bootstrap).
+  `Object.freeze(Deno.core.ops)` itself was correctly ruled out by the plan —
+  it would break that same lazy upgrade — so the fix instead freezes a
+  *separate* clone the live table's future mutations (guest- or
+  upgrade-driven) cannot reach. Every transport that used to read the live
+  table now reads the frozen clone by the same bare name, so all five call
+  sites are hardened by one rebinding with zero call-site changes
+  (`__nimbusCurrentHostCallSessionId:130`, `__nimbusSyncHostValue:170`,
+  `__nimbusAsyncHostValue:205`, `__nimbusWaitUntil:227`, and transitively
+  `nimbus_guest_semantics.js:274`, `deno_runtime_globals.js:28,46,68`,
+  `post_bootstrap.js:2`, `reset_bootstrap_invocation_state.js:8`, none of
+  which needed editing since the identifier itself is unchanged). Closes the
+  web-lane bare-name alias reachability the plan flagged as an open question
+  (Codex-2 note) — the alias still exists and is still bare-name readable
+  (unavoidable), but it no longer shares identity with the live table, so a
+  write through it is inert.
+  - **Corrected a plan assumption:** the plan's stated fast-call-upgrade
+    mechanism ("V8 fast-call swaps the internal fast-API pointer in place,
+    not the JS function identity") is factually wrong per direct source
+    inspection of the vendored fork's `bindings.rs`
+    (`upgrade_snapshotted_ops_with_fast_calls`) — the upgrade builds a new
+    `v8::Function` and replaces the table slot via `.set()`; only the
+    containing table object's identity is stable. This does not change the
+    fix (a private, separately-frozen clone taken pre-bootstrap-execution is
+    safe regardless), but the design rationale above reflects the corrected
+    mechanism, not the plan's original wording.
+  - **Design deviation from literal plan wording:** the plan's fix-approach
+    item 2 suggested "selected op refs." A full shallow clone of the whole
+    table was used instead (matching deno_core's own `capturedCore.ops =
+    ObjectAssign({__proto__: null}, core.ops)` bootstrap idiom in `01_core.js`)
+    because enumerating every op name ever read through this table (the
+    `__nimbusSyncHostValue`/`__nimbusAsyncHostValue` general-purpose
+    transports plus the wait-until hook) is fragile — a missed name would
+    cause a silent runtime break (`"... op not found"`). Documented,
+    accepted tradeoff: only `op_nimbus_runtime_wait_until_pending` is
+    `#[op2(fast)]`-eligible among ops reached through this table (verified —
+    only 3 `op_nimbus_*` ops in the whole codebase are fast-call eligible,
+    and the other 2 are unrelated), so it is the only op that could ever go
+    stale if a lazy fast-call upgrade fires later in an isolate's life; every
+    other op reached through this table is plain and can never go stale.
+  - **New finding, follow-up for HG7 (not fixed in this band):**
+    `node22_runtime_bootstrap.js` is architecturally a separate ES module
+    (`import { core, ... } from "ext:core/mod.js"`) with its own
+    module-scoped `core` binding, not a classic-script global-lexical one —
+    it does not share scope with `__nimbusCoreOps` and is therefore untouched
+    by this fix. See the classification ledger's "Findings beyond the plan's
+    starting inventory" item 4 for the full description and blast radius.
+  - Red-then-green, lane-conditional per plan:
+    `guest_core_ops_table_tampering_via_bare_binding_cannot_force_cross_lane_local_dispatch`
+    (web/default lane — bare-name `__nimbusCoreOps` reach, the only surviving
+    path once `Deno` is deleted) and
+    `guest_core_ops_table_tampering_via_retained_deno_cannot_force_cross_lane_local_dispatch`
+    (Node-compat lane — direct `Deno.core.ops` reach, `Deno` retained via
+    `__nimbusRetainDenoForNodeLazyScripts`), plus
+    `guest_core_ops_table_tampering_leaves_same_lane_local_dispatch_intact`
+    (over-correction guard). All three overwrite
+    `op_nimbus_ctx_resolve_callee_lane` with an impostor that always reports
+    the caller's own lane. RED verified by temporarily reverting the capture
+    to `const __nimbusCoreOps = Deno.core.ops;` — both exploit tests failed
+    with the forged callee reported as `"dispatched":"local"` for a
+    cross-lane target, confirming the vector is real on both lanes; GREEN
+    against the actual fix — all 11 tests in `nested_dispatch.rs` (8
+    pre-existing + 3 new) pass.
+  - Verification: `cargo fmt --all --check` clean; `clippy -p nimbus-runtime
+    --all-targets` clean, no warnings; `make test-rust-runtime` green (469
+    passed, 0 failed, 123 ignored — +3 for the new tests, up from HG2's 466);
+    `make test-rust-workspace` green (4274 passed (1 leaky), 31 skipped, 0
+    failed, `EXIT_CODE=0` confirmed directly, not through a piped `tail`).
+- **NOT started (later dispatches):** HG4, HG6, HG7, HG8, HG9, HGx, the
   full structural regression-gate test, and the threat-model deliverable. The
   Cloud Functions `globalThis.__nimbusInvoke` emit site
   (`cloud_functions/runtime_sources.mjs:35`) is captured by the SAME host path

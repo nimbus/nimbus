@@ -1,4 +1,41 @@
-const __nimbusCoreOps = Deno.core.ops;
+// HG3: Deno.core.ops is a live, guest-writable object — a guest could
+// overwrite any op slot (e.g. op_nimbus_ctx_resolve_callee_lane, the
+// callee-lane trust oracle the nested ctx.run* dispatcher relies on) and the
+// transports below would call the impostor on their next fresh property
+// lookup. This is reachable on BOTH lanes: on Node-retaining lanes directly
+// via Deno.core.ops, and on the web/default lane (where post_bootstrap.js
+// deletes globalThis.Deno) via bare-name resolution of this very binding —
+// a classic-script top-level const lives in the realm's global lexical
+// environment record, which guest MODULE code can still read by name even
+// after globalThis.Deno is gone.
+//
+// Object.freeze(Deno.core.ops) is NOT an option: deno_core's
+// ensure_fast_ops_upgraded (bindings.rs) later overwrites individual op
+// slots on this SAME live object with fast-call-equipped functions the
+// first time a residual ext-module (e.g. a lazily imported Node builtin)
+// loads, and a frozen table would silently reject those writes, permanently
+// pinning every op to its slow-path snapshot function.
+//
+// Instead, take a private null-prototype clone of the whole table right
+// now — before any guest code has ever run, so it can only ever reflect
+// trusted state — and freeze the clone. The transports below read
+// exclusively from this clone, never from the live table, so a guest
+// overwrite on either lane has no effect on them. This mirrors deno_core's
+// own bootstrap pattern for its captured-bootstrap ops clone (01_core.js,
+// `capturedCore.ops = ObjectAssign({__proto__: null}, core.ops)`).
+//
+// Tradeoff: op_nimbus_runtime_wait_until_pending (read below) is the one op
+// reached through this table that is fast-call-eligible (#[op2(fast)]); if
+// a residual ext-module load ever triggers the deferred upgrade later in
+// this isolate's life, this clone will not pick up its fast-call overload
+// and it stays on the slow path for the rest of the isolate's lifetime.
+// Every other op reached through this table is a plain (non-fast) op, so
+// the clone can never go stale for them. This is an accepted, documented
+// perf-only cost of closing the guest-write surface — wait-until tracking
+// is not a hot per-dispatch path.
+const __nimbusCoreOps = Object.freeze(
+  Object.assign(Object.create(null), Deno.core.ops),
+);
 // Capture Deno.core.runImmediates before POST_BOOTSTRAP_SOURCE deletes
 // globalThis.Deno. The spawn-emulation postlude (render.rs) uses this to
 // drain async_hooks' deferred destroy queue: a GC'd AsyncResource enqueues an
