@@ -89,6 +89,16 @@ serious: a later same-tenant invocation's `request`/`args`/`auth` is exposed.
 
 ## Findings (file:line corrected per the 2026-07-12 traces)
 
+**Authoritative classification ledger:**
+`proof/runtime-guest-trust-globals/classification-ledger.md` — the independently
+re-enumerated inventory of every `globalThis.__nimbus*` install and realm-level
+mutable lexical trust binding, each classified TRUST / INTENTIONALLY-MUTABLE /
+COMPAT-OR-TEST with file:line, plus the structural-test allowlist and three
+findings beyond this table's starting inventory (web-lane bare-name `__nimbusCoreOps`
+alias to the ops table, global-lexical writability of HG6/HG8 state, and the
+second HG0 emit site in Cloud Functions codegen). Later bands and the structural
+test consume that ledger.
+
 | ID | Surface | Sev | Mechanism | Where |
 | --- | --- | --- | --- | --- |
 | HG0 | `__nimbusInvoke` (**most serious**) | HIGH | Top-level host entrypoint, plain-assigned; **Rust string-evals `globalThis.__nimbusInvoke(...)` fresh every invocation** and passes the whole request — one level EARLIER than HG1. This is the surface furthest from ALL exemplars (none read a name off a shared object at call time) | consume `crates/nimbus-runtime/src/runtime/invocation.rs:78,80`; emit `packages/codegen/src/emit/runtime_bundle_dispatch_global_invoke.mjs:3`; Cloud Functions dup at `packages/codegen/src/cloud_functions/runtime_sources.mjs:35` |
