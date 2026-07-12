@@ -4,166 +4,229 @@ Status: `proposed` (security; promote to `active` when scheduled)
 Owner branch: TBD (own PR, not the examples PR)
 Origin: surfaced by the adversarial review of the Convex-runtimes-parity work in
 `archive/examples-and-target-resolution-plan.md` (Band EX10R/EX10R2/EX10R3),
-then verified + corrected by an independent Codex source-trace (2026-07-12,
-`--effort high`). That pass refuted one impact claim, flagged one unsafe
-prescribed fix, and found additional instances; this document reflects those
-corrections.
+then verified + corrected by two independent Codex source-traces (2026-07-12,
+`--effort high`): a first pass against Nimbus main, and a second pass that
+cross-referenced the prescribed architecture against how deno_core/deno,
+cloudflare/workerd, get-convex/convex-backend, denoland/rusty_v8, and
+bytecodealliance/wasmtime actually solve the same guest/host trust boundary.
 
-## The vulnerability class
+## Architectural framing (read first)
 
-Nimbus's runtime bootstrap installs functions and mutable state that the
-**trusted, codegen-emitted** invocation path (and the Rust host) call on every
-invocation — context construction, host-call transport, nested dispatch, the
-top-level invoke entrypoint. The trust boundary has THREE reachable surfaces,
-and the plan must sweep all three (the EX10R rounds only fought the first):
+**The root cause is architectural, and every mature exemplar avoids the class by
+construction — none of them harden trust globals property-by-property.** Nimbus's
+trusted, codegen-emitted preamble and the guest handler bundle share ONE V8
+realm / `globalThis`, so trusted dispatch functions sit on the same mutable
+object graph guest code can reach. The exemplars keep the authoritative call
+target off the guest-writable graph entirely:
 
-1. **Reassignable global properties.** Installed by plain
-   `globalThis.__nimbusX = fn` → guest-reassignable. `Object.freeze(value)`
-   freezes the function *object*, NOT the property slot; reassignment still
-   succeeds. Only `Object.defineProperty(globalThis, name, {writable:false,
-   configurable:false})` closes it.
-2. **Mutable global lexical state.** Top-level `let`/`var` bindings and mutable
-   objects captured by trusted code — e.g. `__nimbusInvocationGeneration`,
-   the `__nimbusCoreOps`/`Deno.core.ops` table's own properties, wait-until
-   queues. A frozen property SLOT does not protect a mutable VALUE behind it
-   (`__nimbusHiddenDenoGlobals` is a hardened slot over a mutable object graph).
-3. **Native op-table properties.** `Deno.core.ops` is an ordinary object with
-   writable properties in the pinned deno_core fork (verified: `bindings.rs`
-   uses plain `.set`, no freeze/seal). A guest overwrites an op the trusted
-   transport reads.
+- **cloudflare/workerd** (the multi-tenant gold standard): host methods are bound
+  via V8 `FunctionTemplate` with the C++ impl as a compile-time template
+  parameter (`src/workerd/jsg/jsg.h:200-204`, `resource.h:214-245`); the native
+  callback is recovered from a V8 **internal field** (`wrappable.h:328-345`),
+  never a property lookup — guest reassignment self-sabotages the guest only.
+  Per-request authority is a **thread-local `IoContext::current()`**
+  (`io-context.c++:1136,1341-1348`) re-established fresh per `run()`, so isolate
+  reuse can't leak prior-request tampering. There is no `Deno.core.ops`-shaped
+  ambient table; every capability is a typed resource handed out via `env`.
+- **get-convex/convex-backend** (the upstream Nimbus targets): `ctx` is a **fresh
+  object literal built per invocation and passed as a call ARGUMENT**
+  (`crates/isolate/.../registration_impl.ts:55-72`), never installed on
+  `globalThis`; the Rust→guest boundary reaches the handler via the **ES module
+  namespace** (immutable bindings), not a global; guest syscalls go through a
+  `Convex.{op,syscall}` FunctionTemplate (JS→Rust only). Convex explicitly
+  **refuses isolate reuse across clients "for security isolation"**
+  (`client.rs:1501-1517`) and drains + `check_isolate_clean()` between requests
+  (`isolate.rs:261-289`) with the comment *"JS from this request may leak to a
+  subsequent one on isolate reuse."* Nimbus's warm-pool amplifier is the exact
+  concern the upstream already designed around — architecturally, not by
+  per-property hardening.
+- **denoland/deno_core + deno**: `Deno.core.ops` IS installed with plain
+  `v8::Object::set` and never sealed (`bindings.rs:289,457`) — matching Nimbus's
+  pinned fork. deno's protection is **capture-then-delete**: bootstrap captures
+  each op into module scope (`bindings.rs:1146-1183`), imports them as lexical
+  bindings (`99_main.js:8`), then `removeImportedOps()` **deletes** them off the
+  live table (`99_main.js:633-727`) and deletes the `__bootstrap` alias.
+  `ObjectFreeze(core)` (`01_core.js:854`) is shallow by design — fast-call
+  upgrades keep `.set`-ing op slots afterward. deno tolerates leaving `Deno.core`
+  reachable only because it is single-trust-level-per-realm; Nimbus's
+  realm-sharing is strictly harder, so Nimbus must go FURTHER than deno, not just
+  match it.
+- **bytecodealliance/wasmtime** (contrast): no shared mutable global namespace at
+  all; imports resolve once into an immutable `Arc<...>`, host state travels via
+  Rust-owned `Store<T>`/`Caller<T>`. The class simply cannot exist.
 
-**Amplifier — warm-pool reuse.** Isolates are reused across invocations. A
-guest reassignment in invocation N persists into N+1's trusted path on the same
-isolate (proven surviving current resets: `snapshot_lifecycle.rs:553`).
+**Consequence for this plan:** the tiered fix below (module-scope/closure →
+private captured op refs → `defineProperty` slot-hardening) is the correct
+*retrofit* — it is literally deno's own capture-and-delete idiom — for
+Nimbus's existing shared-realm architecture. But tier-3 (`defineProperty`) is
+NOT the aspirational end state. The aspirational target for any future
+host-call-boundary redesign (especially HG0/HG1, the Rust-eval'd entrypoints) is
+workerd's template-bound / thread-local-authority model and Convex's
+fresh-ctx-as-argument + module-namespace dispatch. The structural test in this
+plan is a **regression gate for an interim architecture**, not the destination.
 
-**Blast-radius correction (Codex, refuting the original draft):** warm-pool
-reuse requires an exact key that **includes bundle identity, and bundle identity
-includes tenant identity** (`warm_pool.rs:40,287`; test `warm_pool.rs:96`; the
-cross-tenant test requires tenant B to cold-miss, `warm_pool.rs:301`). So this
-is **cross-invocation / cross-user / cross-function exposure WITHIN one
-tenant/authority partition — NOT cross-tenant.** Still serious (a later
-invocation's `request`/`args`/`auth` for a different user or function on the
-same tenant is exposed), but describe it precisely everywhere.
+## The vulnerability class (three reachable surfaces)
 
-This class recurred through the EX10 review (plain global → bare `let` binding →
-registrar → transport) because each pass patched one property while a sibling
-sat untouched. This plan does the **systematic** sweep + a structural test, so
-a future addition can't silently reintroduce it.
+1. **Reassignable global properties** — `globalThis.__nimbusX = fn`;
+   `Object.freeze(value)` freezes the function object, not the slot; only
+   `Object.defineProperty {writable:false, configurable:false}` closes it.
+2. **Mutable global lexical state / object graphs** — top-level `let`/`var`
+   bindings and mutable objects captured by trusted code
+   (`__nimbusInvocationGeneration`, the wait-until queue, and object graphs
+   behind hardened slots like `__nimbusHiddenDenoGlobals` — a frozen SLOT does
+   not protect a mutable VALUE).
+3. **Native op-table properties** — `Deno.core.ops` props are writable in the
+   pinned fork; overwrite an op the trusted transport reads.
 
-## Findings
+**Amplifier — warm-pool reuse.** A guest reassignment in invocation N persists
+into N+1's trusted path on the same isolate (`snapshot_lifecycle.rs:553` proves
+module state survives current resets).
 
-Severity within the corrected (same-tenant) blast radius. All file:line from the
-2026-07-12 Codex trace against main.
+**Blast radius = SAME-TENANT cross-invocation / cross-user / cross-function —
+NOT cross-tenant** (warm-pool keys on tenant-scoped bundle identity;
+`warm_pool.rs:41,60,287`; tenant B cold-misses, `warm_pool.rs:96,301`). Still
+serious: a later same-tenant invocation's `request`/`args`/`auth` is exposed.
+
+## Findings (file:line corrected per the 2026-07-12 traces)
 
 | ID | Surface | Sev | Mechanism | Where |
 | --- | --- | --- | --- | --- |
-| HG0 | `__nimbusInvoke` (**most serious; was missed**) | HIGH | The top-level host entrypoint, plain-assigned; **Rust reads it fresh every invocation and passes the complete request**. Same warm-reuse consequence as HG1 but one level EARLIER in dispatch — a reassignment intercepts the entire request/args/auth of a later same-tenant invocation | consume `crates/nimbus-runtime/src/runtime/invocation.rs:52`; emit `packages/codegen/src/emit/runtime_bundle_dispatch_global_invoke.mjs:3`; Cloud Functions also emits a mutable `__nimbusInvoke` at `packages/codegen/src/cloud_functions/runtime_sources.mjs:35` |
-| HG1 | `__nimbusCreateContext` | HIGH | Plain assign (`nimbus_context_contract.js:272`) + `Object.freeze(value)` only (`:599`); builds the whole `ctx` (db/scheduler/runQuery/mutation/action/auth). Preamble reads it fresh per invocation (`runtime_bundle_preamble.mjs:40`; entrypoints `runtime_bundle_execution_entrypoints.mjs:2`). Warm reuse → replacement receives N+1's request/args/auth | see cells |
-| HG2 | `__nimbusInvokeNamedLocal` | MED-HIGH | Plain assign (`runtime_bundle_dispatch_global_invoke.mjs:32`), read fresh into `localInvoker` per nested ctx.run* (`nimbus_context_contract.js:194`, invoked `:238`). Reassign mid-invocation → same-lane nested call returns attacker-selected data | see cells |
-| HG3 | `__nimbusCoreOps` / `Deno.core.ops` | HIGH | Definitively exploitable: transports read op props fresh (`deno_host_call_transport.js:130,165`); pinned deno_core does NOT freeze/seal the table (`bindings.rs:347,563`, plain `.set`). Overwrite `op_nimbus_ctx_resolve_callee_lane` → forge the value consumed at `nimbus_context_contract.js:233`. **Fix is NOT `Object.freeze` — see below** | see cells |
-| HG5 | Cloudflare entrypoint `__nimbusInvokeCloudflareWorkerFetch` | MED | Plain-assigned host entrypoint on the Cloudflare runtime, same reassign-the-entrypoint class | `crates/nimbus-runtime/src/runtime/bootstrap/js/cloudflare_workers_runtime.js:278` |
-| HG6 | wait-until lifecycle: `__nimbusWaitUntil` / `__nimbusDrainWaitUntil` / `__nimbusResetWaitUntil` + the `__nimbusWaitUntilQueue` lexical | MED | Host-called lifecycle hooks (reassignable) plus mutable queue state the host drains | `deno_host_call_transport.js:184` + queue at `:1` |
-| HG7 | `__nimbusRefreshNodeProcessCwd` and other host-called Node bootstrap hooks | LOW-MED | Host/reset-called, reassignable; classify each | `node22_runtime_bootstrap.js` (Codex list) |
-| HG8 | mutable lexical trust state: `__nimbusInvocationGeneration` | MED | Mutable binding the host reset script writes (`reset_bootstrap_invocation_state.js:2`), read as trust/generation state (`nimbus_context_contract.js:270`) — a guest can desync it | see cells |
-| HG9 | mutable object graphs behind hardened slots: `__nimbusHiddenDenoGlobals`, `__nimbusHiddenNodeGlobals` | MED | Slots are hardened but the object VALUES are mutable; trusted transpiled scripts consume them (`transpile.rs:29`). A descriptor-only invariant misses value mutation | see cells |
-| HG4 | lane-oracle metadata (`op_nimbus_ctx_resolve_callee_lane`) | LOW | `runtime_environment_for_function` checks existence + handler/plan shape, no visibility (`runtime_access.rs:90`; bridge `runtime_calls.rs:140`). **NOT a strict subset** of the error oracle: nested-dispatch errors leak unknown/visibility/kind (`selection.rs:14`) but the lane oracle additionally reveals `default`/`node`/`bun`. Tenant-local deployment metadata, not a demonstrated authz bypass — **threat-model decision required, not "consider visibility"** | see cells |
-| HGx | stale implicit global `__nimbusNextHostCallSessionId` | cleanup | Created by undeclared assignment, otherwise unused; remove or justify | `reset_bootstrap_invocation_state.js:1` |
+| HG0 | `__nimbusInvoke` (**most serious**) | HIGH | Top-level host entrypoint, plain-assigned; **Rust string-evals `globalThis.__nimbusInvoke(...)` fresh every invocation** and passes the whole request — one level EARLIER than HG1. This is the surface furthest from ALL exemplars (none read a name off a shared object at call time) | consume `crates/nimbus-runtime/src/runtime/invocation.rs:78,80`; emit `packages/codegen/src/emit/runtime_bundle_dispatch_global_invoke.mjs:3`; Cloud Functions dup at `packages/codegen/src/cloud_functions/runtime_sources.mjs:35` |
+| HG1 | `__nimbusCreateContext` | HIGH | Plain assign (`nimbus_context_contract.js:272`) + `Object.freeze(value)` only (`:599`); builds the whole ctx. Preamble reads it fresh per invocation (`runtime_bundle_preamble.mjs:41`; entrypoints `runtime_bundle_execution_entrypoints.mjs:2`) | see cells |
+| HG2 | `__nimbusInvokeNamedLocal` | MED-HIGH | Plain assign (`runtime_bundle_dispatch_global_invoke.mjs:32`), read fresh into `localInvoker` per nested ctx.run* (`nimbus_context_contract.js:195`, invoked `:238`) | see cells |
+| HG3 | `__nimbusCoreOps` / `Deno.core.ops` | HIGH (lane-conditional) | Transports read op props fresh (`deno_host_call_transport.js:130,165`); deno_core does NOT seal the table (`bindings.rs:289,457`). Overwrite `op_nimbus_ctx_resolve_callee_lane` → forge the value at `nimbus_context_contract.js:233`. **Reachability differs by lane** (see note). **Fix is NOT `Object.freeze` — see below** | see cells |
+| HG5 | Cloudflare entrypoint `__nimbusInvokeCloudflareWorkerFetch` | MED | Plain-assigned host entrypoint, same reassign-the-entrypoint class as HG0 | `cloudflare_workers_runtime.js:278` |
+| HG6 | wait-until lifecycle hooks + `__nimbusWaitUntilQueue` | MED | Host-called `__nimbusWaitUntil`/`Drain`/`Reset` (reassignable) + mutable queue the host drains | hooks `deno_host_call_transport.js:184`; queue `:182` |
+| HG7 | `__nimbusRefreshNodeProcessCwd` + other host-called Node hooks | LOW-MED | Host/reset-called, reassignable; classify each | `node22_runtime_bootstrap.js` |
+| HG8 | `__nimbusInvocationGeneration` (mutable lexical) | MED | Host reset writes it (`reset_bootstrap_invocation_state.js:2`), read as generation/trust state (`nimbus_context_contract.js:270`); guest can desync | see cells |
+| HG9 | object graphs behind hardened slots (`__nimbusHiddenDenoGlobals`/`Node`) | MED | Slots hardened, VALUES mutable; trusted transpiled scripts consume them (`transpile.rs:33,37,45`) | see cells |
+| HG4 | lane-oracle metadata | LOW | `runtime_environment_for_function` — no visibility check (`runtime_access.rs:90`; bridge `runtime_calls.rs:140`). NOT a strict subset of the error oracle (`selection.rs:14`) — adds `default`/`node`/`bun`. **Threat-model decision, not "add visibility"** (guests construct `{name,visibility}`; internal fns are app-callable). No exemplar informs this | see cells |
+| HGx | stale `__nimbusNextHostCallSessionId` | cleanup | Undeclared assignment, unused; remove or justify | `reset_bootstrap_invocation_state.js:1` |
 
-Intentionally guest-mutable / application-singleton (document, do NOT harden):
+**HG3 lane split (Codex-2):** on the default/web lane `post_bootstrap.js:26`
+does `delete globalThis.Deno` (guarded by `__nimbusRetainDenoForNodeLazyScripts
+!== true`), so `Deno.core.ops` is NOT directly guest-reachable by name there —
+the live ref survives only via the script-private `__nimbusCoreOps` const. On
+**Node-compat lanes that retain `Deno`, it stays directly guest-reachable**. So
+HG3 is *definitively* exploitable on Node lanes; the web lane needs an
+alias audit to rule out other paths to the ops object. The red test must be
+**lane-conditional** (web-Deno-deleted vs Node-Deno-retained).
+
+Intentionally guest-mutable / app-singleton (document, do NOT harden):
 `__nimbusCloudFunctionsState`, `__nimbusAdminApps` (`runtime_sources.mjs:81,834`),
-and the compat/test surfaces (`__nimbusFlushEmbeddedTests`,
-`__nimbusNodeRuntimeMajor`, etc.). The classification ledger must state why.
+compat/test surfaces (`__nimbusFlushEmbeddedTests`, `__nimbusNodeRuntimeMajor`,
+…). The classification ledger must state why.
 
 ## Already hardened (verified accurate on main — do not regress)
 
 `__nimbusRuntimeEnvironmentLane` (`deno_runtime_globals.js:312`),
 `__nimbusCallDetachedFromInvocationContext` (`deno_host_call_transport.js:37`,
-captured privately by the contract), `__nimbusSyncHostValue`/
-`__nimbusAsyncHostValue` (`deno_host_call_transport.js:126,161`),
-`__nimbusInstall/Enter/BeginGuest*` (guest-semantics, block-scoped + hardened,
-`nimbus_guest_semantics.js:26,235`), and the callee-lane lookup was REMOVED
-(resolved host-side, `runtime_calls.rs:133`). Caveat: the transports are
-hardened at the SLOT but still read the unhardened op table (HG3) — not
-end-to-end until HG3 lands.
+captured privately), `__nimbusSyncHostValue`/`__nimbusAsyncHostValue`
+(`deno_host_call_transport.js:126,161`), guest-semantics hooks (block-scoped +
+hardened, `nimbus_guest_semantics.js:26,235`), and the callee-lane lookup was
+REMOVED (host-side, `runtime_calls.rs:133`). Caveat: transports are hardened at
+the SLOT but still read the unhardened ops table (HG3) — not end-to-end.
 
-## Fix approach — canonical, root-cause (Codex-corrected)
+## Fix approach — strongest available boundary per finding
 
-The strongest ownership boundary is **NOT a frozen `globalThis` property** (that
-stops reassignment but still exposes the capability to guests). Prefer, in order:
+1. **Rust-held `v8::Global<Function>` in an isolate slot — REQUIRED for HG0/HG1/HG5**
+   (not "where feasible"). Instead of the Rust host string-eval'ing
+   `globalThis.__nimbusInvoke(...)` by name every invocation
+   (`invocation.rs:78,80`), capture the function ONCE post-bootstrap /
+   pre-guest-execution into an isolate slot and call it directly — removing the
+   entrypoints from the guest-reachable surface entirely rather than hardening a
+   slot. Confirmed available: rusty_v8 `Isolate::set_slot/get_slot`
+   (`isolate.rs:1250-1278`), `v8::Global` (`handle.rs:286-294`); deno_core uses
+   exactly this for `OpState` (`jsruntime.rs:1020-1021`); it is workerd's
+   thread-local-authority model in Rust form. `defineProperty` slot-hardening is
+   the FALLBACK only if the isolate-slot approach proves incompatible with the
+   current bootstrap-script-eval invocation path.
+2. **Private captured op references — HG3.** Capture the exact trusted op
+   functions into a private closure and have transports call the captured refs
+   (deno's capture-then-delete), or build a private null-prototype capability
+   table from selected op refs and freeze THAT — **never `Object.freeze` the
+   live `Deno.core.ops`** (breaks deferred fast-call upgrades, `bindings.rs:593,690`).
+   **Precision requirement (Codex-2):** capture must survive the *lazy* deferred
+   fast-call upgrade pass (`ensure_fast_ops_upgraded`, `bindings.rs:713+`) that
+   runs from residual ext-module loaders AFTER bootstrap, not just initial op
+   registration. Because V8 fast-call swaps the internal fast-API pointer in
+   place (not the JS function identity), a captured *reference* stays valid — but
+   this must be verified for the pinned fork with a test asserting a captured op
+   ref still fast-calls correctly after the lazy pass.
+3. **Module-scope / closure — HG2.** Pass the module-private
+   `invokeNamedDefinitionLocally` into `__nimbusCreateContext` (which closes over
+   it) and remove the global — Convex's fresh-ctx-as-argument pattern.
+4. **`defineProperty` slot hardening** ({writable:false, configurable:false,
+   enumerable:false}, atomic install) — the minimum for HG6/HG7 and the HG0/HG1/HG5
+   fallback. Function-object freeze is optional defense-in-depth.
+5. **Mutable-value protection — HG8/HG9.** Descriptor invariant is insufficient;
+   move generation/reset state to host-owned or closure-private storage; review
+   the hidden-globals object graphs directly.
+6. **HG4:** decide in the threat model — document lane metadata as non-secret, or
+   design uniform failure behavior against an explicit confidentiality
+   requirement.
 
-1. **Module scope / IIFE-private closure / Rust-held V8 handle** — the trusted
-   value is unreachable to guest code entirely. Apply to HG2 (pass the
-   module-private `invokeNamedDefinitionLocally` into `__nimbusCreateContext`,
-   which closes over it — remove the global) and, where feasible, HG0/HG1.
-2. **Private captured references** for HG3: capture the exact trusted op
-   functions in a private closure AFTER op init, and have transports call the
-   captured refs — OR build a private null-prototype capability table from
-   selected op refs and freeze THAT (never the live shared `Deno.core.ops`).
-   **Do NOT `Object.freeze(__nimbusCoreOps)`**: the pinned fork performs
-   deferred fast-call upgrades by overwriting op slots (`bindings.rs:593,690`);
-   freezing early disables them.
-3. **`Object.defineProperty` slot hardening** ({writable:false,
-   configurable:false, enumerable:false}, install the real fn atomically) as the
-   minimum where a global must remain — HG0, HG1, HG5, HG6, HG7. Freezing the
-   function object is optional defense-in-depth.
-4. **Mutable-value protection** for HG8/HG9: the descriptor invariant is
-   insufficient; the reset/generation state needs host-owned or closure-private
-   storage, and the hidden-globals object graphs need their own review.
+## Structural test — full spec
 
-HG4: decide, don't hedge. Adding `visibility` to the payload is not a secrecy
-control (guests construct `{name, visibility:"internal"}`; internal functions
-are intentionally app-callable). Either document lane metadata as non-secret,
-or design a uniform failure behavior against an explicit confidentiality
-requirement — a threat-model output.
-
-## Structural test — full spec (Codex)
-
-A single test that FAILS if a future trust global ships unhardened:
-- After bootstrap AND after bundle load, take a `Reflect.ownKeys(globalThis)`
-  inventory of every `__nimbus*` property.
-- An explicit **allowlist classification** for every `__nimbus*` property
-  (trust-relevant vs intentionally-mutable vs compat/test), so a NEW unlisted
-  property fails the test.
-- For every trust property: own data descriptor, `writable:false`,
-  `configurable:false`, and **stable identity after attempted
-  assignment/delete/redefine**.
-- Separate static/semantic checks for global **lexical** bindings and for
-  trusted **mutable object values** (HG8/HG9) — not just property descriptors.
-- Coverage across runtimes: web/default, Node, Cloudflare; and lifecycles:
-  main-realm warm reuse AND fresh-realm recycling; both normal and Cloud
-  Functions codegen.
-- **Red/green exploit tests** for HG0, HG1, HG2, HG3, HG5, and the
-  waitUntil/Cloudflare lifecycle hooks (guest reassigns → trusted path must not
-  call the impostor / must fail safe).
+A single regression-gate test (extend the EXISTING idioms in
+`nested_dispatch.rs:124-129,368,432` and `guest_semantics.rs:531-597`, which
+already do reassignment + `getOwnPropertyDescriptor` + strict-mode-throws
+assertions — do not invent a new one; the ownKeys+allowlist inventory is
+net-new):
+- After bootstrap AND after bundle load: `Reflect.ownKeys(globalThis)` inventory
+  of every `__nimbus*` property.
+- Explicit **allowlist classification** for every `__nimbus*` (trust / mutable /
+  compat) — a NEW unlisted property fails the test.
+- Per trust property: own data descriptor, `writable:false`, `configurable:false`,
+  **stable identity after attempted assignment/delete/redefine**.
+- **Identity-stability assertion (Codex-2):** not only "impostor not called" but
+  "the trusted path's captured reference is the SAME function object after a
+  reassignment attempt" (capture the internally-used ref via a test hook,
+  reassign the global, invoke, assert same object executed) — modeling workerd's
+  compile-time identity guarantee, closing the gap where an impostor happens to
+  behave identically.
+- Separate checks for global **lexical** bindings and **mutable object values**
+  (HG8/HG9), not just descriptors.
+- Coverage: web/default, Node, Cloudflare × main-realm warm reuse AND fresh-realm
+  recycling × normal AND Cloud Functions codegen. **HG3 red test is
+  lane-conditional** (web-Deno-deleted vs Node-Deno-retained).
+- **Red/green exploit tests** for HG0, HG1, HG2, HG3, HG5, HG6.
+- State in-test why this exists: a regression gate for an interim shared-realm
+  architecture (exemplars need no such test because they don't put trust state
+  on the global) — not the exemplar-validated end state.
 
 ## Threat model deliverable (concrete)
 
-Identify: principals (guest handler code, trusted preamble, Rust host); protected
-data (a later invocation's request/args/auth on the same tenant); the
-same-tenant-vs-cross-tenant boundary (warm-pool keys on tenant-scoped bundle
-identity — cross-tenant is out of reach, document why); import-time execution and
-`new Function` reachability into the realm global env; warm-pool partitioning as
-the persistence vector; host-session-id enforcement; and which guest-visible
-capabilities are INTENTIONALLY callable (so hardening doesn't break them).
+Principals (guest handler code, trusted preamble, Rust host); protected data (a
+later same-tenant invocation's request/args/auth); the same-tenant-vs-cross-tenant
+boundary (warm-pool keys on tenant-scoped bundle identity — cross-tenant is out
+of reach; cite **Convex's refusal to reuse isolates across clients**,
+`client.rs:1501-1517`, and its `check_isolate_clean()` drain, `isolate.rs:261-289`,
+as industry precedent that same-client reuse is the boundary requiring explicit
+reasoning); import-time execution + `new Function` realm-global reachability;
+warm-pool partitioning as the persistence vector; host-session-id enforcement;
+and which guest-visible capabilities are INTENTIONALLY callable.
 
 ## Verification lanes
 
-Runtime changes: `make test-rust-runtime` + `make test-rust-workspace`. Codegen
-changes: the codegen selftests + npm gates (`npm run typecheck/test/build`),
-and restage embedded packages before any live check. Closeout on the repo's
-`make ci`. JS/codegen bootstrap edits need BOTH the Rust runtime lanes (they
-compile the bootstrap JS in) and the codegen gates.
+Runtime: `make test-rust-runtime` + `make test-rust-workspace`. Codegen: codegen
+selftests + `npm run typecheck/test/build`, restage embedded packages before
+live checks. Closeout `make ci`. Bootstrap-JS edits need BOTH the Rust runtime
+lanes (they compile the JS in) and the codegen gates.
 
-## Revisions already applied (from the 2026-07-12 verification)
+## Revision history
 
-Incorporated here: corrected same-tenant blast radius (was cross-tenant); added
-HG0 `__nimbusInvoke`, HG5 Cloudflare, HG6 waitUntil, HG7 Node hooks, HG8 lexical
-state, HG9 object graphs; the sweep now covers all three surfaces; the
-`__nimbusCoreOps` fix replaced with a lifecycle-safe private-op-reference design
-(NOT freeze); HG4 reframed as a threat-model decision; and the full
-structural-test + threat-model specs. Corrected outside this file: the
-plans-README entry and agent memory (both had the "cross-tenant" wording).
+- 2026-07-12 Codex pass 1 (Nimbus source): corrected cross-tenant→same-tenant;
+  added HG0/HG5/HG6/HG8/HG9; corrected HG3 fix (not freeze); reframed HG4.
+- 2026-07-12 Codex pass 2 (exemplar cross-reference, this revision): added the
+  architectural framing (workerd/Convex/deno/wasmtime); upgraded HG0/HG1/HG5 to
+  REQUIRED Rust-held isolate-slot capture; added the HG3 lazy-fast-call-upgrade
+  precision + lane split; added the identity-stability structural assertion; cited
+  Convex isolate-reuse refusal in the threat model; fixed citation drift
+  (`invocation.rs:52`→`:78,80`, `context_contract.js:194`→`:195`,
+  `preamble.mjs:40`→`:41`, `transpile.rs:29`→`:33,37,45`, HG6 queue→`:182`,
+  `warm_pool.rs:40`→`:41`).
 
 ## Suggested Goal Prompt (when promoted)
 
-/goal Execute docs/private/plans/runtime-guest-trust-global-hardening-plan.md. First produce the classification ledger (Reflect.ownKeys inventory of every globalThis.__nimbus* + realm lexical trust state, each labelled trust-relevant / intentionally-mutable / compat, with file:line). Then fix each trust surface at the strongest available boundary (module-scope/closure/Rust-held for HG0/HG1/HG2 where feasible; private captured op references for HG3 — never Object.freeze on the live Deno.core.ops, it breaks deferred fast-call upgrades; defineProperty slot-hardening otherwise; host-owned/closure-private storage for HG8/HG9), each with a red-then-green exploit test (guest reassigns the global / mutates the value → the trusted path must not use it). Land the structural test to the full spec (post-bootstrap + post-bundle-load ownKeys inventory, allowlist, descriptor + stable-identity assertions, lexical + object-graph checks, web/Node/Cloudflare + warm/fresh + normal/cloud-functions coverage). Decide HG4 in the threat-model doc. Run make test-rust-runtime + make test-rust-workspace + the codegen gates green; closeout make ci. The goal is met when every HG row is done/decision-recorded with red-then-green evidence, the structural test passes across all runtimes/lifecycles, the threat model is written, and an adversarial re-review confirms no guest-reachable global or mutable trust value drives a trust decision or is called by the trusted path — or stop after 60 turns and record the blocker.
+/goal Execute docs/private/plans/runtime-guest-trust-global-hardening-plan.md. Produce the classification ledger (Reflect.ownKeys inventory of every globalThis.__nimbus* + realm lexical trust state, labelled trust/mutable/compat with file:line). Fix each surface at the strongest available boundary: HG0/HG1/HG5 via a Rust-held v8::Global<Function> captured once into an isolate slot post-bootstrap (defineProperty fallback only if incompatible with the string-eval invocation path); HG3 via private captured op references verified to survive the lazy deferred fast-call upgrade pass — NEVER Object.freeze the live Deno.core.ops; HG2 by passing the module-private invoker into __nimbusCreateContext and removing the global; HG8/HG9 via host-owned/closure-private storage. Each with a red-then-green exploit test following the existing nested_dispatch.rs idiom, HG3 lane-conditional (web-Deno-deleted vs Node-retained). Land the structural test to the full spec including the identity-stability assertion (captured ref unchanged after reassignment). Decide HG4 in the threat-model doc; cite Convex's cross-client isolate-reuse refusal. Run make test-rust-runtime + make test-rust-workspace + codegen gates green; closeout make ci. Met when every HG row is done/decision-recorded with red-then-green evidence, the structural test passes across all lanes/lifecycles, the threat model is written, and an adversarial re-review confirms no guest-reachable global or mutable trust value drives a trust decision or is called by the trusted path — or stop after 60 turns and record the blocker.
