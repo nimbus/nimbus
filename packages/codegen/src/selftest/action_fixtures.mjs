@@ -27,11 +27,13 @@ async function runActionFixtures() {
   await testDefaultRuntimeExternalPackageNestedBrowserConditionFixture();
   await testNodeExternalPackageSymlinkContainmentFixture();
   await testNodeExternalPackageSymlinkCycleFixture();
+  await testNodeExternalPackageSymlinkDiamondFixture();
   await testNodeExternalPackagesStarFixture();
   await testNodePackageImportRequiresExternalizationFixture();
   await testNodeExternalPackageRequiresLocalInstallFixture();
   await testNodeExternalPackagesStarMustStandAloneFixture();
   await testUseNodeActionFixture();
+  await testUseNodeActionWithDefaultLaneHttpRouteFixture();
   await testUseNodeRejectsQueriesFixture();
   await testDefaultRuntimeRejectsNodeBuiltinsFixture();
   await testDefaultRuntimeRejectsUnusedUseNodeImportFixture();
@@ -392,6 +394,69 @@ export const read = action({
     .then(() => true)
     .catch(() => false);
   assert.equal(stagedLoopExists, false, "a symlink cycle must be skipped, not recursively expanded");
+}
+
+// EX10R2.4: the symlink cycle guard is scoped to the recursion ancestry, not
+// to every real path ever visited — a legitimate diamond (two different
+// alias symlinks pointing at the same shared real subdirectory) must stage
+// the shared files under BOTH aliases. An all-paths-ever-seen guard staged
+// only the first alias and silently dropped the second from the deployment
+// artifact. A cycle symlink nested inside the shared subdirectory must still
+// terminate (skipped under the plain path and under both aliases).
+async function testNodeExternalPackageSymlinkDiamondFixture() {
+  const appDir = await createAppFixture(
+    {
+      "messages.ts": `
+"use node";
+
+import { action } from "./_generated/server";
+import pkg from "diamondpkg";
+
+export const read = action({
+  args: {},
+  handler: async () => pkg.ok,
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "node_modules/diamondpkg/package.json": `{"name":"diamondpkg","version":"1.0.0","main":"index.js"}`,
+        "node_modules/diamondpkg/index.js": `export default { ok: true };`,
+        "node_modules/diamondpkg/shared/data.js": `export const shared = "diamond";`,
+        "convex.json": `{ "node": { "externalPackages": ["diamondpkg"] } }\n`,
+      },
+    },
+  );
+
+  const packageDir = path.join(appDir, "node_modules", "diamondpkg");
+  // Two distinct aliases resolving to the same real shared subdirectory...
+  await fs.symlink(path.join(packageDir, "shared"), path.join(packageDir, "aliasA"));
+  await fs.symlink(path.join(packageDir, "shared"), path.join(packageDir, "aliasB"));
+  // ...plus a cycle back to the package root nested inside that shared
+  // subdirectory, reachable via shared/, aliasA/, and aliasB/ alike.
+  await fs.symlink(packageDir, path.join(packageDir, "shared", "loopback"));
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const stagedDir = path.join(appDir, ".nimbus", "convex", "node_modules", "diamondpkg");
+  for (const alias of ["shared", "aliasA", "aliasB"]) {
+    assert.match(
+      await fs.readFile(path.join(stagedDir, alias, "data.js"), "utf8"),
+      /diamond/,
+      `the shared subdirectory must stage under ${alias}, not only under the first alias seen`,
+    );
+    const stagedLoopbackExists = await fs
+      .stat(path.join(stagedDir, alias, "loopback"))
+      .then(() => true)
+      .catch(() => false);
+    assert.equal(
+      stagedLoopbackExists,
+      false,
+      `the nested cycle symlink must be skipped under ${alias}, not recursively expanded`,
+    );
+  }
 }
 
 async function testNodeExternalPackagesStarFixture() {
@@ -905,6 +970,69 @@ export const runInternal = internalAction({
   assert.match(runtimeBundle, /return import\(specifier\)/);
   assert.match(runtimeBundle, /"type": "node_builtin_default"/);
   assert.match(runtimeBundle, /"type": "node_builtin_named"/);
+}
+
+// EX10R2.3: HTTP routes always execute on the default web-standard lane, so
+// an app whose FUNCTIONS are all "use node" but which also routes
+// convex/http.ts httpActions is NOT single-runtime Node — the same
+// bundle.mjs is loaded by the route's web isolate, where an eager top-level
+// `import "node:*"` would fail module linking for the whole bundle (no Node
+// builtins on that lane). Node bindings must stay on the lazy
+// dynamic-import() path for such bundles. See
+// packages/codegen/src/emit/runtime_bundle.mjs's isSingleRuntimeNodeManifest.
+// (testUseNodeActionFixture above covers the complement: a genuinely
+// all-node manifest with no routes still emits the eager import.)
+async function testUseNodeActionWithDefaultLaneHttpRouteFixture() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+"use node";
+
+import { internalAction } from "./_generated/server";
+import fs from "node:fs";
+
+export const runInternal = internalAction({
+  args: {},
+  handler: async () => fs.realpathSync("."),
+});
+`,
+    "http.ts": `
+import { httpRouter } from "convex/server";
+import { httpAction } from "./_generated/server";
+
+const http = httpRouter();
+
+http.route({
+  path: "/ping",
+  method: "GET",
+  handler: httpAction(async () => Response.json({ ok: true })),
+});
+
+export default http;
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const routes = await readConvexJson(appDir, "http_routes.json");
+  assert.equal(routes.routes.length, 1);
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.ok(
+    manifest.functions.every((definition) => definition.runtime_environment === "node"),
+    "every FUNCTION in this fixture is node-lane; only the route is default-lane",
+  );
+
+  const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
+  assert.doesNotMatch(
+    runtimeBundle,
+    /^import "node:fs";/m,
+    "a bundle with a default-lane HTTP route must not emit an eager node:* import",
+  );
+  // The Node binding remains reachable via the lazy dynamic-import() path
+  // that only a node-lane invocation ever triggers.
+  assert.match(runtimeBundle, /nodeBuiltinModule\(specifier\)/);
+  assert.match(runtimeBundle, /"type": "node_builtin_default"/);
 }
 
 async function testUseNodeRejectsQueriesFixture() {

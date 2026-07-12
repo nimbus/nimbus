@@ -224,9 +224,9 @@ async function stageNodeExternalPackages(appDir, report) {
     // is not safe to do unconditionally -- see copyPackageTree's containment
     // and cycle guards below.
     const packageRootReal = await fs.realpath(packageRoot);
-    await copyPackageTree(packageRoot, stagedPackageRoot, {
+    await copyPackageTree(packageRootReal, stagedPackageRoot, {
       containmentRoot: packageRootReal,
-      visitedRealPaths: new Set([packageRootReal]),
+      ancestorRealPaths: new Set([packageRootReal]),
     });
   }
 }
@@ -241,11 +241,24 @@ async function stageNodeExternalPackages(appDir, report) {
 //   skipped rather than copied. Without this, staging would copy arbitrary
 //   files reachable from the package directory (up to and including host
 //   credentials) into the deployment artifact.
-// - Cycles: a symlink whose real target has already been visited on this
-//   walk (including the package root itself, e.g. `self -> .`) is skipped
-//   rather than recursed into again, so a symlink cycle terminates instead
-//   of recursing unboundedly.
-async function copyPackageTree(sourceDir, destDir, { containmentRoot, visitedRealPaths }) {
+// - Cycles: a symlink whose real target is already on the CURRENT recursion
+//   chain — an ancestor directory of the walk position, including the
+//   package root itself (e.g. `self -> .`) — is skipped rather than
+//   recursed into again, so a symlink cycle terminates instead of recursing
+//   unboundedly. The guard is scoped to the ancestry chain, not to every
+//   real path ever visited: a legitimate diamond (two different alias
+//   symlinks pointing at the same shared real subdirectory) must stage the
+//   shared files under BOTH aliases, and an all-paths-ever-seen set would
+//   silently drop the second alias from the deployment artifact.
+//
+// `sourceDir` is always a fully resolved real path (the caller passes the
+// package root's realpath, and recursion descends via plain child names or
+// a symlink's resolved target), so a non-symlink child's real path is just
+// path.join(sourceDir, name). Operating on resolved paths also shrinks the
+// realpath-check -> copy TOCTOU window: once a symlink's target has passed
+// the containment check, the stat/copy/recursion below go through that
+// verified real path, not back through the still-mutable symlink.
+async function copyPackageTree(sourceDir, destDir, { containmentRoot, ancestorRealPaths }) {
   await fs.mkdir(destDir, { recursive: true });
   const entries = await fs.readdir(sourceDir, { withFileTypes: true });
   for (const entry of entries) {
@@ -253,7 +266,9 @@ async function copyPackageTree(sourceDir, destDir, { containmentRoot, visitedRea
     const destPath = path.join(destDir, entry.name);
     if (!entry.isSymbolicLink()) {
       if (entry.isDirectory()) {
-        await copyPackageTree(sourcePath, destPath, { containmentRoot, visitedRealPaths });
+        ancestorRealPaths.add(sourcePath);
+        await copyPackageTree(sourcePath, destPath, { containmentRoot, ancestorRealPaths });
+        ancestorRealPaths.delete(sourcePath);
       } else if (entry.isFile()) {
         await fs.copyFile(sourcePath, destPath);
       }
@@ -265,15 +280,16 @@ async function copyPackageTree(sourceDir, destDir, { containmentRoot, visitedRea
     } catch {
       continue; // dangling symlink target -- nothing to copy
     }
-    if (!isPathWithinRoot(realPath, containmentRoot) || visitedRealPaths.has(realPath)) {
+    if (!isPathWithinRoot(realPath, containmentRoot) || ancestorRealPaths.has(realPath)) {
       continue;
     }
-    visitedRealPaths.add(realPath);
-    const stat = await fs.stat(sourcePath);
+    const stat = await fs.stat(realPath);
     if (stat.isDirectory()) {
-      await copyPackageTree(sourcePath, destPath, { containmentRoot, visitedRealPaths });
+      ancestorRealPaths.add(realPath);
+      await copyPackageTree(realPath, destPath, { containmentRoot, ancestorRealPaths });
+      ancestorRealPaths.delete(realPath);
     } else if (stat.isFile()) {
-      await fs.copyFile(sourcePath, destPath);
+      await fs.copyFile(realPath, destPath);
     }
   }
 }

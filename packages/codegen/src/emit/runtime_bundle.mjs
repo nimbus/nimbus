@@ -12,10 +12,14 @@ import { buildRuntimeBundleSource } from "./runtime_bundle_parts.mjs";
 // ever triggers resolution of the specifiers it actually uses.
 //
 // That cross-lane risk only exists when the bundle is genuinely mixed: some
-// functions on the default lane, others on the node lane, sharing one
-// bundle.mjs. A bundle whose functions are ALL "node" has no such risk —
-// every function invoked against it already requires the node lane, so the
-// bundle is never loaded anywhere else. For that case we also emit bare
+// runtime-bearing surfaces on the default lane, others on the node lane,
+// sharing one bundle.mjs. A bundle whose surfaces are ALL node-lane has no
+// such risk — every function invoked against it already requires the node
+// lane, so the bundle is never loaded anywhere else. Functions are not the
+// only surface that counts: HTTP routes (convex/http.ts httpActions) always
+// execute on the default web-standard lane, so a manifest with any route at
+// all is loaded by a web isolate even when every function is "use node" —
+// see isSingleRuntimeNodeManifest below. For the all-node case we also emit bare
 // top-level imports of every Node binding specifier the manifest uses,
 // purely for their load-time side effects (see collectEagerNodeRuntimeImports
 // below): ES module semantics evaluate that module graph once, before the
@@ -43,9 +47,19 @@ function collectEagerNodeRuntimeImports(manifest) {
   return isSingleRuntimeNodeManifest(manifest) ? collectNodeRuntimeSpecifiers(manifest) : [];
 }
 
+// "Single-runtime Node" means every runtime-bearing surface of the manifest
+// loads on the node lane. HTTP routes carry no runtime_environment because
+// httpActions always run on the default web-standard runtime, so any route
+// makes the bundle load in a web isolate — where an eager top-level
+// `import "node:*"` would fail module linking for the whole bundle.
 function isSingleRuntimeNodeManifest(manifest) {
   const functions = manifest.functions ?? [];
-  return functions.length > 0 && functions.every((fn) => fn.runtime_environment === "node");
+  const routes = manifest.routes ?? [];
+  return (
+    functions.length > 0
+    && functions.every((fn) => fn.runtime_environment === "node")
+    && routes.length === 0
+  );
 }
 
 // The Bun/JSC program bundle is a flat, non-module script (no import/export
