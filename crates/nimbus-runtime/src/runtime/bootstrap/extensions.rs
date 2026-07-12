@@ -19,7 +19,7 @@ use super::node22_runtime::node22_runtime_bootstrap_extension;
 use super::ops::runtime_test_extension;
 use super::ops::{runtime_extension, service_extension};
 use super::state::{
-    InstalledRuntimeEgressGateway, RuntimeInvocationHostCallBinding,
+    InstalledRuntimeContract, InstalledRuntimeEgressGateway, RuntimeInvocationHostCallBinding,
     install_missing_deno_extension_state,
 };
 use super::web_standard_runtime::web_standard_runtime_bootstrap_extension;
@@ -361,6 +361,25 @@ fn nimbus_fetch_egress_gateway_hook(
     state: &mut deno_core::OpState,
     request: deno_fetch::FetchEgressGatewayRequest<'_>,
 ) -> Result<deno_fetch::FetchEgressGatewayAuthorization, JsErrorBox> {
+    // Convex default-runtime contract: `fetch` is available in actions only.
+    // This is a semantics gate IN FRONT of the egress gateway — actions that
+    // pass it still go through the full tenant egress policy below (which
+    // stays deny-by-default); queries and mutations fail closed here even
+    // when the tenant policy would allow the host.
+    if let Some(contract) = state.try_borrow::<InstalledRuntimeContract>()
+        && matches!(
+            contract.limits.guest_semantics,
+            crate::limits::RuntimeGuestSemantics::ConvexDefault
+        )
+        && let Some(kind) = state
+            .try_borrow::<RuntimeInvocationHostCallBinding>()
+            .and_then(RuntimeInvocationHostCallBinding::invocation_kind)
+        && matches!(kind, "query" | "paginated_query" | "mutation")
+    {
+        return Err(JsErrorBox::generic(
+            "Can't use fetch() in queries and mutations. Please consider using an action.",
+        ));
+    }
     let Some(installed) = state.try_borrow::<InstalledRuntimeEgressGateway>() else {
         return Err(JsErrorBox::generic("fetch egress gateway is not installed"));
     };

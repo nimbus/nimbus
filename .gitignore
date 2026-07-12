@@ -63,7 +63,7 @@ test-results/
 playwright-report/
 .env.local
 **/.env.local
-demos/convex/vendor/browser.bundle.js
+examples/convex/vendor/browser.bundle.js
 # Local runtime and machine state
 data/
 

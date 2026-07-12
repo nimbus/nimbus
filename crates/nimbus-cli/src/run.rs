@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -14,10 +15,7 @@ use crate::function_scaling::{
     load_config, load_optional_policy, resolve_function_scaling_intent,
 };
 use crate::local_server_client::LocalServerHttpClient;
-use crate::target_context::{
-    DEPLOY_URL_ENV, TARGET_ENV, TargetContext, TargetContextKind, TargetContextSource,
-    TargetSelector,
-};
+use crate::target_context::{TargetContext, TargetContextKind, TargetSelector};
 
 #[derive(Debug, Args)]
 #[command(
@@ -129,21 +127,7 @@ fn resolve_run_target_with_env(
     command: &RunCommand,
     env_lookup: impl Fn(&str) -> Option<String>,
 ) -> Result<TargetContext, Error> {
-    command
-        .target
-        .resolve("run", |name| env_lookup(name))
-        .or_else(|error| {
-            if has_explicit_run_target(&command.target)
-                || env_lookup(TARGET_ENV).is_some()
-                || env_lookup(DEPLOY_URL_ENV).is_some()
-            {
-                return Err(error);
-            }
-            Ok(TargetContext {
-                kind: TargetContextKind::LocalDiscovery,
-                source: TargetContextSource::ImplicitLocalDefault,
-            })
-        })
+    command.target.resolve("run", |name| env_lookup(name))
 }
 
 async fn run_function_command(
@@ -172,17 +156,17 @@ async fn run_function_command(
         command.cursor.as_deref(),
     );
     let response = invoke_run_function(&target, &command.tenant, kind, &payload).await?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&response).map_err(|error| Error::Internal(format!(
-            "failed to render function result: {error}"
-        )))?
-    );
-    Ok(())
+    write_run_result(&response, &mut io::stdout().lock())
 }
 
-fn has_explicit_run_target(target: &TargetSelector) -> bool {
-    target.local || target.target.is_some() || target.url.is_some()
+/// Render the function result to `out` as pretty JSON and nothing else. This is
+/// the stdout payload: the banner never travels this path, so a consumer that
+/// pipes stdout gets clean JSON.
+fn write_run_result(response: &Value, out: &mut impl Write) -> Result<(), Error> {
+    let rendered = serde_json::to_string_pretty(response)
+        .map_err(|error| Error::Internal(format!("failed to render function result: {error}")))?;
+    writeln!(out, "{rendered}")
+        .map_err(|error| Error::Internal(format!("failed to write function result: {error}")))
 }
 
 fn parse_json_args(command: &RunFunctionsCommand) -> Result<Value, Error> {
@@ -279,18 +263,40 @@ async fn invoke_run_function(
             let client = LocalServerHttpClient::discover(&paths, reqwest::Client::new())?
                 .ok_or_else(|| {
                     Error::InvalidInput(
-                        "no running local Nimbus server was found; start one with `nimbus dev` or `nimbus start`, or pass --url".to_string(),
+                        "no running local Nimbus server was found; start one with `nimbus dev` or `nimbus start`, or pass a TARGET URL".to_string(),
                     )
                 })?;
+            emit_run_target_banner(target, client.base_url());
             client.post_json(&path, payload).await
         }
         TargetContextKind::RemoteUrl(base_url) => {
+            emit_run_target_banner(target, base_url);
             invoke_remote_run_function(base_url, &path, payload).await
         }
-        TargetContextKind::NamedTarget(target) => Err(Error::InvalidInput(format!(
-            "named target `{target}` is not yet backed by a target registry; pass --local or --url"
-        ))),
+        TargetContextKind::NamedTarget(name) => {
+            let base_url = crate::targets::resolve_named_target_url(name)?;
+            emit_run_target_banner(target, &base_url);
+            invoke_remote_run_function(&base_url, &path, payload).await
+        }
     }
+}
+
+/// Print the resolved-target banner to stderr (never stdout, which carries the
+/// function result JSON) so the destination is explicit even when implicit.
+fn emit_run_target_banner(target: &TargetContext, resolved_url: &str) {
+    let _ = write_run_banner(target, resolved_url, &mut io::stderr().lock());
+}
+
+/// Render the resolved-target banner to `out` (the stderr sink in production).
+/// Kept separate from [`write_run_result`] so a test can prove the banner and
+/// the result JSON go to different sinks and never contaminate each other.
+fn write_run_banner(
+    target: &TargetContext,
+    resolved_url: &str,
+    out: &mut impl Write,
+) -> io::Result<()> {
+    let banner = crate::targets::resolved_target_banner("Running against", target, resolved_url);
+    writeln!(out, "{banner}")
 }
 
 async fn invoke_remote_run_function(
@@ -355,9 +361,7 @@ mod tests {
 
     #[test]
     fn run_command_resolves_target() {
-        let cli = Cli::parse_from([
-            "nimbus", "run", "--target", "dev", "exec", "--", "npm", "test",
-        ]);
+        let cli = Cli::parse_from(["nimbus", "run", "dev", "exec", "--", "npm", "test"]);
         let Command::Run(command) = cli.command else {
             panic!("run command should parse");
         };
@@ -380,7 +384,6 @@ mod tests {
         let cli = Cli::parse_from([
             "nimbus",
             "run",
-            "--local",
             "functions",
             "messages:send",
             "{\"body\":\"hello\"}",
@@ -473,6 +476,43 @@ mod tests {
     }
 
     #[test]
+    fn run_banner_goes_to_its_own_sink_and_result_stdout_stays_clean_json() {
+        use crate::target_context::{TargetContext, TargetContextKind, TargetContextSource};
+
+        let target = TargetContext {
+            kind: TargetContextKind::RemoteUrl("https://nimbus.example.test".to_owned()),
+            source: TargetContextSource::PositionalUrl,
+        };
+
+        // The banner sink carries only the one-line banner.
+        let mut banner_sink = Vec::new();
+        super::write_run_banner(&target, "https://nimbus.example.test", &mut banner_sink)
+            .expect("banner should write");
+        let banner = String::from_utf8(banner_sink).unwrap();
+        assert_eq!(
+            banner.trim_end(),
+            "Running against https://nimbus.example.test (from TARGET)"
+        );
+
+        // The result sink carries only the JSON — it parses, and never carries
+        // the banner text, so piping stdout yields clean JSON.
+        let mut result_sink = Vec::new();
+        super::write_run_result(
+            &serde_json::json!({ "ok": true, "value": 7 }),
+            &mut result_sink,
+        )
+        .expect("result should write");
+        let stdout = String::from_utf8(result_sink).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&stdout).expect("stdout must be valid JSON only");
+        assert_eq!(parsed, serde_json::json!({ "ok": true, "value": 7 }));
+        assert!(
+            !stdout.contains("Running against"),
+            "result stdout must never carry the banner: {stdout}"
+        );
+    }
+
+    #[test]
     fn paginated_query_payload_uses_convex_named_paginated_shape() {
         let payload = super::RunFunctionKind::PaginatedQuery.payload(
             "messages:listPage",
@@ -532,7 +572,7 @@ workloads:
         .expect("policy fixture should write");
         let target = crate::target_context::TargetContext {
             kind: crate::target_context::TargetContextKind::LocalDiscovery,
-            source: crate::target_context::TargetContextSource::ExplicitLocalFlag,
+            source: crate::target_context::TargetContextSource::ImplicitLocalDefault,
         };
 
         let error = super::run_function_command(

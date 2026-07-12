@@ -1,6 +1,22 @@
 use super::*;
 use crate::ws::NegotiatedWebSocketProtocol;
 
+// Subscription results must match the Convex wire format the HTTP routes
+// emit — in particular, table-scoped `_id` values — so builtin transforms
+// receive documents converted exactly like a direct query response.
+fn convex_snapshot_documents(
+    snapshot: &nimbus_core::SubscriptionResultSnapshot,
+) -> Result<Vec<serde_json::Value>, String> {
+    snapshot
+        .documents
+        .iter()
+        .cloned()
+        .map(|document| {
+            nimbus_convex::document_to_convex_json(document).map_err(|error| error.to_string())
+        })
+        .collect()
+}
+
 pub(super) async fn unsubscribe_active_subscriptions(
     service: &Arc<nimbus_engine::Engine>,
     tenant_id: &TenantId,
@@ -62,26 +78,31 @@ pub(super) async fn run_subscription_forwarder(
                 )
                 .await;
                 let request_id_for_transform = request_id.clone();
-                match apply_subscription_transform(
-                    RuntimeTransformContext {
-                        engine: &service,
-                        registry: &registry,
-                        runtime_service_registry: &runtime_service_registry,
-                        tenant_context: &tenant_context,
-                        transforms: &transforms,
-                        runtime_cancellation: &runtime_cancellation,
-                        tenant_isolation_mode,
-                        event: ConvexSubscriptionEvent {
-                            subscription_id,
-                            request_id: request_id_for_transform.as_deref(),
-                            commit: commit_hint.as_ref(),
-                            deleted_documents: &snapshot.deleted_documents,
-                        },
-                    },
-                    snapshot.to_json_documents(),
-                )
-                .await
-                {
+                let transform_result = match convex_snapshot_documents(&snapshot) {
+                    Ok(documents) => {
+                        apply_subscription_transform(
+                            RuntimeTransformContext {
+                                engine: &service,
+                                registry: &registry,
+                                runtime_service_registry: &runtime_service_registry,
+                                tenant_context: &tenant_context,
+                                transforms: &transforms,
+                                runtime_cancellation: &runtime_cancellation,
+                                tenant_isolation_mode,
+                                event: ConvexSubscriptionEvent {
+                                    subscription_id,
+                                    request_id: request_id_for_transform.as_deref(),
+                                    commit: commit_hint.as_ref(),
+                                    deleted_documents: &snapshot.deleted_documents,
+                                },
+                            },
+                            documents,
+                        )
+                        .await
+                    }
+                    Err(message) => Err(message),
+                };
+                match transform_result {
                     Ok(Some(data)) => ServerMessage::SubscriptionResult {
                         subscription_id,
                         request_id,

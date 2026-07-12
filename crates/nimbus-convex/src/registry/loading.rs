@@ -361,12 +361,34 @@ fn load_runtime_bundle(bundle_path: &Path) -> Result<RuntimeBundle, Error> {
             hash_path.display()
         ))
     })?;
-    RuntimeBundle::with_expected_sha256(bundle_path, expected_sha256).map_err(|error| {
-        Error::InvalidInput(format!(
-            "failed to load convex runtime bundle {}: {error}",
-            bundle_path.display()
-        ))
-    })
+    let bundle =
+        RuntimeBundle::with_expected_sha256(bundle_path, expected_sha256).map_err(|error| {
+            Error::InvalidInput(format!(
+                "failed to load convex runtime bundle {}: {error}",
+                bundle_path.display()
+            ))
+        })?;
+    Ok(bundle.with_deploy_nonce(capture_deploy_nonce()))
+}
+
+/// Capture a genuine per-deploy nonce for the import-time seed.
+///
+/// A deploy rewrites the bundle artifacts and reloads the Convex registry, so
+/// each deploy runs this exactly once and every invocation of that deploy then
+/// shares the one registry-held [`RuntimeBundle`] (and its nonce) — per-deploy
+/// freshness with per-invocation determinism. The nonce is derived from a
+/// process-monotonic counter plus the wall clock, so two deploys are distinct
+/// even when their source is byte-identical and their entrypoint mtime is
+/// unchanged — the case the previous mtime-only seed collided on.
+fn capture_deploy_nonce() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static DEPLOY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let sequence = DEPLOY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    format!("{sequence:016x}{nanos:032x}")
 }
 
 fn read_schema_manifest(path: &Path) -> Result<Option<Schema>, Error> {

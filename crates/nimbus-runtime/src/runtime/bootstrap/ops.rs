@@ -27,8 +27,8 @@ use self::async_query::{
 use self::async_runtime_extension::op_nimbus_runtime_extension_call;
 use self::async_services::op_nimbus_ctx_service_lookup;
 use self::nested_runtime::{
-    op_nimbus_ctx_run_action, op_nimbus_ctx_run_mutation, op_nimbus_ctx_run_query,
-    op_nimbus_ctx_runtime_enter_nested_call,
+    op_nimbus_ctx_resolve_callee_lane, op_nimbus_ctx_run_action, op_nimbus_ctx_run_mutation,
+    op_nimbus_ctx_run_query, op_nimbus_ctx_runtime_enter_nested_call,
 };
 use self::runtime_local::{
     op_bootstrap_color_depth, op_bootstrap_unstable_args, op_http_start, op_nimbus_runtime_chmod,
@@ -51,7 +51,7 @@ use self::runtime_local::{
 };
 use self::shared::{
     op_nimbus_runtime_contract, op_nimbus_runtime_host_call_session_id,
-    op_nimbus_runtime_wait_until_pending,
+    op_nimbus_runtime_invocation_determinism, op_nimbus_runtime_wait_until_pending,
 };
 use self::sync_query_builder::{
     op_nimbus_ctx_query_filter, op_nimbus_ctx_query_order, op_nimbus_ctx_query_start,
@@ -104,11 +104,13 @@ extension!(
         op_nimbus_ctx_scheduler_run_at,
         op_nimbus_ctx_scheduler_cancel,
         op_nimbus_ctx_runtime_enter_nested_call,
+        op_nimbus_ctx_resolve_callee_lane,
         op_nimbus_ctx_run_query,
         op_nimbus_ctx_run_mutation,
         op_nimbus_ctx_run_action,
         op_nimbus_runtime_contract,
         op_nimbus_runtime_host_call_session_id,
+        op_nimbus_runtime_invocation_determinism,
         op_nimbus_runtime_wait_until_pending,
         op_nimbus_runtime_fs_read_file,
         op_nimbus_runtime_fs_write_file,

@@ -19,7 +19,14 @@ impl ConvexHostBridge {
         match query {
             ConvexExecutableQuery::Query(query) => self.record_query_read(query),
             ConvexExecutableQuery::Read(ConvexReadCommand::Get { table, id }) => {
-                self.record_document_read(table, id);
+                // Get plans carry the protocol-facing table-scoped id, but
+                // commits intersect on raw storage ids — record the resolved
+                // form so a null read still invalidates when the document
+                // later appears. An unresolvable id fails the same invocation
+                // in the executor, and failed invocations install no read set.
+                if let Ok(resolved) = resolve_convex_document_id(table, id.clone()) {
+                    self.record_document_read(table, &resolved.into_document_id());
+                }
             }
             ConvexExecutableQuery::Read(ConvexReadCommand::First { query })
             | ConvexExecutableQuery::Read(ConvexReadCommand::Unique { query }) => {

@@ -190,7 +190,7 @@ fn cli_help_describes_codegen_machine_and_compose_surface() {
     assert!(rendered.contains("nimbus start"));
     assert!(rendered.contains("nimbus dev"));
     assert!(rendered.contains("nimbus run"));
-    assert!(rendered.contains("nimbus codegen --app ./demos/convex/html"));
+    assert!(rendered.contains("nimbus codegen --app ./examples/convex/html"));
     assert!(rendered.contains("nimbus token rotate"));
     assert!(rendered.contains("nimbus machine start"));
     assert!(rendered.contains("nimbus compose up"));
@@ -290,8 +290,8 @@ fn cli_parses_start_command_with_multiple_compose_files_in_order() {
 
 #[test]
 fn cli_parses_start_command_with_app_dir() {
-    let cli = parse_start(["nimbus", "start", "--app-dir", "./demos/convex/html"]);
-    assert_eq!(cli.app_dir, Some(PathBuf::from("./demos/convex/html")));
+    let cli = parse_start(["nimbus", "start", "--app-dir", "./examples/convex/html"]);
+    assert_eq!(cli.app_dir, Some(PathBuf::from("./examples/convex/html")));
 }
 
 #[test]
@@ -309,10 +309,10 @@ fn cli_parses_start_command_with_skip_codegen() {
         "nimbus",
         "start",
         "--app-dir",
-        "./demos/convex/html",
+        "./examples/convex/html",
         "--skip-codegen",
     ]);
-    assert_eq!(cli.app_dir, Some(PathBuf::from("./demos/convex/html")));
+    assert_eq!(cli.app_dir, Some(PathBuf::from("./examples/convex/html")));
     assert!(cli.skip_codegen);
 }
 
@@ -618,6 +618,7 @@ fn adapterless_enablement() -> crate::start::adapters::AdapterEnablement {
         firebase: None,
         cloudflare: None,
         convex_tenancy: None,
+        convex_tenancy_notice: None,
         mongodb: None,
         dynamodb: None,
         s3: None,
@@ -935,10 +936,10 @@ fn cli_parses_codegen_command_with_explicit_app_dir() {
         "nimbus",
         "codegen",
         "--app",
-        "./demos/convex/html",
+        "./examples/convex/html",
         "--debug-node-apis",
     ]);
-    assert_eq!(cli.app, PathBuf::from("./demos/convex/html"));
+    assert_eq!(cli.app, PathBuf::from("./examples/convex/html"));
     assert!(cli.debug_node_apis);
 }
 
@@ -959,8 +960,8 @@ fn start_help_shows_app_dir_flag_name() {
     assert!(rendered.contains("--host"));
     assert!(rendered.contains("--app-dir"));
     assert!(rendered.contains("--skip-codegen"));
-    assert!(rendered.contains("nimbus start --app-dir ./demos/convex/html"));
-    assert!(rendered.contains("nimbus start --app-dir ./demos/convex/html --skip-codegen"));
+    assert!(rendered.contains("nimbus start --app-dir ./examples/convex/html"));
+    assert!(rendered.contains("nimbus start --app-dir ./examples/convex/html --skip-codegen"));
     assert!(rendered.contains("COMPOSE_FILE"));
     assert!(!rendered.contains("--convex-app-dir"));
 }

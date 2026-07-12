@@ -35,7 +35,7 @@ From your app directory, point a dry run at the server:
 
 ```bash
 cd my-app
-nimbus deploy --url http://127.0.0.1:8080 --dry-run
+nimbus deploy http://127.0.0.1:8080 --dry-run
 ```
 
 `nimbus deploy` runs codegen inside the binary, packages your functions,
@@ -53,7 +53,7 @@ read from the local token file automatically.
 Same command, without the flag:
 
 ```bash
-nimbus deploy --url http://127.0.0.1:8080
+nimbus deploy http://127.0.0.1:8080
 ```
 
 The server stages the artifacts, validates them — manifests, routes,
@@ -68,7 +68,7 @@ reports why.
 Run the dry run again:
 
 ```bash
-nimbus deploy --url http://127.0.0.1:8080 --dry-run
+nimbus deploy http://127.0.0.1:8080 --dry-run
 ```
 
 The diff now reports no added, changed, or removed functions or routes —
@@ -87,7 +87,7 @@ For a server that isn't on your machine, two things change:
 
 ```bash
 nimbus auth login --url https://nimbus.example.com
-nimbus deploy --url https://nimbus.example.com --admin-token "$PROD_ADMIN_TOKEN"
+nimbus deploy https://nimbus.example.com --admin-token "$PROD_ADMIN_TOKEN"
 ```
 
 Provisioning the server itself is one binary and one systemd unit — see

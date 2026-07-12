@@ -433,6 +433,21 @@ pub enum RuntimeMemoryEnforcement {
     WasmtimeResourceLimiter,
 }
 
+/// Guest-visible semantics dialect for the executing bundle. `Host` keeps the
+/// platform's native behavior (real clocks, entropy-backed `Math.random`,
+/// kind-agnostic fetch). `ConvexDefault` opts the lane into the Convex default
+/// runtime's contract: seeded deterministic `Math.random`, system time frozen
+/// per invocation for queries/mutations, `performance.timeOrigin` pinned to
+/// the bundle deploy stamp, `fetch` restricted to actions, and the documented
+/// Node-API subset (`process.env`, `node:async_hooks`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeGuestSemantics {
+    #[default]
+    Host,
+    ConvexDefault,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeModuleStateSemantics {

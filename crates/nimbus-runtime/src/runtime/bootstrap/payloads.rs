@@ -12,6 +12,7 @@ pub(super) use crate::host::{
     RuntimeAsyncSchedulerRunAfterPayload, RuntimeAsyncSchedulerRunAtPayload,
     RuntimeAsyncServiceLookupPayload, RuntimeSyncNestedCallPayload, RuntimeSyncQueryFilterPayload,
     RuntimeSyncQueryOrderPayload, RuntimeSyncQueryStartPayload, RuntimeSyncQueryWithIndexPayload,
+    RuntimeSyncResolveCalleeLanePayload,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

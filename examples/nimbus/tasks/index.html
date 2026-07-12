@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="A live task list built with the native Nimbus SDK." />
+    <title>Nimbus Tasks</title>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <p class="eyebrow">Native Nimbus SDK</p>
+        <h1>Tasks that stay in sync.</h1>
+        <p class="lede">HTTP writes meet a live WebSocket view. Open this page twice and every change appears in both.</p>
+        <div class="connection"><span id="connection-dot"></span><span id="connection-status">Connecting…</span></div>
+      </header>
+
+      <section class="task-panel" aria-labelledby="tasks-heading">
+        <form id="task-form">
+          <label class="sr-only" for="task-text">Task description</label>
+          <input id="task-text" name="task" type="text" required autocomplete="off" placeholder="What needs doing?" />
+          <button type="submit">Add task</button>
+        </form>
+        <div class="list-heading">
+          <h2 id="tasks-heading">Your tasks</h2>
+          <span id="task-count">0 tasks</span>
+        </div>
+        <ul id="task-list" aria-live="polite"></ul>
+        <p id="empty-state">Nothing here yet. Add the first task.</p>
+      </section>
+
+      <p id="error-message" role="alert"></p>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

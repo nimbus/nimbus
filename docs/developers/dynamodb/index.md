@@ -178,6 +178,8 @@ from AWS deployments collapses to create-use.
 
 ## Next steps
 
+- [Example app](/developers/dynamodb/examples/) — the shared tasks list
+  driven by the stock AWS SDK.
 - [Feature coverage](/reference/dynamodb/feature-coverage/) — every
   supported operation, by tier.
 - [Divergences](/reference/dynamodb/divergences/) — the documented

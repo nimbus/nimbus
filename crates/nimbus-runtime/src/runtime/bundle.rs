@@ -11,9 +11,10 @@ use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
-    RuntimeExecutionModel, RuntimeJavaScriptEvaluationFormat, RuntimeLanguage, RuntimeLimits,
-    RuntimeMemoryEnforcement, RuntimeMode, RuntimeNodeFullRealmReusePolicy, RuntimePoolKind,
-    RuntimePreset, RuntimeProfile, RuntimeRoutingAffinity,
+    RuntimeExecutionModel, RuntimeGuestSemantics, RuntimeJavaScriptEvaluationFormat,
+    RuntimeLanguage, RuntimeLimits, RuntimeMemoryEnforcement, RuntimeMode,
+    RuntimeNodeFullRealmReusePolicy, RuntimePoolKind, RuntimePreset, RuntimeProfile,
+    RuntimeRoutingAffinity,
 };
 use crate::module_loader::BundleModuleCodeCache;
 
@@ -64,6 +65,13 @@ pub struct RuntimeBundleIdentity {
     entrypoint_kind: RuntimeBundleEntrypointKind,
     entrypoint: PathBuf,
     expected_sha256: Option<String>,
+    // The per-deploy nonce (see `with_deploy_nonce`). Part of the identity so
+    // warm-pool reuse — keyed on this identity — treats two deploys with
+    // byte-identical content but distinct nonces as distinct: a redeploy reseeds
+    // its import-time random stream, so a runtime warmed under the old nonce must
+    // never be handed back for the new deploy (EX10R3.2). Absent for
+    // hand-rolled/legacy bundles, which keep their historical identity.
+    deploy_nonce: Option<String>,
 }
 
 impl RuntimeBundleIdentity {
@@ -86,6 +94,10 @@ impl RuntimeBundleIdentity {
     pub fn expected_sha256(&self) -> Option<&str> {
         self.expected_sha256.as_deref()
     }
+
+    pub fn deploy_nonce(&self) -> Option<&str> {
+        self.deploy_nonce.as_deref()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -105,6 +117,26 @@ struct RuntimeBundleShared {
     expected_sha256: Option<String>,
     identity: RuntimeBundleIdentity,
     module_code_caches: Mutex<HashMap<RuntimeBundleEngineCacheKey, Arc<BundleModuleCodeCache>>>,
+    // A genuine per-deploy nonce, set once by the loader at bundle
+    // registration (see `with_deploy_nonce`). Mixed into the import-time seed
+    // so two distinct deploys reseed differently even when their content and
+    // entrypoint mtime are byte-identical. Absent for hand-rolled/legacy
+    // bundles, which keep the content+mtime seed.
+    deploy_nonce: std::sync::OnceLock<String>,
+    deploy_stamp: std::sync::OnceLock<RuntimeBundleDeployStamp>,
+}
+
+/// Deploy-stable identity for guest determinism semantics: the timestamp the
+/// bundle was deployed (entrypoint mtime — deploys rewrite the bundle file —
+/// falling back to first-observation time) and a content-derived seed (the
+/// bundle SHA-256). Both survive server restarts for the same deployed bundle,
+/// so import-time `Date.now()` / `Math.random()` values and
+/// `performance.timeOrigin` stay stable across runs per the Convex default
+/// runtime contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeBundleDeployStamp {
+    pub timestamp_ms: u64,
+    pub seed_hex: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -116,6 +148,7 @@ struct RuntimeBundleEngineCacheKey {
     content_kind: RuntimeBundleContentKind,
     javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat,
     compatibility_target: RuntimeCompatibilityTarget,
+    guest_semantics: RuntimeGuestSemantics,
     runtime_profile: Option<RuntimeProfile>,
     node_conditions: Vec<String>,
     execution_model: RuntimeExecutionModel,
@@ -161,6 +194,7 @@ impl RuntimeBundleEngineCacheKey {
             content_kind: limits.bundle_content_kind,
             javascript_evaluation_format: limits.javascript_evaluation_format,
             compatibility_target: limits.compatibility_target,
+            guest_semantics: limits.guest_semantics,
             runtime_profile: RuntimeProfile::for_limits(limits),
             node_conditions: limits.node_conditions.clone(),
             execution_model: limits.execution_model,
@@ -490,6 +524,27 @@ impl RuntimeBundle {
         tenant_label: Option<String>,
         explicit_module_root: Option<PathBuf>,
     ) -> Self {
+        Self::from_parts_with_nonce(
+            entrypoint,
+            content,
+            entrypoint_kind,
+            expected_sha256,
+            tenant_label,
+            explicit_module_root,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn from_parts_with_nonce(
+        entrypoint: PathBuf,
+        content: RuntimeBundleContent,
+        entrypoint_kind: RuntimeBundleEntrypointKind,
+        expected_sha256: Option<String>,
+        tenant_label: Option<String>,
+        explicit_module_root: Option<PathBuf>,
+        deploy_nonce: Option<String>,
+    ) -> Self {
         let content_kind = content.content_kind();
         let target_world = match &content {
             RuntimeBundleContent::JavaScript => None,
@@ -527,7 +582,12 @@ impl RuntimeBundle {
                 .clone()
                 .unwrap_or_else(|| entrypoint.clone()),
             expected_sha256: expected_sha256.clone(),
+            deploy_nonce: deploy_nonce.clone(),
         };
+        let deploy_nonce_cell = std::sync::OnceLock::new();
+        if let Some(nonce) = deploy_nonce {
+            let _ = deploy_nonce_cell.set(nonce);
+        }
         Self {
             shared: Arc::new(RuntimeBundleShared {
                 content,
@@ -539,8 +599,87 @@ impl RuntimeBundle {
                 expected_sha256,
                 identity,
                 module_code_caches: Mutex::new(HashMap::new()),
+                deploy_nonce: deploy_nonce_cell,
+                deploy_stamp: std::sync::OnceLock::new(),
             }),
         }
+    }
+
+    /// Attach a genuine per-deploy nonce, captured by the loader at bundle
+    /// registration and persisted with the bundle provenance. The nonce is
+    /// mixed into the import-time seed (see [`Self::deploy_stamp`]) so two
+    /// distinct deploys establish different import-time random streams even
+    /// when their content and entrypoint mtime are byte-identical — the mtime
+    /// is no longer the freshness signal. Set exactly once (the first deploy
+    /// nonce wins); it must be attached before the first `deploy_stamp` read
+    /// (i.e. before the first invocation), which the loader guarantees.
+    pub fn with_deploy_nonce(self, deploy_nonce: impl Into<String>) -> Self {
+        // Rebuild so the nonce participates in `RuntimeBundleIdentity`, which
+        // keys warm-pool reuse. Called at registration before any invocation, so
+        // discarding the fresh (empty) module-code caches and deploy stamp is
+        // free. The first deploy nonce wins: a bundle that already carries one
+        // keeps it.
+        if self.shared.deploy_nonce.get().is_some() {
+            return self;
+        }
+        let shared = &self.shared;
+        Self::from_parts_with_nonce(
+            shared.entrypoint.clone(),
+            shared.content.clone(),
+            shared.entrypoint_kind,
+            shared.expected_sha256.clone(),
+            shared.identity.tenant_label.clone(),
+            shared.canonical_module_root.clone(),
+            Some(deploy_nonce.into()),
+        )
+    }
+
+    /// The bundle's deploy stamp (see [`RuntimeBundleDeployStamp`]). Computed
+    /// once per bundle handle and cached; reading the file for the seed hash
+    /// only happens when no expected SHA-256 was recorded.
+    pub(crate) fn deploy_stamp(&self) -> RuntimeBundleDeployStamp {
+        self.shared
+            .deploy_stamp
+            .get_or_init(|| {
+                let entrypoint = self
+                    .shared
+                    .canonical_entrypoint
+                    .as_deref()
+                    .unwrap_or(&self.shared.entrypoint);
+                let timestamp_ms = std::fs::metadata(entrypoint)
+                    .and_then(|metadata| metadata.modified())
+                    .unwrap_or_else(|_| std::time::SystemTime::now())
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|elapsed| elapsed.as_millis().min(u64::MAX as u128) as u64)
+                    .unwrap_or(0);
+                let content_hash = match &self.shared.expected_sha256 {
+                    Some(sha256) => sha256.clone(),
+                    None => Self::compute_sha256_for_path(entrypoint).unwrap_or_else(|_| {
+                        compute_sha256_hex(entrypoint.to_string_lossy().as_bytes())
+                    }),
+                };
+                // The import-time random stream is a most-recent-DEPLOYMENT
+                // value, not a content property: a redeploy must reseed it even
+                // when the content is byte-identical. Freshness comes from the
+                // per-deploy nonce the loader captured at registration, NOT the
+                // entrypoint mtime — so two deploys that preserve the mtime, or
+                // land in the same millisecond, still reseed differently. The
+                // mtime remains the deploy timestamp guest code observes
+                // (`Date.now()` / `performance.timeOrigin`), where same-instant
+                // deploys legitimately share a value. Legacy bundles with no
+                // nonce keep the content+mtime seed.
+                let seed_hex = match self.shared.deploy_nonce.get() {
+                    Some(nonce) => compute_sha256_hex(
+                        format!("{content_hash}:{timestamp_ms}:{nonce}").as_bytes(),
+                    ),
+                    None => compute_sha256_hex(format!("{content_hash}:{timestamp_ms}").as_bytes()),
+                };
+                RuntimeBundleDeployStamp {
+                    timestamp_ms,
+                    seed_hex,
+                }
+            })
+            .clone()
     }
 
     pub(crate) fn module_code_cache(
@@ -616,4 +755,136 @@ fn compute_sha256_hex(bytes: &[u8]) -> String {
         encoded.push(HEX[(byte & 0x0f) as usize] as char);
     }
     encoded
+}
+
+#[cfg(test)]
+mod deploy_stamp_tests {
+    use super::*;
+
+    fn write_bundle(dir: &std::path::Path, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(
+            &path,
+            b"globalThis.__nimbusInvoke = async () => ({}); export {};",
+        )
+        .expect("bundle write should succeed");
+        path
+    }
+
+    #[test]
+    fn identical_content_and_mtime_reseed_differently_per_deploy_nonce() {
+        // Two deploys of byte-identical source with an identical entrypoint
+        // mtime: the mtime-based seed collided (M2). With a genuine per-deploy
+        // nonce the import-time seed must differ, while the deploy timestamp
+        // (which guest Date.now()/timeOrigin observes) legitimately stays equal.
+        let dir = tempfile::tempdir().expect("tempdir should create");
+        let path = write_bundle(dir.path(), "bundle.mjs");
+
+        let first = RuntimeBundle::new(&path).with_deploy_nonce("deploy-nonce-a");
+        let second = RuntimeBundle::new(&path).with_deploy_nonce("deploy-nonce-b");
+
+        let first_stamp = first.deploy_stamp();
+        let second_stamp = second.deploy_stamp();
+
+        assert_ne!(
+            first_stamp.seed_hex, second_stamp.seed_hex,
+            "distinct per-deploy nonces must reseed the import stream even for identical content+mtime",
+        );
+        assert_eq!(
+            first_stamp.timestamp_ms, second_stamp.timestamp_ms,
+            "the deploy timestamp stays the entrypoint mtime and is unaffected by the nonce",
+        );
+    }
+
+    #[test]
+    fn same_deploy_nonce_is_stable_across_reconstruction() {
+        // Per-invocation / cross-restart determinism: the same deployed
+        // artifact (same content, mtime, and persisted nonce) must reseed
+        // identically no matter how many times the bundle handle is rebuilt.
+        let dir = tempfile::tempdir().expect("tempdir should create");
+        let path = write_bundle(dir.path(), "bundle.mjs");
+
+        let first = RuntimeBundle::new(&path).with_deploy_nonce("stable-nonce");
+        let second = RuntimeBundle::new(&path).with_deploy_nonce("stable-nonce");
+
+        assert_eq!(
+            first.deploy_stamp().seed_hex,
+            second.deploy_stamp().seed_hex,
+            "an identical persisted nonce must keep the import seed stable across reconstruction",
+        );
+    }
+
+    #[test]
+    fn deploy_nonce_participates_in_bundle_identity() {
+        // Warm-pool reuse is keyed on `RuntimeBundleIdentity` (see
+        // warm_pool.rs / RuntimePoolPartitionKey). Two deploys of byte-identical
+        // content but distinct nonces must therefore have distinct identities, or
+        // a runtime warmed and reseeded under the old nonce could be handed back
+        // for the new deploy (EX10R3.2).
+        let dir = tempfile::tempdir().expect("tempdir should create");
+        let path = write_bundle(dir.path(), "bundle.mjs");
+
+        let first = RuntimeBundle::new(&path).with_deploy_nonce("nonce-a");
+        let second = RuntimeBundle::new(&path).with_deploy_nonce("nonce-b");
+        let first_again = RuntimeBundle::new(&path).with_deploy_nonce("nonce-a");
+
+        assert_ne!(
+            first.identity(),
+            second.identity(),
+            "distinct deploy nonces must yield distinct bundle identities",
+        );
+        assert_eq!(
+            first.identity(),
+            first_again.identity(),
+            "the same deploy nonce must yield an equal bundle identity",
+        );
+        assert_eq!(first.identity().deploy_nonce(), Some("nonce-a"));
+
+        // A bundle with no nonce keeps its historical (nonce-free) identity, and
+        // is distinct from any nonce-carrying deploy of the same file.
+        let legacy = RuntimeBundle::new(&path);
+        assert_eq!(legacy.identity().deploy_nonce(), None);
+        assert_ne!(legacy.identity(), first.identity());
+    }
+
+    #[test]
+    fn first_deploy_nonce_wins_and_survives_reattachment() {
+        // The nonce is set once at registration; a second attach must not
+        // silently replace it (which would desync identity from the live seed).
+        let dir = tempfile::tempdir().expect("tempdir should create");
+        let path = write_bundle(dir.path(), "bundle.mjs");
+
+        let bundle = RuntimeBundle::new(&path)
+            .with_deploy_nonce("first")
+            .with_deploy_nonce("second");
+        assert_eq!(bundle.identity().deploy_nonce(), Some("first"));
+        assert_eq!(
+            bundle.deploy_stamp().seed_hex,
+            RuntimeBundle::new(&path)
+                .with_deploy_nonce("first")
+                .deploy_stamp()
+                .seed_hex,
+            "the retained nonce must drive the import seed",
+        );
+    }
+
+    #[test]
+    fn missing_nonce_preserves_legacy_content_and_mtime_seed() {
+        // Bundles with no nonce (hand-rolled/legacy) keep the historical seed
+        // so their behavior is unchanged by this fix.
+        let dir = tempfile::tempdir().expect("tempdir should create");
+        let path = write_bundle(dir.path(), "bundle.mjs");
+
+        let bundle = RuntimeBundle::new(&path);
+        let stamp = bundle.deploy_stamp();
+
+        let content_hash =
+            RuntimeBundle::compute_sha256_for_path(&path).expect("content hash should compute");
+        let expected =
+            compute_sha256_hex(format!("{content_hash}:{}", stamp.timestamp_ms).as_bytes());
+        assert_eq!(
+            stamp.seed_hex, expected,
+            "a bundle without a deploy nonce must keep the content+mtime seed",
+        );
+    }
 }

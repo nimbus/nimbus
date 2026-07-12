@@ -295,6 +295,26 @@ const __nimbusInstallRuntimeContractGlobals = function __nimbusInstallRuntimeCon
     return;
   }
   const compatibilityTarget = contract.compatibility_target;
+  // The manifest-vocabulary runtime lane this isolate executes
+  // ("default" | "node" | "bun"), matching per-function
+  // `runtime_environment` values in generated bundle manifests. The nested
+  // ctx.run* dispatcher compares callee metadata against this to decide
+  // between same-isolate local dispatch and host (engine-path) dispatch.
+  // Host-held and frozen so guest code cannot redirect lane routing; a
+  // repeat install (fresh realm) redefines with the identical value, which
+  // the property model permits.
+  const runtimeEnvironmentLane =
+    typeof compatibilityTarget === "string" && /^node\d+$/.test(compatibilityTarget)
+      ? "node"
+      : compatibilityTarget === "bun_jsc"
+        ? "bun"
+        : "default";
+  Object.defineProperty(globalThis, "__nimbusRuntimeEnvironmentLane", {
+    value: runtimeEnvironmentLane,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
   const nodeApiContract =
     contract.node_api_contract && typeof contract.node_api_contract === "object"
       ? contract.node_api_contract
@@ -450,6 +470,30 @@ const __nimbusInstallRuntimeContractGlobals = function __nimbusInstallRuntimeCon
   delete globalThis.Buffer;
   delete globalThis.global;
   delete globalThis.process;
+  if (contract.guest_semantics === "convex_default") {
+    // Convex default runtime Node-API subset: `process.env` only (backed by
+    // the same capability-gated env proxy as the Node lanes). No versions,
+    // release, cwd, or Buffer — this is not a Node environment.
+    const convexProcess = {};
+    Object.defineProperty(convexProcess, "env", {
+      value: __nimbusCreateProcessEnvProxy(),
+      configurable: true,
+      enumerable: true,
+      writable: false,
+    });
+    Object.defineProperty(convexProcess, Symbol.toStringTag, {
+      value: "process",
+      configurable: false,
+      enumerable: false,
+      writable: true,
+    });
+    Object.defineProperty(globalThis, "process", {
+      value: convexProcess,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+  }
 };
 
 Object.freeze(__nimbusInstallRuntimeContractGlobals);

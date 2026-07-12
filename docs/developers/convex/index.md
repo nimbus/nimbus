@@ -151,6 +151,8 @@ invoked the same way with `useMutation`, `useAction`, or `client.mutation`.
 
 ## Next steps
 
+- [Example apps](/developers/convex/examples/) — runnable React, browser, and
+  Node apps, plus the shared tasks list.
 - [Migrate a Convex app](/developers/convex/migrate/) — bring an existing
   project over.
 - [Project layout](/reference/convex/project-layout/) — every file

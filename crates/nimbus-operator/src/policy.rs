@@ -7,7 +7,7 @@ const FIRESTORE_LISTEN_METHOD_PATH: &str = "/google.firestore.v1.Firestore/Liste
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LocalServerRouteFamily {
     Health,
-    Demos,
+    Examples,
     Ui,
     UiAuthSession,
     NativeApi,
@@ -28,8 +28,8 @@ impl LocalServerRouteFamily {
         if path == "/health" {
             return Self::Health;
         }
-        if path == "/demos" || path.starts_with("/demos/") {
-            return Self::Demos;
+        if path == "/examples" || path.starts_with("/examples/") {
+            return Self::Examples;
         }
         if path == "/ui/auth/session" || path == "/ui/auth/launch-ticket" || path == "/ui/launch" {
             return Self::UiAuthSession;
@@ -82,13 +82,13 @@ impl LocalServerRouteFamily {
     }
 
     pub fn requires_origin_allowlist(self) -> bool {
-        !matches!(self, Self::Health | Self::Demos)
+        !matches!(self, Self::Health | Self::Examples)
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Health => "health",
-            Self::Demos => "demos",
+            Self::Examples => "examples",
             Self::Ui => "ui",
             Self::UiAuthSession => "ui_auth_session",
             Self::NativeApi => "native_api",

@@ -124,23 +124,25 @@ environments (`$CI` or `$NO_BROWSER` set, or stdout is not a TTY).
 ## nimbus deploy
 
 ```bash
-nimbus deploy [flags]
+nimbus deploy [TARGET] [flags]
 ```
 
-Packages generated app artifacts and pushes them to an explicit self-hosted
-Nimbus instance, printing a diff of functions, HTTP routes, schema, and
-runtime-bundle changes. The target URL and token resolve from flags first,
-then environment variables; tokens stored by `nimbus auth login` are used
-when `NIMBUS_DEPLOY_TOKEN` is unset. The deploy route also requires the
+Packages generated app artifacts and pushes them to a self-hosted Nimbus
+instance, printing a diff of functions, HTTP routes, schema, and
+runtime-bundle changes. The target resolves from the positional `TARGET` (a
+URL or a configured target name) first, then the `NIMBUS_TARGET` /
+`NIMBUS_TARGET_URL` environment variables, and defaults to the running local
+server when omitted; the token resolves from `--token`, then
+`NIMBUS_DEPLOY_TOKEN`, then tokens stored by `nimbus auth login`. The deploy route also requires the
 server's local admin token: when the target URL is a loopback address on
 the same machine, `nimbus deploy` reads it from the local token file
 automatically; for a remote server, pass `--admin-token` or set
 `NIMBUS_ADMIN_TOKEN`. The server-side contract is documented in
 [Deploy & admin API](/reference/deploy-admin-api/).
 
-| Flag | Env var | Default | What it does |
+| Argument / Flag | Env var | Default | What it does |
 | --- | --- | --- | --- |
-| `--url` | `NIMBUS_DEPLOY_URL` | required | Target Nimbus server URL. |
+| `TARGET` (positional) | `NIMBUS_TARGET` / `NIMBUS_TARGET_URL` | local server | URL or configured target name; omitted deploys to the running local server. |
 | `--token` | `NIMBUS_DEPLOY_TOKEN` | credentials file | Deploy admin bearer token. |
 | `--admin-token` | `NIMBUS_ADMIN_TOKEN` | local token file (loopback targets) | Local admin token sent as `X-Nimbus-Admin-Token`. |
 | `--app-dir` | — | auto-detected | App directory containing a `nimbus/` or `convex/` source root. |
@@ -151,21 +153,19 @@ automatically; for a remote server, pass `--admin-token` or set
 ## nimbus run
 
 ```bash
-nimbus run [--local|--target TARGET|--url URL] functions <selector> [jsonArgs] [flags]
+nimbus run [TARGET] functions <selector> [jsonArgs] [flags]
 ```
 
-Invokes a Nimbus function on a selected target. `--local`, `--target`, and
-`--url` are mutually exclusive target sources. If none is provided, `nimbus run
-functions` discovers a running local Nimbus server. `NIMBUS_TARGET` and
-`NIMBUS_DEPLOY_URL` are also accepted as target sources.
+Invokes a Nimbus function on a selected target. `TARGET` is one optional
+positional: a URL (`http`/`https`), a configured target name (see
+`nimbus target`), or omitted to discover the running local server.
+`NIMBUS_TARGET` and `NIMBUS_TARGET_URL` are accepted as env fallbacks.
 
 Most-used flags:
 
-| Flag | Env var | Default | What it does |
+| Argument / Flag | Env var | Default | What it does |
 | --- | --- | --- | --- |
-| `--local` | — | `false` | Resolve against the currently running local Nimbus server. |
-| `--target` | `NIMBUS_TARGET` | unset | Named Nimbus target configured for this machine. |
-| `--url` | `NIMBUS_DEPLOY_URL` | unset | Explicit Nimbus server URL. |
+| `TARGET` (positional) | `NIMBUS_TARGET` / `NIMBUS_TARGET_URL` | local server | URL or configured target name; omitted resolves the running local server. |
 | `--kind` | — | inferred | Function kind: `query`, `paginated-query`, `mutation`, or `action`. |
 | `--tenant` | — | `demo` | Tenant id to invoke. |
 | `--app` | — | current directory | App directory used for generated function-kind inference. |
@@ -180,14 +180,16 @@ path.
 ## nimbus sandbox
 
 ```bash
-nimbus sandbox create [--local|--target TARGET|--url URL] --template NAME
-nimbus sandbox list [--local|--target TARGET|--url URL]
+nimbus sandbox create [TARGET] --template NAME
+nimbus sandbox list [TARGET]
 ```
 
 Reserves the top-level sandbox resource namespace and target-resolution contract.
-The commands parse and resolve targets through the same `TargetContext` seam as
-`nimbus run`, then fail actionably until sandbox lifecycle execution is owned by
-the service/sandbox/node workload-control path.
+`TARGET` is one optional positional — a URL or a configured target name; omitted
+resolves the running local server — exactly like `nimbus run`. The commands
+parse and resolve targets through the same `TargetContext` seam as `nimbus run`,
+then fail actionably until sandbox lifecycle execution is owned by the
+service/sandbox/node workload-control path.
 
 ## nimbus codegen
 

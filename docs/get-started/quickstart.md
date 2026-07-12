@@ -77,6 +77,8 @@ queries and mutations from a single local process.
 
 - [Deploy to production](/get-started/deploy/) — take this app from
   `nimbus dev` to a production server with one command.
+- [Convex example apps](/developers/convex/examples/) — runnable apps,
+  including the shared tasks list with a live reactive query.
 - [Developers](/developers/) — functions, schema, scheduling, file storage,
   auth, and the per-adapter guides.
 - [Concepts](/concepts/) — how the engine, data model, and tenancy work.

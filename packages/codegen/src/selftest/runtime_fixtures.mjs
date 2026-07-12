@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import vm from "node:vm";
@@ -22,11 +23,48 @@ async function runRuntimeFixtures() {
   await testRuntimeOnlyQueryFixture();
   await testRuntimeOnlyPaginatedQueryFixture();
   await testRuntimeOnlyMutationImportedScheduledFunctionsFixture();
+  await testRuntimeOnlyMutationImportedScheduledFunctionsWithJsExtensionFixture();
+  await testHostDispatchedInternalMutationInvocationFixture();
+  await testMixedDefaultAndNodeRuntimeSharedBundleFixture();
+  await testSingleRuntimeNodeBundleImportsEagerlyAtLoadFixture();
   await testRuntimeProgramBundleCandidateFixture();
   await testBunRuntimeProgramBundleFixture();
   testRuntimeProgramBundleRejectsNodeRuntimeImports();
   await testImportedServerValidatorsFixture();
   await testUnsupportedPatchWithoutIdValidatorFixture();
+  await testRuntimeHandlerWithTypeScriptSyntaxFailsLoudly();
+}
+
+async function testRuntimeHandlerWithTypeScriptSyntaxFailsLoudly() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+import { mutation } from "./_generated/server";
+import { v } from "convex/values";
+
+export const toggle = mutation({
+  args: { id: v.id("messages") },
+  handler: async (ctx, { id }) => {
+    const message = (await ctx.db.get(id)) as { pinned: boolean } | null;
+    if (message === null) {
+      throw new Error("message not found");
+    }
+    await ctx.db.patch(id, { pinned: !message.pinned });
+    return null;
+  },
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.notEqual(
+    result.status,
+    0,
+    "TypeScript-only syntax in a runtime handler must fail codegen loudly",
+  );
+  assert.match(result.stderr, /messages:toggle/);
+  assert.match(result.stderr, /not valid JavaScript/);
+  assert.match(result.stderr, /messages:\d+/);
+  assert.match(result.stderr, /TypeScript-only syntax/);
 }
 
 async function testUnsupportedMultiOperationFixture() {
@@ -218,6 +256,338 @@ export const sendAndSchedule = mutation({
     assert.equal(scheduledCall?.mutationRef?.kind, "mutation");
     assert.deepEqual(scheduledCall?.args, { body: "hello later" });
   } finally {
+    if (previousInvoke === undefined) {
+      delete globalThis.__nimbusInvoke;
+    } else {
+      globalThis.__nimbusInvoke = previousInvoke;
+    }
+    if (previousCreateContext === undefined) {
+      delete globalThis.__nimbusCreateContext;
+    } else {
+      globalThis.__nimbusCreateContext = previousCreateContext;
+    }
+  }
+}
+
+// Regression fixture for the cross-lane-internal-call bug found via the
+// convex/runtimes example: a host-constructed invocation of the bundle (a
+// cross-lane nested ctx.run* re-entering through host dispatch, or top-level
+// scheduler/client traffic) carries no request.visibility — the host has
+// already resolved and enforced visibility against its registry. The
+// generated invokeNamedDefinitionLocally gate used to default a missing
+// visibility to "public" and reject every internal function on those paths
+// ("nimbus function x is internal, not public"), while an explicit
+// reference-tree visibility (supplied only by same-isolate nested ctx.run*
+// dispatch) must keep being enforced.
+async function testHostDispatchedInternalMutationInvocationFixture() {
+  const appDir = await createAppFixture({
+    "digests.ts": `
+import { internalMutation } from "./_generated/server";
+import { v } from "convex/values";
+
+export const store = internalMutation({
+  args: {
+    body: v.string(),
+  },
+  handler: async (ctx, { body }) =>
+    await ctx.db.insert("digests", { body, createdAt: Date.now() }),
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.equal(manifest.functions[0].name, "digests:store");
+  assert.equal(manifest.functions[0].visibility, "internal");
+  assert.equal(manifest.functions[0].plan, null);
+  assert.match(manifest.functions[0].runtime_handler, /Date\.now/);
+
+  const bundleUrl =
+    `${pathToFileURL(path.join(appDir, ".nimbus", "convex", "bundle.mjs")).href}?hostDispatchedInternal=1`;
+  const previousInvoke = globalThis.__nimbusInvoke;
+  const previousInvokeNamedLocal = globalThis.__nimbusInvokeNamedLocal;
+  const previousCreateContext = globalThis.__nimbusCreateContext;
+
+  const insertedDocuments = [];
+  globalThis.__nimbusCreateContext = () => ({
+    db: {
+      insert: async (table, document) => {
+        insertedDocuments.push({ table, document });
+        return `id-${insertedDocuments.length}`;
+      },
+    },
+  });
+
+  try {
+    await import(bundleUrl);
+
+    // Host-constructed request (no visibility): must invoke the internal
+    // mutation — the host already enforced visibility before dispatching.
+    const hostDispatched = await globalThis.__nimbusInvoke({
+      kind: "mutation",
+      function_name: "digests:store",
+      args: { body: "cross-lane" },
+    });
+    assert.deepEqual(hostDispatched, { status: "ok", value: "id-1" });
+    assert.equal(insertedDocuments[0]?.table, "digests");
+    assert.equal(insertedDocuments[0]?.document?.body, "cross-lane");
+
+    // Same-isolate nested dispatch with the matching internal reference tree
+    // keeps working.
+    const localInternal = await globalThis.__nimbusInvokeNamedLocal({
+      kind: "mutation",
+      function_name: "digests:store",
+      visibility: "internal",
+      args: { body: "local" },
+    });
+    assert.equal(localInternal, "id-2");
+
+    // An explicit public reference aimed at an internal function is still a
+    // reference-selection error.
+    await assert.rejects(
+      globalThis.__nimbusInvokeNamedLocal({
+        kind: "mutation",
+        function_name: "digests:store",
+        visibility: "public",
+        args: { body: "mismatched" },
+      }),
+      /digests:store is internal, not public/,
+    );
+    assert.equal(insertedDocuments.length, 2);
+  } finally {
+    if (previousInvoke === undefined) {
+      delete globalThis.__nimbusInvoke;
+    } else {
+      globalThis.__nimbusInvoke = previousInvoke;
+    }
+    if (previousInvokeNamedLocal === undefined) {
+      delete globalThis.__nimbusInvokeNamedLocal;
+    } else {
+      globalThis.__nimbusInvokeNamedLocal = previousInvokeNamedLocal;
+    }
+    if (previousCreateContext === undefined) {
+      delete globalThis.__nimbusCreateContext;
+    } else {
+      globalThis.__nimbusCreateContext = previousCreateContext;
+    }
+  }
+}
+
+// Regression test for a NodeNext-moduleResolution app whose relative
+// imports carry an explicit ".js" extension (required by NodeNext, optional
+// under Bundler resolution). createKnownImportBindingRecord in
+// parser/compile_bindings.mjs must recognize "./_generated/scheduled_functions.js"
+// the same way it recognizes the extensionless form, or the scheduled-target
+// reference silently drops out of runtime_bindings and the handler throws a
+// ReferenceError the first time the scheduling branch actually executes.
+async function testRuntimeOnlyMutationImportedScheduledFunctionsWithJsExtensionFixture() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+import { internalMutation, mutation } from "./_generated/server.js";
+import { internalScheduledFunctions } from "./_generated/scheduled_functions.js";
+import { v } from "convex/values";
+
+export const sendInternal = internalMutation({
+  args: {
+    body: v.string(),
+  },
+  handler: async (ctx, { body }) => await ctx.db.insert("messages", { body }),
+});
+
+export const sendAndSchedule = mutation({
+  args: {
+    body: v.string(),
+  },
+  handler: async (ctx, { body }) => {
+    const id = await ctx.db.insert("messages", { body });
+    await ctx.scheduler.runAfter(
+      1_000,
+      internalScheduledFunctions.messages.sendInternal,
+      { body: \`\${body} later\` },
+    );
+    return id;
+  },
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.equal(manifest.functions[1].plan, null);
+  assert.match(manifest.functions[1].runtime_handler, /internalScheduledFunctions/);
+  assert.deepEqual(manifest.functions[1].runtime_bindings, {
+    internalScheduledFunctions: {
+      type: "generated_reference_tree",
+      visibility: "internal",
+      reference_kind: "mutation",
+    },
+  });
+}
+
+// Regression fixture for a real bug found while building the convex/runtimes
+// example: crates/nimbus-convex loads exactly one bundle.mjs per app and
+// shares it across every V8-based runtime lane (the default web-standard
+// isolate and every node* lane alike). The codegen bundle template used to
+// emit a static top-level `import ... from "node:x"` for every Node builtin
+// used ANYWHERE in the app, unconditionally — so an app mixing one
+// default-runtime function with one "use node" function importing a Node
+// builtin failed module linking for the *default* function too, even though
+// it never touches that builtin. Node imports must resolve lazily (only when
+// the function that actually uses them is invoked) so a default-runtime
+// function sharing the bundle is never asked to resolve them at all.
+async function testMixedDefaultAndNodeRuntimeSharedBundleFixture() {
+  const appDir = await createAppFixture({
+    "actions.ts": `
+import { action } from "./_generated/server";
+import { v } from "convex/values";
+
+export const runDefault = action({
+  args: { text: v.string() },
+  returns: v.string(),
+  handler: async (_ctx, { text }) => \`default:\${text.toUpperCase()}\`,
+});
+`,
+    "nodeActions.ts": `
+"use node";
+
+import crypto from "node:crypto";
+import { action } from "./_generated/server";
+import { v } from "convex/values";
+
+export const runNode = action({
+  args: { text: v.string() },
+  returns: v.string(),
+  handler: async (_ctx, { text }) =>
+    crypto.createHash("sha256").update(text, "utf8").digest("hex"),
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
+  assert.doesNotMatch(runtimeBundle, /^import .* from "node:/m);
+  assert.match(runtimeBundle, /"actions:runDefault"/);
+  assert.match(runtimeBundle, /"nodeActions:runNode"/);
+
+  const bundleUrl =
+    `${pathToFileURL(path.join(appDir, ".nimbus", "convex", "bundle.mjs")).href}?mixedRuntime=1`;
+  const previousInvoke = globalThis.__nimbusInvoke;
+  const previousCreateContext = globalThis.__nimbusCreateContext;
+  globalThis.__nimbusCreateContext = () => ({});
+
+  try {
+    await import(bundleUrl);
+
+    const defaultResponse = await globalThis.__nimbusInvoke({
+      kind: "action",
+      function_name: "actions:runDefault",
+      args: { text: "world" },
+    });
+    assert.deepEqual(defaultResponse, { status: "ok", value: "default:WORLD" });
+
+    const expectedHash = createHash("sha256").update("hello", "utf8").digest("hex");
+    const nodeResponse = await globalThis.__nimbusInvoke({
+      kind: "action",
+      function_name: "nodeActions:runNode",
+      args: { text: "hello" },
+    });
+    assert.deepEqual(nodeResponse, { status: "ok", value: expectedHash });
+  } finally {
+    if (previousInvoke === undefined) {
+      delete globalThis.__nimbusInvoke;
+    } else {
+      globalThis.__nimbusInvoke = previousInvoke;
+    }
+    if (previousCreateContext === undefined) {
+      delete globalThis.__nimbusCreateContext;
+    } else {
+      globalThis.__nimbusCreateContext = previousCreateContext;
+    }
+  }
+}
+
+// EX10R.4: a bundle whose functions are entirely "use node" must import its
+// Node/external-package bindings eagerly, at bundle load, not lazily at
+// first invocation -- so a dependency that throws or captures state at
+// module-init time fails at deploy, not mid-request. This drives the
+// dependency's own top-level side effect and asserts it has already fired
+// once the bundle module is loaded, before any function is ever invoked.
+async function testSingleRuntimeNodeBundleImportsEagerlyAtLoadFixture() {
+  const appDir = await createAppFixture(
+    {
+      "messages.ts": `
+"use node";
+
+import sideEffectPackage from "eager-side-effect-package";
+import { action } from "./_generated/server";
+import { v } from "convex/values";
+
+export const run = action({
+  args: { text: v.string() },
+  returns: v.string(),
+  handler: async (_ctx, { text }) => \`\${sideEffectPackage.marker}:\${text}\`,
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "node_modules/eager-side-effect-package/package.json":
+          `{"name":"eager-side-effect-package","version":"1.0.0","main":"index.js"}`,
+        "node_modules/eager-side-effect-package/index.js":
+          "globalThis.__nimbusCodegenEagerImportFired = "
+          + "(globalThis.__nimbusCodegenEagerImportFired ?? 0) + 1;\n"
+          + 'export default { marker: "loaded" };\n',
+        "convex.json": `{ "node": { "externalPackages": ["eager-side-effect-package"] } }\n`,
+      },
+    },
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
+  assert.match(runtimeBundle, /^import "eager-side-effect-package";/m);
+
+  const bundleUrl = pathToFileURL(
+    path.join(appDir, ".nimbus", "convex", "bundle.mjs"),
+  ).href;
+  const previousInvoke = globalThis.__nimbusInvoke;
+  const previousCreateContext = globalThis.__nimbusCreateContext;
+  const previousFired = globalThis.__nimbusCodegenEagerImportFired;
+  delete globalThis.__nimbusCodegenEagerImportFired;
+  globalThis.__nimbusCreateContext = () => ({});
+
+  try {
+    await import(bundleUrl);
+    assert.equal(
+      globalThis.__nimbusCodegenEagerImportFired,
+      1,
+      "single-runtime Node bundle must import its dependency's side effects at load, before any invocation",
+    );
+
+    const response = await globalThis.__nimbusInvoke({
+      kind: "action",
+      function_name: "messages:run",
+      args: { text: "hello" },
+    });
+    assert.deepEqual(response, { status: "ok", value: "loaded:hello" });
+    assert.equal(
+      globalThis.__nimbusCodegenEagerImportFired,
+      1,
+      "the lazy per-function dynamic import() at first invocation must resolve from the module cache, not re-run init side effects",
+    );
+  } finally {
+    delete globalThis.__nimbusCodegenEagerImportFired;
+    if (previousFired !== undefined) {
+      globalThis.__nimbusCodegenEagerImportFired = previousFired;
+    }
     if (previousInvoke === undefined) {
       delete globalThis.__nimbusInvoke;
     } else {

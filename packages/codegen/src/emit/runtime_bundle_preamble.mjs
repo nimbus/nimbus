@@ -18,11 +18,24 @@ const routesByName = new Map(
     .filter((route) => typeof route.name === "string" && route.name.length > 0)
     .map((route) => [route.name, route]),
 );
-const runtimeHandlersByName = new Map(
-  manifest.functions
-    .filter((definition) => typeof definition.runtime_handler === "string")
-    .map((definition) => [definition.name, compileRuntimeHandler(definition)]),
-);
+// Compiled lazily, on first invocation of each function, and memoized here
+// by name. Node builtin/external-package bindings are resolved via dynamic
+// import() inside compileRuntimeHandler, so a function is only ever asked to
+// resolve the Node modules it actually uses — a function sharing this bundle
+// that never touches Node builtins never triggers their resolution, even
+// under a compatibility target (RuntimeCompatibilityTarget::WebStandardIsolate)
+// that forbids "node:" imports outright.
+const runtimeHandlersByName = new Map();
+
+async function getRuntimeHandler(definition) {
+  if (typeof definition.runtime_handler !== "string" || definition.runtime_handler.length === 0) {
+    return null;
+  }
+  if (!runtimeHandlersByName.has(definition.name)) {
+    runtimeHandlersByName.set(definition.name, compileRuntimeHandler(definition));
+  }
+  return await runtimeHandlersByName.get(definition.name);
+}
 
 function createRuntimeContext(request) {
   return globalThis.__nimbusCreateContext({
@@ -34,13 +47,13 @@ function createRuntimeContext(request) {
   });
 }
 
-function compileRuntimeHandler(definition) {
+async function compileRuntimeHandler(definition) {
   const source = definition.runtime_handler;
   if (typeof source !== "string" || source.length === 0) {
     return null;
   }
 
-  const runtimeBindings = materializeRuntimeBindings(definition.runtime_bindings);
+  const runtimeBindings = await materializeRuntimeBindings(definition.runtime_bindings);
   const bindingNames = Object.keys(runtimeBindings);
   const bindingValues = bindingNames.map((name) => runtimeBindings[name]);
   const invoke = new Function(
@@ -63,15 +76,15 @@ function compileRuntimeHandler(definition) {
     nimbusWrapRuntimeInvoke(invoke, bindingValues, ctx, args, request, handlerOrigin);
 }
 
-function materializeRuntimeBindings(bindingDescriptors) {
+async function materializeRuntimeBindings(bindingDescriptors) {
   const bindings = {};
   for (const [name, descriptor] of Object.entries(bindingDescriptors ?? {})) {
-    bindings[name] = materializeRuntimeBinding(descriptor);
+    bindings[name] = await materializeRuntimeBinding(descriptor);
   }
   return bindings;
 }
 
-function materializeRuntimeBinding(descriptor) {
+async function materializeRuntimeBinding(descriptor) {
   if (descriptor === null || typeof descriptor !== "object") {
     throw new Error("invalid runtime binding descriptor");
   }
@@ -81,37 +94,40 @@ function materializeRuntimeBinding(descriptor) {
         visibility: descriptor.visibility,
         kind: descriptor.reference_kind ?? undefined,
       });
-    case "node_builtin_default":
-      return nodeBuiltinModule(descriptor.specifier).default ?? nodeBuiltinModule(descriptor.specifier);
+    case "node_builtin_default": {
+      const module = await nodeBuiltinModule(descriptor.specifier);
+      return module.default ?? module;
+    }
     case "node_builtin_namespace":
-      return nodeBuiltinModule(descriptor.specifier);
-    case "node_builtin_named":
-      return nodeBuiltinModule(descriptor.specifier)[descriptor.imported_name];
-    case "node_external_package_default":
-      return nodeExternalPackage(descriptor.specifier).default ?? nodeExternalPackage(descriptor.specifier);
+      return await nodeBuiltinModule(descriptor.specifier);
+    case "node_builtin_named": {
+      const module = await nodeBuiltinModule(descriptor.specifier);
+      return module[descriptor.imported_name];
+    }
+    case "node_external_package_default": {
+      const module = await nodeExternalPackage(descriptor.specifier);
+      return module.default ?? module;
+    }
     case "node_external_package_namespace":
-      return nodeExternalPackage(descriptor.specifier);
-    case "node_external_package_named":
-      return nodeExternalPackage(descriptor.specifier)[descriptor.imported_name];
+      return await nodeExternalPackage(descriptor.specifier);
+    case "node_external_package_named": {
+      const module = await nodeExternalPackage(descriptor.specifier);
+      return module[descriptor.imported_name];
+    }
     default:
       throw new Error(\`unsupported runtime binding descriptor: \${descriptor.type}\`);
   }
 }
 
+// Dynamic import() is only reached when a function that actually uses this
+// specifier is invoked, and ES module semantics already memoize repeated
+// import() calls for the same specifier, so no separate cache is needed here.
 function nodeBuiltinModule(specifier) {
-  const module = __nimbusNodeBuiltinModules.get(specifier);
-  if (module === undefined) {
-    throw new Error(\`missing generated Node.js builtin binding for \${specifier}\`);
-  }
-  return module;
+  return import(specifier);
 }
 
 function nodeExternalPackage(specifier) {
-  const module = __nimbusNodeExternalPackages.get(specifier);
-  if (module === undefined) {
-    throw new Error(\`missing generated Node.js external package binding for \${specifier}\`);
-  }
-  return module;
+  return import(specifier);
 }
 
 function createGeneratedReferenceTree(config, pathParts = []) {

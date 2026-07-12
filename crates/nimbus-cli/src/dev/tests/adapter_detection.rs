@@ -399,3 +399,92 @@ fn dev_plan_detects_cloud_functions_adapter() {
         })
     );
 }
+
+#[test]
+fn convex_json_functions_override_relocates_source_root() {
+    let temp = tempdir().expect("tempdir should build");
+    fs::create_dir_all(temp.path().join("src/backend")).unwrap();
+    fs::write(
+        temp.path().join("convex.json"),
+        r#"{"functions": "src/backend"}"#,
+    )
+    .unwrap();
+
+    let adapter = detect_dev_adapter(temp.path()).expect("adapter detection should succeed");
+    assert_eq!(
+        adapter,
+        Some(DevAdapter::Convex {
+            source_root: temp.path().join("src/backend"),
+        })
+    );
+}
+
+#[test]
+fn convex_json_functions_override_takes_priority_over_default_convex_dir() {
+    let temp = tempdir().expect("tempdir should build");
+    create_source_root(temp.path(), "convex");
+    fs::create_dir_all(temp.path().join("src/backend")).unwrap();
+    fs::write(
+        temp.path().join("convex.json"),
+        r#"{"functions": "src/backend"}"#,
+    )
+    .unwrap();
+
+    let adapter = detect_dev_adapter(temp.path()).expect("adapter detection should succeed");
+    assert_eq!(
+        adapter,
+        Some(DevAdapter::Convex {
+            source_root: temp.path().join("src/backend"),
+        }),
+        "an explicit functions override must win over the default convex/ directory"
+    );
+}
+
+#[test]
+fn convex_json_functions_override_reports_missing_directory() {
+    let temp = tempdir().expect("tempdir should build");
+    fs::write(
+        temp.path().join("convex.json"),
+        r#"{"functions": "src/backend"}"#,
+    )
+    .unwrap();
+
+    let error = detect_dev_adapter(temp.path()).unwrap_err();
+    let message = error.to_string();
+    assert!(
+        message.contains("\"functions\": \"src/backend\"") && message.contains("not a directory"),
+        "missing functions-override directory must name the setting and path: {message}"
+    );
+}
+
+#[test]
+fn convex_json_without_functions_field_falls_back_to_default_heuristic() {
+    let temp = tempdir().expect("tempdir should build");
+    create_source_root(temp.path(), "convex");
+    fs::write(temp.path().join("convex.json"), r#"{"node": {}}"#).unwrap();
+
+    let adapter = detect_dev_adapter(temp.path()).expect("adapter detection should succeed");
+    assert_eq!(
+        adapter,
+        Some(DevAdapter::Convex {
+            source_root: temp.path().join("convex"),
+        })
+    );
+}
+
+#[test]
+fn malformed_convex_json_falls_back_to_default_heuristic_instead_of_erroring() {
+    let temp = tempdir().expect("tempdir should build");
+    create_source_root(temp.path(), "convex");
+    fs::write(temp.path().join("convex.json"), "{not json").unwrap();
+
+    let adapter = detect_dev_adapter(temp.path()).expect(
+        "detection-time convex.json read is best-effort; strict validation happens in codegen",
+    );
+    assert_eq!(
+        adapter,
+        Some(DevAdapter::Convex {
+            source_root: temp.path().join("convex"),
+        })
+    );
+}

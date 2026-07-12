@@ -78,6 +78,26 @@ impl NimbusRuntime {
             .map_err(realm_lease_error)
     }
 
+    /// Builds the guest-semantics import-phase entry script for `bundle`, or
+    /// `None` on Host-semantics lanes. Executed immediately before module
+    /// evaluation so module-scope code observes the deploy-stamped clock and
+    /// deploy-seeded PRNG (Convex default-runtime import-time contract).
+    fn guest_import_phase_script(&self, bundle: &RuntimeBundle) -> Option<String> {
+        if !matches!(
+            self.policy.limits().guest_semantics,
+            crate::limits::RuntimeGuestSemantics::ConvexDefault
+        ) {
+            return None;
+        }
+        let stamp = bundle.deploy_stamp();
+        let seed_json =
+            serde_json::to_string(&stamp.seed_hex).unwrap_or_else(|_| "\"\"".to_string());
+        Some(format!(
+            "globalThis.__nimbusEnterGuestImportPhase?.({{ deploy_ts_ms: {}, deploy_seed_hex: {} }});",
+            stamp.timestamp_ms, seed_json
+        ))
+    }
+
     #[cfg(test)]
     pub(crate) async fn load_bundle(
         &self,
@@ -158,6 +178,11 @@ impl NimbusRuntime {
             request,
             load_start_phase,
         );
+        if let Some(script) = self.guest_import_phase_script(bundle) {
+            runtime
+                .execute_script("<nimbus-runtime:guest-semantics:import-phase>", script)
+                .map_err(|error| NimbusRuntimeError::JavaScript(error.to_string()))?;
+        }
         let module_id = match bundle.entrypoint_kind() {
             RuntimeBundleEntrypointKind::Main => {
                 runtime.load_main_es_module(&module_specifier).await
@@ -735,6 +760,15 @@ impl NimbusRuntime {
             Some(request),
             load_start_phase,
         );
+        if let Some(script) = self.guest_import_phase_script(bundle) {
+            realm
+                .execute_script(
+                    runtime.v8_isolate(),
+                    "<nimbus-runtime:guest-semantics:import-phase>",
+                    script,
+                )
+                .map_err(|error| NimbusRuntimeError::JavaScript(error.to_string()))?;
+        }
         let module_id = match bundle.entrypoint_kind() {
             RuntimeBundleEntrypointKind::Main => {
                 runtime
@@ -875,7 +909,10 @@ impl NimbusRuntime {
         } else {
             None
         };
-        let expression = request.runtime_invoke_expression(module_specifier.as_deref())?;
+        let expression = request.runtime_invoke_expression(
+            module_specifier.as_deref(),
+            self.policy.limits().guest_semantics,
+        )?;
         trace_snapshot_seeded_runtime_phase(
             construction_mode,
             bundle,
@@ -928,6 +965,7 @@ impl NimbusRuntime {
         Ok(Rc::new(RestrictedModuleLoader::new(
             path_policy,
             limits.compatibility_target,
+            limits.guest_semantics,
             limits.node_conditions.clone(),
             bundle.module_code_cache(limits, construction_mode),
             None,
@@ -997,7 +1035,10 @@ impl NimbusRuntime {
             (true, Some(bundle)) => Some(bundle.module_specifier()?.to_string()),
             (true, None) | (false, _) => None,
         };
-        let expression = request.runtime_invoke_expression(module_specifier.as_deref())?;
+        let expression = request.runtime_invoke_expression(
+            module_specifier.as_deref(),
+            self.policy.limits().guest_semantics,
+        )?;
         trace_snapshot_seeded_runtime_phase_with_optional_bundle(
             construction_mode,
             bundle,

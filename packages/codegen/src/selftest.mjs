@@ -8,6 +8,7 @@ import { runCloudFunctionsFixtures } from "./selftest/cloud_functions_fixtures.m
 import { runContextFixtures } from "./selftest/context_fixtures.mjs";
 import { runCoreFixtures } from "./selftest/core_fixtures.mjs";
 import { runDatabaseFixtures } from "./selftest/database_fixtures.mjs";
+import { runProjectConfigFixtures } from "./selftest/project_config_fixtures.mjs";
 import { runRuntimeFixtures } from "./selftest/runtime_fixtures.mjs";
 import { runRuntimeRemapFixtures } from "./selftest/runtime_remap_fixtures.mjs";
 import { runTypeInferenceFixtures } from "./selftest/type_inference_fixtures.mjs";
@@ -27,6 +28,7 @@ async function main() {
   await runCoreFixtures();
   await runDatabaseFixtures();
   await runActionFixtures();
+  await runProjectConfigFixtures();
   await runRuntimeFixtures();
   await runRuntimeRemapFixtures();
   await runTypeInferenceFixtures();

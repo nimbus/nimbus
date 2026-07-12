@@ -593,18 +593,18 @@ pub fn build_router(options: RouterOptions) -> Router {
 }
 
 fn build_public_router() -> Router<Arc<AppState>> {
-    let demos = ServeDir::new(demos_dir()).append_index_html_on_directories(true);
+    let examples = ServeDir::new(examples_dir()).append_index_html_on_directories(true);
 
     Router::new()
         .route("/health", get(http::health))
-        .route("/demos", get(http::demos_redirect))
-        .nest_service("/demos/", demos)
+        .route("/examples", get(http::examples_redirect))
+        .nest_service("/examples/", examples)
 }
 
-fn demos_dir() -> PathBuf {
+fn examples_dir() -> PathBuf {
     std::env::var_os("CARGO_MANIFEST_DIR")
-        .map(|manifest_dir| PathBuf::from(manifest_dir).join("../../demos"))
-        .unwrap_or_else(|| PathBuf::from("demos"))
+        .map(|manifest_dir| PathBuf::from(manifest_dir).join("../../examples"))
+        .unwrap_or_else(|| PathBuf::from("examples"))
 }
 
 fn build_ui_router() -> Router<Arc<AppState>> {

@@ -195,6 +195,8 @@ status mappings is in the [error reference](/reference/native/errors/).
 
 ## Next steps
 
+- [Example apps](/developers/native/examples/) — a browser playground and
+  the shared tasks list on the native SDK.
 - [HTTP API reference](/reference/native/http-api/) — every endpoint,
   request shape, and response shape.
 - [WebSocket protocol reference](/reference/native/websocket-protocol/) —

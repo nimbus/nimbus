@@ -145,9 +145,9 @@ pub(crate) async fn tenant_consistency_report(
     Ok(Json(report))
 }
 
-/// Redirects to the repo-hosted demos index.
-pub(crate) async fn demos_redirect() -> Redirect {
-    Redirect::permanent("/demos/")
+/// Redirects to the repo-hosted examples index.
+pub(crate) async fn examples_redirect() -> Redirect {
+    Redirect::permanent("/examples/")
 }
 
 /// Returns the service encryption status for diagnostics.

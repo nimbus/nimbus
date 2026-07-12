@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 import {
   createAppFixture,
@@ -19,13 +21,25 @@ async function runActionFixtures() {
   await testNodeRuntimeConfigFixture();
   await testNodeRuntimeCurrentConfigFixture();
   await testNodeExternalPackagesMetadataFixture();
+  await testDefaultRuntimeExternalPackageRequiresExternalizationFixture();
+  await testDefaultRuntimeExternalPackageFixture();
+  await testDefaultRuntimeExternalPackageStringBrowserFieldFixture();
+  await testDefaultRuntimeExternalPackageNestedBrowserConditionFixture();
+  await testNodeExternalPackageSymlinkContainmentFixture();
+  await testNodeExternalPackageSymlinkCycleFixture();
+  await testNodeExternalPackageSymlinkDiamondFixture();
   await testNodeExternalPackagesStarFixture();
   await testNodePackageImportRequiresExternalizationFixture();
   await testNodeExternalPackageRequiresLocalInstallFixture();
   await testNodeExternalPackagesStarMustStandAloneFixture();
   await testUseNodeActionFixture();
+  await testUseNodeActionWithDefaultLaneHttpRouteFixture();
   await testUseNodeRejectsQueriesFixture();
   await testDefaultRuntimeRejectsNodeBuiltinsFixture();
+  await testDefaultRuntimeRejectsUnusedUseNodeImportFixture();
+  await testDefaultRuntimeRejectsUsedUseNodeImportFixture();
+  await testDefaultRuntimeAllowsTypeOnlyUseNodeImportFixture();
+  await testDefaultRuntimeAllowsGeneratedApiReferenceToUseNodeActionFixture();
   await testDebugNodeApisFixture();
   await testInvalidNodeVersionFixture();
 }
@@ -102,10 +116,347 @@ export const read = action({
   );
 
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
-  assert.match(runtimeBundle, /from "sharp"/);
-  assert.match(runtimeBundle, /from "@scope\/pkg\/subpath"/);
+  // This manifest has exactly one function and it's "use node", so the whole
+  // bundle is single-runtime Node — never shared with a default-lane
+  // function — and external package bindings are imported eagerly at the
+  // top of the bundle for their load-time side effects, not deferred to
+  // first invocation. See packages/codegen/src/emit/runtime_bundle.mjs.
+  assert.match(runtimeBundle, /^import "sharp";/m);
+  assert.match(runtimeBundle, /^import "@scope\/pkg\/subpath";/m);
+  assert.match(runtimeBundle, /nodeExternalPackage\(specifier\)/);
   assert.match(runtimeBundle, /node_external_package_default/);
   assert.match(runtimeBundle, /node_external_package_named/);
+}
+
+// A default-runtime module (no "use node") importing a bare npm package
+// specifier must be rejected the same way a Node-lane module importing an
+// unexternalized package is -- Nimbus never implicitly bundles npm packages
+// into either lane's runtime bundle.
+async function testDefaultRuntimeExternalPackageRequiresExternalizationFixture() {
+  const appDir = await createAppFixture(
+    {
+      "widgets.ts": `
+import { greet } from "greetlib";
+import { mutation } from "./_generated/server";
+
+export const create = mutation({
+  args: {},
+  handler: async () => greet(),
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "node_modules/greetlib/package.json": `{"name":"greetlib","version":"1.0.0","main":"index.js"}`,
+        "node_modules/greetlib/index.js": `export const greet = () => "hi";`,
+      },
+    },
+  );
+
+  const result = runCli(appDir);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /imports package "greetlib", but that package is not externalized/);
+  assert.match(result.stderr, /node\.externalPackages/);
+}
+
+// A real, browser-compatible npm package (no Node builtins) works from a
+// default-runtime module once externalized in convex.json, exactly like the
+// Node-lane case -- same staging root, same dynamic-import() resolution at
+// runtime (see emit/runtime_bundle_preamble.mjs), just reached from a module
+// without "use node" at the top.
+async function testDefaultRuntimeExternalPackageFixture() {
+  const appDir = await createAppFixture(
+    {
+      "widgets.ts": `
+import { greet } from "greetlib";
+import { mutation } from "./_generated/server";
+
+export const create = mutation({
+  args: {},
+  handler: async () => greet(),
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "node_modules/greetlib/package.json": `{"name":"greetlib","version":"1.0.0","main":"index.js"}`,
+        "node_modules/greetlib/index.js": `export const greet = () => "hi";`,
+        "convex.json": `{ "node": { "externalPackages": ["greetlib"] } }\n`,
+      },
+    },
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.equal(manifest.functions[0].runtime_environment, "default");
+  assert.equal(manifest.functions[0].runtime_bindings.greet.type, "node_external_package_named");
+
+  const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
+  assert.doesNotMatch(runtimeBundle, /^import .* from "greetlib"/m);
+  assert.match(runtimeBundle, /node_external_package_named/);
+
+  assert.match(
+    await readConvexFile(appDir, "node_modules/greetlib/index.js"),
+    /greet = \(\) => "hi"/,
+  );
+}
+
+// EX10R.5: the common `"browser": "./browser.js"` string form of the legacy
+// browser field must resolve, not just the object-shaped
+// `{ "./main.js": "./browser.js" }` form legacyBrowserField already handled.
+async function testDefaultRuntimeExternalPackageStringBrowserFieldFixture() {
+  const appDir = await createAppFixture(
+    {
+      "widgets.ts": `
+import { label } from "strbrowser";
+import { mutation } from "./_generated/server";
+
+export const create = mutation({
+  args: {},
+  handler: async () => label,
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "node_modules/strbrowser/package.json":
+          `{"name":"strbrowser","version":"1.0.0","main":"index.node.js","browser":"./index.browser.js"}`,
+        "node_modules/strbrowser/index.node.js": `export const label = "node";`,
+        "node_modules/strbrowser/index.browser.js": `export const label = "browser";`,
+        "convex.json": `{ "node": { "externalPackages": ["strbrowser"] } }\n`,
+      },
+    },
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const packageReport = await readConvexJson(appDir, "node_external_packages.json");
+  const entry = packageReport.packages.find((candidate) => candidate.packageName === "strbrowser");
+  assert.equal(entry.browserEntry, "./index.browser.js");
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.match(manifest.functions[0].runtime_bindings.label.specifier, /index\.browser\.js$/);
+  assert.match(
+    await readConvexFile(appDir, "node_modules/strbrowser/index.browser.js"),
+    /label = "browser"/,
+  );
+}
+
+// EX10R.5: a package that nests its browser export condition further by
+// module format (`"browser": { "import": ..., "require": ... }`, common for
+// dual ESM/CJS packages) must still resolve -- not just a bare
+// `"browser": "./browser.js"` condition string.
+async function testDefaultRuntimeExternalPackageNestedBrowserConditionFixture() {
+  const appDir = await createAppFixture(
+    {
+      "widgets.ts": `
+import { label } from "nestedbrowser";
+import { mutation } from "./_generated/server";
+
+export const create = mutation({
+  args: {},
+  handler: async () => label,
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "node_modules/nestedbrowser/package.json": JSON.stringify({
+          name: "nestedbrowser",
+          version: "1.0.0",
+          main: "index.js",
+          exports: {
+            ".": {
+              browser: { import: "./browser.mjs", require: "./browser.cjs" },
+              default: "./index.js",
+            },
+          },
+        }),
+        "node_modules/nestedbrowser/index.js": `export const label = "node";`,
+        "node_modules/nestedbrowser/browser.mjs": `export const label = "browser-esm";`,
+        "node_modules/nestedbrowser/browser.cjs": `module.exports = { label: "browser-cjs" };`,
+        "convex.json": `{ "node": { "externalPackages": ["nestedbrowser"] } }\n`,
+      },
+    },
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const packageReport = await readConvexJson(appDir, "node_external_packages.json");
+  const entry = packageReport.packages.find((candidate) => candidate.packageName === "nestedbrowser");
+  assert.equal(entry.browserEntry, "./browser.mjs");
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.match(manifest.functions[0].runtime_bindings.label.specifier, /browser\.mjs$/);
+}
+
+// EX10R.6: a dependency shipping a symlink whose real target resolves
+// outside the package's own root (e.g. `secrets -> ../../.env`) must not
+// have that target's contents copied into the staged deployment artifact.
+async function testNodeExternalPackageSymlinkContainmentFixture() {
+  const appDir = await createAppFixture(
+    {
+      "messages.ts": `
+"use node";
+
+import { action } from "./_generated/server";
+import pkg from "leakypkg";
+
+export const read = action({
+  args: {},
+  handler: async () => pkg.ok,
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "secret.txt": "top-secret-value",
+        "node_modules/leakypkg/package.json": `{"name":"leakypkg","version":"1.0.0","main":"index.js"}`,
+        "node_modules/leakypkg/index.js": `export default { ok: true };`,
+        "convex.json": `{ "node": { "externalPackages": ["leakypkg"] } }\n`,
+      },
+    },
+  );
+
+  await fs.symlink(
+    path.join(appDir, "secret.txt"),
+    path.join(appDir, "node_modules", "leakypkg", "leaked.txt"),
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const stagedDir = path.join(appDir, ".nimbus", "convex", "node_modules", "leakypkg");
+  await assert.rejects(
+    fs.readFile(path.join(stagedDir, "leaked.txt")),
+    (error) => error.code === "ENOENT",
+    "a symlink escaping the package root must not be copied into the staged deployment artifact",
+  );
+  assert.match(
+    await readConvexFile(appDir, "node_modules/leakypkg/index.js"),
+    /ok: true/,
+    "legitimate package files must still stage normally",
+  );
+}
+
+// EX10R.6: a symlink cycle inside a staged package must terminate the copy
+// instead of recursing unboundedly.
+async function testNodeExternalPackageSymlinkCycleFixture() {
+  const appDir = await createAppFixture(
+    {
+      "messages.ts": `
+"use node";
+
+import { action } from "./_generated/server";
+import pkg from "cyclicpkg";
+
+export const read = action({
+  args: {},
+  handler: async () => pkg.ok,
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "node_modules/cyclicpkg/package.json": `{"name":"cyclicpkg","version":"1.0.0","main":"index.js"}`,
+        "node_modules/cyclicpkg/index.js": `export default { ok: true };`,
+        "convex.json": `{ "node": { "externalPackages": ["cyclicpkg"] } }\n`,
+      },
+    },
+  );
+
+  // node_modules/cyclicpkg/loop -> node_modules/cyclicpkg (the package's own
+  // root): a naive recursive copy would walk loop/loop/loop/... forever.
+  await fs.symlink(
+    path.join(appDir, "node_modules", "cyclicpkg"),
+    path.join(appDir, "node_modules", "cyclicpkg", "loop"),
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(
+    await readConvexFile(appDir, "node_modules/cyclicpkg/index.js"),
+    /ok: true/,
+  );
+
+  const stagedLoopExists = await fs
+    .stat(path.join(appDir, ".nimbus", "convex", "node_modules", "cyclicpkg", "loop"))
+    .then(() => true)
+    .catch(() => false);
+  assert.equal(stagedLoopExists, false, "a symlink cycle must be skipped, not recursively expanded");
+}
+
+// EX10R2.4: the symlink cycle guard is scoped to the recursion ancestry, not
+// to every real path ever visited — a legitimate diamond (two different
+// alias symlinks pointing at the same shared real subdirectory) must stage
+// the shared files under BOTH aliases. An all-paths-ever-seen guard staged
+// only the first alias and silently dropped the second from the deployment
+// artifact. A cycle symlink nested inside the shared subdirectory must still
+// terminate (skipped under the plain path and under both aliases).
+async function testNodeExternalPackageSymlinkDiamondFixture() {
+  const appDir = await createAppFixture(
+    {
+      "messages.ts": `
+"use node";
+
+import { action } from "./_generated/server";
+import pkg from "diamondpkg";
+
+export const read = action({
+  args: {},
+  handler: async () => pkg.ok,
+});
+`,
+    },
+    {
+      rootFiles: {
+        "package.json": `{"name":"fixture","private":true}`,
+        "node_modules/diamondpkg/package.json": `{"name":"diamondpkg","version":"1.0.0","main":"index.js"}`,
+        "node_modules/diamondpkg/index.js": `export default { ok: true };`,
+        "node_modules/diamondpkg/shared/data.js": `export const shared = "diamond";`,
+        "convex.json": `{ "node": { "externalPackages": ["diamondpkg"] } }\n`,
+      },
+    },
+  );
+
+  const packageDir = path.join(appDir, "node_modules", "diamondpkg");
+  // Two distinct aliases resolving to the same real shared subdirectory...
+  await fs.symlink(path.join(packageDir, "shared"), path.join(packageDir, "aliasA"));
+  await fs.symlink(path.join(packageDir, "shared"), path.join(packageDir, "aliasB"));
+  // ...plus a cycle back to the package root nested inside that shared
+  // subdirectory, reachable via shared/, aliasA/, and aliasB/ alike.
+  await fs.symlink(packageDir, path.join(packageDir, "shared", "loopback"));
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const stagedDir = path.join(appDir, ".nimbus", "convex", "node_modules", "diamondpkg");
+  for (const alias of ["shared", "aliasA", "aliasB"]) {
+    assert.match(
+      await fs.readFile(path.join(stagedDir, alias, "data.js"), "utf8"),
+      /diamond/,
+      `the shared subdirectory must stage under ${alias}, not only under the first alias seen`,
+    );
+    const stagedLoopbackExists = await fs
+      .stat(path.join(stagedDir, alias, "loopback"))
+      .then(() => true)
+      .catch(() => false);
+    assert.equal(
+      stagedLoopbackExists,
+      false,
+      `the nested cycle symlink must be skipped under ${alias}, not recursively expanded`,
+    );
+  }
 }
 
 async function testNodeExternalPackagesStarFixture() {
@@ -166,7 +517,7 @@ export const read = action({
 
   const result = runCli(appDir);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /package "pkg" from a Node action module/);
+  assert.match(result.stderr, /imports package "pkg", but that package is not externalized/);
   assert.match(result.stderr, /does not yet bundle npm packages/);
   assert.match(result.stderr, /node\.externalPackages/);
 }
@@ -608,9 +959,80 @@ export const runInternal = internalAction({
   });
 
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
-  assert.match(runtimeBundle, /from "node:fs"/);
+  // This manifest has exactly one function and it's "use node", so the whole
+  // bundle is single-runtime Node — never shared with a default-lane
+  // function, so there's no risk a static top-level "node:fs" import breaks
+  // module linking for one — and it is imported eagerly at the top of the
+  // bundle for its load-time side effects. See
+  // packages/codegen/src/emit/runtime_bundle.mjs.
+  assert.match(runtimeBundle, /^import "node:fs";/m);
+  assert.match(runtimeBundle, /nodeBuiltinModule\(specifier\)/);
+  assert.match(runtimeBundle, /return import\(specifier\)/);
   assert.match(runtimeBundle, /"type": "node_builtin_default"/);
   assert.match(runtimeBundle, /"type": "node_builtin_named"/);
+}
+
+// EX10R2.3: HTTP routes always execute on the default web-standard lane, so
+// an app whose FUNCTIONS are all "use node" but which also routes
+// convex/http.ts httpActions is NOT single-runtime Node — the same
+// bundle.mjs is loaded by the route's web isolate, where an eager top-level
+// `import "node:*"` would fail module linking for the whole bundle (no Node
+// builtins on that lane). Node bindings must stay on the lazy
+// dynamic-import() path for such bundles. See
+// packages/codegen/src/emit/runtime_bundle.mjs's isSingleRuntimeNodeManifest.
+// (testUseNodeActionFixture above covers the complement: a genuinely
+// all-node manifest with no routes still emits the eager import.)
+async function testUseNodeActionWithDefaultLaneHttpRouteFixture() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+"use node";
+
+import { internalAction } from "./_generated/server";
+import fs from "node:fs";
+
+export const runInternal = internalAction({
+  args: {},
+  handler: async () => fs.realpathSync("."),
+});
+`,
+    "http.ts": `
+import { httpRouter } from "convex/server";
+import { httpAction } from "./_generated/server";
+
+const http = httpRouter();
+
+http.route({
+  path: "/ping",
+  method: "GET",
+  handler: httpAction(async () => Response.json({ ok: true })),
+});
+
+export default http;
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const routes = await readConvexJson(appDir, "http_routes.json");
+  assert.equal(routes.routes.length, 1);
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.ok(
+    manifest.functions.every((definition) => definition.runtime_environment === "node"),
+    "every FUNCTION in this fixture is node-lane; only the route is default-lane",
+  );
+
+  const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
+  assert.doesNotMatch(
+    runtimeBundle,
+    /^import "node:fs";/m,
+    "a bundle with a default-lane HTTP route must not emit an eager node:* import",
+  );
+  // The Node binding remains reachable via the lazy dynamic-import() path
+  // that only a node-lane invocation ever triggers.
+  assert.match(runtimeBundle, /nodeBuiltinModule\(specifier\)/);
+  assert.match(runtimeBundle, /"type": "node_builtin_default"/);
 }
 
 async function testUseNodeRejectsQueriesFixture() {
@@ -650,6 +1072,146 @@ export const read = action({
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /imports Node\.js builtin module/);
   assert.match(result.stderr, /--debug-node-apis/);
+}
+
+// A default-runtime module cannot import a "use node" module directly, even
+// if the import is never referenced anywhere — the two modules execute on
+// separate runtime lanes (see emit/runtime_bundle_preamble.mjs) and codegen
+// must reject the cross-runtime import outright rather than let it through
+// silently. See parser.mjs's validateCrossModuleRuntimeImports.
+async function testDefaultRuntimeRejectsUnusedUseNodeImportFixture() {
+  const appDir = await createAppFixture({
+    "nodeHelpers.ts": `
+"use node";
+
+import { createHash } from "node:crypto";
+import { action } from "./_generated/server";
+
+export const hashIt = action({
+  args: {},
+  handler: async () => createHash("sha256").update("x").digest("hex"),
+});
+`,
+    "widgets.ts": `
+import { hashIt } from "./nodeHelpers";
+import { query } from "./_generated/server";
+
+export const list = query({
+  args: {},
+  handler: async () => [],
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /widgets\.ts imports "\.\/nodeHelpers"/);
+  assert.match(result.stderr, /begins with "use node"/);
+  assert.match(result.stderr, /cannot import a "use node" module directly/);
+  assert.match(result.stderr, /ctx\.runAction\(internal\.nodeHelpers\.<exportName>, args\)/);
+}
+
+// The same clear cross-runtime-import error must fire even when the import
+// is actually referenced in a handler body — previously this case surfaced a
+// generic, implementation-detail "Phase 4C ... unsupported export shape"
+// error out of the compile-time plan resolver instead.
+async function testDefaultRuntimeRejectsUsedUseNodeImportFixture() {
+  const appDir = await createAppFixture({
+    "nodeHelpers.ts": `
+"use node";
+
+import { createHash } from "node:crypto";
+import { action } from "./_generated/server";
+
+export const hashIt = action({
+  args: {},
+  handler: async () => createHash("sha256").update("x").digest("hex"),
+});
+`,
+    "widgets.ts": `
+import { hashIt } from "./nodeHelpers";
+import { query } from "./_generated/server";
+
+export const list = query({
+  args: {},
+  handler: async () => {
+    return typeof hashIt;
+  },
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /widgets\.ts imports "\.\/nodeHelpers"/);
+  assert.match(result.stderr, /begins with "use node"/);
+  assert.doesNotMatch(result.stderr, /Phase 4C/);
+}
+
+// A whole-statement `import type ... from "./useNodeModule"` is erased by
+// the TypeScript compiler and never reaches the runtime bundle, so it must
+// not trip the cross-runtime import rule.
+async function testDefaultRuntimeAllowsTypeOnlyUseNodeImportFixture() {
+  const appDir = await createAppFixture({
+    "nodeHelpers.ts": `
+"use node";
+
+import { createHash } from "node:crypto";
+import { action } from "./_generated/server";
+
+export const hashIt = action({
+  args: {},
+  handler: async () => createHash("sha256").update("x").digest("hex"),
+});
+`,
+    "widgets.ts": `
+import type { hashIt } from "./nodeHelpers";
+import { query } from "./_generated/server";
+
+export const list = query({
+  args: {},
+  handler: async () => [],
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+}
+
+// The supported way to call a "use node" action from a default-runtime
+// function is through the generated API reference (internal.<module>.<name>)
+// passed to ctx.runAction — this must continue to work unaffected by the
+// cross-runtime import rule, since it never imports the "use node" module's
+// file directly.
+async function testDefaultRuntimeAllowsGeneratedApiReferenceToUseNodeActionFixture() {
+  const appDir = await createAppFixture({
+    "nodeHelpers.ts": `
+"use node";
+
+import { createHash } from "node:crypto";
+import { action } from "./_generated/server";
+
+export const hashIt = action({
+  args: {},
+  handler: async () => createHash("sha256").update("x").digest("hex"),
+});
+`,
+    "widgets.ts": `
+import { internal } from "./_generated/api";
+import { action } from "./_generated/server";
+
+export const runIt = action({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.runAction(internal.nodeHelpers.hashIt, {});
+  },
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
 }
 
 async function testDebugNodeApisFixture() {

@@ -13,6 +13,8 @@ const DENO_RUNTIME_GLOBALS_SOURCE: &str = include_str!("js/deno_runtime_globals.
 const NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE: &str =
     include_str!("js/nimbus_side_channel_hardening.js");
 
+const NIMBUS_GUEST_SEMANTICS_SOURCE: &str = include_str!("js/nimbus_guest_semantics.js");
+
 // Keep Deno cleanup out of the bootstrap sources. Those sources are executed
 // during startup-snapshot creation, and moving `delete globalThis.Deno` into
 // them has already regressed snapshot-backed Locker runtime startup in the
@@ -53,6 +55,10 @@ const BOOTSTRAP_SCRIPTS: &[BootstrapScript] = &[
         name: "<nimbus-runtime:bootstrap:side-channel-hardening>",
         source: NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE,
     },
+    BootstrapScript {
+        name: "<nimbus-runtime:bootstrap:guest-semantics>",
+        source: NIMBUS_GUEST_SEMANTICS_SOURCE,
+    },
 ];
 
 const FINALIZE_BOOTSTRAP_SCRIPT: BootstrapScript = BootstrapScript {
@@ -64,6 +70,21 @@ const RESET_BOOTSTRAP_SCRIPT: BootstrapScript = BootstrapScript {
     name: "<nimbus-runtime:bootstrap:reset>",
     source: RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE,
 };
+
+/// (name, source) of every bootstrap-affecting script, for the embedded
+/// NodeFull anchor-snapshot provenance hash. BOOTSTRAP_SCRIPTS are executed
+/// DURING snapshot creation, so their definitions are baked into the blob: a
+/// snapshot built from older script text keeps serving the old definitions
+/// even though the binary carries new ones. The finalize/reset scripts run
+/// per isolate with fresh text, but they close over snapshot-baked
+/// definitions, so their text is included conservatively as well.
+pub(crate) fn bootstrap_script_provenance_inputs() -> Vec<(&'static str, &'static str)> {
+    BOOTSTRAP_SCRIPTS
+        .iter()
+        .chain([FINALIZE_BOOTSTRAP_SCRIPT, RESET_BOOTSTRAP_SCRIPT].iter())
+        .map(|script| (script.name, script.source))
+        .collect()
+}
 
 pub(crate) fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
     execute_runtime_scripts(runtime, BOOTSTRAP_SCRIPTS)
@@ -138,7 +159,7 @@ fn execute_realm_script(
 mod tests {
     use super::{
         BOOTSTRAP_SCRIPTS, CLOUDFLARE_WORKERS_RUNTIME_SOURCE, DENO_HOST_CALL_TRANSPORT_SOURCE,
-        DENO_RUNTIME_GLOBALS_SOURCE, NIMBUS_CONTEXT_CONTRACT_SOURCE,
+        DENO_RUNTIME_GLOBALS_SOURCE, NIMBUS_CONTEXT_CONTRACT_SOURCE, NIMBUS_GUEST_SEMANTICS_SOURCE,
         NIMBUS_SIDE_CHANNEL_HARDENING_SOURCE,
     };
 
@@ -157,6 +178,7 @@ mod tests {
                 "<nimbus-runtime:bootstrap:cloudflare-workers-runtime>",
                 "<nimbus-runtime:bootstrap:deno-runtime-globals>",
                 "<nimbus-runtime:bootstrap:side-channel-hardening>",
+                "<nimbus-runtime:bootstrap:guest-semantics>",
             ],
         );
         assert!(
@@ -199,6 +221,19 @@ mod tests {
         assert!(DENO_RUNTIME_GLOBALS_SOURCE.contains("op_nimbus_runtime_env_snapshot"));
         assert!(!NIMBUS_CONTEXT_CONTRACT_SOURCE.contains("__nimbusInstallRuntimeContractGlobals"));
         assert!(!NIMBUS_CONTEXT_CONTRACT_SOURCE.contains("op_nimbus_runtime_env_snapshot"));
+    }
+
+    #[test]
+    fn guest_semantics_source_defines_controller_and_stays_inert_until_installed() {
+        assert!(NIMBUS_GUEST_SEMANTICS_SOURCE.contains("__nimbusInstallGuestSemantics"));
+        assert!(NIMBUS_GUEST_SEMANTICS_SOURCE.contains("__nimbusEnterGuestImportPhase"));
+        assert!(NIMBUS_GUEST_SEMANTICS_SOURCE.contains("__nimbusBeginGuestInvocation"));
+        // Only activates on the Convex default-runtime dialect.
+        assert!(NIMBUS_GUEST_SEMANTICS_SOURCE.contains("convex_default"));
+        // Definitions only at script-eval time (the source runs during
+        // startup-snapshot creation): the sole op call is inside the
+        // begin-invocation entry point, never at top level.
+        assert!(NIMBUS_GUEST_SEMANTICS_SOURCE.contains("op_nimbus_runtime_invocation_determinism"));
     }
 
     #[test]

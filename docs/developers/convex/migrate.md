@@ -96,13 +96,22 @@ set those variables in the environment where `nimbus dev` executes.
 - **Scheduling** — `ctx.scheduler.runAfter` and `runAt` targeting mutations.
 - **HTTP actions** — `httpRouter` routes in `convex/http.ts`, served under
   `{deploymentUrl}/http/...`.
-- **Node actions** — `"use node"` modules and `convex.json` settings
-  (`node.nodeVersion`, `node.externalPackages`).
+- **Node actions** — `"use node"` action modules run on Nimbus's
+  Node-compatible runtime (node-compat on V8, not a separate Node process).
+  See [the two Convex runtimes](/developers/convex/runtimes/) for how the
+  default and Node runtimes differ.
 - **Clients** — the `convex/react` hooks and the `convex/browser` HTTP and
   WebSocket clients, including reactive query subscriptions.
 
 ## What to check
 
+- **`convex.json`** — read and honored. `node.nodeVersion` selects the Node
+  lane for your `"use node"` actions (`"20"`, `"22"`, `"24"`, or `"26"`;
+  default `"24"`), `node.externalPackages` is enforced at codegen — an
+  undeclared npm import in a `"use node"` module is a hard error — and
+  `functions` relocates the source directory. Setting `generateCommonJSApi`
+  emits a CommonJS `convex/_generated/api_cjs.cjs` alongside the ES module
+  one.
 - **File storage** — `ctx.storage` and the `_storage` system table are not
   available.
 - **Search** — full-text and vector search (`withSearchIndex`) are not

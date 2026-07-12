@@ -1,25 +1,84 @@
 import { buildRuntimeBundleSource } from "./runtime_bundle_parts.mjs";
 
+// The generated bundle resolves Node builtin/external-package bindings lazily,
+// via dynamic import() inside compileRuntimeHandler (see
+// runtime_bundle_preamble.mjs), rather than static top-level imports. This
+// matters because crates/nimbus-convex loads exactly one bundle.mjs per app
+// and shares it across every V8-based runtime lane (the default web-standard
+// isolate and every node* lane alike) — a static top-level `import ... from
+// "node:x"` emitted for one function's Node dependency would fail module
+// linking for the whole bundle, including default-runtime functions that
+// never touch Node builtins at all. Lazy resolution means a function only
+// ever triggers resolution of the specifiers it actually uses.
+//
+// That cross-lane risk only exists when the bundle is genuinely mixed: some
+// runtime-bearing surfaces on the default lane, others on the node lane,
+// sharing one bundle.mjs. A bundle whose surfaces are ALL node-lane has no
+// such risk — every function invoked against it already requires the node
+// lane, so the bundle is never loaded anywhere else. Functions are not the
+// only surface that counts: HTTP routes (convex/http.ts httpActions) always
+// execute on the default web-standard lane, so a manifest with any route at
+// all is loaded by a web isolate even when every function is "use node" —
+// see isSingleRuntimeNodeManifest below. For the all-node case we also emit bare
+// top-level imports of every Node binding specifier the manifest uses,
+// purely for their load-time side effects (see collectEagerNodeRuntimeImports
+// below): ES module semantics evaluate that module graph once, before the
+// rest of the bundle runs, and the later dynamic import() of the same
+// specifier inside compileRuntimeHandler (at first invocation) resolves from
+// that same cached module record instead of re-running its top-level code.
+// This restores "a package that throws or captures state at init does so at
+// deploy" for single-runtime Node bundles, while leaving genuinely mixed
+// bundles on the fully lazy path.
 function generateRuntimeBundle(manifest) {
-  const { importPreamble } = collectNodeRuntimeImports(manifest);
-  return buildRuntimeBundleSource(JSON.stringify(manifest, null, 2), importPreamble, {
+  const bundleSource = buildRuntimeBundleSource(JSON.stringify(manifest, null, 2), {
     module: true,
   });
+  const eagerImports = collectEagerNodeRuntimeImports(manifest);
+  if (eagerImports.length === 0) {
+    return bundleSource;
+  }
+  const importStatements = eagerImports
+    .map((specifier) => `import ${JSON.stringify(specifier)};`)
+    .join("\n");
+  return `${importStatements}\n${bundleSource}`;
 }
 
+function collectEagerNodeRuntimeImports(manifest) {
+  return isSingleRuntimeNodeManifest(manifest) ? collectNodeRuntimeSpecifiers(manifest) : [];
+}
+
+// "Single-runtime Node" means every runtime-bearing surface of the manifest
+// loads on the node lane. HTTP routes carry no runtime_environment because
+// httpActions always run on the default web-standard runtime, so any route
+// makes the bundle load in a web isolate — where an eager top-level
+// `import "node:*"` would fail module linking for the whole bundle.
+function isSingleRuntimeNodeManifest(manifest) {
+  const functions = manifest.functions ?? [];
+  const routes = manifest.routes ?? [];
+  return (
+    functions.length > 0
+    && functions.every((fn) => fn.runtime_environment === "node")
+    && routes.length === 0
+  );
+}
+
+// The Bun/JSC program bundle is a flat, non-module script (no import/export
+// statements, see the `module: false` option below), so it cannot rely on
+// dynamic import() the way the default module bundle does; Node runtime
+// imports remain unsupported there and are rejected loudly at codegen time.
 function generateRuntimeProgramBundle(manifest) {
-  const { importSpecifiers } = collectNodeRuntimeImports(manifest);
+  const importSpecifiers = collectNodeRuntimeSpecifiers(manifest);
   if (importSpecifiers.length > 0) {
     throw new Error(
       `runtime program bundle cannot materialize Node runtime imports: ${importSpecifiers.join(", ")}`,
     );
   }
-  return buildRuntimeBundleSource(JSON.stringify(manifest, null, 2), "", {
+  return buildRuntimeBundleSource(JSON.stringify(manifest, null, 2), {
     module: false,
   });
 }
 
-function collectNodeRuntimeImports(manifest) {
+function collectNodeRuntimeSpecifiers(manifest) {
   const builtinSpecifiers = new Set();
   const externalPackageSpecifiers = new Set();
   for (const fn of manifest.functions ?? []) {
@@ -28,35 +87,7 @@ function collectNodeRuntimeImports(manifest) {
       externalPackageSpecifiers,
     });
   }
-  return {
-    importSpecifiers: [
-      ...[...builtinSpecifiers].sort(),
-      ...[...externalPackageSpecifiers].sort(),
-    ],
-    importPreamble: [
-      ...createImportMapPreamble({
-        importNamePrefix: "__nimbusNodeBuiltin",
-        mapName: "__nimbusNodeBuiltinModules",
-        specifiers: builtinSpecifiers,
-      }),
-      ...createImportMapPreamble({
-        importNamePrefix: "__nimbusNodeExternalPackage",
-        mapName: "__nimbusNodeExternalPackages",
-        specifiers: externalPackageSpecifiers,
-      }),
-    ].join("\n"),
-  };
-}
-
-function createImportMapPreamble({ importNamePrefix, mapName, specifiers }) {
-  const sorted = [...specifiers].sort();
-  const importNames = new Map(sorted.map((specifier, index) => [specifier, `${importNamePrefix}${index}`]));
-  const imports = sorted.map((specifier) => `import * as ${importNames.get(specifier)} from ${JSON.stringify(specifier)};`);
-  const entries = sorted.map((specifier) => `[${JSON.stringify(specifier)}, ${importNames.get(specifier)}]`);
-  const bindings = entries.length === 0
-    ? `const ${mapName} = new Map();`
-    : `const ${mapName} = new Map([\n  ${entries.join(",\n  ")}\n]);`;
-  return [...imports, bindings];
+  return [...[...builtinSpecifiers].sort(), ...[...externalPackageSpecifiers].sort()];
 }
 
 function collectNodeRuntimeDescriptors(value, { builtinSpecifiers, externalPackageSpecifiers }) {

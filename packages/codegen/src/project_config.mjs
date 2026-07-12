@@ -11,6 +11,8 @@ const SUPPORTED_NODE_VERSION_LABEL = [...SUPPORTED_NODE_VERSIONS]
 
 function defaultProjectConfig() {
   return {
+    functions: null,
+    generateCommonJSApi: false,
     node: {
       externalPackages: [],
       nodeVersion: DEFAULT_NODE_VERSION,
@@ -39,8 +41,49 @@ async function loadProjectConfig(appDir) {
   }
 
   return {
+    functions: parseFunctionsPath(parsed.functions, appDir),
+    generateCommonJSApi: parseGenerateCommonJSApi(parsed.generateCommonJSApi, appDir),
     node: parseNodeConfig(parsed.node, appDir),
   };
+}
+
+// The `functions` setting relocates the app's function source directory
+// (e.g. for Create React App projects, which cannot import from outside
+// `src/`). It is a path relative to appDir; resolveSourceRoot in app.mjs
+// resolves and validates the directory actually exists.
+function parseFunctionsPath(rawFunctions, appDir) {
+  if (rawFunctions === undefined) {
+    return null;
+  }
+  if (typeof rawFunctions !== "string" || rawFunctions.trim().length === 0) {
+    throw new Error(
+      `Invalid convex.json in ${appDir}: "functions" must be a non-empty relative path string.`,
+    );
+  }
+  if (path.isAbsolute(rawFunctions)) {
+    throw new Error(
+      `Invalid convex.json in ${appDir}: "functions" must be a path relative to ${appDir}, not an absolute path.`,
+    );
+  }
+  const normalized = path.normalize(rawFunctions);
+  if (normalized === ".." || normalized.startsWith(`..${path.sep}`)) {
+    throw new Error(
+      `Invalid convex.json in ${appDir}: "functions" must resolve inside ${appDir}, not escape it via "..".`,
+    );
+  }
+  return rawFunctions;
+}
+
+function parseGenerateCommonJSApi(rawGenerateCommonJSApi, appDir) {
+  if (rawGenerateCommonJSApi === undefined) {
+    return false;
+  }
+  if (typeof rawGenerateCommonJSApi !== "boolean") {
+    throw new Error(
+      `Invalid convex.json in ${appDir}: "generateCommonJSApi" must be a boolean.`,
+    );
+  }
+  return rawGenerateCommonJSApi;
 }
 
 function parseNodeConfig(rawNode, appDir) {

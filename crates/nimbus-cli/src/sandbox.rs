@@ -9,7 +9,7 @@ use crate::target_context::{TargetContext, TargetSelector};
 #[command(
     help_template = crate::cli_ux::COMMAND_GROUP_HELP_TEMPLATE,
     subcommand_help_heading = "Available Commands",
-    after_help = "Examples:\n  nimbus sandbox create --local --template agent-browser\n  nimbus sandbox list --target dev\n"
+    after_help = "Examples:\n  nimbus sandbox create --template agent-browser\n  nimbus sandbox list https://nimbus.example.com\n\nTARGET is a URL or a configured target name; omitted = local.\n"
 )]
 pub(crate) struct SandboxCommand {
     #[command(subcommand)]
@@ -71,7 +71,6 @@ mod tests {
             "nimbus",
             "sandbox",
             "create",
-            "--url",
             "https://nimbus.example.test",
             "--template",
             "agent-browser",
@@ -92,5 +91,21 @@ mod tests {
             panic!("sandbox create should parse");
         };
         assert_eq!(create.template, "agent-browser");
+    }
+
+    #[test]
+    fn sandbox_list_without_target_defaults_to_local() {
+        let cli = Cli::parse_from(["nimbus", "sandbox", "list"]);
+        let Command::Sandbox(command) = cli.command else {
+            panic!("sandbox command should parse");
+        };
+
+        let context = resolve_sandbox_target(&command).expect("target should resolve");
+
+        assert_eq!(
+            context.kind,
+            crate::target_context::TargetContextKind::LocalDiscovery,
+            "omitted TARGET must default to local discovery, matching run/deploy"
+        );
     }
 }

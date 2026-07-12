@@ -52,7 +52,7 @@ One HTTP listener carries every routed family:
 ```text
 one HTTP/WebSocket listener
 ├── /health                            liveness, unauthenticated
-├── /demos, /demos/*                   bundled demo apps
+├── /examples, /examples/*             bundled example apps
 ├── /ui/*                              operator console (CSP + sessions)
 ├── /api/*  and  /ws                   native API (admin-gated)
 ├── /api/admin/deploy                  deploy API (admin header only)

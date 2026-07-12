@@ -13,11 +13,19 @@ function createRuntimeBindingDescriptors(source, { runtimeEnvironment = "default
     ...collectKnownImportBindings(source, "runtimeDescriptor"),
   };
   if (runtimeEnvironment === "node") {
-    Object.assign(
-      bindings,
-      collectNodeBuiltinRuntimeBindings(source),
-      collectNodeExternalPackageRuntimeBindings(source),
-    );
+    // Raw Node builtin imports (e.g. "node:crypto") are only meaningful on
+    // the Node-compatible runtime lane -- a default-runtime module importing
+    // one is rejected earlier, at parseModule time, by
+    // parser.mjs's validateNodeBuiltinUsage.
+    Object.assign(bindings, collectNodeBuiltinRuntimeBindings(source));
+  }
+  if (runtimeEnvironment === "node" || runtimeEnvironment === "default") {
+    // Third-party (non-builtin, non-relative) package imports resolve via
+    // the same lazily-staged node_modules directory regardless of runtime
+    // lane (see node_external_packages.mjs) -- a real, browser-compatible
+    // npm package works the same way from a default-runtime module as it
+    // does from a "use node" one.
+    Object.assign(bindings, collectNodeExternalPackageRuntimeBindings(source));
   }
   return bindings;
 }
@@ -135,7 +143,14 @@ function normalizeNodeBuiltinSpecifier(specifier) {
   return specifier.startsWith("node:") ? specifier : `node:${specifier}`;
 }
 
-function createKnownImportBindingRecord(sourcePath, importedName) {
+function createKnownImportBindingRecord(rawSourcePath, importedName) {
+  // TS NodeNext moduleResolution requires relative specifiers to carry an
+  // explicit extension (e.g. "./_generated/api.js"), but that extension is a
+  // TypeScript/Node module-resolution artifact, not part of the logical
+  // module identity this function matches against. Strip it so recognition
+  // is agnostic to whether the app's tsconfig uses NodeNext or Bundler
+  // resolution.
+  const sourcePath = rawSourcePath.replace(/\.m?jsx?$/, "");
   if (sourcePath === "convex/server" || sourcePath === "@nimbus/nimbus/server") {
     if (importedName === "paginationOptsValidator") {
       return { compileValue: createPaginationOptionsValidator() };

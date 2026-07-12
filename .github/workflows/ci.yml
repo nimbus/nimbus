@@ -2419,6 +2419,119 @@ jobs:
       - name: Test
         run: npm run test --workspaces --if-present
 
+  examples-verify:
+    name: Examples Verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    if: github.event_name != 'schedule'
+    needs: [nimbus-bin-build]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Download nimbus-bin binary
+        uses: actions/download-artifact@v8
+        with:
+          name: nimbus-bin
+          path: target/ci-archive
+
+      - name: Mark nimbus-bin executable
+        run: chmod +x target/ci-archive/nimbus
+
+      # nimbus-bin-build's ci-archive profile inherits from `dev`, so
+      # nimbus-assets' rust-embed compiles with debug-assertions on and reads
+      # embedded/packages/manifest.json from disk at runtime instead of baking
+      # it into the binary (rust-embed only embeds bytes at compile time under
+      # release-style, non-debug-assertions builds). Every other job that
+      # boots this binary already re-stages the payload for that reason; this
+      # job needs the same step so app-dir preflight (agent-chat, convex,
+      # firebase, cloud-functions) can find the manifest instead of panicking
+      # at crates/nimbus-assets/src/js_packages.rs:84.
+      - name: Download embedded package payload
+        uses: actions/download-artifact@v8
+        with:
+          name: embedded-packages
+          path: crates/nimbus-assets/embedded/packages
+
+      - name: Refresh embedded package payload mtimes
+        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
+
+      # Same rust-embed debug-assertions gap as above, for the OTHER folder
+      # embed in nimbus-assets: `UiAssets` in crates/nimbus-assets/src/ui.rs
+      # reads $CARGO_MANIFEST_DIR/../../packages/nimbus-ui/dist/ from disk at
+      # runtime under ci-archive. Unlike the manifest.json case this doesn't
+      # panic — nimbus-server's `spa_index_response` falls back to a bootstrap
+      # placeholder HTML page when the embed is empty (crates/nimbus-server/
+      # src/http/ui.rs) — but any example that exercises `/ui` or the console
+      # routes would silently get the placeholder instead of the real SPA
+      # instead of a genuine smoke result. Stage it the same way
+      # nimbus-bin-build and node-dbus-integration already do.
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ui-artifacts
+          path: packages/nimbus-ui
+
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      # The Node22 anchor snapshot blob itself needs no staging (it's
+      # `include_bytes!`'d into nimbus-bin unconditionally at compile time —
+      # unlike rust-embed above, that macro doesn't care about
+      # debug-assertions). But every deno extension's js/esm source file is
+      # declared via `ExtensionFileSource::loaded_during_snapshot(...)`, which
+      # bakes in an ABSOLUTE path under the ORIGINAL builder's
+      # `$CARGO_HOME/git/checkouts/deno-*` vendored checkout
+      # (`concat!(env!("CARGO_MANIFEST_DIR"), ...)`, resolved on
+      # nimbus-bin-build's runner). nimbus-runtime re-reads those same files
+      # from disk at RUNTIME — both to confirm the embedded snapshot's
+      # provenance is still current (`embedded_node22_snapshot_provenance` in
+      # crates/nimbus-runtime/src/backends/v8/startup.rs) and, if that check
+      # can't complete, in deno_core's own no-snapshot JsRuntime fallback — so
+      # any app-dir example that boots a JsRuntime (e.g. agent-chat; tasks
+      # never does, so it's unaffected) panics here with "Failed to
+      # initialize a JsRuntime: No such file or directory", since this job
+      # runs no Rust toolchain and so never populates that checkout.
+      # `cargo fetch --locked` reproduces the same checkout tree
+      # byte-for-byte: Cargo's checkout directory name is a pure hash of the
+      # pinned git source URL + resolved commit, not machine-specific, so it
+      # lands at the exact absolute path baked into the binary. No
+      # compilation happens (`cargo fetch` never runs build scripts), so this
+      # stays cheap relative to nimbus-bin-build's real build.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Cache vendored deno checkout
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: ci-ubuntu-stable-examples-verify-no-bin-v1
+          cache-directories: ~/.cargo/git/checkouts
+          cache-on-failure: "true"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Fetch vendored deno JS/TS sources
+        # The workflow-level RUSTC_WRAPPER=sccache (CC2) breaks even
+        # `cargo fetch`'s rustc -vV probe on this deliberately
+        # toolchain-light job, which never installs sccache.
+        env:
+          RUSTC_WRAPPER: ""
+        run: cargo fetch --locked
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run examples-verify
+        env:
+          NIMBUS_EXAMPLES_VERIFY_BIN: ${{ github.workspace }}/target/ci-archive/nimbus
+        run: make examples-verify
+
   proof-helpers:
     name: Proof Helper Checks
     runs-on: ubuntu-24.04

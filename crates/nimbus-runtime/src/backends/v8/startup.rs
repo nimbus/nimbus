@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::error::Result;
 use crate::limits::RuntimeCompatibilityTarget;
 use crate::runtime::bootstrap::{
-    extension_transpiler_for_target, install_bootstrap, install_missing_deno_extension_state,
-    snapshot_extensions,
+    bootstrap_script_provenance_inputs, extension_transpiler_for_target, install_bootstrap,
+    install_missing_deno_extension_state, snapshot_extensions,
 };
 
 use super::embedder::{
@@ -325,6 +325,16 @@ fn embedded_node22_snapshot_provenance() -> Result<u64> {
             file.specifier.hash(&mut hasher);
             file.load()?.as_bytes().hash(&mut hasher);
         }
+    }
+    // The nimbus bootstrap scripts run DURING snapshot creation (see
+    // build_node22_startup_snapshot -> install_bootstrap), so their
+    // definitions are baked into the blob heap exactly like extension JS. A
+    // blob built from older script text must mismatch and fall back to a
+    // runtime build, or snapshot-backed NodeFull isolates keep serving stale
+    // bootstrap definitions the binary no longer contains.
+    for (name, source) in bootstrap_script_provenance_inputs() {
+        name.hash(&mut hasher);
+        source.as_bytes().hash(&mut hasher);
     }
     Ok(hasher.finish())
 }

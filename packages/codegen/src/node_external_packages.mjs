@@ -50,7 +50,7 @@ async function createNodeExternalPackageReport({
     if (!isExternalPackageAllowed(projectConfig.node.externalPackages, usage)) {
       throw new Error(
         [
-          `${usage.file} imports package ${JSON.stringify(usage.specifier)} from a Node action module, but that package is not externalized.`,
+          `${usage.file} imports package ${JSON.stringify(usage.specifier)}, but that package is not externalized.`,
           "Nimbus does not yet bundle npm packages into Convex function artifacts.",
           `Add ${JSON.stringify(usage.packageName)} to convex.json node.externalPackages, or set node.externalPackages to ["*"].`,
         ].join(" "),
@@ -60,25 +60,40 @@ async function createNodeExternalPackageReport({
     addPackageResolution(packagesByKey, resolved);
   }
 
-  const packages = [...packagesByKey.values()]
-    .sort((left, right) => left.packageName.localeCompare(right.packageName))
-    .map((entry) => ({
-      packageName: entry.packageName,
-      packageRoot: entry.packageRoot === null
-        ? null
-        : path.relative(appDir, entry.packageRoot).replaceAll(path.sep, "/"),
-      stagedPackageRoot: entry.packageRoot === null
-        ? null
-        : path.relative(appDir, path.join(internalDir, "node_modules", entry.packageName))
-          .replaceAll(path.sep, "/"),
-      sizeBytes: entry.sizeBytes,
-      resolvedSpecifiers: [...entry.resolvedSpecifiers].sort(),
-      importers: [...entry.importers].sort((left, right) =>
-        left.file.localeCompare(right.file)
-        || left.specifier.localeCompare(right.specifier)
-        || left.kind.localeCompare(right.kind)
-      ),
-    }));
+  const packages = await Promise.all(
+    [...packagesByKey.values()]
+      .sort((left, right) => left.packageName.localeCompare(right.packageName))
+      .map(async (entry) => ({
+        packageName: entry.packageName,
+        packageRoot: entry.packageRoot === null
+          ? null
+          : path.relative(appDir, entry.packageRoot).replaceAll(path.sep, "/"),
+        stagedPackageRoot: entry.packageRoot === null
+          ? null
+          : path.relative(appDir, path.join(internalDir, "node_modules", entry.packageName))
+            .replaceAll(path.sep, "/"),
+        // The subpath (relative to the package root) of a browser-safe entry
+        // point, when the package declares one via package.json's "browser"
+        // export condition or the legacy "browser" field -- e.g. nanoid ships
+        // both a Node build (`index.js`, imports `node:crypto`) and a browser
+        // build (`index.browser.js`, uses `crypto.getRandomValues`). Nimbus's
+        // default runtime is a web-standard isolate with no Node builtins, so
+        // a default-lane import of this package must load the browser build
+        // instead of whatever plain package-name resolution would otherwise
+        // pick (see the specifier rewrite in main.mjs). Null when the package
+        // declares no such alternate entry.
+        browserEntry: entry.packageRoot === null
+          ? null
+          : await resolveBrowserEntry(entry.packageRoot),
+        sizeBytes: entry.sizeBytes,
+        resolvedSpecifiers: [...entry.resolvedSpecifiers].sort(),
+        importers: [...entry.importers].sort((left, right) =>
+          left.file.localeCompare(right.file)
+          || left.specifier.localeCompare(right.specifier)
+          || left.kind.localeCompare(right.kind)
+        ),
+      })),
+  );
 
   return {
     version: REPORT_VERSION,
@@ -94,6 +109,98 @@ async function createNodeExternalPackageReport({
   };
 }
 
+// Resolves a package's browser-safe entry point, if it declares one, by
+// reading its own package.json -- codegen-time only, using plain Node fs
+// (not the sandboxed runtime's module loader, which does not apply a
+// "browser" export condition when it resolves a bare package specifier).
+// Prefers the "exports"."."."browser" condition (the modern standard);
+// falls back to the legacy top-level "browser" field, which maps the
+// resolved main/module entry file to a browser-safe replacement.
+async function resolveBrowserEntry(packageRoot) {
+  let manifest;
+  try {
+    manifest = JSON.parse(await fs.readFile(path.join(packageRoot, "package.json"), "utf8"));
+  } catch {
+    return null;
+  }
+  return browserExportCondition(manifest) ?? legacyBrowserField(manifest);
+}
+
+function browserExportCondition(manifest) {
+  const exportsField = manifest.exports;
+  if (exportsField === null || typeof exportsField !== "object" || Array.isArray(exportsField)) {
+    return null;
+  }
+  const rootExport = Object.prototype.hasOwnProperty.call(exportsField, ".")
+    ? exportsField["."]
+    : exportsField;
+  if (rootExport === null || typeof rootExport !== "object" || Array.isArray(rootExport)) {
+    return null;
+  }
+  if (!Object.prototype.hasOwnProperty.call(rootExport, "browser")) {
+    return null;
+  }
+  return resolveConditionEntry(rootExport.browser);
+}
+
+// A package.json "exports" condition value is either a plain string (the
+// resolved file) or, for packages that ship both ESM and CJS browser builds,
+// a further nested object of sub-conditions -- e.g.
+// `"browser": { "import": "./browser.mjs", "require": "./browser.cjs" }`.
+// Nimbus's runtime always resolves external-package bindings via ESM
+// dynamic import() (see emit/runtime_bundle_preamble.mjs's
+// nodeExternalPackage), so "import" is preferred; "default" is the other
+// condition name real packages commonly nest a single universal entry under.
+// Anything else falls back to the first string leaf found, so a package
+// nesting under an unrecognized condition name still resolves to *some*
+// browser-safe file rather than silently falling through to the Node entry.
+function resolveConditionEntry(condition) {
+  if (typeof condition === "string") {
+    return condition;
+  }
+  if (condition === null || typeof condition !== "object" || Array.isArray(condition)) {
+    return null;
+  }
+  for (const preferredKey of ["import", "default"]) {
+    if (Object.prototype.hasOwnProperty.call(condition, preferredKey)) {
+      const resolved = resolveConditionEntry(condition[preferredKey]);
+      if (resolved !== null) {
+        return resolved;
+      }
+    }
+  }
+  for (const value of Object.values(condition)) {
+    const resolved = resolveConditionEntry(value);
+    if (resolved !== null) {
+      return resolved;
+    }
+  }
+  return null;
+}
+
+function legacyBrowserField(manifest) {
+  const browserField = manifest.browser;
+  // The common form: a bare string wholesale-replaces the package's main
+  // entry with a browser-safe file, independent of "main"/"module".
+  if (typeof browserField === "string") {
+    return browserField;
+  }
+  if (browserField === null || typeof browserField !== "object" || Array.isArray(browserField)) {
+    return null;
+  }
+  for (const candidate of [manifest.main, manifest.module]) {
+    if (typeof candidate !== "string") {
+      continue;
+    }
+    const normalized = candidate.startsWith("./") ? candidate : `./${candidate}`;
+    const replacement = browserField[normalized] ?? browserField[candidate];
+    if (typeof replacement === "string") {
+      return replacement;
+    }
+  }
+  return null;
+}
+
 async function stageNodeExternalPackages(appDir, report) {
   await fs.rm(path.join(appDir, report.stagingRoot), { force: true, recursive: true });
   for (const entry of report.packages) {
@@ -103,19 +210,108 @@ async function stageNodeExternalPackages(appDir, report) {
     const packageRoot = path.join(appDir, entry.packageRoot);
     const stagedPackageRoot = path.join(appDir, entry.stagedPackageRoot);
     await fs.mkdir(path.dirname(stagedPackageRoot), { recursive: true });
-    await fs.cp(packageRoot, stagedPackageRoot, {
-      dereference: false,
-      errorOnExist: false,
-      force: true,
-      recursive: true,
+    // A hand-rolled recursive copy, not `fs.cp` -- `fs.cp`'s Node-compat
+    // shim runs its own extra permission check ahead of the plain
+    // read/write calls below (that check is independent of, and stricter
+    // than, the sandboxed runtime's own filesystem capability grant that
+    // every other codegen read/write already relies on), so it can reject a
+    // copy this same sandboxed run is otherwise fully permitted to perform.
+    // Dereferencing symlinks (via `stat`, not `lstat`) is also the correct
+    // behavior here regardless: the staged tree is a self-contained artifact
+    // read by a sandboxed runtime scoped to the app's own directory, and a
+    // preserved symlink pointing outside that scope would be unreadable
+    // there even if this copy could preserve it. But dereferencing on its own
+    // is not safe to do unconditionally -- see copyPackageTree's containment
+    // and cycle guards below.
+    const packageRootReal = await fs.realpath(packageRoot);
+    await copyPackageTree(packageRootReal, stagedPackageRoot, {
+      containmentRoot: packageRootReal,
+      ancestorRealPaths: new Set([packageRootReal]),
     });
   }
 }
 
+// Copies a package's files into the staged tree, dereferencing symlinks (see
+// the containment-boundary rationale in stageNodeExternalPackages above).
+// Two guards keep that dereferencing from turning into a containment break
+// or an unbounded walk:
+//
+// - Containment: a symlink whose real target resolves outside the package's
+//   own root -- e.g. a dependency shipping `secrets -> ../../.env` -- is
+//   skipped rather than copied. Without this, staging would copy arbitrary
+//   files reachable from the package directory (up to and including host
+//   credentials) into the deployment artifact.
+// - Cycles: a symlink whose real target is already on the CURRENT recursion
+//   chain — an ancestor directory of the walk position, including the
+//   package root itself (e.g. `self -> .`) — is skipped rather than
+//   recursed into again, so a symlink cycle terminates instead of recursing
+//   unboundedly. The guard is scoped to the ancestry chain, not to every
+//   real path ever visited: a legitimate diamond (two different alias
+//   symlinks pointing at the same shared real subdirectory) must stage the
+//   shared files under BOTH aliases, and an all-paths-ever-seen set would
+//   silently drop the second alias from the deployment artifact.
+//
+// `sourceDir` is always a fully resolved real path (the caller passes the
+// package root's realpath, and recursion descends via plain child names or
+// a symlink's resolved target), so a non-symlink child's real path is just
+// path.join(sourceDir, name). Operating on resolved paths also shrinks the
+// realpath-check -> copy TOCTOU window: once a symlink's target has passed
+// the containment check, the stat/copy/recursion below go through that
+// verified real path, not back through the still-mutable symlink.
+async function copyPackageTree(sourceDir, destDir, { containmentRoot, ancestorRealPaths }) {
+  await fs.mkdir(destDir, { recursive: true });
+  const entries = await fs.readdir(sourceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const sourcePath = path.join(sourceDir, entry.name);
+    const destPath = path.join(destDir, entry.name);
+    if (!entry.isSymbolicLink()) {
+      if (entry.isDirectory()) {
+        ancestorRealPaths.add(sourcePath);
+        await copyPackageTree(sourcePath, destPath, { containmentRoot, ancestorRealPaths });
+        ancestorRealPaths.delete(sourcePath);
+      } else if (entry.isFile()) {
+        await fs.copyFile(sourcePath, destPath);
+      }
+      continue;
+    }
+    let realPath;
+    try {
+      realPath = await fs.realpath(sourcePath);
+    } catch {
+      continue; // dangling symlink target -- nothing to copy
+    }
+    if (!isPathWithinRoot(realPath, containmentRoot) || ancestorRealPaths.has(realPath)) {
+      continue;
+    }
+    const stat = await fs.stat(realPath);
+    if (stat.isDirectory()) {
+      ancestorRealPaths.add(realPath);
+      await copyPackageTree(realPath, destPath, { containmentRoot, ancestorRealPaths });
+      ancestorRealPaths.delete(realPath);
+    } else if (stat.isFile()) {
+      await fs.copyFile(realPath, destPath);
+    }
+  }
+}
+
+function isPathWithinRoot(candidatePath, root) {
+  const relative = path.relative(root, candidatePath);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
+}
+
+// Despite the "node" in the name, this covers external package usage on
+// both the Node-compatible lane and the default lane: both stage packages
+// into the same generated_root/node_modules directory and resolve them via
+// the same dynamic import() at runtime (see emit/runtime_bundle_preamble.mjs
+// and compile_bindings.mjs), so a real, browser-compatible package works
+// identically from either kind of module. Only "use bun" modules are
+// excluded here -- the Bun/JSC program bundle is a flat, non-module script
+// that cannot resolve a dynamic import() the way the shared V8 bundle does
+// (see emit/runtime_bundle.mjs's generateRuntimeProgramBundle).
 function collectNodeExternalPackageUsages(modules, sourceDir) {
   const usages = [];
   for (const moduleInfo of modules) {
-    if (moduleInfo.runtimeEnvironment !== "node") {
+    if (moduleInfo.runtimeEnvironment !== "node" && moduleInfo.runtimeEnvironment !== "default") {
       continue;
     }
     const file = path.relative(sourceDir, moduleInfo.filePath).replaceAll(path.sep, "/");

@@ -1,0 +1,19 @@
+{
+  "name": "mongodb-node",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "scripts": {
+    "demo": "node --experimental-strip-types ./script.ts"
+  },
+  "dependencies": {
+    "@nimbus/mongodb": "0.1.45",
+    "mongodb": "^6.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "6.0.3"
+  }
+}

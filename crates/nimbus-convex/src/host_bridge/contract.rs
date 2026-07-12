@@ -60,6 +60,8 @@ pub enum ConvexHostCallOperation {
     CtxServiceLookup,
     #[serde(rename = "convex.ctx.runtime.enter_nested_call")]
     CtxRuntimeEnterNestedCall,
+    #[serde(rename = "convex.ctx.runtime.resolve_callee_lane")]
+    CtxResolveCalleeLane,
     #[serde(rename = "cloudflare.kv.get")]
     CfKvGet,
     #[serde(rename = "cloudflare.kv.put")]
@@ -94,7 +96,8 @@ impl ConvexHostCallOperation {
             | Self::CtxRunMutation
             | Self::CtxRunAction
             | Self::CtxServiceLookup
-            | Self::CtxRuntimeEnterNestedCall => ConvexHostCallFamily::Function,
+            | Self::CtxRuntimeEnterNestedCall
+            | Self::CtxResolveCalleeLane => ConvexHostCallFamily::Function,
             Self::CtxDbQueryStart
             | Self::CtxDbQueryWithIndex
             | Self::CtxDbQueryFilter
@@ -146,6 +149,7 @@ impl ConvexHostCallOperation {
             Self::CtxSchedulerCancel => "convex.ctx.scheduler.cancel",
             Self::CtxServiceLookup => "convex.ctx.service.lookup",
             Self::CtxRuntimeEnterNestedCall => "convex.ctx.runtime.enter_nested_call",
+            Self::CtxResolveCalleeLane => "convex.ctx.runtime.resolve_callee_lane",
             Self::CfKvGet => "cloudflare.kv.get",
             Self::CfKvPut => "cloudflare.kv.put",
             Self::CfKvDelete => "cloudflare.kv.delete",
@@ -184,6 +188,7 @@ impl From<HostCallOperation> for ConvexHostCallOperation {
             HostCallOperation::CtxSchedulerCancel => Self::CtxSchedulerCancel,
             HostCallOperation::CtxServiceLookup => Self::CtxServiceLookup,
             HostCallOperation::CtxRuntimeEnterNestedCall => Self::CtxRuntimeEnterNestedCall,
+            HostCallOperation::CtxResolveCalleeLane => Self::CtxResolveCalleeLane,
             HostCallOperation::CfKvGet => Self::CfKvGet,
             HostCallOperation::CfKvPut => Self::CfKvPut,
             HostCallOperation::CfKvDelete => Self::CfKvDelete,
@@ -222,6 +227,7 @@ impl From<ConvexHostCallOperation> for HostCallOperation {
             ConvexHostCallOperation::CtxSchedulerCancel => Self::CtxSchedulerCancel,
             ConvexHostCallOperation::CtxServiceLookup => Self::CtxServiceLookup,
             ConvexHostCallOperation::CtxRuntimeEnterNestedCall => Self::CtxRuntimeEnterNestedCall,
+            ConvexHostCallOperation::CtxResolveCalleeLane => Self::CtxResolveCalleeLane,
             ConvexHostCallOperation::CfKvGet => Self::CfKvGet,
             ConvexHostCallOperation::CfKvPut => Self::CfKvPut,
             ConvexHostCallOperation::CfKvDelete => Self::CfKvDelete,

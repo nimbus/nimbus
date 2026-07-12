@@ -354,14 +354,14 @@ c19() {
 }
 check "19. adapter SDKs provisioned only when requested/imported" c19
 
-# ---- 20: no docs/READMEs/demos/launch-plan instruct registry install/publish --
+# ---- 20: no docs/READMEs/examples/launch-plan instruct registry install/publish --
 c20() {
   # User-facing docs must not instruct a registry install of a Nimbus package.
   # docs/private/plans/* legitimately describes the migration/defect and is excluded.
   # Trailing slash on the two directory args: see USER_DOCS comment above (BSD
   # grep -R silently skips a bare symlinked-directory argument).
   ! grep -RqE 'npm install @nimbus/|npm install convex' \
-    docs/private/adapters/ docs/private/operating/ packages/*/README.md demos 2>/dev/null &&
+    docs/private/adapters/ docs/private/operating/ packages/*/README.md examples 2>/dev/null &&
     { [ ! -f "${LAUNCH_PLAN}" ] || ! grep -qE '[Pp]ublish .*to npm' "${LAUNCH_PLAN}"; }
 }
 check "20. no Nimbus-package registry-install/publish instructions in docs" c20

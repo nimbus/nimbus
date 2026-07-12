@@ -1,3 +1,16 @@
+// Captured at bootstrap, before any guest code evaluates: the transport
+// script (which runs earlier in BOOTSTRAP_SCRIPTS) defines this helper, and
+// binding it here means a guest that later shadows or tampers with the
+// global name cannot re-attach caller AsyncLocalStorage context to locally
+// dispatched ctx.run* callees.
+const __nimbusDetachedNestedCall = globalThis.__nimbusCallDetachedFromInvocationContext;
+
+// The nested ctx.run* dispatcher resolves the callee's runtime lane HOST-side
+// (op_nimbus_ctx_resolve_callee_lane), never from any JavaScript state a guest
+// handler body or an eagerly-imported dependency could reach. There is
+// deliberately no in-realm lane lookup, registrar, or global to tamper with:
+// the host registry is the single authority for the local-vs-host decision.
+
 const __nimbusNormalizeFieldName = function __nimbusNormalizeFieldName(field) {
   if (typeof field === "string" && field.length > 0) {
     return field;
@@ -136,6 +149,25 @@ const __nimbusCreateQueryBuilder = function __nimbusCreateQueryBuilder(syncHostV
   });
 };
 
+// Single-argument ctx.db calls receive a table-scoped document id
+// (`<table>:<key>`), the protocol contract shared with the host bridge. The
+// table derived here is advisory only: the bridge re-resolves the scoped id
+// and rejects any mismatch, so a forged prefix cannot redirect the operation.
+const __nimbusTableFromScopedId = function __nimbusTableFromScopedId(id, label) {
+  if (typeof id !== "string") {
+    throw new TypeError(
+      `ctx.${label}(...) requires a table-scoped document id string`,
+    );
+  }
+  const separator = id.indexOf(":");
+  if (separator <= 0 || separator >= id.length - 1) {
+    throw new TypeError(
+      `ctx.${label}(...) requires a table-scoped document id like "tasks:...", got "${id}"`,
+    );
+  }
+  return id.slice(0, separator);
+};
+
 const __nimbusNormalizeFunctionReference = function __nimbusNormalizeFunctionReference(functionRef, label) {
   if (!functionRef || typeof functionRef !== "object") {
     throw new Error(`ctx.${label}(...) requires a generated function reference`);
@@ -167,21 +199,65 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
         throw_on_missing_identity: false,
       }
     : null;
-  if (typeof localInvoker === "function") {
+  // Same-isolate local dispatch is an optimization that is only correct when
+  // the callee executes on this isolate's runtime lane. Generated bundles are
+  // shared across every V8 lane of an app (default web-standard isolate and
+  // "use node" isolates alike), so a nested call whose callee is declared for
+  // a different lane must go through HOST dispatch: the engine path resolves
+  // the callee's own lane, semantics profile, and capability set. Running it
+  // locally would execute e.g. a default-lane mutation under Node/Host
+  // semantics (unfrozen clock, unseeded random) or make a "use node" action
+  // import node builtins inside the web isolate.
+  const useLocalDispatch = (() => {
+    if (typeof localInvoker !== "function") {
+      return false;
+    }
+    // `__nimbusRuntimeEnvironmentLane` is frozen at bootstrap
+    // (deno_runtime_globals.js), so reading it here is not guest-shadowable.
+    const currentLane = globalThis.__nimbusRuntimeEnvironmentLane;
+    if (typeof currentLane !== "string") {
+      // No lane signal anywhere on this isolate: a genuine pre-lane isolate
+      // (no runtime contract installed, so no lane metadata exists at all).
+      // Preserve the historical behavior — local dispatch whenever a
+      // dispatcher exists. Real deployed isolates always freeze a lane string
+      // at bootstrap and never take this branch.
+      return true;
+    }
+    // Ask the HOST for the callee's authoritative runtime lane. The registry
+    // the host owns is the single source of truth; no guest handler body or
+    // eagerly-imported dependency can influence this value. Fail SAFE: any
+    // non-string result (unknown/registry-native callee, or a lane the host
+    // could not resolve) routes to host dispatch, which resolves the callee's
+    // own lane and semantics. Never assume local — local dispatch under a
+    // mismatched lane runs a callee under the wrong clock/seed/capabilities.
+    const calleeLane = syncHostValue("op_nimbus_ctx_resolve_callee_lane", {
+      name: normalized.name,
+    });
+    return typeof calleeLane === "string" && calleeLane === currentLane;
+  })();
+  if (useLocalDispatch) {
     syncHostValue("op_nimbus_ctx_runtime_enter_nested_call", {
       name: normalized.name,
       visibility: normalized.visibility,
       kind,
       host_call_session_id: hostCallSessionId,
     });
-    return await localInvoker({
-      kind,
-      function_name: normalized.name,
-      args,
-      visibility: normalized.visibility,
-      hostCallSessionId,
-      ...(nestedAuthContext ? { auth: nestedAuthContext } : {}),
-    });
+    const invokeLocal = () =>
+      localInvoker({
+        kind,
+        function_name: normalized.name,
+        args,
+        visibility: normalized.visibility,
+        hostCallSessionId,
+        ...(nestedAuthContext ? { auth: nestedAuthContext } : {}),
+      });
+    // Start the nested handler from the root async context (as the host
+    // dispatch path below does) so caller AsyncLocalStorage state never
+    // propagates into ctx.run* callees. The helper reference was captured at
+    // bootstrap; guest reassignment of the global cannot bypass detachment.
+    return await (typeof __nimbusDetachedNestedCall === "function"
+      ? __nimbusDetachedNestedCall(invokeLocal)
+      : invokeLocal());
   }
   return globalThis.__nimbusAsyncHostValue(asyncOpName, {
     ...normalized,
@@ -342,9 +418,11 @@ globalThis.__nimbusCreateContext = function(options = {}) {
                 host_call_session_id: hostCallSessionId,
               });
             }
-            throw new Error(
-              "Nimbus runtime ctx.db.get currently requires table and id at runtime",
-            );
+            return globalThis.__nimbusAsyncHostValue("op_nimbus_document_get", {
+              table: __nimbusTableFromScopedId(tableOrId, "db.get"),
+              id: tableOrId,
+              host_call_session_id: hostCallSessionId,
+            });
           }
           return globalThis.__nimbusAsyncHostValue("op_nimbus_document_get", {
             table: tableOrId,
@@ -365,23 +443,36 @@ globalThis.__nimbusCreateContext = function(options = {}) {
             fields,
           });
         },
-        patch(table, id, patch) {
+        patch(tableOrId, idOrPatch, maybePatch) {
           if (!capabilities.dbWrite) {
             unsupported("db.patch");
           }
+          if (maybePatch === undefined) {
+            return asyncHostValue("op_nimbus_document_patch", {
+              table: __nimbusTableFromScopedId(tableOrId, "db.patch"),
+              id: tableOrId,
+              patch: idOrPatch,
+            });
+          }
           return asyncHostValue("op_nimbus_document_patch", {
-            table,
-            id,
-            patch,
+            table: tableOrId,
+            id: idOrPatch,
+            patch: maybePatch,
           });
         },
-        delete(table, id) {
+        delete(tableOrId, maybeId) {
           if (!capabilities.dbWrite) {
             unsupported("db.delete");
           }
+          if (maybeId === undefined) {
+            return asyncHostValue("op_nimbus_document_delete", {
+              table: __nimbusTableFromScopedId(tableOrId, "db.delete"),
+              id: tableOrId,
+            });
+          }
           return asyncHostValue("op_nimbus_document_delete", {
-            table,
-            id,
+            table: tableOrId,
+            id: maybeId,
           });
         },
       }

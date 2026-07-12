@@ -261,6 +261,13 @@ fn convex_default_runtime_lane(base_limits: RuntimeLimits) -> ConvexRuntimeLane 
     } else {
         limits.apply_resource_overrides_from(&base_limits);
     }
+    // The Convex default runtime carries the upstream guest-semantics
+    // contract (seeded Math.random, frozen invocation clock, deploy-pinned
+    // timeOrigin, fetch-in-actions-only, process.env + node:async_hooks)
+    // regardless of what base limits the server passed in. The node lanes
+    // stay on Host semantics: the upstream Node runtime is exempt from these
+    // rules and only runs actions.
+    limits.guest_semantics = nimbus_runtime::RuntimeGuestSemantics::ConvexDefault;
     ConvexRuntimeLane::from_limits(
         limits,
         RuntimeExecutionAdapterState::Linked,

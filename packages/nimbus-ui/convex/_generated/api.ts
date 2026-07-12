@@ -19,7 +19,7 @@
 //   tables:list (convention-inferred)
 
 import { makeQueryReference } from "convex/browser";
-import type { Doc, Id, JsonValue } from "./dataModel";
+import type { Doc, Id, JsonValue } from "./dataModel.js";
 
 export const api = {
   adapter_capabilities: {

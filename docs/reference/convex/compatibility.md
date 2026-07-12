@@ -161,6 +161,29 @@ Each tenant's deployment URL is `{host}/convex/{tenantId}`. Under it:
 - `"use bun"` modules fail closed unless a Bun runtime adapter is linked
   into the server build.
 
+## Default runtime semantics
+
+Directive-free modules run on the default V8 runtime, which reproduces
+Convex's deterministic time and randomness rules. See
+[the two Convex runtimes](/developers/convex/runtimes/) for the full
+explanation.
+
+| Surface | Behavior |
+| --- | --- |
+| `Math.random()` | Seeded PRNG. Deploy-stable at module load; re-seeded with fresh entropy per `query` / paginated query / `mutation`. |
+| `Date.now()`, `new Date()` | Deploy timestamp at module load; frozen at invocation start through a `query` / paginated query / `mutation`; live (coarsened) host clock in actions. |
+| `performance.now()` | Fixed during import and queries; increments in mutations and actions. |
+| `performance.timeOrigin` | Pinned to the deployment timestamp for every invocation kind. |
+| `fetch` | Actions only. Queries and mutations fail closed with a parity error; actions remain subject to the tenant egress policy. |
+| `process.env` | Present and capability-gated. No other `process` fields (`versions`, `release`, `cwd`, `Buffer`). |
+| `node:async_hooks` | `AsyncLocalStorage` and `AsyncResource` only (no `createHook` / `executionAsyncId`). A store does not propagate into `ctx.runQuery` / `ctx.runMutation` / `ctx.runAction`. |
+| `WebAssembly` | `instantiate` / `Module` / `Instance` available; shared `WebAssembly.Memory` is disabled. |
+| Web globals | `WebSocket`, `URL`, `structuredClone`, and timers are present — a superset of Convex's documented default-runtime globals. |
+
+The deployment timestamp is derived from the deployed bundle entrypoint's
+modification time (a proxy — copies that alter the mtime shift it). Determinism
+here is behavioral parity, not a security boundary.
+
 ## Not supported
 
 - File storage: `ctx.storage` and the `_storage` system table.

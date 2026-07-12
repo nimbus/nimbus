@@ -10,8 +10,9 @@ use serde_json::Value;
 
 use crate::cli_ux;
 use crate::codegen::run_codegen_for_app_dir;
+use crate::local_server_client::LocalServerHttpClient;
+use crate::target_context::{TargetContextKind, TargetSelector};
 
-const DEPLOY_URL_ENV: &str = "NIMBUS_DEPLOY_URL";
 const DEPLOY_TOKEN_ENV: &str = "NIMBUS_DEPLOY_TOKEN";
 const ADMIN_TOKEN_ENV: &str = "NIMBUS_ADMIN_TOKEN";
 
@@ -22,9 +23,8 @@ const ADMIN_TOKEN_ENV: &str = "NIMBUS_ADMIN_TOKEN";
     after_help = crate::cli_ux::DEPLOY_HELP_EXAMPLES
 )]
 pub(crate) struct DeployCommand {
-    /// Target Nimbus server URL. Defaults to NIMBUS_DEPLOY_URL.
-    #[arg(long)]
-    pub(crate) url: Option<String>,
+    #[command(flatten)]
+    pub(crate) target: TargetSelector,
 
     /// Deploy admin bearer token. Defaults to NIMBUS_DEPLOY_TOKEN.
     #[arg(long)]
@@ -160,7 +160,11 @@ pub(crate) async fn run_deploy_command(
     command: DeployCommand,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cwd = env::current_dir()?;
-    let target_url = resolve_deploy_url(command.url.as_deref(), |name| env::var(name).ok())?;
+    let ResolvedDeployTarget {
+        url: target_url,
+        banner,
+    } = resolve_deploy_target_url(&command.target, |name| env::var(name).ok())?;
+    emit_deploy_phase(&banner);
     let token = resolve_deploy_token(
         command.token.as_deref(),
         &target_url,
@@ -271,28 +275,59 @@ impl DeployDiff {
     }
 }
 
-fn resolve_deploy_url(
-    explicit_url: Option<&str>,
+/// The deploy target after resolution: the concrete base URL every downstream
+/// step keys off, plus the prominent banner naming the destination and how it
+/// resolved (printed before the deploy acts, per XD4).
+#[derive(Debug)]
+struct ResolvedDeployTarget {
+    url: String,
+    banner: String,
+}
+
+/// Resolve the deploy target to a concrete base URL the token, admin-token, and
+/// upload steps all key off. The positional `TARGET` follows the shared
+/// [`TargetSelector`] rule (URL / configured name / omitted = local):
+///
+/// - a URL target uses it directly;
+/// - an omitted target discovers the running local server (like `nimbus dev`);
+/// - a named target resolves through the `~/.config/nimbus/targets` registry,
+///   and an unconfigured name fails with an error naming that file and
+///   `nimbus target add`.
+fn resolve_deploy_target_url(
+    target: &TargetSelector,
     env_lookup: impl Fn(&str) -> Option<String>,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let url = explicit_url
-        .map(str::to_owned)
-        .or_else(|| env_lookup(DEPLOY_URL_ENV))
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "nimbus deploy requires --url or NIMBUS_DEPLOY_URL",
-            )
-        })?;
-    let trimmed = url.trim().trim_end_matches('/').to_string();
-    if trimmed.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "deploy target URL must not be empty",
-        )
-        .into());
-    }
-    Ok(trimmed)
+) -> Result<ResolvedDeployTarget, Box<dyn std::error::Error>> {
+    resolve_deploy_target_url_with(target, env_lookup, crate::targets::resolve_named_target_url)
+}
+
+/// Named-target resolution is injected so tests never read the machine's real
+/// `~/.config/nimbus/targets`; production passes
+/// [`crate::targets::resolve_named_target_url`].
+fn resolve_deploy_target_url_with(
+    target: &TargetSelector,
+    env_lookup: impl Fn(&str) -> Option<String>,
+    named_resolver: impl Fn(&str) -> Result<String, nimbus::Error>,
+) -> Result<ResolvedDeployTarget, Box<dyn std::error::Error>> {
+    let context = target.resolve("deploy", env_lookup)?;
+    let url = match &context.kind {
+        TargetContextKind::RemoteUrl(url) => url.trim_end_matches('/').to_string(),
+        TargetContextKind::LocalDiscovery => {
+            let paths = LocalServerPaths::resolve_for_current_platform().map_err(|error| {
+                io::Error::other(format!("failed to resolve local server paths: {error}"))
+            })?;
+            let client = LocalServerHttpClient::discover(&paths, reqwest::Client::new())?
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "no running local Nimbus server was found; start one with `nimbus dev` or `nimbus start`, or pass a TARGET URL",
+                    )
+                })?;
+            client.base_url().trim_end_matches('/').to_string()
+        }
+        TargetContextKind::NamedTarget(name) => named_resolver(name)?,
+    };
+    let banner = crate::targets::resolved_target_banner("Deploying to", &context, &url);
+    Ok(ResolvedDeployTarget { url, banner })
 }
 
 fn resolve_deploy_token(
@@ -898,7 +933,7 @@ mod tests {
     fn cli_parses_deploy_defaults() {
         let command = parse_deploy(["nimbus", "deploy"]);
 
-        assert_eq!(command.url, None);
+        assert_eq!(command.target.target, None);
         assert_eq!(command.token, None);
         assert_eq!(command.app_dir, None);
         assert!(!command.dry_run);
@@ -911,7 +946,6 @@ mod tests {
         let command = parse_deploy([
             "nimbus",
             "deploy",
-            "--url",
             "http://localhost:3210/",
             "--token",
             "secret",
@@ -922,7 +956,10 @@ mod tests {
             "--verbose",
         ]);
 
-        assert_eq!(command.url.as_deref(), Some("http://localhost:3210/"));
+        assert_eq!(
+            command.target.target.as_deref(),
+            Some("http://localhost:3210/")
+        );
         assert_eq!(command.token.as_deref(), Some("secret"));
         assert_eq!(command.app_dir, Some(PathBuf::from("./app")));
         assert!(command.dry_run);
@@ -931,29 +968,96 @@ mod tests {
     }
 
     #[test]
-    fn deploy_help_describes_explicit_target() {
+    fn deploy_help_describes_positional_target() {
         let error =
             Cli::try_parse_from(["nimbus", "deploy", "--help"]).expect_err("help should render");
         assert_eq!(error.kind(), ErrorKind::DisplayHelp);
         let rendered = error.to_string();
 
-        assert!(rendered.contains("--url"));
-        assert!(rendered.contains("NIMBUS_DEPLOY_URL"));
+        assert!(rendered.contains("TARGET"));
+        assert!(
+            !rendered.contains("--url <URL>"),
+            "the deleted --url deploy flag must not appear as an option: {rendered}"
+        );
+        assert!(rendered.contains("NIMBUS_TARGET_URL"));
         assert!(rendered.contains("--token"));
         assert!(rendered.contains("NIMBUS_DEPLOY_TOKEN"));
         assert!(rendered.contains("--dry-run"));
     }
 
     #[test]
-    fn deploy_target_resolution_requires_url_and_token() {
-        let missing_url = resolve_deploy_url(None, |_| None).expect_err("url should be required");
-        assert!(missing_url.to_string().contains("requires --url"));
+    fn deploy_target_resolution_resolves_url_and_requires_token() {
+        let reject_named = |name: &str| -> Result<String, nimbus::Error> {
+            panic!("unexpected named lookup for {name}")
+        };
 
-        let url = resolve_deploy_url(None, |name| {
-            (name == DEPLOY_URL_ENV).then(|| "http://localhost:3210/".to_string())
-        })
+        let resolved = resolve_deploy_target_url_with(
+            &TargetSelector {
+                target: Some("http://localhost:3210/".to_string()),
+            },
+            |_| None,
+            reject_named,
+        )
+        .expect("url target should resolve");
+        assert_eq!(resolved.url, "http://localhost:3210");
+        assert_eq!(
+            resolved.banner,
+            "Deploying to http://localhost:3210 (from TARGET)"
+        );
+
+        let from_env = resolve_deploy_target_url_with(
+            &TargetSelector { target: None },
+            |name| (name == "NIMBUS_TARGET_URL").then(|| "http://localhost:3210/".to_string()),
+            reject_named,
+        )
         .expect("url should resolve from env");
-        assert_eq!(url, "http://localhost:3210");
+        assert_eq!(from_env.url, "http://localhost:3210");
+        assert_eq!(
+            from_env.banner,
+            "Deploying to http://localhost:3210 (from NIMBUS_TARGET_URL)"
+        );
+
+        let named = resolve_deploy_target_url_with(
+            &TargetSelector {
+                target: Some("prod".to_string()),
+            },
+            |_| None,
+            |name| Ok(format!("https://{name}.nimbus.example.com")),
+        )
+        .expect("a configured named target should resolve through the registry");
+        assert_eq!(named.url, "https://prod.nimbus.example.com");
+        assert!(
+            named
+                .banner
+                .starts_with("Deploying to prod (https://prod.nimbus.example.com, from "),
+            "named-target banner should name the destination and its source: {}",
+            named.banner
+        );
+
+        // Unconfigured named target: resolve through a temp registry (never the
+        // machine's real ~/.config/nimbus/targets) so the assertion is
+        // deterministic and always runs.
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let targets_path = temp.path().join("targets");
+        crate::targets::write_targets_file(&targets_path, &crate::targets::TargetsFile::default())
+            .expect("empty registry should write");
+        let unconfigured = resolve_deploy_target_url_with(
+            &TargetSelector {
+                target: Some("ghost".to_string()),
+            },
+            |_| None,
+            |name| crate::targets::resolve_named_target_url_at(&targets_path, name),
+        )
+        .expect_err("an unconfigured named target must fail");
+        let message = unconfigured.to_string();
+        assert!(
+            message.contains("nimbus target add ghost"),
+            "unconfigured-name error should point at `nimbus target add`: {message}"
+        );
+        assert!(
+            message.contains("targets"),
+            "unconfigured-name error should name the targets file: {message}"
+        );
 
         let missing_token =
             resolve_deploy_token(None, "http://localhost:3210", |_| None, |_| Ok(None))

@@ -63,6 +63,7 @@ pub use host::{
     RuntimeAsyncSchedulerRunAfterPayload, RuntimeAsyncSchedulerRunAtPayload,
     RuntimeAsyncServiceLookupPayload, RuntimeSyncNestedCallPayload, RuntimeSyncQueryFilterPayload,
     RuntimeSyncQueryOrderPayload, RuntimeSyncQueryStartPayload, RuntimeSyncQueryWithIndexPayload,
+    RuntimeSyncResolveCalleeLanePayload,
 };
 pub use limits::{
     EffectiveRuntimeScalingPlan, NominalRuntimeHostPressureSource, RequestedRuntimeScalingTarget,
@@ -82,7 +83,7 @@ pub use limits::{
     RuntimeExecutionAdapterArtifactDiagnostics, RuntimeExecutionAdapterArtifactSource,
     RuntimeExecutionAdapterArtifactStatus, RuntimeExecutionAdapterExpectedArtifact,
     RuntimeExecutionAdapterManifestArtifact, RuntimeExecutionAdapterState, RuntimeExecutionModel,
-    RuntimeGrants, RuntimeHostAdmissionAction, RuntimeHostAdmissionDecision,
+    RuntimeGrants, RuntimeGuestSemantics, RuntimeHostAdmissionAction, RuntimeHostAdmissionDecision,
     RuntimeHostPressureLevel, RuntimeHostPressureSample, RuntimeHostPressureSource,
     RuntimeHostPressureSourceStatus, RuntimeHostResourceBudget, RuntimeHostResourceDecision,
     RuntimeHostWorkClass, RuntimeIsolateGroupFfiStatus, RuntimeJavaScriptEvaluationFormat,

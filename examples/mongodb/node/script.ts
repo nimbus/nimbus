@@ -1,0 +1,58 @@
+import { MongoClient } from "mongodb";
+import { mongoUri } from "@nimbus/mongodb";
+
+const host = process.env.NIMBUS_MONGODB_HOST ?? "127.0.0.1";
+const port = process.env.NIMBUS_MONGODB_PORT
+  ? Number(process.env.NIMBUS_MONGODB_PORT)
+  : 27017;
+const username = process.env.NIMBUS_MONGODB_USERNAME;
+const password = process.env.NIMBUS_MONGODB_PASSWORD;
+
+async function main() {
+  if (!username || !password) {
+    throw new Error(
+      "Set NIMBUS_MONGODB_USERNAME and NIMBUS_MONGODB_PASSWORD before running the MongoDB demo.",
+    );
+  }
+
+  console.log(`Connecting to Nimbus MongoDB at ${host}:${port}...`);
+
+  const client = new MongoClient(mongoUri({ host, port, username, password }));
+  await client.connect();
+
+  try {
+    const db = client.db("demo");
+    const messages = db.collection("messages");
+
+    // Insert a document.
+    const insertResult = await messages.insertOne({
+      author: "Node Demo",
+      body: `Hello from Node at ${new Date().toISOString()}`,
+      createdAt: new Date(),
+    });
+    console.log("Inserted document:", insertResult.insertedId.toString());
+
+    // Query all documents.
+    const allMessages = await messages.find().toArray();
+    console.log("All messages after insert:", allMessages);
+
+    // Update the document we just inserted.
+    const updateResult = await messages.updateOne(
+      { _id: insertResult.insertedId },
+      { $set: { body: "Updated message from Node Demo" } },
+    );
+    console.log("Updated documents:", updateResult.modifiedCount);
+
+    // Query again to show the update.
+    const updated = await messages.find().toArray();
+    console.log("All messages after update:", updated);
+  } finally {
+    await client.close();
+    console.log("Connection closed.");
+  }
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

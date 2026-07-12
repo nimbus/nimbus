@@ -80,6 +80,35 @@ impl ConvexRegistry {
         self.selected_runtime_lane(function_name).policy()
     }
 
+    /// Authoritative runtime lane (`"default" | "node" | "bun"`) for the nested
+    /// `ctx.run*` dispatcher's local-vs-host decision, in the same vocabulary the
+    /// isolate freezes into `globalThis.__nimbusRuntimeEnvironmentLane`. Returns
+    /// `None` for callees the local bundle cannot invoke — unknown functions and
+    /// plan-backed/non-runtime functions — so those resolve to host dispatch,
+    /// which owns their execution. This is the single source of truth for the
+    /// decision: no guest-reachable JavaScript state participates.
+    pub fn runtime_environment_for_function(&self, function_name: &str) -> Option<&'static str> {
+        let definition = self.functions.get(function_name)?;
+        if definition.runtime_handler.is_none() || !definition.plan.is_null() {
+            return None;
+        }
+        Some(
+            match self
+                .selected_runtime_lane(function_name)
+                .limits()
+                .compatibility_target
+            {
+                RuntimeCompatibilityTarget::Node20
+                | RuntimeCompatibilityTarget::Node22
+                | RuntimeCompatibilityTarget::Node24
+                | RuntimeCompatibilityTarget::Node26 => "node",
+                RuntimeCompatibilityTarget::BunJsc => "bun",
+                RuntimeCompatibilityTarget::WebStandardIsolate
+                | RuntimeCompatibilityTarget::WasmComponent => "default",
+            },
+        )
+    }
+
     pub fn runtime_lane_for_function(
         &self,
         function_name: &str,
@@ -294,6 +323,37 @@ mod tests {
         assert!(
             registry.has_runtime_bundle_for_function("messages:runtimeOnly"),
             "runtime-only functions should use the runtime bundle"
+        );
+    }
+
+    #[test]
+    fn convex_default_lane_carries_convex_guest_semantics_and_node_lanes_stay_host() {
+        let registry = ConvexRegistry::empty();
+        assert_eq!(
+            registry.runtime_limits().guest_semantics,
+            nimbus_runtime::RuntimeGuestSemantics::ConvexDefault,
+            "the default Convex lane must opt into the Convex default-runtime guest semantics"
+        );
+        for (lane_label, lane) in [
+            ("node20", &registry.node20_runtime_lane),
+            ("node22", &registry.node22_runtime_lane),
+            ("node24", &registry.node24_runtime_lane),
+            ("node26", &registry.node26_runtime_lane),
+        ] {
+            assert_eq!(
+                lane.limits().guest_semantics,
+                nimbus_runtime::RuntimeGuestSemantics::Host,
+                "{lane_label} lane must stay on Host semantics (the upstream Node runtime is \
+                 exempt from the default-runtime determinism contract)"
+            );
+        }
+        // A server-supplied V8 base-limits override must not strip the
+        // semantics opt-in.
+        let overridden = ConvexRegistry::empty().with_runtime_limits(RuntimeLimits::default());
+        assert_eq!(
+            overridden.runtime_limits().guest_semantics,
+            nimbus_runtime::RuntimeGuestSemantics::ConvexDefault,
+            "base-limits overrides must not lose the ConvexDefault opt-in"
         );
     }
 

@@ -107,6 +107,23 @@ where
 #[derive(Default)]
 pub(super) struct RecordingHost {
     pub(super) calls: Mutex<Vec<HostCallRequest>>,
+    // When set, answers the callee-lane oracle (`CtxResolveCalleeLane`) with this
+    // lane for every callee — the host standing in for a registry whose
+    // functions all share this isolate's lane, so same-isolate local dispatch is
+    // taken. `None` reports every callee as unresolved (null), which fails safe
+    // to host dispatch.
+    resolve_lane: Option<String>,
+}
+
+impl RecordingHost {
+    /// A recording host that resolves every nested callee to `lane`, so
+    /// same-lane nested `ctx.run*` calls take the local-dispatch fast path.
+    pub(super) fn resolving_lane(lane: impl Into<String>) -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            resolve_lane: Some(lane.into()),
+        }
+    }
 }
 
 impl HostBridge for RecordingHost {
@@ -115,6 +132,13 @@ impl HostBridge for RecordingHost {
             .lock()
             .expect("recording host lock should not be poisoned")
             .push(request.clone());
+        if request.operation == HostCallOperation::CtxResolveCalleeLane {
+            let value = match &self.resolve_lane {
+                Some(lane) => Value::String(lane.clone()),
+                None => Value::Null,
+            };
+            return Ok(serde_json::json!({ "status": "ok", "value": value }));
+        }
         Ok(serde_json::json!({
             "operation": request.operation,
             "payload": request.payload,
@@ -419,6 +443,9 @@ impl HostBridge for SyncOnlyHost {
             .push(request.clone());
         let value = match request.operation {
             HostCallOperation::QueryBuilderStart => Value::String("builder-1".to_string()),
+            // Resolve every nested callee to the default lane so a same-lane
+            // nested ctx.run* in these default-isolate tests takes local dispatch.
+            HostCallOperation::CtxResolveCalleeLane => Value::String("default".to_string()),
             _ => Value::Null,
         };
         Ok(serde_json::json!({

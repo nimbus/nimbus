@@ -51,6 +51,13 @@ pub(crate) struct AdapterEnablement {
     pub(crate) firebase: Option<FirebaseConfig>,
     pub(crate) cloudflare: Option<CloudflareConfig>,
     pub(crate) convex_tenancy: Option<ConvexTenancyConfig>,
+    /// Loud boot notice when [`convex_tenancy`] admits anonymous requests —
+    /// either `nimbus dev`'s auto-provisioned dev team (EX3.7) or an operator's
+    /// explicit `NIMBUS_CONVEX_ANONYMOUS_TEAM`. `None` whenever anonymous
+    /// application-Convex access stays refused, which keeps
+    /// [`status_lines`](Self::status_lines) unchanged for every boot that
+    /// doesn't touch this path.
+    pub(crate) convex_tenancy_notice: Option<String>,
     pub(crate) mongodb: Option<MongoDbConfig>,
     pub(crate) dynamodb: Option<DynamoDbConfig>,
     pub(crate) s3: Option<S3Config>,
@@ -90,13 +97,17 @@ impl AdapterEnablement {
             .s3
             .as_ref()
             .map_or_else(|| "off".to_string(), |config| config.bind_addr.to_string());
-        vec![
+        let mut lines = vec![
             format!("firestore routes:\t{firestore}"),
             format!("cloudflare routes:\t{cloudflare}"),
             format!("mongodb listener:\t{mongodb}"),
             format!("dynamodb listener:\t{dynamodb}"),
             format!("s3 listener:\t{s3}"),
-        ]
+        ];
+        if let Some(notice) = &self.convex_tenancy_notice {
+            lines.push(notice.clone());
+        }
+        lines
     }
 
     /// Mounts every resolved adapter surface onto the serve options.
@@ -207,10 +218,13 @@ pub(crate) fn resolve_adapter_enablement_with_env_and_app_dir(
     let dynamodb = dynamodb::resolve_dynamodb(command, &env_lookup, &port_is_free, &mut store)?;
     let s3 = s3::resolve_s3(command, &env_lookup, &port_is_free, &mut store)?;
     let cloudflare = cloudflare::resolve_cloudflare(command, app_dir, &mut store)?;
+    let (convex_tenancy, convex_tenancy_notice) =
+        convex_tenancy::resolve_convex_tenancy(command, &env_lookup)?;
     Ok(AdapterEnablement {
         firebase: firebase::resolve_firebase(command, &env_lookup)?,
         cloudflare,
-        convex_tenancy: convex_tenancy::resolve_convex_tenancy(&env_lookup)?,
+        convex_tenancy,
+        convex_tenancy_notice,
         mongodb,
         dynamodb,
         s3,
@@ -371,6 +385,46 @@ mod tests {
         assert!(
             firebase.project_registry().resolve("other").is_err(),
             "ambient project bindings must not desync nimbus dev from its auto tenant"
+        );
+    }
+
+    #[test]
+    fn dev_auto_tenant_enables_anonymous_convex_access() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut command = base_command();
+        command.auto_tenant = Some("dev-project".to_string());
+        let resolved = resolve(&command, temp.path(), |_| None)
+            .expect("dev auto-tenant Convex tenancy config should resolve");
+        let convex_tenancy = resolved
+            .convex_tenancy
+            .as_ref()
+            .expect("nimbus dev must auto-provision a convex tenancy config");
+        let tenant = TenantId::new("dev-project").expect("tenant id should parse");
+        convex_tenancy
+            .authorize_silo_selection(&tenant, &nimbus_core::PrincipalContext::anonymous())
+            .expect("anonymous access to the auto-tenant's silo must be admitted");
+        assert!(
+            resolved
+                .convex_tenancy_notice
+                .as_ref()
+                .expect("dev auto-provisioning must print a loud boot notice")
+                .contains("dev-project"),
+            "the notice should name the auto-provisioned tenant"
+        );
+    }
+
+    #[test]
+    fn start_with_no_convex_envs_keeps_convex_refused() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let resolved = resolve(&base_command(), temp.path(), |_| None)
+            .expect("the default command must resolve every surface");
+        assert!(
+            resolved.convex_tenancy.is_none(),
+            "plain start with no envs must not plumb a convex tenancy config"
+        );
+        assert!(
+            resolved.convex_tenancy_notice.is_none(),
+            "plain start with no envs must never print an anonymous-access notice"
         );
     }
 

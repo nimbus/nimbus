@@ -37,9 +37,9 @@ pub(crate) const ROOT_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus start
   nimbus dev
-  nimbus run --local -- npm test
-  nimbus deploy --url http://localhost:3210
-  nimbus codegen --app ./demos/convex/html
+  nimbus run exec -- npm test
+  nimbus deploy http://localhost:3210
+  nimbus codegen --app ./examples/convex/html
   nimbus token rotate
   nimbus machine start
   nimbus node install --systemd --dry-run
@@ -49,8 +49,8 @@ pub(crate) const DEV_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus dev                  # auto-opens the operator console
   nimbus dev --no-open        # print the launch URL instead of opening
-  nimbus dev --app-dir ./demos/convex/html
-  nimbus dev --app-dir ./demos/convex/html --skip-codegen
+  nimbus dev --app-dir ./examples/convex/html
+  nimbus dev --app-dir ./examples/convex/html --skip-codegen
   nimbus dev --data-dir ./.nimbus/dev
 
 P3 scope:
@@ -64,13 +64,17 @@ the launch URL is printed on a single line you can copy / paste.";
 
 pub(crate) const DEPLOY_HELP_EXAMPLES: &str = "\
 Examples:
-  nimbus deploy --url http://localhost:3210
-  NIMBUS_DEPLOY_URL=http://localhost:3210 nimbus deploy
-  nimbus deploy --app-dir ./demos/convex/html --dry-run
+  nimbus deploy                                 # local server (like nimbus dev)
+  nimbus deploy http://localhost:3210
+  nimbus deploy prod                            # a name from `nimbus target add`
+  NIMBUS_TARGET_URL=http://localhost:3210 nimbus deploy
+  nimbus deploy --app-dir ./examples/convex/html --dry-run
 
 Deploy target:
-  nimbus deploy requires an explicit self-hosted target URL via --url or
-  NIMBUS_DEPLOY_URL. Authenticate via one of:
+  TARGET is a URL or a configured target name; omitted = local. A URL deploys to
+  that self-hosted server; a name resolves through `nimbus target add`; omitting
+  TARGET deploys to the running local server (NIMBUS_TARGET_URL is the env
+  fallback). Authenticate via one of:
     --token <value>             explicit CLI flag (wins)
     NIMBUS_DEPLOY_TOKEN env     CI / automation path
     nimbus auth login --url <daemon> --bearer <value>
@@ -81,16 +85,16 @@ Deploy target:
 pub(crate) const START_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus start
-  nimbus start --app-dir ./demos/convex/html
-  nimbus start --app-dir ./demos/convex/html --skip-codegen
+  nimbus start --app-dir ./examples/convex/html
+  nimbus start --app-dir ./examples/convex/html --skip-codegen
   nimbus start --compose-file ./compose.yaml
   nimbus start --tenant-provider postgres --postgres-url postgres://localhost/nimbus";
 
 pub(crate) const CODEGEN_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus codegen
-  nimbus codegen --app ./demos/convex/html
-  nimbus codegen --app ./demos/convex/node";
+  nimbus codegen --app ./examples/convex/html
+  nimbus codegen --app ./examples/convex/node";
 
 pub(crate) const TOKEN_ROTATE_HELP_EXAMPLES: &str = "\
 Examples:

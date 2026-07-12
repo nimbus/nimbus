@@ -68,6 +68,29 @@ impl DevAdapter {
 }
 
 pub(super) fn detect_dev_adapter(app_dir: &Path) -> io::Result<Option<DevAdapter>> {
+    // convex.json's "functions" setting relocates the source directory (e.g.
+    // Create React App projects that cannot import from outside src/) and
+    // takes precedence over the nimbus/convex directory heuristic below — an
+    // explicit override is an unambiguous signal, so a declared-but-missing
+    // directory is a real misconfiguration to surface, not something to
+    // silently fall through past.
+    if let Some(functions_override) = read_convex_json_functions_field(app_dir) {
+        let functions_root = app_dir.join(&functions_override);
+        if !functions_root.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "convex.json declares \"functions\": {functions_override:?}, but {} is not a directory in {}. Create that directory with your Convex functions inside it, or remove \"functions\" from convex.json.",
+                    functions_root.display(),
+                    app_dir.display(),
+                ),
+            ));
+        }
+        return Ok(Some(DevAdapter::Convex {
+            source_root: functions_root,
+        }));
+    }
+
     let nimbus_root = app_dir.join("nimbus");
     if nimbus_root.is_dir() {
         return Ok(Some(DevAdapter::Convex {
@@ -95,6 +118,19 @@ pub(super) fn detect_dev_adapter(app_dir: &Path) -> io::Result<Option<DevAdapter
     }
 
     Ok(None)
+}
+
+/// Best-effort read of convex.json's top-level "functions" string field.
+/// Malformed JSON, a missing file, or a wrong-typed value all fall through
+/// to `None` (the default nimbus/convex directory heuristic in the caller)
+/// — codegen's own convex.json loader
+/// (packages/codegen/src/project_config.mjs) is the strict validator that
+/// runs right after detection; this detection-time read only needs the
+/// override signal, not full validation.
+fn read_convex_json_functions_field(app_dir: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(app_dir.join("convex.json")).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
+    parsed.get("functions")?.as_str().map(str::to_owned)
 }
 
 fn detect_cloud_functions_adapter(app_dir: &Path) -> io::Result<Option<DevAdapter>> {

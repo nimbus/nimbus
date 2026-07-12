@@ -1,0 +1,14 @@
+{
+  "name": "convex-showcase",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "codegen": "convex codegen --app ."
+  },
+  "dependencies": {
+    "convex": "*"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  }
+}

@@ -231,6 +231,7 @@ impl NimbusRuntime {
             module_loader: Some(Rc::new(RestrictedModuleLoader::new(
                 path_policy.clone(),
                 self.policy.limits().compatibility_target,
+                self.policy.limits().guest_semantics,
                 self.policy.limits().node_conditions.clone(),
                 bundle.module_code_cache(self.policy.limits(), construction_mode),
                 loader_hook_registry,

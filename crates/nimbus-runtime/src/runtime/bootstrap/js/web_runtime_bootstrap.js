@@ -14,6 +14,7 @@ const base64 = core.loadExtScript("ext:deno_web/05_base64.js");
 const streams = core.loadExtScript("ext:deno_web/06_streams.js");
 const messagePort = core.loadExtScript("ext:deno_web/13_message_port.js");
 const timers = core.loadExtScript("ext:deno_web/02_timers.js");
+const performanceModule = core.loadExtScript("ext:deno_web/15_performance.js");
 
 function seedGlobal(name, value) {
   if (value !== undefined && globalThis[name] === undefined) {
@@ -46,3 +47,12 @@ seedGlobal("setTimeout", timers.setTimeout);
 seedGlobal("setInterval", timers.setInterval);
 seedGlobal("clearTimeout", timers.clearTimeout);
 seedGlobal("clearInterval", timers.clearInterval);
+// Convex default-runtime timing surface: performance plus the Performance
+// entry classes (the side-channel hardening pass coarsens performance.now, and
+// the guest-semantics controller pins timeOrigin / freezes now per invocation
+// kind on ConvexDefault lanes).
+seedGlobal("performance", performanceModule.performance);
+seedGlobal("Performance", performanceModule.Performance);
+seedGlobal("PerformanceEntry", performanceModule.PerformanceEntry);
+seedGlobal("PerformanceMark", performanceModule.PerformanceMark);
+seedGlobal("PerformanceMeasure", performanceModule.PerformanceMeasure);

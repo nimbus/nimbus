@@ -1,0 +1,24 @@
+{
+  "name": "nimbus-tasks",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit",
+    "smoke": "node --experimental-strip-types ./smoke.ts"
+  },
+  "dependencies": {
+    "@nimbus/nimbus": "*",
+    "ws": "8.20.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@types/ws": "8.18.1",
+    "typescript": "6.0.3",
+    "vite": "8.0.9"
+  }
+}

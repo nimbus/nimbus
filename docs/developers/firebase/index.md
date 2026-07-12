@@ -155,6 +155,8 @@ covered, see the [compatibility matrix](/reference/firebase/compatibility/).
 
 ## Where next
 
+- [Example apps](/developers/firebase/examples/) — a browser playground and
+  the shared tasks list, built on stock Firestore imports.
 - [Migrate from Firebase](/developers/firebase/migrate/) — move an existing
   Firestore app onto Nimbus step by step.
 - [Firestore compatibility](/reference/firebase/compatibility/) — the precise

@@ -193,7 +193,7 @@ unauthenticated baseline. App Check verification is deferred.
 ## 9. Deploy
 
 ```bash
-nimbus deploy --url <server-url> --token <deploy-token>
+nimbus deploy <server-url> --token <deploy-token>
 ```
 
 ## Suggested order

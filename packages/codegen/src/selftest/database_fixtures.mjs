@@ -83,7 +83,9 @@ export const send = mutation({
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
   assert.match(runtimeBundle, /executeQueryDefinition/);
   assert.match(runtimeBundle, /__nimbusCreateContext/);
-  assert.match(runtimeBundle, /ctx\.db\.query/);
+  // Compiled query plans replay wholesale through the direct query op; the
+  // runtime query-builder API cannot express index-backed ordering.
+  assert.match(runtimeBundle, /op_nimbus_ctx_query/);
   assert.match(runtimeBundle, /executeMutationDefinition/);
   assert.match(runtimeBundle, /ctx\.db\.insert/);
 }

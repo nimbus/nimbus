@@ -10,7 +10,7 @@ import {
 } from "./app.mjs";
 import { loadAuthConfig } from "./auth_config.mjs";
 import { generateCloudFunctionsArtifacts } from "./cloud_functions.mjs";
-import { generateApiFile, generateDataModelFile, generateScheduledFunctionsFile, generateServerFile } from "./emit/generated_files.mjs";
+import { generateApiCjsFile, generateApiFile, generateDataModelFile, generateScheduledFunctionsFile, generateServerFile } from "./emit/generated_files.mjs";
 import {
   generateRuntimeBundle,
   generateRuntimeProgramBundle,
@@ -19,12 +19,12 @@ import {
   collectNodeApiDiagnostics,
   formatNodeApiDiagnostics,
 } from "./node_api_diagnostics.mjs";
-import { assertTenantBundleAdmission } from "./module_specifiers.mjs";
+import { assertTenantBundleAdmission, packageNameFromSpecifier } from "./module_specifiers.mjs";
 import {
   createNodeExternalPackageReport,
   stageNodeExternalPackages,
 } from "./node_external_packages.mjs";
-import { parseHttpRoutes, parseModule } from "./parser.mjs";
+import { parseHttpRoutes, parseModule, validateCrossModuleRuntimeImports } from "./parser.mjs";
 import { loadProjectConfig } from "./project_config.mjs";
 import {
   runtimeLaneMetadata,
@@ -58,17 +58,105 @@ function handlerOriginLine(moduleSource, handlerText) {
   return line;
 }
 
-async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = false, onInfo } = {}) {
-  const resolvedSourceRoot = sourceRoot ?? await resolveSourceRoot(appDir);
+// Runtime handlers are emitted verbatim into the bundle, where the preamble
+// compiles every handler eagerly at module evaluation — one handler that is
+// not valid JavaScript (e.g. TypeScript-only syntax such as `as` casts or
+// type annotations, which codegen does not strip) would disable the entire
+// bundle. Reject it here, at codegen time, naming the offending handler.
+function assertRuntimeHandlerSyntax(fn, moduleInfo) {
+  if (typeof fn.runtimeHandler !== "string" || fn.runtimeHandler.length === 0) {
+    return;
+  }
+  try {
+    // Mirrors the bundle preamble's compileRuntimeHandler expression shape.
+    new Function(`return (${fn.runtimeHandler});`);
+  } catch (error) {
+    const line = handlerOriginLine(moduleInfo.source, fn.runtimeHandler);
+    const location =
+      line === null ? moduleInfo.moduleName : `${moduleInfo.moduleName}:${line}`;
+    throw new Error(
+      `convex function ${fn.name} has a handler that is not valid JavaScript (${location}): ${error.message}. ` +
+        "TypeScript-only syntax (type annotations, `as` casts, generics) is not stripped from runtime handlers — rewrite the handler without it.",
+    );
+  }
+}
+
+const NODE_EXTERNAL_PACKAGE_BINDING_TYPES = new Set([
+  "node_external_package_default",
+  "node_external_package_namespace",
+  "node_external_package_named",
+]);
+
+// Nimbus's default runtime is a web-standard V8 isolate with no Node
+// builtins; its dynamic import() resolves a bare package specifier the same
+// way "use node" lane imports do (plain node_modules resolution, no
+// "browser" export condition applied), so a default-lane import of a package
+// whose main entry uses a Node builtin (e.g. nanoid's `index.js` imports
+// `crypto`) fails at invocation time even though the package also ships a
+// browser-safe build. createNodeExternalPackageReport already resolved each
+// package's browser-safe entry point, if any (see resolveBrowserEntry in
+// node_external_packages.mjs); this rewrites only *default-lane, bare
+// package-root* binding specifiers to reference that entry file directly by
+// its staged relative path -- a plain relative import, which bypasses
+// package.json "exports" subpath gating entirely, unlike a rewritten bare
+// specifier would. "use node" lane bindings and subpath imports (e.g.
+// "nanoid/async") are left untouched: a subpath import already names a
+// specific file the developer chose, not the package's ambiguous main entry.
+function rewriteDefaultLaneExternalPackageSpecifiers(manifest, nodeExternalPackageReport, internalDir, appDir) {
+  const browserEntryByPackageName = new Map(
+    nodeExternalPackageReport.packages
+      .filter((entry) => entry.browserEntry !== null && entry.stagedPackageRoot !== null)
+      .map((entry) => [entry.packageName, entry]),
+  );
+  if (browserEntryByPackageName.size === 0) {
+    return;
+  }
+  for (const fn of manifest) {
+    if (fn.runtime_environment !== "default" || fn.runtime_bindings === undefined) {
+      continue;
+    }
+    for (const descriptor of Object.values(fn.runtime_bindings)) {
+      if (!NODE_EXTERNAL_PACKAGE_BINDING_TYPES.has(descriptor.type)) {
+        continue;
+      }
+      if (packageNameFromSpecifier(descriptor.specifier) !== descriptor.specifier) {
+        continue; // a subpath specifier (e.g. "nanoid/async"), not a bare package root import
+      }
+      const entry = browserEntryByPackageName.get(descriptor.specifier);
+      if (entry === undefined) {
+        continue;
+      }
+      const browserFileAbs = path.join(appDir, entry.stagedPackageRoot, entry.browserEntry);
+      const relFromBundle = path.relative(internalDir, browserFileAbs).replaceAll(path.sep, "/");
+      descriptor.specifier = relFromBundle.startsWith(".") ? relFromBundle : `./${relFromBundle}`;
+    }
+  }
+}
+
+async function generateConvexArtifacts({
+  appDir,
+  sourceRoot,
+  projectConfig: providedProjectConfig,
+  debugNodeApis = false,
+  onInfo,
+} = {}) {
+  // Loaded before source-root resolution: convex.json's "functions" setting
+  // can relocate the source directory, so the config that decides where to
+  // look must come first — and both reads should be the same read, not two
+  // separate convex.json parses that could race a concurrent edit under
+  // `nimbus dev`'s watch loop.
+  const projectConfig = providedProjectConfig ?? await loadProjectConfig(appDir);
+  const resolvedSourceRoot =
+    sourceRoot ?? await resolveSourceRoot(appDir, { functionsOverride: projectConfig.functions });
   const sourceDir = resolvedSourceRoot.sourceDirPath;
   const packageNamespace = resolvedSourceRoot.packageNamespace;
   const generatedDir = path.join(sourceDir, "_generated");
   const internalDir = path.join(appDir, ".nimbus", "convex");
-  const projectConfig = await loadProjectConfig(appDir);
   const schema = await loadSchemaDefinition(sourceDir);
   const authConfig = await loadAuthConfig(sourceDir);
 
   const moduleFiles = await collectModuleFiles(sourceDir);
+  await validateCrossModuleRuntimeImports(sourceDir, moduleFiles);
   const modules = [];
   const manifest = [];
 
@@ -82,6 +170,7 @@ async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = fal
       if (fn.kind === "http_action") {
         continue;
       }
+      assertRuntimeHandlerSyntax(fn, moduleInfo);
       const runtimeMetadata = runtimeMetadataForFunction({
         runtimeEnvironment: fn.runtimeEnvironment,
         projectConfig,
@@ -116,6 +205,7 @@ async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = fal
     projectConfig,
     sourceDir,
   });
+  rewriteDefaultLaneExternalPackageSpecifiers(manifest, nodeExternalPackageReport, internalDir, appDir);
 
   const httpRoutes = await parseHttpRoutes(sourceDir, schema, modules);
   if (debugNodeApis) {
@@ -130,6 +220,12 @@ async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = fal
     generateApiFile(modules, schema, packageNamespace),
     "utf8",
   );
+  const apiCjsPath = path.join(generatedDir, "api_cjs.cjs");
+  if (projectConfig.generateCommonJSApi) {
+    await fs.writeFile(apiCjsPath, generateApiCjsFile(modules, packageNamespace), "utf8");
+  } else {
+    await fs.rm(apiCjsPath, { force: true });
+  }
   await fs.writeFile(
     path.join(generatedDir, "server.ts"),
     generateServerFile(packageNamespace),
@@ -218,7 +314,10 @@ async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = fal
 async function runCliFromArgs(args = process.argv.slice(2), { onInfo } = {}) {
   const appDir = resolveAppDirectory(args);
   const debugNodeApis = args.includes("--debug-node-apis");
-  const sourceRoot = await tryResolveSourceRoot(appDir);
+  const projectConfig = await loadProjectConfig(appDir);
+  const sourceRoot = await tryResolveSourceRoot(appDir, {
+    functionsOverride: projectConfig.functions,
+  });
   const cloudFunctions = await generateCloudFunctionsArtifacts({ appDir, onInfo });
 
   if (sourceRoot?.detectedBothRoots) {
@@ -226,11 +325,11 @@ async function runCliFromArgs(args = process.argv.slice(2), { onInfo } = {}) {
   }
 
   if (sourceRoot === null && cloudFunctions === null) {
-    await resolveSourceRoot(appDir);
+    await resolveSourceRoot(appDir, { functionsOverride: projectConfig.functions });
   }
 
   const convex = sourceRoot
-    ? await generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis, onInfo })
+    ? await generateConvexArtifacts({ appDir, sourceRoot, projectConfig, debugNodeApis, onInfo })
     : null;
   return { appDir, cloudFunctions, convex };
 }
