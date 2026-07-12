@@ -119,10 +119,19 @@ The structural test's `Reflect.ownKeys(globalThis)` inventory must classify ever
 `__nimbus*` own property present after bootstrap AND after bundle load into
 exactly one bucket below; a new unlisted property fails the test.
 
-- **TRUST (must be non-reachable or slot-hardened after Band completion):**
-  `__nimbusInvoke` (removed from global after Band B capture-then-delete),
-  `__nimbusInvokeCloudflareWorkerFetch` (removed/hardened after Band B),
-  `__nimbusCreateContext` (slot-hardened after Band B),
+- **TRUST (must be non-reachable, slot-hardened, or host-authority-off-the-name
+  after Band completion):**
+  `__nimbusInvoke` — Band B moved the host's authority OFF the name: the host now
+  calls the reference captured into a per-realm `v8::Private` at load
+  (`captured_dispatch.rs`), so the global remains present as the guest's own
+  (inert) dispatch handle but no longer drives the trusted path. The structural
+  test's HG0 assertion is IDENTITY (the captured reference is invoked), not
+  absence of the global. (Capture-then-delete was deliberately not taken: the
+  global is the guest's own emitted code, so removing it from the guest's view
+  is not itself a security boundary, and deleting on the central warm-reuse
+  invoke path carries regression risk for no additional authority guarantee.)
+  `__nimbusInvokeCloudflareWorkerFetch` (same treatment as HG0, Band B),
+  `__nimbusCreateContext` (slot-hardened non-writable/non-configurable, Band B),
   `__nimbusInvokeNamedLocal` (HG2), `__nimbusWaitUntil`/`__nimbusDrainWaitUntil`/
   `__nimbusResetWaitUntil` (HG6), `__nimbusRefreshNodeProcessCwd` (HG7),
   `__nimbusHiddenDenoGlobals`/`__nimbusHiddenNodeGlobals` (HG9, value-freeze).

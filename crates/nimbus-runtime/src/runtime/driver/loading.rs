@@ -309,6 +309,14 @@ impl NimbusRuntime {
         self.policy
             .metrics()
             .record_bundle_load(started_at.elapsed());
+        // Capture the invocation entrypoints (globalThis.__nimbusInvoke and, on
+        // their lanes, __nimbusInvokeCloudflareWorkerFetch / __nimbusBeginGuestInvocation)
+        // off the guest-reachable graph now that the bundle has fully evaluated
+        // and before any guest handler body runs. Warm-pool reuse invokes the
+        // captured reference (HG0/HG5), so a guest reassignment in one invocation
+        // cannot redirect the trusted path of a later same-tenant invocation on
+        // the same isolate.
+        crate::runtime::captured_dispatch::capture_invocation_targets(runtime, None)?;
         trace_snapshot_seeded_runtime_phase(
             construction_mode,
             bundle,
@@ -909,10 +917,12 @@ impl NimbusRuntime {
         } else {
             None
         };
-        let expression = request.runtime_invoke_expression(
-            module_specifier.as_deref(),
-            self.policy.limits().guest_semantics,
-        )?;
+        // Capture the invocation entrypoints off the guest-reachable graph now
+        // that the bundle has evaluated in this fresh realm, before any guest
+        // handler body runs (HG0/HG5). The dispatch below reads the captured
+        // reference, never `globalThis.__nimbusInvoke` by name.
+        crate::runtime::captured_dispatch::capture_invocation_targets(runtime, Some(realm))?;
+        let request_json = serde_json::to_string(request)?;
         trace_snapshot_seeded_runtime_phase(
             construction_mode,
             bundle,
@@ -924,35 +934,35 @@ impl NimbusRuntime {
             lease.mark_invoking().map_err(realm_lease_error)?;
         }
         let invocation_script_started_at = Instant::now();
-        realm
-            .execute_script(
-                runtime.v8_isolate(),
-                "<nimbus-runtime:invoke-recycled-context>",
-                expression,
-            )
-            .map_err(|error| {
-                trace_snapshot_seeded_runtime_error(
-                    construction_mode,
-                    bundle,
-                    context,
-                    Some(request),
-                    "invoke_recycled_context:execute_script:error",
-                    &error,
-                );
-                runtime_js_error(error)
-            })
-            .inspect(|_| {
-                self.policy
-                    .metrics()
-                    .record_fresh_realm_invocation_script(invocation_script_started_at.elapsed());
-                trace_snapshot_seeded_runtime_phase(
-                    construction_mode,
-                    bundle,
-                    context,
-                    Some(request),
-                    "invoke_recycled_context:execute_script:complete",
-                );
-            })
+        crate::runtime::captured_dispatch::call_captured_invocation(
+            runtime,
+            Some(realm),
+            &request_json,
+            self.policy.limits().guest_semantics,
+            module_specifier.as_deref(),
+        )
+        .inspect_err(|error| {
+            trace_snapshot_seeded_runtime_error(
+                construction_mode,
+                bundle,
+                context,
+                Some(request),
+                "invoke_recycled_context:execute_script:error",
+                error,
+            );
+        })
+        .inspect(|_| {
+            self.policy
+                .metrics()
+                .record_fresh_realm_invocation_script(invocation_script_started_at.elapsed());
+            trace_snapshot_seeded_runtime_phase(
+                construction_mode,
+                bundle,
+                context,
+                Some(request),
+                "invoke_recycled_context:execute_script:complete",
+            );
+        })
     }
 
     fn fresh_realm_module_loader(
@@ -1035,10 +1045,7 @@ impl NimbusRuntime {
             (true, Some(bundle)) => Some(bundle.module_specifier()?.to_string()),
             (true, None) | (false, _) => None,
         };
-        let expression = request.runtime_invoke_expression(
-            module_specifier.as_deref(),
-            self.policy.limits().guest_semantics,
-        )?;
+        let request_json = serde_json::to_string(request)?;
         trace_snapshot_seeded_runtime_phase_with_optional_bundle(
             construction_mode,
             bundle,
@@ -1053,19 +1060,25 @@ impl NimbusRuntime {
             Some(request),
             "invoke_loaded_bundle:execute_script:start",
         );
-        let value = runtime
-            .execute_script("<nimbus-runtime:invoke>", expression)
-            .map_err(|error| {
-                trace_snapshot_seeded_runtime_error_with_optional_bundle(
-                    construction_mode,
-                    bundle,
-                    context,
-                    Some(request),
-                    "invoke_loaded_bundle:execute_script:error",
-                    &error,
-                );
-                runtime_js_error(error)
-            })?;
+        // Call the invocation entrypoint captured off the guest-reachable graph
+        // at bundle load (HG0/HG5), never `globalThis.__nimbusInvoke` by name.
+        let value = crate::runtime::captured_dispatch::call_captured_invocation(
+            runtime,
+            None,
+            &request_json,
+            self.policy.limits().guest_semantics,
+            module_specifier.as_deref(),
+        )
+        .inspect_err(|error| {
+            trace_snapshot_seeded_runtime_error_with_optional_bundle(
+                construction_mode,
+                bundle,
+                context,
+                Some(request),
+                "invoke_loaded_bundle:execute_script:error",
+                error,
+            );
+        })?;
         trace_snapshot_seeded_runtime_phase_with_optional_bundle(
             construction_mode,
             bundle,

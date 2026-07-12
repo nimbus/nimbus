@@ -269,7 +269,7 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
 
 let __nimbusInvocationGeneration = 0;
 
-globalThis.__nimbusCreateContext = function(options = {}) {
+const __nimbusCreateContextImpl = function(options = {}) {
   const myGeneration = __nimbusInvocationGeneration;
 
   const guardStale = () => {
@@ -596,4 +596,20 @@ globalThis.__nimbusCreateContext = function(options = {}) {
 
 Object.freeze(globalThis.__nimbusSyncHostValue);
 Object.freeze(globalThis.__nimbusAsyncHostValue);
-Object.freeze(globalThis.__nimbusCreateContext);
+// HG1: harden the SLOT, not just the function object. __nimbusCreateContext
+// builds the whole invocation ctx (auth identity, db read/write, scheduler, and
+// nested-call capabilities); the trusted preamble reads it once per invocation.
+// `Object.freeze(value)` freezes only the function object, leaving the global
+// slot reassignable — so a guest handler that ran `globalThis.__nimbusCreateContext
+// = impostor` (or deleted it) in one invocation could redirect a later
+// same-tenant invocation's context construction on a warm isolate. A
+// non-writable, non-configurable slot installed here at bootstrap, before any
+// guest or eagerly-imported code runs, closes that: the preamble's name lookup
+// always resolves to the real factory and guest reassignment throws in strict
+// mode. The frozen function object remains as defense in depth.
+Object.defineProperty(globalThis, "__nimbusCreateContext", {
+  value: Object.freeze(__nimbusCreateContextImpl),
+  writable: false,
+  configurable: false,
+  enumerable: false,
+});
