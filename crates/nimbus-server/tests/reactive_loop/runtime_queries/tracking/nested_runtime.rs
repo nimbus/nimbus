@@ -78,6 +78,13 @@ globalThis.__nimbusInvoke = async function(request) {
   }
 };
 
+// Declare this bundle's functions as same-lane so same-isolate nested ctx.run*
+// takes local dispatch (this test asserts same-isolate execution).
+if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
+  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(
+    () => globalThis.__nimbusRuntimeEnvironmentLane,
+  );
+}
 globalThis.__nimbusInvokeNamedLocal = invokeLocal;
 
 export {};

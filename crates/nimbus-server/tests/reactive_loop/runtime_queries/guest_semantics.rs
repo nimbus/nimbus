@@ -84,6 +84,13 @@ globalThis.__nimbusInvoke = async function(request) {
   }
 };
 
+// Declare this bundle's functions as same-lane so same-isolate nested ctx.run*
+// takes local dispatch (the path whose ALS non-propagation this test asserts).
+if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
+  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(
+    () => globalThis.__nimbusRuntimeEnvironmentLane,
+  );
+}
 globalThis.__nimbusInvokeNamedLocal = invokeLocal;
 
 export {};

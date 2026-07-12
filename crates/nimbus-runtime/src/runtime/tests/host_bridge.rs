@@ -75,6 +75,13 @@ async fn runtime_query_context_is_reader_only_when_request_kind_is_present() {
     std::fs::write(
         &bundle_path,
         r#"
+// Declare this bundle's functions as same-lane so same-isolate nested ctx.run*
+// takes local dispatch (this test asserts the local host-bridge path).
+if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
+  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(
+    () => globalThis.__nimbusRuntimeEnvironmentLane,
+  );
+}
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     hostCallSessionId: `${request.kind}:${request.function_name}`,
@@ -189,6 +196,13 @@ async fn runtime_mutation_context_exposes_query_and_mutation_nested_calls() {
     std::fs::write(
         &bundle_path,
         r#"
+// Declare this bundle's functions as same-lane so same-isolate nested ctx.run*
+// takes local dispatch (this test asserts the local host-bridge path).
+if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
+  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(
+    () => globalThis.__nimbusRuntimeEnvironmentLane,
+  );
+}
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({ request });
   globalThis.__nimbusInvokeNamedLocal = async function (nestedRequest) {
@@ -1430,6 +1444,13 @@ async fn runtime_same_isolate_nested_entry_uses_sync_host_bridge_path() {
     std::fs::write(
         &bundle_path,
         r#"
+// Declare this bundle's functions as same-lane so the nested ctx.run* takes
+// local dispatch (this test asserts the sync host-bridge path it uses).
+if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
+  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(
+    () => globalThis.__nimbusRuntimeEnvironmentLane,
+  );
+}
 globalThis.__nimbusInvokeNamedLocal = async function () {
   return "local-ok";
 };

@@ -459,6 +459,55 @@ async fn convex_semantics_identical_content_redeploy_reseeds_import_stream() {
 }
 
 #[tokio::test]
+async fn convex_semantics_identical_mtime_redeploy_reseeds_via_deploy_nonce() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    // The mtime-as-deploy-time proxy collided for a byte-identical redeploy
+    // that preserves the entrypoint mtime (or two deploys in the same
+    // millisecond): identical content + identical mtime reseeded identically.
+    // A genuine per-deploy nonce fixes that — the same file with two distinct
+    // deploy nonces must establish two different import-time random streams,
+    // while the deploy timestamp guest code observes stays put.
+    let (_tempdir, bundle_path) = write_app_style_bundle(IMPORT_STABILITY_BUNDLE);
+
+    let invoke_with_nonce = |bundle_path: std::path::PathBuf, nonce: &'static str| async move {
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(RecordingHost::default()),
+            convex_semantics_policy(),
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        );
+        runtime
+            .invoke_bundle_for_tenant(
+                &RuntimeBundle::new(&bundle_path).with_deploy_nonce(nonce),
+                &query_request("messages:list"),
+                "tenant-a",
+            )
+            .await
+            .expect("nonce-reseed invocation should succeed")
+    };
+
+    // Same file, same content, same mtime — only the per-deploy nonce differs.
+    let first = invoke_with_nonce(bundle_path.clone(), "deploy-nonce-1").await;
+    let second = invoke_with_nonce(bundle_path.clone(), "deploy-nonce-2").await;
+
+    assert_ne!(
+        first["importRandom"], second["importRandom"],
+        "distinct per-deploy nonces must reseed the import-time random stream for identical content+mtime"
+    );
+    assert_eq!(
+        first["importNow"], second["importNow"],
+        "the deploy timestamp stays the entrypoint mtime and is unaffected by the nonce"
+    );
+
+    // The same nonce (same deploy, replayed) reseeds identically: per-invocation
+    // and cross-restart determinism is preserved.
+    let replay = invoke_with_nonce(bundle_path.clone(), "deploy-nonce-1").await;
+    assert_eq!(
+        first["importRandom"], replay["importRandom"],
+        "replaying the same deploy nonce must keep the import stream deterministic"
+    );
+}
+
+#[tokio::test]
 async fn convex_semantics_guest_cannot_replace_determinism_hooks() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let bundle = r#"
@@ -570,6 +619,14 @@ async fn convex_semantics_als_detachment_survives_guest_tampering() {
 import { AsyncLocalStorage } from "node:async_hooks";
 
 const storage = new AsyncLocalStorage();
+
+// Declare this bundle's functions as same-lane so a same-isolate nested call
+// takes local dispatch (the path whose ALS detachment this test exercises).
+if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
+  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(
+    () => globalThis.__nimbusRuntimeEnvironmentLane,
+  );
+}
 
 try {
   globalThis.__nimbusCallDetachedFromInvocationContext = (fn) => fn();

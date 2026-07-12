@@ -5,6 +5,37 @@
 // dispatched ctx.run* callees.
 const __nimbusDetachedNestedCall = globalThis.__nimbusCallDetachedFromInvocationContext;
 
+// Host-captured callee-lane lookup for the nested ctx.run* dispatcher. The
+// generated bundle evaluates after this bootstrap script but before any guest
+// handler runs, and registers its per-function `runtime_environment` lookup
+// exactly once through this registrar (see
+// packages/codegen/src/emit/runtime_bundle_dispatch_global_invoke.mjs). The
+// dispatcher below consults this captured reference — never a guest-shadowable
+// global read at call time — so guest code that deletes or reassigns a global
+// name cannot redirect lane routing. The registrar is one-shot: a second call
+// throws, so an import-time package or handler cannot replace a legitimately
+// registered lookup with an always-"same lane" impostor. The registrar itself
+// is non-writable and non-configurable, so it cannot be swapped out either.
+let __nimbusCapturedCalleeLaneLookup = null;
+let __nimbusCalleeLaneLookupRegistered = false;
+Object.defineProperty(globalThis, "__nimbusRegisterLocalFunctionRuntimeEnvironment", {
+  value: function __nimbusRegisterLocalFunctionRuntimeEnvironment(lookup) {
+    if (__nimbusCalleeLaneLookupRegistered) {
+      throw new Error(
+        "nimbus callee-lane lookup is already registered for this isolate",
+      );
+    }
+    if (typeof lookup !== "function") {
+      throw new TypeError("nimbus callee-lane lookup must be a function");
+    }
+    __nimbusCalleeLaneLookupRegistered = true;
+    __nimbusCapturedCalleeLaneLookup = lookup;
+  },
+  configurable: false,
+  enumerable: false,
+  writable: false,
+});
+
 const __nimbusNormalizeFieldName = function __nimbusNormalizeFieldName(field) {
   if (typeof field === "string" && field.length > 0) {
     return field;
@@ -206,15 +237,26 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
     if (typeof localInvoker !== "function") {
       return false;
     }
-    const calleeLaneLookup = globalThis.__nimbusLocalFunctionRuntimeEnvironment;
-    if (typeof calleeLaneLookup !== "function") {
-      // Bundle without lane metadata (hand-rolled harness bundles): the
-      // pre-lane behavior, local dispatch whenever a dispatcher exists.
-      return true;
-    }
+    // `__nimbusRuntimeEnvironmentLane` is frozen at bootstrap
+    // (deno_runtime_globals.js), so reading it here is not guest-shadowable.
     const currentLane = globalThis.__nimbusRuntimeEnvironmentLane;
     if (typeof currentLane !== "string") {
+      // No lane signal anywhere on this isolate: a genuine pre-lane isolate
+      // (no runtime contract installed, so no lane metadata exists at all).
+      // Preserve the historical behavior — local dispatch whenever a
+      // dispatcher exists. Real deployed isolates always freeze a lane string
+      // at bootstrap and never take this branch.
       return true;
+    }
+    // The lane is known, so a callee-lane lookup MUST have been registered by
+    // the bundle at eval time, before any guest code ran. If it is missing —
+    // never registered, or the tampering end state where a guest deleted the
+    // old global — fail SAFE to host dispatch, which resolves the callee's own
+    // lane and semantics. Never assume local: local dispatch under a mismatched
+    // lane runs a callee under the wrong clock/seed/capability profile.
+    const calleeLaneLookup = __nimbusCapturedCalleeLaneLookup;
+    if (typeof calleeLaneLookup !== "function") {
+      return false;
     }
     const calleeLane = calleeLaneLookup(normalized.name);
     // Unknown callee (not in this bundle's manifest) also goes to the host,

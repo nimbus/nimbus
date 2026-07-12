@@ -60,12 +60,19 @@ const handlers = {
   },
 };
 
-globalThis.__nimbusLocalFunctionRuntimeEnvironment = function (name) {
+// Register the callee-lane lookup with the host-owned registrar the context
+// contract installs at bootstrap (nimbus_context_contract.js), matching what
+// generated bundles emit; the contract consults the captured reference, not a
+// guest-visible global.
+const __laneLookup = function (name) {
   const definition = definitions.get(name);
   return definition && typeof definition.runtime_environment === "string"
     ? definition.runtime_environment
     : null;
 };
+if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
+  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(__laneLookup);
+}
 
 // Generated-bundle parity (invokeNamedDefinitionLocally in
 // runtime_bundle_dispatch_invocation.mjs): both bundle entry points gate on
