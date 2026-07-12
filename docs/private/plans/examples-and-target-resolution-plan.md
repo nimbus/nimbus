@@ -299,6 +299,33 @@ vs the current tip ada30e4ad, which carries the full 905 integrity fields and
 0 .nimbus refs — resolved by a later registry-backed regen; verified, no
 action. Fixes → Band EX10R2.
 
+**EX10R2 RE-REVIEW (2026-07-12, gpt-5.6-sol + team-lead verified): NOT-READY.**
+The registrar hardening narrowed the surface (old global path dead, registrar
+property frozen non-writable/non-configurable) but the CAPTURED state is still
+guest-writable: `nimbus_context_contract.js` declares
+`__nimbusCapturedCalleeLaneLookup`/`__nimbusCalleeLaneLookupRegistered` as BARE
+top-level `let` (no IIFE), and source.rs runs the file via `execute_script`
+(classic script) — so those become realm-global lexical bindings. Handler
+bodies compiled via `new Function` (runtime_bundle_preamble.mjs) resolve free
+identifiers against the realm global env, so guest code does
+`__nimbusCapturedCalleeLaneLookup = () => currentLane` (bare, no globalThis, no
+touching the frozen registrar) and forces cross-lane local dispatch again.
+Second entry point, same root: eager M1 imports evaluate BEFORE the bundle's
+registration, so an eager-imported dep can reassign the binding OR call the
+registrar first with an impostor (locking out the legit registration via the
+one-shot throw). Confirmed against pinned source. Also: nested_dispatch has 9
+tests (not 10), and none attack the bare-identifier vector — the suite doesn't
+cover the live bypass. M1/M5 CONFIRMED fixed; M2 fixed for its claim but
+RuntimeBundleIdentity omits the nonce so warm_pool reuse can hand back a stale
+runtime (follow-up EX10R3.2). Fixes → Band EX10R3.
+
+### Band EX10R3 — re-re-review fixes
+
+| ID | Item | Acceptance | Owner | Status |
+| --- | --- | --- | --- | --- |
+| EX10R3.1 | **BLOCKER** — the callee-lane lookup state is a realm-global lexical binding guest handler/dependency code can reassign by bare identifier (bypassing the frozen registrar), and eager imports can register an impostor before the bundle. PREFER the class-ending fix: eliminate the guest-reachable JS lookup entirely — resolve the callee's lane HOST-side (the manifest runtime_environment the host already holds), via an op the contract calls or a host-provided lane map captured at bootstrap before any guest code, so no JS binding or registrar is guest-reachable at all. If a JS-side lookup is retained, it MUST be truly closure-private (IIFE/module scope, not bare top-level in a classic script) AND immune to register-first preemption. Kills both bypasses and the whole class | Adversarial tests that MUST fail pre-fix: (a) handler body does bare `__nimbusCapturedCalleeLaneLookup = impostor` then a cross-lane call → still routes to host; (b) an eager-imported module reassigns the binding / pre-registers an impostor → still host; plus the existing same-lane/cross-lane/fail-safe cases. Runtime lane + workspace suite | runtime | todo |
+| EX10R3.2 | M2 warm-pool residual (non-blocker): deploy_nonce is not in RuntimeBundleIdentity (bundle.rs:61-68), and warm_pool.rs reuses runtimes keyed on that identity — two deploys with identical content but different nonces are pool-indistinguishable, so a stale reseeded runtime can be handed back. Include the nonce in the reuse identity or invalidate on nonce change | Test: a redeploy with a new nonce does not reuse a warm runtime seeded under the old nonce | runtime | todo |
+
 ### Band EX10R2 — re-review fixes
 
 | ID | Item | Acceptance | Owner | Status |
