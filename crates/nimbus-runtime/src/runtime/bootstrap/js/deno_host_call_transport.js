@@ -118,21 +118,31 @@ const __nimbusBindHostCallPayload = function __nimbusBindHostCallPayload(opName,
   };
 };
 
-globalThis.__nimbusSyncHostValue = function(opName, payload) {
-  const operation = __nimbusCoreOps[opName];
-  if (typeof operation !== "function") {
-    throw new Error(`Nimbus runtime sync host op not found: ${opName}`);
-  }
-  const response = operation(__nimbusBindHostCallPayload(opName, payload));
-  if (!response || response.status !== "ok") {
-    const error = new Error(
-      `Nimbus runtime sync host call failed for ${opName}: ${__nimbusFormatHostError(response?.error)}`,
-    );
-    error.nimbusHostError = response?.error ?? null;
-    throw error;
-  }
-  return response.value;
-};
+// The host-call transports carry trust decisions the runtime acts on (e.g. the
+// host-authoritative callee lane for nested ctx.run* dispatch), so the globals
+// themselves must be immune to guest reassignment: a name-based caller that
+// could swap in an impostor would forge the host's answer. Frozen non-writable/
+// non-configurable, matching __nimbusCallDetachedFromInvocationContext above.
+Object.defineProperty(globalThis, "__nimbusSyncHostValue", {
+  configurable: false,
+  enumerable: false,
+  writable: false,
+  value: function(opName, payload) {
+    const operation = __nimbusCoreOps[opName];
+    if (typeof operation !== "function") {
+      throw new Error(`Nimbus runtime sync host op not found: ${opName}`);
+    }
+    const response = operation(__nimbusBindHostCallPayload(opName, payload));
+    if (!response || response.status !== "ok") {
+      const error = new Error(
+        `Nimbus runtime sync host call failed for ${opName}: ${__nimbusFormatHostError(response?.error)}`,
+      );
+      error.nimbusHostError = response?.error ?? null;
+      throw error;
+    }
+    return response.value;
+  },
+});
 
 const __nimbusFormatHostError = function __nimbusFormatHostError(error) {
   if (error === null || error === undefined) {
@@ -148,21 +158,26 @@ const __nimbusFormatHostError = function __nimbusFormatHostError(error) {
   }
 };
 
-globalThis.__nimbusAsyncHostValue = async function(opName, payload) {
-  const operation = __nimbusCoreOps[opName];
-  if (typeof operation !== "function") {
-    throw new Error(`Nimbus runtime async host op not found: ${opName}`);
-  }
-  const response = await operation(__nimbusBindHostCallPayload(opName, payload));
-  if (!response || response.status !== "ok") {
-    const error = new Error(
-      `Nimbus runtime async host call failed for ${opName}: ${__nimbusFormatHostError(response?.error)}`,
-    );
-    error.nimbusHostError = response?.error ?? null;
-    throw error;
-  }
-  return response.value;
-};
+Object.defineProperty(globalThis, "__nimbusAsyncHostValue", {
+  configurable: false,
+  enumerable: false,
+  writable: false,
+  value: async function(opName, payload) {
+    const operation = __nimbusCoreOps[opName];
+    if (typeof operation !== "function") {
+      throw new Error(`Nimbus runtime async host op not found: ${opName}`);
+    }
+    const response = await operation(__nimbusBindHostCallPayload(opName, payload));
+    if (!response || response.status !== "ok") {
+      const error = new Error(
+        `Nimbus runtime async host call failed for ${opName}: ${__nimbusFormatHostError(response?.error)}`,
+      );
+      error.nimbusHostError = response?.error ?? null;
+      throw error;
+    }
+    return response.value;
+  },
+});
 
 let __nimbusWaitUntilQueue = [];
 

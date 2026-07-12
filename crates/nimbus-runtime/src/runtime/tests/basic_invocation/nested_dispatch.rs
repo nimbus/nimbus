@@ -120,6 +120,42 @@ export {};
 ///
 /// After the fix none of these exist or are consulted: the callee lane is
 /// resolved host-side, so a cross-lane nested call still routes to the host.
+// A second-layer attack: the callee lane is resolved host-side, but the guest
+// reassigns the sync host-call transport global itself to forge the oracle's
+// answer for `op_nimbus_ctx_resolve_callee_lane` (returning this isolate's own
+// lane so every callee looks same-lane). Pre-fix the transport global was a
+// plain writable assignment, so the dispatcher's dynamic `globalThis.__nimbus
+// SyncHostValue(...)` deref hit the impostor; post-fix the property is frozen
+// non-writable, the reassignment is inert, and the real host answer wins.
+const TRANSPORT_HIJACK_TAMPER_BUNDLE: &str = r#"
+globalThis.__nimbusInvokeNamedLocal = async function (request) {
+  return { dispatched: "local", name: request.function_name };
+};
+
+globalThis.__nimbusInvoke = async function (request) {
+  const attack = new Function(
+    "try {\n" +
+    "  const real = globalThis.__nimbusSyncHostValue;\n" +
+    "  globalThis.__nimbusSyncHostValue = function (opName, payload) {\n" +
+    "    if (opName === 'op_nimbus_ctx_resolve_callee_lane') {\n" +
+    "      return globalThis.__nimbusRuntimeEnvironmentLane;\n" +
+    "    }\n" +
+    "    return real(opName, payload);\n" +
+    "  };\n" +
+    "} catch (_e) {}\n"
+  );
+  attack();
+  const ctx = globalThis.__nimbusCreateContext({ request });
+  const nested = await ctx.runQuery({ name: request.args.target, visibility: "public" }, {});
+  return {
+    currentLane: globalThis.__nimbusRuntimeEnvironmentLane ?? null,
+    nested,
+  };
+};
+
+export {};
+"#;
+
 const LANE_ROUTING_TAMPER_BUNDLE: &str = r#"
 globalThis.__nimbusInvokeNamedLocal = async function (request) {
   return { dispatched: "local", name: request.function_name };
@@ -357,6 +393,38 @@ async fn guest_bare_identifier_tampering_cannot_force_cross_lane_local_dispatch(
     assert!(
         !operations.contains(&HostCallOperation::CtxRuntimeEnterNestedCall),
         "post-tamper cross-lane call must not enter the local-dispatch protocol: {operations:?}"
+    );
+}
+
+#[tokio::test]
+async fn guest_transport_hijack_of_sync_host_value_cannot_force_cross_lane_local_dispatch() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    // Second-layer vector: even with the callee lane resolved host-side, the
+    // host answer travels back through `globalThis.__nimbusSyncHostValue`. A
+    // guest handler reassigns that transport to forge an always-"same lane"
+    // reply for `op_nimbus_ctx_resolve_callee_lane`. The transport globals must
+    // be frozen (non-writable) so the impostor never lands and the real host
+    // lane still routes a cross-lane callee through host dispatch.
+    let (result, operations) = invoke_lane_routing_bundle(
+        TRANSPORT_HIJACK_TAMPER_BUNDLE,
+        convex_default_lane_limits(),
+        &caller_request("child:nodeLane", "query"),
+        APP_LANES,
+    )
+    .await;
+
+    assert_eq!(result["currentLane"], "default");
+    assert_ne!(
+        result["nested"]["dispatched"], "local",
+        "transport hijack must not force a node callee onto local dispatch: {result}"
+    );
+    assert!(
+        operations.contains(&HostCallOperation::CtxRunQuery),
+        "post-hijack cross-lane call must go through host dispatch: {operations:?}"
+    );
+    assert!(
+        !operations.contains(&HostCallOperation::CtxRuntimeEnterNestedCall),
+        "post-hijack cross-lane call must not enter the local-dispatch protocol: {operations:?}"
     );
 }
 
