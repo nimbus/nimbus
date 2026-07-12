@@ -14,7 +14,7 @@
     "test": "npm run codegen && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit"
   },
   "dependencies": {
-    "@nimbus/nimbus": "file:./.nimbus/packages/@nimbus/nimbus",
+    "@nimbus/nimbus": "*",
     "react": "19.2.5",
     "react-dom": "19.2.5"
   },

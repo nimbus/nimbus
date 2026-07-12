@@ -12,7 +12,7 @@
     "smoke": "node --experimental-strip-types --experimental-transform-types ./smoke.ts"
   },
   "dependencies": {
-    "firebase": "file:./.nimbus/packages/firebase"
+    "firebase": "*"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
