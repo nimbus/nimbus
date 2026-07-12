@@ -49,10 +49,6 @@ string, but the identical, correct one.
 > Until the `nimbus init --example` scaffolder ships (it rewrites the `convex`
 > workspace dependency to a published Nimbus pin), run this example in place,
 > from a checkout of this repository.
->
-> Until the `nimbus init --example` scaffolder ships (it rewrites the `convex`
-> dependency to a published Nimbus pin instead of a local staged path), run
-> this example in place, from a checkout of this repository.
 
 ## Running
 
