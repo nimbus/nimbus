@@ -296,7 +296,80 @@ test consume that ledger.
     `test-rust-runtime` above). `pool_reuse.rs` full-module rerun (67 passed,
     0 failed, 76 ignored) confirms no regression in the pre-existing warm-pool
     reuse suite from either fix.
-- **NOT started (later dispatches):** HG4, HG7, HG9, HGx, the
+- **Band F (HG7/HG9/HGx): DONE** — Node hooks slot-hardened, HG9 value-freeze,
+  dead session-id cleanup.
+  - **HG7:** all 8 host/reset/worker-called Node hooks in
+    `node22_runtime_bootstrap.js` traced to their actual consumer rather than
+    hardened by blanket assumption, then closed to `{configurable: false,
+    writable: false}` (the plan's stated minimum — `writable:false` alone
+    with `configurable:true` blocks a PLAIN assignment but NOT
+    `Object.defineProperty` redefinition, which several of these hooks used).
+    `__nimbusRefreshNodeProcessCwd` (`:4154`) and `__nimbusPerfHooksBuiltin`
+    (`:4026`) carry a genuine cross-invocation risk (host/reset-called across
+    warm-pool invocations; and the trusted builtin-module resolver
+    `module_loader/builtins/module_wiring.js`'s `getBuiltinModule` reads the
+    latter fresh on every guest `require("perf_hooks")`) and are real fixes.
+    `__nimbusStartWorkerMessagePump`/`__nimbusWorkerThreadEnv` are
+    safe-by-construction today (worker threads always get a brand-new,
+    never-reused, unsnapshotted realm) but hardened anyway for
+    defense-in-depth. `__nimbusCloseWorker`/`__nimbusInstallSharedWorkerEnvProxy`
+    are self-inflicted-only (guest-self-invoked). `__nimbusProcessTicksAndRejections`/
+    `__nimbusEventLoopHasMoreWork` are test/harness-only. Full per-hook
+    rationale in the classification ledger's TRUST/COMPAT-OR-TEST tables.
+    **Accepted-low, no fix:** `__nimbusAdvanceInvocationGeneration` (HG8) is
+    itself guest-callable — self-DoS-class only, not closed (see ledger).
+    **Deferred, not fixed in this band:** `node22_runtime_bootstrap.js`'s
+    separate module-scoped `core.ops` surface (dozens of call sites spanning
+    roughly lines 177–3670+) — sized during triage, too large to land safely
+    alongside the fixes in this band without either a fragile per-op-name
+    enumeration or ballooning this PR's review surface; recorded in the
+    ledger's "Findings" section 4 as an explicit follow-up.
+  - **HG9:** `__nimbusHiddenDenoGlobals`/`__nimbusHiddenNodeGlobals`'s SLOTS
+    were already hardened, but that only protects which object the slot
+    points to, not the object's own properties — `deno.core`,
+    `internals.nodeGlobals.Buffer`, etc. were themselves installed
+    `{configurable: true, writable: false}`, the same bypass pattern as HG7.
+    The trusted extension-transpiler prelude (`bootstrap/transpile.rs`'s
+    injected `Deno` proxy) reads these properties straight off the live
+    objects for every lazily-transpiled internal Node extension script, on a
+    warm-pooled realm, across invocations. Fixed with a shallow
+    `Object.freeze(deno)` (`:3986`) and `Object.freeze(internals.nodeGlobals)`
+    (`:4261`), each placed immediately after the grep-verified last legitimate
+    write to that object anywhere in the bootstrap tree. Verified safe against
+    `transpile.rs`'s `__nimbusResolveDeno()` lazy-population fallback: every
+    property it could populate is already eagerly set by bootstrap before the
+    freeze point, so the fallback is dead-in-practice. **Deliberately out of
+    scope:** the deeper `internals`/`coreInternals` graph reachable through
+    `deno[deno.internal]` is not frozen by this fix — a materially larger,
+    open-ended surface left as a follow-up (ledger has the full rationale).
+  - **HGx:** dead `__nimbusNextHostCallSessionId = 1;` line removed from
+    `reset_bootstrap_invocation_state.js` (assigned but never declared and
+    never read anywhere in the tree — confirmed via tree-wide grep).
+  - Red-then-green:
+    `guest_cannot_bypass_hardened_node_hooks_via_configurable_defineproperty`
+    and
+    `guest_cannot_poison_frozen_deno_and_node_globals_object_graphs_via_configurable_defineproperty`,
+    both in
+    `crates/nimbus-runtime/src/runtime/tests/basic_invocation/node_bootstrap.rs`.
+    Both exercise the actual bypass this band closes: `Object.defineProperty`
+    with `configurable: true` still permits full property redefinition even
+    though `writable: false` blocks a plain assignment. RED verified by
+    temporarily reverting the fix (the two `configurable: false` sites back
+    to `true`, the two `Object.freeze` calls commented out) — both tests
+    failed with the impostor installed (`cwdImpostorCalled: true`,
+    `perfHooksRequireIsImpostor: true`, `denoCoreIdentityStable: false`,
+    `nodeGlobalsBufferIdentityStable: false`, all descriptor/frozen checks
+    flipped); GREEN against the actual fix, restored byte-for-byte
+    (`diff` confirmed clean) before rerunning.
+  - Verification: `cargo fmt --all --check` clean; `clippy -p nimbus-runtime
+    --all-targets -- -D warnings` clean, no warnings; `make test-rust-runtime`
+    green (473 passed, 0 failed, 123 ignored — +2 for the new tests, up from
+    Band E's 471), `MAKE_RC=0` confirmed directly; `make test-rust-workspace`
+    green (4274 tests run: 4274 passed (1 leaky), 31 skipped, 0 failed,
+    `MAKE_RC=0` confirmed directly — this lane excludes `nimbus-runtime` by
+    design, so unchanged from Band E's count, as expected since this band's
+    fixes are entirely within `nimbus-runtime`).
+- **NOT started (later dispatches):** HG4, the
   full structural regression-gate test, and the threat-model deliverable. The
   Cloud Functions `globalThis.__nimbusInvoke` emit site
   (`cloud_functions/runtime_sources.mjs:35`) is captured by the SAME host path

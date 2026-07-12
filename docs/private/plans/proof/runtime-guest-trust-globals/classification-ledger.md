@@ -63,9 +63,9 @@ isolate; blast radius is SAME-TENANT cross-invocation, not cross-tenant
 | ~~`globalThis.__nimbusInvokeNamedLocal`~~ (REMOVED — see "Already-hardened") | (1) global prop | baseline: emit `runtime_bundle_dispatch_global_invoke.mjs:32`; read fresh into `localInvoker` per nested `ctx.run*` `nimbus_context_contract.js:195`, invoked `:246` | baseline: plain assign, NOT hardened | **HG2** | **Band C — DONE** |
 | ~~`Deno.core.ops` table + `const __nimbusCoreOps` alias~~ (HARDENED — see "Already-hardened") | (2)+(3) | baseline: live table `deno_host_call_transport.js:1`; read fresh `:91,131,166,188`; also `reset_bootstrap_invocation_state.js:8`, `post_bootstrap.js:2` | baseline: op slots writable; alias `const` (readable by bare name, web-lane reachable post-`delete Deno`) | **HG3** (+ discovered web-lane bare-name alias, closed by the same fix; lane-conditional red test per plan) | **Band D — DONE** |
 | ~~`globalThis.__nimbusWaitUntil` / `__nimbusDrainWaitUntil` / `__nimbusResetWaitUntil` + `let __nimbusWaitUntilQueue`~~ (HARDENED — see "Already-hardened") | (1)+(2) | baseline: hooks `deno_host_call_transport.js:184,197,212`; queue `:182`; host drains via `driver/loading.rs:619-635` | baseline: plain assign; queue bare-name writable | **HG6** | **Band E — DONE** |
-| `globalThis.__nimbusRefreshNodeProcessCwd` | (1) global prop | `node22_runtime_bootstrap.js:4113` (`writable:true, configurable:true`); host/reset-called `reset_bootstrap_invocation_state.js:4-5` | NOT hardened (writable slot) | **HG7** | HG7 band (later) |
+| ~~`globalThis.__nimbusRefreshNodeProcessCwd`~~ (HARDENED — see "Already-hardened") | (1) global prop | baseline: `node22_runtime_bootstrap.js:4113` (`writable:true, configurable:true`); host/reset-called `reset_bootstrap_invocation_state.js:4-5` | baseline: NOT hardened (writable slot) | **HG7** | **Band F — DONE** |
 | ~~`let __nimbusInvocationGeneration`~~ (HARDENED — see "Already-hardened") | (2) global-lexical | baseline: `nimbus_context_contract.js:270`; read as stale-guard trust state `:273,276`; host reset writes `reset_bootstrap_invocation_state.js:2` | baseline: bare-name writable from guest modules | **HG8** (guest desyncs generation → defeats "ctx from previous invocation" guard) | **Band E — DONE** |
-| `globalThis.__nimbusHiddenDenoGlobals` / `__nimbusHiddenNodeGlobals` | (1) global prop, mutable VALUE | `node22_runtime_bootstrap.js:3430,3436` (slot `writable:false` but value object mutable); consumed by trusted transpiled scripts `transpile.rs:33,37,45` | slot hardened, VALUE graph mutable | **HG9** (frozen slot does not protect a mutable value) | HG9 band (later) |
+| ~~`globalThis.__nimbusHiddenDenoGlobals` / `__nimbusHiddenNodeGlobals`~~ (HARDENED — see "Already-hardened") | (1) global prop, baseline mutable VALUE | baseline: `node22_runtime_bootstrap.js:3430,3436` (slot `writable:false` but value object mutable); consumed by trusted transpiled scripts `transpile.rs:33,37,45` | baseline: slot hardened, VALUE graph mutable | **HG9** (frozen slot does not protect a mutable value) | **Band F — DONE** |
 
 ## INTENTIONALLY-MUTABLE — app-singleton / guest-owned state (documented safe; do NOT harden)
 
@@ -85,9 +85,11 @@ isolate; blast radius is SAME-TENANT cross-invocation, not cross-tenant
 | `globalThis.__nimbusDrainImmediates` | `deno_host_call_transport.js:12` (`writable:true, configurable:true`) | Test/harness drain hook for async_hooks destroy queue (spawn-emulation postlude, `render.rs`); diagnostic, carries no trust decision. |
 | `globalThis.__nimbusFlushEmbeddedTests` | `node22_runtime_bootstrap.js:3970` | Embedded-test harness hook. Test-only. |
 | `globalThis.__nimbusNodeRuntimeMajor` (+ `process.__nimbusNodeRuntimeMajor`) | `post_bootstrap.js:44,51` (`writable:false`) | Node major-version metadata for compat shims; non-secret, non-authority; already slot-hardened. |
-| `globalThis.__nimbusProcessTicksAndRejections` / `__nimbusEventLoopHasMoreWork` / `__nimbusPerfHooksBuiltin` / `__nimbusStartWorkerMessagePump` / `__nimbusCloseWorker` / `__nimbusInstallSharedWorkerEnvProxy` / `__nimbusWorkerThreadEnv` | `node22_runtime_bootstrap.js:3976,3982,3988,3120,3598,3648,4182` | Node/worker runtime plumbing hooks. Called host-side or by trusted Node bootstrap; enumerate per-hook in the HG7 band, but none carries a same-tenant confidentiality trust decision the way HG0/HG1 do. Recorded here so the HG7 band classifies each explicitly rather than trusting this row. |
-| `globalThis.__nimbusStartWorkerMessagePump` etc. | (as above) | (see above) |
-| `__nimbusNextHostCallSessionId` (undeclared global assignment) | `reset_bootstrap_invocation_state.js:1` | **HGx cleanup**: assigned (`= 1`) but never declared and never read anywhere in the tree (`grep` confirms the reset write is the only reference). Dead. Remove or justify in cleanup. |
+| `globalThis.__nimbusProcessTicksAndRejections` / `__nimbusEventLoopHasMoreWork` | `node22_runtime_bootstrap.js:3976,3982` | **Band F — slot-hardened** (`configurable:false` added; already `writable:false`). Test/harness diagnostic hooks — grep-confirmed no trusted or host call site reads either by name for a trust decision, only test fixtures invoke them. Hardened anyway to the plan's stated HG7 minimum so a future caller cannot silently start depending on a guest-reassignable name. |
+| `globalThis.__nimbusPerfHooksBuiltin` | `node22_runtime_bootstrap.js:3988` (was `configurable:true, writable:false`) | **Band F — slot-hardened, genuine fix (not just documentation).** Real cross-invocation risk: `module_loader/builtins/module_wiring.js:78`'s `getBuiltinModule` — the trusted builtin-module resolver consulted on every guest `require("perf_hooks")`/`import "node:perf_hooks"` — returns `globalThis.__nimbusPerfHooksBuiltin` fresh on every call. Pre-fix `configurable:true` let a guest `Object.defineProperty` an impostor module in invocation N that a later same-tenant invocation's `require("perf_hooks")` would then resolve to. Closed by `configurable:false`. Red/green exploit test: `guest_cannot_bypass_hardened_node_hooks_via_configurable_defineproperty` (`node_bootstrap.rs`). |
+| `globalThis.__nimbusStartWorkerMessagePump` / `__nimbusWorkerThreadEnv` | `node22_runtime_bootstrap.js:3120,4182` | **Band F — slot-hardened, defense-in-depth.** Safe-by-construction today: worker threads always get a brand-new OS thread + brand-new `tokio` runtime + brand-new, never-reused, UNSNAPSHOTTED `js_runtime` per `new Worker()` (`worker_threads.rs`'s `create_unsnapshotted_runtime_with_worker_bootstrap`), and both hooks are read as the literal first statement of that fresh realm's bundle preamble (`worker_threads.rs:454,456,462,469,500,502,508,515`) — before any guest code could ever have tampered with them. No warm-pool reuse of worker realms exists today. Hardened (`configurable:false`) anyway so a future regression (e.g. worker-realm pooling) cannot silently reopen the hole. |
+| `globalThis.__nimbusCloseWorker` / `__nimbusInstallSharedWorkerEnvProxy` | `node22_runtime_bootstrap.js:3598,3648` | **Band F — slot-hardened, self-inflicted-only.** Guest-self-invoked helpers (test fixtures call them on their own worker handle / own env proxy opt-in); tampering only harms the calling guest's own invocation, not a same-tenant cross-invocation victim. Hardened (`configurable:false`) to the plan's stated HG7 minimum for consistency, not because a cross-invocation risk was found. |
+| ~~`__nimbusNextHostCallSessionId` (undeclared global assignment)~~ (REMOVED) | baseline: `reset_bootstrap_invocation_state.js:1` | **HGx — DONE.** Was assigned (`= 1`) but never declared and never read anywhere in the tree (`grep` confirmed the reset write was the only reference). Dead line deleted; the reset script now begins directly with the HG8 generation-advance call. |
 
 ## Already-hardened trust surfaces (verified accurate — do NOT regress)
 
@@ -186,14 +188,79 @@ isolate; blast radius is SAME-TENANT cross-invocation, not cross-tenant
   earlier value (to keep a stale `ctx` object usable) is now a harmless decoy-
   property write; the real guard still fires
   (`"This ctx object is from a previous invocation and cannot be reused"`).
-  **Follow-up (not a regression, tracked for HG7):**
+  **Follow-up, triaged in Band F — accepted-low, no fix:**
   `__nimbusAdvanceInvocationGeneration` is itself guest-callable (frozen
   slot, but any caller may invoke it) — a guest could self-advance the
   counter to prematurely invalidate its OWN ctx objects. This is a
   self-inflicted-DoS-class concern only (no cross-invocation or cross-tenant
   authority impact — a guest can already make its own invocation fail in
   arbitrarily many other ways), not part of HG8's guest-desync-the-guard
-  scope, and left for HG7/HGx triage.
+  scope. Accepted as-is: closing it would require a per-caller-identity
+  gate on a host-authored function with no guest/host distinction available
+  at the call site, for a self-DoS-only payoff — not worth the complexity.
+- `globalThis.__nimbusRefreshNodeProcessCwd` (HG7, Band F) — **slot-hardened**
+  `node22_runtime_bootstrap.js:4154` (`configurable:false, writable:false`,
+  was `configurable:true`). Real cross-invocation risk: host/reset-called
+  (`reset_bootstrap_invocation_state.js:6-8`) across warm-pool invocations on
+  the same realm; pre-fix `configurable:true` let a guest swap in an
+  impostor that the next invocation's trusted reset call would silently
+  invoke instead of the real cwd-policy refresh. The six other Node/worker
+  plumbing hooks originally lumped into the plan's HG7 line item were
+  individually traced to their actual consumer rather than hardened by
+  blanket assumption — see the COMPAT-OR-TEST table rows above for the
+  per-hook classification (`__nimbusPerfHooksBuiltin` turned out to carry
+  the same genuine cross-invocation risk as this one; the rest are
+  fresh-realm-safe or self-inflicted-only, hardened anyway for
+  defense-in-depth). Red/green exploit test:
+  `guest_cannot_bypass_hardened_node_hooks_via_configurable_defineproperty`
+  in
+  `crates/nimbus-runtime/src/runtime/tests/basic_invocation/node_bootstrap.rs`
+  — the bypass this closes is `Object.defineProperty` redefinition, which
+  `writable:false` alone (with `configurable:true`) does NOT block, unlike a
+  plain assignment.
+- `globalThis.__nimbusHiddenDenoGlobals` / `__nimbusHiddenNodeGlobals` (HG9,
+  Band F) — **value graphs frozen**, not just the slots. The slots
+  (`node22_runtime_bootstrap.js:3436,3442`) were already
+  `writable:false, configurable:false`, but that only protects which object
+  the slot points to, not the object's OWN properties — `deno.core`,
+  `internals.nodeGlobals.Buffer`, and every other property on both objects
+  were themselves installed `{configurable:true, writable:false}`, the same
+  redefinition-bypass pattern HG7 closed. The trusted extension-transpiler
+  prelude (`bootstrap/transpile.rs`'s injected `Deno` proxy,
+  `NODE_EXTENSION_INTERNAL_DENO_PRELUDE_BODY`) reads these properties
+  straight off the live objects on every lazily-transpiled internal Node
+  extension script, on a warm-pooled realm, across invocations — a guest
+  redefinition in invocation N would poison invocation N+1's trusted
+  internal polyfill loading. Fixed with a shallow `Object.freeze(deno)`
+  (`:3986`, placed immediately after the last `Object.defineProperty(deno,
+  ...)` write — grep-verified no later write exists anywhere in this file or
+  any other bootstrap file) and `Object.freeze(internals.nodeGlobals)`
+  (`:4261`, same placement discipline — `.process`/`.Buffer` are the only two
+  keys ever assigned onto that object). Verified safe against
+  `__nimbusResolveDeno()`'s lazy `if (x === undefined) { deno.x = ... }`
+  fallback in `transpile.rs`: every property that fallback could populate is
+  already eagerly set by bootstrap before the freeze point, so the fallback
+  is dead-in-practice and the freeze does not break it. **Deliberately out of
+  scope:** the deeper object graph reachable through `deno[deno.internal]`
+  (`internals`/`coreInternals`) is NOT frozen by this fix — freezing `deno`
+  only protects `deno`'s own top-level properties, not objects transitively
+  reachable through them. Tracing and closing that graph is a materially
+  larger, open-ended surface (unlike `deno`/`hiddenNodeGlobals`, `internals`
+  has no exhaustively-enumerable "last write" point established here) and is
+  left as a follow-up, not folded into this band. Red/green exploit test:
+  `guest_cannot_poison_frozen_deno_and_node_globals_object_graphs_via_configurable_defineproperty`
+  in `node_bootstrap.rs`.
+- **Follow-up, deferred out of this band (not fixed, not silently dropped):**
+  `node22_runtime_bootstrap.js`'s own separate `core.ops` surface (see
+  "Findings beyond the plan's starting inventory" item 4 below) — sized
+  during Band F triage at dozens of `core.ops.op_nimbus_*` call sites
+  spanning roughly lines 177–3670+, each needing either individual op-name
+  enumeration (fragile — a missed name silently breaks at runtime) or the
+  same full-table-clone approach Band D used for `__nimbusCoreOps`
+  (`deno_host_call_transport.js`). Too large to land safely inside this
+  band's diff alongside the HG7/HG9/HGx fixes above without either rushing
+  the enumeration or ballooning this PR's review surface; recorded here as
+  an explicit scoped follow-up rather than half-done.
 
 ## Structural-test allowlist (consumed by the regression gate)
 
@@ -213,9 +280,7 @@ exactly one bucket below; a new unlisted property fails the test.
   is not itself a security boundary, and deleting on the central warm-reuse
   invoke path carries regression risk for no additional authority guarantee.)
   `__nimbusInvokeCloudflareWorkerFetch` (same treatment as HG0, Band B),
-  `__nimbusCreateContext` (slot-hardened non-writable/non-configurable, Band B),
-  `__nimbusRefreshNodeProcessCwd` (HG7),
-  `__nimbusHiddenDenoGlobals`/`__nimbusHiddenNodeGlobals` (HG9, value-freeze).
+  `__nimbusCreateContext` (slot-hardened non-writable/non-configurable, Band B).
 - **TRUST already-hardened (assert descriptor stays `writable:false,
   configurable:false`):** `__nimbusSyncHostValue`, `__nimbusAsyncHostValue`,
   `__nimbusCallDetachedFromInvocationContext`, `__nimbusRuntimeEnvironmentLane`,
@@ -224,8 +289,24 @@ exactly one bucket below; a new unlisted property fails the test.
   `__nimbusDrainWaitUntil`/`__nimbusResetWaitUntil` (HG6, Band E — queue
   itself is closure-private, never installed under any name),
   `__nimbusAdvanceInvocationGeneration` (HG8, Band E — counter itself is
-  closure-private, never installed under any name; see the guest-callable
-  follow-up noted above for HG7/HGx triage).
+  closure-private, never installed under any name; accepted-low guest-callable
+  follow-up, see above — not a fix gap),
+  `__nimbusRefreshNodeProcessCwd` / `__nimbusPerfHooksBuiltin` (HG7, Band F —
+  DONE: `configurable:false` closes the redefinition bypass),
+  `__nimbusProcessTicksAndRejections`/`__nimbusEventLoopHasMoreWork`/
+  `__nimbusStartWorkerMessagePump`/`__nimbusWorkerThreadEnv`/`__nimbusCloseWorker`/
+  `__nimbusInstallSharedWorkerEnvProxy` (HG7, Band F — DONE, hardened for
+  defense-in-depth per the per-hook rationale above, not all carry a genuine
+  cross-invocation risk).
+- **TRUST already-hardened, VALUE graph frozen not just the slot (Band F,
+  HG9 — DONE):** `__nimbusHiddenDenoGlobals`/`__nimbusHiddenNodeGlobals`. The
+  slots were already non-writable/non-configurable; the fix adds
+  `Object.freeze` on the objects the slots point to (`deno`,
+  `internals.nodeGlobals`) so every own property redefinition is closed too,
+  not just slot reassignment. The deeper `internals`/`coreInternals` graph
+  reachable through `deno[deno.internal]` remains a documented, deliberate
+  follow-up (see above) — assert only `Object.isFrozen(deno)` and
+  `Object.isFrozen(__nimbusHiddenNodeGlobals)`, not the transitive graph.
 - **TRUST removed entirely (assert ABSENCE from `Reflect.ownKeys(globalThis)`
   after bootstrap and after bundle load, Band C):** `__nimbusInvokeNamedLocal`
   (HG2) — the module-private `invokeNamedDefinitionLocally` now passes as a
@@ -236,8 +317,10 @@ exactly one bucket below; a new unlisted property fails the test.
 - **COMPAT-OR-TEST (assert deleted post-bootstrap OR present-non-authority):**
   deleted → `__nimbusRefreshNodeRuntimeOpState`, `__nimbusDenoFetchModule`,
   `__nimbusRetainDenoForNodeLazyScripts`; present → `__nimbusNodeRuntimeMajor`,
-  `__nimbusDrainImmediates`, `__nimbusFlushEmbeddedTests`, the Node/worker
-  plumbing hooks.
+  `__nimbusDrainImmediates`, `__nimbusFlushEmbeddedTests`. (The remaining
+  Node/worker plumbing hooks moved to the TRUST already-hardened bucket above
+  in Band F — each was individually classified rather than left in this
+  catch-all; `__nimbusNextHostCallSessionId` (HGx) is REMOVED, not present.)
 - **Global-lexical, already neutralized (Band D, HG3 — DONE):**
   `__nimbusCoreOps`. The binding is still bare-name readable (unavoidable, see
   method note 2), but it is now a frozen private clone with no shared identity
@@ -273,7 +356,8 @@ exactly one bucket below; a new unlisted property fails the test.
    Functions emit (the structural test's "normal AND Cloud Functions codegen"
    coverage axis).
 4. **`node22_runtime_bootstrap.js` has its own, separate, un-hardened
-   `core.ops` surface — out of scope for Band D/HG3, follow-up for HG7.**
+   `core.ops` surface — out of scope for Band D/HG3, sized and deferred out of
+   Band F/HG7 as its own follow-up (not fixed here).**
    Unlike every other bootstrap file, this one is an ES **module**
    (`import { core, ... } from "ext:core/mod.js"` at line 1), not a classic
    script. Its `core` import binding is therefore a **module-environment
@@ -285,13 +369,17 @@ exactly one bucket below; a new unlisted property fails the test.
    deno_core's own internal ops (`op_worker_close`, `op_uid`, …), spanning
    roughly lines 177–3670+. A guest overwrite of any of these op slots on the
    live table (reachable the same way HG3's Node-lane vector is, since this
-   file only runs on Node-compat lanes) is unaudited. This needs its own
-   band-scoped fix — most naturally HG7, since it is a much larger surface
-   than a single-line capture swap (a module-scope const capturing `core.ops`
-   analogous to Band D's fix is the likely shape, but every call site's op
-   name would need enumerating or the same full-table-clone approach reused).
-   Do not fold this into Band D — it is a distinct file, a distinct binding
-   kind, and a distinct blast radius.
+   file only runs on Node-compat lanes) is unaudited. **Band F triage
+   decision:** sized honestly rather than half-fixed. Closing it needs either
+   enumerating every `op_nimbus_*` name read through this binding (fragile —
+   a missed name silently breaks at runtime, unlike Band D's whole-table
+   clone) or reusing Band D's full-table-clone approach at module scope here
+   too — either shape is a materially larger diff than the HG7/HG9/HGx fixes
+   in this band, on a file already touched by both of those fixes. Deferred
+   to its own follow-up band rather than folded in here, to avoid rushing the
+   enumeration or ballooning this PR's review surface. Do not fold this into
+   Band D — it is a distinct file, a distinct binding kind, and a distinct
+   blast radius.
 5. **`const __nimbusContextHostCallOps` (Phase-1 review addendum — safe, not a
    gap requiring a band).** A classic-script top-level `const ... = new
    Set([...])` (`deno_host_call_transport.js:96-127`) enumerating the

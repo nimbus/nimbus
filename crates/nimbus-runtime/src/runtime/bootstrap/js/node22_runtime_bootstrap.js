@@ -3171,7 +3171,13 @@ function seedWorkerThreadHostSurface(workerBootstrapState) {
         }
       });
     },
-    configurable: true,
+    // HG7: read by the Rust-generated worker-bundle preamble
+    // (worker_threads.rs:454,500) as the first statement of a brand-new,
+    // never-reused, unsnapshotted worker isolate - no prior guest code has
+    // ever run in that realm when this is read, so it is safe by realm
+    // freshness today. Slot-hardened anyway rather than relying on that
+    // invariant holding forever.
+    configurable: false,
     enumerable: false,
     writable: false,
   });
@@ -3595,6 +3601,10 @@ function seedNodeClusterWorkerIfNeeded(workerBootstrapState, workerMetadataObjec
   }
 }
 
+// HG7: guest-self-service close helper (test fixtures call it on themselves
+// to shut a worker down cleanly); slot-hardened to the plan's stated HG7
+// minimum even though a guest reassigning its own copy is self-inflicted
+// only (the worker just fails to close itself).
 Object.defineProperty(globalThis, "__nimbusCloseWorker", {
   value: () => {
     if (typeof core.ops.op_worker_close === "function") {
@@ -3605,9 +3615,9 @@ Object.defineProperty(globalThis, "__nimbusCloseWorker", {
       globalThis.close();
     }
   },
-  configurable: true,
+  configurable: false,
   enumerable: false,
-  writable: true,
+  writable: false,
 });
 
 function installNimbusSharedWorkerEnvProxy() {
@@ -3645,11 +3655,15 @@ function installNimbusSharedWorkerEnvProxy() {
   return sharedEnv;
 }
 
+// HG7: guest-invoked opt-in (installs a shared process.env proxy backed by
+// host-tracked state); slot-hardened to the plan's stated HG7 minimum so a
+// warm-pool-persistent reassignment in one invocation cannot hand a later
+// same-tenant invocation an impostor proxy over process.env.
 Object.defineProperty(globalThis, "__nimbusInstallSharedWorkerEnvProxy", {
   value: installNimbusSharedWorkerEnvProxy,
-  configurable: true,
+  configurable: false,
   enumerable: false,
-  writable: true,
+  writable: false,
 });
 
 seedHiddenDenoMethod("hostname", denoHostname);
@@ -3955,6 +3969,21 @@ Object.defineProperty(deno, "test", {
   enumerable: true,
   writable: false,
 });
+// HG9: every own property of `deno` above is set by this point (grep-verified
+// - no further `Object.defineProperty(deno, ...)` or direct `deno.x =` write
+// occurs anywhere later in this file or in any other bootstrap file). Freeze
+// the object itself: __nimbusHiddenDenoGlobals's SLOT was already
+// non-writable/non-configurable, but that only protects the slot, not the
+// VALUE - the trusted extension-transpiler prelude
+// (bootstrap/transpile.rs's NODE_EXTENSION_INTERNAL_DENO_PRELUDE_BODY) reads
+// `deno.core` / `deno.env` / `deno.cwd` etc. straight off this object for
+// every lazily-transpiled internal Node extension script, on a warm-pooled
+// realm, across invocations. Without this freeze a guest could
+// `Object.defineProperty(Deno, "core", {value: impostor, configurable:true})`
+// (configurable:true above still permits redefinition even though
+// writable:false blocks a plain assignment) and poison a later same-tenant
+// invocation's trusted internal polyfill loading.
+Object.freeze(deno);
 Object.defineProperty(globalThis, "Deno", {
   value: deno,
   configurable: true,
@@ -3973,21 +4002,30 @@ Object.defineProperty(globalThis, "__nimbusFlushEmbeddedTests", {
   enumerable: false,
   writable: false,
 });
+// HG7: test/harness diagnostic hooks (no trusted or host call site reads these
+// by name for a trust decision - grep-confirmed only test fixtures invoke
+// them), slot-hardened anyway to the plan's stated HG7 minimum so a future
+// caller can't silently start depending on a guest-reassignable name.
 Object.defineProperty(globalThis, "__nimbusProcessTicksAndRejections", {
   value: core.processTicksAndRejections,
-  configurable: true,
+  configurable: false,
   enumerable: false,
   writable: false,
 });
 Object.defineProperty(globalThis, "__nimbusEventLoopHasMoreWork", {
   value: core.eventLoopHasMoreWork,
-  configurable: true,
+  configurable: false,
   enumerable: false,
   writable: false,
 });
+// HG7: consumed by the trusted builtin-module resolver
+// (module_loader/builtins/module_wiring.js:78,253,299) for every guest
+// `require("perf_hooks")` / `import "node:perf_hooks"` on a warm-pooled
+// realm; slot-hardened so a guest reassignment in invocation N cannot swap
+// in an impostor module for invocation N+1's perf_hooks import.
 Object.defineProperty(globalThis, "__nimbusPerfHooksBuiltin", {
   value: nimbusPerfHooksBuiltin,
-  configurable: true,
+  configurable: false,
   enumerable: false,
   writable: false,
 });
@@ -4110,11 +4148,14 @@ seedNodeProcessFinalization(internals.nodeGlobals?.process);
 seedNodeProcessFatalGuards(internals.nodeGlobals?.process);
 installNimbusProcessDlopenErrorMapping(internals.nodeGlobals?.process);
 seedNodeProcessCwd(globalThis.process);
+// HG7: host/reset-called (reset_bootstrap_invocation_state.js) across warm-pool
+// invocations on the same realm; slot-hardened so a guest reassignment cannot
+// suppress the host's per-invocation cwd-policy refresh on a later invocation.
 Object.defineProperty(globalThis, "__nimbusRefreshNodeProcessCwd", {
   value: refreshNodeProcessCwd,
-  configurable: true,
+  configurable: false,
   enumerable: false,
-  writable: true,
+  writable: false,
 });
 seedNodeProcessPlatformMetadata(globalThis.process);
 seedNodeProcessStdio(globalThis.process);
@@ -4179,11 +4220,14 @@ if (typeof internals.__initWorkerThreads === "function") {
         internals.nodeGlobals.process.env = workerEnv;
       }
     }
+    // HG7: same fresh-realm argument as __nimbusStartWorkerMessagePump above
+    // (read by worker_threads.rs:456,502 as part of the same never-reused
+    // worker-bundle preamble); slot-hardened anyway.
     Object.defineProperty(globalThis, "__nimbusWorkerThreadEnv", {
       value: workerEnv,
-      configurable: true,
+      configurable: false,
       enumerable: false,
-      writable: true,
+      writable: false,
     });
   }
   seedNodeClusterWorkerIfNeeded(workerBootstrapState, workerMetadataObject);
@@ -4204,6 +4248,17 @@ if (
     writable: false,
   });
 }
+// HG9: same rationale as the `deno` freeze above - every own-property write
+// to internals.nodeGlobals (aka hiddenNodeGlobals, aka
+// __nimbusHiddenNodeGlobals's value) completes by this point (grep-verified:
+// `.process` and `.Buffer` are the only top-level keys ever assigned onto
+// this object, both above this line; nothing later in this file or in any
+// other bootstrap file adds another). Freeze it so a guest cannot swap in an
+// impostor `.process`/`.Buffer` (etc.) for a later same-tenant invocation's
+// trusted internal Node-extension prelude (bootstrap/transpile.rs) to
+// consume through the (already slot-hardened) __nimbusHiddenNodeGlobals
+// global.
+Object.freeze(internals.nodeGlobals);
 if (
   typeof globalThis.Buffer === "undefined"
   && (internals.nodeGlobals?.Buffer !== undefined || nodeBuffer !== undefined)
