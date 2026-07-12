@@ -53,15 +53,16 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   lifecycle, observability, selective HTTPS interception, credential injection,
   DLP parity, and QUIC/UDP bypass denial. This must land before Nimbus claims
   HTTPS credential injection for agents.
-- `examples-and-target-resolution-plan.md` - `active`. Owns the user-facing
-  examples tree (`demos/` → `examples/` rename, adapter-first layout with a
-  README at every directory level, shared app specs, tier-1 `tasks` apps
-  across all six public adapter surfaces, agent examples, and the smoke
-  verification lane), the unified target-resolution CLI UX (one optional
-  positional `TARGET` = URL or configured name, local default, no node/cluster
-  distinction, riding the existing `TargetSelector` seam), and the public docs
-  pages that display, explain, and GitHub-link each example. Ships as one PR;
-  merge on confirmed green.
+- `runtime-guest-trust-global-hardening-plan.md` - `proposed` (security).
+  Owns the systematic hardening of guest-reassignable `globalThis.__nimbus*`
+  trust globals (HG1 `__nimbusCreateContext` cross-invocation/tenant exposure
+  via warm-pool reuse, HG2 `__nimbusInvokeNamedLocal`, HG3 `__nimbusCoreOps`
+  native-sealing, HG4 lane-oracle visibility) plus a structural test that fails
+  if a future trust global ships unhardened. Surfaced by the adversarial review
+  of the examples/Convex-parity work (archived
+  `archive/examples-and-target-resolution-plan.md`, EX10R3); the
+  reassignable-globals class is largely pre-existing on `main`. Promote when
+  scheduled as launch-relevant security.
 - `distribution-plan.md` - `in_progress`. Owns binary release, Homebrew/cask,
   Linux package mirror, release-owned OCI images, and channel cutover. It should
   consume launch safety decisions rather than define them.
