@@ -76,6 +76,7 @@ const __nimbusContextHostCallOps = new Set([
   "op_nimbus_ctx_scheduler_run_at",
   "op_nimbus_ctx_scheduler_cancel",
   "op_nimbus_ctx_runtime_enter_nested_call",
+  "op_nimbus_ctx_resolve_callee_lane",
   "op_nimbus_ctx_run_query",
   "op_nimbus_ctx_run_mutation",
   "op_nimbus_ctx_run_action",

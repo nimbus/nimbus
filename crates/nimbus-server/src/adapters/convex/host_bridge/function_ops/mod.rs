@@ -45,6 +45,9 @@ impl ConvexHostBridge {
             HostCallPayload::CtxRuntimeEnterNestedCall(payload) => {
                 self.invoke_ctx_runtime_enter_nested_call(runtime_host_payload_value(payload)?)
             }
+            HostCallPayload::CtxResolveCalleeLane(payload) => {
+                self.invoke_ctx_resolve_callee_lane(runtime_host_payload_value(payload)?)
+            }
             _ => unreachable!("non-function host operation routed to function dispatcher"),
         }
     }
@@ -89,6 +92,10 @@ impl ConvexHostBridge {
             HostCallPayload::CtxRuntimeEnterNestedCall(payload) => {
                 ensure_runtime_host_not_cancelled(cancellation)?;
                 self.invoke_ctx_runtime_enter_nested_call(runtime_host_payload_value(payload)?)
+            }
+            HostCallPayload::CtxResolveCalleeLane(payload) => {
+                ensure_runtime_host_not_cancelled(cancellation)?;
+                self.invoke_ctx_resolve_callee_lane(runtime_host_payload_value(payload)?)
             }
             _ => unreachable!("non-function host operation routed to function dispatcher"),
         }
@@ -166,6 +173,10 @@ impl ConvexHostBridge {
             HostCallPayload::CtxRuntimeEnterNestedCall(payload) => {
                 ensure_runtime_host_not_cancelled(cancellation)?;
                 self.invoke_ctx_runtime_enter_nested_call(runtime_host_payload_value(payload)?)
+            }
+            HostCallPayload::CtxResolveCalleeLane(payload) => {
+                ensure_runtime_host_not_cancelled(cancellation)?;
+                self.invoke_ctx_resolve_callee_lane(runtime_host_payload_value(payload)?)
             }
             _ => unreachable!("non-function host operation routed to function dispatcher"),
         }

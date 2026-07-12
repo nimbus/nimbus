@@ -31,26 +31,12 @@ function runtimeBundleDispatchGlobalInvoke({ module = true } = {}) {
 
 globalThis.__nimbusInvokeNamedLocal = invokeNamedDefinitionLocally;
 
-// Per-function runtime lane metadata for the nested ctx.run* dispatcher: the
-// host-owned context contract compares the callee's runtime_environment
-// against the lane this isolate executes and routes cross-lane calls through
-// host dispatch (the engine path) instead of same-isolate local dispatch.
-//
-// The lookup is handed to the host-owned registrar the context contract
-// installs at bootstrap (nimbus_context_contract.js), evaluated here before any
-// guest handler runs. The contract consults that captured reference, never a
-// guest-visible global, so guest code cannot delete, reassign, or shadow the
-// lookup to force a cross-lane callee onto same-isolate local dispatch. We
-// deliberately do NOT expose the lookup as a writable global — there is no
-// tamperable surface to attack.
-if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
-  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(function (name) {
-    const definition = functionsByName.get(name);
-    return definition && typeof definition.runtime_environment === "string"
-      ? definition.runtime_environment
-      : null;
-  });
-}${moduleSentinel}`;
+// The nested ctx.run* dispatcher resolves each callee's runtime lane HOST-side
+// (op_nimbus_ctx_resolve_callee_lane against the host registry), so the bundle
+// deliberately publishes NO per-function lane lookup or registrar. There is no
+// guest-reachable JavaScript state a handler body or an eagerly-imported
+// dependency could tamper with to force a cross-lane callee onto same-isolate
+// local dispatch.${moduleSentinel}`;
 }
 
 export { runtimeBundleDispatchGlobalInvoke };

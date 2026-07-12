@@ -65,6 +65,13 @@ pub struct RuntimeBundleIdentity {
     entrypoint_kind: RuntimeBundleEntrypointKind,
     entrypoint: PathBuf,
     expected_sha256: Option<String>,
+    // The per-deploy nonce (see `with_deploy_nonce`). Part of the identity so
+    // warm-pool reuse — keyed on this identity — treats two deploys with
+    // byte-identical content but distinct nonces as distinct: a redeploy reseeds
+    // its import-time random stream, so a runtime warmed under the old nonce must
+    // never be handed back for the new deploy (EX10R3.2). Absent for
+    // hand-rolled/legacy bundles, which keep their historical identity.
+    deploy_nonce: Option<String>,
 }
 
 impl RuntimeBundleIdentity {
@@ -86,6 +93,10 @@ impl RuntimeBundleIdentity {
 
     pub fn expected_sha256(&self) -> Option<&str> {
         self.expected_sha256.as_deref()
+    }
+
+    pub fn deploy_nonce(&self) -> Option<&str> {
+        self.deploy_nonce.as_deref()
     }
 }
 
@@ -513,6 +524,27 @@ impl RuntimeBundle {
         tenant_label: Option<String>,
         explicit_module_root: Option<PathBuf>,
     ) -> Self {
+        Self::from_parts_with_nonce(
+            entrypoint,
+            content,
+            entrypoint_kind,
+            expected_sha256,
+            tenant_label,
+            explicit_module_root,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn from_parts_with_nonce(
+        entrypoint: PathBuf,
+        content: RuntimeBundleContent,
+        entrypoint_kind: RuntimeBundleEntrypointKind,
+        expected_sha256: Option<String>,
+        tenant_label: Option<String>,
+        explicit_module_root: Option<PathBuf>,
+        deploy_nonce: Option<String>,
+    ) -> Self {
         let content_kind = content.content_kind();
         let target_world = match &content {
             RuntimeBundleContent::JavaScript => None,
@@ -550,7 +582,12 @@ impl RuntimeBundle {
                 .clone()
                 .unwrap_or_else(|| entrypoint.clone()),
             expected_sha256: expected_sha256.clone(),
+            deploy_nonce: deploy_nonce.clone(),
         };
+        let deploy_nonce_cell = std::sync::OnceLock::new();
+        if let Some(nonce) = deploy_nonce {
+            let _ = deploy_nonce_cell.set(nonce);
+        }
         Self {
             shared: Arc::new(RuntimeBundleShared {
                 content,
@@ -562,7 +599,7 @@ impl RuntimeBundle {
                 expected_sha256,
                 identity,
                 module_code_caches: Mutex::new(HashMap::new()),
-                deploy_nonce: std::sync::OnceLock::new(),
+                deploy_nonce: deploy_nonce_cell,
                 deploy_stamp: std::sync::OnceLock::new(),
             }),
         }
@@ -577,8 +614,24 @@ impl RuntimeBundle {
     /// nonce wins); it must be attached before the first `deploy_stamp` read
     /// (i.e. before the first invocation), which the loader guarantees.
     pub fn with_deploy_nonce(self, deploy_nonce: impl Into<String>) -> Self {
-        let _ = self.shared.deploy_nonce.set(deploy_nonce.into());
-        self
+        // Rebuild so the nonce participates in `RuntimeBundleIdentity`, which
+        // keys warm-pool reuse. Called at registration before any invocation, so
+        // discarding the fresh (empty) module-code caches and deploy stamp is
+        // free. The first deploy nonce wins: a bundle that already carries one
+        // keeps it.
+        if self.shared.deploy_nonce.get().is_some() {
+            return self;
+        }
+        let shared = &self.shared;
+        Self::from_parts_with_nonce(
+            shared.entrypoint.clone(),
+            shared.content.clone(),
+            shared.entrypoint_kind,
+            shared.expected_sha256.clone(),
+            shared.identity.tenant_label.clone(),
+            shared.canonical_module_root.clone(),
+            Some(deploy_nonce.into()),
+        )
     }
 
     /// The bundle's deploy stamp (see [`RuntimeBundleDeployStamp`]). Computed
@@ -758,6 +811,60 @@ mod deploy_stamp_tests {
             first.deploy_stamp().seed_hex,
             second.deploy_stamp().seed_hex,
             "an identical persisted nonce must keep the import seed stable across reconstruction",
+        );
+    }
+
+    #[test]
+    fn deploy_nonce_participates_in_bundle_identity() {
+        // Warm-pool reuse is keyed on `RuntimeBundleIdentity` (see
+        // warm_pool.rs / RuntimePoolPartitionKey). Two deploys of byte-identical
+        // content but distinct nonces must therefore have distinct identities, or
+        // a runtime warmed and reseeded under the old nonce could be handed back
+        // for the new deploy (EX10R3.2).
+        let dir = tempfile::tempdir().expect("tempdir should create");
+        let path = write_bundle(dir.path(), "bundle.mjs");
+
+        let first = RuntimeBundle::new(&path).with_deploy_nonce("nonce-a");
+        let second = RuntimeBundle::new(&path).with_deploy_nonce("nonce-b");
+        let first_again = RuntimeBundle::new(&path).with_deploy_nonce("nonce-a");
+
+        assert_ne!(
+            first.identity(),
+            second.identity(),
+            "distinct deploy nonces must yield distinct bundle identities",
+        );
+        assert_eq!(
+            first.identity(),
+            first_again.identity(),
+            "the same deploy nonce must yield an equal bundle identity",
+        );
+        assert_eq!(first.identity().deploy_nonce(), Some("nonce-a"));
+
+        // A bundle with no nonce keeps its historical (nonce-free) identity, and
+        // is distinct from any nonce-carrying deploy of the same file.
+        let legacy = RuntimeBundle::new(&path);
+        assert_eq!(legacy.identity().deploy_nonce(), None);
+        assert_ne!(legacy.identity(), first.identity());
+    }
+
+    #[test]
+    fn first_deploy_nonce_wins_and_survives_reattachment() {
+        // The nonce is set once at registration; a second attach must not
+        // silently replace it (which would desync identity from the live seed).
+        let dir = tempfile::tempdir().expect("tempdir should create");
+        let path = write_bundle(dir.path(), "bundle.mjs");
+
+        let bundle = RuntimeBundle::new(&path)
+            .with_deploy_nonce("first")
+            .with_deploy_nonce("second");
+        assert_eq!(bundle.identity().deploy_nonce(), Some("first"));
+        assert_eq!(
+            bundle.deploy_stamp().seed_hex,
+            RuntimeBundle::new(&path)
+                .with_deploy_nonce("first")
+                .deploy_stamp()
+                .seed_hex,
+            "the retained nonce must drive the import seed",
         );
     }
 

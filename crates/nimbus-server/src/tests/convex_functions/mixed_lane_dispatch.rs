@@ -60,19 +60,11 @@ const handlers = {
   },
 };
 
-// Register the callee-lane lookup with the host-owned registrar the context
-// contract installs at bootstrap (nimbus_context_contract.js), matching what
-// generated bundles emit; the contract consults the captured reference, not a
-// guest-visible global.
-const __laneLookup = function (name) {
-  const definition = definitions.get(name);
-  return definition && typeof definition.runtime_environment === "string"
-    ? definition.runtime_environment
-    : null;
-};
-if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
-  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(__laneLookup);
-}
+// The nested ctx.run* dispatcher resolves each callee's lane HOST-side against
+// this app's registry (op_nimbus_ctx_resolve_callee_lane), so this bundle
+// publishes no callee-lane lookup or registrar — there is no guest-reachable
+// state to tamper with. The `definitions` map above is used only by the
+// visibility gate below, mirroring what generated bundles carry.
 
 // Generated-bundle parity (invokeNamedDefinitionLocally in
 // runtime_bundle_dispatch_invocation.mjs): both bundle entry points gate on
@@ -140,7 +132,28 @@ globalThis.__nimbusInvoke = async function (request) {
 export {};
 "#;
 
+/// A module-top-level tampering preamble that runs before any handler — the
+/// exact timing an eagerly-imported npm/builtin dependency evaluates at. It
+/// attempts every lane-routing attack the removed JS mechanism was vulnerable
+/// to: the bare realm-global identifier reassignment the review found, the older
+/// global, and pre-registering an always-"same lane" impostor with the old
+/// registrar. After the fix none of these exist or are consulted (the callee
+/// lane is resolved host-side), so cross-lane routing is unaffected.
+const CONVEX_MIXED_LANE_TAMPER_PREAMBLE: &str = r#"
+try { __nimbusCapturedCalleeLaneLookup = () => globalThis.__nimbusRuntimeEnvironmentLane; } catch (_e) {}
+try { globalThis.__nimbusLocalFunctionRuntimeEnvironment = () => globalThis.__nimbusRuntimeEnvironmentLane; } catch (_e) {}
+try {
+  if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
+    globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(() => globalThis.__nimbusRuntimeEnvironmentLane);
+  }
+} catch (_e) {}
+"#;
+
 fn build_convex_mixed_lane_app() -> ConvexMixedLaneApp {
+    build_convex_mixed_lane_app_with_preamble("")
+}
+
+fn build_convex_mixed_lane_app_with_preamble(bundle_preamble: &str) -> ConvexMixedLaneApp {
     let tempdir = tempdir().expect("convex mixed-lane tempdir should build");
     let convex_dir = tempdir.path().join(".nimbus").join("convex");
     fs::create_dir_all(&convex_dir).expect("convex dir should build");
@@ -185,7 +198,8 @@ fn build_convex_mixed_lane_app() -> ConvexMixedLaneApp {
     )
     .expect("mixed-lane routes manifest should write");
     let bundle_path = convex_dir.join("bundle.mjs");
-    fs::write(&bundle_path, CONVEX_MIXED_LANE_BUNDLE)
+    let bundle_source = format!("{bundle_preamble}{CONVEX_MIXED_LANE_BUNDLE}");
+    fs::write(&bundle_path, bundle_source.as_bytes())
         .expect("mixed-lane runtime bundle should write");
     let bundle_sha256 =
         RuntimeBundle::compute_sha256_for_path(&bundle_path).expect("bundle hash should load");
@@ -208,8 +222,23 @@ fn build_convex_mixed_lane_app() -> ConvexMixedLaneApp {
 
 #[tokio::test]
 async fn convex_nested_calls_cross_runtime_lanes_execute_on_the_callee_lane() {
-    let app = build_convex_mixed_lane_app();
+    assert_cross_lane_execution_on_callee_lane(build_convex_mixed_lane_app()).await;
+}
 
+/// Guest tampering at module-evaluation time — the timing an eagerly-imported
+/// dependency runs at (EX10R3.1 second vector) — must not influence the
+/// local-vs-host lane decision. The callee lane is resolved host-side, so both
+/// cross-lane directions still execute on the callee's own lane exactly as they
+/// do without the attack.
+#[tokio::test]
+async fn convex_cross_lane_dispatch_survives_module_scope_lane_tampering() {
+    assert_cross_lane_execution_on_callee_lane(build_convex_mixed_lane_app_with_preamble(
+        CONVEX_MIXED_LANE_TAMPER_PREAMBLE,
+    ))
+    .await;
+}
+
+async fn assert_cross_lane_execution_on_callee_lane(app: ConvexMixedLaneApp) {
     // Lane sanity before driving traffic: the registry must place the node
     // action on a Node lane and both default functions on the web lane.
     let node_limits = app.registry.runtime_limits_for_function("nodeside:digest");

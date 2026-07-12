@@ -37,9 +37,22 @@ fn request_of_kind(kind: InvocationKind, function_name: &str) -> InvocationReque
 }
 
 async fn invoke_convex_semantics_bundle(bundle_source: &str, request: &InvocationRequest) -> Value {
+    invoke_convex_semantics_bundle_with_host(
+        bundle_source,
+        request,
+        Arc::new(RecordingHost::default()),
+    )
+    .await
+}
+
+async fn invoke_convex_semantics_bundle_with_host(
+    bundle_source: &str,
+    request: &InvocationRequest,
+    host: Arc<dyn crate::host::HostBridge>,
+) -> Value {
     let (_tempdir, bundle_path) = write_app_style_bundle(bundle_source);
     let runtime = NimbusRuntime::with_policy(
-        Arc::new(RecordingHost::default()),
+        host,
         convex_semantics_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
@@ -620,14 +633,9 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 const storage = new AsyncLocalStorage();
 
-// Declare this bundle's functions as same-lane so a same-isolate nested call
-// takes local dispatch (the path whose ALS detachment this test exercises).
-if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
-  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(
-    () => globalThis.__nimbusRuntimeEnvironmentLane,
-  );
-}
-
+// The host resolves "child:read" to the same (default) lane, so this
+// same-isolate nested call takes local dispatch — the path whose ALS detachment
+// this test exercises.
 try {
   globalThis.__nimbusCallDetachedFromInvocationContext = (fn) => fn();
 } catch (_error) {
@@ -648,7 +656,12 @@ globalThis.__nimbusInvoke = async function (request) {
 
 export {};
 "#;
-    let result = invoke_convex_semantics_bundle(bundle, &query_request("messages:list")).await;
+    let result = invoke_convex_semantics_bundle_with_host(
+        bundle,
+        &query_request("messages:list"),
+        Arc::new(RecordingHost::resolving_lane("default")),
+    )
+    .await;
     assert_eq!(
         result["observed"], "detached",
         "caller ALS context must not leak into locally dispatched ctx.run* callees \

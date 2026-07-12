@@ -75,13 +75,9 @@ async fn runtime_query_context_is_reader_only_when_request_kind_is_present() {
     std::fs::write(
         &bundle_path,
         r#"
-// Declare this bundle's functions as same-lane so same-isolate nested ctx.run*
-// takes local dispatch (this test asserts the local host-bridge path).
-if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
-  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(
-    () => globalThis.__nimbusRuntimeEnvironmentLane,
-  );
-}
+// The host resolves this callee to the same lane (see RecordingHost::resolving_lane
+// below), so this same-isolate nested ctx.run* takes local dispatch — the path
+// this test asserts.
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     hostCallSessionId: `${request.kind}:${request.function_name}`,
@@ -120,7 +116,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let host = Arc::new(RecordingHost::default());
+    let host = Arc::new(RecordingHost::resolving_lane("default"));
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         run_to_completion_snapshot_runtime_test_policy(),
@@ -172,13 +168,23 @@ export {};
         .lock()
         .expect("host calls lock should not be poisoned")
         .clone();
-    assert_eq!(calls.len(), 1);
+    // Local dispatch first consults the host callee-lane oracle, then announces
+    // the nested call via the enter-nested-call protocol.
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].operation, HostCallOperation::CtxResolveCalleeLane);
     assert_eq!(
-        calls[0].operation,
+        calls[0].payload,
+        serde_json::json!({
+            "name": "messages:list",
+            "host_call_session_id": "query:messages:reader",
+        })
+    );
+    assert_eq!(
+        calls[1].operation,
         HostCallOperation::CtxRuntimeEnterNestedCall
     );
     assert_eq!(
-        calls[0].payload,
+        calls[1].payload,
         serde_json::json!({
             "name": "messages:list",
             "visibility": "public",
@@ -196,13 +202,9 @@ async fn runtime_mutation_context_exposes_query_and_mutation_nested_calls() {
     std::fs::write(
         &bundle_path,
         r#"
-// Declare this bundle's functions as same-lane so same-isolate nested ctx.run*
-// takes local dispatch (this test asserts the local host-bridge path).
-if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
-  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(
-    () => globalThis.__nimbusRuntimeEnvironmentLane,
-  );
-}
+// The host resolves these callees to the same lane (RecordingHost::resolving_lane
+// below), so these same-isolate nested ctx.run* calls take local dispatch — the
+// path this test asserts.
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({ request });
   globalThis.__nimbusInvokeNamedLocal = async function (nestedRequest) {
@@ -237,7 +239,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let host = Arc::new(RecordingHost::default());
+    let host = Arc::new(RecordingHost::resolving_lane("default"));
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         run_to_completion_snapshot_runtime_test_policy(),
@@ -289,29 +291,48 @@ export {};
         .lock()
         .expect("host calls lock should not be poisoned")
         .clone();
-    assert_eq!(calls.len(), 2);
-    assert!(
-        calls
-            .iter()
-            .all(|call| call.operation == HostCallOperation::CtxRuntimeEnterNestedCall)
+    // Each nested call first consults the host callee-lane oracle, then (being
+    // same-lane) announces via the enter-nested-call protocol: two nested calls
+    // ⇒ two resolve + two enter host calls.
+    let resolve_payloads: Vec<&Value> = calls
+        .iter()
+        .filter(|call| call.operation == HostCallOperation::CtxResolveCalleeLane)
+        .map(|call| &call.payload)
+        .collect();
+    let enter_payloads: Vec<&Value> = calls
+        .iter()
+        .filter(|call| call.operation == HostCallOperation::CtxRuntimeEnterNestedCall)
+        .map(|call| &call.payload)
+        .collect();
+    assert_eq!(
+        resolve_payloads,
+        vec![
+            &serde_json::json!({
+                "name": "messages:list",
+                "host_call_session_id": "mutation:messages:writer",
+            }),
+            &serde_json::json!({
+                "name": "messages:send",
+                "host_call_session_id": "mutation:messages:writer",
+            }),
+        ]
     );
     assert_eq!(
-        calls[0].payload,
-        serde_json::json!({
-            "name": "messages:list",
-            "visibility": "public",
-            "kind": "query",
-            "host_call_session_id": "mutation:messages:writer",
-        })
-    );
-    assert_eq!(
-        calls[1].payload,
-        serde_json::json!({
-            "name": "messages:send",
-            "visibility": "public",
-            "kind": "mutation",
-            "host_call_session_id": "mutation:messages:writer",
-        })
+        enter_payloads,
+        vec![
+            &serde_json::json!({
+                "name": "messages:list",
+                "visibility": "public",
+                "kind": "query",
+                "host_call_session_id": "mutation:messages:writer",
+            }),
+            &serde_json::json!({
+                "name": "messages:send",
+                "visibility": "public",
+                "kind": "mutation",
+                "host_call_session_id": "mutation:messages:writer",
+            }),
+        ]
     );
 }
 
@@ -1444,13 +1465,8 @@ async fn runtime_same_isolate_nested_entry_uses_sync_host_bridge_path() {
     std::fs::write(
         &bundle_path,
         r#"
-// Declare this bundle's functions as same-lane so the nested ctx.run* takes
-// local dispatch (this test asserts the sync host-bridge path it uses).
-if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
-  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(
-    () => globalThis.__nimbusRuntimeEnvironmentLane,
-  );
-}
+// SyncOnlyHost resolves the callee to the same (default) lane, so this nested
+// ctx.run* takes local dispatch — the sync host-bridge path this test asserts.
 globalThis.__nimbusInvokeNamedLocal = async function () {
   return "local-ok";
 };
@@ -1497,13 +1513,23 @@ export {};
         .lock()
         .expect("sync-only host lock should not be poisoned")
         .clone();
-    assert_eq!(calls.len(), 1);
+    // Local dispatch consults the host callee-lane oracle, then announces via
+    // the enter-nested-call protocol.
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].operation, HostCallOperation::CtxResolveCalleeLane);
     assert_eq!(
-        calls[0].operation,
+        calls[0].payload,
+        serde_json::json!({
+            "name": "messages:list",
+            "host_call_session_id": "query:messages:outer",
+        })
+    );
+    assert_eq!(
+        calls[1].operation,
         HostCallOperation::CtxRuntimeEnterNestedCall
     );
     assert_eq!(
-        calls[0].payload,
+        calls[1].payload,
         serde_json::json!({
             "name": "messages:list",
             "visibility": "public",

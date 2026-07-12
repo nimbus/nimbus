@@ -39,6 +39,7 @@ pub enum HostCallOperation {
     CtxSchedulerCancel,
     CtxServiceLookup,
     CtxRuntimeEnterNestedCall,
+    CtxResolveCalleeLane,
     CfKvGet,
     CfKvPut,
     CfKvDelete,
@@ -75,6 +76,7 @@ impl HostCallOperation {
             Self::CtxSchedulerCancel => "ctx_scheduler_cancel",
             Self::CtxServiceLookup => "ctx_service_lookup",
             Self::CtxRuntimeEnterNestedCall => "ctx_runtime_enter_nested_call",
+            Self::CtxResolveCalleeLane => "ctx_resolve_callee_lane",
             Self::CfKvGet => "cf_kv_get",
             Self::CfKvPut => "cf_kv_put",
             Self::CfKvDelete => "cf_kv_delete",
@@ -107,6 +109,11 @@ impl HostCallOperation {
             Self::CtxRunMutation | Self::CtxRunAction | Self::CtxRuntimeEnterNestedCall => {
                 RuntimeEffectClass::NestedRuntime
             }
+            // Resolving a callee's runtime lane is a pure metadata read of the
+            // host registry — it observes no user data and performs no effect,
+            // so it never trips observed-effect enforcement from any handler
+            // kind (`PureLocalRead` is always violation-free).
+            Self::CtxResolveCalleeLane => RuntimeEffectClass::PureLocalRead,
             Self::CfKvGet | Self::CfKvList => RuntimeEffectClass::ObservableRead,
             Self::CfKvPut | Self::CfKvDelete => RuntimeEffectClass::Write,
             Self::CtxSchedulerRunAfter | Self::CtxSchedulerRunAt | Self::CtxSchedulerCancel => {
@@ -349,6 +356,17 @@ pub struct RuntimeSyncNestedCallPayload {
     pub host_call_session_id: Option<String>,
 }
 
+/// Payload for the callee-lane oracle. The nested `ctx.run*` dispatcher asks the
+/// host for the authoritative runtime lane of `name` (from the registry the host
+/// alone owns) so no guest-reachable JavaScript state participates in the
+/// local-vs-host dispatch decision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeSyncResolveCalleeLanePayload {
+    pub name: String,
+    #[serde(default)]
+    pub host_call_session_id: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeAsyncQueryTerminalPayload {
     pub builder_id: String,
@@ -403,6 +421,7 @@ pub enum HostCallPayload {
     CtxSchedulerCancel(RuntimeAsyncSchedulerCancelPayload),
     CtxServiceLookup(RuntimeAsyncServiceLookupPayload),
     CtxRuntimeEnterNestedCall(RuntimeSyncNestedCallPayload),
+    CtxResolveCalleeLane(RuntimeSyncResolveCalleeLanePayload),
     CfKvGet(RuntimeAsyncCfKvGetPayload),
     CfKvPut(RuntimeAsyncCfKvPutPayload),
     CfKvDelete(RuntimeAsyncCfKvDeletePayload),
@@ -439,6 +458,7 @@ impl HostCallPayload {
             Self::CtxSchedulerCancel(_) => HostCallOperation::CtxSchedulerCancel,
             Self::CtxServiceLookup(_) => HostCallOperation::CtxServiceLookup,
             Self::CtxRuntimeEnterNestedCall(_) => HostCallOperation::CtxRuntimeEnterNestedCall,
+            Self::CtxResolveCalleeLane(_) => HostCallOperation::CtxResolveCalleeLane,
             Self::CfKvGet(_) => HostCallOperation::CfKvGet,
             Self::CfKvPut(_) => HostCallOperation::CfKvPut,
             Self::CfKvDelete(_) => HostCallOperation::CfKvDelete,
@@ -475,6 +495,7 @@ impl HostCallPayload {
             Self::CtxSchedulerCancel(payload) => payload.host_call_session_id.as_deref(),
             Self::CtxServiceLookup(payload) => payload.host_call_session_id.as_deref(),
             Self::CtxRuntimeEnterNestedCall(payload) => payload.host_call_session_id.as_deref(),
+            Self::CtxResolveCalleeLane(payload) => payload.host_call_session_id.as_deref(),
             Self::CfKvGet(payload) => payload.host_call_session_id.as_deref(),
             Self::CfKvPut(payload) => payload.host_call_session_id.as_deref(),
             Self::CfKvDelete(payload) => payload.host_call_session_id.as_deref(),
@@ -556,6 +577,9 @@ impl HostCallPayload {
             HostCallOperation::CtxRuntimeEnterNestedCall => Ok(Self::CtxRuntimeEnterNestedCall(
                 serde_json::from_value(payload)?,
             )),
+            HostCallOperation::CtxResolveCalleeLane => {
+                Ok(Self::CtxResolveCalleeLane(serde_json::from_value(payload)?))
+            }
             HostCallOperation::CfKvGet => Ok(Self::CfKvGet(serde_json::from_value(payload)?)),
             HostCallOperation::CfKvPut => Ok(Self::CfKvPut(serde_json::from_value(payload)?)),
             HostCallOperation::CfKvDelete => Ok(Self::CfKvDelete(serde_json::from_value(payload)?)),
@@ -757,6 +781,10 @@ mod tests {
                 RuntimeEffectClass::NestedRuntime,
             ),
             (
+                HostCallOperation::CtxResolveCalleeLane,
+                RuntimeEffectClass::PureLocalRead,
+            ),
+            (
                 HostCallOperation::CfKvGet,
                 RuntimeEffectClass::ObservableRead,
             ),
@@ -937,6 +965,10 @@ mod tests {
             (
                 HostCallOperation::CtxRuntimeEnterNestedCall,
                 "ctx_runtime_enter_nested_call",
+            ),
+            (
+                HostCallOperation::CtxResolveCalleeLane,
+                "ctx_resolve_callee_lane",
             ),
             (HostCallOperation::CfKvGet, "cf_kv_get"),
             (HostCallOperation::CfKvPut, "cf_kv_put"),

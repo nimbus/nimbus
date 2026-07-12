@@ -1,38 +1,93 @@
-//! Nested ctx.run* lane routing: same-isolate local dispatch is only taken
-//! when the callee's manifest `runtime_environment` matches the lane the
-//! current isolate executes; cross-lane calls go through host dispatch (the
-//! engine path), which resolves the callee's own lane and semantics profile.
+//! Nested ctx.run* lane routing: same-isolate local dispatch is only taken when
+//! the callee's runtime lane matches the lane the current isolate executes;
+//! cross-lane calls go through host dispatch (the engine path), which resolves
+//! the callee's own lane and semantics profile.
+//!
+//! The local-vs-host decision is resolved HOST-side
+//! (`op_nimbus_ctx_resolve_callee_lane`): the runtime asks the host for the
+//! callee's authoritative lane and compares it against this isolate's frozen
+//! lane. There is deliberately no guest-reachable JavaScript lane lookup or
+//! registrar, so no handler body or eagerly-imported dependency can influence
+//! the decision. These tests exercise the honest routing paths and the
+//! adversarial tampering the removed JS mechanism used to be vulnerable to.
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+use serde_json::Value;
 
 use super::support::*;
 use super::*;
-use crate::host::HostCallOperation;
+use crate::error::{NimbusRuntimeError, Result};
+use crate::host::{HostBridge, HostCallOperation, HostCallRequest};
 
-/// A generated-bundle-shaped module: local dispatcher plus the per-function
-/// lane lookup emitted by @nimbus/codegen. The caller is invoked as an
-/// action and runs the nested call named by `args.target` with the kind in
-/// `args.nested_kind`.
-const LANE_ROUTING_BUNDLE: &str = r#"
-const functionsByName = new Map([
-  ["child:defaultLane", { runtime_environment: "default" }],
-  ["child:nodeLane", { runtime_environment: "node" }],
-]);
-
-const __laneLookup = function (name) {
-  const definition = functionsByName.get(name);
-  return definition && typeof definition.runtime_environment === "string"
-    ? definition.runtime_environment
-    : null;
-};
-// Generated bundles register the callee-lane lookup with the host-owned
-// registrar the context contract installs at bootstrap; the contract consults
-// that captured reference, never the guest-visible global name. The plain
-// global assignment mirrors the pre-registrar shape so this bundle exercises
-// both code states.
-if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
-  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(__laneLookup);
+/// Test host that answers the callee-lane oracle from an explicit name→lane
+/// map (standing in for the server registry) and records every host call so the
+/// tests can assert which dispatch path a nested call took. Unknown callees
+/// resolve to JSON null, exactly as the real registry reports a function it does
+/// not own — the runtime must then fail safe to host dispatch.
+struct LaneOracleHost {
+    lanes: HashMap<String, String>,
+    calls: Mutex<Vec<HostCallRequest>>,
 }
-globalThis.__nimbusLocalFunctionRuntimeEnvironment = __laneLookup;
 
+impl LaneOracleHost {
+    fn new(lanes: &[(&str, &str)]) -> Self {
+        Self {
+            lanes: lanes
+                .iter()
+                .map(|(name, lane)| ((*name).to_string(), (*lane).to_string()))
+                .collect(),
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn operations(&self) -> Vec<HostCallOperation> {
+        self.calls
+            .lock()
+            .expect("lane oracle host lock should not be poisoned")
+            .iter()
+            .map(|call| call.operation)
+            .collect()
+    }
+}
+
+impl HostBridge for LaneOracleHost {
+    fn call(&self, request: HostCallRequest) -> Result<Value> {
+        self.calls
+            .lock()
+            .expect("lane oracle host lock should not be poisoned")
+            .push(request.clone());
+        match request.operation {
+            HostCallOperation::CtxResolveCalleeLane => {
+                let name = request
+                    .payload
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        NimbusRuntimeError::Contract(
+                            "callee-lane oracle payload is missing `name`".to_string(),
+                        )
+                    })?;
+                let value = self
+                    .lanes
+                    .get(name)
+                    .map(|lane| Value::String(lane.clone()))
+                    .unwrap_or(Value::Null);
+                Ok(serde_json::json!({ "status": "ok", "value": value }))
+            }
+            _ => Ok(serde_json::json!({
+                "operation": request.operation,
+                "payload": request.payload,
+            })),
+        }
+    }
+}
+
+/// A generated-bundle-shaped module: the local dispatcher plus a caller that
+/// runs the nested call named by `args.target` with the kind in
+/// `args.nested_kind`. The bundle publishes no lane lookup — the host owns that.
+const LANE_ROUTING_BUNDLE: &str = r#"
 globalThis.__nimbusInvokeNamedLocal = async function (request) {
   return { dispatched: "local", name: request.function_name };
 };
@@ -52,79 +107,42 @@ globalThis.__nimbusInvoke = async function (request) {
 export {};
 "#;
 
-/// Same generated-bundle shape as [`LANE_ROUTING_BUNDLE`], but the caller runs
-/// adversarial guest tampering before the nested call: it deletes and/or
-/// reassigns the historical `__nimbusLocalFunctionRuntimeEnvironment` global to
-/// an always-"same lane" function, and tries to re-hijack the host registrar.
-/// None of that may force a cross-lane callee onto same-isolate local
-/// dispatch: the contract consults the host-captured lookup, not the global.
+/// Same shape as [`LANE_ROUTING_BUNDLE`], but the caller runs adversarial guest
+/// tampering before the nested call. It simulates a `new Function`-compiled
+/// handler body (sloppy mode, the environment real guest handlers run in) that:
+///   * reassigns the bare realm-global identifier the review found —
+///     `__nimbusCapturedCalleeLaneLookup = () => currentLane` — to claim every
+///     callee shares this isolate's lane,
+///   * reassigns the historical `__nimbusLocalFunctionRuntimeEnvironment`
+///     global, and
+///   * tries to (re-)register an always-"same lane" impostor through the old
+///     registrar.
+///
+/// After the fix none of these exist or are consulted: the callee lane is
+/// resolved host-side, so a cross-lane nested call still routes to the host.
 const LANE_ROUTING_TAMPER_BUNDLE: &str = r#"
-const functionsByName = new Map([
-  ["child:defaultLane", { runtime_environment: "default" }],
-  ["child:nodeLane", { runtime_environment: "node" }],
-]);
-
-const __laneLookup = function (name) {
-  const definition = functionsByName.get(name);
-  return definition && typeof definition.runtime_environment === "string"
-    ? definition.runtime_environment
-    : null;
-};
-if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
-  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(__laneLookup);
-}
-// A pre-registrar (or tampered) global that the fixed contract must ignore.
-globalThis.__nimbusLocalFunctionRuntimeEnvironment = __laneLookup;
-
 globalThis.__nimbusInvokeNamedLocal = async function (request) {
   return { dispatched: "local", name: request.function_name };
 };
 
 globalThis.__nimbusInvoke = async function (request) {
-  if (request.args.attack === "delete") {
-    delete globalThis.__nimbusLocalFunctionRuntimeEnvironment;
-  } else if (request.args.attack === "reassign") {
-    globalThis.__nimbusLocalFunctionRuntimeEnvironment = function () {
-      // Claim every callee shares this isolate's lane so the pre-fix contract
-      // takes local dispatch for a cross-lane callee.
-      return globalThis.__nimbusRuntimeEnvironmentLane;
-    };
-  }
-  // Attempt to replace the host-captured lookup outright; the one-shot
-  // registrar must reject this.
-  let reRegisterRejected = false;
-  if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
-    try {
-      globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(function () {
-        return globalThis.__nimbusRuntimeEnvironmentLane;
-      });
-    } catch (_error) {
-      reRegisterRejected = true;
-    }
-  }
+  // A sloppy-mode handler body: `new Function` bodies are non-strict and resolve
+  // free identifiers against the realm global env, so this is exactly the reach
+  // a real guest handler has. Pre-fix, the bare assignment reattached an
+  // always-"same lane" impostor to the lexical binding the dispatcher read.
+  const attack = new Function(
+    "try { __nimbusCapturedCalleeLaneLookup = () => globalThis.__nimbusRuntimeEnvironmentLane; } catch (_e) {}\n" +
+    "try { globalThis.__nimbusLocalFunctionRuntimeEnvironment = () => globalThis.__nimbusRuntimeEnvironmentLane; } catch (_e) {}\n" +
+    "if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === 'function') {\n" +
+    "  try { globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(() => globalThis.__nimbusRuntimeEnvironmentLane); } catch (_e) {}\n" +
+    "}\n"
+  );
+  attack();
   const ctx = globalThis.__nimbusCreateContext({ request });
-  const nested = await ctx.runQuery({ name: request.args.target, visibility: "public" }, {});
-  return {
-    currentLane: globalThis.__nimbusRuntimeEnvironmentLane ?? null,
-    reRegisterRejected,
-    nested,
-  };
-};
-
-export {};
-"#;
-
-/// A generated bundle that carries a lane (every real isolate does) but never
-/// registers a callee-lane lookup — the tampering end state where the lookup is
-/// gone. The fixed contract must fail safe to HOST dispatch, never assume local.
-const LANE_ROUTING_NO_LOOKUP_BUNDLE: &str = r#"
-globalThis.__nimbusInvokeNamedLocal = async function (request) {
-  return { dispatched: "local", name: request.function_name };
-};
-
-globalThis.__nimbusInvoke = async function (request) {
-  const ctx = globalThis.__nimbusCreateContext({ request });
-  const nested = await ctx.runQuery({ name: request.args.target, visibility: "public" }, {});
+  const nested =
+    request.args.nested_kind === "mutation"
+      ? await ctx.runMutation({ name: request.args.target, visibility: "public" }, {})
+      : await ctx.runQuery({ name: request.args.target, visibility: "public" }, {});
   return {
     currentLane: globalThis.__nimbusRuntimeEnvironmentLane ?? null,
     nested,
@@ -146,25 +164,14 @@ fn caller_request(target: &str, nested_kind: &str) -> InvocationRequest {
     }
 }
 
-fn attack_request(target: &str, attack: &str) -> InvocationRequest {
-    InvocationRequest {
-        kind: InvocationKind::Action,
-        function_name: "caller:run".to_string(),
-        args: serde_json::json!({ "target": target, "attack": attack }),
-        page_size: None,
-        cursor: None,
-        auth: None,
-        services: Default::default(),
-    }
-}
-
 async fn invoke_lane_routing_bundle(
     bundle_source: &str,
     limits: RuntimeLimits,
     request: &InvocationRequest,
+    lanes: &[(&str, &str)],
 ) -> (Value, Vec<HostCallOperation>) {
     let (_tempdir, bundle_path) = write_app_style_bundle(bundle_source);
-    let host = Arc::new(RecordingHost::default());
+    let host = Arc::new(LaneOracleHost::new(lanes));
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         Arc::new(RuntimePolicy::new(limits)),
@@ -174,14 +181,7 @@ async fn invoke_lane_routing_bundle(
         .invoke_bundle_for_tenant(&RuntimeBundle::new(&bundle_path), request, "tenant-a")
         .await
         .expect("lane-routing bundle invocation should succeed");
-    let operations = host
-        .calls
-        .lock()
-        .expect("recording host lock should not be poisoned")
-        .iter()
-        .map(|call| call.operation)
-        .collect();
-    (result, operations)
+    (result, host.operations())
 }
 
 fn convex_default_lane_limits() -> RuntimeLimits {
@@ -191,6 +191,10 @@ fn convex_default_lane_limits() -> RuntimeLimits {
     }
 }
 
+/// Every real deployment's isolate freezes a lane and its callees resolve to a
+/// lane through the host; both are used verbatim here.
+const APP_LANES: &[(&str, &str)] = &[("child:defaultLane", "default"), ("child:nodeLane", "node")];
+
 #[tokio::test]
 async fn nested_call_same_lane_stays_on_local_dispatch_in_default_isolate() {
     let _guard = acquire_basic_invocation_suite_lock().await;
@@ -198,6 +202,7 @@ async fn nested_call_same_lane_stays_on_local_dispatch_in_default_isolate() {
         LANE_ROUTING_BUNDLE,
         convex_default_lane_limits(),
         &caller_request("child:defaultLane", "query"),
+        APP_LANES,
     )
     .await;
 
@@ -205,6 +210,10 @@ async fn nested_call_same_lane_stays_on_local_dispatch_in_default_isolate() {
     assert_eq!(
         result["nested"]["dispatched"], "local",
         "a default-lane callee in a default isolate must use local dispatch: {result}"
+    );
+    assert!(
+        operations.contains(&HostCallOperation::CtxResolveCalleeLane),
+        "the local-vs-host decision must consult the host oracle: {operations:?}"
     );
     assert!(
         operations.contains(&HostCallOperation::CtxRuntimeEnterNestedCall),
@@ -223,6 +232,7 @@ async fn nested_call_to_node_callee_routes_through_host_dispatch_from_default_is
         LANE_ROUTING_BUNDLE,
         convex_default_lane_limits(),
         &caller_request("child:nodeLane", "query"),
+        APP_LANES,
     )
     .await;
 
@@ -248,6 +258,7 @@ async fn nested_call_to_default_callee_routes_through_host_dispatch_from_node22_
         LANE_ROUTING_BUNDLE,
         RuntimeLimits::application_node22(),
         &caller_request("child:defaultLane", "mutation"),
+        APP_LANES,
     )
     .await;
 
@@ -273,6 +284,7 @@ async fn nested_call_same_lane_stays_on_local_dispatch_in_node22_isolate() {
         LANE_ROUTING_BUNDLE,
         RuntimeLimits::application_node22(),
         &caller_request("child:nodeLane", "query"),
+        APP_LANES,
     )
     .await;
 
@@ -292,89 +304,51 @@ async fn nested_call_same_lane_stays_on_local_dispatch_in_node22_isolate() {
 }
 
 #[tokio::test]
-async fn nested_call_with_lane_but_no_lookup_fails_safe_to_host_dispatch() {
+async fn nested_call_to_unknown_callee_routes_through_host_dispatch() {
     let _guard = acquire_basic_invocation_suite_lock().await;
-    // Every real isolate freezes a lane at bootstrap. A bundle that carries a
-    // lane but registers no callee-lane lookup — whether a stripped-down
-    // harness bundle or the end state of guest tampering that removed the
-    // lookup — must NOT fall through to same-isolate local dispatch. The
-    // contract fails safe to HOST dispatch, which resolves the callee's own
-    // lane and semantics.
+    // A callee the host does not resolve (null lane) may still be a
+    // registry-native function; the host resolves it, the bundle cannot. The
+    // runtime must fail safe to host dispatch — never assume local.
     let (result, operations) = invoke_lane_routing_bundle(
-        LANE_ROUTING_NO_LOOKUP_BUNDLE,
+        LANE_ROUTING_BUNDLE,
+        convex_default_lane_limits(),
+        &caller_request("child:unknown", "query"),
+        APP_LANES,
+    )
+    .await;
+
+    assert_ne!(result["nested"]["dispatched"], "local");
+    assert!(
+        operations.contains(&HostCallOperation::CtxRunQuery),
+        "unknown callees must go through host dispatch: {operations:?}"
+    );
+    assert!(
+        !operations.contains(&HostCallOperation::CtxRuntimeEnterNestedCall),
+        "unknown callees must not enter the local-dispatch protocol: {operations:?}"
+    );
+}
+
+#[tokio::test]
+async fn guest_bare_identifier_tampering_cannot_force_cross_lane_local_dispatch() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    // The blocker vector (EX10R3.1): a sloppy-mode handler body reassigns the
+    // bare realm-global lookup identifier (and the older globals/registrar) to
+    // claim every callee shares this isolate's lane. Pre-fix the dispatcher read
+    // that guest-writable state and ran a "use node" callee inside the web
+    // isolate. Post-fix the callee lane is resolved host-side, so the cross-lane
+    // call still routes to the host regardless of any guest tampering.
+    let (result, operations) = invoke_lane_routing_bundle(
+        LANE_ROUTING_TAMPER_BUNDLE,
         convex_default_lane_limits(),
         &caller_request("child:nodeLane", "query"),
+        APP_LANES,
     )
     .await;
 
     assert_eq!(result["currentLane"], "default");
     assert_ne!(
         result["nested"]["dispatched"], "local",
-        "a lane-carrying bundle with no callee-lane lookup must fail safe to host dispatch: {result}"
-    );
-    assert!(
-        operations.contains(&HostCallOperation::CtxRunQuery),
-        "missing lookup must route through host dispatch: {operations:?}"
-    );
-    assert!(
-        !operations.contains(&HostCallOperation::CtxRuntimeEnterNestedCall),
-        "missing lookup must not enter the local-dispatch protocol: {operations:?}"
-    );
-}
-
-#[tokio::test]
-async fn guest_delete_of_lookup_global_cannot_force_cross_lane_local_dispatch() {
-    let _guard = acquire_basic_invocation_suite_lock().await;
-    // Adversarial: the guest deletes the historical lookup global before a
-    // cross-lane nested call. Pre-fix the contract re-read that global, found
-    // it gone, and fell open to local dispatch — running a "use node" callee
-    // inside the web isolate. The fix consults a host-captured reference the
-    // delete cannot reach, so the cross-lane call still routes to the host.
-    let (result, operations) = invoke_lane_routing_bundle(
-        LANE_ROUTING_TAMPER_BUNDLE,
-        convex_default_lane_limits(),
-        &attack_request("child:nodeLane", "delete"),
-    )
-    .await;
-
-    assert_eq!(result["currentLane"], "default");
-    assert_ne!(
-        result["nested"]["dispatched"], "local",
-        "deleting the lookup global must not force a node callee onto local dispatch: {result}"
-    );
-    assert!(
-        operations.contains(&HostCallOperation::CtxRunQuery),
-        "post-tamper cross-lane call must go through host dispatch: {operations:?}"
-    );
-    assert!(
-        !operations.contains(&HostCallOperation::CtxRuntimeEnterNestedCall),
-        "post-tamper cross-lane call must not enter the local-dispatch protocol: {operations:?}"
-    );
-}
-
-#[tokio::test]
-async fn guest_reassignment_of_lookup_cannot_force_cross_lane_local_dispatch() {
-    let _guard = acquire_basic_invocation_suite_lock().await;
-    // Adversarial: the guest reassigns the lookup global to a function that
-    // claims every callee shares this isolate's lane, and also tries to
-    // re-register a hijacked lookup with the host registrar. Neither can
-    // redirect lane routing: the registrar is one-shot, and the contract reads
-    // the host-captured reference registered at bundle eval.
-    let (result, operations) = invoke_lane_routing_bundle(
-        LANE_ROUTING_TAMPER_BUNDLE,
-        convex_default_lane_limits(),
-        &attack_request("child:nodeLane", "reassign"),
-    )
-    .await;
-
-    assert_eq!(result["currentLane"], "default");
-    assert_eq!(
-        result["reRegisterRejected"], true,
-        "the one-shot registrar must reject a second registration: {result}"
-    );
-    assert_ne!(
-        result["nested"]["dispatched"], "local",
-        "reassigning the lookup global must not force a node callee onto local dispatch: {result}"
+        "guest tampering must not force a node callee onto local dispatch: {result}"
     );
     assert!(
         operations.contains(&HostCallOperation::CtxRunQuery),
@@ -390,12 +364,13 @@ async fn guest_reassignment_of_lookup_cannot_force_cross_lane_local_dispatch() {
 async fn guest_tampering_leaves_same_lane_local_dispatch_intact() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     // The fix must not over-correct: a genuine same-lane callee still takes the
-    // local-dispatch optimization even after the guest reassigned the global,
-    // because the host-captured lookup still reports the real lane.
+    // local-dispatch optimization even after the guest tampered, because the
+    // host oracle still reports the real lane.
     let (result, operations) = invoke_lane_routing_bundle(
         LANE_ROUTING_TAMPER_BUNDLE,
         convex_default_lane_limits(),
-        &attack_request("child:defaultLane", "reassign"),
+        &caller_request("child:defaultLane", "query"),
+        APP_LANES,
     )
     .await;
 
@@ -411,24 +386,5 @@ async fn guest_tampering_leaves_same_lane_local_dispatch_intact() {
     assert!(
         !operations.contains(&HostCallOperation::CtxRunQuery),
         "same-lane local dispatch must not fall back to host dispatch: {operations:?}"
-    );
-}
-
-#[tokio::test]
-async fn nested_call_to_unknown_callee_routes_through_host_dispatch() {
-    let _guard = acquire_basic_invocation_suite_lock().await;
-    // A callee missing from the bundle manifest may still be a
-    // registry-native function; the host resolves it, the bundle cannot.
-    let (result, operations) = invoke_lane_routing_bundle(
-        LANE_ROUTING_BUNDLE,
-        convex_default_lane_limits(),
-        &caller_request("child:unknown", "query"),
-    )
-    .await;
-
-    assert_ne!(result["nested"]["dispatched"], "local");
-    assert!(
-        operations.contains(&HostCallOperation::CtxRunQuery),
-        "unknown callees must go through host dispatch: {operations:?}"
     );
 }

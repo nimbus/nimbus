@@ -219,6 +219,10 @@ struct RuntimePoolBundleAuthorityFacts {
     entrypoint: PathBuf,
     module_root: PathBuf,
     expected_sha256: Option<String>,
+    // Distinguishes two deploys with byte-identical content but different
+    // per-deploy nonces so cooperative reuse never hands back a runtime seeded
+    // under the prior deploy (mirrors the warm-pool identity fix, EX10R3.2).
+    deploy_nonce: Option<String>,
 }
 
 impl RuntimePoolBundleAuthorityFacts {
@@ -235,6 +239,7 @@ impl RuntimePoolBundleAuthorityFacts {
             entrypoint: identity.entrypoint().to_path_buf(),
             module_root: bundle.module_root()?,
             expected_sha256: identity.expected_sha256().map(str::to_owned),
+            deploy_nonce: identity.deploy_nonce().map(str::to_owned),
         })
     }
 }

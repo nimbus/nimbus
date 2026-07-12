@@ -63,6 +63,7 @@ pub use host::{
     RuntimeAsyncSchedulerRunAfterPayload, RuntimeAsyncSchedulerRunAtPayload,
     RuntimeAsyncServiceLookupPayload, RuntimeSyncNestedCallPayload, RuntimeSyncQueryFilterPayload,
     RuntimeSyncQueryOrderPayload, RuntimeSyncQueryStartPayload, RuntimeSyncQueryWithIndexPayload,
+    RuntimeSyncResolveCalleeLanePayload,
 };
 pub use limits::{
     EffectiveRuntimeScalingPlan, NominalRuntimeHostPressureSource, RequestedRuntimeScalingTarget,

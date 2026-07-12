@@ -473,13 +473,9 @@ globalThis.__nimbusInvoke = async function (request) {
 };
 
 // This demo manifest omits per-function runtime_environment; its functions are
-// all default-lane, so declare them same-lane to keep same-isolate nested
-// ctx.run* on local dispatch, matching real generated same-lane app behavior.
-if (typeof globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment === "function") {
-  globalThis.__nimbusRegisterLocalFunctionRuntimeEnvironment(
-    () => globalThis.__nimbusRuntimeEnvironmentLane,
-  );
-}
+// all default-lane. The host resolves them to this isolate's lane
+// (op_nimbus_ctx_resolve_callee_lane), so same-isolate nested ctx.run* stays on
+// local dispatch, matching real generated same-lane app behavior.
 globalThis.__nimbusInvokeNamedLocal = invokeNamedDefinitionLocally;
 
 export {};

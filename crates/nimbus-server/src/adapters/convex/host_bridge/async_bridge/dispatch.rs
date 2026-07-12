@@ -19,7 +19,8 @@ impl ConvexHostBridge {
             | HostCallPayload::CtxRunMutation(_)
             | HostCallPayload::CtxRunAction(_)
             | HostCallPayload::CtxServiceLookup(_)
-            | HostCallPayload::CtxRuntimeEnterNestedCall(_)) => {
+            | HostCallPayload::CtxRuntimeEnterNestedCall(_)
+            | HostCallPayload::CtxResolveCalleeLane(_)) => {
                 self.dispatch_function_host_call_async(payload, cancellation)
                     .await
             }
@@ -79,7 +80,8 @@ impl ConvexHostBridge {
             | HostCallPayload::CtxRunMutation(_)
             | HostCallPayload::CtxRunAction(_)
             | HostCallPayload::CtxServiceLookup(_)
-            | HostCallPayload::CtxRuntimeEnterNestedCall(_)) => {
+            | HostCallPayload::CtxRuntimeEnterNestedCall(_)
+            | HostCallPayload::CtxResolveCalleeLane(_)) => {
                 self.dispatch_function_host_call_cancellable(payload, cancellation)
             }
             payload @ (HostCallPayload::QueryBuilderStart(_)
@@ -132,7 +134,8 @@ impl ConvexHostBridge {
             | HostCallPayload::CtxRunMutation(_)
             | HostCallPayload::CtxRunAction(_)
             | HostCallPayload::CtxServiceLookup(_)
-            | HostCallPayload::CtxRuntimeEnterNestedCall(_)) => {
+            | HostCallPayload::CtxRuntimeEnterNestedCall(_)
+            | HostCallPayload::CtxResolveCalleeLane(_)) => {
                 self.dispatch_function_host_call(payload)
             }
             payload @ (HostCallPayload::QueryBuilderStart(_)

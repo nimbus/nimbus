@@ -80,6 +80,35 @@ impl ConvexRegistry {
         self.selected_runtime_lane(function_name).policy()
     }
 
+    /// Authoritative runtime lane (`"default" | "node" | "bun"`) for the nested
+    /// `ctx.run*` dispatcher's local-vs-host decision, in the same vocabulary the
+    /// isolate freezes into `globalThis.__nimbusRuntimeEnvironmentLane`. Returns
+    /// `None` for callees the local bundle cannot invoke — unknown functions and
+    /// plan-backed/non-runtime functions — so those resolve to host dispatch,
+    /// which owns their execution. This is the single source of truth for the
+    /// decision: no guest-reachable JavaScript state participates.
+    pub fn runtime_environment_for_function(&self, function_name: &str) -> Option<&'static str> {
+        let definition = self.functions.get(function_name)?;
+        if definition.runtime_handler.is_none() || !definition.plan.is_null() {
+            return None;
+        }
+        Some(
+            match self
+                .selected_runtime_lane(function_name)
+                .limits()
+                .compatibility_target
+            {
+                RuntimeCompatibilityTarget::Node20
+                | RuntimeCompatibilityTarget::Node22
+                | RuntimeCompatibilityTarget::Node24
+                | RuntimeCompatibilityTarget::Node26 => "node",
+                RuntimeCompatibilityTarget::BunJsc => "bun",
+                RuntimeCompatibilityTarget::WebStandardIsolate
+                | RuntimeCompatibilityTarget::WasmComponent => "default",
+            },
+        )
+    }
+
     pub fn runtime_lane_for_function(
         &self,
         function_name: &str,
