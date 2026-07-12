@@ -18,8 +18,10 @@ Object.defineProperty(globalThis, "__nimbusDrainImmediates", {
   writable: true,
 });
 // Nested-call context detachment: a locally-dispatched nested invocation
-// (globalThis.__nimbusInvokeNamedLocal) must start from the same async
-// context a host-dispatched one would — the root frame captured here at
+// (the bundle's invokeNamedDefinitionLocally, passed into the context-contract
+// layer's context factory as a call argument — HG2, not bridged through a
+// guest-reachable global) must start from the same async context a
+// host-dispatched one would — the root frame captured here at
 // bootstrap — so AsyncLocalStorage data never propagates into
 // ctx.runQuery/runMutation/runAction (the documented Convex default-runtime
 // caveat, and dispatch-path parity between the local and host paths).

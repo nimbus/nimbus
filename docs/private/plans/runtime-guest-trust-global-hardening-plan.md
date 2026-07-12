@@ -139,7 +139,35 @@ test consume that ledger.
     lookup), `guest_semantics::convex_semantics_guest_cannot_replace_create_context_factory`.
     `make test-rust-runtime` green (465 passed, 0 failed, 123 ignored);
     `make test-rust-workspace` excludes nimbus-runtime and compiles/passes clean.
-- **NOT started (later dispatches):** HG2, HG3, HG4, HG6, HG7, HG8, HG9, HGx, the
+- **Band C (HG2): DONE** — `globalThis.__nimbusInvokeNamedLocal` removed;
+  `invokeNamedDefinitionLocally` now passes as an explicit `invokeNamedLocal`
+  call argument into `globalThis.__nimbusCreateContext({...})` (Convex's
+  fresh-ctx-as-argument pattern, fix approach item 3 above). Threaded through
+  `__nimbusCreateContextImpl` (computed once, only if `options.invokeNamedLocal`
+  is a function) into `__nimbusRunNamedFunction(..., localInvoker)` for each of
+  `runQuery`/`runMutation`/`runAction`; the trusted dispatch call site never
+  reads a `globalThis` property by name
+  (`nimbus_context_contract.js:193,281-282,569,586,603`;
+  preamble wiring `runtime_bundle_preamble.mjs:54`,
+  `runtime_bundle_dispatch_global_invoke.mjs:32`). Full blast-radius sweep
+  across hand-authored JS test fixtures and codegen selftest fixtures
+  (14 files) updated to the new call-argument pattern.
+  - Red-then-green: `host_bridge::runtime_nested_local_dispatch_ignores_guest_reassigned_invoke_named_local_global`
+    — a guest handler reassigns the OLD global name immediately before
+    triggering its own nested `ctx.runQuery`; RED verified against a
+    temporarily-reintroduced name-based read at the dispatch call site
+    (returns the `IMPOSTOR` result), GREEN against the actual fix (returns
+    `REAL`, proving only the call-argument reference is ever consulted).
+  - Verification: `cargo fmt --all --check` and `clippy -p nimbus-runtime`
+    / `-p nimbus-server` (`--lib --tests -- -D warnings`) clean; `npm run
+    typecheck`/`test` clean (including updated codegen selftest fixtures);
+    `make test-rust-runtime` green (466 passed, 0 failed, 123 ignored, +1 for
+    the new test); `make test-rust-workspace` green (4274 passed, 31 skipped,
+    0 failed — an initial run's single failure in an unrelated
+    `nimbus-server` fairness/websocket test was confirmed transient
+    full-suite contention via a clean isolated rerun, then a clean full-suite
+    rerun).
+- **NOT started (later dispatches):** HG3, HG4, HG6, HG7, HG8, HG9, HGx, the
   full structural regression-gate test, and the threat-model deliverable. The
   Cloud Functions `globalThis.__nimbusInvoke` emit site
   (`cloud_functions/runtime_sources.mjs:35`) is captured by the SAME host path

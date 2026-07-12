@@ -95,7 +95,7 @@ const assertReferenceVisibility = (request) => {
   }
 };
 
-globalThis.__nimbusInvokeNamedLocal = async function (request) {
+async function invokeNamedLocal(request) {
   const handler = handlers[request.function_name];
   if (!handler) {
     throw new Error("missing local handler: " + request.function_name);
@@ -104,9 +104,10 @@ globalThis.__nimbusInvokeNamedLocal = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     request,
     hostCallSessionId: request.hostCallSessionId,
+    invokeNamedLocal,
   });
   return await handler(ctx, request.args ?? {});
-};
+}
 
 globalThis.__nimbusInvoke = async function (request) {
   try {
@@ -118,7 +119,7 @@ globalThis.__nimbusInvoke = async function (request) {
       };
     }
     assertReferenceVisibility(request);
-    const ctx = globalThis.__nimbusCreateContext({ request });
+    const ctx = globalThis.__nimbusCreateContext({ request, invokeNamedLocal });
     const value = await handler(ctx, request.args ?? {});
     return { status: "ok", value };
   } catch (error) {

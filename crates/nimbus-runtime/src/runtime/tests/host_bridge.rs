@@ -78,17 +78,19 @@ async fn runtime_query_context_is_reader_only_when_request_kind_is_present() {
 // The host resolves this callee to the same lane (see RecordingHost::resolving_lane
 // below), so this same-isolate nested ctx.run* takes local dispatch — the path
 // this test asserts.
+async function invokeNamedLocal(nestedRequest) {
+  return {
+    kind: nestedRequest.kind,
+    functionName: nestedRequest.function_name,
+    args: nestedRequest.args,
+  };
+}
+
 globalThis.__nimbusInvoke = async function (request) {
   const ctx = globalThis.__nimbusCreateContext({
     hostCallSessionId: `${request.kind}:${request.function_name}`,
+    invokeNamedLocal,
   });
-  globalThis.__nimbusInvokeNamedLocal = async function (nestedRequest) {
-    return {
-      kind: nestedRequest.kind,
-      functionName: nestedRequest.function_name,
-      args: nestedRequest.args,
-    };
-  };
   const capture = async (fn) => {
     try {
       await fn();
@@ -205,15 +207,16 @@ async fn runtime_mutation_context_exposes_query_and_mutation_nested_calls() {
 // The host resolves these callees to the same lane (RecordingHost::resolving_lane
 // below), so these same-isolate nested ctx.run* calls take local dispatch — the
 // path this test asserts.
-globalThis.__nimbusInvoke = async function (request) {
-  const ctx = globalThis.__nimbusCreateContext({ request });
-  globalThis.__nimbusInvokeNamedLocal = async function (nestedRequest) {
-    return {
-      kind: nestedRequest.kind,
-      functionName: nestedRequest.function_name,
-      args: nestedRequest.args,
-    };
+async function invokeNamedLocal(nestedRequest) {
+  return {
+    kind: nestedRequest.kind,
+    functionName: nestedRequest.function_name,
+    args: nestedRequest.args,
   };
+}
+
+globalThis.__nimbusInvoke = async function (request) {
+  const ctx = globalThis.__nimbusCreateContext({ request, invokeNamedLocal });
   let runActionError = null;
   try {
     await ctx.runAction({ name: "messages:fanout", visibility: "public" }, {});
@@ -1467,12 +1470,12 @@ async fn runtime_same_isolate_nested_entry_uses_sync_host_bridge_path() {
         r#"
 // SyncOnlyHost resolves the callee to the same (default) lane, so this nested
 // ctx.run* takes local dispatch — the sync host-bridge path this test asserts.
-globalThis.__nimbusInvokeNamedLocal = async function () {
+async function invokeNamedLocal() {
   return "local-ok";
-};
+}
 
 globalThis.__nimbusInvoke = async function () {
-  const ctx = globalThis.__nimbusCreateContext();
+  const ctx = globalThis.__nimbusCreateContext({ invokeNamedLocal });
   return await ctx.runQuery(
     { name: "messages:list", visibility: "public" },
     { author: "Ada" },
@@ -1536,6 +1539,82 @@ export {};
             "kind": "query",
             "host_call_session_id": "query:messages:outer",
         })
+    );
+}
+
+// HG2: globalThis.__nimbusInvokeNamedLocal used to be the guest-reachable name
+// the trusted preamble read for nested ctx.run* local dispatch. A compromised
+// handler could reassign it and hijack a later same-tenant invocation's local
+// dispatch on a warm/reused isolate. The fix passes the trusted invoker
+// straight through as a call argument (invokeNamedLocal) into
+// __nimbusCreateContext, never bridged through a guest-reachable global. This
+// proves the property that makes that class of hijack impossible: even a
+// guest handler that reassigns the OLD global name, then immediately triggers
+// nested dispatch itself, cannot redirect it — the argument-passed reference
+// is the only thing the trusted dispatch path ever reads.
+#[tokio::test]
+async fn runtime_nested_local_dispatch_ignores_guest_reassigned_invoke_named_local_global() {
+    let _guard = acquire_runtime_suite_lock().await;
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+// SyncOnlyHost resolves the callee to the same (default) lane, so this nested
+// ctx.run* takes local dispatch — the path this test asserts stays on the
+// trusted invokeNamedLocal argument.
+async function invokeNamedLocal() {
+  return { source: "REAL" };
+}
+
+globalThis.__nimbusInvoke = async function () {
+  const ctx = globalThis.__nimbusCreateContext({ invokeNamedLocal });
+  // A guest handler reassigning the pre-HG2 global name, hoping the trusted
+  // dispatch path still reads it by name (it never does, before or after
+  // this guest's own ctx.runQuery call below, or a later same-tenant
+  // invocation on a reused isolate).
+  globalThis.__nimbusInvokeNamedLocal = async function () {
+    return { source: "IMPOSTOR" };
+  };
+  return await ctx.runQuery(
+    { name: "messages:list", visibility: "public" },
+    { author: "Ada" },
+  );
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let host = Arc::new(SyncOnlyHost::default());
+    let runtime = NimbusRuntime::with_policy(
+        host.clone(),
+        run_to_completion_snapshot_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let result = runtime
+        .invoke_bundle_for_tenant(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:outer".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+            "tenant-a",
+        )
+        .await
+        .expect("nested local dispatch should succeed despite guest tampering");
+
+    assert_eq!(
+        result,
+        serde_json::json!({ "source": "REAL" }),
+        "nested ctx.runQuery local dispatch must run the trusted invokeNamedLocal argument, \
+         not a guest-reassigned globalThis.__nimbusInvokeNamedLocal impostor: {result}"
     );
 }
 

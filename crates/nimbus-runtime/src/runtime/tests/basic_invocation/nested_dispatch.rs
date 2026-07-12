@@ -88,12 +88,14 @@ impl HostBridge for LaneOracleHost {
 /// runs the nested call named by `args.target` with the kind in
 /// `args.nested_kind`. The bundle publishes no lane lookup — the host owns that.
 const LANE_ROUTING_BUNDLE: &str = r#"
-globalThis.__nimbusInvokeNamedLocal = async function (request) {
+// HG2: invokeNamedLocal is a module-private binding passed into
+// __nimbusCreateContext as a call argument, never a guest-reachable global.
+const invokeNamedLocal = async function (request) {
   return { dispatched: "local", name: request.function_name };
 };
 
 globalThis.__nimbusInvoke = async function (request) {
-  const ctx = globalThis.__nimbusCreateContext({ request });
+  const ctx = globalThis.__nimbusCreateContext({ request, invokeNamedLocal });
   const nested =
     request.args.nested_kind === "mutation"
       ? await ctx.runMutation({ name: request.args.target, visibility: "public" }, {})
@@ -128,7 +130,7 @@ export {};
 // SyncHostValue(...)` deref hit the impostor; post-fix the property is frozen
 // non-writable, the reassignment is inert, and the real host answer wins.
 const TRANSPORT_HIJACK_TAMPER_BUNDLE: &str = r#"
-globalThis.__nimbusInvokeNamedLocal = async function (request) {
+const invokeNamedLocal = async function (request) {
   return { dispatched: "local", name: request.function_name };
 };
 
@@ -145,7 +147,7 @@ globalThis.__nimbusInvoke = async function (request) {
     "} catch (_e) {}\n"
   );
   attack();
-  const ctx = globalThis.__nimbusCreateContext({ request });
+  const ctx = globalThis.__nimbusCreateContext({ request, invokeNamedLocal });
   const nested = await ctx.runQuery({ name: request.args.target, visibility: "public" }, {});
   return {
     currentLane: globalThis.__nimbusRuntimeEnvironmentLane ?? null,
@@ -157,7 +159,7 @@ export {};
 "#;
 
 const LANE_ROUTING_TAMPER_BUNDLE: &str = r#"
-globalThis.__nimbusInvokeNamedLocal = async function (request) {
+const invokeNamedLocal = async function (request) {
   return { dispatched: "local", name: request.function_name };
 };
 
@@ -174,7 +176,7 @@ globalThis.__nimbusInvoke = async function (request) {
     "}\n"
   );
   attack();
-  const ctx = globalThis.__nimbusCreateContext({ request });
+  const ctx = globalThis.__nimbusCreateContext({ request, invokeNamedLocal });
   const nested =
     request.args.nested_kind === "mutation"
       ? await ctx.runMutation({ name: request.args.target, visibility: "public" }, {})

@@ -726,12 +726,12 @@ try {
   // non-writable: the tamper attempt must not change routing behavior
 }
 
-globalThis.__nimbusInvokeNamedLocal = async function () {
+async function invokeNamedLocal() {
   return storage.getStore()?.tag ?? "detached";
-};
+}
 
 globalThis.__nimbusInvoke = async function (request) {
-  const ctx = globalThis.__nimbusCreateContext({ request });
+  const ctx = globalThis.__nimbusCreateContext({ request, invokeNamedLocal });
   const observed = await storage.run({ tag: "caller" }, () =>
     ctx.runQuery({ name: "child:read", visibility: "public" }, {}),
   );

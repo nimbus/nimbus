@@ -60,7 +60,7 @@ isolate; blast radius is SAME-TENANT cross-invocation, not cross-tenant
 | `globalThis.__nimbusInvoke` (Cloud Functions bundle) | (1) global prop | emit `cloud_functions/runtime_sources.mjs:35`; same Rust eval sites | plain assign, NOT hardened | **HG0** (Cloud Functions codegen variant — same class, second emit site) | **Band B (this)** |
 | `globalThis.__nimbusInvokeCloudflareWorkerFetch` | (1) global prop | `cloudflare_workers_runtime.js:278,295`; **Rust host string-evals by name** `invocation.rs:68` | `Object.freeze(value)` only — slot writable | **HG5** (bootstrap-stable entrypoint, same class as HG0) | **Band B (this)** |
 | `globalThis.__nimbusCreateContext` | (1) global prop | `nimbus_context_contract.js:272,599`; read fresh per invocation by trusted preamble `runtime_bundle_preamble.mjs:41`, entrypoints `runtime_bundle_execution_entrypoints.mjs:3,15,42,53` | `Object.freeze(value)` only — slot writable | **HG1** (builds the whole ctx incl. auth/db/scheduler capabilities) | **Band B (this)** |
-| `globalThis.__nimbusInvokeNamedLocal` | (1) global prop | emit `runtime_bundle_dispatch_global_invoke.mjs:32`; read fresh into `localInvoker` per nested `ctx.run*` `nimbus_context_contract.js:195`, invoked `:246` | plain assign, NOT hardened | **HG2** | HG2 band (later) |
+| ~~`globalThis.__nimbusInvokeNamedLocal`~~ (REMOVED — see "Already-hardened") | (1) global prop | baseline: emit `runtime_bundle_dispatch_global_invoke.mjs:32`; read fresh into `localInvoker` per nested `ctx.run*` `nimbus_context_contract.js:195`, invoked `:246` | baseline: plain assign, NOT hardened | **HG2** | **Band C — DONE** |
 | `Deno.core.ops` table + `const __nimbusCoreOps` alias | (2)+(3) | live table `deno_host_call_transport.js:1`; read fresh `:91,131,166,188`; also `reset_bootstrap_invocation_state.js:8`, `post_bootstrap.js:2` | op slots writable; alias `const` (readable by bare name, web-lane reachable post-`delete Deno`) | **HG3** (+ discovered web-lane bare-name alias; lane-conditional per plan) | HG3 band (later) |
 | `globalThis.__nimbusWaitUntil` / `__nimbusDrainWaitUntil` / `__nimbusResetWaitUntil` + `let __nimbusWaitUntilQueue` | (1)+(2) | hooks `deno_host_call_transport.js:184,197,212`; queue `:182`; host drains via `driver/loading.rs:619-635` | plain assign; queue bare-name writable | **HG6** | HG6 band (later) |
 | `globalThis.__nimbusRefreshNodeProcessCwd` | (1) global prop | `node22_runtime_bootstrap.js:4113` (`writable:true, configurable:true`); host/reset-called `reset_bootstrap_invocation_state.js:4-5` | NOT hardened (writable slot) | **HG7** | HG7 band (later) |
@@ -112,6 +112,18 @@ isolate; blast radius is SAME-TENANT cross-invocation, not cross-tenant
 - `globalThis.__nimbusInstallGuestSemantics` / `__nimbusEnterGuestImportPhase` —
   slot-hardened `nimbus_guest_semantics.js:235,245`; block-scoped guest-semantics
   hooks hardened at `nimbus_guest_semantics.js` (per plan "already hardened").
+- `globalThis.__nimbusInvokeNamedLocal` (HG2, Band C) — **removed entirely**,
+  not slot-hardened: `invokeNamedDefinitionLocally` now passes as an explicit
+  `invokeNamedLocal` call argument into `globalThis.__nimbusCreateContext({...})`
+  (Convex's fresh-ctx-as-argument pattern), threaded through
+  `__nimbusCreateContextImpl` → `__nimbusRunNamedFunction(..., localInvoker)`
+  for `runQuery`/`runMutation`/`runAction`
+  (`nimbus_context_contract.js:193,281-282,569,586,603`; preamble wiring
+  `runtime_bundle_preamble.mjs:54`). The trusted dispatch call site never reads
+  a `globalThis` property by name, so there is no slot to harden — unlike
+  HG0/HG1/HG5, the global itself no longer exists after this band. The
+  structural test's HG2 assertion is **absence**: `Reflect.ownKeys(globalThis)`
+  must NOT contain `__nimbusInvokeNamedLocal` after bootstrap or bundle load.
 
 ## Structural-test allowlist (consumed by the regression gate)
 
@@ -132,7 +144,7 @@ exactly one bucket below; a new unlisted property fails the test.
   invoke path carries regression risk for no additional authority guarantee.)
   `__nimbusInvokeCloudflareWorkerFetch` (same treatment as HG0, Band B),
   `__nimbusCreateContext` (slot-hardened non-writable/non-configurable, Band B),
-  `__nimbusInvokeNamedLocal` (HG2), `__nimbusWaitUntil`/`__nimbusDrainWaitUntil`/
+  `__nimbusWaitUntil`/`__nimbusDrainWaitUntil`/
   `__nimbusResetWaitUntil` (HG6), `__nimbusRefreshNodeProcessCwd` (HG7),
   `__nimbusHiddenDenoGlobals`/`__nimbusHiddenNodeGlobals` (HG9, value-freeze).
 - **TRUST already-hardened (assert descriptor stays `writable:false,
@@ -140,6 +152,11 @@ exactly one bucket below; a new unlisted property fails the test.
   `__nimbusCallDetachedFromInvocationContext`, `__nimbusRuntimeEnvironmentLane`,
   `__nimbusBeginGuestInvocation`, `__nimbusInstallGuestSemantics`,
   `__nimbusEnterGuestImportPhase`.
+- **TRUST removed entirely (assert ABSENCE from `Reflect.ownKeys(globalThis)`
+  after bootstrap and after bundle load, Band C):** `__nimbusInvokeNamedLocal`
+  (HG2) — the module-private `invokeNamedDefinitionLocally` now passes as a
+  call argument into `__nimbusCreateContext`, so no `globalThis` slot exists to
+  harden or check a descriptor on.
 - **INTENTIONALLY-MUTABLE (assert present-and-mutable is acceptable):**
   `__nimbusCloudFunctionsState`, `__nimbusAdminApps` (Cloud Functions bundles only).
 - **COMPAT-OR-TEST (assert deleted post-bootstrap OR present-non-authority):**

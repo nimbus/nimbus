@@ -81,7 +81,10 @@ export const send = defineMutation("messages:send", ({ body }) => ({
 
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
   assert.match(runtimeBundle, /globalThis\.__nimbusInvoke = async function/);
-  assert.match(runtimeBundle, /globalThis\.__nimbusInvokeNamedLocal = invokeNamedDefinitionLocally/);
+  // HG2: invokeNamedDefinitionLocally is passed into __nimbusCreateContext as
+  // a call argument, never bridged onto a guest-reachable globalThis property.
+  assert.match(runtimeBundle, /invokeNamedLocal: invokeNamedDefinitionLocally/);
+  assert.doesNotMatch(runtimeBundle, /globalThis\.__nimbusInvokeNamedLocal/);
   // The callee-lane decision is resolved host-side; the bundle must publish no
   // guest-reachable lane lookup or registrar.
   assert.doesNotMatch(runtimeBundle, /__nimbusRegisterLocalFunctionRuntimeEnvironment/);

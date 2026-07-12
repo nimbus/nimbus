@@ -40,6 +40,7 @@ async function invokeLocal(request) {
     globalThis.__nimbusCreateContext({
       hostCallSessionId: request.hostCallSessionId ?? `${request.kind}:${request.function_name}`,
       request,
+      invokeNamedLocal: invokeLocal,
     }),
     request.args ?? {},
     request,
@@ -59,7 +60,6 @@ globalThis.__nimbusInvoke = async function(request) {
 
 // Same-isolate nested ctx.run* takes local dispatch because the host resolves
 // these default-lane callees to this isolate's lane (op_nimbus_ctx_resolve_callee_lane).
-globalThis.__nimbusInvokeNamedLocal = invokeLocal;
 
 export {};
 "#,

@@ -32,6 +32,9 @@ function createRuntimeContext(request) {
       typeof request.hostCallSessionId === "string" && request.hostCallSessionId.length > 0
         ? request.hostCallSessionId
         : `${request.kind}:${request.function_name}`,
+    // HG2: pass the module-private local-dispatch invoker as a call argument
+    // instead of bridging it through a guest-reachable globalThis property.
+    invokeNamedLocal: invokeNamedDefinitionLocally,
   });
 }
 
@@ -476,7 +479,6 @@ globalThis.__nimbusInvoke = async function (request) {
 // all default-lane. The host resolves them to this isolate's lane
 // (op_nimbus_ctx_resolve_callee_lane), so same-isolate nested ctx.run* stays on
 // local dispatch, matching real generated same-lane app behavior.
-globalThis.__nimbusInvokeNamedLocal = invokeNamedDefinitionLocally;
 
 export {};
 "#;

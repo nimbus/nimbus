@@ -307,7 +307,6 @@ export const store = internalMutation({
   const bundleUrl =
     `${pathToFileURL(path.join(appDir, ".nimbus", "convex", "bundle.mjs")).href}?hostDispatchedInternal=1`;
   const previousInvoke = globalThis.__nimbusInvoke;
-  const previousInvokeNamedLocal = globalThis.__nimbusInvokeNamedLocal;
   const previousCreateContext = globalThis.__nimbusCreateContext;
 
   const insertedDocuments = [];
@@ -335,19 +334,24 @@ export const store = internalMutation({
     assert.equal(insertedDocuments[0]?.document?.body, "cross-lane");
 
     // Same-isolate nested dispatch with the matching internal reference tree
-    // keeps working.
-    const localInternal = await globalThis.__nimbusInvokeNamedLocal({
+    // keeps working. invokeNamedDefinitionLocally is module-private (HG2) —
+    // there is no globalThis bridge to call directly anymore, so this drives
+    // it the same way a real ctx.run* call does: through globalThis.__nimbusInvoke,
+    // which forwards the request (including an explicit visibility) straight
+    // through to invokeNamedDefinitionLocally.
+    const localInternal = await globalThis.__nimbusInvoke({
       kind: "mutation",
       function_name: "digests:store",
       visibility: "internal",
       args: { body: "local" },
     });
-    assert.equal(localInternal, "id-2");
+    assert.deepEqual(localInternal, { status: "ok", value: "id-2" });
 
     // An explicit public reference aimed at an internal function is still a
-    // reference-selection error.
+    // reference-selection error. The gate throws a plain Error (no
+    // nimbusHostError), so __nimbusInvoke's catch rethrows it unchanged.
     await assert.rejects(
-      globalThis.__nimbusInvokeNamedLocal({
+      globalThis.__nimbusInvoke({
         kind: "mutation",
         function_name: "digests:store",
         visibility: "public",
@@ -361,11 +365,6 @@ export const store = internalMutation({
       delete globalThis.__nimbusInvoke;
     } else {
       globalThis.__nimbusInvoke = previousInvoke;
-    }
-    if (previousInvokeNamedLocal === undefined) {
-      delete globalThis.__nimbusInvokeNamedLocal;
-    } else {
-      globalThis.__nimbusInvokeNamedLocal = previousInvokeNamedLocal;
     }
     if (previousCreateContext === undefined) {
       delete globalThis.__nimbusCreateContext;

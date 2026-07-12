@@ -190,9 +190,9 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
   label,
   functionRef,
   args = {},
+  localInvoker = null,
 ) {
   const normalized = __nimbusNormalizeFunctionReference(functionRef, label);
-  const localInvoker = globalThis.__nimbusInvokeNamedLocal;
   const nestedAuthContext = authContext
     ? {
         ...authContext,
@@ -271,6 +271,15 @@ let __nimbusInvocationGeneration = 0;
 
 const __nimbusCreateContextImpl = function(options = {}) {
   const myGeneration = __nimbusInvocationGeneration;
+  // HG2: the trusted bundle preamble passes its module-private
+  // invokeNamedDefinitionLocally straight through as a call argument (no
+  // globalThis bridge for guest code to reassign). A caller that omits it
+  // (or a guest calling __nimbusCreateContext directly with forged options)
+  // only ever affects the ctx object it constructs for itself — nested
+  // ctx.run* on that ctx routes to host dispatch instead of local dispatch,
+  // never a different invocation's trusted path.
+  const localInvoker =
+    typeof options.invokeNamedLocal === "function" ? options.invokeNamedLocal : null;
 
   const guardStale = () => {
     if (__nimbusInvocationGeneration !== myGeneration) {
@@ -557,6 +566,7 @@ const __nimbusCreateContextImpl = function(options = {}) {
         "runQuery",
         functionRef,
         args,
+        localInvoker,
       );
     },
     runMutation(functionRef, args = {}) {
@@ -573,6 +583,7 @@ const __nimbusCreateContextImpl = function(options = {}) {
         "runMutation",
         functionRef,
         args,
+        localInvoker,
       );
     },
     runAction(functionRef, args = {}) {
@@ -589,6 +600,7 @@ const __nimbusCreateContextImpl = function(options = {}) {
         "runAction",
         functionRef,
         args,
+        localInvoker,
       );
     },
   };

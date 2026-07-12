@@ -29,7 +29,11 @@ function runtimeBundleDispatchGlobalInvoke({ module = true } = {}) {
   }
 };
 
-globalThis.__nimbusInvokeNamedLocal = invokeNamedDefinitionLocally;
+// HG2: invokeNamedDefinitionLocally is no longer bridged onto globalThis.
+// __nimbusCreateContext receives it directly as a call argument (see
+// runtime_bundle_preamble.mjs createRuntimeContext) so a guest handler body
+// has no guest-reachable name to reassign and redirect a later same-tenant
+// invocation's nested ctx.run* dispatch on a warm isolate.
 
 // The nested ctx.run* dispatcher resolves each callee's runtime lane HOST-side
 // (op_nimbus_ctx_resolve_callee_lane against the host registry), so the bundle
