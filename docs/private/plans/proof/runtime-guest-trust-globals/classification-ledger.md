@@ -59,7 +59,7 @@ isolate; blast radius is SAME-TENANT cross-invocation, not cross-tenant
 | `globalThis.__nimbusInvoke` (default/Convex bundle) | (1) global prop | emit `runtime_bundle_dispatch_global_invoke.mjs:3`; **Rust host string-evals by name** `invocation.rs:78,80`, `driver/loading.rs:928,1057`, `cooperative.rs:518` | plain assign, NOT hardened | **HG0** (most serious — Rust reads the guest-writable name at call time) | **Band B (this)** |
 | `globalThis.__nimbusInvoke` (Cloud Functions bundle) | (1) global prop | emit `cloud_functions/runtime_sources.mjs:35`; same Rust eval sites | plain assign, NOT hardened | **HG0** (Cloud Functions codegen variant — same class, second emit site) | **Band B (this)** |
 | `globalThis.__nimbusInvokeCloudflareWorkerFetch` | (1) global prop | `cloudflare_workers_runtime.js:278,295`; **Rust host string-evals by name** `invocation.rs:68` | `Object.freeze(value)` only — slot writable | **HG5** (bootstrap-stable entrypoint, same class as HG0) | **Band B (this)** |
-| `globalThis.__nimbusCreateContext` | (1) global prop | `nimbus_context_contract.js:272,599`; read fresh per invocation by trusted preamble `runtime_bundle_preamble.mjs:41`, entrypoints `runtime_bundle_execution_entrypoints.mjs:3,15,42,53` | `Object.freeze(value)` only — slot writable | **HG1** (builds the whole ctx incl. auth/db/scheduler capabilities) | **Band B (this)** |
+| `globalThis.__nimbusCreateContext` | (1) global prop | `nimbus_context_contract.js:298,648`; read fresh per invocation by trusted preamble `runtime_bundle_preamble.mjs:41`, entrypoints `runtime_bundle_execution_entrypoints.mjs:3,15,42,53` | `Object.freeze(value)` only — slot writable | **HG1** (builds the whole ctx incl. auth/db/scheduler capabilities) | **Band B (this)** |
 | ~~`globalThis.__nimbusInvokeNamedLocal`~~ (REMOVED — see "Already-hardened") | (1) global prop | baseline: emit `runtime_bundle_dispatch_global_invoke.mjs:32`; read fresh into `localInvoker` per nested `ctx.run*` `nimbus_context_contract.js:195`, invoked `:246` | baseline: plain assign, NOT hardened | **HG2** | **Band C — DONE** |
 | ~~`Deno.core.ops` table + `const __nimbusCoreOps` alias~~ (HARDENED — see "Already-hardened") | (2)+(3) | baseline: live table `deno_host_call_transport.js:1`; read fresh `:91,131,166,188`; also `reset_bootstrap_invocation_state.js:8`, `post_bootstrap.js:2` | baseline: op slots writable; alias `const` (readable by bare name, web-lane reachable post-`delete Deno`) | **HG3** (+ discovered web-lane bare-name alias, closed by the same fix; lane-conditional red test per plan) | **Band D — DONE** |
 | ~~`globalThis.__nimbusWaitUntil` / `__nimbusDrainWaitUntil` / `__nimbusResetWaitUntil` + `let __nimbusWaitUntilQueue`~~ (HARDENED — see "Already-hardened") | (1)+(2) | baseline: hooks `deno_host_call_transport.js:184,197,212`; queue `:182`; host drains via `driver/loading.rs:619-635` | baseline: plain assign; queue bare-name writable | **HG6** | **Band E — DONE** |
@@ -93,12 +93,12 @@ isolate; blast radius is SAME-TENANT cross-invocation, not cross-tenant
 
 - `globalThis.__nimbusSyncHostValue` / `__nimbusAsyncHostValue` — slot-hardened
   `{writable:false, configurable:false, enumerable:false}` at
-  `deno_host_call_transport.js:126,161`. The fresh `globalThis.__nimbusAsyncHostValue`
+  `deno_host_call_transport.js:165,200`. The fresh `globalThis.__nimbusAsyncHostValue`
   reads inside `nimbus_context_contract.js` (`:312,320,415-431`) and
   `cloudflare_workers_runtime.js` (`:190,201,211,220,224`) are therefore safe —
   the slot cannot be reassigned.
 - `globalThis.__nimbusCallDetachedFromInvocationContext` — slot-hardened
-  `:37-54`; captured privately as `const __nimbusDetachedNestedCall`
+  `:76-93`; captured privately as `const __nimbusDetachedNestedCall`
   (`nimbus_context_contract.js:6`).
 - `globalThis.__nimbusRuntimeEnvironmentLane` — slot-hardened
   `deno_runtime_globals.js:312`; read as the trusted local-vs-host lane signal
@@ -292,3 +292,33 @@ exactly one bucket below; a new unlisted property fails the test.
    name would need enumerating or the same full-table-clone approach reused).
    Do not fold this into Band D — it is a distinct file, a distinct binding
    kind, and a distinct blast radius.
+5. **`const __nimbusContextHostCallOps` (Phase-1 review addendum — safe, not a
+   gap requiring a band).** A classic-script top-level `const ... = new
+   Set([...])` (`deno_host_call_transport.js:96-127`) enumerating the
+   context host-call op names (`op_nimbus_ctx_query_start`,
+   `op_nimbus_ctx_run_query`, `op_nimbus_ctx_scheduler_run_after`, …). Like
+   `__nimbusCoreOps`, `const` blocks *rebinding* but not bare-name reads or
+   mutation of the Set's contents (`.add()`/`.delete()`), and the Set is not
+   frozen. `__nimbusBindHostCallPayload` (`:137-158`) consults it via
+   `.has(opName)` to decide whether to stamp/validate
+   `host_call_session_id` on a payload before dispatch; a guest that
+   `.delete()`s an op name from this Set (bare-name reachable, warm-pool-
+   persistent like every other classic-script global-lexical binding) makes
+   `__nimbusBindHostCallPayload` skip that stamping entirely for the op.
+   Traced to ground before concluding safe: the *authoritative* session
+   check is independent and host-side —
+   `enforce_live_host_call_session` (`runtime/bootstrap/ops/shared.rs:308-338`)
+   runs on every `op_nimbus_sync_host_call`/`op_nimbus_async_host_call`
+   dispatch and compares the payload's `host_call_session_id` against the
+   Rust-owned `RuntimeInvocationHostCallBinding::session_id()` — not
+   anything the JS layer asserts. `operation_requires_host_call_session`
+   (`:340-345`) defaults to `true` for every `HostCallOperation` except
+   `HttpRoute`/`RuntimeExtensionCall`, which covers every op in this Set.
+   So Set tampering only breaks the JS-side convenience stamping; the
+   affected op call then arrives at the host with no (or a guest-forged)
+   `host_call_session_id`, which the Rust-side check rejects with "runtime
+   host-call session is stale or forged" — a hard failure, never a silent
+   bypass. Not present anywhere in the TRUST/INTENTIONALLY-MUTABLE/
+   COMPAT-OR-TEST tables above; recorded here rather than added to a table
+   because it does not need a fix, only a documented reason it was
+   considered and cleared.
