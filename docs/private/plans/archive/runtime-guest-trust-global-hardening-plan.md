@@ -1,6 +1,6 @@
 # Runtime Guest Trust-Global Hardening — Security Plan
 
-Status: `active` (security; implementation started 2026-07-12, branch runtime-guest-trust-global-hardening)
+Status: `complete, archived` — PR #183 squash-merged to main (`666d9b68f`, 2026-07-13); CI confirmed green (47 pass, 0 fail). Do not re-execute.
 Owner branch: `runtime-guest-trust-global-hardening` (own PR)
 Origin: surfaced by the adversarial review of the Convex-runtimes-parity work in
 `archive/examples-and-target-resolution-plan.md` (Band EX10R/EX10R2/EX10R3),
