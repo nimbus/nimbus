@@ -40,14 +40,23 @@ use serde::Deserialize;
 use super::support::*;
 use super::*;
 
-/// Embedded at compile time so the gate never depends on the test process's
-/// working directory (unlike a runtime file read, this can't silently pick
-/// up a stale copy from a different worktree or fail under `cargo nextest`'s
-/// sandboxed cwd).
-const FIXTURE_JSON: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../docs/private/plans/proof/runtime-guest-trust-globals/structural-gate-allowlist.json"
-));
+/// Path to the classification fixture, resolved at RUNTIME from
+/// `CARGO_MANIFEST_DIR` — the runtime env var Cargo/nextest set for the test
+/// process, NOT the compile-time `env!` macro (the repo's test-taxonomy F2
+/// rule forbids compile-time Cargo env macros in the test tree; see
+/// `scripts/test-taxonomy.py`). `crates/nimbus-runtime`'s parent's parent is
+/// the repo root, matching the `repo_root()` helper the node canary tests use.
+/// The committed, force-tracked fixture stays the single source of truth.
+fn fixture_path() -> std::path::PathBuf {
+    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-runtime tests");
+    manifest_dir
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("crate manifest dir should have a repo root")
+        .join("docs/private/plans/proof/runtime-guest-trust-globals/structural-gate-allowlist.json")
+}
 
 /// Shared JS: enumerates every guest-reachable trust-relevant global on
 /// `globalThis` after bootstrap and after the bundle's own top-level code
@@ -116,7 +125,11 @@ enum Bucket {
 
 impl Fixture {
     fn load() -> Self {
-        serde_json::from_str(FIXTURE_JSON)
+        let path = fixture_path();
+        let json = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!("structural-gate-allowlist.json should read from {path:?}: {error}")
+        });
+        serde_json::from_str(&json)
             .expect("structural-gate-allowlist.json should parse as the documented schema")
     }
 
