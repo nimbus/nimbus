@@ -369,14 +369,33 @@ test consume that ledger.
     `MAKE_RC=0` confirmed directly — this lane excludes `nimbus-runtime` by
     design, so unchanged from Band E's count, as expected since this band's
     fixes are entirely within `nimbus-runtime`).
-- **NOT started (later dispatches):** HG4, the
-  full structural regression-gate test, and the threat-model deliverable. The
-  Cloud Functions `globalThis.__nimbusInvoke` emit site
-  (`cloud_functions/runtime_sources.mjs:35`) is captured by the SAME host path
-  (no codegen change needed for HG0 there); the codegen preamble module-capture
-  for HG1 (Convex fresh-ctx-as-argument, defense-in-depth atop the hardened slot)
-  was left for a codegen-touching pass to avoid an embedded-package rebuild in
-  this band.
+- **Band F (structural regression-gate test + Finding 1 Deno slot-hardening +
+  HG4 threat model): DONE, pending owner ratification of the HG4
+  recommendation.**
+  - Full structural regression-gate test:
+    `crates/nimbus-runtime/src/runtime/tests/basic_invocation/trust_global_structural_gate.rs`,
+    driven by the fixture
+    `proof/runtime-guest-trust-globals/structural-gate-allowlist.json`. Covers
+    all five lanes (web, node22, cloudflare, cloud_functions, convex_default)
+    through the real `invoke_bundle_for_tenant` bootstrap+load path, plus two
+    `WarmContextRecycle` fresh-realm-recycle variants (node22, cloudflare).
+  - Finding 1 (`globalThis.Deno` slot-hardening on the node22 lane, lane-aware
+    — the web lane's `delete globalThis.Deno` in `post_bootstrap.js` never
+    fires for this slot since it is Node-lane-only): landed in
+    `node22_runtime_bootstrap.js`, red/green test
+    `guest_cannot_swap_hardened_deno_slot_via_configurable_defineproperty` in
+    `node_bootstrap.rs`.
+  - HG4: `proof/runtime-guest-trust-globals/hg4-threat-model.md` — recommends
+    accept-as-low (lane-oracle metadata is same-tenant deployment topology,
+    not application data, and Nimbus's own error-oracle on the same call
+    surface already discloses strictly more); non-binding, owner ratifies.
+  - The Cloud Functions `globalThis.__nimbusInvoke` emit site
+    (`cloud_functions/runtime_sources.mjs:42`, corrected from the stale `:35`
+    citation during this band's ledger sweep) is captured by the SAME host
+    path (no codegen change needed for HG0 there); the codegen preamble
+    module-capture for HG1 (Convex fresh-ctx-as-argument, defense-in-depth
+    atop the hardened slot) remains left for a codegen-touching pass to avoid
+    an embedded-package rebuild.
 
 **HG3 lane split (Codex-2):** on the default/web lane `post_bootstrap.js:26`
 does `delete globalThis.Deno` (guarded by `__nimbusRetainDenoForNodeLazyScripts

@@ -9,4 +9,5 @@ mod node_capabilities;
 mod package_resolution;
 mod side_channel;
 mod support;
+mod trust_global_structural_gate;
 mod web_standard;

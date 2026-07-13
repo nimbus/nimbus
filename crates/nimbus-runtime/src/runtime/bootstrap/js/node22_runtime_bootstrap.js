@@ -3984,9 +3984,24 @@ Object.defineProperty(deno, "test", {
 // writable:false blocks a plain assignment) and poison a later same-tenant
 // invocation's trusted internal polyfill loading.
 Object.freeze(deno);
+// Finding 1 (runtime-guest-trust-global-hardening, structural-test sweep):
+// freezing the VALUE above closes property-level poisoning, but
+// `configurable:true` on this SLOT still let a guest
+// `Object.defineProperty(globalThis, "Deno", {value: impostor,
+// configurable:true, writable:true})` and swap the whole binding out from
+// under every later same-tenant invocation on this warm-pooled realm -- the
+// exact bare-name-reassignment class HG0/HG1/HG3 closed for the other trust
+// globals. `configurable:false` closes the slot itself. Node-lane-only: the
+// web lane never reaches this file (`extensions.rs`'s
+// `selected_bootstrap_entries` only includes `node22_runtime_bootstrap.js`
+// when `target.is_node()`), and `post_bootstrap.js`'s guarded
+// `delete globalThis.Deno` only fires when
+// `__nimbusRetainDenoForNodeLazyScripts` is NOT `true` -- which this file
+// always sets to `true` on the Node lane, so that delete never executes
+// against this hardened slot on any lane.
 Object.defineProperty(globalThis, "Deno", {
   value: deno,
-  configurable: true,
+  configurable: false,
   enumerable: false,
   writable: false,
 });

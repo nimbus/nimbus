@@ -1224,3 +1224,86 @@ export {};
          both hardened slots must be closed: {result}"
     );
 }
+
+/// Finding 1 (runtime-guest-trust-global-hardening, structural-test sweep):
+/// `globalThis.Deno`'s SLOT was installed `configurable:true` even though
+/// `Object.freeze(deno)` closed the value graph — the same bare-name
+/// redefinition-bypass class HG0/HG1/HG7 closed for the other trust globals.
+/// A guest could `Object.defineProperty(globalThis, "Deno", {value:
+/// impostor, configurable:true, writable:true})` and swap the whole binding
+/// for a later same-tenant invocation on a warm-pooled Node realm — the
+/// trusted extension-transpiler prelude (`bootstrap/transpile.rs`) and the
+/// `deno_host_call_transport.js` transports both resolve `Deno`/`Deno.core`
+/// by bare name. Post-fix the slot is `configurable:false`.
+#[tokio::test]
+async fn guest_cannot_swap_hardened_deno_slot_via_configurable_defineproperty() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = function () {
+  const originalDeno = globalThis.Deno;
+
+  let denoSwapDefineThrew = false;
+  try {
+    Object.defineProperty(globalThis, "Deno", {
+      value: { __impostor: true },
+      configurable: true,
+      writable: true,
+    });
+  } catch (_error) {
+    denoSwapDefineThrew = true;
+  }
+
+  const denoDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Deno");
+
+  return {
+    denoSwapDefineThrew,
+    denoIdentityStable: globalThis.Deno === originalDeno,
+    denoIsImpostor: globalThis.Deno?.__impostor === true,
+    denoWritable: denoDescriptor.writable,
+    denoConfigurable: denoDescriptor.configurable,
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let result = runtime
+        .invoke_bundle_for_tenant(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:list".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+            "tenant-a",
+        )
+        .await
+        .expect("bundle should execute");
+
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "denoSwapDefineThrew": true,
+            "denoIdentityStable": true,
+            "denoIsImpostor": false,
+            "denoWritable": false,
+            "denoConfigurable": false,
+        }),
+        "the configurable:true whole-binding swap on globalThis.Deno must be closed: {result}"
+    );
+}

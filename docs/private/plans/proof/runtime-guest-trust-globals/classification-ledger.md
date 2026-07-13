@@ -56,16 +56,17 @@ isolate; blast radius is SAME-TENANT cross-invocation, not cross-tenant
 
 | Property / binding | Surface | File:line | Current hardening | Finding | Fix owner band |
 | --- | --- | --- | --- | --- | --- |
-| `globalThis.__nimbusInvoke` (default/Convex bundle) | (1) global prop | emit `runtime_bundle_dispatch_global_invoke.mjs:3`; **Rust host string-evals by name** `invocation.rs:78,80`, `driver/loading.rs:928,1057`, `cooperative.rs:518` | plain assign, NOT hardened | **HG0** (most serious — Rust reads the guest-writable name at call time) | **Band B (this)** |
-| `globalThis.__nimbusInvoke` (Cloud Functions bundle) | (1) global prop | emit `cloud_functions/runtime_sources.mjs:35`; same Rust eval sites | plain assign, NOT hardened | **HG0** (Cloud Functions codegen variant — same class, second emit site) | **Band B (this)** |
-| `globalThis.__nimbusInvokeCloudflareWorkerFetch` | (1) global prop | `cloudflare_workers_runtime.js:278,295`; **Rust host string-evals by name** `invocation.rs:68` | `Object.freeze(value)` only — slot writable | **HG5** (bootstrap-stable entrypoint, same class as HG0) | **Band B (this)** |
-| `globalThis.__nimbusCreateContext` | (1) global prop | `nimbus_context_contract.js:298,648`; read fresh per invocation by trusted preamble `runtime_bundle_preamble.mjs:41`, entrypoints `runtime_bundle_execution_entrypoints.mjs:3,15,42,53` | `Object.freeze(value)` only — slot writable | **HG1** (builds the whole ctx incl. auth/db/scheduler capabilities) | **Band B (this)** |
+| ~~`globalThis.__nimbusInvoke` (default/Convex bundle)~~ (HARDENED — see "Already-hardened") | (1) global prop | emit `runtime_bundle_dispatch_global_invoke.mjs:3`; **Rust host captures off-graph via `v8::Private`** `captured_dispatch.rs` (moved off the string-eval-by-name path) | baseline: plain assign; **current: `Object.defineProperty {configurable:false, writable:false}`, first statement of the dispatch segment (Band B-FIX, CAPTURE-ORDERING)** | **HG0** (most serious — Rust used to read the guest-writable name at call time) | **Band B-FIX — DONE** |
+| ~~`globalThis.__nimbusInvoke` (Cloud Functions bundle)~~ (HARDENED — see "Already-hardened") | (1) global prop | emit `cloud_functions/runtime_sources.mjs:42`; same capture-off-graph treatment | baseline: plain assign; **current: `Object.defineProperty {configurable:false, writable:false}`** | **HG0** (Cloud Functions codegen variant — same class, second emit site) | **Band B-FIX — DONE** |
+| ~~`globalThis.__nimbusInvokeCloudflareWorkerFetch`~~ (HARDENED — see "Already-hardened") | (1) global prop | `cloudflare_workers_runtime.js:291`; **Rust host captures off-graph via `v8::Private`** `captured_dispatch.rs` | baseline: `Object.freeze(value)` only, slot writable; **current: `Object.defineProperty {configurable:false, writable:false}`, plus the value itself is `Object.freeze`d (Band B-FIX)** | **HG5** (bootstrap-stable entrypoint, same class as HG0) | **Band B-FIX — DONE** |
+| ~~`globalThis.__nimbusCreateContext`~~ (HARDENED — see "Already-hardened") | (1) global prop | `nimbus_context_contract.js:648`; read fresh per invocation by trusted preamble `runtime_bundle_preamble.mjs:41`, entrypoints `runtime_bundle_execution_entrypoints.mjs:3,15,42,53` | baseline: `Object.freeze(value)` only, slot writable; **current: `Object.defineProperty {writable:false, configurable:false}`** | **HG1** (builds the whole ctx incl. auth/db/scheduler capabilities) | **Band B — DONE** |
 | ~~`globalThis.__nimbusInvokeNamedLocal`~~ (REMOVED — see "Already-hardened") | (1) global prop | baseline: emit `runtime_bundle_dispatch_global_invoke.mjs:32`; read fresh into `localInvoker` per nested `ctx.run*` `nimbus_context_contract.js:195`, invoked `:246` | baseline: plain assign, NOT hardened | **HG2** | **Band C — DONE** |
 | ~~`Deno.core.ops` table + `const __nimbusCoreOps` alias~~ (HARDENED — see "Already-hardened") | (2)+(3) | baseline: live table `deno_host_call_transport.js:1`; read fresh `:91,131,166,188`; also `reset_bootstrap_invocation_state.js:8`, `post_bootstrap.js:2` | baseline: op slots writable; alias `const` (readable by bare name, web-lane reachable post-`delete Deno`) | **HG3** (+ discovered web-lane bare-name alias, closed by the same fix; lane-conditional red test per plan) | **Band D — DONE** |
 | ~~`globalThis.__nimbusWaitUntil` / `__nimbusDrainWaitUntil` / `__nimbusResetWaitUntil` + `let __nimbusWaitUntilQueue`~~ (HARDENED — see "Already-hardened") | (1)+(2) | baseline: hooks `deno_host_call_transport.js:184,197,212`; queue `:182`; host drains via `driver/loading.rs:619-635` | baseline: plain assign; queue bare-name writable | **HG6** | **Band E — DONE** |
 | ~~`globalThis.__nimbusRefreshNodeProcessCwd`~~ (HARDENED — see "Already-hardened") | (1) global prop | baseline: `node22_runtime_bootstrap.js:4113` (`writable:true, configurable:true`); host/reset-called `reset_bootstrap_invocation_state.js:4-5` | baseline: NOT hardened (writable slot) | **HG7** | **Band F — DONE** |
 | ~~`let __nimbusInvocationGeneration`~~ (HARDENED — see "Already-hardened") | (2) global-lexical | baseline: `nimbus_context_contract.js:270`; read as stale-guard trust state `:273,276`; host reset writes `reset_bootstrap_invocation_state.js:2` | baseline: bare-name writable from guest modules | **HG8** (guest desyncs generation → defeats "ctx from previous invocation" guard) | **Band E — DONE** |
 | ~~`globalThis.__nimbusHiddenDenoGlobals` / `__nimbusHiddenNodeGlobals`~~ (HARDENED — see "Already-hardened") | (1) global prop, baseline mutable VALUE | baseline: `node22_runtime_bootstrap.js:3430,3436` (slot `writable:false` but value object mutable); consumed by trusted transpiled scripts `transpile.rs:33,37,45` | baseline: slot hardened, VALUE graph mutable | **HG9** (frozen slot does not protect a mutable value) | **Band F — DONE** |
+| ~~`globalThis.Deno`~~ (HARDENED — see "Already-hardened") | (1) global prop, non-`__nimbus`-prefixed | Node-lane-only: `node22_runtime_bootstrap.js:3987` (baseline `configurable:true, writable:false`); value already shallow-frozen (`Object.freeze(deno)` at `:3986`); read by bare name by the trusted extension-transpiler prelude (`bootstrap/transpile.rs`) and by `deno_host_call_transport.js`'s `__nimbusCoreOps` capture on every warm-pooled realm boot | baseline: value frozen but SLOT `configurable:true` — same redefinition-bypass class as HG7/HG9 | **Finding 1** (structural-test sweep; not `__nimbus*`-prefixed, so the ownKeys+`__nimbus*`-prefix inventory alone would have missed it — explicit allowlist entry required) | **structural-test sweep (this) — DONE** |
 
 ## INTENTIONALLY-MUTABLE — app-singleton / guest-owned state (documented safe; do NOT harden)
 
@@ -95,13 +96,47 @@ isolate; blast radius is SAME-TENANT cross-invocation, not cross-tenant
 
 - `globalThis.__nimbusSyncHostValue` / `__nimbusAsyncHostValue` — slot-hardened
   `{writable:false, configurable:false, enumerable:false}` at
-  `deno_host_call_transport.js:165,200`. The fresh `globalThis.__nimbusAsyncHostValue`
+  `deno_host_call_transport.js:180,215`. The fresh `globalThis.__nimbusAsyncHostValue`
   reads inside `nimbus_context_contract.js` (`:312,320,415-431`) and
   `cloudflare_workers_runtime.js` (`:190,201,211,220,224`) are therefore safe —
   the slot cannot be reassigned.
 - `globalThis.__nimbusCallDetachedFromInvocationContext` — slot-hardened
   `:76-93`; captured privately as `const __nimbusDetachedNestedCall`
   (`nimbus_context_contract.js:6`).
+- `globalThis.__nimbusInvoke` (both emit sites: default/Convex
+  `runtime_bundle_dispatch_global_invoke.mjs:3` and Cloud Functions
+  `cloud_functions/runtime_sources.mjs:42`), `globalThis.__nimbusInvokeCloudflareWorkerFetch`
+  (`cloudflare_workers_runtime.js:291`), `globalThis.__nimbusCreateContext`
+  (`nimbus_context_contract.js:648`) — HG0/HG5/HG1, Band B-FIX
+  (CAPTURE-ORDERING). **This corrects a stale TRUST-table entry found during
+  the structural-test sweep**: the table's "Current hardening" column
+  described the plan's pre-fix baseline (plain assignment / freeze-only) and
+  was never updated after Band B-FIX landed. Current code slot-hardens all
+  four (`Object.defineProperty {configurable:false, writable:false}`) as the
+  first statement of their respective bundle/bootstrap segment, before any
+  guest or eagerly-imported code can run; `__nimbusInvoke` and
+  `__nimbusInvokeCloudflareWorkerFetch` are additionally captured off-graph
+  into a per-realm `v8::Private` (`captured_dispatch.rs`) after evaluation
+  and event-loop drain, so the Rust host no longer resolves either by
+  guest-writable name at call time even as defense in depth beyond the slot
+  hardening. Exercised by `crates/nimbus-runtime/src/runtime/tests/capture_ordering.rs`.
+- `globalThis.Deno` (Finding 1) — slot-hardened
+  `{writable:false, configurable:false, enumerable:false}` at
+  `node22_runtime_bootstrap.js:3987`, Node-lane-only. The value graph was
+  already shallow-frozen (`Object.freeze(deno)`, `:3986`); the slot itself was
+  the residual gap — `configurable:true` still permitted a guest to redefine
+  the whole binding via `Object.defineProperty`. Lane-scoped by construction:
+  `extensions.rs`'s `selected_bootstrap_entries` only includes
+  `node22_runtime_bootstrap.js` when `target.is_node()`, so the web lane never
+  executes this line and `globalThis.Deno` is never defined there in the
+  first place. `post_bootstrap.js`'s guarded `delete globalThis.Deno`
+  (`:25-28`) only fires when `__nimbusRetainDenoForNodeLazyScripts !== true`;
+  the Node lane always sets that flag to `true`, so the delete is a dead
+  branch on the Node lane too — `configurable:false` never collides with a
+  `delete` call site on any lane. Red/green exploit test:
+  `guest_cannot_swap_hardened_deno_slot_via_configurable_defineproperty`
+  (`node_bootstrap.rs`); web-lane non-regression covered by the existing
+  `runtime_removes_deno_global_from_bundle_execution` (`web_standard.rs`).
 - `globalThis.__nimbusRuntimeEnvironmentLane` — slot-hardened
   `deno_runtime_globals.js:312`; read as the trusted local-vs-host lane signal
   `nimbus_context_contract.js:217`.
@@ -135,8 +170,8 @@ isolate; blast radius is SAME-TENANT cross-invocation, not cross-tenant
   (that pass only triggers from residual ext-module/Node-polyfill lazy
   loading, never during static bootstrap; verified against the pinned
   deno_core fork's `bindings.rs`). The transports
-  (`__nimbusCurrentHostCallSessionId:130`, `__nimbusSyncHostValue:170`,
-  `__nimbusAsyncHostValue:205`, `__nimbusWaitUntil:227`) all read this frozen
+  (`__nimbusCurrentHostCallSessionId:96`, `__nimbusSyncHostValue:180`,
+  `__nimbusAsyncHostValue:215`, `__nimbusWaitUntil:247`) all read this frozen
   clone, never the live table, on both lanes. The bare-name binding itself is
   still guest-readable (that cannot be closed — see method note 2 above), but
   writes through it or through `Deno.core.ops` directly no longer reach
@@ -268,19 +303,6 @@ The structural test's `Reflect.ownKeys(globalThis)` inventory must classify ever
 `__nimbus*` own property present after bootstrap AND after bundle load into
 exactly one bucket below; a new unlisted property fails the test.
 
-- **TRUST (must be non-reachable, slot-hardened, or host-authority-off-the-name
-  after Band completion):**
-  `__nimbusInvoke` — Band B moved the host's authority OFF the name: the host now
-  calls the reference captured into a per-realm `v8::Private` at load
-  (`captured_dispatch.rs`), so the global remains present as the guest's own
-  (inert) dispatch handle but no longer drives the trusted path. The structural
-  test's HG0 assertion is IDENTITY (the captured reference is invoked), not
-  absence of the global. (Capture-then-delete was deliberately not taken: the
-  global is the guest's own emitted code, so removing it from the guest's view
-  is not itself a security boundary, and deleting on the central warm-reuse
-  invoke path carries regression risk for no additional authority guarantee.)
-  `__nimbusInvokeCloudflareWorkerFetch` (same treatment as HG0, Band B),
-  `__nimbusCreateContext` (slot-hardened non-writable/non-configurable, Band B).
 - **TRUST already-hardened (assert descriptor stays `writable:false,
   configurable:false`):** `__nimbusSyncHostValue`, `__nimbusAsyncHostValue`,
   `__nimbusCallDetachedFromInvocationContext`, `__nimbusRuntimeEnvironmentLane`,
@@ -297,7 +319,14 @@ exactly one bucket below; a new unlisted property fails the test.
   `__nimbusStartWorkerMessagePump`/`__nimbusWorkerThreadEnv`/`__nimbusCloseWorker`/
   `__nimbusInstallSharedWorkerEnvProxy` (HG7, Band F — DONE, hardened for
   defense-in-depth per the per-hook rationale above, not all carry a genuine
-  cross-invocation risk).
+  cross-invocation risk),
+  `__nimbusInvoke` (both emit sites), `__nimbusInvokeCloudflareWorkerFetch`,
+  `__nimbusCreateContext` (HG0/HG5/HG1, Band B-FIX — corrected from a stale
+  "identity-only, slot mutable" description during the structural-test
+  sweep; see "Already-hardened" above — all three are fully slot-hardened
+  `{configurable:false, writable:false}`, and `__nimbusInvoke` /
+  `__nimbusInvokeCloudflareWorkerFetch` are additionally captured off-graph
+  into a per-realm `v8::Private` as defense in depth).
 - **TRUST already-hardened, VALUE graph frozen not just the slot (Band F,
   HG9 — DONE):** `__nimbusHiddenDenoGlobals`/`__nimbusHiddenNodeGlobals`. The
   slots were already non-writable/non-configurable; the fix adds
@@ -307,6 +336,14 @@ exactly one bucket below; a new unlisted property fails the test.
   reachable through `deno[deno.internal]` remains a documented, deliberate
   follow-up (see above) — assert only `Object.isFrozen(deno)` and
   `Object.isFrozen(__nimbusHiddenNodeGlobals)`, not the transitive graph.
+- **TRUST already-hardened, LANE-CONDITIONAL (Finding 1 — DONE):** `Deno`
+  (non-`__nimbus*`-prefixed — the structural test's allowlist must check this
+  name explicitly, not just the `__nimbus*` prefix). Node-retained lanes
+  (`target.is_node()`): present, slot-hardened
+  `{writable:false, configurable:false, enumerable:false}`. All other lanes
+  (web, Cloudflare, Cloud Functions, ConvexDefault — none of which execute
+  `node22_runtime_bootstrap.js`): must assert ABSENCE, same as the
+  `__nimbusInvokeNamedLocal` bucket below.
 - **TRUST removed entirely (assert ABSENCE from `Reflect.ownKeys(globalThis)`
   after bootstrap and after bundle load, Band C):** `__nimbusInvokeNamedLocal`
   (HG2) — the module-private `invokeNamedDefinitionLocally` now passes as a
@@ -350,7 +387,7 @@ exactly one bucket below; a new unlisted property fails the test.
    or host-owned storage (a `defineProperty` on `globalThis` would not even
    address the reachable surface).
 3. **Second HG0 emit site.** The Cloud Functions codegen path installs its own
-   `globalThis.__nimbusInvoke` (`cloud_functions/runtime_sources.mjs:35`) via
+   `globalThis.__nimbusInvoke` (`cloud_functions/runtime_sources.mjs:42`) via
    `createInvocationDispatcher`. Band B's capture-then-delete must cover BOTH the
    default `runtime_bundle_dispatch_global_invoke.mjs` emit and this Cloud
    Functions emit (the structural test's "normal AND Cloud Functions codegen"
