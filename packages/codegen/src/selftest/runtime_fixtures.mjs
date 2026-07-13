@@ -11,6 +11,7 @@ import {
   readConvexJson,
   readGeneratedFile,
   runCli,
+  runInWorkerRealm,
 } from "./helpers.mjs";
 import {
   assertBunJscRuntimeMetadata,
@@ -224,49 +225,67 @@ export const sendAndSchedule = mutation({
   assert.match(runtimeBundle, /materializeRuntimeBindings/);
   assert.match(runtimeBundle, /generated_reference_tree/);
 
-  const bundleUrl =
-    `${pathToFileURL(path.join(appDir, ".nimbus", "convex", "bundle.mjs")).href}?runtimeBindings=1`;
-  const previousInvoke = globalThis.__nimbusInvoke;
-  const previousCreateContext = globalThis.__nimbusCreateContext;
+  const bundleUrl = pathToFileURL(
+    path.join(appDir, ".nimbus", "convex", "bundle.mjs"),
+  ).href;
 
-  let scheduledCall = null;
-  globalThis.__nimbusCreateContext = () => ({
-    db: {
-      insert: async (_table, document) => document.body === "hello" ? "message-id" : "scheduled-id",
-    },
-    scheduler: {
-      runAfter: async (delayMs, mutationRef, args) => {
-        scheduledCall = { delayMs, mutationRef, args };
-        return "job-id";
-      },
-    },
-  });
-
+  // HG0 (Band B-FIX, CAPTURE-ORDERING): __nimbusInvoke is now installed via
+  // Object.defineProperty(configurable:false, writable:false), so it can
+  // never be deleted/reinstalled on the selftest process's own globalThis.
+  // Drive the import + invoke in a fresh worker realm instead (see
+  // runInWorkerRealm in helpers.mjs) — the mock context and captured
+  // scheduler call travel back over postMessage, and assertions stay here.
+  const source = `
+(async () => {
+  const { parentPort, workerData } = await import("node:worker_threads");
   try {
-    await import(bundleUrl);
+    let scheduledCall = null;
+    globalThis.__nimbusCreateContext = () => ({
+      db: {
+        insert: async (_table, document) =>
+          document.body === "hello" ? "message-id" : "scheduled-id",
+      },
+      scheduler: {
+        runAfter: async (delayMs, mutationRef, args) => {
+          // mutationRef carries internal dispatch machinery that isn't
+          // structured-cloneable across postMessage; the test only asserts
+          // on these three fields, so pull just those out.
+          scheduledCall = {
+            delayMs,
+            mutationRef: {
+              name: mutationRef?.name,
+              visibility: mutationRef?.visibility,
+              kind: mutationRef?.kind,
+            },
+            args,
+          };
+          return "job-id";
+        },
+      },
+    });
+    await import(workerData.bundleUrl);
     const response = await globalThis.__nimbusInvoke({
       kind: "mutation",
       function_name: "messages:sendAndSchedule",
       args: { body: "hello" },
     });
-    assert.deepEqual(response, { status: "ok", value: "message-id" });
-    assert.equal(scheduledCall?.delayMs, 1_000);
-    assert.equal(scheduledCall?.mutationRef?.name, "messages:sendInternal");
-    assert.equal(scheduledCall?.mutationRef?.visibility, "internal");
-    assert.equal(scheduledCall?.mutationRef?.kind, "mutation");
-    assert.deepEqual(scheduledCall?.args, { body: "hello later" });
-  } finally {
-    if (previousInvoke === undefined) {
-      delete globalThis.__nimbusInvoke;
-    } else {
-      globalThis.__nimbusInvoke = previousInvoke;
-    }
-    if (previousCreateContext === undefined) {
-      delete globalThis.__nimbusCreateContext;
-    } else {
-      globalThis.__nimbusCreateContext = previousCreateContext;
-    }
+    parentPort.postMessage({ ok: true, value: { response, scheduledCall } });
+  } catch (error) {
+    parentPort.postMessage({
+      ok: false,
+      error: { message: error?.message ?? String(error), stack: error?.stack ?? null },
+    });
   }
+})();
+`;
+
+  const { response, scheduledCall } = await runInWorkerRealm(source, { bundleUrl });
+  assert.deepEqual(response, { status: "ok", value: "message-id" });
+  assert.equal(scheduledCall?.delayMs, 1_000);
+  assert.equal(scheduledCall?.mutationRef?.name, "messages:sendInternal");
+  assert.equal(scheduledCall?.mutationRef?.visibility, "internal");
+  assert.equal(scheduledCall?.mutationRef?.kind, "mutation");
+  assert.deepEqual(scheduledCall?.args, { body: "hello later" });
 }
 
 // Regression fixture for the cross-lane-internal-call bug found via the
@@ -304,23 +323,31 @@ export const store = internalMutation({
   assert.equal(manifest.functions[0].plan, null);
   assert.match(manifest.functions[0].runtime_handler, /Date\.now/);
 
-  const bundleUrl =
-    `${pathToFileURL(path.join(appDir, ".nimbus", "convex", "bundle.mjs")).href}?hostDispatchedInternal=1`;
-  const previousInvoke = globalThis.__nimbusInvoke;
-  const previousCreateContext = globalThis.__nimbusCreateContext;
+  const bundleUrl = pathToFileURL(
+    path.join(appDir, ".nimbus", "convex", "bundle.mjs"),
+  ).href;
 
-  const insertedDocuments = [];
-  globalThis.__nimbusCreateContext = () => ({
-    db: {
-      insert: async (table, document) => {
-        insertedDocuments.push({ table, document });
-        return `id-${insertedDocuments.length}`;
-      },
-    },
-  });
-
+  // HG0 (Band B-FIX, CAPTURE-ORDERING): see the comment in
+  // testRuntimeOnlyMutationImportedScheduledFunctionsFixture above — drive
+  // this in a fresh worker realm instead of delete-then-reinstall against the
+  // selftest process's own (now hardened) globalThis.__nimbusInvoke. The
+  // mismatched-visibility call's rejection is caught inside the worker (a
+  // rejected promise can't cross postMessage) and reported back as a plain
+  // message for the outer assertion to match against.
+  const source = `
+(async () => {
+  const { parentPort, workerData } = await import("node:worker_threads");
   try {
-    await import(bundleUrl);
+    const insertedDocuments = [];
+    globalThis.__nimbusCreateContext = () => ({
+      db: {
+        insert: async (table, document) => {
+          insertedDocuments.push({ table, document });
+          return "id-" + insertedDocuments.length;
+        },
+      },
+    });
+    await import(workerData.bundleUrl);
 
     // Host-constructed request (no visibility): must invoke the internal
     // mutation — the host already enforced visibility before dispatching.
@@ -329,49 +356,60 @@ export const store = internalMutation({
       function_name: "digests:store",
       args: { body: "cross-lane" },
     });
-    assert.deepEqual(hostDispatched, { status: "ok", value: "id-1" });
-    assert.equal(insertedDocuments[0]?.table, "digests");
-    assert.equal(insertedDocuments[0]?.document?.body, "cross-lane");
 
     // Same-isolate nested dispatch with the matching internal reference tree
     // keeps working. invokeNamedDefinitionLocally is module-private (HG2) —
     // there is no globalThis bridge to call directly anymore, so this drives
-    // it the same way a real ctx.run* call does: through globalThis.__nimbusInvoke,
-    // which forwards the request (including an explicit visibility) straight
-    // through to invokeNamedDefinitionLocally.
+    // it the same way a real ctx.run* call does: through
+    // globalThis.__nimbusInvoke, which forwards the request (including an
+    // explicit visibility) straight through to invokeNamedDefinitionLocally.
     const localInternal = await globalThis.__nimbusInvoke({
       kind: "mutation",
       function_name: "digests:store",
       visibility: "internal",
       args: { body: "local" },
     });
-    assert.deepEqual(localInternal, { status: "ok", value: "id-2" });
 
     // An explicit public reference aimed at an internal function is still a
     // reference-selection error. The gate throws a plain Error (no
     // nimbusHostError), so __nimbusInvoke's catch rethrows it unchanged.
-    await assert.rejects(
-      globalThis.__nimbusInvoke({
+    let mismatchedError = null;
+    try {
+      await globalThis.__nimbusInvoke({
         kind: "mutation",
         function_name: "digests:store",
         visibility: "public",
         args: { body: "mismatched" },
-      }),
-      /digests:store is internal, not public/,
-    );
-    assert.equal(insertedDocuments.length, 2);
-  } finally {
-    if (previousInvoke === undefined) {
-      delete globalThis.__nimbusInvoke;
-    } else {
-      globalThis.__nimbusInvoke = previousInvoke;
+      });
+    } catch (error) {
+      mismatchedError = { message: error?.message ?? String(error) };
     }
-    if (previousCreateContext === undefined) {
-      delete globalThis.__nimbusCreateContext;
-    } else {
-      globalThis.__nimbusCreateContext = previousCreateContext;
-    }
+
+    parentPort.postMessage({
+      ok: true,
+      value: { hostDispatched, localInternal, mismatchedError, insertedDocuments },
+    });
+  } catch (error) {
+    parentPort.postMessage({
+      ok: false,
+      error: { message: error?.message ?? String(error), stack: error?.stack ?? null },
+    });
   }
+})();
+`;
+
+  const { hostDispatched, localInternal, mismatchedError, insertedDocuments } =
+    await runInWorkerRealm(source, { bundleUrl });
+
+  assert.deepEqual(hostDispatched, { status: "ok", value: "id-1" });
+  assert.equal(insertedDocuments[0]?.table, "digests");
+  assert.equal(insertedDocuments[0]?.document?.body, "cross-lane");
+
+  assert.deepEqual(localInternal, { status: "ok", value: "id-2" });
+
+  assert.ok(mismatchedError, "expected the mismatched-visibility call to reject");
+  assert.match(mismatchedError.message, /digests:store is internal, not public/);
+  assert.equal(insertedDocuments.length, 2);
 }
 
 // Regression test for a NodeNext-moduleResolution app whose relative
@@ -474,41 +512,46 @@ export const runNode = action({
   assert.match(runtimeBundle, /"actions:runDefault"/);
   assert.match(runtimeBundle, /"nodeActions:runNode"/);
 
-  const bundleUrl =
-    `${pathToFileURL(path.join(appDir, ".nimbus", "convex", "bundle.mjs")).href}?mixedRuntime=1`;
-  const previousInvoke = globalThis.__nimbusInvoke;
-  const previousCreateContext = globalThis.__nimbusCreateContext;
-  globalThis.__nimbusCreateContext = () => ({});
+  const bundleUrl = pathToFileURL(
+    path.join(appDir, ".nimbus", "convex", "bundle.mjs"),
+  ).href;
 
+  // HG0 (Band B-FIX, CAPTURE-ORDERING): see the comment in
+  // testRuntimeOnlyMutationImportedScheduledFunctionsFixture above.
+  const source = `
+(async () => {
+  const { parentPort, workerData } = await import("node:worker_threads");
   try {
-    await import(bundleUrl);
+    globalThis.__nimbusCreateContext = () => ({});
+    await import(workerData.bundleUrl);
 
     const defaultResponse = await globalThis.__nimbusInvoke({
       kind: "action",
       function_name: "actions:runDefault",
       args: { text: "world" },
     });
-    assert.deepEqual(defaultResponse, { status: "ok", value: "default:WORLD" });
 
-    const expectedHash = createHash("sha256").update("hello", "utf8").digest("hex");
     const nodeResponse = await globalThis.__nimbusInvoke({
       kind: "action",
       function_name: "nodeActions:runNode",
       args: { text: "hello" },
     });
-    assert.deepEqual(nodeResponse, { status: "ok", value: expectedHash });
-  } finally {
-    if (previousInvoke === undefined) {
-      delete globalThis.__nimbusInvoke;
-    } else {
-      globalThis.__nimbusInvoke = previousInvoke;
-    }
-    if (previousCreateContext === undefined) {
-      delete globalThis.__nimbusCreateContext;
-    } else {
-      globalThis.__nimbusCreateContext = previousCreateContext;
-    }
+
+    parentPort.postMessage({ ok: true, value: { defaultResponse, nodeResponse } });
+  } catch (error) {
+    parentPort.postMessage({
+      ok: false,
+      error: { message: error?.message ?? String(error), stack: error?.stack ?? null },
+    });
   }
+})();
+`;
+
+  const { defaultResponse, nodeResponse } = await runInWorkerRealm(source, { bundleUrl });
+  assert.deepEqual(defaultResponse, { status: "ok", value: "default:WORLD" });
+
+  const expectedHash = createHash("sha256").update("hello", "utf8").digest("hex");
+  assert.deepEqual(nodeResponse, { status: "ok", value: expectedHash });
 }
 
 // EX10R.4: a bundle whose functions are entirely "use node" must import its
@@ -557,47 +600,54 @@ export const run = action({
   const bundleUrl = pathToFileURL(
     path.join(appDir, ".nimbus", "convex", "bundle.mjs"),
   ).href;
-  const previousInvoke = globalThis.__nimbusInvoke;
-  const previousCreateContext = globalThis.__nimbusCreateContext;
-  const previousFired = globalThis.__nimbusCodegenEagerImportFired;
-  delete globalThis.__nimbusCodegenEagerImportFired;
-  globalThis.__nimbusCreateContext = () => ({});
 
+  // HG0 (Band B-FIX, CAPTURE-ORDERING): see the comment in
+  // testRuntimeOnlyMutationImportedScheduledFunctionsFixture above. A fresh
+  // worker realm also gives __nimbusCodegenEagerImportFired a clean start
+  // for free, so both checkpoints are read straight off the worker's own
+  // globalThis rather than saved/restored on the shared process global.
+  const source = `
+(async () => {
+  const { parentPort, workerData } = await import("node:worker_threads");
   try {
-    await import(bundleUrl);
-    assert.equal(
-      globalThis.__nimbusCodegenEagerImportFired,
-      1,
-      "single-runtime Node bundle must import its dependency's side effects at load, before any invocation",
-    );
+    globalThis.__nimbusCreateContext = () => ({});
+    await import(workerData.bundleUrl);
+    const firedAfterLoad = globalThis.__nimbusCodegenEagerImportFired;
 
     const response = await globalThis.__nimbusInvoke({
       kind: "action",
       function_name: "messages:run",
       args: { text: "hello" },
     });
-    assert.deepEqual(response, { status: "ok", value: "loaded:hello" });
-    assert.equal(
-      globalThis.__nimbusCodegenEagerImportFired,
-      1,
-      "the lazy per-function dynamic import() at first invocation must resolve from the module cache, not re-run init side effects",
-    );
-  } finally {
-    delete globalThis.__nimbusCodegenEagerImportFired;
-    if (previousFired !== undefined) {
-      globalThis.__nimbusCodegenEagerImportFired = previousFired;
-    }
-    if (previousInvoke === undefined) {
-      delete globalThis.__nimbusInvoke;
-    } else {
-      globalThis.__nimbusInvoke = previousInvoke;
-    }
-    if (previousCreateContext === undefined) {
-      delete globalThis.__nimbusCreateContext;
-    } else {
-      globalThis.__nimbusCreateContext = previousCreateContext;
-    }
+    const firedAfterInvoke = globalThis.__nimbusCodegenEagerImportFired;
+
+    parentPort.postMessage({
+      ok: true,
+      value: { firedAfterLoad, response, firedAfterInvoke },
+    });
+  } catch (error) {
+    parentPort.postMessage({
+      ok: false,
+      error: { message: error?.message ?? String(error), stack: error?.stack ?? null },
+    });
   }
+})();
+`;
+
+  const { firedAfterLoad, response, firedAfterInvoke } = await runInWorkerRealm(source, {
+    bundleUrl,
+  });
+  assert.equal(
+    firedAfterLoad,
+    1,
+    "single-runtime Node bundle must import its dependency's side effects at load, before any invocation",
+  );
+  assert.deepEqual(response, { status: "ok", value: "loaded:hello" });
+  assert.equal(
+    firedAfterInvoke,
+    1,
+    "the lazy per-function dynamic import() at first invocation must resolve from the module cache, not re-run init side effects",
+  );
 }
 
 async function testRuntimeProgramBundleCandidateFixture() {
@@ -644,7 +694,11 @@ export const sendAndSchedule = mutation({
   });
   assert.doesNotMatch(programBundle, /^import\s/m);
   assert.doesNotMatch(programBundle, /^export\s/m);
-  assert.match(programBundle, /globalThis\.__nimbusInvoke/);
+  // HG0 (Band B-FIX, CAPTURE-ORDERING): __nimbusInvoke is installed via
+  // Object.defineProperty (configurable:false, writable:false), not a plain
+  // assignment — see runtimeBundleDispatchGlobalInvoke in
+  // emit/runtime_bundle_dispatch_global_invoke.mjs.
+  assert.match(programBundle, /Object\.defineProperty\(globalThis, "__nimbusInvoke"/);
   assert.match(programBundle, /materializeRuntimeBindings/);
 
   let scheduledCall = null;
@@ -713,7 +767,9 @@ export const send = mutation({
 
   const bunProgramBundle = await readConvexFile(appDir, "bun_program_bundle.js");
   const bunProgramBundleHash = await readConvexFile(appDir, "bun_program_bundle.sha256");
-  assert.match(bunProgramBundle, /globalThis\.__nimbusInvoke/);
+  // HG0 (Band B-FIX, CAPTURE-ORDERING): see the note above in
+  // testRuntimeProgramBundleCandidateFixture — same shared emitter.
+  assert.match(bunProgramBundle, /Object\.defineProperty\(globalThis, "__nimbusInvoke"/);
   assert.match(bunProgramBundle, /runtimeHandlersByName/);
   assert.doesNotMatch(bunProgramBundle, /^import\s/m);
   assert.doesNotMatch(bunProgramBundle, /^export\s/m);

@@ -275,21 +275,37 @@ const __nimbusCloudflareWorkerSerializeResponse = async function __nimbusCloudfl
   };
 };
 
-globalThis.__nimbusInvokeCloudflareWorkerFetch = async function(moduleNamespacePromise, request) {
-  __nimbusCloudflareWorkerInstallUnsupportedGlobals();
-  const moduleNamespace = await moduleNamespacePromise;
-  const workerEntrypoint = moduleNamespace && moduleNamespace.default;
-  if (!workerEntrypoint || typeof workerEntrypoint.fetch !== "function") {
-    throw new TypeError("CloudflareWorker default export must provide fetch(request, env, ctx)");
-  }
-  const args = request && typeof request === "object" && request.args && typeof request.args === "object"
-    ? request.args
-    : {};
-  const workerRequest = __nimbusCloudflareWorkerCreateRequest(args.request);
-  const env = __nimbusCloudflareWorkerCreateEnv(args.env ?? args.bindings);
-  const ctx = __nimbusCloudflareWorkerCreateCtx();
-  const response = await workerEntrypoint.fetch(workerRequest, env, ctx);
-  return await __nimbusCloudflareWorkerSerializeResponse(response, ctx);
-};
-
-Object.freeze(globalThis.__nimbusInvokeCloudflareWorkerFetch);
+// HG0/HG5 (Band B-FIX, CAPTURE-ORDERING): this bootstrap runs before the guest
+// worker module ever loads (install_bootstrap_in_realm precedes
+// load_main_es_module_in_realm in driver/loading.rs), so this is the FIRST
+// and only writer of this slot. Object.defineProperty with
+// configurable:false, writable:false closes the window a plain assignment
+// left open: once the guest worker module evaluates (and its microtasks
+// drain) ahead of the host's post-drain capture in captured_dispatch.rs, a
+// top-level or queueMicrotask-queued `globalThis.__nimbusInvokeCloudflareWorkerFetch
+// = impostor` now throws instead of being captured as the impostor.
+// Object.freeze on the function value itself (not just the slot) matches the
+// HG9 lesson: slot-hardening alone does not protect a mutable value's own
+// properties from a guest that reaches the function object through some
+// other path.
+Object.defineProperty(globalThis, "__nimbusInvokeCloudflareWorkerFetch", {
+  value: Object.freeze(async function(moduleNamespacePromise, request) {
+    __nimbusCloudflareWorkerInstallUnsupportedGlobals();
+    const moduleNamespace = await moduleNamespacePromise;
+    const workerEntrypoint = moduleNamespace && moduleNamespace.default;
+    if (!workerEntrypoint || typeof workerEntrypoint.fetch !== "function") {
+      throw new TypeError("CloudflareWorker default export must provide fetch(request, env, ctx)");
+    }
+    const args = request && typeof request === "object" && request.args && typeof request.args === "object"
+      ? request.args
+      : {};
+    const workerRequest = __nimbusCloudflareWorkerCreateRequest(args.request);
+    const env = __nimbusCloudflareWorkerCreateEnv(args.env ?? args.bindings);
+    const ctx = __nimbusCloudflareWorkerCreateCtx();
+    const response = await workerEntrypoint.fetch(workerRequest, env, ctx);
+    return await __nimbusCloudflareWorkerSerializeResponse(response, ctx);
+  }),
+  configurable: false,
+  enumerable: false,
+  writable: false,
+});

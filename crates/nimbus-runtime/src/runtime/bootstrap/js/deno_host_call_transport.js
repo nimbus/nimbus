@@ -93,39 +93,6 @@ Object.defineProperty(globalThis, "__nimbusDrainImmediates", {
   });
 }
 
-const __nimbusContextHostCallOps = new Set([
-  "op_nimbus_ctx_query_start",
-  "op_nimbus_ctx_query_with_index",
-  "op_nimbus_ctx_query_filter",
-  "op_nimbus_ctx_query_order",
-  "op_nimbus_ctx_query",
-  "op_nimbus_ctx_paginated_query",
-  "op_nimbus_ctx_mutation",
-  "op_nimbus_ctx_action",
-  "op_nimbus_document_get",
-  "op_nimbus_document_insert",
-  "op_nimbus_document_patch",
-  "op_nimbus_document_delete",
-  "op_nimbus_ctx_query_collect",
-  "op_nimbus_ctx_query_take",
-  "op_nimbus_ctx_query_paginate",
-  "op_nimbus_ctx_query_first",
-  "op_nimbus_ctx_query_unique",
-  "op_nimbus_ctx_scheduler_run_after",
-  "op_nimbus_ctx_scheduler_run_at",
-  "op_nimbus_ctx_scheduler_cancel",
-  "op_nimbus_ctx_runtime_enter_nested_call",
-  "op_nimbus_ctx_resolve_callee_lane",
-  "op_nimbus_ctx_run_query",
-  "op_nimbus_ctx_run_mutation",
-  "op_nimbus_ctx_run_action",
-  "op_nimbus_ctx_service_lookup",
-  "op_nimbus_cf_kv_get",
-  "op_nimbus_cf_kv_put",
-  "op_nimbus_cf_kv_delete",
-  "op_nimbus_cf_kv_list",
-]);
-
 const __nimbusCurrentHostCallSessionId = function __nimbusCurrentHostCallSessionId() {
   const operation = __nimbusCoreOps.op_nimbus_runtime_host_call_session_id;
   if (typeof operation !== "function") {
@@ -134,28 +101,76 @@ const __nimbusCurrentHostCallSessionId = function __nimbusCurrentHostCallSession
   return operation();
 };
 
-const __nimbusBindHostCallPayload = function __nimbusBindHostCallPayload(opName, payload) {
-  if (!__nimbusContextHostCallOps.has(opName)) {
-    return payload;
-  }
-  if (payload !== null && payload !== undefined && (typeof payload !== "object" || Array.isArray(payload))) {
-    throw new Error(`Nimbus runtime host-call payload must be an object for ${opName}`);
-  }
-  const currentSessionId = __nimbusCurrentHostCallSessionId();
-  const providedSessionId = payload?.host_call_session_id;
-  if (
-    providedSessionId !== undefined &&
-    providedSessionId !== null &&
-    providedSessionId !== "" &&
-    providedSessionId !== currentSessionId
-  ) {
-    throw new Error(`Nimbus runtime host-call session is stale or forged for ${opName}`);
-  }
-  return {
-    ...(payload ?? {}),
-    host_call_session_id: currentSessionId,
+// Band B-FIX LEDGER MISS: __nimbusContextHostCallOps used to be a bare
+// top-level `const new Set([...])` — same guest-bare-name-reachable class as
+// HG3's op-table alias and the pre-HG6 wait-until queue (see those comments
+// above). `const` only blocks REBINDING the name; it does nothing to protect
+// the mutable Set instance itself, so guest module code could still reach
+// the name and call `.clear()`/`.delete(...)` on it. Rust independently
+// rejects an unbound host-call session at `shared.rs:322`, so this was never
+// an authority bypass, but it was a persistent same-tenant DoS: once the set
+// is emptied, every context host-call silently skips session-id binding, and
+// the same isolate stays in that state for the rest of its warm-pool life.
+// An IIFE closure (matching HG6's block-scoping) makes the Set itself
+// unreachable by any bare name; only the pure `__nimbusBindHostCallPayload`
+// function — which exposes no way to enumerate or mutate what it closed
+// over — remains at top level.
+const __nimbusBindHostCallPayload = (() => {
+  const contextHostCallOps = new Set([
+    "op_nimbus_ctx_query_start",
+    "op_nimbus_ctx_query_with_index",
+    "op_nimbus_ctx_query_filter",
+    "op_nimbus_ctx_query_order",
+    "op_nimbus_ctx_query",
+    "op_nimbus_ctx_paginated_query",
+    "op_nimbus_ctx_mutation",
+    "op_nimbus_ctx_action",
+    "op_nimbus_document_get",
+    "op_nimbus_document_insert",
+    "op_nimbus_document_patch",
+    "op_nimbus_document_delete",
+    "op_nimbus_ctx_query_collect",
+    "op_nimbus_ctx_query_take",
+    "op_nimbus_ctx_query_paginate",
+    "op_nimbus_ctx_query_first",
+    "op_nimbus_ctx_query_unique",
+    "op_nimbus_ctx_scheduler_run_after",
+    "op_nimbus_ctx_scheduler_run_at",
+    "op_nimbus_ctx_scheduler_cancel",
+    "op_nimbus_ctx_runtime_enter_nested_call",
+    "op_nimbus_ctx_resolve_callee_lane",
+    "op_nimbus_ctx_run_query",
+    "op_nimbus_ctx_run_mutation",
+    "op_nimbus_ctx_run_action",
+    "op_nimbus_ctx_service_lookup",
+    "op_nimbus_cf_kv_get",
+    "op_nimbus_cf_kv_put",
+    "op_nimbus_cf_kv_delete",
+    "op_nimbus_cf_kv_list",
+  ]);
+  return function __nimbusBindHostCallPayload(opName, payload) {
+    if (!contextHostCallOps.has(opName)) {
+      return payload;
+    }
+    if (payload !== null && payload !== undefined && (typeof payload !== "object" || Array.isArray(payload))) {
+      throw new Error(`Nimbus runtime host-call payload must be an object for ${opName}`);
+    }
+    const currentSessionId = __nimbusCurrentHostCallSessionId();
+    const providedSessionId = payload?.host_call_session_id;
+    if (
+      providedSessionId !== undefined &&
+      providedSessionId !== null &&
+      providedSessionId !== "" &&
+      providedSessionId !== currentSessionId
+    ) {
+      throw new Error(`Nimbus runtime host-call session is stale or forged for ${opName}`);
+    }
+    return {
+      ...(payload ?? {}),
+      host_call_session_id: currentSessionId,
+    };
   };
-};
+})();
 
 // The host-call transports carry trust decisions the runtime acts on (e.g. the
 // host-authoritative callee lane for nested ctx.run* dispatch), so the globals

@@ -1,6 +1,16 @@
 function runtimeBundleDispatchGlobalInvoke({ module = true } = {}) {
   const moduleSentinel = module ? "\n\nexport {};" : "";
-  return `globalThis.__nimbusInvoke = async function (request) {
+  return `// HG0 (Band B-FIX, CAPTURE-ORDERING): installed via Object.defineProperty
+// with configurable:false, writable:false rather than a plain assignment, and
+// as the FIRST statement this dispatch segment of the bundle runs — before any
+// guest handler body has a chance to execute (handler bodies compile lazily
+// via the Function constructor on first invocation; see runtime_bundle_preamble.mjs).
+// The host still captures this entrypoint off-graph (captured_dispatch.rs)
+// after evaluation and event-loop drain, but a guest reassignment attempt —
+// whether a direct top-level write or one queued via queueMicrotask — now
+// throws instead of silently installing an impostor for capture to observe.
+Object.defineProperty(globalThis, "__nimbusInvoke", {
+  value: async function (request) {
   try {
     const definition = functionsByName.get(request.function_name);
     if (definition) {
@@ -27,7 +37,11 @@ function runtimeBundleDispatchGlobalInvoke({ module = true } = {}) {
     }
     throw error;
   }
-};
+  },
+  configurable: false,
+  enumerable: false,
+  writable: false,
+});
 
 // HG2: invokeNamedDefinitionLocally is no longer bridged onto globalThis.
 // __nimbusCreateContext receives it directly as a call argument (see

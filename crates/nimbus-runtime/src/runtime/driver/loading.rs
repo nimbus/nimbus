@@ -316,7 +316,11 @@ impl NimbusRuntime {
         // captured reference (HG0/HG5), so a guest reassignment in one invocation
         // cannot redirect the trusted path of a later same-tenant invocation on
         // the same isolate.
-        crate::runtime::captured_dispatch::capture_invocation_targets(runtime, None)?;
+        crate::runtime::captured_dispatch::capture_invocation_targets(
+            runtime,
+            None,
+            self.policy.limits().guest_semantics,
+        )?;
         trace_snapshot_seeded_runtime_phase(
             construction_mode,
             bundle,
@@ -921,7 +925,11 @@ impl NimbusRuntime {
         // that the bundle has evaluated in this fresh realm, before any guest
         // handler body runs (HG0/HG5). The dispatch below reads the captured
         // reference, never `globalThis.__nimbusInvoke` by name.
-        crate::runtime::captured_dispatch::capture_invocation_targets(runtime, Some(realm))?;
+        crate::runtime::captured_dispatch::capture_invocation_targets(
+            runtime,
+            Some(realm),
+            self.policy.limits().guest_semantics,
+        )?;
         let request_json = serde_json::to_string(request)?;
         trace_snapshot_seeded_runtime_phase(
             construction_mode,

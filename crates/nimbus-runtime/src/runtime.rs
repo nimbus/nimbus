@@ -118,6 +118,7 @@ mod tests {
 
     mod basic_invocation;
     mod bundle_integrity;
+    mod capture_ordering;
     mod captured_dispatch;
     mod cooperative;
     mod host_bridge;

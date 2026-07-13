@@ -380,33 +380,41 @@ exactly one bucket below; a new unlisted property fails the test.
    enumeration or ballooning this PR's review surface. Do not fold this into
    Band D — it is a distinct file, a distinct binding kind, and a distinct
    blast radius.
-5. **`const __nimbusContextHostCallOps` (Phase-1 review addendum — safe, not a
-   gap requiring a band).** A classic-script top-level `const ... = new
-   Set([...])` (`deno_host_call_transport.js:96-127`) enumerating the
-   context host-call op names (`op_nimbus_ctx_query_start`,
+5. **`const __nimbusContextHostCallOps` (Phase-1 review addendum — corrected
+   by Band B-FIX LEDGER MISS finding; the original "safe, no fix needed"
+   conclusion below understated the impact and is superseded).** A
+   classic-script top-level `const ... = new Set([...])`
+   (`deno_host_call_transport.js:96-127`, pre-fix line numbers) enumerating
+   the context host-call op names (`op_nimbus_ctx_query_start`,
    `op_nimbus_ctx_run_query`, `op_nimbus_ctx_scheduler_run_after`, …). Like
    `__nimbusCoreOps`, `const` blocks *rebinding* but not bare-name reads or
-   mutation of the Set's contents (`.add()`/`.delete()`), and the Set is not
-   frozen. `__nimbusBindHostCallPayload` (`:137-158`) consults it via
-   `.has(opName)` to decide whether to stamp/validate
-   `host_call_session_id` on a payload before dispatch; a guest that
-   `.delete()`s an op name from this Set (bare-name reachable, warm-pool-
+   mutation of the Set's contents (`.add()`/`.delete()`/`.clear()`), and the
+   Set was not frozen (`Object.freeze(Set)` would not have helped either —
+   freezing a `Set` instance freezes its own properties, not its internal
+   `[[SetData]]`; `.clear()`/`.add()`/`.delete()` remain callable). Original
+   analysis traced the *authoritative* session check correctly — it is
+   independent and host-side (`enforce_live_host_call_session`,
+   `runtime/bootstrap/ops/shared.rs:308-338`, comparing the payload's
+   `host_call_session_id` against the Rust-owned
+   `RuntimeInvocationHostCallBinding::session_id()`, not anything the JS
+   layer asserts), so Set tampering was never a silent authority bypass —
+   the affected op call arrives at the host with no (or a guest-forged)
+   `host_call_session_id` and is hard-rejected with "runtime host-call
+   session is stale or forged". **What the original analysis missed:** that
+   hard rejection is itself the impact. A guest calling
+   `__nimbusContextHostCallOps.clear()` (bare-name reachable, warm-pool-
    persistent like every other classic-script global-lexical binding) makes
-   `__nimbusBindHostCallPayload` skip that stamping entirely for the op.
-   Traced to ground before concluding safe: the *authoritative* session
-   check is independent and host-side —
-   `enforce_live_host_call_session` (`runtime/bootstrap/ops/shared.rs:308-338`)
-   runs on every `op_nimbus_sync_host_call`/`op_nimbus_async_host_call`
-   dispatch and compares the payload's `host_call_session_id` against the
-   Rust-owned `RuntimeInvocationHostCallBinding::session_id()` — not
-   anything the JS layer asserts. `operation_requires_host_call_session`
-   (`:340-345`) defaults to `true` for every `HostCallOperation` except
-   `HttpRoute`/`RuntimeExtensionCall`, which covers every op in this Set.
-   So Set tampering only breaks the JS-side convenience stamping; the
-   affected op call then arrives at the host with no (or a guest-forged)
-   `host_call_session_id`, which the Rust-side check rejects with "runtime
-   host-call session is stale or forged" — a hard failure, never a silent
-   bypass. Not present anywhere in the TRUST/INTENTIONALLY-MUTABLE/
-   COMPAT-OR-TEST tables above; recorded here rather than added to a table
-   because it does not need a fix, only a documented reason it was
-   considered and cleared.
+   `__nimbusBindHostCallPayload` skip session stamping for every op in the
+   Set from that point on, so every subsequent context host-call on the
+   *same warm isolate* — for the rest of that isolate's warm-pool life, not
+   just the triggering invocation — now hits the host-side hard rejection.
+   That is a guest-triggered, persistent, same-tenant denial of service
+   against every `ctx.db`/`ctx.scheduler`/`ctx.run*` call the isolate will
+   ever make again, not merely a broken convenience stamp. **Fix (Band
+   B-FIX):** the Set moved into an IIFE closure in
+   `deno_host_call_transport.js` (mirroring the HG6 wait-until-queue
+   block-scoping pattern) so it is no longer reachable by any bare name;
+   only the pure `__nimbusBindHostCallPayload` function, which exposes no
+   way to enumerate or mutate what it closed over, remains at top level.
+   Red-green:
+   `runtime::tests::cooperative::ledger5_host_call_ops_set_not_guest_reachable`.
