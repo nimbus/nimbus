@@ -352,3 +352,169 @@ async fn convex_client_calls_to_internal_functions_stay_rejected() {
         "{body}"
     );
 }
+
+/// HG4 hardened: `op_nimbus_ctx_resolve_callee_lane` validates trivially (no
+/// session token check applies when the payload omits one, exactly as the
+/// trusted dispatcher's own call omits it), so a guest handler body can call
+/// it directly through the same guest-reachable transport the transport-
+/// hijack tests above exercise (`globalThis.__nimbusSyncHostValue`), with any
+/// `name` it likes — not just the callee of a real `ctx.run*` it is making.
+/// Before hardening this returned the callee's raw three-way lane bucket
+/// ("node"/"bun"/"default"/null), letting a guest map same-tenant runtime
+/// topology function by function. After hardening the host reduces both this
+/// invocation's own lane and the callee's lane to a single boolean before the
+/// answer ever reaches guest scope, so a real cross-lane callee and a
+/// nonexistent one are indistinguishable to the guest.
+const CONVEX_LANE_ORACLE_PROBE_BUNDLE: &str = r#"
+const probe = function (name) {
+  return globalThis.__nimbusSyncHostValue("op_nimbus_ctx_resolve_callee_lane", { name });
+};
+
+const handlers = {
+  "oracle:probe": async () => ({
+    callerLane: globalThis.__nimbusRuntimeEnvironmentLane ?? null,
+    sameLaneCallee: probe("oracle:defaultPeer"),
+    crossLaneCallee: probe("oracle:nodePeer"),
+    unknownCallee: probe("oracle:doesNotExist"),
+  }),
+};
+
+globalThis.__nimbusInvoke = async function (request) {
+  try {
+    const handler = handlers[request.function_name];
+    if (!handler) {
+      return {
+        status: "error",
+        error: { kind: "internal", message: "missing handler " + request.function_name },
+      };
+    }
+    const value = await handler();
+    return { status: "ok", value };
+  } catch (error) {
+    return {
+      status: "error",
+      error: { kind: "internal", message: String(error?.message ?? error) },
+    };
+  }
+};
+
+export {};
+"#;
+
+fn build_convex_lane_oracle_probe_app() -> ConvexMixedLaneApp {
+    let tempdir = tempdir().expect("convex lane-oracle probe tempdir should build");
+    let convex_dir = tempdir.path().join(".nimbus").join("convex");
+    fs::create_dir_all(&convex_dir).expect("convex dir should build");
+    fs::write(
+        convex_dir.join("functions.json"),
+        serde_json::to_vec_pretty(&json!({
+            "functions": [
+                {
+                    "name": "oracle:probe",
+                    "kind": "action",
+                    "visibility": "public",
+                    "runtime_environment": "default",
+                    "runtime_handler": "async () => ({})",
+                    "plan": null
+                },
+                {
+                    "name": "oracle:defaultPeer",
+                    "kind": "mutation",
+                    "visibility": "internal",
+                    "runtime_environment": "default",
+                    "runtime_handler": "async () => ({})",
+                    "plan": null
+                },
+                {
+                    "name": "oracle:nodePeer",
+                    "kind": "action",
+                    "visibility": "internal",
+                    "runtime_environment": "node",
+                    "runtime_compatibility_target": "node22",
+                    "runtime_handler": "async () => ({})",
+                    "plan": null
+                }
+            ]
+        }))
+        .expect("lane-oracle probe functions json should serialize"),
+    )
+    .expect("lane-oracle probe functions manifest should write");
+    fs::write(
+        convex_dir.join("http_routes.json"),
+        serde_json::to_vec_pretty(&json!({ "routes": [] }))
+            .expect("lane-oracle probe routes json should serialize"),
+    )
+    .expect("lane-oracle probe routes manifest should write");
+    let bundle_path = convex_dir.join("bundle.mjs");
+    fs::write(&bundle_path, CONVEX_LANE_ORACLE_PROBE_BUNDLE.as_bytes())
+        .expect("lane-oracle probe runtime bundle should write");
+    let bundle_sha256 =
+        RuntimeBundle::compute_sha256_for_path(&bundle_path).expect("bundle hash should load");
+    fs::write(
+        bundle_path.with_extension("sha256"),
+        format!("{bundle_sha256}\n"),
+    )
+    .expect("lane-oracle probe runtime bundle hash should write");
+
+    let registry = ConvexRegistry::from_app_dir(tempdir.path())
+        .expect("convex lane-oracle probe registry should load")
+        .with_runtime_limits(run_to_completion_snapshot_runtime_test_limits());
+    ConvexMixedLaneApp {
+        registry,
+        _tempdir: tempdir,
+    }
+}
+
+#[tokio::test]
+async fn convex_callee_lane_oracle_collapses_to_a_boolean_no_lane_string_leaks() {
+    let app = build_convex_lane_oracle_probe_app();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
+    let server = ServerFixture::start(router_for_convex_team(service, app.registry.clone())).await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+
+    let response = api
+        .convex_named_action("demo", "oracle:probe", json!({}))
+        .await;
+    let status = response.status();
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("lane-oracle probe response should parse");
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    assert_eq!(body["callerLane"], json!("default"), "{body}");
+    for field in ["sameLaneCallee", "crossLaneCallee", "unknownCallee"] {
+        assert!(
+            body[field].is_boolean(),
+            "op_nimbus_ctx_resolve_callee_lane must answer a bare boolean, not a lane string: \
+             {field} = {body}"
+        );
+    }
+    assert_eq!(
+        body["sameLaneCallee"],
+        json!(true),
+        "a same-lane callee must resolve to locally-dispatchable=true: {body}"
+    );
+    assert_eq!(
+        body["crossLaneCallee"],
+        json!(false),
+        "a cross-lane (node) callee must resolve to false, exactly like an unknown callee: {body}"
+    );
+    assert_eq!(
+        body["unknownCallee"],
+        json!(false),
+        "an unresolved callee must resolve to false: {body}"
+    );
+    assert_eq!(
+        body["crossLaneCallee"], body["unknownCallee"],
+        "the guest must not be able to distinguish a real node-lane callee from a nonexistent \
+         one through this oracle -- both must collapse to the same false answer (HG4 hardened): \
+         {body}"
+    );
+}

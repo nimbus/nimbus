@@ -75,9 +75,10 @@ async fn runtime_query_context_is_reader_only_when_request_kind_is_present() {
     std::fs::write(
         &bundle_path,
         r#"
-// The host resolves this callee to the same lane (see RecordingHost::resolving_lane
-// below), so this same-isolate nested ctx.run* takes local dispatch — the path
-// this test asserts.
+// The host reports this callee as locally dispatchable (see
+// RecordingHost::resolving_as_locally_dispatchable below), so this
+// same-isolate nested ctx.run* takes local dispatch — the path this test
+// asserts.
 async function invokeNamedLocal(nestedRequest) {
   return {
     kind: nestedRequest.kind,
@@ -118,7 +119,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let host = Arc::new(RecordingHost::resolving_lane("default"));
+    let host = Arc::new(RecordingHost::resolving_as_locally_dispatchable());
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         run_to_completion_snapshot_runtime_test_policy(),
@@ -204,9 +205,10 @@ async fn runtime_mutation_context_exposes_query_and_mutation_nested_calls() {
     std::fs::write(
         &bundle_path,
         r#"
-// The host resolves these callees to the same lane (RecordingHost::resolving_lane
-// below), so these same-isolate nested ctx.run* calls take local dispatch — the
-// path this test asserts.
+// The host reports these callees as locally dispatchable
+// (RecordingHost::resolving_as_locally_dispatchable below), so these
+// same-isolate nested ctx.run* calls take local dispatch — the path this
+// test asserts.
 async function invokeNamedLocal(nestedRequest) {
   return {
     kind: nestedRequest.kind,
@@ -242,7 +244,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let host = Arc::new(RecordingHost::resolving_lane("default"));
+    let host = Arc::new(RecordingHost::resolving_as_locally_dispatchable());
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         run_to_completion_snapshot_runtime_test_policy(),

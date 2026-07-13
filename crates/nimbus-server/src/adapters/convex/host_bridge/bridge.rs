@@ -94,6 +94,7 @@ pub(crate) struct ConvexHostBridge {
     execution_unit: Option<Arc<nimbus_engine::MutationExecutionUnit>>,
     state: Arc<RuntimeHostState>,
     query_builders: Arc<Mutex<ConvexRuntimeQueryBuilders>>,
+    function_name: String,
 }
 
 impl ConvexHostBridge {
@@ -142,6 +143,7 @@ impl ConvexHostBridge {
             execution_unit: bootstrap.execution_unit,
             state: bootstrap.state,
             query_builders: Arc::new(Mutex::new(ConvexRuntimeQueryBuilders::default())),
+            function_name: invocation.function_name,
         })
     }
 
@@ -191,6 +193,32 @@ impl ConvexHostBridge {
 
     pub(crate) fn registry(&self) -> &Arc<ConvexRegistry> {
         &self.registry
+    }
+
+    /// The name of the function this bridge was built to serve (HG4). Used to
+    /// resolve THIS invocation's own runtime lane, so the callee-lane oracle
+    /// can answer a same-vs-cross-lane boolean without ever handing the guest
+    /// the underlying lane bucket.
+    pub(in crate::adapters::convex) fn current_function_name(&self) -> &str {
+        &self.function_name
+    }
+
+    /// A clone of this bridge retargeted to serve as the host object for a new
+    /// nested `ctx.run*` invocation of `function_name` (HG4). Nested host
+    /// dispatch reuses the calling bridge's session/bootstrap state rather
+    /// than building a fresh `ConvexHostBridge` per hop (see
+    /// `nested_runtime/dispatch.rs`), so without this retarget
+    /// `current_function_name()` would stay frozen at the top-level
+    /// entrypoint's name across every hop of a nested dispatch chain, and the
+    /// callee-lane oracle would compare the callee against the WRONG "current"
+    /// lane past the first hop.
+    pub(in crate::adapters::convex) fn retargeted_for_nested_invocation(
+        &self,
+        function_name: impl Into<String>,
+    ) -> Self {
+        let mut nested = self.clone();
+        nested.function_name = function_name.into();
+        nested
     }
 
     pub(crate) fn auth(&self) -> Option<&InvocationAuth> {

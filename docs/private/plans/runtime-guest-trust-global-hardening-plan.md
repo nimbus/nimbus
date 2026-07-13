@@ -110,7 +110,7 @@ test consume that ledger.
 | HG7 | `__nimbusRefreshNodeProcessCwd` + other host-called Node hooks | LOW-MED | Host/reset-called, reassignable; classify each | `node22_runtime_bootstrap.js` |
 | HG8 | `__nimbusInvocationGeneration` (mutable lexical) | MED | Host reset writes it (`reset_bootstrap_invocation_state.js:2`), read as generation/trust state (`nimbus_context_contract.js:270`); guest can desync | see cells |
 | HG9 | object graphs behind hardened slots (`__nimbusHiddenDenoGlobals`/`Node`) | MED | Slots hardened, VALUES mutable; trusted transpiled scripts consume them (`transpile.rs:33,37,45`) | see cells |
-| HG4 | lane-oracle metadata | LOW | `runtime_environment_for_function` — no visibility check (`runtime_access.rs:90`; bridge `runtime_calls.rs:140`). NOT a strict subset of the error oracle (`selection.rs:14`) — adds `default`/`node`/`bun`. **Threat-model decision, not "add visibility"** (guests construct `{name,visibility}`; internal fns are app-callable). No exemplar informs this | see cells |
+| HG4 | lane-oracle metadata | LOW, **HARDENED (DONE)** | `runtime_environment_for_function` — no visibility check (`runtime_access.rs:90`; bridge `runtime_calls.rs:149`). NOT a strict subset of the error oracle (`selection.rs:14`) — adds `default`/`node`/`bun`. **Threat-model decision, not "add visibility"** (guests construct `{name,visibility}`; internal fns are app-callable). Owner ratified harden over accept-as-low; `invoke_ctx_resolve_callee_lane` now collapses both lanes to a bare `Value::Bool` — no exemplar informs this | see cells |
 | HGx | stale `__nimbusNextHostCallSessionId` | cleanup | Undeclared assignment, unused; remove or justify | `reset_bootstrap_invocation_state.js:1` |
 
 ## Band status
@@ -370,8 +370,8 @@ test consume that ledger.
     design, so unchanged from Band E's count, as expected since this band's
     fixes are entirely within `nimbus-runtime`).
 - **Band F (structural regression-gate test + Finding 1 Deno slot-hardening +
-  HG4 threat model): DONE, pending owner ratification of the HG4
-  recommendation.**
+  HG4 threat model): DONE. HG4 hardened (boolean collapse), DONE** — the owner
+  ratified harden over accept-as-low; see below.
   - Full structural regression-gate test:
     `crates/nimbus-runtime/src/runtime/tests/basic_invocation/trust_global_structural_gate.rs`,
     driven by the fixture
@@ -385,10 +385,31 @@ test consume that ledger.
     `node22_runtime_bootstrap.js`, red/green test
     `guest_cannot_swap_hardened_deno_slot_via_configurable_defineproperty` in
     `node_bootstrap.rs`.
-  - HG4: `proof/runtime-guest-trust-globals/hg4-threat-model.md` — recommends
-    accept-as-low (lane-oracle metadata is same-tenant deployment topology,
-    not application data, and Nimbus's own error-oracle on the same call
-    surface already discloses strictly more); non-binding, owner ratifies.
+  - HG4: `proof/runtime-guest-trust-globals/hg4-threat-model.md` — the owner
+    ratified **harden** over the doc's own accept-as-low analysis (lane-oracle
+    metadata is same-tenant deployment topology, not application data, and
+    Nimbus's own error-oracle on the same call surface already discloses
+    strictly more, but confidentiality of internal runtime topology was judged
+    worth closing outright). Implemented: `invoke_ctx_resolve_callee_lane`
+    (`crates/nimbus-server/src/adapters/convex/host_bridge/function_ops/ctx_ops/runtime_calls.rs:149`)
+    now resolves both the caller's and callee's lane host-side and answers a
+    bare `Value::Bool` — the three-way `"node"`/`"bun"`/`"default"`/`null`
+    lane string never crosses into guest-reachable scope. Guest-side,
+    `nimbus_context_contract.js`'s `__nimbusRunNamedFunction` consumes
+    `locallyDispatchable === true` instead of a lane-string comparison; the
+    local-vs-host dispatch decision itself is unchanged. Fixing this also
+    surfaced a genuine nested-dispatch correctness bug (a naive per-invocation
+    "current function" field would have stayed stale across a nested hop,
+    since `invoke_nested_runtime_function_*_cancellable` in
+    `nested_runtime/dispatch.rs` reuses the calling bridge rather than
+    building a fresh one) — closed via
+    `ConvexHostBridge::retargeted_for_nested_invocation` (`bridge.rs`). Red/green:
+    `convex_callee_lane_oracle_collapses_to_a_boolean_no_lane_string_leaks`
+    (new) plus the pre-existing
+    `convex_cross_lane_dispatch_survives_module_scope_lane_tampering` and
+    `convex_nested_calls_cross_runtime_lanes_execute_on_the_callee_lane`
+    (both in `crates/nimbus-server/src/tests/convex_functions/mixed_lane_dispatch.rs`),
+    confirming dispatch still routes identically across lanes.
   - The Cloud Functions `globalThis.__nimbusInvoke` emit site
     (`cloud_functions/runtime_sources.mjs:42`, corrected from the stale `:35`
     citation during this band's ledger sweep) is captured by the SAME host
@@ -417,8 +438,9 @@ compat/test surfaces (`__nimbusFlushEmbeddedTests`, `__nimbusNodeRuntimeMajor`,
 `__nimbusCallDetachedFromInvocationContext` (`deno_host_call_transport.js:37`,
 captured privately), `__nimbusSyncHostValue`/`__nimbusAsyncHostValue`
 (`deno_host_call_transport.js:126,161`), guest-semantics hooks (block-scoped +
-hardened, `nimbus_guest_semantics.js:26,235`), and the callee-lane lookup was
-REMOVED (host-side, `runtime_calls.rs:133`). Caveat: transports are hardened at
+hardened, `nimbus_guest_semantics.js:26,235`), and the callee-lane lookup's
+dispatch decision is resolved host-side and its answer collapsed to a bare
+boolean (HG4, `runtime_calls.rs:149`). Caveat: transports are hardened at
 the SLOT but still read the unhardened ops table (HG3) — not end-to-end.
 `__nimbusWaitUntil`/`__nimbusDrainWaitUntil`/`__nimbusResetWaitUntil`
 (`deno_host_call_transport.js:232,249,268`, slot-hardened, queue closure-private,
@@ -461,9 +483,11 @@ E/HG8).
 5. **Mutable-value protection — HG8/HG9.** Descriptor invariant is insufficient;
    move generation/reset state to host-owned or closure-private storage; review
    the hidden-globals object graphs directly.
-6. **HG4:** decide in the threat model — document lane metadata as non-secret, or
-   design uniform failure behavior against an explicit confidentiality
-   requirement.
+6. **HG4:** decided in the threat model — harden, not document as non-secret.
+   `invoke_ctx_resolve_callee_lane` now resolves caller-lane and callee-lane
+   host-side and answers a uniform `Value::Bool` (locally-dispatchable
+   yes/no); the three-way lane string is no longer part of the guest-visible
+   return value. See Band F above.
 
 ## Structural test — full spec
 
@@ -525,6 +549,16 @@ lanes (they compile the JS in) and the codegen gates.
   (`invocation.rs:52`→`:78,80`, `context_contract.js:194`→`:195`,
   `preamble.mjs:40`→`:41`, `transpile.rs:29`→`:33,37,45`, HG6 queue→`:182`,
   `warm_pool.rs:40`→`:41`).
+- 2026-07-13: HG4 ratified harden over accept-as-low. `invoke_ctx_resolve_callee_lane`
+  (`runtime_calls.rs:149`) collapses the three-way `"node"`/`"bun"`/`"default"`/`null`
+  lane string to a bare `Value::Bool`, resolving both caller and callee lane
+  host-side (`ConvexHostBridge::current_function_name()`). Fixing this surfaced
+  and closed a real nested-dispatch staleness bug via
+  `ConvexHostBridge::retargeted_for_nested_invocation` (`bridge.rs`) — nested
+  host dispatch (`nested_runtime/dispatch.rs`) reuses the calling bridge rather
+  than building a fresh one per hop, so the per-invocation "current function"
+  now gets explicitly retargeted at each hop. `hg4-threat-model.md` updated to
+  RESOLVED (hardened); Band F marked DONE.
 
 ## Suggested Goal Prompt (when promoted)
 

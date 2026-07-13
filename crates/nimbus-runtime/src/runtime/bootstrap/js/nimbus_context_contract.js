@@ -223,17 +223,19 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
       // at bootstrap and never take this branch.
       return true;
     }
-    // Ask the HOST for the callee's authoritative runtime lane. The registry
-    // the host owns is the single source of truth; no guest handler body or
-    // eagerly-imported dependency can influence this value. Fail SAFE: any
-    // non-string result (unknown/registry-native callee, or a lane the host
-    // could not resolve) routes to host dispatch, which resolves the callee's
-    // own lane and semantics. Never assume local — local dispatch under a
-    // mismatched lane runs a callee under the wrong clock/seed/capabilities.
-    const calleeLane = syncHostValue("op_nimbus_ctx_resolve_callee_lane", {
+    // Ask the HOST whether the callee is locally dispatchable from THIS
+    // isolate's own runtime lane. The registry the host owns is the single
+    // source of truth for both lanes; it answers a bare boolean (HG4
+    // hardened) so no lane bucket — this isolate's or the callee's — ever
+    // crosses into guest-reachable scope. Fail SAFE: any non-true result
+    // (cross-lane callee, or one the host could not resolve at all) routes to
+    // host dispatch, which resolves the callee's own lane and semantics.
+    // Never assume local — local dispatch under a mismatched lane runs a
+    // callee under the wrong clock/seed/capabilities.
+    const locallyDispatchable = syncHostValue("op_nimbus_ctx_resolve_callee_lane", {
       name: normalized.name,
     });
-    return typeof calleeLane === "string" && calleeLane === currentLane;
+    return locallyDispatchable === true;
   })();
   if (useLocalDispatch) {
     syncHostValue("op_nimbus_ctx_runtime_enter_nested_call", {

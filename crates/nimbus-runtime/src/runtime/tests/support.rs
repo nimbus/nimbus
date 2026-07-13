@@ -107,21 +107,23 @@ where
 #[derive(Default)]
 pub(super) struct RecordingHost {
     pub(super) calls: Mutex<Vec<HostCallRequest>>,
-    // When set, answers the callee-lane oracle (`CtxResolveCalleeLane`) with this
-    // lane for every callee — the host standing in for a registry whose
-    // functions all share this isolate's lane, so same-isolate local dispatch is
-    // taken. `None` reports every callee as unresolved (null), which fails safe
-    // to host dispatch.
-    resolve_lane: Option<String>,
+    // When true, answers the callee-lane oracle (`CtxResolveCalleeLane`) as
+    // "locally dispatchable" for every callee — the host standing in for a
+    // registry whose functions all share this isolate's lane, so same-isolate
+    // local dispatch is taken. `false` (the default) fails safe to host
+    // dispatch for every callee. HG4 hardened: the oracle answers a bare
+    // boolean, never the underlying node/bun/default lane bucket.
+    resolve_locally_dispatchable: bool,
 }
 
 impl RecordingHost {
-    /// A recording host that resolves every nested callee to `lane`, so
-    /// same-lane nested `ctx.run*` calls take the local-dispatch fast path.
-    pub(super) fn resolving_lane(lane: impl Into<String>) -> Self {
+    /// A recording host that reports every nested callee as locally
+    /// dispatchable, so nested `ctx.run*` calls take the local-dispatch fast
+    /// path.
+    pub(super) fn resolving_as_locally_dispatchable() -> Self {
         Self {
             calls: Mutex::new(Vec::new()),
-            resolve_lane: Some(lane.into()),
+            resolve_locally_dispatchable: true,
         }
     }
 }
@@ -133,11 +135,10 @@ impl HostBridge for RecordingHost {
             .expect("recording host lock should not be poisoned")
             .push(request.clone());
         if request.operation == HostCallOperation::CtxResolveCalleeLane {
-            let value = match &self.resolve_lane {
-                Some(lane) => Value::String(lane.clone()),
-                None => Value::Null,
-            };
-            return Ok(serde_json::json!({ "status": "ok", "value": value }));
+            return Ok(serde_json::json!({
+                "status": "ok",
+                "value": self.resolve_locally_dispatchable,
+            }));
         }
         Ok(serde_json::json!({
             "operation": request.operation,
@@ -443,9 +444,10 @@ impl HostBridge for SyncOnlyHost {
             .push(request.clone());
         let value = match request.operation {
             HostCallOperation::QueryBuilderStart => Value::String("builder-1".to_string()),
-            // Resolve every nested callee to the default lane so a same-lane
-            // nested ctx.run* in these default-isolate tests takes local dispatch.
-            HostCallOperation::CtxResolveCalleeLane => Value::String("default".to_string()),
+            // Every nested callee in these default-isolate tests is same-lane,
+            // so the host answers locally-dispatchable=true (HG4 hardened:
+            // the op returns a bare boolean, never a lane string).
+            HostCallOperation::CtxResolveCalleeLane => Value::Bool(true),
             _ => Value::Null,
         };
         Ok(serde_json::json!({

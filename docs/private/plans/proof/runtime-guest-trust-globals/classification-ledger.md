@@ -455,3 +455,19 @@ exactly one bucket below; a new unlisted property fails the test.
    way to enumerate or mutate what it closed over, remains at top level.
    Red-green:
    `runtime::tests::cooperative::ledger5_host_call_ops_set_not_guest_reachable`.
+
+## HG4 is out of this ledger's scope (by design, not omission)
+
+HG4 (lane-oracle metadata, `invoke_ctx_resolve_callee_lane`) has no row in the
+tables above because it is not a `globalThis.__nimbus*` own property or a
+global-lexical trust binding at all — it is an op's Rust **return-value
+shape**. This ledger's inventory is bounded to the two (plus the one found)
+reachable-surface kinds described in "Method + the reachability model" above;
+an op's answer content is a different axis entirely and doesn't fit either
+table without stretching their columns to mean something else. HG4's own
+analysis and disposition (ratified: harden; boolean-collapse fix implemented)
+live in `hg4-threat-model.md`, with the Band F status recorded in
+`runtime-guest-trust-global-hardening-plan.md`. Nothing here needs a
+corresponding entry in `structural-gate-allowlist.json` either — that fixture
+enumerates `globalThis.__nimbus*` keys, and HG4's fix never added, removed, or
+reshaped one.

@@ -4,12 +4,13 @@
 //! the callee's own lane and semantics profile.
 //!
 //! The local-vs-host decision is resolved HOST-side
-//! (`op_nimbus_ctx_resolve_callee_lane`): the runtime asks the host for the
-//! callee's authoritative lane and compares it against this isolate's frozen
-//! lane. There is deliberately no guest-reachable JavaScript lane lookup or
-//! registrar, so no handler body or eagerly-imported dependency can influence
-//! the decision. These tests exercise the honest routing paths and the
-//! adversarial tampering the removed JS mechanism used to be vulnerable to.
+//! (`op_nimbus_ctx_resolve_callee_lane`): the runtime asks the host whether the
+//! callee shares this isolate's lane and gets back a single boolean (HG4
+//! hardened — the host never hands out the underlying lane bucket). There is
+//! deliberately no guest-reachable JavaScript lane lookup or registrar, so no
+//! handler body or eagerly-imported dependency can influence the decision.
+//! These tests exercise the honest routing paths and the adversarial
+//! tampering the removed JS mechanism used to be vulnerable to.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -22,18 +23,23 @@ use crate::error::{NimbusRuntimeError, Result};
 use crate::host::{HostBridge, HostCallOperation, HostCallRequest};
 
 /// Test host that answers the callee-lane oracle from an explicit name→lane
-/// map (standing in for the server registry) and records every host call so the
-/// tests can assert which dispatch path a nested call took. Unknown callees
-/// resolve to JSON null, exactly as the real registry reports a function it does
-/// not own — the runtime must then fail safe to host dispatch.
+/// map (standing in for the server registry) compared against `current_lane`
+/// (standing in for this invocation's own lane, resolved host-side per HG4),
+/// and records every host call so the tests can assert which dispatch path a
+/// nested call took. Unknown callees resolve to `false` exactly as the real
+/// registry now does for a function it does not own — the runtime must then
+/// fail safe to host dispatch, and a guest cannot tell an unknown callee apart
+/// from a real cross-lane one (both answer `false`).
 struct LaneOracleHost {
+    current_lane: String,
     lanes: HashMap<String, String>,
     calls: Mutex<Vec<HostCallRequest>>,
 }
 
 impl LaneOracleHost {
-    fn new(lanes: &[(&str, &str)]) -> Self {
+    fn new(current_lane: &str, lanes: &[(&str, &str)]) -> Self {
         Self {
+            current_lane: current_lane.to_string(),
             lanes: lanes
                 .iter()
                 .map(|(name, lane)| ((*name).to_string(), (*lane).to_string()))
@@ -69,12 +75,11 @@ impl HostBridge for LaneOracleHost {
                             "callee-lane oracle payload is missing `name`".to_string(),
                         )
                     })?;
-                let value = self
+                let locally_dispatchable = self
                     .lanes
                     .get(name)
-                    .map(|lane| Value::String(lane.clone()))
-                    .unwrap_or(Value::Null);
-                Ok(serde_json::json!({ "status": "ok", "value": value }))
+                    .is_some_and(|lane| lane == &self.current_lane);
+                Ok(serde_json::json!({ "status": "ok", "value": locally_dispatchable }))
             }
             _ => Ok(serde_json::json!({
                 "operation": request.operation,
@@ -275,10 +280,11 @@ async fn invoke_lane_routing_bundle(
     bundle_source: &str,
     limits: RuntimeLimits,
     request: &InvocationRequest,
+    current_lane: &str,
     lanes: &[(&str, &str)],
 ) -> (Value, Vec<HostCallOperation>) {
     let (_tempdir, bundle_path) = write_app_style_bundle(bundle_source);
-    let host = Arc::new(LaneOracleHost::new(lanes));
+    let host = Arc::new(LaneOracleHost::new(current_lane, lanes));
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         Arc::new(RuntimePolicy::new(limits)),
@@ -309,6 +315,7 @@ async fn nested_call_same_lane_stays_on_local_dispatch_in_default_isolate() {
         LANE_ROUTING_BUNDLE,
         convex_default_lane_limits(),
         &caller_request("child:defaultLane", "query"),
+        "default",
         APP_LANES,
     )
     .await;
@@ -339,6 +346,7 @@ async fn nested_call_to_node_callee_routes_through_host_dispatch_from_default_is
         LANE_ROUTING_BUNDLE,
         convex_default_lane_limits(),
         &caller_request("child:nodeLane", "query"),
+        "default",
         APP_LANES,
     )
     .await;
@@ -365,6 +373,7 @@ async fn nested_call_to_default_callee_routes_through_host_dispatch_from_node22_
         LANE_ROUTING_BUNDLE,
         RuntimeLimits::application_node22(),
         &caller_request("child:defaultLane", "mutation"),
+        "node",
         APP_LANES,
     )
     .await;
@@ -391,6 +400,7 @@ async fn nested_call_same_lane_stays_on_local_dispatch_in_node22_isolate() {
         LANE_ROUTING_BUNDLE,
         RuntimeLimits::application_node22(),
         &caller_request("child:nodeLane", "query"),
+        "node",
         APP_LANES,
     )
     .await;
@@ -420,6 +430,7 @@ async fn nested_call_to_unknown_callee_routes_through_host_dispatch() {
         LANE_ROUTING_BUNDLE,
         convex_default_lane_limits(),
         &caller_request("child:unknown", "query"),
+        "default",
         APP_LANES,
     )
     .await;
@@ -448,6 +459,7 @@ async fn guest_bare_identifier_tampering_cannot_force_cross_lane_local_dispatch(
         LANE_ROUTING_TAMPER_BUNDLE,
         convex_default_lane_limits(),
         &caller_request("child:nodeLane", "query"),
+        "default",
         APP_LANES,
     )
     .await;
@@ -480,6 +492,7 @@ async fn guest_transport_hijack_of_sync_host_value_cannot_force_cross_lane_local
         TRANSPORT_HIJACK_TAMPER_BUNDLE,
         convex_default_lane_limits(),
         &caller_request("child:nodeLane", "query"),
+        "default",
         APP_LANES,
     )
     .await;
@@ -509,6 +522,7 @@ async fn guest_tampering_leaves_same_lane_local_dispatch_intact() {
         LANE_ROUTING_TAMPER_BUNDLE,
         convex_default_lane_limits(),
         &caller_request("child:defaultLane", "query"),
+        "default",
         APP_LANES,
     )
     .await;
@@ -540,6 +554,7 @@ async fn guest_core_ops_table_tampering_via_bare_binding_cannot_force_cross_lane
         CORE_OPS_TABLE_TAMPER_BUNDLE_WEB,
         convex_default_lane_limits(),
         &caller_request("child:nodeLane", "query"),
+        "default",
         APP_LANES,
     )
     .await;
@@ -571,6 +586,7 @@ async fn guest_core_ops_table_tampering_via_retained_deno_cannot_force_cross_lan
         CORE_OPS_TABLE_TAMPER_BUNDLE_NODE,
         RuntimeLimits::application_node22(),
         &caller_request("child:defaultLane", "mutation"),
+        "node",
         APP_LANES,
     )
     .await;
@@ -600,6 +616,7 @@ async fn guest_core_ops_table_tampering_leaves_same_lane_local_dispatch_intact()
         CORE_OPS_TABLE_TAMPER_BUNDLE_WEB,
         convex_default_lane_limits(),
         &caller_request("child:defaultLane", "query"),
+        "default",
         APP_LANES,
     )
     .await;

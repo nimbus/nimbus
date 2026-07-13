@@ -130,25 +130,36 @@ impl ConvexHostBridge {
         serde_json::to_value(response).map_err(NimbusRuntimeError::from)
     }
 
-    /// Callee-lane oracle for the nested `ctx.run*` dispatcher (EX10R3.1). The
-    /// runtime asks the host for the authoritative lane of `payload.name` and
-    /// compares it against the isolate's frozen lane to choose local vs host
-    /// dispatch. Resolving it here — from the registry the host alone owns —
-    /// means no guest handler body or eagerly-imported dependency can influence
-    /// that decision. `None` (unknown or non-locally-dispatchable callee) is
-    /// returned as JSON null so the runtime fails safe to host dispatch.
+    /// Callee-lane oracle for the nested `ctx.run*` dispatcher (EX10R3.1,
+    /// hardened for HG4). The runtime asks the host whether `payload.name` is
+    /// locally dispatchable from THIS invocation's own runtime lane; both
+    /// lanes are resolved from the registry the host alone owns and reduced
+    /// to a single boolean before the answer ever crosses into guest-reachable
+    /// scope. Resolving it here means no guest handler body or eagerly-
+    /// imported dependency can influence the local-vs-host decision.
+    ///
+    /// Before this hardening, the host answered with the callee's raw
+    /// three-way lane bucket ("node"/"bun"/"default"/null), which let a guest
+    /// probe this op directly (it validates trivially with no session token)
+    /// to map same-tenant runtime-deployment topology function by function.
+    /// Collapsing to a boolean removes that oracle: a cross-lane callee and an
+    /// unknown callee are now indistinguishable to the guest, both answering
+    /// `false`, and the guest never learns which lane bucket is in play for
+    /// either its own invocation or the callee.
     pub(in crate::adapters::convex) fn invoke_ctx_resolve_callee_lane(
         &self,
         payload: Value,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: RuntimeSyncResolveCalleeLanePayload = serde_json::from_value(payload)?;
         self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
-        let lane = self
-            .registry()
-            .runtime_environment_for_function(&payload.name)
-            .map(|lane| Value::String(lane.to_string()))
-            .unwrap_or(Value::Null);
-        encode_runtime_core_result(Ok(lane))
+        let registry = self.registry();
+        let current_lane = registry.runtime_environment_for_function(self.current_function_name());
+        let callee_lane = registry.runtime_environment_for_function(&payload.name);
+        let locally_dispatchable = matches!(
+            (current_lane, callee_lane),
+            (Some(current), Some(callee)) if current == callee
+        );
+        encode_runtime_core_result(Ok(Value::Bool(locally_dispatchable)))
     }
 
     pub(in crate::adapters::convex) async fn invoke_ctx_run_mutation_async_cancellable(

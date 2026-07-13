@@ -743,7 +743,7 @@ export {};
     let result = invoke_convex_semantics_bundle_with_host(
         bundle,
         &query_request("messages:list"),
-        Arc::new(RecordingHost::resolving_lane("default")),
+        Arc::new(RecordingHost::resolving_as_locally_dispatchable()),
     )
     .await;
     assert_eq!(
