@@ -501,6 +501,76 @@ export {};
 }
 
 #[tokio::test]
+async fn pir4_wait_until_hook_tampering_cannot_hide_unreferenced_pending_background_work_from_system_timeout()
+ {
+    // HG6: __nimbusWaitUntil used to be a plain `globalThis.X = function(){}`
+    // assignment — reassignable by any sloppy-mode handler body (the shape a
+    // real guest handler runs in). A guest could swap in an impostor that
+    // swallows the promise without ever pushing it onto the tracked queue,
+    // hiding a never-resolving background task from the system timeout that
+    // bounds it (see the un-tampered twin,
+    // `pir4_wait_until_system_timeout_bounds_unreferenced_pending_background_work`,
+    // above). Post-fix the hook is a frozen (`writable: false`) slot; the
+    // sloppy reassignment attempt is a silent no-op and the real hook still
+    // tracks the promise, so the system timeout still bounds it.
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function () {
+  const attack = new Function(
+    "try {\n" +
+    "  globalThis.__nimbusWaitUntil = function (_promise) {};\n" +
+    "} catch (_e) {}\n"
+  );
+  attack();
+  globalThis.__nimbusWaitUntil(new Promise(() => {}));
+  return { ok: true };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.execution_timeout = std::time::Duration::from_secs(1);
+    limits.system_timeout = std::time::Duration::from_millis(300);
+    let runtime = NimbusRuntime::with_limits(
+        Arc::new(RecordingHost::default()),
+        limits,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let error = runtime
+        .invoke_bundle_for_tenant(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:get".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+            "tenant-a",
+        )
+        .await
+        .expect_err(
+            "waitUntil hook tampering must not hide unreferenced pending background work from the system timeout",
+        );
+
+    match error {
+        NimbusRuntimeError::SystemTimeout(timeout) => {
+            assert_eq!(timeout, std::time::Duration::from_millis(300));
+        }
+        other => panic!("unexpected waitUntil tampering timeout error: {other}"),
+    }
+    assert_eq!(runtime.policy.metrics_snapshot().timed_out_invocations, 1);
+}
+
+#[tokio::test]
 async fn pir4_wait_until_drains_on_cooperative_queries() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");

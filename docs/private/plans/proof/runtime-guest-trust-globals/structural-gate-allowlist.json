@@ -1,0 +1,57 @@
+{
+  "$schema_note": "Consumed by crates/nimbus-runtime/src/runtime/tests/basic_invocation/trust_global_structural_gate.rs. Classifies every globalThis own property the structural gate finds (Reflect.ownKeys(globalThis) filtered to names starting with '__nimbus' plus the explicit non-prefixed allowlist entries below) into exactly one bucket. A name the gate observes at runtime that is not listed anywhere in 'base' or the active lane's overrides FAILS the test, naming the offending global and lane. This mirrors docs/private/plans/proof/runtime-guest-trust-globals/classification-ledger.md's 'Structural-test allowlist' section (TRUST / TRUST already-hardened / TRUST removed entirely / INTENTIONALLY-MUTABLE / COMPAT-OR-TEST) -- update both together.",
+  "non_prefixed_allowlist": ["Deno"],
+  "base": {
+    "trust_hardened": [
+      "__nimbusInvoke",
+      "__nimbusInvokeCloudflareWorkerFetch",
+      "__nimbusCreateContext",
+      "__nimbusSyncHostValue",
+      "__nimbusAsyncHostValue",
+      "__nimbusCallDetachedFromInvocationContext",
+      "__nimbusRuntimeEnvironmentLane",
+      "__nimbusBeginGuestInvocation",
+      "__nimbusInstallGuestSemantics",
+      "__nimbusEnterGuestImportPhase",
+      "__nimbusWaitUntil",
+      "__nimbusDrainWaitUntil",
+      "__nimbusResetWaitUntil",
+      "__nimbusAdvanceInvocationGeneration",
+      "__nimbusRefreshNodeProcessCwd",
+      "__nimbusPerfHooksBuiltin",
+      "__nimbusProcessTicksAndRejections",
+      "__nimbusEventLoopHasMoreWork",
+      "__nimbusStartWorkerMessagePump",
+      "__nimbusWorkerThreadEnv",
+      "__nimbusCloseWorker",
+      "__nimbusInstallSharedWorkerEnvProxy",
+      "__nimbusHiddenDenoGlobals",
+      "__nimbusHiddenNodeGlobals"
+    ],
+    "trust_removed": [
+      "__nimbusInvokeNamedLocal",
+      "Deno"
+    ],
+    "intentionally_mutable": [
+      "__nimbusCloudFunctionsState",
+      "__nimbusAdminApps"
+    ],
+    "compat": [
+      "__nimbusNodeRuntimeMajor",
+      "__nimbusDrainImmediates",
+      "__nimbusFlushEmbeddedTests",
+      "__nimbusRefreshNodeRuntimeOpState",
+      "__nimbusDenoFetchModule",
+      "__nimbusRetainDenoForNodeLazyScripts"
+    ]
+  },
+  "lane_overrides": {
+    "web": {},
+    "cloudflare": {},
+    "cloud_functions": {},
+    "convex_default": {},
+    "node22": {
+      "move_to_trust_hardened": ["Deno"]
+    }
+  }
+}

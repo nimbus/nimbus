@@ -3,9 +3,6 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::error::{NimbusRuntimeError, Result};
-use crate::limits::RuntimeGuestSemantics;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InvocationKind {
@@ -46,40 +43,6 @@ pub struct InvocationRequest {
     pub auth: Option<Value>,
     #[serde(default, skip_serializing)]
     pub services: InvocationServices,
-}
-
-impl InvocationRequest {
-    pub(crate) fn runtime_invoke_expression(
-        &self,
-        module_specifier: Option<&str>,
-        guest_semantics: RuntimeGuestSemantics,
-    ) -> Result<String> {
-        let request_json = serde_json::to_string(self)?;
-        match self.kind {
-            InvocationKind::CloudflareWorkerFetch => {
-                let module_specifier = module_specifier.ok_or_else(|| {
-                    NimbusRuntimeError::Contract(
-                        "Cloudflare Worker fetch invocation requires a loaded runtime bundle"
-                            .to_string(),
-                    )
-                })?;
-                let module_specifier_json = serde_json::to_string(module_specifier)?;
-                Ok(format!(
-                    "globalThis.__nimbusInvokeCloudflareWorkerFetch(import({module_specifier_json}), {request_json})"
-                ))
-            }
-            // The prelude reconfigures the guest-semantics surface (frozen
-            // clock / seeded PRNG) for this invocation. It is emitted only on
-            // ConvexDefault lanes: Host-semantics lanes never call the hook at
-            // all, so a Host-lane bundle gets no per-invocation host callback
-            // (the hook global itself is also host-frozen). The comma
-            // expression still evaluates to the __nimbusInvoke result.
-            _ if guest_semantics == RuntimeGuestSemantics::ConvexDefault => Ok(format!(
-                "(globalThis.__nimbusBeginGuestInvocation?.(), globalThis.__nimbusInvoke({request_json}))"
-            )),
-            _ => Ok(format!("globalThis.__nimbusInvoke({request_json})")),
-        }
-    }
 }
 
 pub type InvocationServices = BTreeMap<String, InvocationServiceBinding>;

@@ -190,9 +190,9 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
   label,
   functionRef,
   args = {},
+  localInvoker = null,
 ) {
   const normalized = __nimbusNormalizeFunctionReference(functionRef, label);
-  const localInvoker = globalThis.__nimbusInvokeNamedLocal;
   const nestedAuthContext = authContext
     ? {
         ...authContext,
@@ -223,17 +223,19 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
       // at bootstrap and never take this branch.
       return true;
     }
-    // Ask the HOST for the callee's authoritative runtime lane. The registry
-    // the host owns is the single source of truth; no guest handler body or
-    // eagerly-imported dependency can influence this value. Fail SAFE: any
-    // non-string result (unknown/registry-native callee, or a lane the host
-    // could not resolve) routes to host dispatch, which resolves the callee's
-    // own lane and semantics. Never assume local — local dispatch under a
-    // mismatched lane runs a callee under the wrong clock/seed/capabilities.
-    const calleeLane = syncHostValue("op_nimbus_ctx_resolve_callee_lane", {
+    // Ask the HOST whether the callee is locally dispatchable from THIS
+    // isolate's own runtime lane. The registry the host owns is the single
+    // source of truth for both lanes; it answers a bare boolean (HG4
+    // hardened) so no lane bucket — this isolate's or the callee's — ever
+    // crosses into guest-reachable scope. Fail SAFE: any non-true result
+    // (cross-lane callee, or one the host could not resolve at all) routes to
+    // host dispatch, which resolves the callee's own lane and semantics.
+    // Never assume local — local dispatch under a mismatched lane runs a
+    // callee under the wrong clock/seed/capabilities.
+    const locallyDispatchable = syncHostValue("op_nimbus_ctx_resolve_callee_lane", {
       name: normalized.name,
     });
-    return typeof calleeLane === "string" && calleeLane === currentLane;
+    return locallyDispatchable === true;
   })();
   if (useLocalDispatch) {
     syncHostValue("op_nimbus_ctx_runtime_enter_nested_call", {
@@ -267,13 +269,48 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
   });
 };
 
-let __nimbusInvocationGeneration = 0;
+// HG8: __nimbusInvocationGeneration used to be a bare top-level `let` in the
+// global lexical environment — writable AND readable by bare name from guest
+// MODULE code (same global-lexical reachability class as HG3/HG6 above),
+// which could defeat this stale-ctx guard entirely: a guest handler could
+// reset the counter to match any generation it captured earlier, keeping a
+// ctx object from a previous invocation permanently "fresh" across
+// warm-pool reuse cycles. The counter itself is now private to this
+// closure; only a `const`-bound getter crosses out (bare-name readable, but
+// never reassignable — `const` throws on any reassignment attempt
+// regardless of strict/sloppy mode), and the increment step is exposed as a
+// separate slot-hardened global the trusted host-issued reset script
+// (reset_bootstrap_invocation_state.js) calls, instead of doing bare-name
+// arithmetic on a shared binding guest code could equally perform.
+const __nimbusReadInvocationGeneration = (() => {
+  let generation = 0;
+  Object.defineProperty(globalThis, "__nimbusAdvanceInvocationGeneration", {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: function __nimbusAdvanceInvocationGeneration() {
+      generation++;
+    },
+  });
+  return function __nimbusReadInvocationGeneration() {
+    return generation;
+  };
+})();
 
-globalThis.__nimbusCreateContext = function(options = {}) {
-  const myGeneration = __nimbusInvocationGeneration;
+const __nimbusCreateContextImpl = function(options = {}) {
+  const myGeneration = __nimbusReadInvocationGeneration();
+  // HG2: the trusted bundle preamble passes its module-private
+  // invokeNamedDefinitionLocally straight through as a call argument (no
+  // globalThis bridge for guest code to reassign). A caller that omits it
+  // (or a guest calling __nimbusCreateContext directly with forged options)
+  // only ever affects the ctx object it constructs for itself — nested
+  // ctx.run* on that ctx routes to host dispatch instead of local dispatch,
+  // never a different invocation's trusted path.
+  const localInvoker =
+    typeof options.invokeNamedLocal === "function" ? options.invokeNamedLocal : null;
 
   const guardStale = () => {
-    if (__nimbusInvocationGeneration !== myGeneration) {
+    if (__nimbusReadInvocationGeneration() !== myGeneration) {
       throw new Error(
         "This ctx object is from a previous invocation and cannot be reused"
       );
@@ -557,6 +594,7 @@ globalThis.__nimbusCreateContext = function(options = {}) {
         "runQuery",
         functionRef,
         args,
+        localInvoker,
       );
     },
     runMutation(functionRef, args = {}) {
@@ -573,6 +611,7 @@ globalThis.__nimbusCreateContext = function(options = {}) {
         "runMutation",
         functionRef,
         args,
+        localInvoker,
       );
     },
     runAction(functionRef, args = {}) {
@@ -589,6 +628,7 @@ globalThis.__nimbusCreateContext = function(options = {}) {
         "runAction",
         functionRef,
         args,
+        localInvoker,
       );
     },
   };
@@ -596,4 +636,20 @@ globalThis.__nimbusCreateContext = function(options = {}) {
 
 Object.freeze(globalThis.__nimbusSyncHostValue);
 Object.freeze(globalThis.__nimbusAsyncHostValue);
-Object.freeze(globalThis.__nimbusCreateContext);
+// HG1: harden the SLOT, not just the function object. __nimbusCreateContext
+// builds the whole invocation ctx (auth identity, db read/write, scheduler, and
+// nested-call capabilities); the trusted preamble reads it once per invocation.
+// `Object.freeze(value)` freezes only the function object, leaving the global
+// slot reassignable — so a guest handler that ran `globalThis.__nimbusCreateContext
+// = impostor` (or deleted it) in one invocation could redirect a later
+// same-tenant invocation's context construction on a warm isolate. A
+// non-writable, non-configurable slot installed here at bootstrap, before any
+// guest or eagerly-imported code runs, closes that: the preamble's name lookup
+// always resolves to the real factory and guest reassignment throws in strict
+// mode. The frozen function object remains as defense in depth.
+Object.defineProperty(globalThis, "__nimbusCreateContext", {
+  value: Object.freeze(__nimbusCreateContextImpl),
+  writable: false,
+  configurable: false,
+  enumerable: false,
+});

@@ -515,12 +515,20 @@ impl NimbusRuntime {
             (Ok(value), Some(realm))
         } else {
             let request_json = serde_json::to_string(&request)?;
-            let expression = format!("globalThis.__nimbusInvoke({request_json})");
+            // Dispatch through the entrypoint captured off the guest-reachable
+            // graph at bundle load (HG0), never globalThis.__nimbusInvoke by
+            // name. This non-recycling branch is the Host-semantics main-realm
+            // path (ConvexDefault determinism runs via the context-recycling
+            // branch above), and the captured begin-guest-invocation prelude is
+            // a no-op on Host lanes.
             (
-                driver
-                    .runtime
-                    .execute_script("<nimbus-runtime:invoke>", expression)
-                    .map_err(runtime_js_error),
+                crate::runtime::captured_dispatch::call_captured_invocation(
+                    &mut driver.runtime,
+                    None,
+                    &request_json,
+                    self.policy.limits().guest_semantics,
+                    None,
+                ),
                 None,
             )
         };

@@ -44,6 +44,14 @@ function createRuntimeContext(request) {
       typeof request.hostCallSessionId === "string" && request.hostCallSessionId.length > 0
         ? request.hostCallSessionId
         : \`\${request.kind}:\${request.function_name}\`,
+    // HG2: pass the module-private local-dispatch invoker straight through as
+    // a call argument (Convex's fresh-ctx-as-argument pattern) instead of
+    // bridging it through a guest-reachable globalThis property. guest handler
+    // bodies compile via the Function constructor (see compileRuntimeHandler
+    // below) and run in global scope, so they have no lexical access to this
+    // module's \`invokeNamedDefinitionLocally\` binding and cannot intercept or
+    // forge it here; only this trusted preamble code ever supplies it.
+    invokeNamedLocal: invokeNamedDefinitionLocally,
   });
 }
 

@@ -1,4 +1,41 @@
-const __nimbusCoreOps = Deno.core.ops;
+// HG3: Deno.core.ops is a live, guest-writable object — a guest could
+// overwrite any op slot (e.g. op_nimbus_ctx_resolve_callee_lane, the
+// callee-lane trust oracle the nested ctx.run* dispatcher relies on) and the
+// transports below would call the impostor on their next fresh property
+// lookup. This is reachable on BOTH lanes: on Node-retaining lanes directly
+// via Deno.core.ops, and on the web/default lane (where post_bootstrap.js
+// deletes globalThis.Deno) via bare-name resolution of this very binding —
+// a classic-script top-level const lives in the realm's global lexical
+// environment record, which guest MODULE code can still read by name even
+// after globalThis.Deno is gone.
+//
+// Object.freeze(Deno.core.ops) is NOT an option: deno_core's
+// ensure_fast_ops_upgraded (bindings.rs) later overwrites individual op
+// slots on this SAME live object with fast-call-equipped functions the
+// first time a residual ext-module (e.g. a lazily imported Node builtin)
+// loads, and a frozen table would silently reject those writes, permanently
+// pinning every op to its slow-path snapshot function.
+//
+// Instead, take a private null-prototype clone of the whole table right
+// now — before any guest code has ever run, so it can only ever reflect
+// trusted state — and freeze the clone. The transports below read
+// exclusively from this clone, never from the live table, so a guest
+// overwrite on either lane has no effect on them. This mirrors deno_core's
+// own bootstrap pattern for its captured-bootstrap ops clone (01_core.js,
+// `capturedCore.ops = ObjectAssign({__proto__: null}, core.ops)`).
+//
+// Tradeoff: op_nimbus_runtime_wait_until_pending (read below) is the one op
+// reached through this table that is fast-call-eligible (#[op2(fast)]); if
+// a residual ext-module load ever triggers the deferred upgrade later in
+// this isolate's life, this clone will not pick up its fast-call overload
+// and it stays on the slow path for the rest of the isolate's lifetime.
+// Every other op reached through this table is a plain (non-fast) op, so
+// the clone can never go stale for them. This is an accepted, documented
+// perf-only cost of closing the guest-write surface — wait-until tracking
+// is not a hot per-dispatch path.
+const __nimbusCoreOps = Object.freeze(
+  Object.assign(Object.create(null), Deno.core.ops),
+);
 // Capture Deno.core.runImmediates before POST_BOOTSTRAP_SOURCE deletes
 // globalThis.Deno. The spawn-emulation postlude (render.rs) uses this to
 // drain async_hooks' deferred destroy queue: a GC'd AsyncResource enqueues an
@@ -18,8 +55,10 @@ Object.defineProperty(globalThis, "__nimbusDrainImmediates", {
   writable: true,
 });
 // Nested-call context detachment: a locally-dispatched nested invocation
-// (globalThis.__nimbusInvokeNamedLocal) must start from the same async
-// context a host-dispatched one would — the root frame captured here at
+// (the bundle's invokeNamedDefinitionLocally, passed into the context-contract
+// layer's context factory as a call argument — HG2, not bridged through a
+// guest-reachable global) must start from the same async context a
+// host-dispatched one would — the root frame captured here at
 // bootstrap — so AsyncLocalStorage data never propagates into
 // ctx.runQuery/runMutation/runAction (the documented Convex default-runtime
 // caveat, and dispatch-path parity between the local and host paths).
@@ -54,39 +93,6 @@ Object.defineProperty(globalThis, "__nimbusDrainImmediates", {
   });
 }
 
-const __nimbusContextHostCallOps = new Set([
-  "op_nimbus_ctx_query_start",
-  "op_nimbus_ctx_query_with_index",
-  "op_nimbus_ctx_query_filter",
-  "op_nimbus_ctx_query_order",
-  "op_nimbus_ctx_query",
-  "op_nimbus_ctx_paginated_query",
-  "op_nimbus_ctx_mutation",
-  "op_nimbus_ctx_action",
-  "op_nimbus_document_get",
-  "op_nimbus_document_insert",
-  "op_nimbus_document_patch",
-  "op_nimbus_document_delete",
-  "op_nimbus_ctx_query_collect",
-  "op_nimbus_ctx_query_take",
-  "op_nimbus_ctx_query_paginate",
-  "op_nimbus_ctx_query_first",
-  "op_nimbus_ctx_query_unique",
-  "op_nimbus_ctx_scheduler_run_after",
-  "op_nimbus_ctx_scheduler_run_at",
-  "op_nimbus_ctx_scheduler_cancel",
-  "op_nimbus_ctx_runtime_enter_nested_call",
-  "op_nimbus_ctx_resolve_callee_lane",
-  "op_nimbus_ctx_run_query",
-  "op_nimbus_ctx_run_mutation",
-  "op_nimbus_ctx_run_action",
-  "op_nimbus_ctx_service_lookup",
-  "op_nimbus_cf_kv_get",
-  "op_nimbus_cf_kv_put",
-  "op_nimbus_cf_kv_delete",
-  "op_nimbus_cf_kv_list",
-]);
-
 const __nimbusCurrentHostCallSessionId = function __nimbusCurrentHostCallSessionId() {
   const operation = __nimbusCoreOps.op_nimbus_runtime_host_call_session_id;
   if (typeof operation !== "function") {
@@ -95,28 +101,76 @@ const __nimbusCurrentHostCallSessionId = function __nimbusCurrentHostCallSession
   return operation();
 };
 
-const __nimbusBindHostCallPayload = function __nimbusBindHostCallPayload(opName, payload) {
-  if (!__nimbusContextHostCallOps.has(opName)) {
-    return payload;
-  }
-  if (payload !== null && payload !== undefined && (typeof payload !== "object" || Array.isArray(payload))) {
-    throw new Error(`Nimbus runtime host-call payload must be an object for ${opName}`);
-  }
-  const currentSessionId = __nimbusCurrentHostCallSessionId();
-  const providedSessionId = payload?.host_call_session_id;
-  if (
-    providedSessionId !== undefined &&
-    providedSessionId !== null &&
-    providedSessionId !== "" &&
-    providedSessionId !== currentSessionId
-  ) {
-    throw new Error(`Nimbus runtime host-call session is stale or forged for ${opName}`);
-  }
-  return {
-    ...(payload ?? {}),
-    host_call_session_id: currentSessionId,
+// Band B-FIX LEDGER MISS: __nimbusContextHostCallOps used to be a bare
+// top-level `const new Set([...])` — same guest-bare-name-reachable class as
+// HG3's op-table alias and the pre-HG6 wait-until queue (see those comments
+// above). `const` only blocks REBINDING the name; it does nothing to protect
+// the mutable Set instance itself, so guest module code could still reach
+// the name and call `.clear()`/`.delete(...)` on it. Rust independently
+// rejects an unbound host-call session at `shared.rs:322`, so this was never
+// an authority bypass, but it was a persistent same-tenant DoS: once the set
+// is emptied, every context host-call silently skips session-id binding, and
+// the same isolate stays in that state for the rest of its warm-pool life.
+// An IIFE closure (matching HG6's block-scoping) makes the Set itself
+// unreachable by any bare name; only the pure `__nimbusBindHostCallPayload`
+// function — which exposes no way to enumerate or mutate what it closed
+// over — remains at top level.
+const __nimbusBindHostCallPayload = (() => {
+  const contextHostCallOps = new Set([
+    "op_nimbus_ctx_query_start",
+    "op_nimbus_ctx_query_with_index",
+    "op_nimbus_ctx_query_filter",
+    "op_nimbus_ctx_query_order",
+    "op_nimbus_ctx_query",
+    "op_nimbus_ctx_paginated_query",
+    "op_nimbus_ctx_mutation",
+    "op_nimbus_ctx_action",
+    "op_nimbus_document_get",
+    "op_nimbus_document_insert",
+    "op_nimbus_document_patch",
+    "op_nimbus_document_delete",
+    "op_nimbus_ctx_query_collect",
+    "op_nimbus_ctx_query_take",
+    "op_nimbus_ctx_query_paginate",
+    "op_nimbus_ctx_query_first",
+    "op_nimbus_ctx_query_unique",
+    "op_nimbus_ctx_scheduler_run_after",
+    "op_nimbus_ctx_scheduler_run_at",
+    "op_nimbus_ctx_scheduler_cancel",
+    "op_nimbus_ctx_runtime_enter_nested_call",
+    "op_nimbus_ctx_resolve_callee_lane",
+    "op_nimbus_ctx_run_query",
+    "op_nimbus_ctx_run_mutation",
+    "op_nimbus_ctx_run_action",
+    "op_nimbus_ctx_service_lookup",
+    "op_nimbus_cf_kv_get",
+    "op_nimbus_cf_kv_put",
+    "op_nimbus_cf_kv_delete",
+    "op_nimbus_cf_kv_list",
+  ]);
+  return function __nimbusBindHostCallPayload(opName, payload) {
+    if (!contextHostCallOps.has(opName)) {
+      return payload;
+    }
+    if (payload !== null && payload !== undefined && (typeof payload !== "object" || Array.isArray(payload))) {
+      throw new Error(`Nimbus runtime host-call payload must be an object for ${opName}`);
+    }
+    const currentSessionId = __nimbusCurrentHostCallSessionId();
+    const providedSessionId = payload?.host_call_session_id;
+    if (
+      providedSessionId !== undefined &&
+      providedSessionId !== null &&
+      providedSessionId !== "" &&
+      providedSessionId !== currentSessionId
+    ) {
+      throw new Error(`Nimbus runtime host-call session is stale or forged for ${opName}`);
+    }
+    return {
+      ...(payload ?? {}),
+      host_call_session_id: currentSessionId,
+    };
   };
-};
+})();
 
 // The host-call transports carry trust decisions the runtime acts on (e.g. the
 // host-authoritative callee lane for nested ctx.run* dispatch), so the globals
@@ -179,36 +233,59 @@ Object.defineProperty(globalThis, "__nimbusAsyncHostValue", {
   },
 });
 
-let __nimbusWaitUntilQueue = [];
-
-globalThis.__nimbusWaitUntil = function(promise) {
-  if (promise === null || promise === undefined || typeof promise.then !== "function") {
-    throw new TypeError("Nimbus waitUntil requires a Promise-like value");
-  }
-  const markPending = __nimbusCoreOps.op_nimbus_runtime_wait_until_pending;
-  if (typeof markPending === "function") {
-    markPending();
-  }
-  const tracked = Promise.resolve(promise);
-  tracked.catch(() => {});
-  __nimbusWaitUntilQueue.push(tracked);
-};
-
-globalThis.__nimbusDrainWaitUntil = async function() {
-  let rejected = 0;
-  while (__nimbusWaitUntilQueue.length > 0) {
-    const batch = __nimbusWaitUntilQueue;
-    __nimbusWaitUntilQueue = [];
-    const settled = await Promise.allSettled(batch);
-    for (const result of settled) {
-      if (result.status === "rejected") {
-        rejected++;
+// HG6: __nimbusWaitUntilQueue used to be a bare top-level `let` — writable
+// AND readable by bare name from guest MODULE code (same global-lexical
+// reachability class as HG3's op-table alias above), and the three hooks
+// below were plain `globalThis.X = ...` assignments — guest-reassignable
+// slots. A guest could either replace the queue outright (silently dropping
+// promises the host believes are tracked for wait-until draining —
+// background work vanishes without ever rejecting) or swap in an impostor
+// hook. The queue is now private to this block; only the three hooks cross
+// out, installed as non-writable, non-configurable slots.
+{
+  let queue = [];
+  Object.defineProperty(globalThis, "__nimbusWaitUntil", {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: function __nimbusWaitUntil(promise) {
+      if (promise === null || promise === undefined || typeof promise.then !== "function") {
+        throw new TypeError("Nimbus waitUntil requires a Promise-like value");
       }
-    }
-  }
-  return { rejected };
-};
-
-globalThis.__nimbusResetWaitUntil = function() {
-  __nimbusWaitUntilQueue = [];
-};
+      const markPending = __nimbusCoreOps.op_nimbus_runtime_wait_until_pending;
+      if (typeof markPending === "function") {
+        markPending();
+      }
+      const tracked = Promise.resolve(promise);
+      tracked.catch(() => {});
+      queue.push(tracked);
+    },
+  });
+  Object.defineProperty(globalThis, "__nimbusDrainWaitUntil", {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: async function __nimbusDrainWaitUntil() {
+      let rejected = 0;
+      while (queue.length > 0) {
+        const batch = queue;
+        queue = [];
+        const settled = await Promise.allSettled(batch);
+        for (const result of settled) {
+          if (result.status === "rejected") {
+            rejected++;
+          }
+        }
+      }
+      return { rejected };
+    },
+  });
+  Object.defineProperty(globalThis, "__nimbusResetWaitUntil", {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: function __nimbusResetWaitUntil() {
+      queue = [];
+    },
+  });
+}

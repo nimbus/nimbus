@@ -3,9 +3,9 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 import {
+  invokeCloudFunctionsBundle,
   readCloudFunctionsFile,
   readCloudFunctionsJson,
   runCli,
@@ -78,7 +78,13 @@ export const cleanupUser = onDocumentDeleted(
   );
 
   const runtimeBundle = await readCloudFunctionsFile(appDir, "bundle.mjs");
-  assert.match(runtimeBundle, /globalThis\.__nimbusInvoke = createInvocationDispatcher/);
+  // HG0 (Band B-FIX, CAPTURE-ORDERING): __nimbusInvoke is installed via
+  // Object.defineProperty (configurable:false, writable:false), not a plain
+  // assignment — see cloudFunctionsEntrySource in runtime_sources.mjs.
+  assert.match(
+    runtimeBundle,
+    /Object\.defineProperty\(globalThis, "__nimbusInvoke", \{\s*value: createInvocationDispatcher/,
+  );
   assert.match(runtimeBundle, /defineFirestoreDocumentTarget/);
 
   const runtimeBundleHash = (await readCloudFunctionsFile(appDir, "bundle.sha256")).trim();
@@ -204,12 +210,6 @@ export const inspectWrittenUser = onDocumentWritten("users/{userId}", async (eve
   const result = runCli(appDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  delete globalThis.__nimbusCloudFunctionsState;
-  delete globalThis.__nimbusInvoke;
-  await import(
-    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
-  );
-
   const rawTime = 1712345678901;
   const commonIdentity = {
     id: "evt-users-alice",
@@ -225,12 +225,29 @@ export const inspectWrittenUser = onDocumentWritten("users/{userId}", async (eve
     },
   };
 
-  assert.deepEqual(
-    await globalThis.__nimbusInvoke({
+  const { results } = await invokeCloudFunctionsBundle(appDir, [
+    {
       function_name: "exports.inspectCreatedUser",
       args: sampleCreatedTriggerEvent({ time: rawTime }),
-    }),
+    },
     {
+      function_name: "exports.inspectDeletedUser",
+      args: sampleDeletedTriggerEvent({ time: rawTime }),
+    },
+    {
+      function_name: "exports.inspectUpdatedUser",
+      args: sampleUpdatedTriggerEvent({ time: rawTime }),
+    },
+    {
+      function_name: "exports.inspectWrittenUser",
+      args: sampleWrittenTriggerEvent({ time: rawTime }),
+    },
+  ]);
+  const [created, deleted, updated, written] = results;
+
+  assert.deepEqual(created, {
+    ok: true,
+    value: {
       ...commonIdentity,
       type: "google.cloud.firestore.document.v1.created",
       exists: true,
@@ -241,14 +258,11 @@ export const inspectWrittenUser = onDocumentWritten("users/{userId}", async (eve
         },
       },
     },
-  );
+  });
 
-  assert.deepEqual(
-    await globalThis.__nimbusInvoke({
-      function_name: "exports.inspectDeletedUser",
-      args: sampleDeletedTriggerEvent({ time: rawTime }),
-    }),
-    {
+  assert.deepEqual(deleted, {
+    ok: true,
+    value: {
       ...commonIdentity,
       type: "google.cloud.firestore.document.v1.deleted",
       exists: true,
@@ -259,14 +273,11 @@ export const inspectWrittenUser = onDocumentWritten("users/{userId}", async (eve
         },
       },
     },
-  );
+  });
 
-  assert.deepEqual(
-    await globalThis.__nimbusInvoke({
-      function_name: "exports.inspectUpdatedUser",
-      args: sampleUpdatedTriggerEvent({ time: rawTime }),
-    }),
-    {
+  assert.deepEqual(updated, {
+    ok: true,
+    value: {
       ...commonIdentity,
       type: "google.cloud.firestore.document.v1.updated",
       beforeExists: true,
@@ -284,14 +295,11 @@ export const inspectWrittenUser = onDocumentWritten("users/{userId}", async (eve
         },
       },
     },
-  );
+  });
 
-  assert.deepEqual(
-    await globalThis.__nimbusInvoke({
-      function_name: "exports.inspectWrittenUser",
-      args: sampleWrittenTriggerEvent({ time: rawTime }),
-    }),
-    {
+  assert.deepEqual(written, {
+    ok: true,
+    value: {
       ...commonIdentity,
       type: "google.cloud.firestore.document.v1.written",
       beforeExists: true,
@@ -309,7 +317,7 @@ export const inspectWrittenUser = onDocumentWritten("users/{userId}", async (eve
         },
       },
     },
-  );
+  });
 }
 
 async function testFrameworkPackageTargetsUseExplicitBindingManifest() {
@@ -442,14 +450,8 @@ functions.http("fallback", async (req, res) => ({
   const result = runCli(appDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  delete globalThis.__nimbusCloudFunctionsState;
-  delete globalThis.__nimbusInvoke;
-  await import(
-    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
-  );
-
-  assert.deepEqual(
-    await globalThis.__nimbusInvoke({
+  const { results } = await invokeCloudFunctionsBundle(appDir, [
+    {
       function_name: "registry.helloWorld",
       args: {
         method: "POST",
@@ -467,8 +469,25 @@ functions.http("fallback", async (req, res) => ({
         },
         raw_body: "{\"hello\":\"world\"}",
       },
-    }),
+    },
     {
+      function_name: "registry.fallback",
+      args: {
+        method: "GET",
+        path: "/fallback",
+        original_url: "http://localhost/fallback",
+        query: {},
+        headers: {},
+        body: null,
+        raw_body: "",
+      },
+    },
+  ]);
+  const [helloWorld, fallback] = results;
+
+  assert.deepEqual(helloWorld, {
+    ok: true,
+    value: {
       status: 201,
       headers: {
         "content-type": "application/json",
@@ -489,22 +508,11 @@ functions.http("fallback", async (req, res) => ({
         rawBody: "{\"hello\":\"world\"}",
       },
     },
-  );
+  });
 
-  assert.deepEqual(
-    await globalThis.__nimbusInvoke({
-      function_name: "registry.fallback",
-      args: {
-        method: "GET",
-        path: "/fallback",
-        original_url: "http://localhost/fallback",
-        query: {},
-        headers: {},
-        body: null,
-        raw_body: "",
-      },
-    }),
-    {
+  assert.deepEqual(fallback, {
+    ok: true,
+    value: {
       status: 200,
       headers: {
         "content-type": "application/json",
@@ -515,7 +523,7 @@ functions.http("fallback", async (req, res) => ({
         body: null,
       },
     },
-  );
+  });
 }
 
 async function testFrameworkCloudEventTargetsMaterializeStandardCloudEventShape() {
@@ -556,19 +564,16 @@ functions.cloudEvent("syncUser", async (event) => ({
   const result = runCli(appDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  delete globalThis.__nimbusCloudFunctionsState;
-  delete globalThis.__nimbusInvoke;
-  await import(
-    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
-  );
-
   const rawTime = 1712345678901;
-  assert.deepEqual(
-    await globalThis.__nimbusInvoke({
+  const { results: [syncUser] } = await invokeCloudFunctionsBundle(appDir, [
+    {
       function_name: "registry.syncUser",
       args: sampleWrittenTriggerEvent({ time: rawTime }),
-    }),
-    {
+    },
+  ]);
+  assert.deepEqual(syncUser, {
+    ok: true,
+    value: {
       id: "evt-users-alice",
       source: "//firestore.googleapis.com/projects/demo-project/databases/(default)",
       specversion: "1.0",
@@ -593,7 +598,7 @@ functions.cloudEvent("syncUser", async (event) => ({
         },
       },
     },
-  );
+  });
 }
 
 async function testFirebaseOnRequestTargetsUseSharedHttpPathContract() {
@@ -661,14 +666,8 @@ export const empty = onRequest({}, async () => ({ ok: true }));
     ],
   );
 
-  delete globalThis.__nimbusCloudFunctionsState;
-  delete globalThis.__nimbusInvoke;
-  await import(
-    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
-  );
-
-  assert.deepEqual(
-    await globalThis.__nimbusInvoke({
+  const { results: [hello] } = await invokeCloudFunctionsBundle(appDir, [
+    {
       function_name: "exports.hello",
       args: {
         method: "POST",
@@ -686,8 +685,11 @@ export const empty = onRequest({}, async () => ({ ok: true }));
         },
         raw_body: "{\"hello\":\"world\"}",
       },
-    }),
-    {
+    },
+  ]);
+  assert.deepEqual(hello, {
+    ok: true,
+    value: {
       status: 202,
       headers: {
         "content-type": "application/json",
@@ -708,7 +710,7 @@ export const empty = onRequest({}, async () => ({ ok: true }));
         header: "present",
       },
     },
-  );
+  });
 
   const invalidOptionsAppDir = await createFirebaseProjectFixture({
     "src/index.ts": `
@@ -793,14 +795,8 @@ export const empty = onCall({}, async () => null);
     ],
   );
 
-  delete globalThis.__nimbusCloudFunctionsState;
-  delete globalThis.__nimbusInvoke;
-  await import(
-    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
-  );
-
-  assert.deepEqual(
-    await globalThis.__nimbusInvoke({
+  const { results } = await invokeCloudFunctionsBundle(appDir, [
+    {
       function_name: "exports.hello",
       args: {
         method: "POST",
@@ -832,8 +828,36 @@ export const empty = onCall({}, async () => null);
           instance_id_token: "iid-token",
         },
       },
-    }),
+    },
     {
+      function_name: "exports.hello",
+      args: {
+        method: "POST",
+        path: "/hello",
+        original_url: "http://localhost/hello",
+        query: {},
+        headers: {
+          "content-type": "application/json",
+        },
+        body: {
+          data: {
+            fail: true,
+          },
+        },
+        raw_body: "{\"data\":{\"fail\":true}}",
+        callable: {
+          data: {
+            fail: true,
+          },
+        },
+      },
+    },
+  ]);
+  const [succeeded, failed] = results;
+
+  assert.deepEqual(succeeded, {
+    ok: true,
+    value: {
       status: 200,
       headers: {
         "content-type": "application/json",
@@ -859,33 +883,11 @@ export const empty = onCall({}, async () => null);
         },
       },
     },
-  );
+  });
 
-  assert.deepEqual(
-    await globalThis.__nimbusInvoke({
-      function_name: "exports.hello",
-      args: {
-        method: "POST",
-        path: "/hello",
-        original_url: "http://localhost/hello",
-        query: {},
-        headers: {
-          "content-type": "application/json",
-        },
-        body: {
-          data: {
-            fail: true,
-          },
-        },
-        raw_body: "{\"data\":{\"fail\":true}}",
-        callable: {
-          data: {
-            fail: true,
-          },
-        },
-      },
-    }),
-    {
+  assert.deepEqual(failed, {
+    ok: true,
+    value: {
       status: 400,
       headers: {
         "content-type": "application/json",
@@ -901,7 +903,7 @@ export const empty = onCall({}, async () => null);
         },
       },
     },
-  );
+  });
 }
 
 async function testFirebaseDeferredRootSurfaceAndCallableUnsupportedOptionsFailFast() {
@@ -965,19 +967,15 @@ export const inspectAdmin = onDocumentWritten("users/{userId}", async () => {
   const result = runCli(appDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  delete globalThis.__nimbusCloudFunctionsState;
-  delete globalThis.__nimbusAdminApps;
-  delete globalThis.__nimbusInvoke;
-  await import(
-    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
-  );
-
-  assert.deepEqual(
-    await globalThis.__nimbusInvoke({
+  const { results: [inspectAdmin] } = await invokeCloudFunctionsBundle(appDir, [
+    {
       function_name: "exports.inspectAdmin",
       args: sampleWrittenTriggerEvent({ time: 1712345678901 }),
-    }),
-    {
+    },
+  ]);
+  assert.deepEqual(inspectAdmin, {
+    ok: true,
+    value: {
       defaultAppName: "[DEFAULT]",
       defaultProjectId: "demo-project",
       beforeDelete: ["[DEFAULT]", "secondary"],
@@ -985,7 +983,7 @@ export const inspectAdmin = onDocumentWritten("users/{userId}", async () => {
       firestoreAppName: "[DEFAULT]",
       firestoreDatabaseId: "custom-db",
     },
-  );
+  });
 }
 
 async function testFirebaseAdminFirestoreDocumentOperationsUseCoveredHostBridge() {
@@ -1027,60 +1025,38 @@ export const inspectAdmin = onDocumentWritten("users/{userId}", async () => {
   const result = runCli(appDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  delete globalThis.__nimbusCloudFunctionsState;
-  delete globalThis.__nimbusAdminApps;
-  delete globalThis.__nimbusInvoke;
-  const hostCalls = [];
-  globalThis.__nimbusAsyncHostValue = async (opName, payload) => {
-    hostCalls.push({ opName, payload: JSON.parse(JSON.stringify(payload)) });
-    if (
-      opName === "op_nimbus_runtime_extension_call"
-      && payload?.operation === "firebase_admin.firestore.get_document"
-    ) {
-      return {
-        path: "users/alice",
-        id: "alice",
-        fields: {
-          profile: {
-            name: "before",
+  const { results: [inspectAdmin], hostCalls } = await invokeCloudFunctionsBundle(
+    appDir,
+    [
+      {
+        function_name: "exports.inspectAdmin",
+        args: sampleWrittenTriggerEvent({ time: 1712345678901 }),
+      },
+    ],
+    {
+      hostResponses: {
+        "firebase_admin.firestore.get_document": {
+          path: "users/alice",
+          id: "alice",
+          fields: {
+            profile: {
+              name: "before",
+            },
+            count: 1,
           },
-          count: 1,
+          create_time_ms: 11,
+          update_time_ms: 12,
         },
-        create_time_ms: 11,
-        update_time_ms: 12,
-      };
-    }
-    if (
-      opName === "op_nimbus_runtime_extension_call"
-      && payload?.operation === "firebase_admin.firestore.set_document"
-    ) {
-      return { write_time_ms: 101 };
-    }
-    if (
-      opName === "op_nimbus_runtime_extension_call"
-      && payload?.operation === "firebase_admin.firestore.update_document"
-    ) {
-      return { write_time_ms: 102 };
-    }
-    if (
-      opName === "op_nimbus_runtime_extension_call"
-      && payload?.operation === "firebase_admin.firestore.delete_document"
-    ) {
-      return { write_time_ms: 103 };
-    }
-    throw new Error(`unexpected host op ${opName}`);
-  };
-
-  await import(
-    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
+        "firebase_admin.firestore.set_document": { write_time_ms: 101 },
+        "firebase_admin.firestore.update_document": { write_time_ms: 102 },
+        "firebase_admin.firestore.delete_document": { write_time_ms: 103 },
+      },
+    },
   );
 
-  assert.deepEqual(
-    await globalThis.__nimbusInvoke({
-      function_name: "exports.inspectAdmin",
-      args: sampleWrittenTriggerEvent({ time: 1712345678901 }),
-    }),
-    {
+  assert.deepEqual(inspectAdmin, {
+    ok: true,
+    value: {
       beforeExists: true,
       beforeId: "alice",
       beforeName: "before",
@@ -1098,7 +1074,7 @@ export const inspectAdmin = onDocumentWritten("users/{userId}", async () => {
       updateWriteTime: 102,
       deleteWriteTime: 103,
     },
-  );
+  });
 
   assert.deepEqual(hostCalls, [
     {
@@ -1153,8 +1129,6 @@ export const inspectAdmin = onDocumentWritten("users/{userId}", async () => {
       },
     },
   ]);
-
-  delete globalThis.__nimbusAsyncHostValue;
 }
 
 async function testFirebaseAdminFirestoreDeferredOperationsFailFast() {
@@ -1180,34 +1154,37 @@ export const invalidDelete = onDocumentWritten("users/{userId}", async () => {
   const result = runCli(appDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  delete globalThis.__nimbusCloudFunctionsState;
-  delete globalThis.__nimbusAdminApps;
-  delete globalThis.__nimbusInvoke;
-  await import(
-    `${pathToFileURL(path.join(appDir, ".nimbus", "firebase", "bundle.mjs")).href}?t=${Date.now()}`
-  );
-
-  await assert.rejects(
-    () => globalThis.__nimbusInvoke({
+  const { results } = await invokeCloudFunctionsBundle(appDir, [
+    {
       function_name: "exports.invalidDoc",
       args: sampleWrittenTriggerEvent({ time: 1712345678901 }),
-    }),
+    },
+    {
+      function_name: "exports.invalidSet",
+      args: sampleWrittenTriggerEvent({ time: 1712345678901 }),
+    },
+    {
+      function_name: "exports.invalidDelete",
+      args: sampleWrittenTriggerEvent({ time: 1712345678901 }),
+    },
+  ]);
+  const [invalidDoc, invalidSet, invalidDelete] = results;
+
+  assert.equal(invalidDoc.ok, false);
+  assert.match(
+    invalidDoc.error.message,
     /collection\(\)\.doc\(\) requires an explicit document path/,
   );
 
-  await assert.rejects(
-    () => globalThis.__nimbusInvoke({
-      function_name: "exports.invalidSet",
-      args: sampleWrittenTriggerEvent({ time: 1712345678901 }),
-    }),
+  assert.equal(invalidSet.ok, false);
+  assert.match(
+    invalidSet.error.message,
     /DocumentReference\.set\(\) currently supports only set\(data\)/,
   );
 
-  await assert.rejects(
-    () => globalThis.__nimbusInvoke({
-      function_name: "exports.invalidDelete",
-      args: sampleWrittenTriggerEvent({ time: 1712345678901 }),
-    }),
+  assert.equal(invalidDelete.ok, false);
+  assert.match(
+    invalidDelete.error.message,
     /DocumentReference\.delete\(\) does not yet support delete options/,
   );
 }

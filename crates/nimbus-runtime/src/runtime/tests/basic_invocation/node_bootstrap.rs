@@ -990,3 +990,320 @@ export {};
         })
     );
 }
+
+/// HG7: `__nimbusRefreshNodeProcessCwd` (host/reset-called across warm-pool
+/// invocations) and `__nimbusPerfHooksBuiltin` (read fresh by the trusted
+/// builtin-module resolver, `module_loader/builtins/module_wiring.js`'s
+/// `getBuiltinModule`, on every guest `require("perf_hooks")`) used to be
+/// installed `{configurable: true, writable: false}`. `writable: false` alone
+/// only blocks a PLAIN assignment; `Object.defineProperty` with
+/// `configurable: true` still permits full property redefinition — the
+/// bypass this test exercises. Post-fix both slots are `{configurable:
+/// false, writable: false}`, so the redefinition attempt throws instead of
+/// silently swapping in an impostor that would otherwise ride into a later
+/// same-tenant invocation on a warm-pooled realm.
+#[tokio::test]
+async fn guest_cannot_bypass_hardened_node_hooks_via_configurable_defineproperty() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+
+globalThis.__nimbusInvoke = function () {
+  const originalCwdRefresh = globalThis.__nimbusRefreshNodeProcessCwd;
+  const originalPerfHooks = globalThis.__nimbusPerfHooksBuiltin;
+
+  // The bypass: configurable:true still permits Object.defineProperty to
+  // fully redefine the property even though writable:false blocks a plain
+  // assignment. Pre-fix both slots used exactly this vulnerable pattern.
+  let cwdRefreshDefineThrew = false;
+  try {
+    Object.defineProperty(globalThis, "__nimbusRefreshNodeProcessCwd", {
+      value: function () {
+        globalThis.__cwdImpostorCalled = true;
+      },
+      configurable: true,
+      writable: true,
+    });
+  } catch (_error) {
+    cwdRefreshDefineThrew = true;
+  }
+
+  let perfHooksDefineThrew = false;
+  try {
+    Object.defineProperty(globalThis, "__nimbusPerfHooksBuiltin", {
+      value: { performance: { now: () => -1 }, __impostor: true },
+      configurable: true,
+      writable: true,
+    });
+  } catch (_error) {
+    perfHooksDefineThrew = true;
+  }
+
+  // Simulate the host's per-invocation reset script actually calling the
+  // hook (what reset_bootstrap_invocation_state.js does), and a later
+  // require("perf_hooks") consulting the resolver — the two real trusted
+  // consumers of these slots.
+  globalThis.__nimbusRefreshNodeProcessCwd();
+  const perfHooksModule = require("node:perf_hooks");
+
+  const cwdRefreshDescriptor = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "__nimbusRefreshNodeProcessCwd",
+  );
+  const perfHooksDescriptor = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "__nimbusPerfHooksBuiltin",
+  );
+
+  return {
+    cwdRefreshDefineThrew,
+    perfHooksDefineThrew,
+    cwdRefreshIdentityStable: globalThis.__nimbusRefreshNodeProcessCwd === originalCwdRefresh,
+    perfHooksIdentityStable: globalThis.__nimbusPerfHooksBuiltin === originalPerfHooks,
+    cwdImpostorCalled: globalThis.__cwdImpostorCalled === true,
+    perfHooksRequireIsImpostor: perfHooksModule?.__impostor === true,
+    cwdRefreshWritable: cwdRefreshDescriptor.writable,
+    cwdRefreshConfigurable: cwdRefreshDescriptor.configurable,
+    perfHooksWritable: perfHooksDescriptor.writable,
+    perfHooksConfigurable: perfHooksDescriptor.configurable,
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let result = runtime
+        .invoke_bundle_for_tenant(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:list".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+            "tenant-a",
+        )
+        .await
+        .expect("bundle should execute");
+
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "cwdRefreshDefineThrew": true,
+            "perfHooksDefineThrew": true,
+            "cwdRefreshIdentityStable": true,
+            "perfHooksIdentityStable": true,
+            "cwdImpostorCalled": false,
+            "perfHooksRequireIsImpostor": false,
+            "cwdRefreshWritable": false,
+            "cwdRefreshConfigurable": false,
+            "perfHooksWritable": false,
+            "perfHooksConfigurable": false,
+        }),
+        "the configurable:true redefinition bypass must be closed for both hooks: {result}"
+    );
+}
+
+/// HG9: `__nimbusHiddenDenoGlobals`/`__nimbusHiddenNodeGlobals`'s SLOTS were
+/// already hardened (`writable: false, configurable: false`), but that only
+/// protects which object the slot points to — the object's OWN properties
+/// (`deno.core`, `hiddenNodeGlobals.Buffer`, …) were themselves installed
+/// `{configurable: true, writable: false}`, the same redefinition-bypass
+/// pattern as HG7. The trusted extension-transpiler prelude
+/// (`bootstrap/transpile.rs`'s injected `Deno` proxy) reads these properties
+/// straight off the live object on every lazily-transpiled internal Node
+/// extension script, on a warm-pooled realm, across invocations — so a guest
+/// that redefined `Deno.core` in invocation N would poison invocation N+1's
+/// trusted internal polyfill loading. Post-fix both objects are shallow-
+/// frozen (`Object.freeze`), closing every own-property redefinition path at
+/// once.
+#[tokio::test]
+async fn guest_cannot_poison_frozen_deno_and_node_globals_object_graphs_via_configurable_defineproperty()
+ {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = function () {
+  const deno = globalThis.Deno;
+  const hiddenNodeGlobals = globalThis.__nimbusHiddenNodeGlobals;
+
+  const originalDenoCore = deno.core;
+  const originalBuffer = hiddenNodeGlobals.Buffer;
+
+  const denoFrozenBefore = Object.isFrozen(deno);
+  const nodeGlobalsFrozenBefore = Object.isFrozen(hiddenNodeGlobals);
+
+  let denoCoreDefineThrew = false;
+  try {
+    Object.defineProperty(deno, "core", {
+      value: { ops: { __impostor: true } },
+      configurable: true,
+      writable: true,
+    });
+  } catch (_error) {
+    denoCoreDefineThrew = true;
+  }
+
+  let nodeGlobalsBufferDefineThrew = false;
+  try {
+    Object.defineProperty(hiddenNodeGlobals, "Buffer", {
+      value: function ImpostorBuffer() {},
+      configurable: true,
+      writable: true,
+    });
+  } catch (_error) {
+    nodeGlobalsBufferDefineThrew = true;
+  }
+
+  return {
+    denoFrozenBefore,
+    nodeGlobalsFrozenBefore,
+    denoCoreDefineThrew,
+    nodeGlobalsBufferDefineThrew,
+    denoCoreIdentityStable: deno.core === originalDenoCore,
+    nodeGlobalsBufferIdentityStable: hiddenNodeGlobals.Buffer === originalBuffer,
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let result = runtime
+        .invoke_bundle_for_tenant(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:list".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+            "tenant-a",
+        )
+        .await
+        .expect("bundle should execute");
+
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "denoFrozenBefore": true,
+            "nodeGlobalsFrozenBefore": true,
+            "denoCoreDefineThrew": true,
+            "nodeGlobalsBufferDefineThrew": true,
+            "denoCoreIdentityStable": true,
+            "nodeGlobalsBufferIdentityStable": true,
+        }),
+        "the configurable:true redefinition bypass on the value graphs behind \
+         both hardened slots must be closed: {result}"
+    );
+}
+
+/// Finding 1 (runtime-guest-trust-global-hardening, structural-test sweep):
+/// `globalThis.Deno`'s SLOT was installed `configurable:true` even though
+/// `Object.freeze(deno)` closed the value graph — the same bare-name
+/// redefinition-bypass class HG0/HG1/HG7 closed for the other trust globals.
+/// A guest could `Object.defineProperty(globalThis, "Deno", {value:
+/// impostor, configurable:true, writable:true})` and swap the whole binding
+/// for a later same-tenant invocation on a warm-pooled Node realm — the
+/// trusted extension-transpiler prelude (`bootstrap/transpile.rs`) and the
+/// `deno_host_call_transport.js` transports both resolve `Deno`/`Deno.core`
+/// by bare name. Post-fix the slot is `configurable:false`.
+#[tokio::test]
+async fn guest_cannot_swap_hardened_deno_slot_via_configurable_defineproperty() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = function () {
+  const originalDeno = globalThis.Deno;
+
+  let denoSwapDefineThrew = false;
+  try {
+    Object.defineProperty(globalThis, "Deno", {
+      value: { __impostor: true },
+      configurable: true,
+      writable: true,
+    });
+  } catch (_error) {
+    denoSwapDefineThrew = true;
+  }
+
+  const denoDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Deno");
+
+  return {
+    denoSwapDefineThrew,
+    denoIdentityStable: globalThis.Deno === originalDeno,
+    denoIsImpostor: globalThis.Deno?.__impostor === true,
+    denoWritable: denoDescriptor.writable,
+    denoConfigurable: denoDescriptor.configurable,
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let result = runtime
+        .invoke_bundle_for_tenant(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:list".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+            "tenant-a",
+        )
+        .await
+        .expect("bundle should execute");
+
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "denoSwapDefineThrew": true,
+            "denoIdentityStable": true,
+            "denoIsImpostor": false,
+            "denoWritable": false,
+            "denoConfigurable": false,
+        }),
+        "the configurable:true whole-binding swap on globalThis.Deno must be closed: {result}"
+    );
+}

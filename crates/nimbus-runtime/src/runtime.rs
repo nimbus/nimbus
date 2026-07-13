@@ -19,6 +19,7 @@ use crate::watchdog::WatchdogTimer;
 
 pub(crate) mod bootstrap;
 pub(crate) mod bundle;
+mod captured_dispatch;
 mod classify;
 mod cooperative;
 pub(crate) mod driver;
@@ -117,6 +118,8 @@ mod tests {
 
     mod basic_invocation;
     mod bundle_integrity;
+    mod capture_ordering;
+    mod captured_dispatch;
     mod cooperative;
     mod host_bridge;
     mod locker;

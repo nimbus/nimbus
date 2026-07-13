@@ -902,6 +902,172 @@ export {};
     watchdog.shutdown();
 }
 
+pub(super) const LEDGER5_HOST_CALL_OPS_SET_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-ledger5-host-call-ops-set-not-guest-reachable",
+        "cooperative-host-call-session",
+        "Band B-FIX LEDGER MISS: __nimbusContextHostCallOps is closure-private, so a guest cannot \
+         clear it to disable host-call-session stamping for every op the isolate will ever dispatch \
+         again",
+        "runtime::tests::cooperative::ledger5_host_call_ops_set_not_guest_reachable_subprocess",
+    );
+
+#[test]
+fn ledger5_host_call_ops_set_not_guest_reachable() {
+    run_v8_sensitive_runtime_test_in_subprocess(LEDGER5_HOST_CALL_OPS_SET_CASE);
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate cooperative locker V8 state"]
+fn ledger5_host_call_ops_set_not_guest_reachable_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(ledger5_host_call_ops_set_not_guest_reachable_inner());
+}
+
+async fn ledger5_host_call_ops_set_not_guest_reachable_inner() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function () {
+  // Band B-FIX LEDGER MISS: before the fix, this Set was a bare top-level
+  // `const` in the classic-script global-lexical environment — reachable by
+  // name from guest module code (same class as HG3's op-table alias). A
+  // guest could call `.clear()` on it to disable host-call-session stamping
+  // for every context host-call op, forever, for the rest of this warm
+  // isolate's life. The fix moves the Set into an IIFE closure, so the bare
+  // name must no longer resolve at all.
+  let clearThrew = false;
+  let clearErrorIsReferenceError = false;
+  try {
+    // eslint-disable-next-line no-undef
+    __nimbusContextHostCallOps.clear();
+  } catch (error) {
+    clearThrew = true;
+    clearErrorIsReferenceError = error instanceof ReferenceError;
+  }
+
+  // Even attempting the clear must not have disabled session stamping: a
+  // forged session on a context host-call op must still be rejected by the
+  // host, exactly like the sibling PIR4 case.
+  let forgedRejected = false;
+  let forgedMessage = "";
+  try {
+    await globalThis.__nimbusAsyncHostValue("op_nimbus_document_get", {
+      table: "messages",
+      id: "doc-1",
+      host_call_session_id: "forged-session",
+    });
+  } catch (error) {
+    forgedRejected = true;
+    forgedMessage = String(error && error.message ? error.message : error);
+  }
+
+  return { clearThrew, clearErrorIsReferenceError, forgedRejected, forgedMessage };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let request = cooperative_query_request("messages:ledger5");
+    let host = Arc::new(ImmediateRecordingAsyncHost::default());
+    let runtime_owner = NimbusRuntime::with_policy(
+        host.clone(),
+        cooperative_warm_pool_runtime_test_policy(),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
+    let watchdog = WatchdogTimer::new();
+    let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
+    let mut permit = SharedInvocationPermit::new(
+        runtime_owner.policy(),
+        Some("tenant-a".to_string()),
+        None,
+        false,
+        None,
+    );
+    permit
+        .acquire_initial(std::time::Instant::now())
+        .await
+        .expect("permit should admit invocation");
+    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+
+    let mut slot = runtime_owner
+        .start_cooperative_locker_runtime_slot(
+            &mut v8_runtime_pool,
+            CooperativeRuntimeSlotStart {
+                invocation: RuntimeInvocationExecution {
+                    watchdog: watchdog.clone(),
+                    bundle,
+                    request: request.clone(),
+                    context: context.clone(),
+                    execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
+                        runtime_owner.policy().as_ref(),
+                        &request,
+                        &context,
+                    ),
+                    external_cancellation: None,
+                    response_ready_tx: None,
+                    permit: permit.clone(),
+                },
+                activity_signal,
+            },
+        )
+        .await
+        .expect("cooperative locker slot should start");
+
+    wait_until_slot_completed_without_external_release(
+        &mut slot,
+        LEDGER5_HOST_CALL_OPS_SET_CASE,
+        "guest __nimbusContextHostCallOps.clear() attempt and forged-session dispatch should complete",
+    )
+    .await;
+
+    let result = slot
+        .take_result()
+        .expect("completed slot should retain its result");
+    assert_eq!(
+        result.get("clearThrew").and_then(Value::as_bool),
+        Some(true),
+        "guest access to __nimbusContextHostCallOps must throw (name not reachable): {result}"
+    );
+    assert_eq!(
+        result
+            .get("clearErrorIsReferenceError")
+            .and_then(Value::as_bool),
+        Some(true),
+        "guest access to __nimbusContextHostCallOps must fail as a ReferenceError, proving the Set \
+         is closure-private rather than merely non-writable: {result}"
+    );
+    assert_eq!(
+        result.get("forgedRejected").and_then(Value::as_bool),
+        Some(true),
+        "forged host-call session must still be rejected after the guest's clear attempt: {result}"
+    );
+    let forged_message = result
+        .get("forgedMessage")
+        .and_then(Value::as_str)
+        .expect("rejection should return an error message");
+    assert!(
+        forged_message.contains("stale or forged"),
+        "unexpected forged-session rejection message: {forged_message}"
+    );
+    assert!(
+        host.calls().is_empty(),
+        "forged host-call session must be rejected before host dispatch even after the guest's \
+         clear attempt"
+    );
+    assert!(permit.finish_invocation().await.is_empty());
+    watchdog.shutdown();
+}
+
 #[test]
 fn rec3_query_write_effect_violation_rejects_before_host_dispatch() {
     run_v8_sensitive_runtime_test_in_subprocess(REC3_QUERY_WRITE_EFFECT_VIOLATION_CASE);

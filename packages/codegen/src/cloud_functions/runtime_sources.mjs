@@ -32,7 +32,19 @@ ${modules.join(",\n")}
   ...collectRegisteredFrameworkTargets(),
 ];
 export const __nimbusTargets = __nimbusCollectedTargets.map((target) => target.target);
-globalThis.__nimbusInvoke = createInvocationDispatcher(__nimbusCollectedTargets);
+// HG0 (Band B-FIX, CAPTURE-ORDERING): the codebase entrypoints above are
+// eager static imports, so their top-level bodies (including anything queued
+// via queueMicrotask) already ran before this line. Object.defineProperty
+// with configurable:false, writable:false closes the remaining window: a
+// microtask queued during that eager import that would otherwise fire after
+// this assignment (but before the host's post-drain capture in
+// captured_dispatch.rs) now throws instead of installing an impostor.
+Object.defineProperty(globalThis, "__nimbusInvoke", {
+  value: createInvocationDispatcher(__nimbusCollectedTargets),
+  configurable: false,
+  enumerable: false,
+  writable: false,
+});
 
 export {};
 `;

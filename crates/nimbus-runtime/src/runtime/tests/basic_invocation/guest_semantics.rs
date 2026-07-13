@@ -625,6 +625,90 @@ export {};
     assert_eq!(result["hookStaysHostFrozen"], true, "{result}");
 }
 
+/// HG1: `__nimbusCreateContext` builds the whole invocation ctx (auth, db,
+/// scheduler, nested-call capabilities). Before the fix it was plain-assigned to
+/// `globalThis` and only `Object.freeze`'d (function object frozen, slot still
+/// writable/configurable), so a guest handler could reassign or delete the
+/// global and redirect context construction to an impostor. The slot is now
+/// installed non-writable + non-configurable at bootstrap; guest reassignment,
+/// redefinition, and deletion all throw in module strict mode and the real
+/// factory keeps building the ctx.
+#[tokio::test]
+async fn convex_semantics_guest_cannot_replace_create_context_factory() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let bundle = r#"
+let assignError = null;
+let defineError = null;
+let deleteError = null;
+try {
+  globalThis.__nimbusCreateContext = () => ({ __impostor: true });
+} catch (error) {
+  assignError = String(error);
+}
+try {
+  Object.defineProperty(globalThis, "__nimbusCreateContext", {
+    value: () => ({ __impostor: true }),
+  });
+} catch (error) {
+  defineError = String(error);
+}
+try {
+  delete globalThis.__nimbusCreateContext;
+} catch (error) {
+  deleteError = String(error);
+}
+
+globalThis.__nimbusInvoke = async function (request) {
+  // Build a ctx AFTER the tamper attempts. If the slot were still reassignable,
+  // this would resolve to the impostor and expose no real capability surface.
+  const ctx = globalThis.__nimbusCreateContext({ request });
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "__nimbusCreateContext");
+  return {
+    assignError,
+    defineError,
+    deleteError,
+    ctxIsImpostor: ctx.__impostor === true,
+    ctxHasAuth: typeof ctx.auth?.getUserIdentity === "function",
+    ctxHasDb: typeof ctx.db?.get === "function",
+    slotWritable: descriptor?.writable,
+    slotConfigurable: descriptor?.configurable,
+  };
+};
+
+export {};
+"#;
+    let result = invoke_convex_semantics_bundle(bundle, &query_request("messages:list")).await;
+
+    for field in ["assignError", "defineError", "deleteError"] {
+        assert!(
+            result[field]
+                .as_str()
+                .is_some_and(|message| message.contains("TypeError")),
+            "guest attempt to replace the ctx factory must throw ({field}): {result}"
+        );
+    }
+    assert_eq!(
+        result["ctxIsImpostor"], false,
+        "the real (host-held) __nimbusCreateContext must build the ctx, not a guest impostor: {result}"
+    );
+    assert_eq!(
+        result["ctxHasAuth"], true,
+        "the real ctx must expose the auth surface: {result}"
+    );
+    assert_eq!(
+        result["ctxHasDb"], true,
+        "the real ctx must expose the db surface: {result}"
+    );
+    assert_eq!(
+        result["slotWritable"], false,
+        "the __nimbusCreateContext slot must be non-writable: {result}"
+    );
+    assert_eq!(
+        result["slotConfigurable"], false,
+        "the __nimbusCreateContext slot must be non-configurable: {result}"
+    );
+}
+
 #[tokio::test]
 async fn convex_semantics_als_detachment_survives_guest_tampering() {
     let _guard = acquire_basic_invocation_suite_lock().await;
@@ -642,12 +726,12 @@ try {
   // non-writable: the tamper attempt must not change routing behavior
 }
 
-globalThis.__nimbusInvokeNamedLocal = async function () {
+async function invokeNamedLocal() {
   return storage.getStore()?.tag ?? "detached";
-};
+}
 
 globalThis.__nimbusInvoke = async function (request) {
-  const ctx = globalThis.__nimbusCreateContext({ request });
+  const ctx = globalThis.__nimbusCreateContext({ request, invokeNamedLocal });
   const observed = await storage.run({ tag: "caller" }, () =>
     ctx.runQuery({ name: "child:read", visibility: "public" }, {}),
   );
@@ -659,7 +743,7 @@ export {};
     let result = invoke_convex_semantics_bundle_with_host(
         bundle,
         &query_request("messages:list"),
-        Arc::new(RecordingHost::resolving_lane("default")),
+        Arc::new(RecordingHost::resolving_as_locally_dispatchable()),
     )
     .await;
     assert_eq!(

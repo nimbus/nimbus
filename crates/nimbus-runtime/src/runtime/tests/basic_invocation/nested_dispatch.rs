@@ -4,12 +4,13 @@
 //! the callee's own lane and semantics profile.
 //!
 //! The local-vs-host decision is resolved HOST-side
-//! (`op_nimbus_ctx_resolve_callee_lane`): the runtime asks the host for the
-//! callee's authoritative lane and compares it against this isolate's frozen
-//! lane. There is deliberately no guest-reachable JavaScript lane lookup or
-//! registrar, so no handler body or eagerly-imported dependency can influence
-//! the decision. These tests exercise the honest routing paths and the
-//! adversarial tampering the removed JS mechanism used to be vulnerable to.
+//! (`op_nimbus_ctx_resolve_callee_lane`): the runtime asks the host whether the
+//! callee shares this isolate's lane and gets back a single boolean (HG4
+//! hardened — the host never hands out the underlying lane bucket). There is
+//! deliberately no guest-reachable JavaScript lane lookup or registrar, so no
+//! handler body or eagerly-imported dependency can influence the decision.
+//! These tests exercise the honest routing paths and the adversarial
+//! tampering the removed JS mechanism used to be vulnerable to.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -22,18 +23,23 @@ use crate::error::{NimbusRuntimeError, Result};
 use crate::host::{HostBridge, HostCallOperation, HostCallRequest};
 
 /// Test host that answers the callee-lane oracle from an explicit name→lane
-/// map (standing in for the server registry) and records every host call so the
-/// tests can assert which dispatch path a nested call took. Unknown callees
-/// resolve to JSON null, exactly as the real registry reports a function it does
-/// not own — the runtime must then fail safe to host dispatch.
+/// map (standing in for the server registry) compared against `current_lane`
+/// (standing in for this invocation's own lane, resolved host-side per HG4),
+/// and records every host call so the tests can assert which dispatch path a
+/// nested call took. Unknown callees resolve to `false` exactly as the real
+/// registry now does for a function it does not own — the runtime must then
+/// fail safe to host dispatch, and a guest cannot tell an unknown callee apart
+/// from a real cross-lane one (both answer `false`).
 struct LaneOracleHost {
+    current_lane: String,
     lanes: HashMap<String, String>,
     calls: Mutex<Vec<HostCallRequest>>,
 }
 
 impl LaneOracleHost {
-    fn new(lanes: &[(&str, &str)]) -> Self {
+    fn new(current_lane: &str, lanes: &[(&str, &str)]) -> Self {
         Self {
+            current_lane: current_lane.to_string(),
             lanes: lanes
                 .iter()
                 .map(|(name, lane)| ((*name).to_string(), (*lane).to_string()))
@@ -69,12 +75,11 @@ impl HostBridge for LaneOracleHost {
                             "callee-lane oracle payload is missing `name`".to_string(),
                         )
                     })?;
-                let value = self
+                let locally_dispatchable = self
                     .lanes
                     .get(name)
-                    .map(|lane| Value::String(lane.clone()))
-                    .unwrap_or(Value::Null);
-                Ok(serde_json::json!({ "status": "ok", "value": value }))
+                    .is_some_and(|lane| lane == &self.current_lane);
+                Ok(serde_json::json!({ "status": "ok", "value": locally_dispatchable }))
             }
             _ => Ok(serde_json::json!({
                 "operation": request.operation,
@@ -88,12 +93,14 @@ impl HostBridge for LaneOracleHost {
 /// runs the nested call named by `args.target` with the kind in
 /// `args.nested_kind`. The bundle publishes no lane lookup — the host owns that.
 const LANE_ROUTING_BUNDLE: &str = r#"
-globalThis.__nimbusInvokeNamedLocal = async function (request) {
+// HG2: invokeNamedLocal is a module-private binding passed into
+// __nimbusCreateContext as a call argument, never a guest-reachable global.
+const invokeNamedLocal = async function (request) {
   return { dispatched: "local", name: request.function_name };
 };
 
 globalThis.__nimbusInvoke = async function (request) {
-  const ctx = globalThis.__nimbusCreateContext({ request });
+  const ctx = globalThis.__nimbusCreateContext({ request, invokeNamedLocal });
   const nested =
     request.args.nested_kind === "mutation"
       ? await ctx.runMutation({ name: request.args.target, visibility: "public" }, {})
@@ -128,7 +135,7 @@ export {};
 // SyncHostValue(...)` deref hit the impostor; post-fix the property is frozen
 // non-writable, the reassignment is inert, and the real host answer wins.
 const TRANSPORT_HIJACK_TAMPER_BUNDLE: &str = r#"
-globalThis.__nimbusInvokeNamedLocal = async function (request) {
+const invokeNamedLocal = async function (request) {
   return { dispatched: "local", name: request.function_name };
 };
 
@@ -145,7 +152,7 @@ globalThis.__nimbusInvoke = async function (request) {
     "} catch (_e) {}\n"
   );
   attack();
-  const ctx = globalThis.__nimbusCreateContext({ request });
+  const ctx = globalThis.__nimbusCreateContext({ request, invokeNamedLocal });
   const nested = await ctx.runQuery({ name: request.args.target, visibility: "public" }, {});
   return {
     currentLane: globalThis.__nimbusRuntimeEnvironmentLane ?? null,
@@ -157,7 +164,7 @@ export {};
 "#;
 
 const LANE_ROUTING_TAMPER_BUNDLE: &str = r#"
-globalThis.__nimbusInvokeNamedLocal = async function (request) {
+const invokeNamedLocal = async function (request) {
   return { dispatched: "local", name: request.function_name };
 };
 
@@ -174,7 +181,76 @@ globalThis.__nimbusInvoke = async function (request) {
     "}\n"
   );
   attack();
-  const ctx = globalThis.__nimbusCreateContext({ request });
+  const ctx = globalThis.__nimbusCreateContext({ request, invokeNamedLocal });
+  const nested =
+    request.args.nested_kind === "mutation"
+      ? await ctx.runMutation({ name: request.args.target, visibility: "public" }, {})
+      : await ctx.runQuery({ name: request.args.target, visibility: "public" }, {});
+  return {
+    currentLane: globalThis.__nimbusRuntimeEnvironmentLane ?? null,
+    nested,
+  };
+};
+
+export {};
+"#;
+
+/// HG3, web/default lane: `post_bootstrap.js` deletes `globalThis.Deno` on this
+/// lane, so the only surviving reach to the op-functions table the trusted
+/// transports read from is the bare-name `__nimbusCoreOps` realm-lexical
+/// binding a sloppy-mode handler body can still resolve. Pre-fix that binding
+/// pointed at the SAME live object as `Deno.core.ops`; overwriting the
+/// callee-lane op slot on it forged the lane oracle's answer. Post-fix the
+/// transports read from a private frozen clone taken before any guest code
+/// ran, so this overwrite (however it's reached) never lands on their path.
+const CORE_OPS_TABLE_TAMPER_BUNDLE_WEB: &str = r#"
+const invokeNamedLocal = async function (request) {
+  return { dispatched: "local", name: request.function_name };
+};
+
+globalThis.__nimbusInvoke = async function (request) {
+  const attack = new Function(
+    "try {\n" +
+    "  __nimbusCoreOps.op_nimbus_ctx_resolve_callee_lane = function () {\n" +
+    "    return { status: 'ok', value: globalThis.__nimbusRuntimeEnvironmentLane };\n" +
+    "  };\n" +
+    "} catch (_e) {}\n"
+  );
+  attack();
+  const ctx = globalThis.__nimbusCreateContext({ request, invokeNamedLocal });
+  const nested =
+    request.args.nested_kind === "mutation"
+      ? await ctx.runMutation({ name: request.args.target, visibility: "public" }, {})
+      : await ctx.runQuery({ name: request.args.target, visibility: "public" }, {});
+  return {
+    currentLane: globalThis.__nimbusRuntimeEnvironmentLane ?? null,
+    nested,
+  };
+};
+
+export {};
+"#;
+
+/// HG3, Node-compat lane: same vector as [`CORE_OPS_TABLE_TAMPER_BUNDLE_WEB`],
+/// but through the more direct path available here — `post_bootstrap.js`
+/// retains `globalThis.Deno` on Node-compat lanes (guarded by
+/// `__nimbusRetainDenoForNodeLazyScripts`), so the op-functions table is
+/// reachable straight off `Deno.core.ops` with no bare-name alias needed.
+const CORE_OPS_TABLE_TAMPER_BUNDLE_NODE: &str = r#"
+const invokeNamedLocal = async function (request) {
+  return { dispatched: "local", name: request.function_name };
+};
+
+globalThis.__nimbusInvoke = async function (request) {
+  const attack = new Function(
+    "try {\n" +
+    "  Deno.core.ops.op_nimbus_ctx_resolve_callee_lane = function () {\n" +
+    "    return { status: 'ok', value: globalThis.__nimbusRuntimeEnvironmentLane };\n" +
+    "  };\n" +
+    "} catch (_e) {}\n"
+  );
+  attack();
+  const ctx = globalThis.__nimbusCreateContext({ request, invokeNamedLocal });
   const nested =
     request.args.nested_kind === "mutation"
       ? await ctx.runMutation({ name: request.args.target, visibility: "public" }, {})
@@ -204,10 +280,11 @@ async fn invoke_lane_routing_bundle(
     bundle_source: &str,
     limits: RuntimeLimits,
     request: &InvocationRequest,
+    current_lane: &str,
     lanes: &[(&str, &str)],
 ) -> (Value, Vec<HostCallOperation>) {
     let (_tempdir, bundle_path) = write_app_style_bundle(bundle_source);
-    let host = Arc::new(LaneOracleHost::new(lanes));
+    let host = Arc::new(LaneOracleHost::new(current_lane, lanes));
     let runtime = NimbusRuntime::with_policy(
         host.clone(),
         Arc::new(RuntimePolicy::new(limits)),
@@ -238,6 +315,7 @@ async fn nested_call_same_lane_stays_on_local_dispatch_in_default_isolate() {
         LANE_ROUTING_BUNDLE,
         convex_default_lane_limits(),
         &caller_request("child:defaultLane", "query"),
+        "default",
         APP_LANES,
     )
     .await;
@@ -268,6 +346,7 @@ async fn nested_call_to_node_callee_routes_through_host_dispatch_from_default_is
         LANE_ROUTING_BUNDLE,
         convex_default_lane_limits(),
         &caller_request("child:nodeLane", "query"),
+        "default",
         APP_LANES,
     )
     .await;
@@ -294,6 +373,7 @@ async fn nested_call_to_default_callee_routes_through_host_dispatch_from_node22_
         LANE_ROUTING_BUNDLE,
         RuntimeLimits::application_node22(),
         &caller_request("child:defaultLane", "mutation"),
+        "node",
         APP_LANES,
     )
     .await;
@@ -320,6 +400,7 @@ async fn nested_call_same_lane_stays_on_local_dispatch_in_node22_isolate() {
         LANE_ROUTING_BUNDLE,
         RuntimeLimits::application_node22(),
         &caller_request("child:nodeLane", "query"),
+        "node",
         APP_LANES,
     )
     .await;
@@ -349,6 +430,7 @@ async fn nested_call_to_unknown_callee_routes_through_host_dispatch() {
         LANE_ROUTING_BUNDLE,
         convex_default_lane_limits(),
         &caller_request("child:unknown", "query"),
+        "default",
         APP_LANES,
     )
     .await;
@@ -377,6 +459,7 @@ async fn guest_bare_identifier_tampering_cannot_force_cross_lane_local_dispatch(
         LANE_ROUTING_TAMPER_BUNDLE,
         convex_default_lane_limits(),
         &caller_request("child:nodeLane", "query"),
+        "default",
         APP_LANES,
     )
     .await;
@@ -409,6 +492,7 @@ async fn guest_transport_hijack_of_sync_host_value_cannot_force_cross_lane_local
         TRANSPORT_HIJACK_TAMPER_BUNDLE,
         convex_default_lane_limits(),
         &caller_request("child:nodeLane", "query"),
+        "default",
         APP_LANES,
     )
     .await;
@@ -438,6 +522,7 @@ async fn guest_tampering_leaves_same_lane_local_dispatch_intact() {
         LANE_ROUTING_TAMPER_BUNDLE,
         convex_default_lane_limits(),
         &caller_request("child:defaultLane", "query"),
+        "default",
         APP_LANES,
     )
     .await;
@@ -454,5 +539,208 @@ async fn guest_tampering_leaves_same_lane_local_dispatch_intact() {
     assert!(
         !operations.contains(&HostCallOperation::CtxRunQuery),
         "same-lane local dispatch must not fall back to host dispatch: {operations:?}"
+    );
+}
+
+#[tokio::test]
+async fn guest_core_ops_table_tampering_via_bare_binding_cannot_force_cross_lane_local_dispatch() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    // Third-layer vector (HG3): even with the transport globals frozen
+    // (`__nimbusSyncHostValue`/`__nimbusAsyncHostValue`), those transports
+    // still dereference the callee-lane op function fresh out of the
+    // op-functions table on every call. See CORE_OPS_TABLE_TAMPER_BUNDLE_WEB's
+    // doc comment for the exact reach path on this lane.
+    let (result, operations) = invoke_lane_routing_bundle(
+        CORE_OPS_TABLE_TAMPER_BUNDLE_WEB,
+        convex_default_lane_limits(),
+        &caller_request("child:nodeLane", "query"),
+        "default",
+        APP_LANES,
+    )
+    .await;
+
+    assert_eq!(result["currentLane"], "default");
+    assert_ne!(
+        result["nested"]["dispatched"], "local",
+        "op-table tampering via the bare binding must not force a node callee onto local dispatch: {result}"
+    );
+    assert!(
+        operations.contains(&HostCallOperation::CtxRunQuery),
+        "post-tamper cross-lane call must go through host dispatch: {operations:?}"
+    );
+    assert!(
+        !operations.contains(&HostCallOperation::CtxRuntimeEnterNestedCall),
+        "post-tamper cross-lane call must not enter the local-dispatch protocol: {operations:?}"
+    );
+}
+
+#[tokio::test]
+async fn guest_core_ops_table_tampering_via_retained_deno_cannot_force_cross_lane_local_dispatch() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    // Same vector as the bare-binding test above, but the most direct form of
+    // it: on Node-compat lanes Deno is retained, so the op-functions table is
+    // reachable straight off `Deno.core.ops` with no alias needed at all. Same
+    // fix, same result: the frozen private clone the transports actually read
+    // from was taken before any guest code ran and is unaffected.
+    let (result, operations) = invoke_lane_routing_bundle(
+        CORE_OPS_TABLE_TAMPER_BUNDLE_NODE,
+        RuntimeLimits::application_node22(),
+        &caller_request("child:defaultLane", "mutation"),
+        "node",
+        APP_LANES,
+    )
+    .await;
+
+    assert_eq!(result["currentLane"], "node");
+    assert_ne!(
+        result["nested"]["dispatched"], "local",
+        "op-table tampering via retained Deno must not force a default-lane callee onto local dispatch: {result}"
+    );
+    assert!(
+        operations.contains(&HostCallOperation::CtxRunMutation),
+        "post-tamper cross-lane call must go through host dispatch: {operations:?}"
+    );
+    assert!(
+        !operations.contains(&HostCallOperation::CtxRuntimeEnterNestedCall),
+        "post-tamper cross-lane call must not enter the local-dispatch protocol: {operations:?}"
+    );
+}
+
+#[tokio::test]
+async fn guest_core_ops_table_tampering_leaves_same_lane_local_dispatch_intact() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    // The fix must not over-correct: a genuine same-lane callee still takes
+    // the local-dispatch optimization even after the guest tampers with the
+    // op table, because the frozen private clone still holds the real op.
+    let (result, operations) = invoke_lane_routing_bundle(
+        CORE_OPS_TABLE_TAMPER_BUNDLE_WEB,
+        convex_default_lane_limits(),
+        &caller_request("child:defaultLane", "query"),
+        "default",
+        APP_LANES,
+    )
+    .await;
+
+    assert_eq!(result["currentLane"], "default");
+    assert_eq!(
+        result["nested"]["dispatched"], "local",
+        "a same-lane callee must still use local dispatch after op-table tampering: {result}"
+    );
+    assert!(
+        operations.contains(&HostCallOperation::CtxRuntimeEnterNestedCall),
+        "same-lane local dispatch must announce the nested call: {operations:?}"
+    );
+    assert!(
+        !operations.contains(&HostCallOperation::CtxRunQuery),
+        "same-lane local dispatch must not fall back to host dispatch: {operations:?}"
+    );
+}
+
+/// Answers every host call with a generic ok/null response. Used only by the
+/// HG8 test below, where the only thing that should ever fail the invocation
+/// is the stale-ctx guard itself (`guardStale` in nimbus_context_contract.js)
+/// — not this stand-in host.
+struct GenericOkHost;
+
+impl HostBridge for GenericOkHost {
+    fn call(&self, _request: HostCallRequest) -> Result<Value> {
+        Ok(serde_json::json!({ "status": "ok", "value": Value::Null }))
+    }
+}
+
+/// HG8: `__nimbusInvocationGeneration` used to be a bare top-level `let` —
+/// writable AND readable by bare name from guest MODULE code (the same
+/// global-lexical reachability class as HG3/HG6 above), which the stale-ctx
+/// guard (`guardStale` in `__nimbusCreateContextImpl`) relies on being
+/// host-authoritative. A guest handler could read the current generation
+/// before it captured a ctx, let the (simulated) host reset advance the real
+/// counter for what would be the "next" invocation, then reassign the bare
+/// binding back to the captured value — keeping its stale ctx object usable
+/// past the invocation it was created for. Post-fix the counter is
+/// closure-private (an IIFE, never installed under any name at all); the
+/// bare identifier does not exist, so a sloppy-mode read/write against it
+/// either throws (caught) or auto-vivifies an unrelated decoy `globalThis`
+/// property, and the real guard keeps enforcing staleness.
+///
+/// This simulates cross-invocation staleness within a single
+/// `__nimbusInvoke` call by driving the same generation-advance step the
+/// host's real per-invocation reset script runs, rather than standing up
+/// warm-pool reuse machinery — the generation counter does not care which
+/// side advances it. The advance step feature-detects the hardened slot so
+/// this bundle exercises the real attack (the forged reassignment below)
+/// against either code state instead of assuming the fix is already applied.
+const STALE_CTX_GENERATION_FORGERY_BUNDLE: &str = r#"
+globalThis.__nimbusInvoke = async function (request) {
+  const ctx = globalThis.__nimbusCreateContext({ request });
+  const captureCurrentGeneration = new Function(
+    "try { return __nimbusInvocationGeneration; } catch (_e) { return undefined; }"
+  );
+  const capturedGeneration = captureCurrentGeneration();
+  // What the host's reset_bootstrap_invocation_state.js does between real
+  // invocations, driven here to simulate the "next" invocation starting
+  // without a second Rust-level invoke.
+  const advanceGeneration = new Function(
+    "if (typeof globalThis.__nimbusAdvanceInvocationGeneration === 'function') {\n" +
+    "  globalThis.__nimbusAdvanceInvocationGeneration();\n" +
+    "} else {\n" +
+    "  try { __nimbusInvocationGeneration++; } catch (_e) {}\n" +
+    "}"
+  );
+  advanceGeneration();
+  // The attack: a sloppy-mode handler body (the shape real guest handlers
+  // run in) tries to force the counter back to the value `ctx` captured, to
+  // keep using it past its real lifetime.
+  const attack = new Function(
+    "try { __nimbusInvocationGeneration = arguments[0]; } catch (_e) {}"
+  );
+  attack(capturedGeneration);
+  let staleCtxUsable = false;
+  let staleCtxErrorMessage = null;
+  try {
+    await ctx.db.get("messages", "doc-1");
+    staleCtxUsable = true;
+  } catch (error) {
+    staleCtxErrorMessage = error?.message ?? String(error);
+  }
+  return { staleCtxUsable, staleCtxErrorMessage };
+};
+
+export {};
+"#;
+
+#[tokio::test]
+async fn guest_generation_forgery_cannot_defeat_stale_ctx_reuse_guard() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(STALE_CTX_GENERATION_FORGERY_BUNDLE);
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(GenericOkHost),
+        Arc::new(RuntimePolicy::new(convex_default_lane_limits())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let result = runtime
+        .invoke_bundle_for_tenant(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:get".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+            "tenant-a",
+        )
+        .await
+        .expect("generation-forgery bundle invocation should succeed");
+
+    assert_eq!(
+        result["staleCtxUsable"], false,
+        "generation forgery must not keep a stale ctx object usable: {result}"
+    );
+    assert_eq!(
+        result["staleCtxErrorMessage"],
+        "This ctx object is from a previous invocation and cannot be reused",
+        "the stale ctx guard must still fire after generation-forgery tampering: {result}"
     );
 }
