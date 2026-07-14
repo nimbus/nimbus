@@ -54,8 +54,12 @@ impl TenantRuntime {
     }
 
     pub(crate) fn release_mutation_worker(&self) -> bool {
+        // Pass the admission check as a CLOSURE so `release_worker` evaluates it
+        // after clearing `worker_running`. Passing `has_pending()` by value would
+        // read the admission queue before the store and reopen a lost-wakeup
+        // deadlock (see MutationJournalState::release_worker for the ordering).
         self.mutation_journal
-            .release_worker(self.mutation_admission.has_pending())
+            .release_worker(|| self.mutation_admission.has_pending())
     }
 
     pub(crate) fn record_mutation_worker_start(&self) {
