@@ -139,22 +139,16 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 6 - Demand-Gated Policy, Admission, Transport, And Density
 
-- `parallel-prepare-serial-commit-plan.md` - `proposed`. Owns the per-tenant
-  committer evolution toward Convex's parallel-prepare / serial-assign /
-  ordered-publish shape while keeping the single sequence. Slicing rule:
-  semantics/contract are pre-launch-priced and land wire-now; invisible
-  throughput machinery is measurement-gated. Wire-now set is PPSC0
-  (under-gate time-split + shadow-conflict instrumentation +
-  `PreparedCommit`), PPSC1 (server-side bounded conflict retry), PPSC2
-  (in-memory full-image conflict window + schema epochs + collection-group
-  dependency + assign-time stamping + adaptive batching), and PPSC3
-  (uniform first-committer-wins contract + typed Conflict error surface +
-  per-mutation caps on every adapter). PPSC4 (off-gate prepare pool) and
-  PPSC5 (pipelined ordered publish) are measurement-gated and may close as
-  not-worth-it; PPSC5 carries a standing provider-arm trigger — enterprise
-  DBaaS backends (postgres/mysql/remote-libsql) have Convex's
-  network-persistence shape, where in-order pipelining transfers directly.
-  Governing research:
+- `parallel-prepare-serial-commit-plan.md` - `active`. Owns the per-tenant
+  committer evolution to Convex's production architecture — parallel
+  prepare, tiny serial assign, ordered publish, transparent bounded retry,
+  per-mutation caps — while keeping the single sequence. Convex is the
+  north star; all bands execute in order PPSC0→PPSC5 with verification
+  gates (tests/benchmarks) proving each band before the next, and a Status
+  Ledger + paste-ready /goal drive autonomous execution. PPSC5's provider
+  arm serves enterprise DBaaS backends (postgres/mysql/remote-libsql),
+  which share Convex's network-persistence shape. Testability seams
+  (S0–S5) are binding scope. Governing research:
   `research/parallel-prepare-serial-commit-redesign.md`.
 - `layered-admission-control-plan.md` - `deferred`. Owns future layered
   admission experiments and EO8-style promotion work. Consumes the
