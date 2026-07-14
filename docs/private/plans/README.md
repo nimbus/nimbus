@@ -139,8 +139,20 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 6 - Demand-Gated Policy, Admission, Transport, And Density
 
+- `parallel-prepare-serial-commit-plan.md` - `proposed`. Owns the per-tenant
+  committer evolution toward Convex's parallel-prepare / serial-assign /
+  ordered-publish shape while keeping the single sequence. Wire-now set is
+  PPSC0 (under-gate time-split + shadow-conflict instrumentation +
+  `PreparedCommit` unification) and PPSC1 (server-side bounded conflict
+  retry — a Convex-parity gap that exists today); PPSC2 (off-gate prepare
+  pool + adaptive batching) is pre-launch-eligible; PPSC3/PPSC4 (OCC
+  generalization, pipelined publish) are gated on a named kill-criterion
+  and may close as not-worth-it. Governing research:
+  `research/parallel-prepare-serial-commit-redesign.md`.
 - `layered-admission-control-plan.md` - `deferred`. Owns future layered
-  admission experiments and EO8-style promotion work.
+  admission experiments and EO8-style promotion work. Consumes the
+  retry-amplification admission signal from
+  `parallel-prepare-serial-commit-plan.md` if that plan's gated bands run.
 - `native-transport-evolution-plan.md` - `proposed`. Owns benchmark-driven
   Nimbus-native transport evolution without replacing the established WebSocket
   protocol by default.
