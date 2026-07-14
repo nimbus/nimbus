@@ -1,0 +1,550 @@
+//! Concurrent write-throughput benchmark — measures the group-commit ceiling.
+//!
+//! WHY THIS EXISTS. The embedded-provider CRUD benchmark issues one mutation at
+//! a time (await, then issue the next), so the per-tenant journal worker only
+//! ever has a batch of 1 to commit — one fsync per write. That measures per-op
+//! durability latency, NOT the group-commit throughput, because Nimbus's journal
+//! worker coalesces up to `MUTATION_JOURNAL_BATCH_SIZE` (32) concurrently-queued
+//! mutations into a single fsync. To see that benefit you must present the
+//! worker with concurrent in-flight mutations.
+//!
+//! METHODOLOGY (canonical closed-loop concurrency sweep):
+//!   * CLOSED-LOOP load: a fixed pool of N async workers, each in a tight loop
+//!     {insert -> await durable ack -> repeat}, zero think time. In-flight
+//!     concurrency is pinned at N by construction — exactly the batch-formation
+//!     condition we want to characterize.
+//!   * GEOMETRIC LADDER over N (1,2,4,...,256) — we sweep to find the knee/peak
+//!     of the throughput-vs-concurrency curve rather than betting on one N.
+//!   * SINGLE TENANT: group commit coalesces PER TENANT, so all load drives one
+//!     journal worker. (A cross-tenant sweep is a different experiment.)
+//!   * N=1 IS THE SEQUENTIAL ANCHOR. The N=1 rung is, by definition, this
+//!     harness's one-op-at-a-time sequential path (batch size 1). Every higher-N
+//!     result is a speedup S(N)=X(N)/X(1) relative to it — which is what makes
+//!     the group-commit payoff a valid, workload-independent multiple. The
+//!     default CRUD workload replays the sequential CRUD baseline's shape
+//!     (schemaless "tasks" table, phased insert/update/delete over 300 docs,
+//!     same fields, no pre-seed), so N=1 should land NEAR the published ~2,661
+//!     mutations/s figure as a cross-check — not bit-identical (separate
+//!     harness, machine state), so treat a modest difference as expected.
+//!   * LITTLE'S LAW check per rung: N ~= X * R (concurrency = throughput x mean
+//!     latency). A rung where this fails by >~10% signals a measurement bug.
+//!   * STATISTICS match the house style: warmup rounds discarded, then R
+//!     measured rounds; report mean + median throughput, a two-sided Student-t
+//!     95% CI on the round means, and the coefficient of variation (CV). CV
+//!     above ~10% means the environment is too noisy to trust — fix it first.
+//!
+//! HONEST CAVEAT ON LATENCY. The p50/p95/p99 reported here are CLOSED-LOOP
+//! (queue) latencies. At saturated rungs they suffer coordinated omission and
+//! are NOT service-latency SLAs — read them as "how long a client waits at this
+//! concurrency," not as the engine's service time. A faithful SLA-latency number
+//! needs a separate open-loop / constant-rate run below Cmax (follow-up).
+//!
+//! Effective batch size (ops/fsync) is not measured directly here — that needs
+//! journal-worker fsync instrumentation (follow-up). The speedup S(N) is the
+//! implied fsync-amortization factor in the meantime.
+//!
+//! Env overrides (all optional):
+//!   NIMBUS_CWB_WORKLOAD=crud|insert           unit = insert+update+delete (default) or insert
+//!   NIMBUS_CWB_LADDER=1,2,4,8,...              concurrency ladder (N=1 always forced in)
+//!   NIMBUS_CWB_OPS_PER_WORKER=300              base work units/worker per round (300 = baseline docs)
+//!   NIMBUS_CWB_MAX_MUTATIONS_PER_ROUND=24000   per-round mutation cap (bounds high-N runtime)
+//!   NIMBUS_CWB_MEASURE_ROUNDS=10               measured rounds per rung
+//!   NIMBUS_CWB_WARMUP_ROUNDS=2                 discarded warmup rounds per rung
+//!   NIMBUS_CWB_SEED_DOCS=0                      pre-seed docs (0 = match baseline; >0 pre-ages the store)
+//!   NIMBUS_CWB_BACKEND=sqlite|redb             embedded backend (default sqlite)
+//!   NIMBUS_CWB_OUT=<path>                      also write the markdown report to <path>
+
+use std::hint::black_box;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use nimbus_core::{TableName, TenantId};
+use nimbus_engine::{EmbeddedProviderKind, Engine};
+use serde_json::json;
+use tokio::task::JoinSet;
+
+fn env_usize(key: &str, default: usize) -> usize {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(default)
+}
+
+fn ladder() -> Vec<usize> {
+    let mut levels = match std::env::var("NIMBUS_CWB_LADDER") {
+        Ok(raw) => {
+            let parsed: Vec<usize> = raw
+                .split(',')
+                .filter_map(|s| s.trim().parse::<usize>().ok())
+                .filter(|n| *n > 0)
+                .collect();
+            if parsed.is_empty() {
+                default_ladder()
+            } else {
+                parsed
+            }
+        }
+        Err(_) => default_ladder(),
+    };
+    // The N=1 rung is the MANDATORY sequential anchor: every speedup is reported
+    // relative to it, so it must always be measured and must be the smallest N.
+    // Force it in, then sort ascending + dedup so the anchor is first and a
+    // custom (possibly unsorted, N=1-less) ladder can never silently baseline
+    // the speedup on some N>1 rung.
+    levels.push(1);
+    levels.sort_unstable();
+    levels.dedup();
+    levels
+}
+
+fn default_ladder() -> Vec<usize> {
+    // Geometric, densified around the 32-coalesce cap where the knee is expected.
+    vec![1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256]
+}
+
+fn backend() -> EmbeddedProviderKind {
+    match std::env::var("NIMBUS_CWB_BACKEND")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "redb" => EmbeddedProviderKind::Redb,
+        _ => EmbeddedProviderKind::Sqlite,
+    }
+}
+
+/// Which mutation shape one "unit" of work is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Workload {
+    /// One durable insert per unit.
+    Insert,
+    /// insert + update + delete per unit (3 durable mutations), run PHASED per
+    /// worker — the same shape and fields as the sequential CRUD baseline, so N=1
+    /// cross-checks against the published ~2,661 mutations/s figure.
+    Crud,
+}
+
+impl Workload {
+    fn mutations_per_unit(self) -> usize {
+        match self {
+            Workload::Insert => 1,
+            Workload::Crud => 3,
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Workload::Insert => "insert",
+            Workload::Crud => "crud (insert+update+delete)",
+        }
+    }
+}
+
+fn workload() -> Workload {
+    match std::env::var("NIMBUS_CWB_WORKLOAD")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "insert" => Workload::Insert,
+        _ => Workload::Crud,
+    }
+}
+
+fn insert_fields(unit: usize) -> serde_json::Map<String, serde_json::Value> {
+    // Exactly the sequential CRUD baseline's insert shape (exercise_crud_sample):
+    // {status, rank, title} on a schemaless "tasks" table — no extra fields.
+    serde_json::Map::from_iter([
+        ("status".to_string(), json!("open")),
+        ("rank".to_string(), json!(unit)),
+        ("title".to_string(), json!(format!("task-{unit:05}"))),
+    ])
+}
+
+fn patch_fields(unit: usize) -> serde_json::Map<String, serde_json::Value> {
+    // Baseline's update patch: {rank: rank + CRUD_DOCUMENTS} (CRUD_DOCUMENTS = 300).
+    serde_json::Map::from_iter([("rank".to_string(), json!(unit + 300))])
+}
+
+/// One measured concurrency rung.
+struct Rung {
+    n: usize,
+    throughputs: Vec<f64>, // per-round ops/sec (measured rounds only)
+    latencies_ns: Vec<u64>,
+}
+
+struct RungStats {
+    n: usize,
+    mean_tps: f64,
+    median_tps: f64,
+    ci95_low: f64,
+    ci95_high: f64,
+    cv_percent: f64,
+    p50_us: f64,
+    p95_us: f64,
+    p99_us: f64,
+    mean_latency_s: f64,
+}
+
+/// Perform one closed-loop round: `n` workers each perform `units_per_worker`
+/// work units against a single tenant/table, recording EVERY durable mutation's
+/// latency. For `Crud` the unit expands PHASED per worker — bulk-insert all
+/// units, then bulk-update all, then bulk-delete all (3 mutations/unit) —
+/// matching the sequential CRUD baseline; for `Insert` a unit is one insert.
+/// Returns (total_mutations, wall_elapsed, per-mutation latencies in ns).
+async fn run_round(
+    engine: &Arc<Engine>,
+    tenant: &TenantId,
+    table: &TableName,
+    n: usize,
+    units_per_worker: usize,
+    workload: Workload,
+) -> (usize, Duration, Vec<u64>) {
+    let started = Instant::now();
+    let mut set: JoinSet<Vec<u64>> = JoinSet::new();
+    for _worker in 0..n {
+        let engine = engine.clone();
+        let tenant = tenant.clone();
+        let table = table.clone();
+        set.spawn(async move {
+            let mut lat = Vec::with_capacity(units_per_worker * workload.mutations_per_unit());
+            // Phase 1 — bulk insert, collecting ids. This PHASED shape (all
+            // inserts, then all updates, then all deletes) mirrors the sequential
+            // CRUD baseline exactly, so the update/delete phases operate over a
+            // populated live set rather than a just-inserted-then-deleted doc.
+            let mut ids = Vec::with_capacity(units_per_worker);
+            for unit in 0..units_per_worker {
+                let t = Instant::now();
+                let id = engine
+                    .insert_document_async(tenant.clone(), table.clone(), insert_fields(unit))
+                    .await
+                    .expect("insert_document_async should succeed");
+                lat.push(t.elapsed().as_nanos() as u64);
+                ids.push(id);
+            }
+            if workload == Workload::Crud {
+                // Phase 2 — bulk update over the now-populated live set.
+                for (unit, id) in ids.iter().cloned().enumerate() {
+                    let t = Instant::now();
+                    engine
+                        .update_document_async(
+                            tenant.clone(),
+                            table.clone(),
+                            id,
+                            patch_fields(unit),
+                        )
+                        .await
+                        .expect("update_document_async should succeed");
+                    lat.push(t.elapsed().as_nanos() as u64);
+                }
+                // Phase 3 — bulk delete.
+                for id in ids {
+                    let t = Instant::now();
+                    engine
+                        .delete_document_async(tenant.clone(), table.clone(), id)
+                        .await
+                        .expect("delete_document_async should succeed");
+                    lat.push(t.elapsed().as_nanos() as u64);
+                }
+            }
+            lat
+        });
+    }
+
+    let mut latencies = Vec::with_capacity(n * units_per_worker * workload.mutations_per_unit());
+    while let Some(joined) = set.join_next().await {
+        latencies.extend(joined.expect("worker task should not panic"));
+    }
+    let elapsed = started.elapsed();
+    (latencies.len(), elapsed, latencies)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "benchmark rung driver threads the full sweep configuration"
+)]
+async fn measure_rung(
+    engine: &Arc<Engine>,
+    tenant: &TenantId,
+    table: &TableName,
+    n: usize,
+    units_per_worker: usize,
+    warmup_rounds: usize,
+    measure_rounds: usize,
+    workload: Workload,
+) -> Rung {
+    for _ in 0..warmup_rounds {
+        let (ops, elapsed, lat) =
+            run_round(engine, tenant, table, n, units_per_worker, workload).await;
+        black_box((ops, elapsed, lat.len()));
+    }
+    let mut throughputs = Vec::with_capacity(measure_rounds);
+    let mut latencies_ns = Vec::new();
+    for _ in 0..measure_rounds {
+        let (ops, elapsed, mut lat) =
+            run_round(engine, tenant, table, n, units_per_worker, workload).await;
+        let secs = elapsed.as_secs_f64();
+        throughputs.push(if secs > 0.0 { ops as f64 / secs } else { 0.0 });
+        latencies_ns.append(&mut lat);
+    }
+    Rung {
+        n,
+        throughputs,
+        latencies_ns,
+    }
+}
+
+fn mean(xs: &[f64]) -> f64 {
+    if xs.is_empty() {
+        return 0.0;
+    }
+    xs.iter().sum::<f64>() / xs.len() as f64
+}
+
+fn median(sorted: &[f64]) -> f64 {
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    let mid = sorted.len() / 2;
+    if sorted.len().is_multiple_of(2) {
+        (sorted[mid - 1] + sorted[mid]) / 2.0
+    } else {
+        sorted[mid]
+    }
+}
+
+fn percentile_ns(sorted: &[u64], pct: f64) -> f64 {
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    let rank = ((sorted.len() - 1) as f64 * pct / 100.0).round() as usize;
+    sorted[rank.min(sorted.len() - 1)] as f64
+}
+
+/// Two-sided Student-t critical value at 95% confidence for `n-1` d.o.f.
+/// Small table (matches the embedded-provider harness's approach); large-n
+/// falls back to the normal approximation.
+fn student_t_critical_95(n: usize) -> f64 {
+    const TABLE: [f64; 30] = [
+        12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228, 2.201, 2.179, 2.160,
+        2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086, 2.080, 2.074, 2.069, 2.064, 2.060, 2.056,
+        2.052, 2.048, 2.045, 2.042,
+    ];
+    if n <= 1 {
+        return 0.0;
+    }
+    let df = n - 1;
+    if df <= 30 { TABLE[df - 1] } else { 1.96 }
+}
+
+fn summarize(rung: &Rung) -> RungStats {
+    let mut tput_sorted = rung.throughputs.clone();
+    tput_sorted.sort_by(f64::total_cmp);
+    let mean_tps = mean(&rung.throughputs);
+    let median_tps = median(&tput_sorted);
+
+    let count = rung.throughputs.len();
+    let stddev = if count > 1 {
+        let var = rung
+            .throughputs
+            .iter()
+            .map(|x| (x - mean_tps).powi(2))
+            .sum::<f64>()
+            / (count - 1) as f64;
+        var.sqrt()
+    } else {
+        0.0
+    };
+    let sem = if count > 1 {
+        stddev / (count as f64).sqrt()
+    } else {
+        0.0
+    };
+    let radius = student_t_critical_95(count) * sem;
+    let cv_percent = if mean_tps > 0.0 {
+        stddev / mean_tps * 100.0
+    } else {
+        0.0
+    };
+
+    let mut lat_sorted = rung.latencies_ns.clone();
+    lat_sorted.sort_unstable();
+    let mean_latency_s = if lat_sorted.is_empty() {
+        0.0
+    } else {
+        lat_sorted.iter().sum::<u64>() as f64 / lat_sorted.len() as f64 / 1e9
+    };
+
+    RungStats {
+        n: rung.n,
+        mean_tps,
+        median_tps,
+        ci95_low: (mean_tps - radius).max(0.0),
+        ci95_high: mean_tps + radius,
+        cv_percent,
+        p50_us: percentile_ns(&lat_sorted, 50.0) / 1000.0,
+        p95_us: percentile_ns(&lat_sorted, 95.0) / 1000.0,
+        p99_us: percentile_ns(&lat_sorted, 99.0) / 1000.0,
+        mean_latency_s,
+    }
+}
+
+fn render_report(
+    stats: &[RungStats],
+    backend: EmbeddedProviderKind,
+    cfg: &str,
+    workload: Workload,
+) -> String {
+    // Baseline is the N=1 rung specifically — NOT stats.first() — so a custom or
+    // unsorted ladder can never anchor the speedup on an N>1 rung and report an
+    // inflated (false) speedup. `ladder()` guarantees N=1 is always measured.
+    let baseline = stats
+        .iter()
+        .find(|s| s.n == 1)
+        .map(|s| s.mean_tps)
+        .unwrap_or(0.0);
+    let mut out = String::new();
+    out.push_str("# Concurrent write-throughput (group-commit sweep)\n\n");
+    out.push_str(&format!(
+        "backend: `{}`  |  {}\n\n",
+        match backend {
+            EmbeddedProviderKind::Sqlite => "sqlite",
+            EmbeddedProviderKind::Redb => "redb",
+        },
+        cfg,
+    ));
+    out.push_str(&format!(
+        "Closed-loop, single-tenant, workload = `{}`. Throughput is durable mutations/sec. ",
+        workload.label(),
+    ));
+    out.push_str("N=1 (batch size 1) is this harness's own sequential anchor");
+    if workload == Workload::Crud {
+        out.push_str("; it replays the sequential CRUD baseline's shape, so it should land NEAR ~2,661 mutations/s as a cross-check (not bit-identical — a separate harness)");
+    }
+    out.push_str(
+        ";\n`speedup` = mean_tps(N) / mean_tps(1). Little's Law: `N≈X·R` should ~match N.\n",
+    );
+    out.push_str("Latency percentiles are closed-loop (queue) latency — not SLA service time at saturated rungs (coordinated omission).\n\n");
+    out.push_str("| N | throughput mut/s (mean) | 95% CI | median | CV% | speedup | p50 µs | p95 µs | p99 µs | N≈X·R |\n");
+    out.push_str("|---|---|---|---|---|---|---|---|---|---|\n");
+    for s in stats {
+        let speedup = if baseline > 0.0 {
+            s.mean_tps / baseline
+        } else {
+            0.0
+        };
+        let little = s.mean_tps * s.mean_latency_s; // should ≈ N
+        out.push_str(&format!(
+            "| {} | {:.0} | [{:.0}, {:.0}] | {:.0} | {:.1} | {:.2}× | {:.1} | {:.1} | {:.1} | {:.1} |\n",
+            s.n,
+            s.mean_tps,
+            s.ci95_low,
+            s.ci95_high,
+            s.median_tps,
+            s.cv_percent,
+            speedup,
+            s.p50_us,
+            s.p95_us,
+            s.p99_us,
+            little,
+        ));
+    }
+
+    // Headline: peak throughput + the rung achieving it.
+    if let Some(peak) = stats
+        .iter()
+        .max_by(|a, b| a.mean_tps.total_cmp(&b.mean_tps))
+    {
+        let speedup = if baseline > 0.0 {
+            peak.mean_tps / baseline
+        } else {
+            0.0
+        };
+        out.push_str(&format!(
+            "\n**Peak:** {:.0} mut/s at N={} — {:.2}× the sequential (N=1) baseline of {:.0} mut/s.\n",
+            peak.mean_tps, peak.n, speedup, baseline,
+        ));
+    }
+    out
+}
+
+async fn run() -> String {
+    let ladder = ladder();
+    let base_units = env_usize("NIMBUS_CWB_OPS_PER_WORKER", 300);
+    let max_mut_per_round = env_usize("NIMBUS_CWB_MAX_MUTATIONS_PER_ROUND", 24_000);
+    let measure_rounds = env_usize("NIMBUS_CWB_MEASURE_ROUNDS", 10);
+    let warmup_rounds = std::env::var("NIMBUS_CWB_WARMUP_ROUNDS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(2);
+    // Default 0: the sequential CRUD baseline does NOT pre-seed, so N=1 matches
+    // it. Set >0 for a pre-aged (deliberately non-baseline-matching) variant.
+    let seed_docs = env_usize("NIMBUS_CWB_SEED_DOCS", 0);
+    let backend = backend();
+    let workload = workload();
+
+    let cfg = format!(
+        "workload={}, base_units/worker={base_units}, max_mut/round={max_mut_per_round}, measure_rounds={measure_rounds}, warmup_rounds={warmup_rounds}, seed_docs={seed_docs}, ladder={ladder:?}",
+        workload.label(),
+    );
+    eprintln!("[cwb] {cfg}");
+
+    let dir = tempfile::tempdir().expect("tempdir should build");
+    let engine = Arc::new(
+        Engine::new_with_embedded_provider(dir.path(), backend)
+            .expect("engine should open with the embedded provider"),
+    );
+    let tenant = TenantId::new("cwb-tenant").expect("tenant id should build");
+    let table = TableName::new("tasks").expect("table name should build");
+    engine
+        .create_tenant_async(tenant.clone())
+        .await
+        .expect("tenant creation should succeed");
+
+    // Pre-age the store so we are not measuring the empty-file fast path.
+    if seed_docs > 0 {
+        eprintln!("[cwb] seeding {seed_docs} documents…");
+        run_round(&engine, &tenant, &table, 1, seed_docs, Workload::Insert).await;
+    }
+
+    let mut_per_unit = workload.mutations_per_unit();
+    let mut stats = Vec::with_capacity(ladder.len());
+    for n in &ladder {
+        // Cap total mutations per round so high-N (overload) rungs don't blow up
+        // wall time, while low-N rungs still do `base_units` of work. Always >=1.
+        let capped = (max_mut_per_round / (mut_per_unit * *n)).max(1);
+        let units_per_worker = base_units.min(capped);
+        eprintln!("[cwb] rung N={n} (units/worker={units_per_worker})…");
+        let rung = measure_rung(
+            &engine,
+            &tenant,
+            &table,
+            *n,
+            units_per_worker,
+            warmup_rounds,
+            measure_rounds,
+            workload,
+        )
+        .await;
+        stats.push(summarize(&rung));
+    }
+
+    let report = render_report(&stats, backend, &cfg, workload);
+    if let Ok(path) = std::env::var("NIMBUS_CWB_OUT") {
+        if let Err(e) = std::fs::write(&path, &report) {
+            eprintln!("[cwb] could not write report to {path}: {e}");
+        } else {
+            eprintln!("[cwb] report written to {path}");
+        }
+    }
+    report
+}
+
+fn main() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build");
+    let report = runtime.block_on(run());
+    println!("{report}");
+}
