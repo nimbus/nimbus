@@ -135,19 +135,19 @@ Encryption covers the local files Nimbus owns; external databases —
 Postgres, MySQL, a remote libSQL primary — are encrypted by that
 database, not by Nimbus. The operator workflow is documented in
 [encryption at rest](/operators/encryption/); architecturally it is an
-envelope model implemented in `crates/nimbus-storage/src/encryption/`:
+envelope model implemented in `crates/nimbus-crypto/src/`:
 
 - Each protected database file gets its own random 256-bit data
   encryption key (DEK).
 - A key provider wraps the DEK: a master-key-file provider that derives a
   per-file wrapping key via HKDF-SHA256
-  (`crates/nimbus-storage/src/encryption/master_key_file.rs`), a
+  (`crates/nimbus-crypto/src/master_key_file.rs`), a
   key-directory provider with one key file per protected subject, or an
   AWS KMS provider (a compile-time feature) that delegates wrapping to
   KMS.
 - The wrapped DEK and its metadata live in a `.nimbus-enc` sidecar
   manifest next to the database file
-  (`crates/nimbus-storage/src/encryption/manifest.rs`), with the metadata
+  (`crates/nimbus-crypto/src/manifest.rs`), with the metadata
   bound into the AEAD so a tampered manifest fails to decrypt rather than
   silently misbehaving.
 

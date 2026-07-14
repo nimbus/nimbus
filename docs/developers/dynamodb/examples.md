@@ -20,14 +20,15 @@ in the source repository. Run it in place from a checkout.
 
 ```bash
 nimbus dev
-nimbus deploy [TARGET]
 ```
 
-`TARGET` is a URL or a configured target name; omit it to target your local
-server. The DynamoDB listener uses its own endpoint (`127.0.0.1:8000` by
-default), and the access key id selects the Nimbus tenant. When `nimbus dev`
-sees the AWS SDK dependency, it writes the `NIMBUS_DYNAMODB_*` connection
-variables to `.env.local`.
+`nimbus dev` starts a local server with the DynamoDB listener on its own
+endpoint (`127.0.0.1:8000` by default) and, when it detects the AWS SDK
+dependency, writes the `NIMBUS_DYNAMODB_*` connection variables to
+`.env.local`. The access key id selects the Nimbus tenant. Then run the
+example app from its directory (see its README); it reads those variables
+and drives the DynamoDB endpoint directly — there is no Nimbus function
+bundle to deploy.
 
 ## The app
 

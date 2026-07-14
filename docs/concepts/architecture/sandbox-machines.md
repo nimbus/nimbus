@@ -12,7 +12,7 @@ Nimbus first boots a **machine**: a single outer Linux VM that supplies the
 kernel features sandboxes need. This page tours the crates that implement both
 layers: `crates/nimbus-sandbox` (the sandbox seam and its backends) and
 `crates/nimbus-machine` plus the `nimbus machine` CLI flow in
-`crates/nimbus-bin/src/machine/`.
+`crates/nimbus-cli/src/machine/`.
 
 For what sandboxes *are* in the product model — how they relate to services and
 sessions — see [the resource model](/concepts/resource-model/). This page is
@@ -97,7 +97,7 @@ disk, and 64 GiB logs.
 
 ## Egress is deny-by-default
 
-`SandboxEgressPolicy` (`crates/nimbus-sandbox/src/egress.rs`) defaults to an
+`EgressPolicy` (`crates/nimbus-egress/src/policy.rs`) defaults to an
 empty allow list, which means deny-all. Each allow rule names a protocol, a
 host pattern, and a port, and HTTP rules may further restrict methods and path
 prefixes; TCP rules must not carry HTTP-shaped fields. Destinations that
@@ -112,7 +112,13 @@ spec validator rejects any attempt by a launch spec to set those keys itself.
 The HTTP surface in `crates/nimbus-compute/src/sandbox_spec.rs` separates
 what callers may send from what responses may echo. Public launch input
 rejects `Rootfs` roots and OCI `Build` sources as operator-only internal
-inputs. Responses never echo sensitive launch material: rootfs and build roots
+inputs. The public input (`SandboxSpecInput`) is also deliberately
+narrow: a caller may set only tenant id, owner, backend, root, and
+process. Egress policy, mounts, and resource limits are not part of it —
+they are fixed by the server (deny-all egress, no caller-supplied mounts,
+default resource limits), so the spec fields described above are server-
+and operator-set defaults rather than caller inputs. Responses never echo
+sensitive launch material: rootfs and build roots
 come back as `{"redacted": true, "reason": "operatorOnlyLaunchInput"}`, and
 process argv, entrypoint, command, and environment come back as counts
 (`{"redacted": true, "valueCount": N}`) rather than values.
@@ -120,7 +126,7 @@ process argv, entrypoint, command, and environment come back as counts
 ## Machines: the outer Linux VM
 
 `crates/nimbus-machine` models the machine itself; the `nimbus machine` CLI
-flow lives in `crates/nimbus-bin/src/machine/`. A machine is one long-lived
+flow lives in `crates/nimbus-cli/src/machine/`. A machine is one long-lived
 Linux VM per development host, not a per-workload unit. Its image source is
 integrity-anchored: an OCI reference (the default is `ghcr.io/nimbus/machine-os`,
 digest-pinned on macOS), an HTTP URL that must carry a `#sha256=<digest>`
@@ -144,10 +150,10 @@ Two providers are declared (`MachineProvider`):
 ## Inside a machine, sandboxes are containers — never nested microVMs
 
 The topology rule is enforced by construction, not convention. Inside the
-guest, `nimbus machine api` (`crates/nimbus-bin/src/machine/api.rs`) serves
+guest, `nimbus machine api` (`crates/nimbus-cli/src/machine/api.rs`) serves
 sandbox operations over a unix socket and constructs only a container
 backend — there is no krun backend in the guest. On the host side,
-`ForwardedMachineApiSandboxBackend` (`crates/nimbus-bin/src/machine/backend.rs`)
+`ForwardedMachineApiSandboxBackend` (`crates/nimbus-cli/src/machine/backend.rs`)
 implements `SandboxBackend` by forwarding image-based launches across that
 socket; it reports `SandboxBackendKind::Container` and rejects rootfs roots
 and standalone-owned specs at the boundary. So a sandbox is never a microVM

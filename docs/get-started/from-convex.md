@@ -7,7 +7,7 @@ sidebar:
 
 Nimbus implements a Convex-compatible backend: the same function model
 (queries, mutations, actions, HTTP actions), the same `convex/` project
-layout, schema and validators, scheduling and crons, and reactive
+layout, schema and validators, task scheduling, and reactive
 subscriptions — self-hosted in a single binary.
 
 ## What carries over
@@ -41,6 +41,11 @@ Compatibility is per-surface: some are complete, some are bounded.
 - **A deployment is a single process today.** There is no clustering layer;
   one Nimbus binary serves the workload — see
   [Scaling](/concepts/scaling/).
+- **Not every Convex surface is translated.** Cron jobs (`cronJobs`) do not
+  carry over — use task scheduling (`ctx.scheduler`) instead. The
+  [migration guide](/developers/convex/migrate/) walks the remaining gaps,
+  and the [compatibility matrix](/reference/convex/compatibility/) is the
+  source of truth.
 
 The [Convex compatibility matrix](/reference/convex/compatibility/) is the
 source of truth for what is supported today.

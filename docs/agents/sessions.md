@@ -7,10 +7,13 @@ sidebar:
 
 A session is a scoped, expiring connection to a running service or
 sandbox. Simple service use needs no session — start the service and let
-your app use the named dependency. Sessions exist for the *interactive*
-cases: a stdio stream into a running workload, file exchange, or a
-browser-control channel. A session is a lease, not an ambient connection
-that outlives its purpose.
+your app use the named dependency. Sessions model the *interactive* cases
+— a stdio channel into a running workload, file exchange, or a
+browser-control channel — as a declared, audited lease. Today the SDK and
+HTTP surface cover the session lifecycle (open, get, list, close) and
+validate the channels a target offers; client-facing byte transport over
+those channels is not yet wired. A session is a lease, not an ambient
+connection that outlives its purpose.
 
 All examples assume a configured client:
 

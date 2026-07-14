@@ -5,9 +5,9 @@ sidebar:
   order: 3
 ---
 
-A sandbox is a single isolated world: a root filesystem, a process to run,
-and a network policy, created for one purpose and addressed by id for its
-whole life. This guide covers standalone sandboxes — the ones you create
+A sandbox is a single isolated world: a root filesystem and a process to
+run, with deny-by-default network egress, created for one purpose and
+addressed by id for its whole life. This guide covers standalone sandboxes — the ones you create
 directly, without a service definition. New to the model? Start with the
 [agent sandbox quickstart](/agents/sandbox-quickstart/).
 
@@ -68,10 +68,11 @@ The spec answers two separate questions:
 the same spec, id, lifecycle, and session rules apply either way:
 
 - `"container"` — OCI container isolation, driven through `crun`. This is
-  the process-capable default that runs workloads today.
-- `"krun"` — libkrun-based microVM isolation. It currently fails closed
-  for process execution until its network egress enforcement reaches
-  parity with the container backend.
+  the default backend for standalone sandboxes.
+- `"krun"` — libkrun-based microVM isolation with per-sandbox egress
+  enforcement. It executes workloads on Linux hosts — its launch stands up
+  a deny-by-default network namespace and an egress proxy first — and is
+  the default backend for services run through `nimbus compose`.
 
 Both run on Linux hosts with deny-by-default outbound network access; on
 macOS and WSL2, `nimbus machine` provides the hosting Linux VM. See
@@ -101,8 +102,8 @@ what you launched with is not readable back.
 
 ## Related pages
 
-- [Open sessions](/agents/sessions/) — stdio and file access to a running
-  sandbox.
+- [Open sessions](/agents/sessions/) — lease scoped, expiring sessions to a
+  running sandbox.
 - [Services, sandboxes, and sessions](/concepts/resource-model/) — the
   design rationale.
 - [SDK resources reference](/reference/sdk/resources/) — full type and

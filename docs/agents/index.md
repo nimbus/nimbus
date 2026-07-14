@@ -27,8 +27,8 @@ nouns is explained in
 ## Start here
 
 - [Agent sandbox quickstart](/agents/sandbox-quickstart/) — create a
-  sandbox, watch it run, open a session, and tear it down, in about five
-  minutes.
+  sandbox, wait for it to come up, open a session, and tear it down, in
+  about five minutes.
 - [Run sandboxes](/agents/sandboxes/) — standalone sandboxes: specs,
   labels, listing, and what the API redacts.
 - [Manage services](/agents/services/) — named workloads: backends,
@@ -49,11 +49,12 @@ follow-ups, all inside your own deployment:
 
 ## Where sandboxes actually run
 
-Sandbox execution runs on Linux hosts: workloads launch as OCI containers
-with deny-by-default network egress. (A libkrun microVM backend exists but
-fails closed for process execution today — containers are what run
-workloads.) On macOS and WSL2, `nimbus machine` provides the managed Linux
-VM that hosts them — see the [CLI reference](/reference/cli/). The full
+Sandbox execution runs on Linux hosts, and both backends enforce
+deny-by-default network egress. Workloads launch as OCI containers by
+default; libkrun microVMs also execute on Linux and are the default for
+services run through `nimbus compose`. On macOS and WSL2, `nimbus machine`
+provides the managed Linux VM that hosts them — see the
+[CLI reference](/reference/cli/). The full
 status table is in
 [current capabilities](/reference/current-capabilities/).
 

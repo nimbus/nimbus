@@ -29,6 +29,9 @@ haven't run a server yet, then work through
   and rotation.
 - [Backup and restore](/operators/backup-restore/) — `nimbus backup` for the
   embedded providers, plus what to capture per backend and how to restore it.
+- [Object storage](/operators/object-storage/) — administer the object byte
+  plane: placement policy, the master key, GC and erasure health, byte-plane
+  backup and restore, and destructive tenant removal.
 
 ## Administration
 
@@ -36,13 +39,17 @@ haven't run a server yet, then work through
   tenants on a running server.
 - [Run Nimbus as a service](/operators/node-lifecycle/) — systemd and Quadlet
   service management with `nimbus node`.
+- [Scale out](/operators/scale-out/) — grow past one machine by partitioning
+  tenants across independent instances.
 - [Inspect the server](/operators/observability/) — health, debug endpoints,
   logs, and the access audit log.
 - [Security hardening](/operators/hardening/) — the checklist for exposed
   deployments.
 - [Troubleshooting](/operators/troubleshooting/) — symptom, cause, fix.
 
-The flag-by-flag configuration tables live in the
-[Reference](/reference/configuration/) section, and the isolation model
-itself is explained in
+When one machine runs out of headroom, [scale out](/operators/scale-out/) by
+partitioning tenants across instances; the single-process growth model is
+explained in [Concepts: scaling](/concepts/scaling/). The flag-by-flag
+configuration tables live in the [Reference](/reference/configuration/)
+section, and the isolation model itself is explained in
 [Concepts: tenant isolation](/concepts/tenant-isolation/).

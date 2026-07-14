@@ -175,7 +175,7 @@ crates/nimbus-assets/embedded/packages/   (rust-embed, version-locked)
   `@connectrpc/connect-web`) — under `crates/nimbus-assets/embedded/packages/`
   with a checksummed `manifest.json`, which
   `crates/nimbus-assets/src/js_packages.rs` embeds into the binary.
-- `crates/nimbus-bin/src/provision.rs` writes the embedded payload into
+- `crates/nimbus-cli/src/provision.rs` writes the embedded payload into
   `<app>/.nimbus/packages/`, resolving the dependency closure for the
   selected adapter, and stamps `.nimbus/packages/.version` with the
   manifest digest only after every file lands — so an interrupted run is

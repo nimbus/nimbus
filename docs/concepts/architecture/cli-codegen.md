@@ -7,7 +7,7 @@ sidebar:
 ---
 
 Everything user-facing ships in one binary. The CLI in
-`crates/nimbus-bin` is not a thin wrapper around a separate server — it
+`crates/nimbus-cli` is not a thin wrapper around a separate server — it
 *is* the server, plus the developer loop, plus the code generator, plus
 the host-management surface. This page explains how those pieces
 compose. The full flag-by-flag reference lives in
@@ -15,12 +15,15 @@ compose. The full flag-by-flag reference lives in
 
 ## One binary, one command tree
 
-`crates/nimbus-bin/src/main.rs` declares a single clap command tree:
-`start`, `dev`, `deploy`, `codegen`, `init`, `token`, `auth`, `ui`,
-`machine`, `node`, `compose`, `policy`, `encryption`, and `packages`,
-plus one hidden internal subcommand used for sandbox supervision. Each
-subcommand owns a module under `crates/nimbus-bin/src/`; `main.rs` stays
-a thin dispatcher. The practical consequence: a production node, a
+`crates/nimbus-cli/src/lib.rs` declares the clap command tree — `start`,
+`dev`, `deploy`, `run`, `codegen`, `init`, `token`, `auth`, `ui`,
+`machine`, `node`, `compose`, `policy`, `encryption`, `packages`, `kv`,
+and `object-storage` among others — plus a few hidden internal
+subcommands used for sandbox supervision and workload execution. Each
+subcommand owns a module under `crates/nimbus-cli/src/`; the top-level
+`run_from_env` entry point stays a thin dispatcher, and the binary itself
+(`crates/nimbus-bin/src/main.rs`) is a small shim that initializes tracing
+and calls it. The practical consequence: a production node, a
 laptop dev loop, and a CI codegen step all run the same binary with the
 same embedded assets, so there is no version skew between "the CLI" and
 "the server".
@@ -28,11 +31,11 @@ same embedded assets, so there is no version skew between "the CLI" and
 ## How `start` composes the server
 
 `nimbus start` is the composition root. The boot sequence in
-`crates/nimbus-bin/src/start/boot.rs` resolves configuration, loads the
+`crates/nimbus-cli/src/start/boot.rs` resolves configuration, loads the
 license, wires function registries, mints serve options, and only then
 binds the listener.
 
-Configuration resolution (`crates/nimbus-bin/src/start/config.rs`)
+Configuration resolution (`crates/nimbus-cli/src/start/config.rs`)
 follows a strict precedence: **flag, then environment, then file**. The
 implementation makes the order structural — inputs from the command line
 are built first and each lower layer is applied only as a fallback for
@@ -62,18 +65,18 @@ waits for deploys.
 
 ## How `dev` differs
 
-`nimbus dev` (`crates/nimbus-bin/src/dev.rs`) is `start` plus a watch
+`nimbus dev` (`crates/nimbus-cli/src/dev.rs`) is `start` plus a watch
 loop, racing in the same process: the server runs in-process on port
 3210 while a poll-based watcher drives regeneration, and whichever
 finishes first ends the session.
 
-The dev plan (`crates/nimbus-bin/src/dev/plan.rs`) pins
+The dev plan (`crates/nimbus-cli/src/dev/plan.rs`) pins
 development-friendly choices: state lives under `<app>/.nimbus/dev`, the
 provider is sqlite, a `demo` tenant is auto-created, tenant isolation
 runs in a local-development mode, and a fresh random deploy token is
 generated per run.
 
-The watch loop (`crates/nimbus-bin/src/dev/watch.rs`) polls every 500ms
+The watch loop (`crates/nimbus-cli/src/dev/watch.rs`) polls every 500ms
 with a 300ms debounce, fingerprinting files by modification time and
 length and skipping generated and vendored directories (`_generated`,
 `node_modules`, `.git`, `.nimbus`, and build outputs). On change it runs
@@ -85,7 +88,7 @@ same deploy path a remote client would.
 App-directory detection walks up from the working directory looking for
 a `nimbus/` or `convex/` directory, generated Convex functions, or a
 `firebase.json`. The walk is bounded at the repository boundary:
-`crates/nimbus-bin/src/path_boundary.rs` stops at the first ancestor
+`crates/nimbus-cli/src/path_boundary.rs` stops at the first ancestor
 containing `.git` — checked by existence, so worktree and submodule
 `.git` *files* count — ensuring a lookalike directory outside the repo
 can never be adopted as the app.
@@ -95,7 +98,7 @@ can never be adopted as the app.
 Code generation (schema parsing, function manifest emission, generated
 TypeScript) is implemented in JavaScript in `packages/codegen`, but
 users do not install it. The package is bundled at build time and
-embedded in the binary, and `crates/nimbus-bin/src/codegen.rs` chooses
+embedded in the binary, and `crates/nimbus-cli/src/codegen.rs` chooses
 between two runners:
 
 - **Embedded runner (default).** The binary materializes its embedded
@@ -128,7 +131,7 @@ Project templates (schema, example functions, `tsconfig`, scaffold
 strings.
 
 SDK packages reach an app through provisioning
-(`crates/nimbus-bin/src/provision.rs`): the binary writes its embedded
+(`crates/nimbus-cli/src/provision.rs`): the binary writes its embedded
 packages into `<app>/.nimbus/packages/<name>/` and scaffolded
 `package.json` files reference them with `file:./.nimbus/packages/...`
 specifiers — so `npm install` links the SDK that shipped *inside this

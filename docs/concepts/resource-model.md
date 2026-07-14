@@ -76,9 +76,10 @@ Two distinctions worth internalizing:
 
 ## Sandboxes: isolated execution environments
 
-A sandbox is a single isolated world: a root filesystem, a process to run,
-resource limits, mounts, and a network policy, created for one purpose and
-addressed by id for its whole life. The spec answers two separate
+A sandbox is a single isolated world: a root filesystem and a process to
+run, created for one purpose and addressed by id for its whole life. Its
+resource limits, mounts, and deny-by-default network egress are set by the
+server, not the caller — the public create spec answers two separate
 questions:
 
 - **What root material runs?** Either a prepared root filesystem or OCI
@@ -92,11 +93,10 @@ questions:
 
 Sandboxes are created under a **profile** — currently `worker` or
 `desktop` — which states the intended workload shape, and run on one of
-two isolation backends: an OCI container backend (the process-capable
-default, driven through `crun`) and a libkrun-based microVM backend. The
-microVM backend currently fails closed for process execution until its
-network egress enforcement reaches parity with the container backend, so
-container isolation is what runs workloads today. The important design
+two isolation backends: an OCI container backend (driven through `crun`,
+the default for standalone sandboxes) and a libkrun-based microVM backend
+that executes workloads on Linux with per-sandbox egress enforcement and
+is the default for services run through `nimbus compose`. The important design
 point is that the backend is a property of the deployment, not of the
 resource: the same spec, id, lifecycle, and session semantics apply
 regardless of which isolation mechanism is underneath.
@@ -111,9 +111,11 @@ sandbox, reporting only value counts. See
 ## Sessions: scoped, expiring connections
 
 Simple service use needs no session — start the service, let your app use
-the named dependency. A session exists for the *interactive* cases: a
-shell or stdio stream into a running workload, file exchange, or a
-browser-control channel. It is a lease, not a registry entry:
+the named dependency. A session models the *interactive* cases — a shell
+or stdio stream into a running workload, file exchange, or a
+browser-control channel — as a lease, not a registry entry. The session
+lifecycle and channel declaration are what the SDK and HTTP surface expose
+today; byte transport over those channels is not yet wired:
 
 - **Every session expires.** Opening one takes an optional requested TTL;
   the server applies a bounded default TTL with a hard cap. Sessions move

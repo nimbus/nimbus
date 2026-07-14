@@ -47,6 +47,7 @@ sources exist.
 | `agents/index.md`, `agents/sandbox-quickstart.md`, `agents/sandboxes.md` | Linux-host sandbox execution, container vs krun posture, `nimbus machine` on macOS/WSL2 (restates the verified rows for the pages below) | `docs/reference/current-capabilities.md`, `docs/concepts/resource-model.md` |
 | `agents/agent-chat.md` | Durable chat agent: `messages`/`agentMemory` tables, plain-text `remember`/`recall` tools, and a `ctx.scheduler.runAfter` reminder delivered by a single-insert scheduled target | `examples/nimbus/agent-chat/`, `packages/nimbus/` |
 | `agents/agent-worker.md` | Headless worker: `runWorker` schedules one `processJob` hop per job id via `ctx.scheduler.runAfter`; jobs run `pending`→`done` server-side; a scheduled target cannot reschedule itself | `examples/nimbus/agent-worker/`, `packages/nimbus/` |
+| `agents/agent-in-a-sandbox.md` | Public sandbox spec fields (owner/backend/root/process/env); sealed sandbox — deny-all egress, no caller mounts/limits; env input channel; host-bound endpoints; session lease with no client byte transport | `crates/nimbus-compute/src/sandbox_spec.rs`, `crates/nimbus-sandbox/src/spec.rs`, `packages/nimbus/src/control-plane/types.ts`, `crates/nimbus-server/src/http/sandboxes.rs` |
 
 ## Developers + Reference — Convex
 
@@ -196,6 +197,7 @@ sources exist.
 | `operators/backup-restore.md` | Control DB holds usage tracking; present even with external backends | `crates/nimbus-storage/src/usage_store.rs`, `crates/nimbus-engine/src/persistence_config.rs` |
 | `operators/backup-restore.md` | Encrypted DBs are SQLCipher (stock sqlite3 can't open); `nimbus encryption export` plaintext recovery | `crates/nimbus-storage/src/sqlite/encryption.rs`, `crates/nimbus-cli/src/encryption/mod.rs` |
 | `operators/backup-restore.md` | Admin token regenerable; libSQL replica cache rebuildable | `crates/nimbus-cli/src/token.rs`, `crates/nimbus-storage/src/libsql/provider.rs` |
+| `operators/object-storage.md` | `nimbus object-storage` subcommands (set-placement, bootstrap-master-key, gc-status, erasure-status/heal, backup/restore-object-store, tenant rm); local pack vs erasure leg; per-tenant DEK under object master key; offline maintenance | `crates/nimbus-cli/src/object_storage.rs`, `crates/nimbus-cli/src/object_storage/backup_restore.rs`, `crates/nimbus-blob/`, `crates/nimbus-crypto/` |
 
 ## Operators — administration + observability
 
@@ -217,6 +219,7 @@ sources exist.
 | `operators/hardening.md` | CORS approval limited to localhost origins unless `--cors-allow-origin` grants exact origins; admin route families audited | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/local_server/middleware.rs` |
 | `operators/hardening.md` | In-server TLS via `--tls-cert`/`--tls-key` (startup-validated) or reverse-proxy posture; adapter listeners proxy-fronted | `crates/nimbus-server/src/tls.rs`, `crates/nimbus-cli/src/start/mod.rs`, `crates/nimbus-server/src/construction.rs` |
 | `operators/troubleshooting.md` | Bind/auth/schema/storage/encryption/license/codegen/bundle error strings (each entry quotes source text) | `crates/nimbus-cli/src/start/network_bind.rs`, `crates/nimbus-operator/src/access_policy.rs`, `crates/nimbus-core/src/error.rs`, `crates/nimbus-crypto/src/runtime.rs`, `crates/nimbus-storage/src/sqlite/backend.rs`, `crates/nimbus-license/src/loading.rs`, `crates/nimbus-cli/src/codegen.rs`, `crates/nimbus-runtime/src/error.rs` |
+| `operators/scale-out.md` | Partition-by-tenant runbook: per-tenant admission/journal-apply-lag/libSQL-freshness signals; lever ladder; tenant move via backup archive (embedded) or per-schema export (external); non-loopback bind + admin-token rotation; tenant routing by path segment or WS header | `crates/nimbus-engine/src/tenant/mutation/admission.rs`, `crates/nimbus-storage/src/libsql/freshness.rs`, `crates/nimbus-cli/src/backup.rs`, `crates/nimbus-cli/src/start/network_bind.rs`, `crates/nimbus-server/src/ws/tenant.rs` |
 
 ## Concepts + Reference — tenancy and server
 
@@ -316,6 +319,10 @@ sources exist.
 | `reference/current-capabilities.md` | Adapter statuses (Convex/Cloud Functions detected from the app; Firestore/MongoDB/DynamoDB served by default; `nimbus dev` writes `.env.local` keys for detected driver/SDK apps) | `crates/nimbus-cli/src/start/boot.rs`, `crates/nimbus-server/src/construction.rs`, `crates/nimbus-server/src/adapters/`, `crates/nimbus-cli/src/dev/wire.rs` |
 | `reference/current-capabilities.md` | Storage/encryption/sandbox/machine/resource API statuses | `crates/nimbus-cli/src/start/config.rs`, `crates/nimbus-sandbox/src/backends/`, `crates/nimbus-cli/src/machine/mod.rs`, `crates/nimbus-server/src/router.rs` |
 | `reference/current-capabilities.md` | Backup status: `nimbus backup create/restore` for embedded sqlite/redb only (offline, per-tenant, fingerprint-verified); external backends + encrypted dirs use native/cold-copy; no continuous point-in-time recovery | `crates/nimbus-cli/src/backup.rs` |
+| `reference/adapter-capabilities.md` | Cross-adapter capability matrix (CRUD, queries, indexes, subscriptions, transactions, schema, auth, tenancy, ports) reconciled from the per-adapter references | `crates/nimbus-cli/src/start/mod.rs`, `crates/nimbus-convex/`, `crates/nimbus-firebase/`, `crates/nimbus-cloud-functions/`, `crates/nimbus-mongodb/`, `crates/nimbus-dynamodb/`, `crates/nimbus-server/src/adapters/` |
+| `reference/s3/compatibility.md` | S3 adapter: default-on `127.0.0.1:9000` (busy-skip); `--no-s3`/`--s3-port`/`--s3-host`/`--s3-access-key`, `NIMBUS_S3_ACCESS_KEYS`; SigV4; object/multipart ops; Convex file-storage face + `/_nimbus/convex/storage/` | `crates/nimbus-cli/src/start/adapters/s3.rs`, `crates/nimbus-cli/src/start/mod.rs`, `crates/nimbus-s3/src/config.rs`, `crates/nimbus-s3/src/convex.rs`, `crates/nimbus-server/src/adapters/` |
+| `reference/cloudflare/compatibility.md` | Cloudflare adapter: default-on main listener; `--no-cloudflare`; Workers KV REST served; Durable Objects/D1/R2 parsed-not-served; wrangler binding registry | `crates/nimbus-cli/src/start/mod.rs`, `crates/nimbus-server/src/adapters/cloudflare/`, `crates/nimbus-compute/src/cloudflare_config/wrangler.rs` |
+| `reference/kv/compatibility.md` | RESP KV: `nimbus kv` loopback `127.0.0.1:6380`; RESP2/3 via HELLO; mandatory AUTH; string/key command surface; durable-redb vs in-memory modes | `crates/nimbus-cli/src/kv.rs`, `crates/nimbus-kv/src/server.rs`, `crates/nimbus-kv/src/store.rs` |
 
 ## Concepts — architecture (request path)
 

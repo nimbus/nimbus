@@ -25,7 +25,7 @@ separate:
 
 ## Installing the node service
 
-The `nimbus node` surface lives in `crates/nimbus-bin/src/node_service.rs`
+The `nimbus node` surface lives in `crates/nimbus-cli/src/node_service.rs`
 and only ever mutates Linux hosts; on other platforms the mutating
 subcommands refuse to run. It renders two families of artifacts:
 
@@ -54,7 +54,7 @@ Generated units are treated as build outputs, not config files:
 
 With socket activation, systemd owns the TCP listener and the rendered
 service starts the binary with a flag telling it to inherit the socket.
-On boot, `crates/nimbus-bin/src/start/boot.rs` verifies the systemd
+On boot, `crates/nimbus-cli/src/start/boot.rs` verifies the systemd
 activation contract — exactly one passed file descriptor, addressed to
 this process — before adopting the inherited listener instead of binding
 its own.
@@ -152,7 +152,7 @@ symmetric. Each pass writes status evidence through a writer seam so the
 observation that justified the outcome is recorded alongside it.
 
 The live implementation entry point is the hidden node workload executor
-(`crates/nimbus-bin/src/node_workload_executor.rs`), which constructs a
+(`crates/nimbus-cli/src/node_workload_executor.rs`), which constructs a
 `NodeWorkloadReconciler` over the systemd transient backend and runs the
 reconcile loop for one assigned workload per invocation. It is not part
 of the public workload CLI. User-facing commands declare workload intent
