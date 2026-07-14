@@ -141,13 +141,17 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 - `parallel-prepare-serial-commit-plan.md` - `proposed`. Owns the per-tenant
   committer evolution toward Convex's parallel-prepare / serial-assign /
-  ordered-publish shape while keeping the single sequence. Wire-now set is
-  PPSC0 (under-gate time-split + shadow-conflict instrumentation +
-  `PreparedCommit` unification) and PPSC1 (server-side bounded conflict
-  retry — a Convex-parity gap that exists today); PPSC2 (off-gate prepare
-  pool + adaptive batching) is pre-launch-eligible; PPSC3/PPSC4 (OCC
-  generalization, pipelined publish) are gated on a named kill-criterion
-  and may close as not-worth-it. Governing research:
+  ordered-publish shape while keeping the single sequence. Slicing rule:
+  semantics/contract are pre-launch-priced and land wire-now; invisible
+  throughput machinery is measurement-gated. Wire-now set is PPSC0
+  (under-gate time-split + shadow-conflict instrumentation +
+  `PreparedCommit`), PPSC1 (server-side bounded conflict retry), PPSC2
+  (in-memory full-image conflict window + schema epochs + collection-group
+  dependency + assign-time stamping + adaptive batching), and PPSC3
+  (uniform first-committer-wins contract + typed Conflict error surface +
+  per-mutation caps on every adapter). PPSC4 (off-gate prepare pool) and
+  PPSC5 (pipelined ordered publish) are measurement-gated and may close as
+  not-worth-it. Governing research:
   `research/parallel-prepare-serial-commit-redesign.md`.
 - `layered-admission-control-plan.md` - `deferred`. Owns future layered
   admission experiments and EO8-style promotion work. Consumes the
