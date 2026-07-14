@@ -59,6 +59,74 @@ async fn async_schema_write_advances_runtime_journal_before_next_queued_document
     assert_eq!(after_insert.worker_failure_count, 0);
 }
 
+/// Liveness smoke for the real `insert_document_async` path under concurrency:
+/// several tasks issue rapid mutations in true parallelism and every one must
+/// drain within a bound. This exercises the mutation journal end-to-end and
+/// catches gross liveness regressions.
+///
+/// It is deliberately NOT presented as a reliable reproducer of the specific
+/// lost-wakeup race it was born from — that window is nanosecond-scale (the
+/// benchmark that found it needed concurrency up to 256 to hit it ~1 run in 4),
+/// so at this scale it will not, on its own, catch a call-site regression that
+/// hoists `has_pending()` out of the closure. The precise, deterministic guard
+/// for the race is
+/// `tenant::mutation::journal::tests::release_worker_clears_running_before_evaluating_the_gate`;
+/// a full revert of the closure signature is caught by compilation. Counts are
+/// modest because `cargo test` builds unoptimized (durable commits are ~10-50x
+/// slower than the release build the benchmark uses).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_mutations_do_not_strand_the_journal_worker() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+
+    const TASKS: usize = 4;
+    const MUTATIONS_PER_TASK: usize = 200;
+
+    let workload = {
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            let mut handles = Vec::with_capacity(TASKS);
+            for task in 0..TASKS {
+                let engine = engine.clone();
+                let tenant_id = tenant_id.clone();
+                handles.push(tokio::spawn(async move {
+                    for index in 0..MUTATIONS_PER_TASK {
+                        engine
+                            .insert_document_async(
+                                tenant_id.clone(),
+                                tasks_table(),
+                                serde_json::Map::from_iter([(
+                                    "title".to_string(),
+                                    json!(format!("t{task}-{index}")),
+                                )]),
+                            )
+                            .await
+                            .expect("concurrent insert should not fail");
+                    }
+                }));
+            }
+            for handle in handles {
+                handle.await.expect("mutation task should not panic");
+            }
+        }
+    };
+
+    tokio::time::timeout(std::time::Duration::from_secs(45), workload)
+        .await
+        .expect(
+            "every concurrent mutation must drain — a hang here means the journal-worker \
+             lost-wakeup deadlock has regressed",
+        );
+
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load");
+    assert_eq!(stats.queue_depth, 0, "all mutations drained");
+    assert_eq!(stats.worker_failure_count, 0, "no worker failures");
+}
+
 #[tokio::test]
 async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_in_flight_response()
 {
