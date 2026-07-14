@@ -151,7 +151,10 @@ extension-registry seam before the second concern edits `extensions.rs`.
   (uniform first-committer-wins contract + typed Conflict error surface +
   per-mutation caps on every adapter). PPSC4 (off-gate prepare pool) and
   PPSC5 (pipelined ordered publish) are measurement-gated and may close as
-  not-worth-it. Governing research:
+  not-worth-it; PPSC5 carries a standing provider-arm trigger — enterprise
+  DBaaS backends (postgres/mysql/remote-libsql) have Convex's
+  network-persistence shape, where in-order pipelining transfers directly.
+  Governing research:
   `research/parallel-prepare-serial-commit-redesign.md`.
 - `layered-admission-control-plan.md` - `deferred`. Owns future layered
   admission experiments and EO8-style promotion work. Consumes the
