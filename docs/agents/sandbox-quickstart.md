@@ -103,7 +103,7 @@ while (current.status.lifecycleState !== "ready") {
   current = await nimbus.sandboxes.get({ id: sandbox.metadata.id });
 }
 
-// Lease an interactive connection. Every session expires on its own.
+// Lease a session to the sandbox. Every session expires on its own.
 const session = await nimbus.sessions.open({
   target: { sandbox: { id: sandbox.metadata.id } },
   channels: ["stdio"],

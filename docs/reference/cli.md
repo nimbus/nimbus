@@ -20,9 +20,15 @@ nimbus <command> [subcommand] [flags]
 | [`dev`](#nimbus-dev) | Start a local development server with watched codegen |
 | [`deploy`](#nimbus-deploy) | Push app artifacts to a self-hosted Nimbus instance |
 | [`run`](#nimbus-run) | Invoke functions and reserve target-scoped workload execution |
+| [`target`](#nimbus-target) | Manage the named-target registry |
+| [`explain`](#nimbus-explain) | Explain effective configuration and runtime admission |
+| [`validate`](#nimbus-validate) | Validate project config or policy |
+| [`list`](#nimbus-list) | List Nimbus resources |
 | [`sandbox`](#nimbus-sandbox) | Reserve target-scoped sandbox lifecycle commands |
 | [`codegen`](#nimbus-codegen) | Generate app artifacts from `nimbus/` or `convex/` source |
 | [`init`](#nimbus-init) | Scaffold a new Nimbus project |
+| [`kv`](#nimbus-kv) | Run the loopback RESP (Redis) KV listener |
+| [`object-storage`](#nimbus-object-storage) | Administer the object byte plane |
 | [`token`](#nimbus-token) | Local admin token management |
 | [`backup`](#nimbus-backup) | Offline backup and restore of the local data directory |
 | [`auth`](#nimbus-auth) | Console sign-in URLs and remote deploy credentials |
@@ -60,18 +66,20 @@ Most-used flags:
 | `--cors-allow-origin` | `NIMBUS_CORS_ALLOW_ORIGINS` | loopback only | Additional allowed browser origin for CORS (repeatable; env var is comma-separated). Exact match; wildcards rejected. |
 | `--data-dir` | `NIMBUS_DATA_DIR` | `./data` | Local data directory for embedded tenant databases and, by default, the control plane. |
 | `--tenant-provider` | `NIMBUS_TENANT_PROVIDER` | `sqlite` | Tenant persistence provider: `sqlite`, `libsql-replica`, `redb`, `postgres`, or `mysql`. |
-| `--config` | `NIMBUS_CONFIG` | unset | Optional JSON config file; CLI flags override env vars, which override file values. |
+| `--config` | `NIMBUS_CONFIG` | unset | Optional YAML or JSON config file; CLI flags override env vars, which override file values. Without it, Nimbus also auto-discovers `./nimbus.yaml`. |
 
-The protocol adapters — Firestore routes on the main listener, plus the
-MongoDB and DynamoDB wire listeners on `27017` and `8000` — are served by
-default; a busy conventional port skips that listener with a warning.
-`--no-firestore`, `--no-mongodb`, and `--no-dynamodb` switch a surface
-off, `--mongodb-port` / `--dynamodb-port` pin an explicit port (busy is
-then a hard error), and credentials come from the generated
+The protocol adapters — Firestore and Cloudflare routes on the main
+listener, plus the MongoDB, DynamoDB, and S3 wire listeners on `27017`,
+`8000`, and `9000` — are served by default; a busy conventional port skips
+that listener with a warning. `--no-firestore`, `--no-cloudflare`,
+`--no-mongodb`, `--no-dynamodb`, and `--no-s3` switch a surface off,
+`--mongodb-port` / `--dynamodb-port` / `--s3-port` pin an explicit port
+(busy is then a hard error), and credentials come from the generated
 `wire-credentials.json` in the data directory unless overridden —
-`--mongodb-username` with the env-only `NIMBUS_MONGODB_PASSWORD`, and
-repeatable `--dynamodb-access-key KEY_ID:SECRET:TENANT` or
-`NIMBUS_DYNAMODB_ACCESS_KEYS`.
+`--mongodb-username` with the env-only `NIMBUS_MONGODB_PASSWORD`, repeatable
+`--dynamodb-access-key KEY_ID:SECRET:TENANT` or `NIMBUS_DYNAMODB_ACCESS_KEYS`,
+and repeatable `--s3-access-key KEY_ID:SECRET:TENANT` or
+`NIMBUS_S3_ACCESS_KEYS`.
 
 `nimbus start` accepts further flag families — TLS termination
 (`--tls-cert` + `--tls-key`), app loading (`--app-dir`,
@@ -177,6 +185,46 @@ execution is not shipped yet. It resolves the target and then exits with an
 actionable error instead of bypassing the service/sandbox/node workload-control
 path.
 
+## nimbus target
+
+```bash
+nimbus target <subcommand>
+```
+
+Manages the named-target registry at `~/.config/nimbus/targets` — the named
+endpoints that `deploy`, `run`, `sandbox`, and `list` resolve instead of a
+raw URL. Run `nimbus target --help` for the add, list, and remove
+subcommands.
+
+## nimbus explain
+
+```bash
+nimbus explain [flags]
+```
+
+Explains the effective Nimbus configuration and runtime admission decisions
+for a target — how flags, environment, and config-file values resolve. Run
+`nimbus explain --help` for its options.
+
+## nimbus validate
+
+```bash
+nimbus validate [flags]
+```
+
+Validates a Nimbus project's configuration or an operator policy file before
+you apply it, reporting problems without starting a server. Run
+`nimbus validate --help` for what it checks.
+
+## nimbus list
+
+```bash
+nimbus list <resource>
+```
+
+Lists Nimbus resources on a target, such as sandboxes and services. Run
+`nimbus list --help` for the resource kinds it enumerates.
+
 ## nimbus sandbox
 
 ```bash
@@ -222,6 +270,34 @@ the project template; existing files are never overwritten.
 | `[directory]` | — | `.` | Target directory, created if it does not exist. |
 | `--source-root` | — | `convex` | Source root directory name (convex adapter only). |
 | `--install` | — | `false` | Install adapter dependencies after scaffolding. |
+
+## nimbus kv
+
+```bash
+nimbus kv [flags]
+```
+
+Runs a loopback RESP (Redis) listener speaking RESP2 and RESP3 on
+`127.0.0.1:6380`. Authentication is mandatory and the listener serves one
+tenant per credential; if no password is given (`--password` or
+`NIMBUS_KV_PASSWORD`), a dev credential is generated and printed at startup.
+The command surface and flags are documented in
+[KV (Redis) compatibility](/reference/kv/compatibility/).
+
+## nimbus object-storage
+
+```bash
+nimbus object-storage <subcommand>
+```
+
+Administers the object byte plane — the store the S3 adapter reads and writes
+through. Subcommands cover placement policy (`set-placement`), the encryption
+master key (`bootstrap-master-key`), garbage-collection and erasure health
+(`gc-status`, `erasure-status`, `erasure-heal`), offline byte-plane backup and
+restore (`backup-object-store`, `restore-object-store`), and destructive
+per-tenant removal (`tenant rm`). The maintenance verbs are offline and fail
+closed while a server is running. See
+[Object storage](/operators/object-storage/) for the operator runbook.
 
 ## nimbus token
 

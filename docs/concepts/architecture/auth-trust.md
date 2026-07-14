@@ -81,7 +81,7 @@ origin allowlist for browser-reachable route families.
 ### The explicit-rotation gate
 
 Binding to a non-loopback address is a two-stage opt-in
-(`crates/nimbus-bin/src/start/network_bind.rs`). First, a non-loopback
+(`crates/nimbus-cli/src/start/network_bind.rs`). First, a non-loopback
 host requires an explicit `--allow-network` flag. Second, the server
 refuses the bind unless the admin token has been **explicitly rotated at
 least once** — the auto-minted first-boot token can never be exposed

@@ -166,8 +166,8 @@ aborted with it — one lifecycle for the whole transport layer.
 
 `serve` accepting a pre-bound listener is a deliberate seam. Deciding
 *what* to bind is the CLI binary's job, in
-`crates/nimbus-bin/src/start/boot.rs` and
-`crates/nimbus-bin/src/start/network_bind.rs`:
+`crates/nimbus-cli/src/start/boot.rs` and
+`crates/nimbus-cli/src/start/network_bind.rs`:
 
 - Loopback is the default. Binding a non-loopback host requires an
   explicit `--allow-network` opt-in, checked before any expensive
