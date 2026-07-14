@@ -59,25 +59,29 @@ async fn async_schema_write_advances_runtime_journal_before_next_queued_document
     assert_eq!(after_insert.worker_failure_count, 0);
 }
 
-/// End-to-end guard for the mutation-journal lost-wakeup deadlock
-/// (see `MutationJournalState::release_worker`). Drives the bursty pattern that
-/// empties the admission queue after nearly every mutation — the interleaving
-/// that exposes the race — from a couple of tasks in true parallelism. On the
-/// buggy ordering a mutation is stranded with no drainer and the run never
-/// finishes; on correct code every mutation drains well under the bound. The
-/// counts are kept modest because `cargo test` builds unoptimized (durable
-/// commits are ~10-50x slower than the release build the benchmark uses). The
-/// precise, deterministic guard lives in
+/// Liveness smoke for the real `insert_document_async` path under concurrency:
+/// several tasks issue rapid mutations in true parallelism and every one must
+/// drain within a bound. This exercises the mutation journal end-to-end and
+/// catches gross liveness regressions.
+///
+/// It is deliberately NOT presented as a reliable reproducer of the specific
+/// lost-wakeup race it was born from — that window is nanosecond-scale (the
+/// benchmark that found it needed concurrency up to 256 to hit it ~1 run in 4),
+/// so at this scale it will not, on its own, catch a call-site regression that
+/// hoists `has_pending()` out of the closure. The precise, deterministic guard
+/// for the race is
 /// `tenant::mutation::journal::tests::release_worker_clears_running_before_evaluating_the_gate`;
-/// this test exercises the real `insert_document_async` path under concurrency.
+/// a full revert of the closure signature is caught by compilation. Counts are
+/// modest because `cargo test` builds unoptimized (durable commits are ~10-50x
+/// slower than the release build the benchmark uses).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_mutations_do_not_strand_the_journal_worker() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
 
-    const TASKS: usize = 2;
-    const MUTATIONS_PER_TASK: usize = 500;
+    const TASKS: usize = 4;
+    const MUTATIONS_PER_TASK: usize = 200;
 
     let workload = {
         let engine = engine.clone();
@@ -109,7 +113,7 @@ async fn concurrent_mutations_do_not_strand_the_journal_worker() {
         }
     };
 
-    tokio::time::timeout(std::time::Duration::from_secs(30), workload)
+    tokio::time::timeout(std::time::Duration::from_secs(45), workload)
         .await
         .expect(
             "every concurrent mutation must drain — a hang here means the journal-worker \
