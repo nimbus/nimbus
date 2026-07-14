@@ -57,6 +57,10 @@ name = "embedded-provider-benchmarks"
 harness = false
 
 [[bench]]
+name = "concurrent-write-throughput"
+harness = false
+
+[[bench]]
 name = "postgres-provider-benchmarks"
 harness = false
 
