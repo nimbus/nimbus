@@ -15,7 +15,7 @@ use super::traits::{TenantWriteOutcome, TenantWriteStorage};
 
 const TENANT_WRITE_PARALLELISM: usize = 1;
 
-pub(super) trait BlockingWriteStore: Send + Sync + 'static {
+pub(crate) trait BlockingWriteStore: Send + Sync + 'static {
     type WriteTransaction;
 
     fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
@@ -84,7 +84,7 @@ impl BlockingWriteStore for SqliteTenantStore {
     }
 }
 
-pub(super) struct BlockingWriteExecutor<Store> {
+pub(crate) struct BlockingWriteExecutor<Store> {
     store: Arc<Store>,
     permits: Arc<Semaphore>,
     runtime_handle: TokioRuntimeHandle,
@@ -104,7 +104,7 @@ impl<Store> BlockingWriteExecutor<Store>
 where
     Store: BlockingWriteStore,
 {
-    pub(super) fn new(store: Arc<Store>, runtime_handle: TokioRuntimeHandle) -> Self {
+    pub(crate) fn new(store: Arc<Store>, runtime_handle: TokioRuntimeHandle) -> Self {
         Self {
             store,
             permits: Arc::new(Semaphore::new(TENANT_WRITE_PARALLELISM)),
@@ -112,7 +112,7 @@ where
         }
     }
 
-    pub(super) async fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
+    pub(crate) async fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
     where
         T: Send + 'static,
         F: FnOnce(&mut Store::WriteTransaction) -> Result<T> + Send + 'static,
@@ -133,7 +133,7 @@ where
             .map_err(map_join_error)?
     }
 
-    pub(super) async fn execute_write_cancellable<T, Fut, Check, F>(
+    pub(crate) async fn execute_write_cancellable<T, Fut, Check, F>(
         &self,
         cancel_wait: Fut,
         check_cancel: Check,

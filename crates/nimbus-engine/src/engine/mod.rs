@@ -172,6 +172,28 @@ impl Engine {
         )
     }
 
+    /// Creates a test-only engine whose tenant persistence is process-local memory.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn new_with_memory_persistence(data_dir: impl Into<PathBuf>) -> Result<Self> {
+        Self::new_with_simulation_and_memory_persistence(
+            data_dir,
+            Arc::new(SystemClock),
+            Arc::new(NoopFaultInjector),
+            Arc::new(SystemIdSource),
+        )
+    }
+
+    /// Creates a test-only memory-persistence engine with deterministic seams.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn new_with_simulation_and_memory_persistence(
+        data_dir: impl Into<PathBuf>,
+        clock: Arc<dyn Clock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
+        bootstrap::build_memory_engine(data_dir.into(), clock, storage_fault_injector, id_source)
+    }
+
     /// Creates a new engine with deterministic simulation seams and an
     /// explicit embedded persistence provider.
     ///

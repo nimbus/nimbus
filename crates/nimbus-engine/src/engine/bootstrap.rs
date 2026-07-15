@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use nimbus_core::{Error, IdSource, Result};
 use nimbus_crypto::LocalKeyProvider;
+#[cfg(any(test, feature = "test-hooks"))]
+use nimbus_storage::MemoryTenantProvider;
 use nimbus_storage::{
     Clock, EmbeddedProviderKind, EmbeddedRedbControlPlaneProvider, EmbeddedRedbProvider,
     EmbeddedSqliteProvider, FaultInjector, LibsqlReplicaProvider, LibsqlReplicaProviderConfig,
@@ -76,6 +78,37 @@ pub(super) fn build_embedded_engine(
         simulation,
         None,
     )
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+pub(super) fn build_memory_engine(
+    data_dir: PathBuf,
+    clock: Arc<dyn Clock>,
+    storage_fault_injector: Arc<dyn FaultInjector>,
+    id_source: Arc<dyn IdSource>,
+) -> Result<Engine> {
+    std::fs::create_dir_all(&data_dir).map_err(internal_error)?;
+    let (engine_executor, storage_executor) = build_executors()?;
+    let control_plane_provider =
+        build_control_plane_provider(data_dir.clone(), None, &storage_executor)?;
+    let persistence_provider = PersistenceProvider::Memory(Arc::new(MemoryTenantProvider::new(
+        clock.clone(),
+        storage_fault_injector.clone(),
+        storage_executor.handle(),
+    )));
+
+    Ok(Engine::from_bootstrap_parts(EngineBootstrapParts {
+        data_dir,
+        embedded_provider_kind: None,
+        persistence_provider,
+        control_plane_provider,
+        clock,
+        id_source,
+        storage_fault_injector,
+        engine_executor,
+        storage_executor,
+        encryption_status: None,
+    }))
 }
 
 async fn build_from_plan(

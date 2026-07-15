@@ -20,7 +20,9 @@ pub(crate) use crate::test_support::{
     messages_schema, messages_table, owner_read_write_policy, principal_with_subject,
     read_only_owner_policy,
 };
-pub(crate) use nimbus_storage::{Clock, FaultPoint, ManualClock, NoopFaultInjector};
+pub(crate) use nimbus_storage::{
+    Clock, DeterministicHarness, FaultPoint, ManualClock, NoopFaultInjector,
+};
 
 mod atomic_write_batch;
 mod mutation_execution_unit;

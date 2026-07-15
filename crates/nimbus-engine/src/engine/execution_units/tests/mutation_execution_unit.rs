@@ -1,5 +1,63 @@
 use super::*;
 
+#[tokio::test]
+async fn mutation_execution_unit_commits_through_memory_persistence() {
+    let harness = DeterministicHarness::scenario("memory-committer", 41, Timestamp(25_000));
+    let fixture = EngineFixture::new_with_memory_persistence(harness.clone(), |path, harness| {
+        Engine::new_with_simulation_and_memory_persistence(
+            path,
+            harness.clock(),
+            harness.fault_injector(),
+            harness.id_source(),
+        )
+    });
+    let engine = fixture.engine();
+    let tenant_id = TenantId::new("memory-committer").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("memory tenant should create");
+    let table = messages_table("memory_committer_messages");
+
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    let document_id = execution_unit
+        .insert_document(
+            table.clone(),
+            serde_json::Map::from_iter([("body".to_string(), json!("memory commit"))]),
+        )
+        .expect("insert should stage");
+    let commit = execution_unit
+        .commit()
+        .expect("memory-backed commit should succeed")
+        .expect("insert should emit a durable commit");
+
+    assert_eq!(
+        engine
+            .get_document(&tenant_id, &table, document_id.clone())
+            .expect("committed document should read back")
+            .get_field("body"),
+        Some(&json!("memory commit"))
+    );
+    let runtime = engine
+        .get_existing_tenant(&tenant_id)
+        .expect("tenant runtime should remain loaded");
+    assert!(matches!(
+        runtime.store(),
+        crate::persistence::TenantPersistence::Memory(_)
+    ));
+    assert_eq!(runtime.durable_head(), commit.sequence);
+    assert_eq!(runtime.applied_head(), commit.sequence);
+    let journal = runtime
+        .store()
+        .read_durable_journal_from(commit.sequence)
+        .expect("durable journal should read");
+    assert_eq!(journal.len(), 1);
+    assert_eq!(journal[0].sequence, commit.sequence);
+    assert_eq!(journal[0].writes, commit.writes);
+}
+
 #[test]
 fn mutation_execution_unit_commits_id_from_injected_source() {
     let data_dir = tempdir().expect("engine tempdir should build");
@@ -463,7 +521,8 @@ fn mutation_execution_unit_write_dependencies_use_snapshot_table_identity() {
         }
         crate::persistence::TenantPersistence::LibsqlReplica(_)
         | crate::persistence::TenantPersistence::Postgres(_)
-        | crate::persistence::TenantPersistence::MySql(_) => {
+        | crate::persistence::TenantPersistence::MySql(_)
+        | crate::persistence::TenantPersistence::Memory(_) => {
             panic!("engine fixture should use an embedded persistence provider")
         }
     };

@@ -6,6 +6,8 @@ macro_rules! match_persistence_provider {
             crate::persistence::PersistenceProvider::LibsqlReplica($provider) => $body,
             crate::persistence::PersistenceProvider::Postgres($provider) => $body,
             crate::persistence::PersistenceProvider::MySql($provider) => $body,
+            #[cfg(any(test, feature = "test-hooks"))]
+            crate::persistence::PersistenceProvider::Memory($provider) => $body,
         }
     };
 }
@@ -18,6 +20,8 @@ macro_rules! match_tenant_persistence {
             crate::persistence::TenantPersistence::LibsqlReplica($store) => $body,
             crate::persistence::TenantPersistence::Postgres($store) => $body,
             crate::persistence::TenantPersistence::MySql($store) => $body,
+            #[cfg(any(test, feature = "test-hooks"))]
+            crate::persistence::TenantPersistence::Memory($store) => $body,
         }
     };
 }
@@ -30,6 +34,8 @@ macro_rules! match_tenant_persistence_executor {
             crate::persistence::TenantPersistenceExecutor::LibsqlReplica($storage) => $body,
             crate::persistence::TenantPersistenceExecutor::Postgres($storage) => $body,
             crate::persistence::TenantPersistenceExecutor::MySql($storage) => $body,
+            #[cfg(any(test, feature = "test-hooks"))]
+            crate::persistence::TenantPersistenceExecutor::Memory($storage) => $body,
         }
     };
     ($value:expr, |$wrap:ident, $storage:ident| $body:expr) => {
@@ -52,6 +58,11 @@ macro_rules! match_tenant_persistence_executor {
             }
             crate::persistence::TenantPersistenceExecutor::MySql($storage) => {
                 let $wrap = crate::persistence::TenantPersistence::MySql;
+                $body
+            }
+            #[cfg(any(test, feature = "test-hooks"))]
+            crate::persistence::TenantPersistenceExecutor::Memory($storage) => {
+                let $wrap = crate::persistence::TenantPersistence::Memory;
                 $body
             }
         }
@@ -78,6 +89,8 @@ macro_rules! match_tenant_persistence_snapshot {
             }
             crate::persistence::TenantPersistenceSnapshot::Postgres($snapshot) => $body,
             crate::persistence::TenantPersistenceSnapshot::MySql($snapshot) => $body,
+            #[cfg(any(test, feature = "test-hooks"))]
+            crate::persistence::TenantPersistenceSnapshot::Memory($snapshot) => $body,
         }
     };
 }

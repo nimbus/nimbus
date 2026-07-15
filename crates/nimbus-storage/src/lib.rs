@@ -12,6 +12,7 @@ pub mod keys;
 pub mod kv;
 pub mod libsql;
 pub mod materializer;
+pub mod memory;
 pub mod mysql;
 pub mod object_placement;
 pub mod postgres;
@@ -65,6 +66,10 @@ pub use libsql::{
     LibsqlReplicaWriteTransaction,
 };
 pub use materializer::{ShadowMaterializer, ShadowMaterializerConfig, ShadowMaterializerManifest};
+pub use memory::{
+    MemoryTenantProvider, MemoryTenantSnapshot, MemoryTenantStorage, MemoryTenantStore,
+    MemoryWriteTransaction, OpenedMemoryTenant,
+};
 pub use mysql::{
     MySqlProvider, MySqlProviderConfig, MySqlReadSnapshot, MySqlTenantRegistration,
     MySqlTenantStorage, MySqlTenantStore, MySqlWriteTransaction,

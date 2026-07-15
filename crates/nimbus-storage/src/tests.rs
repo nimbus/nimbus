@@ -20,12 +20,12 @@ pub(crate) use crate::keys::{document_key, prefix_end, table_prefix};
 pub(crate) use crate::{
     DeterministicHarness, FaultInjector, FaultOccurrence, FaultPoint, GeneratedTaskHistory,
     GeneratedTaskHistorySeedCase, GeneratedTaskRecord, HardDeleteDecision, LibsqlReplicaProvider,
-    LibsqlReplicaProviderConfig, ManualClock, MySqlProvider, MySqlProviderConfig, PostgresProvider,
-    PostgresProviderConfig, RedbTenantStorage, RestartBoundary, RetentionFloor,
-    RetentionParticipant, ScriptedRestartSchedule, SeededFaultInjector, ShadowMaterializer,
-    ShadowMaterializerConfig, ShadowMaterializerManifest, SqliteTenantStorage, SqliteTenantStore,
-    TenantReadStorage, TenantStore, TenantWriteOutcome, TenantWriteStorage, UsageStore,
-    VerificationHarnessMode, replay_generated_task_history,
+    LibsqlReplicaProviderConfig, ManualClock, MemoryTenantStore, MySqlProvider,
+    MySqlProviderConfig, PostgresProvider, PostgresProviderConfig, RedbTenantStorage,
+    RestartBoundary, RetentionFloor, RetentionParticipant, ScriptedRestartSchedule,
+    SeededFaultInjector, ShadowMaterializer, ShadowMaterializerConfig, ShadowMaterializerManifest,
+    SqliteTenantStorage, SqliteTenantStore, TenantReadStorage, TenantStore, TenantWriteOutcome,
+    TenantWriteStorage, UsageStore, VerificationHarnessMode, replay_generated_task_history,
     selected_generated_task_history_seed_corpus,
 };
 
@@ -33,6 +33,7 @@ mod async_faults;
 mod crud_and_journal;
 mod generated_history;
 mod libsql_provider;
+mod memory_conformance;
 mod mysql_provider;
 mod object_meta;
 mod postgres_provider;

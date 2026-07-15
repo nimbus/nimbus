@@ -4,6 +4,8 @@ use nimbus_core::{
     CollectionName, Document, DocumentId, ResourcePathBinding, Result, SequenceNumber, TableId,
     TableName,
 };
+#[cfg(any(test, feature = "test-hooks"))]
+use nimbus_storage::MemoryTenantSnapshot;
 use nimbus_storage::{
     MySqlReadSnapshot, PostgresReadSnapshot, SqliteReadSnapshot,
     TenantReadSnapshot as RedbReadSnapshot,
@@ -15,6 +17,8 @@ pub(crate) enum TenantPersistenceSnapshot {
     LibsqlReplica(Arc<Mutex<SqliteReadSnapshot>>),
     Postgres(PostgresReadSnapshot),
     MySql(MySqlReadSnapshot),
+    #[cfg(any(test, feature = "test-hooks"))]
+    Memory(MemoryTenantSnapshot),
 }
 
 impl TenantPersistenceSnapshot {
@@ -39,6 +43,8 @@ impl TenantPersistenceSnapshot {
                 .scan_resource_path_bindings(),
             Self::Postgres(snapshot) => snapshot.scan_resource_path_bindings(),
             Self::MySql(snapshot) => snapshot.scan_resource_path_bindings(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(snapshot) => snapshot.scan_resource_path_bindings(),
         }
     }
 
@@ -73,6 +79,8 @@ impl TenantPersistenceSnapshot {
                 .scan_collection_group_bindings(collection_group),
             Self::Postgres(snapshot) => snapshot.scan_collection_group_bindings(collection_group),
             Self::MySql(snapshot) => snapshot.scan_collection_group_bindings(collection_group),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(snapshot) => snapshot.scan_collection_group_bindings(collection_group),
         }
     }
 }
