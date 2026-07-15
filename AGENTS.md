@@ -112,6 +112,29 @@ Using gpt-5.6-sol inside workflows and subagents:
   Disable temporarily by creating
   `~/.claude/hooks-state/stop-triage/disabled`.
 
+Codex delegation: never rely on idle-wake; isolate context, not judgment
+(verified 2026-07-15 — forensics + upstream #39632/#21048/#32085, all
+closed not-planned):
+
+- An idle subagent is not reliably woken by its own background-task
+  completion; notifications queue until the next inbound message. The
+  documented-reliable wake is an inbound `SendMessage`. Therefore a
+  delegating agent holds its Codex job **in the foreground of one turn**
+  (repeated short status calls for long jobs) — never fire-and-idle on a
+  notification, even though the harness prompt discourages polling.
+- Sequential delegation needs no intermediary: the orchestrator drives
+  `codex-companion.mjs` directly (its own background tasks re-invoke the
+  main session) and reviews the result itself.
+- Parallel lanes use liaison subagents (sonnet-tier; the implementer is
+  Codex) with an explicit non-role: launch, hold, heartbeat with an
+  effort-scaled timeout, return structured results verbatim — no
+  implementing, no reviewing, no committing. The liaison's value is
+  context isolation, not reliability.
+- Judgment lives at the orchestrator's gate: independent verification
+  before push/PR; progress judged by job-log/tree timestamps, never
+  message-arrival cadence; takeover after ~1h of tree quiet measured
+  from job start.
+
 ## Pre-Launch Status
 
 **This project has NOT launched yet.** There are no production users or data to migrate.
