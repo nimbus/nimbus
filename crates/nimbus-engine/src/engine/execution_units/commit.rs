@@ -2,11 +2,11 @@ use std::time::Instant;
 
 use nimbus_core::{
     CommitEntry, DependencySet, Error, Result, SequenceNumber, TableName, Timestamp,
-    commit_intersects_dependency_set,
 };
 
 use super::super::mutations::phase_metrics::{CommitPhaseDurations, maybe_warn_wide_read_set};
 use super::super::mutations::prepared::PreparedCommit;
+use super::super::mutations::write_log::ValidationSource;
 use super::state::ExecutionUnitLifecycle;
 use super::{MutationExecutionUnit, labels};
 
@@ -101,6 +101,11 @@ impl MutationExecutionUnit {
                     .wait_for_commit_fault(labels::DURABLE_BEFORE_PUBLISH)?;
                 if let Some(commit) = &commit {
                     let publish_started = Instant::now();
+                    self.runtime.stage_pending_write_log_commits(
+                        [commit.clone()],
+                        self.runtime.store.now(),
+                    );
+                    self.runtime.publish_write_log_through(commit.sequence);
                     self.runtime.mark_durable_head(commit.sequence);
                     phases.add_publish(publish_started.elapsed());
                     let apply_started = Instant::now();
@@ -158,19 +163,36 @@ impl MutationExecutionUnit {
             return Ok(());
         }
 
-        let commits = self
+        let head = self.runtime.durable_head();
+        let conflicting_sequence = match self
             .runtime
-            .store
-            .read_commit_log_from(SequenceNumber(snapshot_sequence.0.saturating_add(1)))?;
-        for commit in commits {
-            if commit_intersects_dependency_set(&commit, dependencies, &[], |table, document_id| {
-                self.runtime.store.get(table, &document_id)
-            }) {
-                return Err(Error::retryable_conflict(
-                    "transaction conflict detected; retry the mutation",
-                    Some(commit.sequence),
-                ));
-            }
+            .write_log
+            .validation_source(snapshot_sequence, head)?
+        {
+            ValidationSource::InMemory(view) => view
+                .first_conflicting_sequence(dependencies, |table, document_id| {
+                    self.runtime.store.get(table, &document_id)
+                }),
+            ValidationSource::StorageFallback => self
+                .runtime
+                .store
+                .read_commit_log_from(SequenceNumber(snapshot_sequence.0.saturating_add(1)))?
+                .into_iter()
+                .find_map(|commit| {
+                    nimbus_core::commit_intersects_dependency_set(
+                        &commit,
+                        dependencies,
+                        &[],
+                        |table, document_id| self.runtime.store.get(table, &document_id),
+                    )
+                    .then_some(commit.sequence)
+                }),
+        };
+        if let Some(conflicting_sequence) = conflicting_sequence {
+            return Err(Error::retryable_conflict(
+                "transaction conflict detected; retry the mutation",
+                Some(conflicting_sequence),
+            ));
         }
         Ok(())
     }

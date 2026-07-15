@@ -376,7 +376,15 @@ struct WriteLogInspection {
 
 #[cfg(test)]
 mod tests {
-    use nimbus_core::{TableId, WriteOp, WriteOpType};
+    use std::sync::Arc;
+
+    use nimbus_core::{
+        Filter, FilterOp, IndexId, IndexRangeDependency, PaginatedWindowDependency,
+        PredicateDependency, TableId, WriteOp, WriteOpType,
+    };
+    use nimbus_storage::{ManualClock, MemoryTenantStore, NoopFaultInjector};
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
     use serde_json::json;
 
     use super::*;
@@ -512,5 +520,221 @@ mod tests {
         let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
         log.stage_pending([commit(2, 8)], Timestamp(0));
         log.stage_pending([commit(1, 8)], Timestamp(0));
+    }
+
+    #[test]
+    fn bootstrap_fallback_uses_storage_scan() {
+        let store = MemoryTenantStore::with_simulation(
+            Arc::new(ManualClock::new(Timestamp(1_000))),
+            Arc::new(NoopFaultInjector),
+        );
+        let document = document(1, "active", 1);
+        let commit = store.insert(&document).expect("seed insert should commit");
+        let log = WriteLog::new(
+            WriteLogConfig::for_tests(30, 300, usize::MAX),
+            commit.sequence,
+            commit.sequence,
+        );
+        let mut dependencies = DependencySet::default();
+        dependencies.record_table(&commit.writes[0].table, &commit.writes[0].table_id);
+
+        assert!(matches!(
+            log.validation_source(SequenceNumber(0), commit.sequence)
+                .expect("bootstrap coverage decision should succeed"),
+            ValidationSource::StorageFallback
+        ));
+        let storage_conflict = store
+            .read_commit_log_from(SequenceNumber(1))
+            .expect("bootstrap fallback scan should read memory persistence")
+            .into_iter()
+            .any(|entry| {
+                commit_intersects_dependency_set(&entry, &dependencies, &[], |table, id| {
+                    store.get(table, &id)
+                })
+            });
+        assert!(
+            storage_conflict,
+            "the mandatory bootstrap fallback must preserve the storage-scan abort decision"
+        );
+    }
+
+    #[test]
+    fn window_vs_storage_scan_differential() {
+        const HISTORIES: usize = 20;
+        const CASES_PER_HISTORY: usize = 25;
+        const CORPUS_SIZE: usize = HISTORIES * CASES_PER_HISTORY;
+
+        let mut rng = StdRng::seed_from_u64(0x5050_5343_3257_4c47);
+        let mut checked = 0;
+        for history_index in 0..HISTORIES {
+            let store = MemoryTenantStore::with_simulation(
+                Arc::new(ManualClock::new(Timestamp(
+                    10_000 + u64::try_from(history_index).expect("history index fits u64"),
+                ))),
+                Arc::new(NoopFaultInjector),
+            );
+            let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
+            let mut active = Vec::<Document>::new();
+            let mut history = Vec::<CommitEntry>::new();
+
+            for operation_index in 0..CASES_PER_HISTORY {
+                let choose_insert = active.is_empty() || rng.gen_bool(0.45);
+                let commit = if choose_insert {
+                    let document = document(
+                        history_index * 1_000 + operation_index,
+                        if rng.gen_bool(0.5) {
+                            "active"
+                        } else {
+                            "archived"
+                        },
+                        rng.gen_range(0..100),
+                    );
+                    let commit = store
+                        .insert(&document)
+                        .expect("generated insert should commit");
+                    active.push(document);
+                    commit
+                } else {
+                    let target = rng.gen_range(0..active.len());
+                    if active.len() > 1 && rng.gen_bool(0.25) {
+                        let document = active.swap_remove(target);
+                        store
+                            .delete_validated_returning_document(
+                                &document.table,
+                                &document.id,
+                                |_| Ok(()),
+                            )
+                            .expect("generated delete should commit")
+                            .0
+                    } else {
+                        let document = &mut active[target];
+                        let status = if rng.gen_bool(0.5) {
+                            "active"
+                        } else {
+                            "archived"
+                        };
+                        let rank = rng.gen_range(0..100);
+                        let patch = serde_json::Map::from_iter([
+                            ("status".to_string(), json!(status)),
+                            ("rank".to_string(), json!(rank)),
+                        ]);
+                        let commit = store
+                            .update_validated(&document.table, &document.id, &patch, |_, _| Ok(()))
+                            .expect("generated update should commit");
+                        document.fields.extend(patch);
+                        document.update_time = commit.timestamp;
+                        commit
+                    }
+                };
+                log.stage_pending([commit.clone()], Timestamp(1_000));
+                log.publish_pending_through(commit.sequence, Timestamp(1_000), SequenceNumber(0));
+                history.push(commit);
+            }
+
+            let head = history
+                .last()
+                .expect("generated history should be non-empty")
+                .sequence;
+            for _ in 0..CASES_PER_HISTORY {
+                let snapshot = SequenceNumber(rng.gen_range(0..head.0));
+                let target = &history[rng.gen_range(0..history.len())];
+                let dependencies = generated_dependencies(&mut rng, target);
+                let storage_conflict = store
+                    .read_commit_log_from(SequenceNumber(snapshot.0.saturating_add(1)))
+                    .expect("differential storage scan should read")
+                    .into_iter()
+                    .find_map(|entry| {
+                        commit_intersects_dependency_set(&entry, &dependencies, &[], |table, id| {
+                            store.get(table, &id)
+                        })
+                        .then_some(entry.sequence)
+                    });
+                let ValidationSource::InMemory(view) = log
+                    .validation_source(snapshot, head)
+                    .expect("generated in-memory validation should be retained")
+                else {
+                    panic!("fully populated generated history should not fall back");
+                };
+                let window_conflict = view
+                    .first_conflicting_sequence(&dependencies, |table, id| store.get(table, &id));
+                assert_eq!(
+                    window_conflict.is_some(),
+                    storage_conflict.is_some(),
+                    "differential case {checked} disagreed at snapshot {snapshot}"
+                );
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, CORPUS_SIZE);
+    }
+
+    fn document(slot: usize, status: &str, rank: u64) -> Document {
+        let table = TableName::new("differential_messages").expect("table name should be valid");
+        Document {
+            id: DocumentId::from_key(format!("generated-{slot}"))
+                .expect("generated document id should be valid"),
+            table,
+            creation_time: Timestamp(u64::try_from(slot).unwrap_or(u64::MAX)),
+            update_time: Timestamp(u64::try_from(slot).unwrap_or(u64::MAX)),
+            fields: serde_json::Map::from_iter([
+                ("status".to_string(), json!(status)),
+                ("rank".to_string(), json!(rank)),
+            ]),
+            typed_fields: Default::default(),
+        }
+    }
+
+    fn generated_dependencies(rng: &mut StdRng, commit: &CommitEntry) -> DependencySet {
+        let write = &commit.writes[0];
+        let mut dependencies = DependencySet::default();
+        match rng.gen_range(0..8) {
+            0 => dependencies.record_table(&write.table, &write.table_id),
+            1 => dependencies.record_document(&write.table, &write.table_id, write.doc_id.clone()),
+            2 => dependencies.record_missing_table(&write.table),
+            3 => dependencies.record_predicate(PredicateDependency {
+                table: write.table.clone(),
+                table_id: write.table_id.clone(),
+                filters: vec![Filter {
+                    field: "status".to_string(),
+                    op: FilterOp::Eq,
+                    value: json!(if rng.gen_bool(0.5) {
+                        "active"
+                    } else {
+                        "archived"
+                    }),
+                }],
+            }),
+            4 => dependencies.record_paginated_window(PaginatedWindowDependency {
+                table: write.table.clone(),
+                table_id: write.table_id.clone(),
+                filters: Vec::new(),
+                order: None,
+                start_sort_values: Vec::new(),
+                start_doc_id: None,
+                end_sort_values: Vec::new(),
+                end_doc_id: None,
+                result_count: rng.gen_range(0..4),
+                page_size: 4,
+            }),
+            5 => dependencies.record_index_range(IndexRangeDependency {
+                table: write.table.clone(),
+                table_id: write.table_id.clone(),
+                index_id: IndexId::new(),
+                index_name: "by_rank".to_string(),
+                field: "rank".to_string(),
+                start: Some(json!(rng.gen_range(0..50))),
+                end: Some(json!(rng.gen_range(50..100))),
+                start_inclusive: rng.gen_bool(0.5),
+                end_inclusive: rng.gen_bool(0.5),
+            }),
+            6 => dependencies.record_document(
+                &write.table,
+                &write.table_id,
+                DocumentId::from_key(format!("absent-{}", rng.r#gen::<u64>()))
+                    .expect("absent id should be valid"),
+            ),
+            _ => dependencies.record_table(&write.table, &TableId::new()),
+        }
+        dependencies
     }
 }
