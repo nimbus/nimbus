@@ -101,7 +101,7 @@ impl From<nimbus_core::Error> for MongoError {
             nimbus_core::Error::InvalidInput(_) => (BAD_VALUE, err.to_string()),
             nimbus_core::Error::SchemaValidation(_) => (BAD_VALUE, err.to_string()),
             nimbus_core::Error::PermissionDenied(_) => (UNAUTHORIZED, err.to_string()),
-            nimbus_core::Error::Conflict(_) | nimbus_core::Error::PreconditionFailed(_) => {
+            nimbus_core::Error::Conflict { .. } | nimbus_core::Error::PreconditionFailed(_) => {
                 (WRITE_CONFLICT, err.to_string())
             }
             nimbus_core::Error::Serialization(_) => (BAD_VALUE, err.to_string()),
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn core_conflict_maps_to_write_conflict() {
-        let core_err = nimbus_core::Error::Conflict("concurrent write".into());
+        let core_err = nimbus_core::Error::conflict("concurrent write");
         let mongo_err = MongoError::from(core_err);
         match mongo_err {
             MongoError::Command { code, .. } => assert_eq!(code, WRITE_CONFLICT.code),

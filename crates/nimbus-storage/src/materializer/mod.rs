@@ -285,7 +285,7 @@ impl ShadowMaterializer {
         match write.op_type {
             WriteOpType::Insert => match (&write.previous, &write.current) {
                 (None, Some(current)) => match self.documents.get(&document_key) {
-                    Some(existing) if existing != current => Err(Error::Conflict(format!(
+                    Some(existing) if existing != current => Err(Error::conflict(format!(
                         "shadow materializer insert replay found conflicting state for document {} at sequence {}",
                         write.doc_id, record.sequence.0
                     ))),
@@ -303,7 +303,7 @@ impl ShadowMaterializer {
             WriteOpType::Update => match (&write.previous, &write.current) {
                 (Some(previous), Some(current)) => {
                     let existing = self.documents.get(&document_key).ok_or_else(|| {
-                        Error::Conflict(format!(
+                        Error::conflict(format!(
                             "shadow materializer update replay missing document {} at sequence {}",
                             write.doc_id, record.sequence.0
                         ))
@@ -312,7 +312,7 @@ impl ShadowMaterializer {
                         return Ok(());
                     }
                     if existing != previous {
-                        return Err(Error::Conflict(format!(
+                        return Err(Error::conflict(format!(
                             "shadow materializer update replay found conflicting state for document {} at sequence {}",
                             write.doc_id, record.sequence.0
                         )));
@@ -327,7 +327,7 @@ impl ShadowMaterializer {
             },
             WriteOpType::Delete => match (&write.previous, &write.current) {
                 (Some(previous), None) => match self.documents.remove(&document_key) {
-                    Some(removed) if removed != *previous => Err(Error::Conflict(format!(
+                    Some(removed) if removed != *previous => Err(Error::conflict(format!(
                         "shadow materializer delete replay found conflicting state for document {} at sequence {}",
                         write.doc_id, record.sequence.0
                     ))),
@@ -347,7 +347,7 @@ impl ShadowMaterializer {
         let staged_hidden = match self.table_identities.get(&hidden_key) {
             Some((hidden_id, TableState::Hidden)) if hidden_id == &write.table_id => true,
             Some((hidden_id, state)) => {
-                return Err(Error::Conflict(format!(
+                return Err(Error::conflict(format!(
                     "shadow materializer hidden slot for table {} id {} contains {} in {} state",
                     write.table, write.table_id, hidden_id, state
                 )));
@@ -357,14 +357,14 @@ impl ShadowMaterializer {
         match self.table_identities.get(&key).cloned() {
             Some((existing, TableState::Active)) if existing == write.table_id => {
                 if staged_hidden {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "shadow materializer table {} already has active table id {} and a duplicate hidden slot",
                         write.table, write.table_id
                     )));
                 }
                 Ok(())
             }
-            Some((existing, state)) if existing == write.table_id => Err(Error::Conflict(format!(
+            Some((existing, state)) if existing == write.table_id => Err(Error::conflict(format!(
                 "shadow materializer table {} is assigned table id {} in {} state, journal references it at document {}",
                 write.table, existing, state, write.doc_id
             ))),
@@ -374,7 +374,7 @@ impl ShadowMaterializer {
                 match self.table_identities.get(&deleting_key) {
                     Some((deleting_id, TableState::Deleting)) if deleting_id == &existing => {}
                     Some((deleting_id, state)) => {
-                        return Err(Error::Conflict(format!(
+                        return Err(Error::conflict(format!(
                             "shadow materializer cannot retire table {} id {} because deleting slot holds {} in {} state",
                             write.table, existing, deleting_id, state
                         )));
@@ -391,7 +391,7 @@ impl ShadowMaterializer {
                     .insert(key, (write.table_id.clone(), TableState::Active));
                 Ok(())
             }
-            Some((existing, state)) => Err(Error::Conflict(format!(
+            Some((existing, state)) => Err(Error::conflict(format!(
                 "shadow materializer table {} is assigned table id {} in {} state, journal references {} at document {}",
                 write.table, existing, state, write.table_id, write.doc_id
             ))),
@@ -414,7 +414,7 @@ impl ShadowMaterializer {
     ) -> Result<()> {
         for (key, (existing_id, state)) in &self.table_identities {
             if existing_id == table_id && Some(key) != allowed_key {
-                return Err(Error::Conflict(format!(
+                return Err(Error::conflict(format!(
                     "shadow materializer table id {} is already assigned to namespace {} table {} in {} state",
                     table_id, key.0, key.1, state
                 )));

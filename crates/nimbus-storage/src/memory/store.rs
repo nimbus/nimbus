@@ -111,7 +111,7 @@ impl MemoryTenantStore {
         transaction.check_cancel()?;
         let mut live = self.write_state()?;
         if live.revision != transaction.base_revision {
-            return Err(Error::Conflict(
+            return Err(Error::conflict(
                 "memory write transaction observed concurrent state change".to_string(),
             ));
         }

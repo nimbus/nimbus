@@ -39,7 +39,7 @@ impl WriteExpectation {
 }
 
 fn changed_before_commit_error(id: &DocumentId) -> Error {
-    Error::Conflict(format!("document {} changed before transaction commit", id))
+    Error::conflict(format!("document {} changed before transaction commit", id))
 }
 
 impl TenantWriteTransaction {

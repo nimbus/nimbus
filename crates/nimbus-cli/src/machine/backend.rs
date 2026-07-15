@@ -110,7 +110,7 @@ fn machine_client_error_to_sandbox_error(error: Error) -> SandboxError {
             SandboxError::BackendUnavailable { message: rendered }
         }
         Error::AlreadyExists(_)
-        | Error::Conflict(_)
+        | Error::Conflict { .. }
         | Error::PreconditionFailed(_)
         | Error::Cancelled
         | Error::TenantNotFound(_)

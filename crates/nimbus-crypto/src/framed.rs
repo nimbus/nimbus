@@ -297,7 +297,7 @@ impl<'a> FramedSealSession<'a> {
     pub fn seal_all(&mut self, plaintext: &[u8]) -> Result<Vec<u8>> {
         if self.state != FramedSessionState::Ready {
             self.state = FramedSessionState::Failed;
-            return Err(Error::Conflict(
+            return Err(Error::conflict(
                 "framed seal session is in terminal error state".to_string(),
             ));
         }
@@ -395,7 +395,7 @@ impl<'a> FramedOpenSession<'a> {
     pub fn open_range(&mut self, framed: &[u8], range: Range<u64>) -> Result<Vec<u8>> {
         if self.state != FramedSessionState::Ready {
             self.state = FramedSessionState::Failed;
-            return Err(Error::Conflict(
+            return Err(Error::conflict(
                 "framed open session is in terminal error state".to_string(),
             ));
         }
@@ -927,7 +927,7 @@ mod tests {
         session.seal_all(b"payload").unwrap();
         let error = session.seal_all(b"again").unwrap_err();
 
-        assert!(matches!(error, Error::Conflict(_)));
+        assert!(matches!(error, Error::Conflict { .. }));
     }
 
     #[test]

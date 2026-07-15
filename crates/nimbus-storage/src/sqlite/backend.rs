@@ -149,7 +149,7 @@ pub(super) fn resolve_table_id_in_conn(
     };
     let state = TableState::from_str(state.as_str())?;
     if state != TableState::Active {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "logical table {} is in {} lifecycle state",
             table, state
         )));
@@ -195,7 +195,7 @@ pub(super) fn ensure_table_id_in_conn(
     {
         Some((hidden_id, TableState::Hidden)) if hidden_id == *table_id => true,
         Some((hidden_id, state)) => {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "hidden identity slot for logical table {} and table id {} contains {} in {} state",
                 table, table_id, hidden_id, state
             )));
@@ -206,7 +206,7 @@ pub(super) fn ensure_table_id_in_conn(
     match catalog_identity_row_in_conn(conn, DEFAULT_TABLE_NAMESPACE, table)? {
         Some((existing, TableState::Active)) if existing == *table_id => {
             if staged_hidden {
-                return Err(Error::Conflict(format!(
+                return Err(Error::conflict(format!(
                     "logical table {} already has active table id {} and a duplicate hidden slot",
                     table, table_id
                 )));
@@ -214,7 +214,7 @@ pub(super) fn ensure_table_id_in_conn(
             return Ok(());
         }
         Some((existing, state)) if existing == *table_id => {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "logical table {} is assigned table id {} in {} lifecycle state",
                 table, table_id, state
             )));
@@ -258,7 +258,7 @@ pub(super) fn ensure_table_id_in_conn(
             return Ok(());
         }
         Some((existing, state)) => {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "logical table {} is already assigned table id {} in {} lifecycle state, journal references {}",
                 table, existing, state, table_id
             )));
@@ -298,7 +298,7 @@ pub(super) fn ensure_table_identity_in_conn(
         if existing_id == identity.table_id && existing_state == identity.state {
             return Ok(());
         }
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "logical table {} in namespace {} is already assigned table id {} in {} state, snapshot references {} in {} state",
             identity.table,
             identity.namespace,
@@ -380,7 +380,7 @@ fn ensure_table_id_available_in_conn(
     {
         return Ok(());
     }
-    Err(Error::Conflict(format!(
+    Err(Error::conflict(format!(
         "table id {} is already assigned to logical table {} in namespace {} with {} state",
         table_id,
         table_name,

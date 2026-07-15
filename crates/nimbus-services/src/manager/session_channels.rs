@@ -109,7 +109,7 @@ impl SessionChannelState {
 
     pub(super) fn ensure_target_generation(&self, current_generation: u64) -> Result<(), Error> {
         if current_generation != self.target_generation {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "session channel `{}` for session `{}` was opened against target generation {}, but the current target generation is {}; reopen the session before attaching the channel",
                 self.channel, self.session_id, self.target_generation, current_generation
             )));

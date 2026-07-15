@@ -78,7 +78,7 @@ impl MemoryState {
         if let Some(identity) = self.table_identities.get(table_id)
             && identity.table != *table
         {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "table id {} is already assigned to logical table {}",
                 table_id, identity.table
             )));

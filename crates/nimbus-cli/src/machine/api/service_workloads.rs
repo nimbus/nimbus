@@ -416,7 +416,7 @@ fn core_error_to_http(error: Error) -> MachineApiHttpError {
         Error::PermissionDenied(_) => StatusCode::FORBIDDEN,
         Error::NotFound(_) => StatusCode::NOT_FOUND,
         Error::ResourceExhausted(_) => StatusCode::TOO_MANY_REQUESTS,
-        Error::Conflict(_) | Error::PreconditionFailed(_) => StatusCode::CONFLICT,
+        Error::Conflict { .. } | Error::PreconditionFailed(_) => StatusCode::CONFLICT,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     MachineApiHttpError {

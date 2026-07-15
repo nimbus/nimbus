@@ -54,7 +54,7 @@ fn decode_catalog_value(value: &str) -> Result<TableCatalogValue> {
 fn active_table_id(table: &TableName, value: TableCatalogValue) -> Result<Option<TableId>> {
     match value.state {
         TableState::Active => Ok(Some(value.table_id)),
-        TableState::Hidden | TableState::Deleting => Err(Error::Conflict(format!(
+        TableState::Hidden | TableState::Deleting => Err(Error::conflict(format!(
             "logical table {} is in {} lifecycle state",
             table, value.state
         ))),
@@ -178,7 +178,7 @@ pub(crate) fn ensure_table_id_in_write_txn(
         if existing.table_id == identity.table_id && existing.state == identity.state {
             return Ok(());
         }
-        return Err(nimbus_core::Error::Conflict(format!(
+        return Err(nimbus_core::Error::conflict(format!(
             "logical table {} in namespace {} is already assigned table id {} in {} state, journal references {} in {} state",
             identity.table,
             identity.namespace,
@@ -193,7 +193,7 @@ pub(crate) fn ensure_table_id_in_write_txn(
         let (existing_key, existing_value) = item.map_err(map_redb_error)?;
         let existing = decode_catalog_value(existing_value.value())?;
         if existing.table_id == identity.table_id && existing_key.value() != key {
-            return Err(nimbus_core::Error::Conflict(format!(
+            return Err(nimbus_core::Error::conflict(format!(
                 "table id {} is already assigned to catalog key {:?}, cannot assign it to {} in namespace {}",
                 identity.table_id,
                 existing_key.value(),
@@ -237,7 +237,7 @@ pub(crate) fn ensure_default_table_id_in_write_txn(
     {
         Some(hidden) if hidden.table_id == *table_id && hidden.state == TableState::Hidden => true,
         Some(hidden) => {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "hidden identity slot for logical table {} and table id {} contains {} in {} state",
                 table, table_id, hidden.table_id, hidden.state
             )));
@@ -249,7 +249,7 @@ pub(crate) fn ensure_default_table_id_in_write_txn(
             if existing.table_id == *table_id && existing.state == TableState::Active =>
         {
             if staged_hidden {
-                Err(Error::Conflict(format!(
+                Err(Error::conflict(format!(
                     "logical table {} already has active table id {} and a duplicate hidden slot",
                     table, table_id
                 )))
@@ -257,7 +257,7 @@ pub(crate) fn ensure_default_table_id_in_write_txn(
                 Ok(())
             }
         }
-        Some(existing) if existing.table_id == *table_id => Err(Error::Conflict(format!(
+        Some(existing) if existing.table_id == *table_id => Err(Error::conflict(format!(
             "logical table {} is assigned table id {} in {} lifecycle state",
             table, table_id, existing.state
         ))),
@@ -276,7 +276,7 @@ pub(crate) fn ensure_default_table_id_in_write_txn(
                     if deleting.table_id == existing.table_id
                         && deleting.state == TableState::Deleting => {}
                 Some(deleting) => {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "deleting identity slot for logical table {} already contains table id {} in {} state",
                         table, deleting.table_id, deleting.state
                     )));
@@ -302,7 +302,7 @@ pub(crate) fn ensure_default_table_id_in_write_txn(
                 .map_err(map_redb_error)?;
             Ok(())
         }
-        Some(existing) => Err(Error::Conflict(format!(
+        Some(existing) => Err(Error::conflict(format!(
             "logical table {} is already assigned table id {} in {} lifecycle state, journal references {}",
             table, existing.table_id, existing.state, table_id
         ))),
@@ -334,7 +334,7 @@ fn ensure_table_id_unassigned_in_catalog(
         }
         let existing = decode_catalog_value(existing_value.value())?;
         if existing.table_id == *table_id {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "table id {} is already assigned to catalog key {:?}",
                 table_id,
                 existing_key.value()
@@ -352,7 +352,7 @@ pub(crate) fn stage_hidden_table_identity_in_write_txn(
     if let Some((namespace, existing_table, existing)) =
         find_catalog_entry_by_table_id_in_write_txn(write_txn, table_id)?
     {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "table id {} is already assigned to logical table {} in namespace {} with {} state",
             existing.table_id, existing_table, namespace, existing.state
         )));
@@ -368,7 +368,7 @@ pub(crate) fn stage_hidden_table_identity_in_write_txn(
         .open_table(TABLE_CATALOG)
         .map_err(map_redb_error)?;
     if catalog.get(key.as_str()).map_err(map_redb_error)?.is_some() {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "hidden table identity already exists for logical table {} and table id {}",
             table, table_id
         )));
@@ -394,7 +394,7 @@ pub(crate) fn mark_default_table_deleting_in_write_txn(
         decode_catalog_value(existing.value())?
     };
     if existing.state != TableState::Active {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "logical table {} is already in {} lifecycle state",
             table, existing.state
         )));
@@ -408,7 +408,7 @@ pub(crate) fn mark_default_table_deleting_in_write_txn(
         .map_err(map_redb_error)?
         .is_some()
     {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "deleting table identity already exists for logical table {} and table id {}",
             table, table_id
         )));
@@ -448,7 +448,7 @@ pub(crate) fn activate_hidden_table_identity_in_write_txn(
         decode_catalog_value(hidden.value())?
     };
     if &hidden.table_id != table_id || hidden.state != TableState::Hidden {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "hidden table identity {} for logical table {} is cataloged as {} in {} state",
             table_id, table, hidden.table_id, hidden.state
         )));
@@ -462,7 +462,7 @@ pub(crate) fn activate_hidden_table_identity_in_write_txn(
     let old_table_id = match existing_active {
         Some(existing) if existing.state == TableState::Active => Some(existing.table_id),
         Some(existing) => {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "logical table {} is already in {} lifecycle state",
                 table, existing.state
             )));
@@ -477,7 +477,7 @@ pub(crate) fn activate_hidden_table_identity_in_write_txn(
             .map_err(map_redb_error)?
             .is_some()
         {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "deleting table identity already exists for logical table {} and table id {}",
                 table, old_table_id
             )));
@@ -521,7 +521,7 @@ pub(crate) fn hard_delete_deleting_table_identity_in_write_txn(
         return Ok(None);
     };
     if value.state != TableState::Deleting {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "table id {} for logical table {} is in {} lifecycle state, not deleting",
             table_id, table, value.state
         )));

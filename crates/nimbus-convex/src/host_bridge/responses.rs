@@ -25,6 +25,9 @@ pub enum ConvexRuntimeEncodedError {
     },
     Conflict {
         message: String,
+        conflicting_sequence: Option<nimbus_core::SequenceNumber>,
+        retryable: bool,
+        attempts: Option<usize>,
     },
     PreconditionFailed {
         message: String,
@@ -102,7 +105,17 @@ impl ConvexRuntimeEncodedError {
                 job_id: job_id.to_string(),
             },
             Error::AlreadyExists(message) => Self::AlreadyExists { message },
-            Error::Conflict(message) => Self::Conflict { message },
+            Error::Conflict {
+                message,
+                conflicting_sequence,
+                retryable,
+                attempts,
+            } => Self::Conflict {
+                message,
+                conflicting_sequence,
+                retryable,
+                attempts,
+            },
             Error::PreconditionFailed(message) => Self::PreconditionFailed { message },
             Error::ResourceExhausted(message) => Self::ResourceExhausted { message },
             Error::PermissionDenied(message) => Self::PermissionDenied { message },
@@ -142,7 +155,17 @@ impl ConvexRuntimeEncodedError {
                 .map(Error::ScheduledJobNotFound)
                 .unwrap_or_else(|error| Error::Internal(error.to_string())),
             Self::AlreadyExists { message } => Error::AlreadyExists(message),
-            Self::Conflict { message } => Error::Conflict(message),
+            Self::Conflict {
+                message,
+                conflicting_sequence,
+                retryable,
+                attempts,
+            } => Error::Conflict {
+                message,
+                conflicting_sequence,
+                retryable,
+                attempts,
+            },
             Self::PreconditionFailed { message } => Error::PreconditionFailed(message),
             Self::ResourceExhausted { message } => Error::ResourceExhausted(message),
             Self::PermissionDenied { message } => Error::PermissionDenied(message),

@@ -140,10 +140,10 @@ impl MutationExecutionUnit {
         let current_schema = self.runtime.schema();
         for table in touched_tables(dependencies) {
             if current_schema.get_table(&table) != self.schema_snapshot.get_table(&table) {
-                return Err(Error::Conflict(format!(
-                    "table schema changed during transaction: {}",
-                    table
-                )));
+                return Err(Error::retryable_conflict(
+                    format!("table schema changed during transaction: {table}"),
+                    None,
+                ));
             }
         }
         Ok(())
@@ -166,8 +166,9 @@ impl MutationExecutionUnit {
             if commit_intersects_dependency_set(&commit, dependencies, &[], |table, document_id| {
                 self.runtime.store.get(table, &document_id)
             }) {
-                return Err(Error::Conflict(
-                    "transaction conflict detected; retry the mutation".to_string(),
+                return Err(Error::retryable_conflict(
+                    "transaction conflict detected; retry the mutation",
+                    Some(commit.sequence),
                 ));
             }
         }

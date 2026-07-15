@@ -79,7 +79,7 @@ impl VersionedRegistry {
         for record in &records {
             record.validate_integrity()?;
             if previous_sequence == Some(record.sequence) {
-                return Err(Error::Conflict(format!(
+                return Err(Error::conflict(format!(
                     "duplicate tenant event sequence {} in historical registry",
                     record.sequence
                 )));
@@ -232,7 +232,7 @@ impl RegistryState {
         match active.as_slice() {
             [] => Ok(None),
             [table_id] => Ok(Some(table_id.clone())),
-            _ => Err(Error::Conflict(format!(
+            _ => Err(Error::conflict(format!(
                 "historical registry has multiple active table ids for logical table {}",
                 table
             ))),
@@ -248,7 +248,7 @@ impl RegistryState {
         match active.as_slice() {
             [] => Ok(None),
             [state] => Ok(Some(*state)),
-            _ => Err(Error::Conflict(format!(
+            _ => Err(Error::conflict(format!(
                 "historical registry has multiple active table ids for logical table {}",
                 table
             ))),
@@ -644,7 +644,7 @@ mod tests {
 
         let error = VersionedRegistry::from_records([first, second]).unwrap_err();
 
-        assert!(matches!(error, Error::Conflict(message) if message.contains("duplicate")));
+        assert!(matches!(error, Error::Conflict { message, .. } if message.contains("duplicate")));
     }
 
     #[test]

@@ -97,7 +97,7 @@ pub fn commit_transaction(
     engine
         .commit_transaction_session(&tenant_id, &token, principal, None)
         .map_err(|e| match e {
-            nimbus_core::Error::Conflict(_) | nimbus_core::Error::PreconditionFailed(_) => {
+            nimbus_core::Error::Conflict { .. } | nimbus_core::Error::PreconditionFailed(_) => {
                 MongoError::Command {
                     code: WRITE_CONFLICT.code,
                     code_name: WRITE_CONFLICT.code_name.into(),

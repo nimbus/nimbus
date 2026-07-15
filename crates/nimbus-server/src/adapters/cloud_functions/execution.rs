@@ -1279,7 +1279,7 @@ functions.cloudEvent("syncUser", async (event) => {
         for attempt in 1..=MAX_ATTEMPTS {
             match seed_firebase_document_once(engine, tenant_id, document_path, fields.clone()) {
                 Ok(()) => return,
-                Err(Error::Conflict(_)) if attempt < MAX_ATTEMPTS => {
+                Err(Error::Conflict { .. }) if attempt < MAX_ATTEMPTS => {
                     std::thread::sleep(Duration::from_millis(10 * attempt as u64));
                 }
                 Err(error) => panic!("batch should execute: {error:?}"),

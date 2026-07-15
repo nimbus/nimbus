@@ -161,7 +161,7 @@ where
     if let Some((namespace, existing_table, state)) =
         table_identity_row_for_table_id(session, database_name, table_id).await?
     {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "table id {} is already assigned to logical table {} in namespace {} with {} state",
             table_id, existing_table, namespace, state
         )));
@@ -205,7 +205,7 @@ where
         )));
     };
     if &hidden_table_id != table_id || hidden_state != TableState::Hidden {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "hidden table identity {} for logical table {} is cataloged as {} in {} state",
             table_id, table, hidden_table_id, hidden_state
         )));
@@ -215,7 +215,7 @@ where
         match catalog_row(session, database_name, DEFAULT_TABLE_NAMESPACE, table).await? {
             Some((active_table_id, TableState::Active)) => Some(active_table_id),
             Some((_, state)) => {
-                return Err(Error::Conflict(format!(
+                return Err(Error::conflict(format!(
                     "logical table {} is already in {} lifecycle state",
                     table, state
                 )));
@@ -287,7 +287,7 @@ where
         return Ok(None);
     };
     if state != TableState::Active {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "logical table {} is already in {} lifecycle state",
             table, state
         )));
@@ -335,7 +335,7 @@ where
         return Ok(None);
     };
     if state != TableState::Deleting {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "table id {} for logical table {} is in {} lifecycle state, not deleting",
             table_id, table_name, state
         )));
@@ -436,7 +436,7 @@ where
         .map_err(map_mysql_error)?
         .is_some()
     {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "table identity already exists for logical table {} in namespace {}",
             table, namespace
         )));
