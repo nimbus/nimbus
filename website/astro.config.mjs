@@ -84,6 +84,7 @@ export default defineConfig({
             {
               label: 'Adapters',
               items: [
+                'developers/adapters',
                 { label: 'Convex', collapsed: true, items: [{ autogenerate: { directory: 'developers/convex' } }] },
                 { label: 'Firestore', collapsed: true, items: [{ autogenerate: { directory: 'developers/firebase' } }] },
                 { label: 'Cloud Functions', collapsed: true, items: [{ autogenerate: { directory: 'developers/cloud-functions' } }] },

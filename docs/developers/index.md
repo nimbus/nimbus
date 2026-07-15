@@ -21,28 +21,10 @@ yet, then [build your first app](/developers/first-app/).
 - Building for AI agents? Sandboxes, services, and sessions have their
   own [Agents](/agents/) section.
 
-## Adapter guides
+## Adapters
 
-Each protocol surface has a front door, and the ported-source surfaces
-(Convex, Firestore, Cloud Functions) add a migration guide. Every server
-serves these surfaces by default, and `nimbus dev` detects which one your app
-uses and wires the app to it automatically:
-
-- [Convex](/developers/convex/) — the Convex function model, schema, and
-  clients; [migrate a Convex app](/developers/convex/migrate/) or browse
-  [example apps](/developers/convex/examples/).
-- [Firestore](/developers/firebase/) — Firestore SDKs against Nimbus;
-  [migrate a Firebase app](/developers/firebase/migrate/) or browse
-  [example apps](/developers/firebase/examples/).
-- [Cloud Functions](/developers/cloud-functions/) — Cloud Functions
-  workloads; [migrate](/developers/cloud-functions/migrate/) or browse an
-  [example bundle](/developers/cloud-functions/examples/).
-- [MongoDB](/developers/mongodb/) — connect official MongoDB drivers;
-  [driver recipes and example apps](/developers/mongodb/examples/).
-- [DynamoDB](/developers/dynamodb/) — point AWS SDK clients at Nimbus;
-  browse an [example app](/developers/dynamodb/examples/).
-- [Native API](/developers/native/) — plain HTTP and WebSocket from any
-  language, no SDK required; browse [example apps](/developers/native/examples/).
-
-The full per-surface compatibility matrices live in the
-[Reference](/reference/) section.
+Nimbus speaks Convex, Firestore, Cloud Functions, MongoDB, DynamoDB, and its
+own native HTTP and WebSocket API — one engine behind several front doors,
+all served by default. [Adapters](/developers/adapters/) explains what a
+surface is, helps you pick one, and routes you to its guide, migration path,
+and examples.
