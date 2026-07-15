@@ -71,6 +71,7 @@ pub struct Engine {
     control_plane_provider: ControlPlaneProvider,
     clock: Arc<dyn Clock>,
     id_source: Arc<dyn IdSource>,
+    commit_faults: execution_units::CommitFaultClient,
     storage_fault_injector: Arc<dyn FaultInjector>,
     scheduler_wakeup: Notify,
     provider_hint_worker_started: AtomicBool,
@@ -82,8 +83,6 @@ pub struct Engine {
     engine_executor: BackgroundExecutor,
     storage_executor: BackgroundExecutor,
     encryption_status: Option<encryption::EncryptionStatus>,
-    #[cfg(test)]
-    execution_unit_commit_pause: Arc<execution_units::ExecutionUnitCommitPauseState>,
 }
 
 pub(super) struct EngineBootstrapParts {
@@ -224,6 +223,7 @@ impl Engine {
             control_plane_provider: parts.control_plane_provider,
             clock: parts.clock,
             id_source: parts.id_source,
+            commit_faults: execution_units::CommitFaultClient::default(),
             storage_fault_injector: parts.storage_fault_injector,
             scheduler_wakeup: Notify::new(),
             provider_hint_worker_started: AtomicBool::new(false),
@@ -235,10 +235,6 @@ impl Engine {
             engine_executor: parts.engine_executor,
             storage_executor: parts.storage_executor,
             encryption_status: parts.encryption_status,
-            #[cfg(test)]
-            execution_unit_commit_pause: Arc::new(
-                execution_units::ExecutionUnitCommitPauseState::default(),
-            ),
         }
     }
 
@@ -294,6 +290,13 @@ impl Engine {
 
     pub(crate) fn next_document_id(&self) -> DocumentId {
         self.id_source.next_document_id()
+    }
+
+    pub(in crate::engine) fn wait_for_commit_fault(
+        &self,
+        label: execution_units::Label,
+    ) -> Result<()> {
+        self.commit_faults.wait(label).into_result()
     }
 
     pub(crate) fn open_tenant_store(&self, path: &Path) -> Result<TenantPersistence> {

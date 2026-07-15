@@ -4,8 +4,8 @@ use nimbus_core::{
 };
 use nimbus_storage::ResolvedScheduleOp;
 
-use super::MutationExecutionUnit;
 use super::state::ExecutionUnitLifecycle;
+use super::{MutationExecutionUnit, labels};
 
 struct FinalizationGuard<'a> {
     unit: &'a MutationExecutionUnit,
@@ -49,14 +49,21 @@ impl MutationExecutionUnit {
         if writes.is_empty() && schedule_ops.is_empty() {
             return Ok(None);
         }
+        self.engine
+            .wait_for_commit_fault(labels::PREPARE_COMPLETE)?;
 
         let result = (|| -> Result<Option<CommitEntry>> {
+            self.engine.wait_for_commit_fault(labels::PRE_ASSIGN)?;
             let commit = {
                 let _sequence_guard = self.runtime.lock_mutation_sequence();
                 self.ensure_schema_unchanged(&conflict_dependencies)?;
                 self.ensure_no_conflicts(&conflict_dependencies)?;
-                #[cfg(test)]
-                self.engine.execution_unit_commit_pause.wait_if_armed();
+                self.engine
+                    .wait_for_commit_fault(labels::POST_VALIDATE_PRE_STAGE)?;
+                // Staging and persistence are one storage call today, so this
+                // is the closest pre-persist boundary until PreparedCommit
+                // splits those phases in later PPSC0 work.
+                self.engine.wait_for_commit_fault(labels::PRE_PERSIST)?;
                 let commit = self.runtime.store.apply_execution_unit_batch_with_origin(
                     &writes,
                     &schedule_ops,
@@ -70,6 +77,8 @@ impl MutationExecutionUnit {
                 }
                 commit
             };
+            self.engine
+                .wait_for_commit_fault(labels::POST_PUBLISH_PRE_FANOUT)?;
             Ok(commit)
         })();
         drop(finalization_guard);

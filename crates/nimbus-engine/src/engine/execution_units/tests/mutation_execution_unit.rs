@@ -87,6 +87,175 @@ fn mutation_execution_unit_commit_timestamp_follows_manual_clock() {
     assert_eq!(commit.timestamp, expected_timestamp);
 }
 
+#[tokio::test]
+async fn mutation_execution_unit_pre_assign_label_forces_commit_interleaving() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_pre_assign_interleaving");
+    engine
+        .insert_document(
+            &tenant_id,
+            table.clone(),
+            serde_json::Map::from_iter([("body".to_string(), json!("Seed"))]),
+        )
+        .expect("seed insert should establish the table identity");
+
+    let first_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("first execution unit should start");
+    let first_id = first_unit
+        .insert_document(
+            table.clone(),
+            serde_json::Map::from_iter([("body".to_string(), json!("First"))]),
+        )
+        .expect("first insert should stage");
+    let second_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("second execution unit should start");
+    let second_id = second_unit
+        .insert_document(
+            table.clone(),
+            serde_json::Map::from_iter([("body".to_string(), json!("Second"))]),
+        )
+        .expect("second insert should stage");
+
+    let faults = engine.commit_fault_handle_for_testing();
+    faults.arm(labels::PRE_ASSIGN);
+    let first_commit = tokio::task::spawn_blocking({
+        let first_unit = first_unit.clone();
+        move || first_unit.commit()
+    });
+    let reached_label = tokio::task::spawn_blocking({
+        let faults = faults.clone();
+        move || faults.wait_until_entered(labels::PRE_ASSIGN, Duration::from_secs(5))
+    })
+    .await
+    .expect("label wait should join");
+    assert!(
+        reached_label,
+        "first commit should pause before entering the serial sequence path"
+    );
+    assert!(
+        !first_commit.is_finished(),
+        "first commit should remain held"
+    );
+
+    let second_commit = timeout(
+        Duration::from_secs(5),
+        tokio::task::spawn_blocking({
+            let second_unit = second_unit.clone();
+            move || second_unit.commit()
+        }),
+    )
+    .await
+    .expect("second commit should finish while the first is held")
+    .expect("second commit task should join")
+    .expect("second commit should succeed")
+    .expect("second insert should produce a commit");
+    assert_eq!(
+        engine
+            .get_document(&tenant_id, &table, second_id.clone())
+            .expect("second document should be visible")
+            .get_field("body"),
+        Some(&json!("Second"))
+    );
+    assert!(matches!(
+        engine.get_document(&tenant_id, &table, first_id.clone()),
+        Err(Error::DocumentNotFound(_))
+    ));
+    assert!(
+        !first_commit.is_finished(),
+        "first commit must still be held after the second becomes visible"
+    );
+
+    faults.release(labels::PRE_ASSIGN);
+    let first_commit = timeout(Duration::from_secs(5), first_commit)
+        .await
+        .expect("first commit should finish after release")
+        .expect("first commit task should join")
+        .expect("first commit should succeed")
+        .expect("first insert should produce a commit");
+    assert!(
+        second_commit.sequence.0 < first_commit.sequence.0,
+        "the unblocked second commit should be assigned before the held first commit"
+    );
+    assert_eq!(
+        engine
+            .get_document(&tenant_id, &table, first_id)
+            .expect("first document should be visible after release")
+            .get_field("body"),
+        Some(&json!("First"))
+    );
+}
+
+#[test]
+fn mutation_execution_unit_pre_persist_fault_leaves_no_partial_state() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_pre_persist_fault");
+    let runtime = engine
+        .get_existing_tenant(&tenant_id)
+        .expect("tenant runtime should exist");
+    let durable_head_before = runtime.durable_head();
+    let applied_head_before = runtime.applied_head();
+
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    let document_id = execution_unit
+        .insert_document(
+            table.clone(),
+            serde_json::Map::from_iter([("body".to_string(), json!("must not persist"))]),
+        )
+        .expect("insert should stage");
+
+    let faults = engine.commit_fault_handle_for_testing();
+    faults.inject(
+        labels::PRE_PERSIST,
+        Fault::Error(Error::storage(
+            StorageErrorKind::Io,
+            "injected pre-persist failure",
+        )),
+    );
+    let error = execution_unit
+        .commit()
+        .expect_err("injected pre-persist fault should fail the public commit API");
+
+    assert_eq!(error.storage_kind(), Some(StorageErrorKind::Io));
+    assert_eq!(
+        error.storage_message(),
+        Some("injected pre-persist failure")
+    );
+    assert_eq!(runtime.durable_head(), durable_head_before);
+    assert_eq!(runtime.applied_head(), applied_head_before);
+    let later_commits = runtime
+        .store()
+        .read_commit_log_from(SequenceNumber(durable_head_before.0.saturating_add(1)))
+        .expect("commit log should remain readable");
+    assert!(
+        later_commits.is_empty(),
+        "the failed commit must not append a durable journal entry"
+    );
+    assert!(matches!(
+        engine.get_document(&tenant_id, &table, document_id),
+        Err(Error::DocumentNotFound(_))
+    ));
+    let visible = engine
+        .query_documents(
+            &tenant_id,
+            &Query {
+                table,
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+        )
+        .expect("table query should remain readable");
+    assert!(visible.is_empty(), "the failed commit must not be visible");
+}
+
 #[test]
 fn mutation_execution_unit_aborts_on_overlapping_document_conflict() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
@@ -191,8 +360,8 @@ async fn mutation_execution_unit_conflict_scan_and_append_are_sequence_atomic() 
         )
         .expect("second staged insert should succeed");
 
-    let pause = engine.execution_unit_commit_pause_handle_for_testing();
-    pause.arm();
+    let pause = engine.commit_fault_handle_for_testing();
+    pause.arm(labels::POST_VALIDATE_PRE_STAGE);
 
     let first_commit = tokio::task::spawn_blocking({
         let first_unit = first_unit.clone();
@@ -200,10 +369,11 @@ async fn mutation_execution_unit_conflict_scan_and_append_are_sequence_atomic() 
     });
 
     let pause_wait = pause.clone();
-    let first_reached_pause =
-        tokio::task::spawn_blocking(move || pause_wait.wait_until_entered(Duration::from_secs(1)))
-            .await
-            .expect("pause wait should join");
+    let first_reached_pause = tokio::task::spawn_blocking(move || {
+        pause_wait.wait_until_entered(labels::POST_VALIDATE_PRE_STAGE, Duration::from_secs(1))
+    })
+    .await
+    .expect("pause wait should join");
     assert!(
         first_reached_pause,
         "first commit should pause after conflict scan while holding the sequence gate"
@@ -221,7 +391,7 @@ async fn mutation_execution_unit_conflict_scan_and_append_are_sequence_atomic() 
         "second commit should wait behind the first scan+append critical section"
     );
 
-    pause.release();
+    pause.release(labels::POST_VALIDATE_PRE_STAGE);
 
     let first_commit = timeout(Duration::from_secs(1), first_commit)
         .await

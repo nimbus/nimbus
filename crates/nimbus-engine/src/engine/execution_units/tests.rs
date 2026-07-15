@@ -5,15 +5,16 @@ pub(crate) use nimbus_core::{
     ArrayPopSide, AtomicWrite, AtomicWriteBatch, BitwiseOperation, DocumentId, DocumentLocator,
     Error, FieldTransform, FieldTransformOperation, IndexDefinition, NumericValue, OrderBy,
     OrderDirection, PaginatedQuery, PrincipalContext, Query, QueryDirection, SeededIdSource,
-    SpecialDouble, StoredValue, StructuredOrder, StructuredQuery, TableId, TenantId, Timestamp,
-    TriggerInvocationKey, TriggerWriteOrigin, TypedScalarValue, WriteKey, WritePrecondition,
-    WriteSetMode,
+    SequenceNumber, SpecialDouble, StorageErrorKind, StoredValue, StructuredOrder, StructuredQuery,
+    TableId, TenantId, Timestamp, TriggerInvocationKey, TriggerWriteOrigin, TypedScalarValue,
+    WriteKey, WritePrecondition, WriteSetMode,
 };
 pub(crate) use nimbus_testing::{BlockingFaultInjector, EngineFixture};
 pub(crate) use serde_json::json;
 pub(crate) use tempfile::tempdir;
 pub(crate) use tokio::time::{Duration, timeout};
 
+pub(crate) use super::{Fault, labels};
 pub(crate) use crate::Engine;
 pub(crate) use crate::test_support::{
     messages_schema, messages_table, owner_read_write_policy, principal_with_subject,

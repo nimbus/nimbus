@@ -9,7 +9,6 @@ use super::Engine;
 
 mod batch;
 mod commit;
-#[cfg(test)]
 mod pause;
 mod reads;
 mod staging;
@@ -19,8 +18,9 @@ mod state;
 mod tests;
 
 use self::state::MutationExecutionUnitState;
+pub(crate) use pause::{CommitFaultClient, Label, labels};
 #[cfg(test)]
-pub(crate) use pause::{ExecutionUnitCommitPauseHandle, ExecutionUnitCommitPauseState};
+pub(crate) use pause::{CommitFaultHandle, Fault};
 
 pub struct MutationExecutionUnit {
     engine: Arc<Engine>,
@@ -56,10 +56,8 @@ impl Engine {
     }
 
     #[cfg(test)]
-    pub(crate) fn execution_unit_commit_pause_handle_for_testing(
-        &self,
-    ) -> ExecutionUnitCommitPauseHandle {
-        ExecutionUnitCommitPauseHandle::new(self.execution_unit_commit_pause.clone())
+    pub(crate) fn commit_fault_handle_for_testing(&self) -> CommitFaultHandle {
+        self.commit_faults.handle()
     }
 }
 
