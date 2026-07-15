@@ -149,6 +149,8 @@ pub(super) fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport
     }
     markdown.push('\n');
 
+    render_gate_hold_report(&mut markdown, config, report);
+
     for workload in workloads {
         markdown.push_str(&format!("## {}\n\n", workload.label()));
         markdown.push_str(&format!("{}\n\n", workload.notes()));
