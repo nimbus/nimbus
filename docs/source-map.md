@@ -34,6 +34,7 @@ sources exist.
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
 | `developers/index.md` | Adapter surfaces served by default; `nimbus dev` detects the app's adapter and wires it automatically | `crates/nimbus-cli/src/start/adapters/mod.rs`, `crates/nimbus-cli/src/dev/adapter.rs`, `crates/nimbus-cli/src/dev/wire.rs` |
+| `developers/adapters.md` | Adapter surfaces served by default; `nimbus dev` detects the app's adapter and wires it automatically; per-surface front doors, with migration guides for the ported-source surfaces (Convex, Firestore, Cloud Functions) | `crates/nimbus-cli/src/start/adapters/mod.rs`, `crates/nimbus-cli/src/dev/adapter.rs`, `crates/nimbus-cli/src/dev/wire.rs` |
 | `developers/first-app.md` | Scaffold contents, schema/messages templates | `crates/nimbus-assets/embedded/templates/convex/` |
 | `developers/first-app.md` | Dev loop: auto npm install, codegen, `demo` tenant, port 3210, watch-and-activate | `crates/nimbus-cli/src/dev.rs` |
 | `developers/first-app.md` | `ConvexClient.onUpdate` live subscriptions, `ConvexHttpClient` | `packages/convex/src/browser.ts`, `examples/convex/node/script.ts` |
