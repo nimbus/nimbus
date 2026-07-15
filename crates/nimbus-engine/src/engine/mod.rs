@@ -47,6 +47,10 @@ pub use committed_mutations::{CommittedMutationEvent, CommittedMutationObserver}
 pub use committed_mutations::{TableSchemaChangeEvent, TableSchemaChangeObserver};
 pub use encryption::{EncryptionStatus, InitializedKeyProvider};
 pub use execution_units::MutationExecutionUnit;
+pub use mutations::phase_metrics::CommitPhaseMetricsSnapshot;
+pub(crate) use mutations::phase_metrics::{
+    CommitPhaseDurations, CommitPhaseMetrics, CommitTraceSample, maybe_emit_commit_trace,
+};
 pub use mutations::{AsyncMutationContext, MutationActor};
 pub use objects::TenantObjectMeta;
 pub(crate) use provider_hints::ProviderPollWorker;

@@ -52,6 +52,7 @@
 //!   NIMBUS_CWB_WARMUP_ROUNDS=2                 discarded warmup rounds per rung
 //!   NIMBUS_CWB_SEED_DOCS=0                      pre-seed docs (0 = match baseline; >0 pre-ages the store)
 //!   NIMBUS_CWB_BACKEND=sqlite|redb             embedded backend (default sqlite)
+//!   NIMBUS_CWB_SPLIT_PHASES=1                   add plan-CPU/apply/fsync phase shares (default off)
 //!   NIMBUS_CWB_OUT=<path>                      also write the markdown report to <path>
 
 use std::hint::black_box;
@@ -59,9 +60,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use nimbus_core::{TableName, TenantId};
-use nimbus_engine::{EmbeddedProviderKind, Engine};
+use nimbus_engine::{CommitPhaseMetricsSnapshot, EmbeddedProviderKind, Engine};
 use serde_json::json;
 use tokio::task::JoinSet;
+
+#[path = "support/concurrent_write_phase_split.rs"]
+mod concurrent_write_phase_split;
+
+use concurrent_write_phase_split::{PhaseSplit, PhaseTotals, render_phase_split_section};
 
 fn env_usize(key: &str, default: usize) -> usize {
     std::env::var(key)
@@ -112,6 +118,12 @@ fn backend() -> EmbeddedProviderKind {
         "redb" => EmbeddedProviderKind::Redb,
         _ => EmbeddedProviderKind::Sqlite,
     }
+}
+
+fn split_phases_enabled() -> bool {
+    std::env::var("NIMBUS_CWB_SPLIT_PHASES")
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes" | "on"))
 }
 
 /// Which mutation shape one "unit" of work is.
@@ -171,6 +183,7 @@ struct Rung {
     n: usize,
     throughputs: Vec<f64>, // per-round ops/sec (measured rounds only)
     latencies_ns: Vec<u64>,
+    phase_split: Option<PhaseSplit>,
 }
 
 struct RungStats {
@@ -184,6 +197,7 @@ struct RungStats {
     p95_us: f64,
     p99_us: f64,
     mean_latency_s: f64,
+    phase_split: Option<PhaseSplit>,
 }
 
 /// Perform one closed-loop round: `n` workers each perform `units_per_worker`
@@ -272,12 +286,19 @@ async fn measure_rung(
     warmup_rounds: usize,
     measure_rounds: usize,
     workload: Workload,
+    split_phases: bool,
 ) -> Rung {
     for _ in 0..warmup_rounds {
         let (ops, elapsed, lat) =
             run_round(engine, tenant, table, n, units_per_worker, workload).await;
         black_box((ops, elapsed, lat.len()));
     }
+    let phase_before = split_phases.then(|| {
+        engine
+            .tenant_engine_diagnostics(tenant)
+            .expect("phase snapshot before measured rounds should load")
+            .commit_phases
+    });
     let mut throughputs = Vec::with_capacity(measure_rounds);
     let mut latencies_ns = Vec::new();
     for _ in 0..measure_rounds {
@@ -287,10 +308,18 @@ async fn measure_rung(
         throughputs.push(if secs > 0.0 { ops as f64 / secs } else { 0.0 });
         latencies_ns.append(&mut lat);
     }
+    let phase_split = phase_before.map(|before| {
+        let after = engine
+            .tenant_engine_diagnostics(tenant)
+            .expect("phase snapshot after measured rounds should load")
+            .commit_phases;
+        PhaseSplit::between(phase_totals(before), phase_totals(after))
+    });
     Rung {
         n,
         throughputs,
         latencies_ns,
+        phase_split,
     }
 }
 
@@ -386,6 +415,7 @@ fn summarize(rung: &Rung) -> RungStats {
         p95_us: percentile_ns(&lat_sorted, 95.0) / 1000.0,
         p99_us: percentile_ns(&lat_sorted, 99.0) / 1000.0,
         mean_latency_s,
+        phase_split: rung.phase_split,
     }
 }
 
@@ -465,7 +495,23 @@ fn render_report(
             peak.mean_tps, peak.n, speedup, baseline,
         ));
     }
+
+    let phase_rows = stats
+        .iter()
+        .filter_map(|stats| stats.phase_split.map(|split| (stats.n, split)))
+        .collect::<Vec<_>>();
+    out.push_str(&render_phase_split_section(&phase_rows));
     out
+}
+
+fn phase_totals(snapshot: CommitPhaseMetricsSnapshot) -> PhaseTotals {
+    PhaseTotals {
+        prepare_nanos: snapshot.prepare_nanos,
+        conflict_check_nanos: snapshot.conflict_check_nanos,
+        apply_nanos: snapshot.apply_nanos,
+        publish_nanos: snapshot.publish_nanos,
+        durable_append_nanos: snapshot.durable_append_nanos,
+    }
 }
 
 async fn run() -> String {
@@ -482,12 +528,16 @@ async fn run() -> String {
     let seed_docs = env_usize("NIMBUS_CWB_SEED_DOCS", 0);
     let backend = backend();
     let workload = workload();
+    let split_phases = split_phases_enabled();
 
     let cfg = format!(
         "workload={}, base_units/worker={base_units}, max_mut/round={max_mut_per_round}, measure_rounds={measure_rounds}, warmup_rounds={warmup_rounds}, seed_docs={seed_docs}, ladder={ladder:?}",
         workload.label(),
     );
     eprintln!("[cwb] {cfg}");
+    if split_phases {
+        eprintln!("[cwb] under-gate phase split enabled");
+    }
 
     let dir = tempfile::tempdir().expect("tempdir should build");
     let engine = Arc::new(
@@ -524,6 +574,7 @@ async fn run() -> String {
             warmup_rounds,
             measure_rounds,
             workload,
+            split_phases,
         )
         .await;
         stats.push(summarize(&rung));

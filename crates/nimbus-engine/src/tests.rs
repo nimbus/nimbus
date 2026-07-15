@@ -42,6 +42,9 @@ pub(crate) use nimbus_storage::{
 };
 
 mod ambient_sources;
+#[path = "../benches/support/concurrent_write_phase_split.rs"]
+mod concurrent_write_phase_split;
+mod concurrent_write_phase_split_tests;
 mod consistency;
 mod embedded_providers;
 mod libsql_replica_provider;

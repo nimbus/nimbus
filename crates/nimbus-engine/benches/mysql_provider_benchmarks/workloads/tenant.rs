@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn benchmark_mixed_multi_tenant_load(
-    _config: &BenchmarkConfig,
+    config: &BenchmarkConfig,
     environment: &BenchmarkEnvironment,
     report: &mut BenchmarkReport,
 ) -> BenchResult<()> {
@@ -194,6 +194,13 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
                     )
                     .await?;
                     let elapsed = started.elapsed();
+                    let gate_hold = GateHoldRound::from_fresh_engine(
+                        &engine,
+                        &seed.tenant_states,
+                        MIXED_LOAD_RTT_TENANTS,
+                        MIXED_LOAD_RTT_OPS_PER_TENANT,
+                        elapsed,
+                    )?;
                     tokio::time::timeout(
                         Duration::from_secs(BENCHMARK_REOPEN_TIMEOUT_SECS),
                         reopened_resource.cleanup(engine, "mixed-load RTT reopened teardown"),
@@ -206,7 +213,7 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
                         )
                         .into()
                     })??;
-                    Ok(elapsed)
+                    Ok(gate_hold)
                 }
             },
         )
@@ -217,6 +224,14 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
         let operations_per_sample = u64::try_from(MIXED_LOAD_TENANTS * MIXED_LOAD_OPS_PER_TENANT)?;
         let rtt_operations_per_sample =
             u64::try_from(MIXED_LOAD_RTT_TENANTS * MIXED_LOAD_RTT_OPS_PER_TENANT)?;
+        let mysql_loopback_rtt_elapsed = mysql_loopback_rtt
+            .iter()
+            .map(|round| round.elapsed())
+            .collect();
+        let mysql_injected_rtt_elapsed = mysql_injected_rtt
+            .iter()
+            .map(|round| round.elapsed())
+            .collect();
         record_contrast_measurements(
             report,
             WorkloadKind::MixedMultiTenantLoad,
@@ -237,6 +252,13 @@ pub(crate) async fn benchmark_mixed_multi_tenant_load(
             report,
             WorkloadKind::MixedMultiTenantLoad,
             rtt_operations_per_sample,
+            mysql_loopback_rtt_elapsed,
+            mysql_injected_rtt_elapsed,
+        );
+        record_gate_hold_measurements(
+            report,
+            MIXED_LOAD_RTT_TENANTS,
+            config.rtt_delay,
             mysql_loopback_rtt,
             mysql_injected_rtt,
         );

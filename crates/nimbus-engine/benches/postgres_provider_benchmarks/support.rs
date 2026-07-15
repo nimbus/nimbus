@@ -172,16 +172,16 @@ where
     result
 }
 
-pub(super) async fn measure_two_backends_async<B, F, Fut>(
+pub(super) async fn measure_two_backends_async<B, F, Fut, Sample>(
     workload: WorkloadKind,
     lane: BenchmarkLane,
     backends: [B; 2],
     mut run_sample: F,
-) -> BenchResult<(Vec<Duration>, Vec<Duration>)>
+) -> BenchResult<(Vec<Sample>, Vec<Sample>)>
 where
     B: Copy + Eq,
     F: FnMut(B) -> Fut,
-    Fut: std::future::Future<Output = BenchResult<Duration>>,
+    Fut: std::future::Future<Output = BenchResult<Sample>>,
 {
     eprintln!("  starting {} lane", lane.label().to_lowercase());
     let started = Instant::now();

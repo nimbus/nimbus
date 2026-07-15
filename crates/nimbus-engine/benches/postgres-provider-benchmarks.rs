@@ -33,6 +33,11 @@ mod common;
 
 use common::*;
 
+#[path = "provider_bench/gate_hold.rs"]
+mod gate_hold;
+
+use gate_hold::*;
+
 #[path = "postgres_provider_benchmarks/report.rs"]
 mod report;
 #[path = "postgres_provider_benchmarks/scenarios.rs"]
@@ -151,6 +156,7 @@ impl BenchmarkConfig {
                     }
                     rtt_delay = Duration::from_millis(millis);
                 }
+                "--bench" => {}
                 "--help" | "-h" => {
                     print_usage();
                     std::process::exit(0);
@@ -339,11 +345,20 @@ impl MeasuredBackend {
             Self::PostgresInjectedRtt => "postgres (injected RTT)",
         }
     }
+
+    fn provider_loopback() -> Self {
+        Self::PostgresLoopback
+    }
+
+    fn provider_injected_rtt() -> Self {
+        Self::PostgresInjectedRtt
+    }
 }
 
 #[derive(Debug, Default)]
 struct BenchmarkReport {
     measurements: Vec<WorkloadMeasurement>,
+    gate_hold_measurements: Vec<GateHoldMeasurement>,
     pool_pressure: Option<PoolPressureObservation>,
 }
 
