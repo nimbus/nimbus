@@ -6,7 +6,7 @@ fn default_phase_split_section_is_byte_empty() {
 }
 
 #[test]
-fn phase_split_section_reports_plan_apply_and_fsync_shares() {
+fn phase_split_section_reports_plan_conflict_apply_and_fsync_shares() {
     let split = PhaseSplit::between(
         PhaseTotals::default(),
         PhaseTotals {
@@ -20,12 +20,12 @@ fn phase_split_section_reports_plan_apply_and_fsync_shares() {
     let report = render_phase_split_section(&[(8, split)]);
 
     assert!(report.contains("## Under-gate phase split"));
-    assert!(report.contains("| N | plan-CPU | apply | fsync/append |"));
-    assert!(report.contains("| 8 | 20.0% | 30.0% | 50.0% | 10.000 ms |"));
+    assert!(report.contains("| N | plan-CPU | conflict-check | apply | fsync/append |"));
+    assert!(report.contains("| 8 | 10.0% | 10.0% | 30.0% | 50.0% | 10.000 ms |"));
 }
 
 #[test]
-fn phase_split_delta_combines_prepare_and_conflict_check() {
+fn phase_split_delta_separates_prepare_from_conflict_check() {
     let before = PhaseTotals {
         prepare_nanos: 10,
         conflict_check_nanos: 20,
@@ -41,6 +41,7 @@ fn phase_split_delta_combines_prepare_and_conflict_check() {
         durable_append_nanos: 85,
     };
 
+    // Deltas: prepare 15, conflict-check 25, apply(+publish) 35, fsync 45 → total 120.
     let report = render_phase_split_section(&[(1, PhaseSplit::between(before, after))]);
-    assert!(report.contains("| 1 | 33.3% | 29.2% | 37.5% | 0.000 ms |"));
+    assert!(report.contains("| 1 | 12.5% | 20.8% | 29.2% | 37.5% | 0.000 ms |"));
 }

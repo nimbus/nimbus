@@ -10,6 +10,7 @@ pub(crate) struct PhaseTotals {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PhaseSplit {
     plan_cpu_nanos: u64,
+    conflict_check_nanos: u64,
     apply_nanos: u64,
     fsync_append_nanos: u64,
 }
@@ -17,14 +18,10 @@ pub(crate) struct PhaseSplit {
 impl PhaseSplit {
     pub(crate) fn between(before: PhaseTotals, after: PhaseTotals) -> Self {
         Self {
-            plan_cpu_nanos: after
-                .prepare_nanos
-                .saturating_sub(before.prepare_nanos)
-                .saturating_add(
-                    after
-                        .conflict_check_nanos
-                        .saturating_sub(before.conflict_check_nanos),
-                ),
+            plan_cpu_nanos: after.prepare_nanos.saturating_sub(before.prepare_nanos),
+            conflict_check_nanos: after
+                .conflict_check_nanos
+                .saturating_sub(before.conflict_check_nanos),
             apply_nanos: after
                 .apply_nanos
                 .saturating_sub(before.apply_nanos)
@@ -37,6 +34,7 @@ impl PhaseSplit {
 
     fn total_nanos(self) -> u64 {
         self.plan_cpu_nanos
+            .saturating_add(self.conflict_check_nanos)
             .saturating_add(self.apply_nanos)
             .saturating_add(self.fsync_append_nanos)
     }
@@ -58,14 +56,17 @@ pub(crate) fn render_phase_split_section(rows: &[(usize, PhaseSplit)]) -> String
 
     let mut out = String::from("\n## Under-gate phase split\n\n");
     out.push_str(
-        "Shares use measured-round committer wall time: `plan-CPU = prepare + conflict-check`; `apply = apply + publish` (storage apply plus engine visibility bookkeeping); `fsync/append = durable-append`.\n\n",
+        "Shares use measured-round committer wall time: `plan-CPU = prepare` (validation, authorization, serialization); `conflict-check` (path C real OCC scan; paths A/B bounded shadow observation) is reported separately so the true plan-CPU baseline is not conflated with observation cost; `apply = apply + publish` (storage apply plus engine visibility bookkeeping); `fsync/append = durable-append`.\n\n",
     );
-    out.push_str("| N | plan-CPU | apply | fsync/append | measured under-gate |\n");
-    out.push_str("|---|---|---|---|---|\n");
+    out.push_str(
+        "| N | plan-CPU | conflict-check | apply | fsync/append | measured under-gate |\n",
+    );
+    out.push_str("|---|---|---|---|---|---|\n");
     for (n, split) in rows {
         out.push_str(&format!(
-            "| {n} | {:.1}% | {:.1}% | {:.1}% | {:.3} ms |\n",
+            "| {n} | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.3} ms |\n",
             split.share(split.plan_cpu_nanos),
+            split.share(split.conflict_check_nanos),
             split.share(split.apply_nanos),
             split.share(split.fsync_append_nanos),
             split.total_nanos() as f64 / 1_000_000.0,
