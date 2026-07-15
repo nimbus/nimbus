@@ -26,7 +26,7 @@ where
     };
     let state = TableState::from_str(row.get::<_, String>(1).as_str())?;
     if state != TableState::Active {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "logical table {} is in {} lifecycle state",
             table, state
         )));
@@ -123,7 +123,7 @@ where
     {
         Some((hidden_id, TableState::Hidden)) if hidden_id == *table_id => true,
         Some((hidden_id, state)) => {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "hidden identity slot for logical table {} and table id {} contains {} in {} state",
                 table, table_id, hidden_id, state
             )));
@@ -136,7 +136,7 @@ where
     {
         Some((existing, TableState::Active)) if existing == *table_id => {
             if staged_hidden {
-                return Err(Error::Conflict(format!(
+                return Err(Error::conflict(format!(
                     "logical table {} already has active table id {} and a duplicate hidden slot",
                     table, table_id
                 )));
@@ -144,7 +144,7 @@ where
             return Ok(());
         }
         Some((existing, state)) if existing == *table_id => {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "logical table {} is assigned table id {} in {} lifecycle state",
                 table, table_id, state
             )));
@@ -205,7 +205,7 @@ where
             return Ok(());
         }
         Some((existing, state)) => {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "logical table {} is already assigned table id {} in {} lifecycle state, journal references {}",
                 table, existing, state, table_id
             )));
@@ -305,7 +305,7 @@ where
     {
         return Ok(());
     }
-    Err(Error::Conflict(format!(
+    Err(Error::conflict(format!(
         "table id {} is already assigned to logical table {} in namespace {} with {} state",
         table_id, table, namespace, state
     )))

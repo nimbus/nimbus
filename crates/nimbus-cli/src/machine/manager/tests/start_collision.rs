@@ -23,7 +23,7 @@ fn ensure_machine_can_start_rejects_external_vmm_pid_collision() {
 
     let rendered = error.to_string();
     assert!(
-        matches!(error, Error::Conflict(_)),
+        matches!(error, Error::Conflict { .. }),
         "external collision must surface as Conflict: {rendered}"
     );
     assert!(
@@ -65,7 +65,7 @@ fn ensure_machine_can_start_rejects_external_gvproxy_pid_collision() {
 
     let rendered = error.to_string();
     assert!(
-        matches!(error, Error::Conflict(_)),
+        matches!(error, Error::Conflict { .. }),
         "external collision must surface as Conflict: {rendered}"
     );
     assert!(

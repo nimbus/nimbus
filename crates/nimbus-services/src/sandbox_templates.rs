@@ -432,7 +432,7 @@ impl SandboxTemplateLeaseController {
         let key = (request.tenant_id.clone(), request.template_name.clone());
         let active = self.active.entry(key).or_default();
         if active.len() as u32 >= template.max_instances_per_tenant {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "sandbox template `{}` quota exceeded for tenant {}",
                 template.name(),
                 request.tenant_id

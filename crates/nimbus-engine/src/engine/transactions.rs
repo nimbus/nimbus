@@ -608,7 +608,7 @@ mod tests {
         let error = engine
             .commit_transaction_session(&tenant_id, &session.token, &principal, None)
             .expect_err("staged transaction should conflict with the outside write");
-        assert!(matches!(error, Error::Conflict(_)));
+        assert!(matches!(error, Error::Conflict { .. }));
         assert_eq!(
             engine
                 .get_document(&tenant_id, &table, document_id)
@@ -800,7 +800,7 @@ mod tests {
             )
             .expect_err("conflicting commit should fail");
 
-        assert!(matches!(error, Error::Conflict(_)));
+        assert!(matches!(error, Error::Conflict { .. }));
         assert_eq!(engine.active_transaction_session_count(), 0);
         assert_eq!(
             engine

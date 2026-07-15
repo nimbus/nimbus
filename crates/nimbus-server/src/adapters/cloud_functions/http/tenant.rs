@@ -16,11 +16,11 @@ fn resolve_application_tenant(tenants: Vec<TenantId>) -> std::result::Result<Ten
         .collect::<Vec<_>>();
     match tenants.as_slice() {
         [tenant_id] => Ok(tenant_id.clone()),
-        [] => Err(AppError::from(Error::Conflict(
+        [] => Err(AppError::from(Error::conflict(
             "cloud functions http handlers require exactly one tenant, but no tenants exist"
                 .to_string(),
         ))),
-        _ => Err(AppError::from(Error::Conflict(
+        _ => Err(AppError::from(Error::conflict(
             "cloud functions http handlers require exactly one tenant; explicit multi-tenant HTTP binding is deferred to a later cloud functions phase"
                 .to_string(),
         ))),

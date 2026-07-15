@@ -73,7 +73,7 @@ impl DocumentVersionHistory {
         for record in &records {
             record.validate_integrity()?;
             if previous_sequence == Some(record.sequence) {
-                return Err(Error::Conflict(format!(
+                return Err(Error::conflict(format!(
                     "duplicate tenant event sequence {} in document history",
                     record.sequence
                 )));
@@ -436,7 +436,7 @@ mod tests {
             .expect_err("format generation zero should fail");
 
         assert!(
-            matches!(duplicate_error, Error::Conflict(message) if message.contains("duplicate"))
+            matches!(duplicate_error, Error::Conflict { message, .. } if message.contains("duplicate"))
         );
         assert_eq!(
             format_error.historical_read_kind(),

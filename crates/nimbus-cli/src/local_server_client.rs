@@ -159,7 +159,7 @@ fn http_status_error(status: StatusCode, message: String) -> Error {
         StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND | StatusCode::UNPROCESSABLE_ENTITY => {
             Error::InvalidInput(message)
         }
-        StatusCode::CONFLICT => Error::Conflict(message),
+        StatusCode::CONFLICT => Error::conflict(message),
         StatusCode::PRECONDITION_FAILED => Error::PreconditionFailed(message),
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Error::PermissionDenied(message),
         StatusCode::TOO_MANY_REQUESTS => Error::ResourceExhausted(message),

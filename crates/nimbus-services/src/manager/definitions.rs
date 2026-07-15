@@ -142,7 +142,7 @@ impl ServiceManager {
             .service_backend_for_tenant(tenant_id, service_name)
             .is_some()
         {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "service `{service_name}` for tenant `{tenant_id}` is static and cannot be updated through dynamic service definition routes"
             )));
         }
@@ -163,7 +163,7 @@ impl ServiceManager {
             )));
         }
         if state.activations_in_progress.contains(&key) || state.handles.contains_key(&key) {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "service `{service_name}` for tenant `{tenant_id}` has an active backend; stop the service before updating its definition"
             )));
         }
@@ -192,7 +192,7 @@ impl ServiceManager {
             .service_backend_for_tenant(tenant_id, service_name)
             .is_some()
         {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "service `{service_name}` for tenant `{tenant_id}` is static and cannot be deleted through dynamic service definition routes"
             )));
         }
@@ -226,7 +226,7 @@ impl ServiceManager {
                 .expect("manager lock should not be poisoned");
             if let Some(current) = state.definitions.get(&key) {
                 if current.source != ServiceDefinitionSource::Dynamic {
-                    Err(Error::Conflict(format!(
+                    Err(Error::conflict(format!(
                         "service `{service_name}` for tenant `{tenant_id}` is static and cannot be deleted through dynamic service definition routes"
                     )))
                 } else if current.generation != expected_generation {
@@ -258,7 +258,7 @@ impl ServiceManager {
             };
             if live_session_count > 0 {
                 self.release_activation(&key);
-                return Err(Error::Conflict(format!(
+                return Err(Error::conflict(format!(
                     "service `{service_name}` for tenant `{tenant_id}` has {live_session_count} open session(s); close sessions first or pass an authorized force delete policy",
                 )));
             }
@@ -278,7 +278,7 @@ impl ServiceManager {
             );
             if running && !force {
                 self.release_activation(&key);
-                return Err(Error::Conflict(format!(
+                return Err(Error::conflict(format!(
                     "service `{service_name}` for tenant `{tenant_id}` is running; stop it first or pass an authorized force delete policy"
                 )));
             }
@@ -314,7 +314,7 @@ impl ServiceManager {
         if current.source != ServiceDefinitionSource::Dynamic {
             state.activations_in_progress.remove(&key);
             self.activation_notify.notify_waiters();
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "service `{service_name}` for tenant `{tenant_id}` is static and cannot be deleted through dynamic service definition routes"
             )));
         }
@@ -330,7 +330,7 @@ impl ServiceManager {
         if !live_session_ids.is_empty() && !force {
             state.activations_in_progress.remove(&key);
             self.activation_notify.notify_waiters();
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "service `{service_name}` for tenant `{tenant_id}` has {} open session(s); close sessions first or pass an authorized force delete policy",
                 live_session_ids.len()
             )));
@@ -407,7 +407,7 @@ impl ServiceManager {
                     return Ok(());
                 }
                 if !force {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "service `{}` for tenant `{}` has an activation in progress; retry after the service reaches a stable lifecycle state",
                         key.service_name, key.tenant_id
                     )));

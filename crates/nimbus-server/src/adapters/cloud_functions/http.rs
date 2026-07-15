@@ -101,7 +101,7 @@ mod tests {
         InvocationAuth, Query, RuntimeUserIdentity, TableName, TenantId, VerifiedUserIdentity,
         VerifiedUserIdentityKind,
     };
-    use nimbus_engine::Engine;
+    use nimbus_engine::{Engine, commit_fault_labels};
     use nimbus_testing::{EngineFixture, ServerFixture};
     use reqwest::StatusCode;
     use serde_json::Value;
@@ -205,11 +205,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cloud_functions_http_handler_dispatches_exact_path_and_commits_writes() {
+    async fn cloud_functions_http_entrypoint_retry_test() {
+        // SAFETY: nextest runs each test in its own process.
+        unsafe {
+            std::env::set_var("NIMBUS_MUTATION_OCC_MAX_RETRIES", "3");
+            std::env::set_var("NIMBUS_MUTATION_OCC_INITIAL_BACKOFF_MS", "1");
+            std::env::set_var("NIMBUS_MUTATION_OCC_MAX_BACKOFF_MS", "1");
+        }
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let service = fixture.engine();
+        let tenant_id = TenantId::new("demo").expect("tenant id should parse");
         service
-            .create_tenant(TenantId::new("demo").expect("tenant id should parse"))
+            .create_tenant(tenant_id.clone())
             .expect("tenant should create");
         let app_dir = tempdir().expect("app tempdir should build");
         write_cloud_functions_artifact(
@@ -268,6 +275,14 @@ export {};
                 .build(),
         )
         .await;
+        let applied_head = service
+            .tenant_engine_diagnostics(&tenant_id)
+            .expect("tenant diagnostics should load")
+            .mutation_journal
+            .applied_head;
+        service
+            .commit_fault_handle_for_testing()
+            .inject_retryable_conflicts(commit_fault_labels::PRE_ASSIGN, 1, Some(applied_head));
 
         let response = server
             .client()
@@ -333,6 +348,14 @@ export {};
             audit_documents[0].get_field("name"),
             Some(&Value::String("jack".into()))
         );
+        let diagnostics = service
+            .tenant_engine_diagnostics(&tenant_id)
+            .expect("tenant diagnostics should load");
+        assert_eq!(diagnostics.commit_phases.mutation_conflict_retries_total, 1);
+        assert_eq!(
+            diagnostics.commit_phases.mutation_conflict_exhausted_total,
+            0
+        );
     }
 
     #[tokio::test]
@@ -394,11 +417,18 @@ export {};
     }
 
     #[tokio::test]
-    async fn cloud_functions_callable_handler_supports_preflight_and_json_envelope() {
+    async fn cloud_functions_callable_entrypoint_retry_test() {
+        // SAFETY: nextest runs each test in its own process.
+        unsafe {
+            std::env::set_var("NIMBUS_MUTATION_OCC_MAX_RETRIES", "3");
+            std::env::set_var("NIMBUS_MUTATION_OCC_INITIAL_BACKOFF_MS", "1");
+            std::env::set_var("NIMBUS_MUTATION_OCC_MAX_BACKOFF_MS", "1");
+        }
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let service = fixture.engine();
+        let tenant_id = TenantId::new("demo").expect("tenant id should parse");
         service
-            .create_tenant(TenantId::new("demo").expect("tenant id should parse"))
+            .create_tenant(tenant_id.clone())
             .expect("tenant should create");
         let app_dir = tempdir().expect("app tempdir should build");
         write_cloud_functions_artifact(
@@ -419,6 +449,11 @@ globalThis.__nimbusInvoke = async function (request) {
   if (request.function_name !== "exports.hello") {
     throw new Error(`unknown handler ${request.function_name}`);
   }
+  const ctx = globalThis.__nimbusCreateContext({
+    request,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
+  });
+  await ctx.db.insert("audit", { callable: true });
   return {
     status: 200,
     headers: {
@@ -444,11 +479,19 @@ export {};
         let registry = CloudFunctionsRegistry::from_app_dir(app_dir.path())
             .expect("cloud functions registry should load");
         let server = ServerFixture::start(
-            crate::router::RouterBuildConfig::core(service)
+            crate::router::RouterBuildConfig::core(service.clone())
                 .with_cloud_functions(registry)
                 .build(),
         )
         .await;
+        let applied_head = service
+            .tenant_engine_diagnostics(&tenant_id)
+            .expect("tenant diagnostics should load")
+            .mutation_journal
+            .applied_head;
+        service
+            .commit_fault_handle_for_testing()
+            .inject_retryable_conflicts(commit_fault_labels::PRE_ASSIGN, 1, Some(applied_head));
         let allowed_origin = server.http_url("").trim_end_matches('/').to_string();
 
         let preflight = server
@@ -534,6 +577,25 @@ export {};
                     "rawBody": "{\"data\":{\"hello\":\"world\"}}",
                 },
             })
+        );
+        let diagnostics = service
+            .tenant_engine_diagnostics(&tenant_id)
+            .expect("tenant diagnostics should load");
+        assert_eq!(diagnostics.commit_phases.mutation_conflict_retries_total, 1);
+        assert_eq!(
+            service
+                .query_documents(
+                    &tenant_id,
+                    &Query {
+                        table: TableName::new("audit").expect("table should parse"),
+                        filters: Vec::new(),
+                        order: None,
+                        limit: None,
+                    },
+                )
+                .expect("callable audit query should succeed")
+                .len(),
+            1
         );
     }
 

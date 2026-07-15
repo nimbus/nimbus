@@ -85,7 +85,7 @@ impl ServiceManager {
                         ))
                     })?;
                 if resource.handle.status != SandboxStatus::Ready {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "sandbox `{id}` is {}; session open requires a ready sandbox target",
                         sandbox_lifecycle_state(resource.handle.status)
                     )));
@@ -117,7 +117,7 @@ impl ServiceManager {
         if let Some(gate) = service_gate.as_ref() {
             let key = TenantServiceKey::new(tenant_id, &gate.name);
             if state.activations_in_progress.contains(&key) {
-                return Err(Error::Conflict(format!(
+                return Err(Error::conflict(format!(
                     "service `{}` for tenant `{tenant_id}` has a lifecycle operation in progress; retry session open after it reaches a stable state",
                     gate.name
                 )));
@@ -130,7 +130,7 @@ impl ServiceManager {
                     )));
                 };
                 if current.generation != gate.generation {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "service `{}` changed while opening the session; retry against the latest service definition",
                         gate.name
                     )));

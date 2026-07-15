@@ -59,7 +59,7 @@ pub fn firestore_grpc_code(error: &Error) -> Code {
         | Error::ScheduledJobNotFound(_)
         | Error::SchemaNotFound(_)
         | Error::NotFound(_) => Code::NotFound,
-        Error::Conflict(_) => Code::Aborted,
+        Error::Conflict { .. } => Code::Aborted,
         Error::PreconditionFailed(_) | Error::MissingIndex { .. } => Code::FailedPrecondition,
         Error::ResourceExhausted(_) => Code::ResourceExhausted,
         Error::PermissionDenied(_) => Code::PermissionDenied,
@@ -107,7 +107,7 @@ fn firebase_rest_error(error: &Error) -> FirestoreRestError {
         | Error::ScheduledJobNotFound(_)
         | Error::SchemaNotFound(_)
         | Error::NotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND"),
-        Error::Conflict(_) => (StatusCode::CONFLICT, "ABORTED"),
+        Error::Conflict { .. } => (StatusCode::CONFLICT, "ABORTED"),
         Error::PreconditionFailed(_) | Error::MissingIndex { .. } => {
             (StatusCode::PRECONDITION_FAILED, "FAILED_PRECONDITION")
         }
@@ -184,11 +184,7 @@ mod tests {
                 StatusCode::NOT_FOUND,
                 "NOT_FOUND",
             ),
-            (
-                Error::Conflict("conflict".to_string()),
-                StatusCode::CONFLICT,
-                "ABORTED",
-            ),
+            (Error::conflict("conflict"), StatusCode::CONFLICT, "ABORTED"),
             (
                 Error::PreconditionFailed("stale generation".to_string()),
                 StatusCode::PRECONDITION_FAILED,

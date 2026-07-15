@@ -53,7 +53,7 @@ fn resolve_localhost_ssh_target<'a>(
     state: &'a MachineStateRecord,
 ) -> Result<LocalhostSshTarget<'a>, Error> {
     if state.lifecycle != MachineLifecycle::Running {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "machine '{}' is {} and cannot accept SSH",
             config.name,
             state.lifecycle.as_str()

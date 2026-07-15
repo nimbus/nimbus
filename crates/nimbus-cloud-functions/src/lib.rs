@@ -4,6 +4,7 @@ pub mod app_contract;
 mod host_bridge;
 pub mod http;
 mod registry;
+mod retry;
 pub mod runtime_api;
 mod runtime_invocation;
 mod trigger_executor;

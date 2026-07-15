@@ -77,7 +77,7 @@ async fn create_sandbox_resource_preserves_existing_backend_after_duplicate_star
         .await;
 
     assert!(
-        matches!(&duplicate, Err(Error::Conflict(message)) if message.contains("duplicate sandbox id")),
+        matches!(&duplicate, Err(Error::Conflict { message, .. }) if message.contains("duplicate sandbox id")),
         "duplicate post-start id should return conflict, got {duplicate:?}"
     );
     assert_eq!(backend.image_starts.load(Ordering::SeqCst), 2);

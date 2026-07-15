@@ -3,7 +3,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use thiserror::Error as ThisError;
 
-use crate::types::{DocumentId, TableName, TenantId};
+use crate::types::{DocumentId, SequenceNumber, TableName, TenantId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageErrorKind {
@@ -111,8 +111,13 @@ pub enum Error {
     #[error("permission denied: {0}")]
     PermissionDenied(String),
 
-    #[error("conflict: {0}")]
-    Conflict(String),
+    #[error("conflict: {message}")]
+    Conflict {
+        message: String,
+        conflicting_sequence: Option<SequenceNumber>,
+        retryable: bool,
+        attempts: Option<usize>,
+    },
 
     #[error("precondition failed: {0}")]
     PreconditionFailed(String),
@@ -167,6 +172,44 @@ pub fn non_empty(value: impl Into<String>, field: &str) -> Result<String> {
 }
 
 impl Error {
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::Conflict {
+            message: message.into(),
+            conflicting_sequence: None,
+            retryable: false,
+            attempts: None,
+        }
+    }
+
+    pub fn retryable_conflict(
+        message: impl Into<String>,
+        conflicting_sequence: Option<SequenceNumber>,
+    ) -> Self {
+        Self::Conflict {
+            message: message.into(),
+            conflicting_sequence,
+            retryable: true,
+            attempts: None,
+        }
+    }
+
+    pub fn with_conflict_attempts(self, attempts: usize) -> Self {
+        match self {
+            Self::Conflict {
+                message,
+                conflicting_sequence,
+                retryable,
+                ..
+            } => Self::Conflict {
+                message,
+                conflicting_sequence,
+                retryable,
+                attempts: Some(attempts),
+            },
+            other => other,
+        }
+    }
+
     pub fn storage(kind: StorageErrorKind, message: impl Into<String>) -> Self {
         Self::Storage {
             kind,
@@ -217,6 +260,22 @@ mod tests {
             error.to_string(),
             "storage error [unavailable]: database unavailable"
         );
+    }
+
+    #[test]
+    fn retryable_conflict_preserves_occ_metadata_and_attempts() {
+        let error = Error::retryable_conflict("write raced", Some(SequenceNumber(42)))
+            .with_conflict_attempts(4);
+
+        assert!(matches!(
+            error,
+            Error::Conflict {
+                ref message,
+                conflicting_sequence: Some(SequenceNumber(42)),
+                retryable: true,
+                attempts: Some(4),
+            } if message == "write raced"
+        ));
     }
 
     #[test]

@@ -381,7 +381,7 @@ fn ensure_machine_can_start(
         } else {
             ""
         };
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "machine '{}' is already {}{}",
             paths.name,
             state.lifecycle.as_str(),
@@ -420,7 +420,7 @@ fn ensure_no_external_machine_collision(paths: &MachinePaths) -> Result<(), Erro
         .map(|(label, pid, path)| format!("{label} pid {pid} at {}", path.display()))
         .collect::<Vec<_>>()
         .join(", ");
-    Err(Error::Conflict(format!(
+    Err(Error::conflict(format!(
         "machine '{}' cannot start: another process owns the runtime sockets ({summary}). \
          Stop the other machine, or set {} to a separate path before starting.",
         paths.name,

@@ -40,7 +40,7 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
         CoreError::PermissionDenied(_) => DynamoDbError::AccessDeniedException(message),
 
         // Optimistic-concurrency / write conflict.
-        CoreError::Conflict(_) => DynamoDbError::TransactionConflictException(message),
+        CoreError::Conflict { .. } => DynamoDbError::TransactionConflictException(message),
 
         // Failed generation / existence preconditions map to DynamoDB's
         // conditional-write failure class.
@@ -109,7 +109,7 @@ mod tests {
             "AccessDeniedException"
         );
         assert_eq!(
-            code(&map_core_error(CoreError::Conflict("race".into()))),
+            code(&map_core_error(CoreError::conflict("race"))),
             "TransactionConflictException"
         );
         assert_eq!(

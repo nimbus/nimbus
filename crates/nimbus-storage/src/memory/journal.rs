@@ -23,7 +23,7 @@ impl MemoryState {
             (None, Some(current)) => match documents.get(&write.doc_id) {
                 Some(existing) if existing == current => {}
                 Some(_) => {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "durable journal insert replay found conflicting state for document {}",
                         write.doc_id
                     )));
@@ -34,14 +34,14 @@ impl MemoryState {
             },
             (Some(previous), Some(current)) => {
                 let existing = documents.get(&write.doc_id).ok_or_else(|| {
-                    Error::Conflict(format!(
+                    Error::conflict(format!(
                         "durable journal update replay missing document {}",
                         write.doc_id
                     ))
                 })?;
                 if existing != current {
                     if existing != previous {
-                        return Err(Error::Conflict(format!(
+                        return Err(Error::conflict(format!(
                             "durable journal update replay found conflicting state for document {}",
                             write.doc_id
                         )));
@@ -53,7 +53,7 @@ impl MemoryState {
                 if let Some(existing) = documents.get(&write.doc_id)
                     && existing != previous
                 {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "durable journal delete replay found conflicting state for document {}",
                         write.doc_id
                     )));
@@ -105,7 +105,7 @@ impl MemoryState {
                     Some(identity)
                         if identity.table == *table && identity.state == TableState::Hidden => {}
                     Some(_) => {
-                        return Err(Error::Conflict(format!(
+                        return Err(Error::conflict(format!(
                             "cannot stage hidden table {table} with already assigned id {table_id}"
                         )));
                     }
@@ -134,12 +134,12 @@ impl MemoryState {
                     }
                 }
                 let identity = self.table_identities.get_mut(table_id).ok_or_else(|| {
-                    Error::Conflict(format!(
+                    Error::conflict(format!(
                         "cannot activate missing hidden table {table} with id {table_id}"
                     ))
                 })?;
                 if identity.table != *table {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "hidden table id {table_id} belongs to {}, not {table}",
                         identity.table
                     )));
@@ -156,7 +156,7 @@ impl MemoryState {
                 } else if let Some(identity) = self.table_identities.get(table_id)
                     && identity.state != TableState::Deleting
                 {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "cannot mark non-active table id {table_id} deleting"
                     )));
                 }

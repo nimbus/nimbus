@@ -256,12 +256,17 @@ impl PublicError {
                 Value::Null,
                 None,
             ),
-            Error::Conflict(_) => Self::new(
+            Error::Conflict {
+                conflicting_sequence,
+                retryable,
+                attempts,
+                ..
+            } => Self::new(
                 "op.conflict",
                 error.to_string(),
                 ErrorSeverity::Error,
-                false,
-                Value::Null,
+                *retryable,
+                conflict_detail(*conflicting_sequence, *attempts),
                 Some(ErrorRemediation::new(
                     "fix_request",
                     "Resolve the conflicting state and retry.",
@@ -534,7 +539,7 @@ impl StructuredHttpError {
                     | Error::ScheduledJobNotFound(_)
                     | Error::SchemaNotFound(_)
                     | Error::NotFound(_) => StatusCode::NOT_FOUND,
-                    Error::Conflict(_) => StatusCode::CONFLICT,
+                    Error::Conflict { .. } => StatusCode::CONFLICT,
                     Error::PreconditionFailed(_) | Error::MissingIndex { .. } => {
                         StatusCode::PRECONDITION_FAILED
                     }
@@ -574,6 +579,20 @@ impl StructuredHttpError {
             }
         }
     }
+}
+
+fn conflict_detail(
+    conflicting_sequence: Option<nimbus_core::SequenceNumber>,
+    attempts: Option<usize>,
+) -> Value {
+    let mut detail = serde_json::Map::new();
+    if let Some(sequence) = conflicting_sequence {
+        detail.insert("conflictingSequence".to_string(), json!(sequence.0));
+    }
+    if let Some(attempts) = attempts {
+        detail.insert("attempts".to_string(), json!(attempts));
+    }
+    Value::Object(detail)
 }
 
 impl std::fmt::Display for StructuredHttpError {

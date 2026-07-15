@@ -31,7 +31,7 @@ impl WriteExpectation {
 }
 
 fn changed_before_commit(id: &DocumentId) -> Error {
-    Error::Conflict(format!("document {id} changed before transaction commit"))
+    Error::conflict(format!("document {id} changed before transaction commit"))
 }
 
 fn validate_index_values(document: &Document, indexes: &[IndexDefinition]) -> Result<()> {

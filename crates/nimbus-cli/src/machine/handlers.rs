@@ -562,7 +562,7 @@ fn update_machine_with_layout_locked(
     let machine_name = command.name().to_owned();
     let (paths, mut config, state) = load_initialized_machine(roots, &machine_name)?;
     if state.lifecycle != MachineLifecycle::Stopped {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "machine '{}' is {} and must be stopped before applying `nimbus machine set`.\n{}",
             machine_name,
             state.lifecycle.as_str(),
@@ -616,7 +616,7 @@ fn delete_machine_with_layout_locked(
         state.lifecycle,
         MachineLifecycle::Starting | MachineLifecycle::Running
     ) {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "machine '{}' is {} and cannot be removed safely.\n{}",
             machine_name,
             state.lifecycle.as_str(),

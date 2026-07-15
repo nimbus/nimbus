@@ -269,7 +269,7 @@ impl RetentionFloor {
     ) -> Result<()> {
         match self.hard_delete_decision(table_id, current_head) {
             HardDeleteDecision::Allowed => Ok(()),
-            HardDeleteDecision::Denied { pin } => Err(Error::Conflict(format!(
+            HardDeleteDecision::Denied { pin } => Err(Error::conflict(format!(
                 "hard delete for table id {} is blocked by retention participant {:?} at sequence {} ({})",
                 table_id, pin.participant, pin.sequence.0, pin.reason
             ))),

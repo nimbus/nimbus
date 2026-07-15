@@ -670,7 +670,7 @@ impl SqliteWriteTransaction {
             } => {
                 self.check_cancel()?;
                 if self.load_document(&document.table, &document.id)?.is_some() {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "document {} changed before transaction commit",
                         document.id
                     )));
@@ -693,18 +693,18 @@ impl SqliteWriteTransaction {
                 self.check_cancel()?;
                 let existing =
                     self.load_document(&current.table, &current.id)?
-                        .ok_or(Error::Conflict(format!(
+                        .ok_or(Error::conflict(format!(
                             "document {} changed before transaction commit",
                             current.id
                         )))?;
                 if existing != *previous {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "document {} changed before transaction commit",
                         current.id
                     )));
                 }
                 let table_id = resolve_table_id_in_conn(self.connection_mut()?, &current.table)?
-                    .ok_or(Error::Conflict(format!(
+                    .ok_or(Error::conflict(format!(
                         "document {} changed before transaction commit",
                         current.id
                     )))?;
@@ -742,18 +742,18 @@ impl SqliteWriteTransaction {
                 self.check_cancel()?;
                 let existing =
                     self.load_document(&previous.table, &previous.id)?
-                        .ok_or(Error::Conflict(format!(
+                        .ok_or(Error::conflict(format!(
                             "document {} changed before transaction commit",
                             previous.id
                         )))?;
                 if existing != *previous {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "document {} changed before transaction commit",
                         previous.id
                     )));
                 }
                 let table_id = resolve_table_id_in_conn(self.connection_mut()?, &previous.table)?
-                    .ok_or(Error::Conflict(format!(
+                    .ok_or(Error::conflict(format!(
                     "document {} changed before transaction commit",
                     previous.id
                 )))?;

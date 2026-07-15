@@ -18,9 +18,11 @@ mod state;
 mod tests;
 
 use self::state::MutationExecutionUnitState;
-pub(crate) use pause::{CommitFaultClient, Label, labels};
-#[cfg(test)]
-pub(crate) use pause::{CommitFaultHandle, Fault};
+pub(crate) use pause::CommitFaultClient;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use pause::{CommitFaultHandle, Fault, Label, labels};
+#[cfg(not(any(test, feature = "test-hooks")))]
+pub(crate) use pause::{Label, labels};
 
 pub struct MutationExecutionUnit {
     engine: Arc<Engine>,
@@ -55,8 +57,8 @@ impl Engine {
         }))
     }
 
-    #[cfg(test)]
-    pub(crate) fn commit_fault_handle_for_testing(&self) -> CommitFaultHandle {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn commit_fault_handle_for_testing(&self) -> CommitFaultHandle {
         self.commit_faults.handle()
     }
 }

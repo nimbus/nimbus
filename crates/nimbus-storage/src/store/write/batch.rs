@@ -202,7 +202,7 @@ mod tests {
             )
             .expect_err("conflicting sibling write should fail the batch");
 
-        assert!(matches!(failed, Error::Conflict(_)));
+        assert!(matches!(failed, Error::Conflict { .. }));
         assert!(
             store
                 .get(&table, &pending.id)

@@ -121,9 +121,10 @@ fn run_machine_os_rollback(
     }
     let client = require_running_bootc_machine_api_client(&paths, &state)?;
     let before = client.bootc_status()?;
-    let rollback_image = before.rollback_image.clone().ok_or_else(|| {
-        Error::Conflict("bootc status does not report a rollback deployment".to_owned())
-    })?;
+    let rollback_image = before
+        .rollback_image
+        .clone()
+        .ok_or_else(|| Error::conflict("bootc status does not report a rollback deployment"))?;
     let operation = client.bootc_rollback(MachineApiBootcRollbackRequest {})?;
     if command.restart {
         restart_bootc_machine(&paths, &mut config, &mut state)?;
@@ -432,7 +433,7 @@ fn apply_machine_os_change(
     }
 
     if matches!(state.lifecycle, MachineLifecycle::Starting) {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "machine '{}' is starting; wait for startup to finish before applying a machine OS change.\n{}",
             DEFAULT_MACHINE_NAME,
             cli_ux::format_hint("rerun the command after the current start completes")
@@ -440,7 +441,7 @@ fn apply_machine_os_change(
     }
     let was_running = matches!(state.lifecycle, MachineLifecycle::Running);
     if was_running && !restart {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "machine '{}' is running; rerun with `--restart` to apply the machine OS change immediately, or stop it first.\n{}",
             DEFAULT_MACHINE_NAME,
             cli_ux::format_hint(&format!(
@@ -517,7 +518,7 @@ pub(in crate::machine) fn plan_machine_os_upgrade(
     let current_version = parse_machine_release_version(&current_tag)?;
     let target_version = parse_machine_release_version(&stream.target_version)?;
     if stream.follows_host_release && current_version > target_version {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "configured machine image version {} is newer than the supported machine stream version {}. Install a matching nimbus build or use `nimbus machine os apply <oci-ref-or-digest>` explicitly.",
             current_tag, stream.target_version
         )));

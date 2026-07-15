@@ -71,13 +71,13 @@ impl NodeAssignment {
             )));
         }
         if update.observed_generation < self.generation {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "status generation {} is stale for assignment generation {}",
                 update.observed_generation, self.generation
             )));
         }
         if update.observed_generation > self.generation {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "status generation {} is newer than assignment generation {}",
                 update.observed_generation, self.generation
             )));

@@ -1035,7 +1035,7 @@ fn runtime_mutation_bridge_commit_detects_occ_conflicts() {
     let error = bridge
         .commit_mutation_execution_unit()
         .expect_err("commit should detect the conflict");
-    assert!(matches!(error, Error::Conflict(_)));
+    assert!(matches!(error, Error::Conflict { .. }));
     assert_eq!(
         engine
             .get_document(&tenant_id, &table, document_id.clone())
@@ -1113,7 +1113,7 @@ fn runtime_mutation_bridge_conflict_discards_staged_scheduler_side_effects() {
     let error = bridge
         .commit_mutation_execution_unit()
         .expect_err("commit should detect the conflict");
-    assert!(matches!(error, Error::Conflict(_)));
+    assert!(matches!(error, Error::Conflict { .. }));
     assert!(
         engine
             .list_scheduled_jobs(&tenant_id)

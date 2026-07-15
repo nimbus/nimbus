@@ -10,6 +10,7 @@ pub mod cancellation;
 pub mod capabilities;
 pub mod egress;
 pub mod host_calls;
+pub mod mutation_retry;
 pub mod read_tracking;
 pub mod responses;
 pub mod state;

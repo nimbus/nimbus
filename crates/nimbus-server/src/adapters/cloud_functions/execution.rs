@@ -22,7 +22,9 @@ mod tests {
         TriggerCommitMetadata, TriggerEvent, TriggerExecutionPrincipal, TriggerInvocationKey,
         TriggerInvocationRecord, WriteKey, WritePrecondition, WriteSetMode,
     };
-    use nimbus_engine::{Engine, TriggerInvocationExecution, TriggerInvocationExecutor};
+    use nimbus_engine::{
+        Engine, TriggerInvocationExecution, TriggerInvocationExecutor, commit_fault_labels,
+    };
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -60,7 +62,13 @@ mod tests {
     }
 
     #[test]
-    fn cloud_functions_trigger_executor_reads_and_writes_via_runtime_bundle() {
+    fn cloud_functions_trigger_entrypoint_retry_test() {
+        // SAFETY: nextest runs each test in its own process.
+        unsafe {
+            std::env::set_var("NIMBUS_MUTATION_OCC_MAX_RETRIES", "3");
+            std::env::set_var("NIMBUS_MUTATION_OCC_INITIAL_BACKOFF_MS", "1");
+            std::env::set_var("NIMBUS_MUTATION_OCC_MAX_BACKOFF_MS", "1");
+        }
         let service_dir = tempdir().expect("service tempdir should build");
         let engine = Arc::new(Engine::new(service_dir.path()).expect("engine should build"));
         let tenant_id = TenantId::new("demo").expect("tenant id should build");
@@ -134,6 +142,14 @@ export {};
             TenantIsolationMode::LocalDevelopment,
             Arc::new(ComputeCloudFunctionsRuntimeInvoker),
         );
+        let applied_head = engine
+            .tenant_engine_diagnostics(&tenant_id)
+            .expect("tenant diagnostics should load")
+            .mutation_journal
+            .applied_head;
+        engine
+            .commit_fault_handle_for_testing()
+            .inject_retryable_conflicts(commit_fault_labels::PRE_ASSIGN, 1, Some(applied_head));
 
         assert_eq!(
             executor.execute_invocation(
@@ -162,6 +178,10 @@ export {};
             Some(&json!("before"))
         );
         assert_eq!(audit_document.get_field("nextName"), Some(&json!("after")));
+        let diagnostics = engine
+            .tenant_engine_diagnostics(&tenant_id)
+            .expect("tenant diagnostics should load");
+        assert_eq!(diagnostics.commit_phases.mutation_conflict_retries_total, 1);
     }
 
     #[test]
@@ -1279,7 +1299,7 @@ functions.cloudEvent("syncUser", async (event) => {
         for attempt in 1..=MAX_ATTEMPTS {
             match seed_firebase_document_once(engine, tenant_id, document_path, fields.clone()) {
                 Ok(()) => return,
-                Err(Error::Conflict(_)) if attempt < MAX_ATTEMPTS => {
+                Err(Error::Conflict { .. }) if attempt < MAX_ATTEMPTS => {
                     std::thread::sleep(Duration::from_millis(10 * attempt as u64));
                 }
                 Err(error) => panic!("batch should execute: {error:?}"),

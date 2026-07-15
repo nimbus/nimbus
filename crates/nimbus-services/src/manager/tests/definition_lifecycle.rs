@@ -274,7 +274,7 @@ async fn delete_service_definition_serializes_with_in_flight_activation() {
         .await
         .expect_err("non-force delete must reject in-flight activation");
     assert!(
-        matches!(&non_force, Error::Conflict(message) if message.contains("activation in progress")),
+        matches!(&non_force, Error::Conflict { message, .. } if message.contains("activation in progress")),
         "non-force delete should fail closed on activation race, got {non_force:?}"
     );
     assert!(

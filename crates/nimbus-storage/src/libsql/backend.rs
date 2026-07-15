@@ -116,7 +116,7 @@ pub(super) async fn load_remote_table_id_from_session(
     let table_id = row.get::<String>(0).map_err(map_libsql_error)?;
     let state = TableState::from_str(row.get::<String>(1).map_err(map_libsql_error)?.as_str())?;
     if state != TableState::Active {
-        return Err(Error::Conflict(format!(
+        return Err(Error::conflict(format!(
             "logical table {} is in {} lifecycle state",
             table, state
         )));
@@ -165,7 +165,7 @@ pub(super) async fn ensure_remote_table_id(
     {
         Some((hidden_id, TableState::Hidden)) if hidden_id == *table_id => true,
         Some((hidden_id, state)) => {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "hidden identity slot for logical table {} and table id {} contains {} in {} state",
                 table, table_id, hidden_id, state
             )));
@@ -176,7 +176,7 @@ pub(super) async fn ensure_remote_table_id(
     match remote_catalog_identity_row(conn, DEFAULT_TABLE_NAMESPACE, table).await? {
         Some((existing, TableState::Active)) if existing == *table_id => {
             if staged_hidden {
-                return Err(Error::Conflict(format!(
+                return Err(Error::conflict(format!(
                     "logical table {} already has active table id {} and a duplicate hidden slot",
                     table, table_id
                 )));
@@ -184,7 +184,7 @@ pub(super) async fn ensure_remote_table_id(
             return Ok(());
         }
         Some((existing, state)) if existing == *table_id => {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "logical table {} is assigned table id {} in {} lifecycle state",
                 table, table_id, state
             )));
@@ -232,7 +232,7 @@ pub(super) async fn ensure_remote_table_id(
             return Ok(());
         }
         Some((existing, state)) => {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "logical table {} is already assigned table id {} in {} lifecycle state, journal references {}",
                 table, existing, state, table_id
             )));
@@ -311,7 +311,7 @@ async fn ensure_remote_table_id_available(
     {
         return Ok(());
     }
-    Err(Error::Conflict(format!(
+    Err(Error::conflict(format!(
         "table id {} is already assigned to logical table {} in namespace {} with {} state",
         table_id, table, namespace, state
     )))
@@ -446,7 +446,7 @@ async fn apply_document_writes_in_remote_conn(conn: &Connection, writes: &[Write
                 match existing {
                     Some(existing) if existing == *current => continue,
                     Some(_) => {
-                        return Err(Error::Conflict(format!(
+                        return Err(Error::conflict(format!(
                             "durable journal insert replay found conflicting state for document {}",
                             write.doc_id
                         )));
@@ -484,7 +484,7 @@ async fn apply_document_writes_in_remote_conn(conn: &Connection, writes: &[Write
                     &write.doc_id,
                 )
                 .await?
-                .ok_or(Error::Conflict(format!(
+                .ok_or(Error::conflict(format!(
                     "durable journal update replay missing document {}",
                     write.doc_id
                 )))?;
@@ -492,7 +492,7 @@ async fn apply_document_writes_in_remote_conn(conn: &Connection, writes: &[Write
                     continue;
                 }
                 if existing != *previous {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "durable journal update replay found conflicting state for document {}",
                         write.doc_id
                     )));
@@ -524,7 +524,7 @@ async fn apply_document_writes_in_remote_conn(conn: &Connection, writes: &[Write
                 .await?
                 {
                     Some(existing) if existing != *previous => {
-                        return Err(Error::Conflict(format!(
+                        return Err(Error::conflict(format!(
                             "durable journal delete replay found conflicting state for document {}",
                             write.doc_id
                         )));

@@ -78,7 +78,7 @@ impl ServiceManager {
             state.sandbox_resources.contains_key(&id)
         };
         if duplicate_id {
-            return Err(Error::Conflict(format!(
+            return Err(Error::conflict(format!(
                 "sandbox backend returned duplicate sandbox id `{id}`"
             )));
         }
@@ -123,7 +123,7 @@ impl ServiceManager {
             return Ok(resource);
         }
 
-        let error = Error::Conflict(format!(
+        let error = Error::conflict(format!(
             "sandbox backend returned duplicate sandbox id `{id}`"
         ));
         // The duplicate id is already associated with a tracked sandbox, so a

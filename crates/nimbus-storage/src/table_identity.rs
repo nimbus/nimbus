@@ -49,7 +49,7 @@ impl TableLifecycleStateMachine {
                 Ok(Some(TableState::Deleting))
             }
             (Some(TableState::Deleting), TableLifecycleTransition::HardDelete) => Ok(None),
-            (state, transition) => Err(nimbus_core::Error::Conflict(format!(
+            (state, transition) => Err(nimbus_core::Error::conflict(format!(
                 "invalid table lifecycle transition {:?} from {:?}",
                 transition, state
             ))),

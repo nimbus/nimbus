@@ -911,7 +911,7 @@ impl LibsqlReplicaWriteTransaction {
             } => {
                 self.check_cancel()?;
                 if self.load_document(&document.table, &document.id)?.is_some() {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "document {} changed before transaction commit",
                         document.id
                     )));
@@ -934,12 +934,12 @@ impl LibsqlReplicaWriteTransaction {
                 self.check_cancel()?;
                 let existing =
                     self.load_document(&current.table, &current.id)?
-                        .ok_or(Error::Conflict(format!(
+                        .ok_or(Error::conflict(format!(
                             "document {} changed before transaction commit",
                             current.id
                         )))?;
                 if existing != *previous {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "document {} changed before transaction commit",
                         current.id
                     )));
@@ -949,7 +949,7 @@ impl LibsqlReplicaWriteTransaction {
                 let table_id = self.store.block_on(async {
                     load_remote_table_id_from_session(self.session()?, &current.table)
                         .await?
-                        .ok_or(Error::Conflict(format!(
+                        .ok_or(Error::conflict(format!(
                             "document {} changed before transaction commit",
                             current.id
                         )))
@@ -993,12 +993,12 @@ impl LibsqlReplicaWriteTransaction {
                 self.check_cancel()?;
                 let existing =
                     self.load_document(&previous.table, &previous.id)?
-                        .ok_or(Error::Conflict(format!(
+                        .ok_or(Error::conflict(format!(
                             "document {} changed before transaction commit",
                             previous.id
                         )))?;
                 if existing != *previous {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "document {} changed before transaction commit",
                         previous.id
                     )));
@@ -1006,7 +1006,7 @@ impl LibsqlReplicaWriteTransaction {
                 let table_id = self.store.block_on(async {
                     load_remote_table_id_from_session(self.session()?, &previous.table)
                         .await?
-                        .ok_or(Error::Conflict(format!(
+                        .ok_or(Error::conflict(format!(
                             "document {} changed before transaction commit",
                             previous.id
                         )))

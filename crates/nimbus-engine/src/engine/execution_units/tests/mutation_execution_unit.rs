@@ -369,7 +369,25 @@ fn mutation_execution_unit_aborts_on_overlapping_document_conflict() {
     let error = execution_unit
         .commit()
         .expect_err("commit should detect the conflict");
-    assert!(matches!(error, Error::Conflict(_)));
+    let applied_head = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("tenant diagnostics should load")
+        .mutation_journal
+        .applied_head;
+    let Error::Conflict {
+        conflicting_sequence,
+        retryable,
+        attempts,
+        ..
+    } = error
+    else {
+        panic!("expected typed conflict metadata");
+    };
+    let conflicting_sequence =
+        conflicting_sequence.expect("OCC conflict should identify the first intersecting commit");
+    assert!(conflicting_sequence.0 <= applied_head.0);
+    assert!(retryable);
+    assert_eq!(attempts, None);
     assert_eq!(
         engine
             .get_document(&tenant_id, &table, document_id.clone())
@@ -473,7 +491,7 @@ async fn mutation_execution_unit_conflict_scan_and_append_are_sequence_atomic() 
         .expect("second commit should complete after first append is visible")
         .expect("second commit task should join")
         .expect_err("second commit should conflict with first phantom insert");
-    assert!(matches!(second_error, Error::Conflict(_)));
+    assert!(matches!(second_error, Error::Conflict { .. }));
 
     let documents = engine
         .query_documents(&tenant_id, &query)
@@ -924,7 +942,7 @@ async fn mutation_execution_unit_conflicts_with_durable_unapplied_write() {
     let error = commit_result.expect_err(
         "commit should conflict with the durable journal write that was not part of the applied snapshot",
     );
-    assert!(matches!(error, Error::Conflict(_)));
+    assert!(matches!(error, Error::Conflict { .. }));
     let documents = engine
         .query_documents(
             &tenant_id,
@@ -1085,7 +1103,7 @@ fn mutation_execution_unit_conflicts_when_auth_filtered_visibility_changes() {
     let error = execution_unit
         .commit()
         .expect_err("commit should detect the auth-filtered visibility change");
-    assert!(matches!(error, Error::Conflict(_)));
+    assert!(matches!(error, Error::Conflict { .. }));
 }
 
 #[test]
@@ -1273,7 +1291,7 @@ fn mutation_execution_unit_rejects_reuse_after_failed_commit_attempt() {
     let commit_error = execution_unit
         .commit()
         .expect_err("commit should detect the conflict");
-    assert!(matches!(commit_error, Error::Conflict(_)));
+    assert!(matches!(commit_error, Error::Conflict { .. }));
 
     let read_error = execution_unit
         .get_document(&table, document_id.clone())

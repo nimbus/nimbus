@@ -290,7 +290,7 @@ fn apply_document_write_in_write_txn(
                     let existing = decode_document_msgpack(existing.value())
                         .map_err(|error| Error::Serialization(error.to_string()))?;
                     if existing != *current {
-                        return Err(Error::Conflict(format!(
+                        return Err(Error::conflict(format!(
                             "durable journal insert replay found conflicting state for document {}",
                             write.doc_id
                         )));
@@ -315,7 +315,7 @@ fn apply_document_write_in_write_txn(
                 let existing = documents
                     .get(key.as_slice())
                     .map_err(map_redb_error)?
-                    .ok_or(Error::Conflict(format!(
+                    .ok_or(Error::conflict(format!(
                         "durable journal update replay missing document {}",
                         write.doc_id
                     )))?;
@@ -326,7 +326,7 @@ fn apply_document_write_in_write_txn(
                 return Ok(());
             }
             if existing != *previous {
-                return Err(Error::Conflict(format!(
+                return Err(Error::conflict(format!(
                     "durable journal update replay found conflicting state for document {}",
                     write.doc_id
                 )));
@@ -345,7 +345,7 @@ fn apply_document_write_in_write_txn(
                     let removed = decode_document_msgpack(removed.value())
                         .map_err(|error| Error::Serialization(error.to_string()))?;
                     if removed != *previous {
-                        return Err(Error::Conflict(format!(
+                        return Err(Error::conflict(format!(
                             "durable journal delete replay found conflicting state for document {}",
                             write.doc_id
                         )));
@@ -425,7 +425,7 @@ fn apply_table_lifecycle_in_write_txn(
         TableLifecycleEvent::MarkDeleting { table, table_id } => {
             match mark_default_table_deleting_in_write_txn(write_txn, table)? {
                 Some(actual_table_id) if actual_table_id == *table_id => Ok(()),
-                Some(actual_table_id) => Err(Error::Conflict(format!(
+                Some(actual_table_id) => Err(Error::conflict(format!(
                     "tenant event table lifecycle expected table id {} but marked {} deleting",
                     table_id, actual_table_id
                 ))),

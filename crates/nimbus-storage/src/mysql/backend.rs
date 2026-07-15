@@ -1065,7 +1065,7 @@ where
                 match existing {
                     Some(existing) if existing == *current => continue,
                     Some(_) => {
-                        return Err(Error::Conflict(format!(
+                        return Err(Error::conflict(format!(
                             "durable journal insert replay found conflicting state for document {}",
                             write.doc_id
                         )));
@@ -1103,7 +1103,7 @@ where
                     &write.doc_id,
                 )
                 .await?
-                .ok_or(Error::Conflict(format!(
+                .ok_or(Error::conflict(format!(
                     "durable journal update replay missing document {}",
                     write.doc_id
                 )))?;
@@ -1111,7 +1111,7 @@ where
                     continue;
                 }
                 if existing != *previous {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "durable journal update replay found conflicting state for document {}",
                         write.doc_id
                     )));
@@ -1148,7 +1148,7 @@ where
                 .await?
                 {
                     Some(existing) if existing != *previous => {
-                        return Err(Error::Conflict(format!(
+                        return Err(Error::conflict(format!(
                             "durable journal delete replay found conflicting state for document {}",
                             write.doc_id
                         )));

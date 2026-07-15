@@ -443,7 +443,7 @@ fn apply_document_write_in_conn(conn: &Connection, write: &WriteOp) -> Result<()
             match existing {
                 Some(existing) if existing == *current => return Ok(()),
                 Some(_) => {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "durable journal insert replay found conflicting state for document {}",
                         write.doc_id
                     )));
@@ -476,7 +476,7 @@ fn apply_document_write_in_conn(conn: &Connection, write: &WriteOp) -> Result<()
                 &write.table_id,
                 &write.doc_id,
             )?
-            .ok_or(Error::Conflict(format!(
+            .ok_or(Error::conflict(format!(
                 "durable journal update replay missing document {}",
                 write.doc_id
             )))?;
@@ -484,7 +484,7 @@ fn apply_document_write_in_conn(conn: &Connection, write: &WriteOp) -> Result<()
                 return Ok(());
             }
             if existing != *previous {
-                return Err(Error::Conflict(format!(
+                return Err(Error::conflict(format!(
                     "durable journal update replay found conflicting state for document {}",
                     write.doc_id
                 )));
@@ -516,7 +516,7 @@ fn apply_document_write_in_conn(conn: &Connection, write: &WriteOp) -> Result<()
                 &write.doc_id,
             )? {
                 Some(existing) if existing != *previous => {
-                    return Err(Error::Conflict(format!(
+                    return Err(Error::conflict(format!(
                         "durable journal delete replay found conflicting state for document {}",
                         write.doc_id
                     )));
