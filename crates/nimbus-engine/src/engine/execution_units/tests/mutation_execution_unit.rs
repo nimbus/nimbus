@@ -1,6 +1,93 @@
 use super::*;
 
 #[test]
+fn mutation_execution_unit_commits_id_from_injected_source() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let expected_id = DocumentId::from_key("00000000000000000000000000")
+        .expect("deterministic ULID should be a valid document id");
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_id_source(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(10_000))),
+            Arc::new(NoopFaultInjector),
+            Arc::new(SeededIdSource::new(0)),
+        )
+        .expect("engine should create"),
+    );
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    let table = messages_table("messages_injected_id_source");
+
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    let staged_id = execution_unit
+        .insert_document(
+            table.clone(),
+            serde_json::Map::from_iter([("body".to_string(), json!("deterministic"))]),
+        )
+        .expect("insert should stage");
+    let commit = execution_unit
+        .commit()
+        .expect("commit should succeed")
+        .expect("document insert should produce a commit");
+
+    assert_eq!(staged_id, expected_id);
+    assert_eq!(commit.writes.len(), 1);
+    assert_eq!(commit.writes[0].doc_id, expected_id);
+    assert_eq!(
+        commit.writes[0]
+            .current
+            .as_ref()
+            .expect("insert commit should contain the current document")
+            .id,
+        expected_id
+    );
+    assert_eq!(
+        engine
+            .get_document(&tenant_id, &table, expected_id.clone())
+            .expect("committed document should be readable")
+            .id,
+        expected_id
+    );
+}
+
+#[test]
+fn mutation_execution_unit_commit_timestamp_follows_manual_clock() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let clock = Arc::new(ManualClock::new(Timestamp(10_000)));
+    let engine = Arc::new(
+        Engine::new_with_simulation(data_dir.path(), clock.clone(), Arc::new(NoopFaultInjector))
+            .expect("engine should create"),
+    );
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    let table = messages_table("messages_injected_commit_clock");
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    execution_unit
+        .insert_document(
+            table,
+            serde_json::Map::from_iter([("body".to_string(), json!("clocked"))]),
+        )
+        .expect("insert should stage");
+
+    let expected_timestamp = Timestamp(73_421);
+    clock.set(expected_timestamp);
+    let commit = execution_unit
+        .commit()
+        .expect("commit should succeed")
+        .expect("document insert should produce a commit");
+
+    assert_eq!(commit.timestamp, expected_timestamp);
+}
+
+#[test]
 fn mutation_execution_unit_aborts_on_overlapping_document_conflict() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();

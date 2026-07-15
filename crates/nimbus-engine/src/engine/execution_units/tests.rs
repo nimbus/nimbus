@@ -4,8 +4,8 @@ pub(crate) use std::sync::atomic::{AtomicU64, Ordering};
 pub(crate) use nimbus_core::{
     ArrayPopSide, AtomicWrite, AtomicWriteBatch, BitwiseOperation, DocumentId, DocumentLocator,
     Error, FieldTransform, FieldTransformOperation, IndexDefinition, NumericValue, OrderBy,
-    OrderDirection, PaginatedQuery, PrincipalContext, Query, QueryDirection, SpecialDouble,
-    StoredValue, StructuredOrder, StructuredQuery, TableId, TenantId, Timestamp,
+    OrderDirection, PaginatedQuery, PrincipalContext, Query, QueryDirection, SeededIdSource,
+    SpecialDouble, StoredValue, StructuredOrder, StructuredQuery, TableId, TenantId, Timestamp,
     TriggerInvocationKey, TriggerWriteOrigin, TypedScalarValue, WriteKey, WritePrecondition,
     WriteSetMode,
 };

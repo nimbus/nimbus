@@ -6,8 +6,8 @@ use std::{
 };
 
 use nimbus_core::{
-    AccessAction, CommitEntry, Document, DocumentId, Error, Mutation, Result, SequenceNumber,
-    TableId, TableName, TenantEventRecord, TenantId,
+    AccessAction, CommitEntry, Document, DocumentId, Error, IdSource, Mutation, Result,
+    SequenceNumber, TableId, TableName, TenantEventRecord, TenantId,
 };
 use tokio::sync::oneshot;
 use tracing::warn;
@@ -83,8 +83,9 @@ impl Engine {
             }
 
             let runtime_for_task = runtime.clone();
+            let id_source = Arc::clone(&self.id_source);
             let batch_result = tokio::task::spawn_blocking(move || {
-                process_queued_mutation_batch(runtime_for_task, batch)
+                process_queued_mutation_batch(runtime_for_task, batch, id_source.as_ref())
             })
             .await;
 
@@ -197,6 +198,7 @@ impl Engine {
 fn process_queued_mutation_batch(
     runtime: Arc<TenantRuntime>,
     batch: Vec<QueuedMutationRequest>,
+    id_source: &dyn IdSource,
 ) -> Result<QueuedMutationBatchResult> {
     let sequence_guard = runtime.lock_mutation_sequence();
     let mut overlay = HashMap::<(TableName, DocumentId), Option<Document>>::new();
@@ -211,6 +213,7 @@ fn process_queued_mutation_batch(
             &mut overlay,
             &mut table_id_overlay,
             &mut scheduled_execution_overlay,
+            id_source,
         ) {
             planned.push(planned_request);
         }
@@ -316,6 +319,7 @@ fn plan_queued_mutation_request(
     overlay: &mut HashMap<(TableName, DocumentId), Option<Document>>,
     table_id_overlay: &mut HashMap<TableName, TableId>,
     scheduled_execution_overlay: &mut HashSet<String>,
+    id_source: &dyn IdSource,
 ) -> Option<PlannedQueuedMutation> {
     let QueuedMutationRequest {
         mutation,
@@ -369,7 +373,7 @@ fn plan_queued_mutation_request(
             }
             let document = match id {
                 Some(document_id) => Document::with_id(document_id, table.clone(), fields),
-                None => Document::new(table.clone(), fields),
+                None => Document::with_id(id_source.next_document_id(), table.clone(), fields),
             };
             if let Err(error) = enforce_mutation_authorization(
                 table_schema.as_ref(),

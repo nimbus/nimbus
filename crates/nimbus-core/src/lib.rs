@@ -8,6 +8,7 @@ pub mod document_history;
 pub mod encoding;
 pub mod error;
 pub mod firestore;
+pub mod id_source;
 pub mod identity;
 pub mod index_history;
 pub mod mutation;
@@ -48,6 +49,7 @@ pub use firestore::{
     DEFAULT_FIRESTORE_DATABASE_ID, locator_for_document_path, parse_document_path,
     storage_table_for_collection_path, validate_default_database_id,
 };
+pub use id_source::{IdSource, SeededIdSource, SystemIdSource};
 pub use identity::{
     InvocationAuth, RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
 };

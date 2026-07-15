@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::AtomicBool;
 
-use nimbus_core::{Error, Result, TenantId, Timestamp};
+use nimbus_core::{DocumentId, Error, IdSource, Result, SystemIdSource, TenantId, Timestamp};
 use nimbus_storage::{
     Clock, EmbeddedProviderKind, FaultInjector, NoopFaultInjector, SqliteTenantStore, SystemClock,
     TenantStore,
@@ -70,6 +70,7 @@ pub struct Engine {
     persistence_provider: PersistenceProvider,
     control_plane_provider: ControlPlaneProvider,
     clock: Arc<dyn Clock>,
+    id_source: Arc<dyn IdSource>,
     storage_fault_injector: Arc<dyn FaultInjector>,
     scheduler_wakeup: Notify,
     provider_hint_worker_started: AtomicBool,
@@ -91,6 +92,7 @@ pub(super) struct EngineBootstrapParts {
     persistence_provider: PersistenceProvider,
     control_plane_provider: ControlPlaneProvider,
     clock: Arc<dyn Clock>,
+    id_source: Arc<dyn IdSource>,
     storage_fault_injector: Arc<dyn FaultInjector>,
     engine_executor: BackgroundExecutor,
     storage_executor: BackgroundExecutor,
@@ -152,6 +154,26 @@ impl Engine {
     }
 
     /// Creates a new engine with deterministic simulation seams and an
+    /// injected source for generated document and job identifiers.
+    pub fn new_with_simulation_and_id_source(
+        data_dir: impl Into<PathBuf>,
+        clock: Arc<dyn Clock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
+        let data_dir = data_dir.into();
+        bootstrap::build_embedded_engine(
+            data_dir.clone(),
+            data_dir,
+            None,
+            clock,
+            storage_fault_injector,
+            id_source,
+            EmbeddedProviderKind::default(),
+        )
+    }
+
+    /// Creates a new engine with deterministic simulation seams and an
     /// explicit embedded persistence provider.
     ///
     /// Note: This API does not support encryption. Use
@@ -170,6 +192,7 @@ impl Engine {
             None,
             clock,
             storage_fault_injector,
+            Arc::new(SystemIdSource),
             embedded_provider_kind,
         )
     }
@@ -181,7 +204,13 @@ impl Engine {
         clock: Arc<dyn Clock>,
         storage_fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
-        bootstrap::build_from_persistence_config(config, clock, storage_fault_injector).await
+        bootstrap::build_from_persistence_config(
+            config,
+            clock,
+            storage_fault_injector,
+            Arc::new(SystemIdSource),
+        )
+        .await
     }
 
     fn from_bootstrap_parts(parts: EngineBootstrapParts) -> Self {
@@ -194,6 +223,7 @@ impl Engine {
             persistence_provider: parts.persistence_provider,
             control_plane_provider: parts.control_plane_provider,
             clock: parts.clock,
+            id_source: parts.id_source,
             storage_fault_injector: parts.storage_fault_injector,
             scheduler_wakeup: Notify::new(),
             provider_hint_worker_started: AtomicBool::new(false),
@@ -260,6 +290,10 @@ impl Engine {
 
     pub(crate) fn now(&self) -> Timestamp {
         self.clock.now()
+    }
+
+    pub(crate) fn next_document_id(&self) -> DocumentId {
+        self.id_source.next_document_id()
     }
 
     pub(crate) fn open_tenant_store(&self, path: &Path) -> Result<TenantPersistence> {

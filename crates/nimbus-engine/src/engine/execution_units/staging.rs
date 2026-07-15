@@ -33,7 +33,7 @@ impl MutationExecutionUnit {
             .unwrap_or_default();
         let document = match document_id {
             Some(document_id) => Document::with_id(document_id, table.clone(), fields),
-            None => Document::new(table.clone(), fields),
+            None => Document::with_id(self.engine.next_document_id(), table.clone(), fields),
         };
         enforce_mutation_authorization(
             table_schema.as_ref(),
@@ -129,7 +129,7 @@ impl MutationExecutionUnit {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
         let now = self.engine.now();
         let job = nimbus_core::ScheduledJob {
-            id: nimbus_core::JobId::new(),
+            id: self.engine.next_document_id(),
             run_at: Timestamp(now.0.saturating_add(delay_ms)),
             mutation,
             created_at: now,
@@ -147,7 +147,7 @@ impl MutationExecutionUnit {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
         let now = self.engine.now();
         let job = nimbus_core::ScheduledJob {
-            id: nimbus_core::JobId::new(),
+            id: self.engine.next_document_id(),
             run_at: Timestamp(timestamp_ms.max(now.0)),
             mutation,
             created_at: now,
