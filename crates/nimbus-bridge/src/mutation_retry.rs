@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use nimbus_core::{Error, SequenceNumber};
@@ -5,12 +6,14 @@ use nimbus_core::{Error, SequenceNumber};
 const DEFAULT_MAX_ATTEMPTS: usize = 4;
 const DEFAULT_INITIAL_BACKOFF_MS: u64 = 100;
 const DEFAULT_MAX_BACKOFF_MS: u64 = 2_000;
+static NEXT_JITTER_SEED: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MutationOccRetryPolicy {
     max_attempts: usize,
     initial_backoff: Duration,
     max_backoff: Duration,
+    jitter_seed: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +44,9 @@ impl MutationOccRetryPolicy {
                 "NIMBUS_MUTATION_OCC_MAX_BACKOFF_MS",
                 DEFAULT_MAX_BACKOFF_MS,
             )),
+            // Give concurrent invocations independent jitter even when they
+            // conflict on the same commit sequence and failed attempt.
+            jitter_seed: NEXT_JITTER_SEED.fetch_add(1, Ordering::Relaxed),
         }
     }
 
@@ -83,7 +89,8 @@ impl MutationOccRetryPolicy {
         let seed = sequence
             ^ u64::try_from(failed_attempt)
                 .unwrap_or(u64::MAX)
-                .wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ self.jitter_seed.rotate_left(17);
         let jitter_ms = splitmix64(seed) % jitter_width;
         Duration::from_millis(floor_ms.saturating_add(jitter_ms))
     }
@@ -122,6 +129,7 @@ mod tests {
             max_attempts: 2,
             initial_backoff: Duration::from_millis(100),
             max_backoff: Duration::from_secs(2),
+            jitter_seed: 1,
         };
         let retryable = Error::retryable_conflict("race", Some(SequenceNumber(7)));
 
@@ -143,16 +151,34 @@ mod tests {
     }
 
     #[test]
-    fn jittered_backoff_grows_exponentially_and_respects_cap() {
+    fn backoff_timing_test() {
         let policy = MutationOccRetryPolicy {
             max_attempts: 8,
             initial_backoff: Duration::from_millis(100),
             max_backoff: Duration::from_millis(200),
+            jitter_seed: 1,
         };
 
         let first = policy.jittered_backoff(1, Some(SequenceNumber(1)));
+        let second = policy.jittered_backoff(2, Some(SequenceNumber(1)));
         let capped = policy.jittered_backoff(8, Some(SequenceNumber(1)));
         assert!((Duration::from_millis(50)..=Duration::from_millis(100)).contains(&first));
+        assert!((Duration::from_millis(100)..=Duration::from_millis(200)).contains(&second));
+        assert!(second >= first);
         assert!((Duration::from_millis(100)..=Duration::from_millis(200)).contains(&capped));
+
+        let invocation_delays = (1..=16)
+            .map(|jitter_seed| {
+                MutationOccRetryPolicy {
+                    jitter_seed,
+                    ..policy
+                }
+                .jittered_backoff(1, Some(SequenceNumber(1)))
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(
+            invocation_delays.len() > 1,
+            "independent invocations should not share one deterministic delay"
+        );
     }
 }

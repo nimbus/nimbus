@@ -1,10 +1,12 @@
+#[cfg(any(test, feature = "test-hooks"))]
+use nimbus_core::SequenceNumber;
 use nimbus_core::{Error, Result};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::collections::{HashMap, hash_map::Entry};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::sync::{Arc, Condvar, Mutex};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -32,7 +34,7 @@ pub enum Fault {
     #[default]
     Noop,
     #[cfg_attr(
-        not(test),
+        not(any(test, feature = "test-hooks")),
         expect(dead_code, reason = "constructed by the test-only fault controller")
     )]
     Error(Error),
@@ -49,25 +51,25 @@ impl Fault {
 
 #[derive(Clone, Default)]
 pub(crate) struct CommitFaultClient {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     state: Arc<CommitFaultState>,
 }
 
 impl CommitFaultClient {
     #[inline]
     pub(crate) fn wait(&self, label: Label) -> Fault {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         {
             self.state.wait(label)
         }
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-hooks")))]
         {
             let _ = label;
             Fault::Noop
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn handle(&self) -> CommitFaultHandle {
         CommitFaultHandle {
             state: self.state.clone(),
@@ -75,29 +77,38 @@ impl CommitFaultClient {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Debug, Clone)]
-pub(crate) struct CommitFaultHandle {
+pub struct CommitFaultHandle {
     state: Arc<CommitFaultState>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Debug)]
 enum ArmedFault {
-    Pause { entered: bool, released: bool },
+    Pause {
+        entered: bool,
+        released: bool,
+    },
     Error(Error),
+    RetryableConflicts {
+        remaining: usize,
+        conflicting_sequence: Option<SequenceNumber>,
+    },
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Debug, Default)]
 struct CommitFaultState {
     armed: Mutex<HashMap<Label, ArmedFault>>,
+    hits: Mutex<HashMap<Label, usize>>,
     condvar: Condvar,
+    hits_condvar: Condvar,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl CommitFaultHandle {
-    pub(crate) fn arm(&self, label: Label) {
+    pub fn arm(&self, label: Label) {
         let mut armed = self
             .state
             .armed
@@ -112,7 +123,7 @@ impl CommitFaultHandle {
         };
     }
 
-    pub(crate) fn inject(&self, label: Label, fault: Fault) {
+    pub fn inject(&self, label: Label, fault: Fault) {
         let mut armed = self
             .state
             .armed
@@ -134,7 +145,70 @@ impl CommitFaultHandle {
         }
     }
 
-    pub(crate) fn wait_until_entered(&self, label: Label, timeout: std::time::Duration) -> bool {
+    pub fn inject_retryable_conflicts(
+        &self,
+        label: Label,
+        count: usize,
+        conflicting_sequence: Option<SequenceNumber>,
+    ) {
+        assert!(count > 0, "retryable conflict count must be positive");
+        let mut armed = self
+            .state
+            .armed
+            .lock()
+            .expect("execution unit commit fault lock should not be poisoned");
+        match armed.entry(label) {
+            Entry::Vacant(entry) => entry.insert(ArmedFault::RetryableConflicts {
+                remaining: count,
+                conflicting_sequence,
+            }),
+            Entry::Occupied(_) => panic!("commit fault label {label:?} is already armed"),
+        };
+    }
+
+    pub fn hit_count(&self, label: Label) -> usize {
+        self.state
+            .hits
+            .lock()
+            .expect("execution unit commit fault hit lock should not be poisoned")
+            .get(&label)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    pub fn wait_until_hits(
+        &self,
+        label: Label,
+        expected: usize,
+        timeout: std::time::Duration,
+    ) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut hits = self
+            .state
+            .hits
+            .lock()
+            .expect("execution unit commit fault hit lock should not be poisoned");
+        loop {
+            if hits.get(&label).copied().unwrap_or_default() >= expected {
+                return true;
+            }
+            let now = Instant::now();
+            let Some(remaining) = deadline.checked_duration_since(now) else {
+                return false;
+            };
+            let (next, result) = self
+                .state
+                .hits_condvar
+                .wait_timeout(hits, remaining)
+                .expect("execution unit commit fault hit wait should not be poisoned");
+            hits = next;
+            if result.timed_out() && hits.get(&label).copied().unwrap_or_default() < expected {
+                return false;
+            }
+        }
+    }
+
+    pub fn wait_until_entered(&self, label: Label, timeout: std::time::Duration) -> bool {
         let deadline = Instant::now() + timeout;
         let mut armed = self
             .state
@@ -169,7 +243,7 @@ impl CommitFaultHandle {
         }
     }
 
-    pub(crate) fn release(&self, label: Label) {
+    pub fn release(&self, label: Label) {
         let mut armed = self
             .state
             .armed
@@ -183,9 +257,17 @@ impl CommitFaultHandle {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl CommitFaultState {
     fn wait(&self, label: Label) -> Fault {
+        {
+            let mut hits = self
+                .hits
+                .lock()
+                .expect("execution unit commit fault hit lock should not be poisoned");
+            *hits.entry(label).or_default() += 1;
+            self.hits_condvar.notify_all();
+        }
         let mut armed = self
             .armed
             .lock()
@@ -195,6 +277,24 @@ impl CommitFaultState {
         };
         match fault {
             ArmedFault::Error(error) => Fault::Error(error),
+            ArmedFault::RetryableConflicts {
+                remaining,
+                conflicting_sequence,
+            } => {
+                if remaining > 1 {
+                    armed.insert(
+                        label,
+                        ArmedFault::RetryableConflicts {
+                            remaining: remaining - 1,
+                            conflicting_sequence,
+                        },
+                    );
+                }
+                Fault::Error(Error::retryable_conflict(
+                    "injected optimistic conflict",
+                    conflicting_sequence,
+                ))
+            }
             ArmedFault::Pause {
                 entered: true,
                 released,
@@ -231,7 +331,7 @@ impl CommitFaultState {
                             armed.remove(&label);
                             return Fault::Noop;
                         }
-                        Some(ArmedFault::Error(_)) => {
+                        Some(ArmedFault::Error(_) | ArmedFault::RetryableConflicts { .. }) => {
                             unreachable!("an entered pause cannot change fault kind")
                         }
                         None => return Fault::Noop,

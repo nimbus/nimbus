@@ -1,5 +1,7 @@
 #[path = "convex_runtime/cancellation/mod.rs"]
 mod cancellation;
+#[path = "convex_runtime/conflict_retry.rs"]
+mod conflict_retry;
 #[path = "convex_runtime/fairness.rs"]
 pub(super) mod fairness;
 #[path = "convex_runtime/http_routes/mod.rs"]

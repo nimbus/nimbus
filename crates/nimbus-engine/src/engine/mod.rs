@@ -48,6 +48,8 @@ pub use committed_mutations::{CommittedMutationEvent, CommittedMutationObserver}
 pub use committed_mutations::{TableSchemaChangeEvent, TableSchemaChangeObserver};
 pub use encryption::{EncryptionStatus, InitializedKeyProvider};
 pub use execution_units::MutationExecutionUnit;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use execution_units::{CommitFaultHandle, Fault, labels as commit_fault_labels};
 pub use mutations::phase_metrics::CommitPhaseMetricsSnapshot;
 pub(crate) use mutations::phase_metrics::{
     CommitPhaseDurations, CommitPhaseMetrics, CommitTraceSample, maybe_emit_commit_trace,
