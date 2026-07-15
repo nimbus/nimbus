@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::engine::{
     CommitPhaseDurations, CommitPhaseMetrics, CommitPhaseMetricsSnapshot, CommitTraceSample,
-    maybe_emit_commit_trace,
+    WriteLog, WriteLogConfig, maybe_emit_commit_trace,
 };
 use crate::persistence::{TenantPersistence, TenantPersistenceExecutor};
 use crate::subscriptions::SubscriptionRegistry;
@@ -97,6 +97,7 @@ pub struct TenantRuntime {
     materialized_reads: TenantMaterializedReadSurface,
     query_planning: QueryPlanningMetrics,
     commit_phases: CommitPhaseMetrics,
+    pub(crate) write_log: WriteLog,
     subscription_delivery: SubscriptionDeliveryQueue,
     trigger_candidates: TriggerCandidateFeed,
     trigger_execution: TriggerExecutionQueue,
@@ -161,6 +162,11 @@ impl TenantRuntime {
             materialized_reads: TenantMaterializedReadSurface::new(),
             query_planning: QueryPlanningMetrics::new(),
             commit_phases: CommitPhaseMetrics::new(),
+            write_log: WriteLog::new(
+                WriteLogConfig::from_env(),
+                progress.applied_head,
+                progress.durable_head,
+            ),
             subscription_delivery: SubscriptionDeliveryQueue::new(),
             trigger_candidates: TriggerCandidateFeed::new(),
             trigger_execution: TriggerExecutionQueue::new(),

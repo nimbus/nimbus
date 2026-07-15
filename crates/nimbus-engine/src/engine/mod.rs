@@ -7,6 +7,7 @@ mod execution_units;
 mod kv;
 mod latency;
 mod mutations;
+pub(crate) use mutations::write_log::{WriteLog, WriteLogConfig};
 mod object_placement;
 mod objects;
 mod occ_retry;
