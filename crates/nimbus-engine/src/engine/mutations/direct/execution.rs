@@ -117,7 +117,7 @@ impl Engine {
             .unwrap_or_default();
         let document = match document_id {
             Some(document_id) => Document::with_id(document_id, table, fields),
-            None => Document::new(table, fields),
+            None => Document::with_id(self.next_document_id(), table, fields),
         };
         enforce_mutation_authorization(
             table_schema.as_ref(),

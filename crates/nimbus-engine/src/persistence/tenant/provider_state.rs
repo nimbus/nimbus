@@ -19,6 +19,8 @@ impl TenantPersistence {
             Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) | Self::MySql(_) => {
                 read_storage.execute(|store| store.load_schema()).await
             }
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => read_storage.execute(|store| store.load_schema()).await,
         }
     }
 
@@ -31,6 +33,8 @@ impl TenantPersistence {
             Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) | Self::MySql(_) => {
                 read_storage.execute(|store| store.journal_progress()).await
             }
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => read_storage.execute(|store| store.journal_progress()).await,
         }
     }
 
@@ -41,6 +45,12 @@ impl TenantPersistence {
         match self {
             Self::Postgres(store) => store.recover_durable_journal_async().await,
             Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) | Self::MySql(_) => {
+                read_storage
+                    .execute(|store| store.recover_durable_journal())
+                    .await
+            }
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => {
                 read_storage
                     .execute(|store| store.recover_durable_journal())
                     .await
@@ -56,6 +66,12 @@ impl TenantPersistence {
         match self {
             Self::Postgres(store) => store.read_durable_journal_from_async(next_sequence).await,
             Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) | Self::MySql(_) => {
+                read_storage
+                    .execute(move |store| store.read_durable_journal_from(next_sequence))
+                    .await
+            }
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => {
                 read_storage
                     .execute(move |store| store.read_durable_journal_from(next_sequence))
                     .await
@@ -91,6 +107,12 @@ impl TenantPersistence {
         match self {
             Self::Postgres(store) => store.has_scheduled_work_async().await,
             Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) | Self::MySql(_) => {
+                read_storage
+                    .execute(|store| store.has_scheduled_work())
+                    .await
+            }
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => {
                 read_storage
                     .execute(|store| store.has_scheduled_work())
                     .await

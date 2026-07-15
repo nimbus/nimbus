@@ -58,6 +58,10 @@ impl Engine {
                 | TenantPersistence::MySql(_) => Err(Error::Internal(
                     "TenantKvStore is not available for the configured tenant provider".to_string(),
                 )),
+                #[cfg(any(test, feature = "test-hooks"))]
+                TenantPersistence::Memory(_) => Err(Error::Internal(
+                    "TenantKvStore is not available for the configured tenant provider".to_string(),
+                )),
             }
         })
     }

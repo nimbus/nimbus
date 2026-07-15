@@ -8,6 +8,8 @@ impl TenantPersistence {
             Self::LibsqlReplica(store) => store.check_fault(point),
             Self::Postgres(store) => store.check_fault(point),
             Self::MySql(store) => store.check_fault(point),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(store) => store.check_fault(point),
         }
     }
 
@@ -24,6 +26,8 @@ impl TenantPersistence {
                 .read_snapshot()
                 .map(TenantPersistenceSnapshot::Postgres),
             Self::MySql(store) => store.read_snapshot().map(TenantPersistenceSnapshot::MySql),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(store) => store.read_snapshot().map(TenantPersistenceSnapshot::Memory),
         }
     }
 
@@ -39,6 +43,8 @@ impl TenantPersistence {
         match self {
             Self::LibsqlReplica(store) => store.replica_freshness_stats().ok(),
             Self::Redb(_) | Self::Sqlite(_) | Self::Postgres(_) | Self::MySql(_) => None,
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => None,
         }
     }
 

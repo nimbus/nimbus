@@ -26,7 +26,9 @@ mod write;
 
 pub use self::control::EmbeddedRedbControlPlaneProvider;
 pub use self::engine::{EmbeddedProviderKind, EmbeddedRedbProvider, OpenedEmbeddedRedbTenant};
+pub(crate) use self::read::BlockingReadExecutor;
 pub use self::read::{RedbTenantStorage, RedbUsageStorage};
 pub use self::sqlite::{EmbeddedSqliteProvider, OpenedEmbeddedSqliteTenant, SqliteTenantStorage};
 pub(crate) use self::task_error::{map_executor_join_error, map_executor_permit_error};
 pub use self::traits::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, UsageStorage};
+pub(crate) use self::write::{BlockingWriteExecutor, BlockingWriteStore};

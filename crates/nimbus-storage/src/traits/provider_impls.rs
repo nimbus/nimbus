@@ -20,9 +20,10 @@ use crate::store::{
     PointInTimeRestoreTarget, TenantReadSnapshot,
 };
 use crate::{
-    LibsqlReplicaProvider, LibsqlReplicaTenantStore, MySqlProvider, MySqlReadSnapshot,
-    MySqlTenantStore, PostgresProvider, PostgresReadSnapshot, PostgresTenantStore,
-    RedbUsageStorage, SqliteReadSnapshot, SqliteTenantStore, TenantStore,
+    LibsqlReplicaProvider, LibsqlReplicaTenantStore, MemoryTenantProvider, MemoryTenantSnapshot,
+    MemoryTenantStore, MySqlProvider, MySqlReadSnapshot, MySqlTenantStore, OpenedMemoryTenant,
+    PostgresProvider, PostgresReadSnapshot, PostgresTenantStore, RedbUsageStorage,
+    SqliteReadSnapshot, SqliteTenantStore, TenantStore,
 };
 
 use super::object_metadata::{
@@ -125,6 +126,7 @@ macro_rules! impl_provider_lifecycle {
 impl_provider_lifecycle!(PostgresProvider, OpenedPostgresTenant);
 impl_provider_lifecycle!(MySqlProvider, OpenedMySqlTenant);
 impl_provider_lifecycle!(LibsqlReplicaProvider, OpenedLibsqlReplicaTenant);
+impl_provider_lifecycle!(MemoryTenantProvider, OpenedMemoryTenant);
 
 macro_rules! impl_point_read {
       ($($ty:ty),+ $(,)?) => {
@@ -144,10 +146,12 @@ impl_point_read!(
     PostgresTenantStore,
     MySqlTenantStore,
     LibsqlReplicaTenantStore,
+    MemoryTenantStore,
     TenantReadSnapshot,
     SqliteReadSnapshot,
     PostgresReadSnapshot,
     MySqlReadSnapshot,
+    MemoryTenantSnapshot,
 );
 
 macro_rules! impl_point_write {
@@ -193,6 +197,7 @@ impl_point_write!(
     PostgresTenantStore,
     MySqlTenantStore,
     LibsqlReplicaTenantStore,
+    MemoryTenantStore,
 );
 
 macro_rules! impl_range_scan {
@@ -317,10 +322,12 @@ impl_range_scan!(
     PostgresTenantStore,
     MySqlTenantStore,
     LibsqlReplicaTenantStore,
+    MemoryTenantStore,
     TenantReadSnapshot,
     SqliteReadSnapshot,
     PostgresReadSnapshot,
     MySqlReadSnapshot,
+    MemoryTenantSnapshot,
 );
 
 macro_rules! impl_durable_journal {
@@ -399,6 +406,7 @@ impl_durable_journal!(
     PostgresTenantStore,
     MySqlTenantStore,
     LibsqlReplicaTenantStore,
+    MemoryTenantStore,
 );
 
 macro_rules! impl_resource_path_snapshot {
@@ -418,6 +426,7 @@ impl_resource_path_snapshot!(
     SqliteReadSnapshot,
     PostgresReadSnapshot,
     MySqlReadSnapshot,
+    MemoryTenantSnapshot,
 );
 
 macro_rules! impl_resource_path_scan {
@@ -453,6 +462,7 @@ impl_resource_path_scan!(
     // libsql's local read replica cache is backed by a SQLite store, so its
     // read snapshot is a `SqliteReadSnapshot` rather than a distinct type.
     (LibsqlReplicaTenantStore, SqliteReadSnapshot),
+    (MemoryTenantStore, MemoryTenantSnapshot),
 );
 
 macro_rules! impl_materialized_rebuild {
@@ -481,6 +491,7 @@ impl_materialized_rebuild!(
     PostgresTenantStore,
     MySqlTenantStore,
     LibsqlReplicaTenantStore,
+    MemoryTenantStore,
 );
 
 macro_rules! impl_scheduler_store {
@@ -509,6 +520,7 @@ impl_scheduler_store!(
     PostgresTenantStore,
     MySqlTenantStore,
     LibsqlReplicaTenantStore,
+    MemoryTenantStore,
 );
 
 macro_rules! impl_object_meta_store {
@@ -584,6 +596,7 @@ impl_object_meta_store!(
     PostgresTenantStore,
     MySqlTenantStore,
     LibsqlReplicaTenantStore,
+    MemoryTenantStore,
 );
 
 impl ControlPlaneUsage for RedbUsageStorage {}

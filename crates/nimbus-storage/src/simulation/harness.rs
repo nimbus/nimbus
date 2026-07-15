@@ -1,7 +1,7 @@
 use std::num::NonZeroU64;
 use std::sync::Arc;
 
-use nimbus_core::{Result, Timestamp};
+use nimbus_core::{Result, SeededIdSource, Timestamp};
 
 use super::clocks::ManualClock;
 use super::coordination::{ScenarioMetadata, ScenarioSignal, ScenarioSignalKind, SignalRegistry};
@@ -12,6 +12,7 @@ use super::faults::{
 pub struct DeterministicHarness {
     metadata: ScenarioMetadata,
     clock: Arc<ManualClock>,
+    id_source: Arc<SeededIdSource>,
     fault_injector: Arc<dyn FaultInjector>,
     cancellations: Arc<SignalRegistry>,
     disconnects: Arc<SignalRegistry>,
@@ -23,6 +24,7 @@ impl Clone for DeterministicHarness {
         Self {
             metadata: self.metadata.clone(),
             clock: Arc::clone(&self.clock),
+            id_source: Arc::clone(&self.id_source),
             fault_injector: Arc::clone(&self.fault_injector),
             cancellations: Arc::clone(&self.cancellations),
             disconnects: Arc::clone(&self.disconnects),
@@ -74,9 +76,11 @@ impl DeterministicHarness {
         clock: Arc<ManualClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Self {
+        let id_source = Arc::new(SeededIdSource::new(metadata.seed()));
         Self {
             metadata,
             clock,
+            id_source,
             fault_injector,
             cancellations: Arc::new(SignalRegistry::new(ScenarioSignalKind::Cancellation)),
             disconnects: Arc::new(SignalRegistry::new(ScenarioSignalKind::Disconnect)),
@@ -102,6 +106,10 @@ impl DeterministicHarness {
 
     pub fn clock(&self) -> Arc<ManualClock> {
         Arc::clone(&self.clock)
+    }
+
+    pub fn id_source(&self) -> Arc<SeededIdSource> {
+        Arc::clone(&self.id_source)
     }
 
     pub fn fault_injector(&self) -> Arc<dyn FaultInjector> {

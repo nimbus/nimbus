@@ -1,6 +1,6 @@
 use std::num::NonZeroU64;
 
-use nimbus_core::Timestamp;
+use nimbus_core::{IdSource, Timestamp};
 
 use super::*;
 
@@ -70,6 +70,30 @@ fn seeded_harness_replays_the_same_fault_schedule_for_the_same_seed() {
     .collect::<Vec<_>>();
 
     assert_eq!(left_results, right_results);
+}
+
+#[test]
+fn harness_id_source_replays_from_the_scenario_seed() {
+    let left = DeterministicHarness::scenario("left", 11, Timestamp(10_000));
+    let right = DeterministicHarness::scenario("right", 11, Timestamp(20_000));
+    let different_seed = DeterministicHarness::scenario("different", 12, Timestamp(10_000));
+
+    let left_ids = [
+        left.id_source().next_document_id(),
+        left.id_source().next_document_id(),
+    ];
+    let right_ids = [
+        right.id_source().next_document_id(),
+        right.id_source().next_document_id(),
+    ];
+
+    assert_eq!(left_ids, right_ids);
+    assert!(left_ids[0] < left_ids[1]);
+    assert_ne!(
+        left_ids[0],
+        different_seed.id_source().next_document_id(),
+        "the scenario seed should select a distinct deterministic id sequence"
+    );
 }
 
 #[test]

@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use nimbus_core::{Error, Result};
+use nimbus_core::{Error, IdSource, Result};
 use nimbus_crypto::LocalKeyProvider;
+#[cfg(any(test, feature = "test-hooks"))]
+use nimbus_storage::MemoryTenantProvider;
 use nimbus_storage::{
     Clock, EmbeddedProviderKind, EmbeddedRedbControlPlaneProvider, EmbeddedRedbProvider,
     EmbeddedSqliteProvider, FaultInjector, LibsqlReplicaProvider, LibsqlReplicaProviderConfig,
@@ -17,10 +19,17 @@ use crate::persistence_config::{
     PostgresTenantBootstrapPlan, TenantProviderBootstrapPlan,
 };
 
+struct EngineSimulationSeams {
+    clock: Arc<dyn Clock>,
+    id_source: Arc<dyn IdSource>,
+    storage_fault_injector: Arc<dyn FaultInjector>,
+}
+
 pub(super) async fn build_from_persistence_config(
     config: EnginePersistenceConfig,
     clock: Arc<dyn Clock>,
     storage_fault_injector: Arc<dyn FaultInjector>,
+    id_source: Arc<dyn IdSource>,
 ) -> Result<Engine> {
     let key_provider = encryption::initialize_encryption(&config)?;
     let encryption_status = encryption::EncryptionStatus::from_config(&config);
@@ -29,11 +38,16 @@ pub(super) async fn build_from_persistence_config(
         .as_ref()
         .map(encryption::InitializedKeyProvider::provider);
 
+    let simulation = EngineSimulationSeams {
+        clock,
+        id_source,
+        storage_fault_injector,
+    };
+
     build_from_plan(
         plan,
         encryption_provider,
-        clock,
-        storage_fault_injector,
+        simulation,
         Some(encryption_status),
     )
     .await
@@ -45,8 +59,14 @@ pub(super) fn build_embedded_engine(
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
     clock: Arc<dyn Clock>,
     storage_fault_injector: Arc<dyn FaultInjector>,
+    id_source: Arc<dyn IdSource>,
     embedded_provider_kind: EmbeddedProviderKind,
 ) -> Result<Engine> {
+    let simulation = EngineSimulationSeams {
+        clock,
+        id_source,
+        storage_fault_injector,
+    };
     build_embedded_from_plan(
         tenant_data_dir.clone(),
         control_data_dir,
@@ -55,17 +75,46 @@ pub(super) fn build_embedded_engine(
             data_dir: tenant_data_dir,
         },
         encryption_provider,
-        clock,
-        storage_fault_injector,
+        simulation,
         None,
     )
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+pub(super) fn build_memory_engine(
+    data_dir: PathBuf,
+    clock: Arc<dyn Clock>,
+    storage_fault_injector: Arc<dyn FaultInjector>,
+    id_source: Arc<dyn IdSource>,
+) -> Result<Engine> {
+    std::fs::create_dir_all(&data_dir).map_err(internal_error)?;
+    let (engine_executor, storage_executor) = build_executors()?;
+    let control_plane_provider =
+        build_control_plane_provider(data_dir.clone(), None, &storage_executor)?;
+    let persistence_provider = PersistenceProvider::Memory(Arc::new(MemoryTenantProvider::new(
+        clock.clone(),
+        storage_fault_injector.clone(),
+        storage_executor.handle(),
+    )));
+
+    Ok(Engine::from_bootstrap_parts(EngineBootstrapParts {
+        data_dir,
+        embedded_provider_kind: None,
+        persistence_provider,
+        control_plane_provider,
+        clock,
+        id_source,
+        storage_fault_injector,
+        engine_executor,
+        storage_executor,
+        encryption_status: None,
+    }))
 }
 
 async fn build_from_plan(
     plan: EngineBootstrapPlan,
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
-    clock: Arc<dyn Clock>,
-    storage_fault_injector: Arc<dyn FaultInjector>,
+    simulation: EngineSimulationSeams,
     encryption_status: Option<encryption::EncryptionStatus>,
 ) -> Result<Engine> {
     let EngineBootstrapPlan {
@@ -83,8 +132,7 @@ async fn build_from_plan(
             control_plane_data_dir,
             plan,
             encryption_provider,
-            clock,
-            storage_fault_injector,
+            simulation,
             encryption_status,
         ),
         TenantProviderBootstrapPlan::Postgres(plan) => {
@@ -93,8 +141,7 @@ async fn build_from_plan(
                 control_plane_data_dir,
                 plan,
                 encryption_provider,
-                clock,
-                storage_fault_injector,
+                simulation,
                 encryption_status,
             )
             .await
@@ -105,8 +152,7 @@ async fn build_from_plan(
                 control_plane_data_dir,
                 plan,
                 encryption_provider,
-                clock,
-                storage_fault_injector,
+                simulation,
                 encryption_status,
             )
             .await
@@ -117,8 +163,7 @@ async fn build_from_plan(
                 control_plane_data_dir,
                 plan,
                 encryption_provider,
-                clock,
-                storage_fault_injector,
+                simulation,
                 encryption_status,
             )
             .await
@@ -131,8 +176,7 @@ fn build_embedded_from_plan(
     control_data_dir: PathBuf,
     plan: EmbeddedTenantBootstrapPlan,
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
-    clock: Arc<dyn Clock>,
-    storage_fault_injector: Arc<dyn FaultInjector>,
+    simulation: EngineSimulationSeams,
     encryption_status: Option<encryption::EncryptionStatus>,
 ) -> Result<Engine> {
     std::fs::create_dir_all(&plan.data_dir).map_err(internal_error)?;
@@ -152,15 +196,15 @@ fn build_embedded_from_plan(
                 EmbeddedRedbProvider::new_encrypted(
                     plan.data_dir.clone(),
                     provider,
-                    clock.clone(),
-                    storage_fault_injector.clone(),
+                    simulation.clock.clone(),
+                    simulation.storage_fault_injector.clone(),
                     storage_executor.handle(),
                 )?
             } else {
                 EmbeddedRedbProvider::new(
                     plan.data_dir.clone(),
-                    clock.clone(),
-                    storage_fault_injector.clone(),
+                    simulation.clock.clone(),
+                    simulation.storage_fault_injector.clone(),
                     storage_executor.handle(),
                 )?
             };
@@ -171,15 +215,15 @@ fn build_embedded_from_plan(
                 EmbeddedSqliteProvider::new_encrypted(
                     plan.data_dir.clone(),
                     provider,
-                    clock.clone(),
-                    storage_fault_injector.clone(),
+                    simulation.clock.clone(),
+                    simulation.storage_fault_injector.clone(),
                     storage_executor.handle(),
                 )?
             } else {
                 EmbeddedSqliteProvider::new(
                     plan.data_dir.clone(),
-                    clock.clone(),
-                    storage_fault_injector.clone(),
+                    simulation.clock.clone(),
+                    simulation.storage_fault_injector.clone(),
                     storage_executor.handle(),
                 )?
             };
@@ -192,8 +236,9 @@ fn build_embedded_from_plan(
         embedded_provider_kind: Some(plan.provider_kind),
         persistence_provider,
         control_plane_provider,
-        clock,
-        storage_fault_injector,
+        clock: simulation.clock,
+        id_source: simulation.id_source,
+        storage_fault_injector: simulation.storage_fault_injector,
         engine_executor,
         storage_executor,
         encryption_status,
@@ -205,8 +250,7 @@ async fn build_postgres_from_plan(
     control_data_dir: PathBuf,
     plan: PostgresTenantBootstrapPlan,
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
-    clock: Arc<dyn Clock>,
-    storage_fault_injector: Arc<dyn FaultInjector>,
+    simulation: EngineSimulationSeams,
     encryption_status: Option<encryption::EncryptionStatus>,
 ) -> Result<Engine> {
     std::fs::create_dir_all(&control_data_dir).map_err(internal_error)?;
@@ -224,8 +268,8 @@ async fn build_postgres_from_plan(
         PostgresProvider::connect_with_simulation(
             provider_config,
             storage_executor.handle(),
-            clock.clone(),
-            storage_fault_injector.clone(),
+            simulation.clock.clone(),
+            simulation.storage_fault_injector.clone(),
         )
         .await?,
     );
@@ -235,8 +279,9 @@ async fn build_postgres_from_plan(
         embedded_provider_kind: None,
         persistence_provider: PersistenceProvider::Postgres(postgres_provider),
         control_plane_provider,
-        clock,
-        storage_fault_injector,
+        clock: simulation.clock,
+        id_source: simulation.id_source,
+        storage_fault_injector: simulation.storage_fault_injector,
         engine_executor,
         storage_executor,
         encryption_status,
@@ -248,8 +293,7 @@ async fn build_libsql_replica_from_plan(
     control_data_dir: PathBuf,
     plan: LibsqlReplicaTenantBootstrapPlan,
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
-    clock: Arc<dyn Clock>,
-    storage_fault_injector: Arc<dyn FaultInjector>,
+    simulation: EngineSimulationSeams,
     encryption_status: Option<encryption::EncryptionStatus>,
 ) -> Result<Engine> {
     std::fs::create_dir_all(&control_data_dir).map_err(internal_error)?;
@@ -273,8 +317,8 @@ async fn build_libsql_replica_from_plan(
         LibsqlReplicaProvider::connect_with_simulation(
             provider_config,
             storage_executor.handle(),
-            clock.clone(),
-            storage_fault_injector.clone(),
+            simulation.clock.clone(),
+            simulation.storage_fault_injector.clone(),
         )
         .await?,
     );
@@ -284,8 +328,9 @@ async fn build_libsql_replica_from_plan(
         embedded_provider_kind: None,
         persistence_provider: PersistenceProvider::LibsqlReplica(libsql_replica_provider),
         control_plane_provider,
-        clock,
-        storage_fault_injector,
+        clock: simulation.clock,
+        id_source: simulation.id_source,
+        storage_fault_injector: simulation.storage_fault_injector,
         engine_executor,
         storage_executor,
         encryption_status,
@@ -297,8 +342,7 @@ async fn build_mysql_from_plan(
     control_data_dir: PathBuf,
     plan: MySqlTenantBootstrapPlan,
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
-    clock: Arc<dyn Clock>,
-    storage_fault_injector: Arc<dyn FaultInjector>,
+    simulation: EngineSimulationSeams,
     encryption_status: Option<encryption::EncryptionStatus>,
 ) -> Result<Engine> {
     std::fs::create_dir_all(&control_data_dir).map_err(internal_error)?;
@@ -316,8 +360,8 @@ async fn build_mysql_from_plan(
         MySqlProvider::connect_with_simulation(
             provider_config,
             storage_executor.handle(),
-            clock.clone(),
-            storage_fault_injector.clone(),
+            simulation.clock.clone(),
+            simulation.storage_fault_injector.clone(),
         )
         .await?,
     );
@@ -327,8 +371,9 @@ async fn build_mysql_from_plan(
         embedded_provider_kind: None,
         persistence_provider: PersistenceProvider::MySql(mysql_provider),
         control_plane_provider,
-        clock,
-        storage_fault_injector,
+        clock: simulation.clock,
+        id_source: simulation.id_source,
+        storage_fault_injector: simulation.storage_fault_injector,
         engine_executor,
         storage_executor,
         encryption_status,

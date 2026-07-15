@@ -21,7 +21,7 @@ pub(super) fn default_tenant_read_parallelism() -> usize {
         .unwrap_or(MIN_TENANT_READ_PARALLELISM)
 }
 
-pub(super) struct BlockingReadExecutor<S> {
+pub(crate) struct BlockingReadExecutor<S> {
     store: Arc<S>,
     permits: Arc<Semaphore>,
     runtime_handle: TokioRuntimeHandle,
@@ -41,7 +41,7 @@ impl<S> BlockingReadExecutor<S>
 where
     S: Send + Sync + 'static,
 {
-    pub(super) fn new(
+    pub(crate) fn new(
         store: Arc<S>,
         runtime_handle: TokioRuntimeHandle,
         max_concurrent_reads: usize,
@@ -53,11 +53,11 @@ where
         }
     }
 
-    pub(super) fn store(&self) -> Arc<S> {
+    pub(crate) fn store(&self) -> Arc<S> {
         self.store.clone()
     }
 
-    pub(super) async fn execute<T, F>(&self, task: F) -> Result<T>
+    pub(crate) async fn execute<T, F>(&self, task: F) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce(Arc<S>) -> Result<T> + Send + 'static,
@@ -78,7 +78,7 @@ where
             .map_err(map_join_error)?
     }
 
-    pub(super) async fn execute_cancellable<T, Fut, Check, F>(
+    pub(crate) async fn execute_cancellable<T, Fut, Check, F>(
         &self,
         cancel_wait: Fut,
         check_cancel: Check,

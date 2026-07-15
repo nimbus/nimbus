@@ -16,6 +16,8 @@ impl TenantPersistence {
             Self::Postgres(store) => store.invalidate_schema_cache(),
             Self::MySql(store) => store.invalidate_schema_cache(),
             Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) => {}
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => {}
         }
     }
 }

@@ -41,6 +41,7 @@ pub(crate) use nimbus_storage::{
     TenantStore,
 };
 
+mod ambient_sources;
 mod consistency;
 mod embedded_providers;
 mod libsql_replica_provider;

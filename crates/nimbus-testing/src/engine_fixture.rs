@@ -48,6 +48,18 @@ impl<S> EngineFixture<S> {
         }
     }
 
+    /// Builds an engine through its test-only memory-persistence constructor.
+    ///
+    /// The generic builder keeps this fixture crate independent of the engine
+    /// crate and mirrors `new_with_harness` without changing existing callers.
+    pub fn new_with_memory_persistence<F, E>(harness: DeterministicHarness, builder: F) -> Self
+    where
+        F: FnOnce(&Path, &DeterministicHarness) -> Result<S, E>,
+        E: Display,
+    {
+        Self::new_with_harness(harness, builder)
+    }
+
     pub fn data_dir(&self) -> &Path {
         self._data_dir.path()
     }

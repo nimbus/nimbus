@@ -9,6 +9,8 @@ use nimbus_storage::{
     EmbeddedRedbProvider, EmbeddedSqliteProvider, LibsqlReplicaProvider, MySqlProvider,
     PostgresProvider,
 };
+#[cfg(any(test, feature = "test-hooks"))]
+use nimbus_storage::{MemoryTenantProvider, OpenedMemoryTenant};
 
 use super::{
     LibsqlReplicaRuntimeHooks, MySqlRuntimeHooks, PostgresRuntimeHooks, RuntimeHooks,
@@ -22,6 +24,8 @@ pub(crate) enum PersistenceProvider {
     LibsqlReplica(Arc<LibsqlReplicaProvider>),
     Postgres(Arc<PostgresProvider>),
     MySql(Arc<MySqlProvider>),
+    #[cfg(any(test, feature = "test-hooks"))]
+    Memory(Arc<MemoryTenantProvider>),
 }
 
 pub(crate) struct OpenedTenantPersistence {
@@ -51,6 +55,8 @@ impl PersistenceProvider {
             Self::LibsqlReplica(_) => Some(Box::new(LibsqlReplicaRuntimeHooks)),
             Self::MySql(_) => Some(Box::new(MySqlRuntimeHooks)),
             Self::Redb(_) | Self::Sqlite(_) => None,
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => None,
         }
     }
 
@@ -195,6 +201,22 @@ impl OpenedTenantProvider for MySqlProvider {
     }
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
+impl OpenedTenantProvider for MemoryTenantProvider {
+    type OpenedTenant = OpenedMemoryTenant;
+
+    async fn create_opened_tenant(&self, tenant_id: &TenantId) -> Result<Self::OpenedTenant> {
+        MemoryTenantProvider::create_opened_tenant(self, tenant_id).await
+    }
+
+    async fn open_existing_opened_tenant(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<Option<Self::OpenedTenant>> {
+        MemoryTenantProvider::open_existing_opened_tenant(self, tenant_id).await
+    }
+}
+
 impl From<OpenedEmbeddedRedbTenant> for OpenedTenantPersistence {
     fn from(opened: OpenedEmbeddedRedbTenant) -> Self {
         Self {
@@ -236,6 +258,16 @@ impl From<OpenedMySqlTenant> for OpenedTenantPersistence {
         Self {
             persistence: TenantPersistence::MySql(opened.store),
             executor: TenantPersistenceExecutor::MySql(opened.read_storage),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+impl From<OpenedMemoryTenant> for OpenedTenantPersistence {
+    fn from(opened: OpenedMemoryTenant) -> Self {
+        Self {
+            persistence: TenantPersistence::Memory(opened.store),
+            executor: TenantPersistenceExecutor::Memory(opened.read_storage),
         }
     }
 }

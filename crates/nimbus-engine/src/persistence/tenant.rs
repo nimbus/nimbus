@@ -6,6 +6,8 @@ use nimbus_core::{
     TableName, TableSchema, TenantEventRecord, Timestamp, TriggerDeliveryCursor,
     TriggerInvocationRecord,
 };
+#[cfg(any(test, feature = "test-hooks"))]
+use nimbus_storage::MemoryTenantStore;
 use nimbus_storage::{
     ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage, DurableJournalBootstrap,
     DurableJournalPage, FaultPoint, JournalProgress, LibsqlReplicaFreshnessStats,
@@ -23,6 +25,8 @@ pub(crate) enum TenantPersistence {
     LibsqlReplica(Arc<LibsqlReplicaTenantStore>),
     Postgres(Arc<PostgresTenantStore>),
     MySql(Arc<MySqlTenantStore>),
+    #[cfg(any(test, feature = "test-hooks"))]
+    Memory(Arc<MemoryTenantStore>),
 }
 
 macro_rules! delegate_store_method {
@@ -54,6 +58,10 @@ impl TenantPersistence {
             ),
             (PersistenceProvider::MySql(provider), Self::MySql(store)) => Ok(
                 TenantPersistenceExecutor::MySql(provider.read_storage_for_store(store)),
+            ),
+            #[cfg(any(test, feature = "test-hooks"))]
+            (PersistenceProvider::Memory(provider), Self::Memory(store)) => Ok(
+                TenantPersistenceExecutor::Memory(provider.read_storage_for_store(store)),
             ),
             _ => Err(nimbus_core::Error::Internal(
                 "persistence provider and tenant persistence mismatch".to_string(),
