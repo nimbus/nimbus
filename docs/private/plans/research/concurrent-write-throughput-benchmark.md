@@ -105,3 +105,32 @@ Env knobs (all optional): `NIMBUS_CWB_WORKLOAD=crud|insert`, `NIMBUS_CWB_LADDER`
 `NIMBUS_CWB_OPS_PER_WORKER`, `NIMBUS_CWB_MAX_MUTATIONS_PER_ROUND`,
 `NIMBUS_CWB_MEASURE_ROUNDS`, `NIMBUS_CWB_WARMUP_ROUNDS`, `NIMBUS_CWB_SEED_DOCS`,
 `NIMBUS_CWB_BACKEND=sqlite|redb`, `NIMBUS_CWB_OUT`.
+
+## PPSC0 post-instrumentation baseline (2026-07-15, main @c1595e948)
+
+Re-run after PPSC0 landed (PreparedCommit unification, phase timers, sampled
+shadow-conflict observation, bench phase split — PRs #188/#191/#192). Same
+harness, SQLite, 15 rounds, phased CRUD, split mode on.
+
+**Peak: 18,022 mut/s at N=64 — 10.01× the N=1 anchor (1,801 mut/s); plateau
+16.6–18k through N=256, no retrograde.** Slightly above the pre-PPSC0 peak
+(16,668): batch-merging the shadow observation removed per-request overhead.
+
+Under-gate phase split at the plateau (the PPSC baseline number):
+**plan-CPU ≈ 21–22% · conflict-check (sampled shadow) ≈ 0.4–2% · apply
+(storage apply + publish) ≈ 52–54% · fsync/append ≈ 23–24%.** The split is
+apply-dominated, per the parallel-prepare plan's Decision Record: the
+embedded prepare-pool lift is Amdahl-bounded (~1.3×); provider-arm RTT
+pipelining and the architecture/contract outcomes carry the plan.
+
+Provider baseline (PPSC0 B5, live local Postgres): mean gate-hold/commit
+1.19 ms loopback vs 215 ms at 5 ms/direction injected RTT (~25% gate-hold
+share) — the enqueue-to-durable network round-trip dominates exactly as the
+provider-arm analysis predicts.
+
+Regression note: the first baseline attempt measured a collapse to ~569
+mut/s at N=256 — the unbounded, per-request shadow-conflict scan under the
+gate (#191) feeding back into queue depth. Fixed in #192 (window clamp 64 +
+batch-merge + 1-in-16 deterministic sampling + separate conflict-check
+split column). The instrumentation caught its own regression: working as
+designed.
