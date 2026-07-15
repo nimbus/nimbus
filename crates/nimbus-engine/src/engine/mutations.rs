@@ -2,6 +2,7 @@ mod authorization;
 mod commit_processing;
 mod direct;
 mod journal;
+pub(in crate::engine) mod prepared;
 
 pub(crate) use authorization::enforce_mutation_authorization;
 pub(in crate::engine) use commit_processing::document_bearing_commit_identity;

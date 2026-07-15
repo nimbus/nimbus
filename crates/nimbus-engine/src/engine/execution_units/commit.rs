@@ -2,8 +2,8 @@ use nimbus_core::{
     CommitEntry, DependencySet, Error, Result, SequenceNumber, TableName, Timestamp,
     commit_intersects_dependency_set,
 };
-use nimbus_storage::ResolvedScheduleOp;
 
+use super::super::mutations::prepared::PreparedCommit;
 use super::state::ExecutionUnitLifecycle;
 use super::{MutationExecutionUnit, labels};
 
@@ -32,21 +32,22 @@ impl MutationExecutionUnit {
     ) -> Result<Option<CommitEntry>> {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
         let finalization_guard = FinalizationGuard { unit: self };
-        let (writes, schedule_ops, conflict_dependencies, trigger_write_origin) = {
+        let prepared_commit = {
             let mut state = self.active_state()?;
             state.lifecycle = ExecutionUnitLifecycle::Finalizing;
             let writes = self.build_resolved_writes(&state);
             let schedule_ops = self.build_resolved_schedule_ops(&state);
             let mut conflict_dependencies = state.read_dependencies.clone();
             conflict_dependencies.extend(&state.write_dependencies);
-            (
+            PreparedCommit::for_execution_unit(
+                self.snapshot_sequence,
+                conflict_dependencies,
                 writes,
                 schedule_ops,
-                conflict_dependencies,
                 state.trigger_write_origin.clone(),
             )
         };
-        if writes.is_empty() && schedule_ops.is_empty() {
+        if prepared_commit.is_empty_execution_unit() {
             return Ok(None);
         }
         self.engine
@@ -56,18 +57,23 @@ impl MutationExecutionUnit {
             self.engine.wait_for_commit_fault(labels::PRE_ASSIGN)?;
             let commit = {
                 let _sequence_guard = self.runtime.lock_mutation_sequence();
-                self.ensure_schema_unchanged(&conflict_dependencies)?;
-                self.ensure_no_conflicts(&conflict_dependencies)?;
+                self.ensure_schema_unchanged(&prepared_commit.read_set)?;
+                self.ensure_no_conflicts(
+                    prepared_commit.snapshot_sequence,
+                    &prepared_commit.read_set,
+                )?;
                 self.engine
                     .wait_for_commit_fault(labels::POST_VALIDATE_PRE_STAGE)?;
                 // Staging and persistence are one storage call today, so this
-                // is the closest pre-persist boundary until PreparedCommit
-                // splits those phases in later PPSC0 work.
+                // remains the closest pre-persist boundary. PreparedCommit now
+                // carries the exact storage payload without changing that call.
                 self.engine.wait_for_commit_fault(labels::PRE_PERSIST)?;
+                let (writes, schedule_ops, trigger_write_origin) =
+                    prepared_commit.execution_unit_effects()?;
                 let commit = self.runtime.store.apply_execution_unit_batch_with_origin(
-                    &writes,
-                    &schedule_ops,
-                    trigger_write_origin.as_ref(),
+                    writes,
+                    schedule_ops,
+                    trigger_write_origin,
                     commit_timestamp,
                 )?;
                 if let Some(commit) = &commit {
@@ -87,10 +93,7 @@ impl MutationExecutionUnit {
         if let Some(commit) = &commit {
             self.engine.process_commit(self.runtime.clone(), commit);
         }
-        if schedule_ops
-            .iter()
-            .any(|operation| matches!(operation, ResolvedScheduleOp::Insert { .. }))
-        {
+        if prepared_commit.has_scheduled_insert() {
             self.engine.wake_scheduler();
         }
         Ok(commit)
@@ -109,7 +112,11 @@ impl MutationExecutionUnit {
         Ok(())
     }
 
-    fn ensure_no_conflicts(&self, dependencies: &DependencySet) -> Result<()> {
+    fn ensure_no_conflicts(
+        &self,
+        snapshot_sequence: SequenceNumber,
+        dependencies: &DependencySet,
+    ) -> Result<()> {
         if dependencies.is_empty() {
             return Ok(());
         }
@@ -117,7 +124,7 @@ impl MutationExecutionUnit {
         let commits = self
             .runtime
             .store
-            .read_commit_log_from(SequenceNumber(self.snapshot_sequence.0.saturating_add(1)))?;
+            .read_commit_log_from(SequenceNumber(snapshot_sequence.0.saturating_add(1)))?;
         for commit in commits {
             if commit_intersects_dependency_set(&commit, dependencies, &[], |table, document_id| {
                 self.runtime.store.get(table, &document_id)

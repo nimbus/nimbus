@@ -7,7 +7,7 @@ use std::{
 
 use nimbus_core::{
     AccessAction, CommitEntry, Document, DocumentId, Error, IdSource, Mutation, Result,
-    SequenceNumber, TableId, TableName, TenantEventRecord, TenantId,
+    SequenceNumber, TableId, TableName, TenantId,
 };
 use tokio::sync::oneshot;
 use tracing::warn;
@@ -20,6 +20,7 @@ use crate::tenant::{
 
 use super::direct::{MutationExecutionMode, MutationExecutionResult};
 use super::enforce_mutation_authorization;
+use super::prepared::PreparedCommit;
 
 const MUTATION_JOURNAL_BATCH_SIZE: usize = 32;
 
@@ -38,8 +39,7 @@ struct PlannedQueuedMutation {
     _operation: TenantOperationGuard,
     response: oneshot::Sender<Result<QueuedMutationResult>>,
     result: QueuedMutationResult,
-    scheduled_execution_id: Option<String>,
-    writes: Vec<nimbus_core::WriteOp>,
+    prepared_commit: PreparedCommit,
 }
 
 struct ActiveQueuedMutation {
@@ -213,6 +213,7 @@ fn process_queued_mutation_batch(
     let mut table_id_overlay = HashMap::<TableName, TableId>::new();
     let mut scheduled_execution_overlay = HashSet::new();
     let mut planned = Vec::new();
+    let snapshot_sequence = runtime.durable_head();
 
     for request in batch {
         if let Some(planned_request) = plan_queued_mutation_request(
@@ -222,6 +223,7 @@ fn process_queued_mutation_batch(
             &mut table_id_overlay,
             &mut scheduled_execution_overlay,
             id_source,
+            snapshot_sequence,
         ) {
             planned.push(planned_request);
         }
@@ -236,18 +238,15 @@ fn process_queued_mutation_batch(
             _operation,
             response,
             result,
-            scheduled_execution_id,
-            writes,
+            prepared_commit,
         } = planned_request;
         if cancelled.load(std::sync::atomic::Ordering::Acquire) {
             let _ = response.send(Err(Error::Cancelled));
             continue;
         }
-        let record = match TenantEventRecord::new(
+        let record = match prepared_commit.into_record(
             nimbus_core::SequenceNumber(next_sequence),
             runtime.store.now(),
-            writes,
-            scheduled_execution_id,
         ) {
             Ok(record) => record,
             Err(error) => {
@@ -331,6 +330,7 @@ fn plan_queued_mutation_request(
     table_id_overlay: &mut HashMap<TableName, TableId>,
     scheduled_execution_overlay: &mut HashSet<String>,
     id_source: &dyn IdSource,
+    snapshot_sequence: SequenceNumber,
 ) -> Option<PlannedQueuedMutation> {
     let QueuedMutationRequest {
         mutation,
@@ -410,17 +410,20 @@ fn plan_queued_mutation_request(
                 _operation,
                 response,
                 result,
-                scheduled_execution_id,
-                writes: vec![nimbus_core::WriteOp {
-                    table: document.table.clone(),
-                    table_id,
-                    op_type: nimbus_core::WriteOpType::Insert,
-                    doc_id: document_id.clone(),
-                    resource_path_binding: None,
-                    trigger_write_origin: None,
-                    previous: None,
-                    current: Some(document),
-                }],
+                prepared_commit: PreparedCommit::for_journal(
+                    snapshot_sequence,
+                    vec![nimbus_core::WriteOp {
+                        table: document.table.clone(),
+                        table_id,
+                        op_type: nimbus_core::WriteOpType::Insert,
+                        doc_id: document_id.clone(),
+                        resource_path_binding: None,
+                        trigger_write_origin: None,
+                        previous: None,
+                        current: Some(document),
+                    }],
+                    scheduled_execution_id,
+                ),
             })
         }
         Mutation::Update { table, id, patch } => {
@@ -476,17 +479,20 @@ fn plan_queued_mutation_request(
                 _operation,
                 response,
                 result,
-                scheduled_execution_id,
-                writes: vec![nimbus_core::WriteOp {
-                    table: table.clone(),
-                    table_id,
-                    op_type: nimbus_core::WriteOpType::Update,
-                    doc_id: id,
-                    resource_path_binding: None,
-                    trigger_write_origin: None,
-                    previous: Some(existing),
-                    current: Some(document),
-                }],
+                prepared_commit: PreparedCommit::for_journal(
+                    snapshot_sequence,
+                    vec![nimbus_core::WriteOp {
+                        table: table.clone(),
+                        table_id,
+                        op_type: nimbus_core::WriteOpType::Update,
+                        doc_id: id,
+                        resource_path_binding: None,
+                        trigger_write_origin: None,
+                        previous: Some(existing),
+                        current: Some(document),
+                    }],
+                    scheduled_execution_id,
+                ),
             })
         }
         Mutation::Delete { table, id } => {
@@ -532,17 +538,20 @@ fn plan_queued_mutation_request(
                 _operation,
                 response,
                 result,
-                scheduled_execution_id,
-                writes: vec![nimbus_core::WriteOp {
-                    table: table.clone(),
-                    table_id,
-                    op_type: nimbus_core::WriteOpType::Delete,
-                    doc_id: id,
-                    resource_path_binding: None,
-                    trigger_write_origin: None,
-                    previous: Some(existing),
-                    current: None,
-                }],
+                prepared_commit: PreparedCommit::for_journal(
+                    snapshot_sequence,
+                    vec![nimbus_core::WriteOp {
+                        table: table.clone(),
+                        table_id,
+                        op_type: nimbus_core::WriteOpType::Delete,
+                        doc_id: id,
+                        resource_path_binding: None,
+                        trigger_write_origin: None,
+                        previous: Some(existing),
+                        current: None,
+                    }],
+                    scheduled_execution_id,
+                ),
             })
         }
     }

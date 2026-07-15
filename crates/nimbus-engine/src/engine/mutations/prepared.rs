@@ -1,0 +1,657 @@
+use nimbus_core::{
+    DependencySet, Document, DocumentId, Error, IndexDefinition, ResourcePathBinding, Result,
+    SequenceNumber, TableId, TableName, TenantEventRecord, Timestamp, TriggerWriteOrigin, WriteOp,
+    WriteOpType,
+};
+use nimbus_storage::{ResolvedScheduleOp, ResolvedWrite};
+
+/// The document material known to the engine before persistence.
+#[derive(Debug, Clone, PartialEq)]
+pub(in crate::engine) enum PreparedDocument {
+    Full(Document),
+    Patch(serde_json::Map<String, serde_json::Value>),
+}
+
+/// One engine-layer write intent, with unavailable storage-owned details left absent.
+#[derive(Debug, Clone, PartialEq)]
+pub(in crate::engine) struct PreparedWrite {
+    pub(in crate::engine) table: TableName,
+    pub(in crate::engine) table_id: Option<TableId>,
+    pub(in crate::engine) op_type: WriteOpType,
+    pub(in crate::engine) doc_id: DocumentId,
+    pub(in crate::engine) resource_path_binding: Option<ResourcePathBinding>,
+    pub(in crate::engine) trigger_write_origin: Option<TriggerWriteOrigin>,
+    pub(in crate::engine) previous: Option<Document>,
+    pub(in crate::engine) current: Option<PreparedDocument>,
+}
+
+impl PreparedWrite {
+    fn from_complete(write: WriteOp) -> Self {
+        Self {
+            table: write.table,
+            table_id: Some(write.table_id),
+            op_type: write.op_type,
+            doc_id: write.doc_id,
+            resource_path_binding: write.resource_path_binding,
+            trigger_write_origin: write.trigger_write_origin,
+            previous: write.previous,
+            current: write.current.map(PreparedDocument::Full),
+        }
+    }
+
+    fn into_complete(self) -> Result<WriteOp> {
+        let table_id = self.table_id.ok_or_else(|| {
+            Error::Internal(
+                "journal prepared write must contain a stable table identity".to_string(),
+            )
+        })?;
+        let current = match self.current {
+            Some(PreparedDocument::Full(document)) => Some(document),
+            Some(PreparedDocument::Patch(_)) => {
+                return Err(Error::Internal(
+                    "journal prepared write must contain a full current document".to_string(),
+                ));
+            }
+            None => None,
+        };
+        Ok(WriteOp {
+            table: self.table,
+            table_id,
+            op_type: self.op_type,
+            doc_id: self.doc_id,
+            resource_path_binding: self.resource_path_binding,
+            trigger_write_origin: self.trigger_write_origin,
+            previous: self.previous,
+            current,
+        })
+    }
+}
+
+/// Index maintenance input known before storage materializes concrete key changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::engine) struct PreparedIndexDelta {
+    pub(in crate::engine) table: TableName,
+    pub(in crate::engine) doc_id: DocumentId,
+    pub(in crate::engine) index: IndexDefinition,
+}
+
+/// Exact path-specific inputs that must survive until the existing persistence call.
+#[derive(Debug, Clone)]
+pub(in crate::engine) enum PreparedSerializedEffects {
+    Journal {
+        scheduled_execution_id: Option<String>,
+    },
+    Direct,
+    ExecutionUnit {
+        writes: Vec<ResolvedWrite>,
+        schedule_ops: Vec<ResolvedScheduleOp>,
+        trigger_write_origin: Option<TriggerWriteOrigin>,
+    },
+}
+
+/// Engine-owned representation of a mutation after planning and before persistence.
+#[derive(Debug, Clone)]
+pub(in crate::engine) struct PreparedCommit {
+    /// Sequence context observed while preparing the mutation. Path A records the durable
+    /// head under its exclusive sequence guard and path B records the durable head before its
+    /// lock-serialized typed call; neither uses the value for OCC. Path C is fully populated
+    /// with the applied sequence of the opened read snapshot and uses it as the OCC pin.
+    pub(in crate::engine) snapshot_sequence: SequenceNumber,
+    /// Dependencies used for assign-time conflict detection. This is empty on paths A and B:
+    /// both serialize through the per-tenant sequence lock, and path A additionally plans each
+    /// batch in strict order against an overlay. Path C is fully populated with its read and
+    /// write dependencies.
+    pub(in crate::engine) read_set: DependencySet,
+    /// Engine-visible write intents. Path A is fully populated, including stable table identity
+    /// and both document images. Path B is intentionally sparse: storage resolves table identity
+    /// and the previous image under its lock, while an update's current value is the incoming
+    /// patch. Path C has full previous/current images but leaves table identity absent because
+    /// the existing execution-unit storage call resolves it atomically.
+    pub(in crate::engine) write_set: Vec<PreparedWrite>,
+    /// Index work known before persistence. Paths A and B leave this empty because their existing
+    /// storage paths resolve index effects under the storage lock. Path C partially populates it
+    /// with each affected index definition; storage still materializes the concrete old/new keys.
+    pub(in crate::engine) index_deltas: Vec<PreparedIndexDelta>,
+    /// Persistence-ready path-specific effects. Path A carries the scheduled-execution marker
+    /// alongside the fully populated `write_set`; path B has no serialized engine payload because
+    /// its typed storage method owns validation and serialization; path C fully preserves the
+    /// resolved writes, scheduler operations, and trigger origin consumed by its unchanged atomic
+    /// storage call.
+    pub(in crate::engine) serialized_effects: PreparedSerializedEffects,
+}
+
+impl PreparedCommit {
+    pub(in crate::engine) fn for_journal(
+        snapshot_sequence: SequenceNumber,
+        writes: Vec<WriteOp>,
+        scheduled_execution_id: Option<String>,
+    ) -> Self {
+        Self {
+            snapshot_sequence,
+            read_set: DependencySet::default(),
+            write_set: writes
+                .into_iter()
+                .map(PreparedWrite::from_complete)
+                .collect(),
+            index_deltas: Vec::new(),
+            serialized_effects: PreparedSerializedEffects::Journal {
+                scheduled_execution_id,
+            },
+        }
+    }
+
+    pub(in crate::engine) fn for_direct_insert(
+        snapshot_sequence: SequenceNumber,
+        document: Document,
+    ) -> Self {
+        let write = PreparedWrite {
+            table: document.table.clone(),
+            table_id: None,
+            op_type: WriteOpType::Insert,
+            doc_id: document.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
+            previous: None,
+            current: Some(PreparedDocument::Full(document)),
+        };
+        Self::for_direct(snapshot_sequence, write)
+    }
+
+    pub(in crate::engine) fn for_direct_update(
+        snapshot_sequence: SequenceNumber,
+        table: TableName,
+        doc_id: DocumentId,
+        patch: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        Self::for_direct(
+            snapshot_sequence,
+            PreparedWrite {
+                table,
+                table_id: None,
+                op_type: WriteOpType::Update,
+                doc_id,
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: None,
+                current: Some(PreparedDocument::Patch(patch)),
+            },
+        )
+    }
+
+    pub(in crate::engine) fn for_direct_delete(
+        snapshot_sequence: SequenceNumber,
+        table: TableName,
+        doc_id: DocumentId,
+    ) -> Self {
+        Self::for_direct(
+            snapshot_sequence,
+            PreparedWrite {
+                table,
+                table_id: None,
+                op_type: WriteOpType::Delete,
+                doc_id,
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: None,
+                current: None,
+            },
+        )
+    }
+
+    fn for_direct(snapshot_sequence: SequenceNumber, write: PreparedWrite) -> Self {
+        Self {
+            snapshot_sequence,
+            read_set: DependencySet::default(),
+            write_set: vec![write],
+            index_deltas: Vec::new(),
+            serialized_effects: PreparedSerializedEffects::Direct,
+        }
+    }
+
+    pub(in crate::engine) fn for_execution_unit(
+        snapshot_sequence: SequenceNumber,
+        read_set: DependencySet,
+        writes: Vec<ResolvedWrite>,
+        schedule_ops: Vec<ResolvedScheduleOp>,
+        trigger_write_origin: Option<TriggerWriteOrigin>,
+    ) -> Self {
+        let write_set = writes
+            .iter()
+            .map(|write| prepared_write_for_resolved(write, trigger_write_origin.as_ref()))
+            .collect();
+        let index_deltas = writes
+            .iter()
+            .flat_map(prepared_index_deltas_for_resolved)
+            .collect();
+        let prepared = Self {
+            snapshot_sequence,
+            read_set,
+            write_set,
+            index_deltas,
+            // Scheduler operations and trigger origin are transaction-level side effects rather
+            // than document writes, so they ride with the exact storage payload instead of being
+            // forced into `write_set` and losing their established semantics.
+            serialized_effects: PreparedSerializedEffects::ExecutionUnit {
+                writes,
+                schedule_ops,
+                trigger_write_origin,
+            },
+        };
+        debug_assert!(prepared.index_deltas.iter().all(|delta| {
+            prepared
+                .write_set
+                .iter()
+                .any(|write| write.table == delta.table && write.doc_id == delta.doc_id)
+        }));
+        prepared
+    }
+
+    pub(in crate::engine) fn into_record(
+        self,
+        sequence: SequenceNumber,
+        timestamp: Timestamp,
+    ) -> Result<TenantEventRecord> {
+        let PreparedSerializedEffects::Journal {
+            scheduled_execution_id,
+        } = self.serialized_effects
+        else {
+            return Err(Error::Internal(
+                "only a journal prepared commit can become a tenant event record".to_string(),
+            ));
+        };
+        let writes = self
+            .write_set
+            .into_iter()
+            .map(PreparedWrite::into_complete)
+            .collect::<Result<Vec<_>>>()?;
+        TenantEventRecord::new(sequence, timestamp, writes, scheduled_execution_id)
+    }
+
+    pub(in crate::engine) fn direct_insert_document(&self) -> Result<&Document> {
+        match self.write_set.as_slice() {
+            [
+                PreparedWrite {
+                    op_type: WriteOpType::Insert,
+                    current: Some(PreparedDocument::Full(document)),
+                    ..
+                },
+            ] if matches!(self.serialized_effects, PreparedSerializedEffects::Direct) => {
+                Ok(document)
+            }
+            _ => Err(Error::Internal(
+                "direct insert prepared commit has an invalid shape".to_string(),
+            )),
+        }
+    }
+
+    pub(in crate::engine) fn direct_update_parts(
+        &self,
+    ) -> Result<(
+        &TableName,
+        &DocumentId,
+        &serde_json::Map<String, serde_json::Value>,
+    )> {
+        match self.write_set.as_slice() {
+            [
+                PreparedWrite {
+                    table,
+                    op_type: WriteOpType::Update,
+                    doc_id,
+                    current: Some(PreparedDocument::Patch(patch)),
+                    ..
+                },
+            ] if matches!(self.serialized_effects, PreparedSerializedEffects::Direct) => {
+                Ok((table, doc_id, patch))
+            }
+            _ => Err(Error::Internal(
+                "direct update prepared commit has an invalid shape".to_string(),
+            )),
+        }
+    }
+
+    pub(in crate::engine) fn direct_delete_parts(&self) -> Result<(&TableName, &DocumentId)> {
+        match self.write_set.as_slice() {
+            [
+                PreparedWrite {
+                    table,
+                    op_type: WriteOpType::Delete,
+                    doc_id,
+                    current: None,
+                    ..
+                },
+            ] if matches!(self.serialized_effects, PreparedSerializedEffects::Direct) => {
+                Ok((table, doc_id))
+            }
+            _ => Err(Error::Internal(
+                "direct delete prepared commit has an invalid shape".to_string(),
+            )),
+        }
+    }
+
+    pub(in crate::engine) fn execution_unit_effects(
+        &self,
+    ) -> Result<(
+        &[ResolvedWrite],
+        &[ResolvedScheduleOp],
+        Option<&TriggerWriteOrigin>,
+    )> {
+        match &self.serialized_effects {
+            PreparedSerializedEffects::ExecutionUnit {
+                writes,
+                schedule_ops,
+                trigger_write_origin,
+            } => Ok((writes, schedule_ops, trigger_write_origin.as_ref())),
+            _ => Err(Error::Internal(
+                "execution-unit prepared commit has an invalid effect shape".to_string(),
+            )),
+        }
+    }
+
+    pub(in crate::engine) fn is_empty_execution_unit(&self) -> bool {
+        matches!(
+            &self.serialized_effects,
+            PreparedSerializedEffects::ExecutionUnit {
+                writes,
+                schedule_ops,
+                ..
+            } if writes.is_empty() && schedule_ops.is_empty()
+        )
+    }
+
+    pub(in crate::engine) fn has_scheduled_insert(&self) -> bool {
+        matches!(
+            &self.serialized_effects,
+            PreparedSerializedEffects::ExecutionUnit { schedule_ops, .. }
+                if schedule_ops
+                    .iter()
+                    .any(|operation| matches!(operation, ResolvedScheduleOp::Insert { .. }))
+        )
+    }
+}
+
+fn prepared_write_for_resolved(
+    write: &ResolvedWrite,
+    trigger_write_origin: Option<&TriggerWriteOrigin>,
+) -> PreparedWrite {
+    match write {
+        ResolvedWrite::Insert {
+            document,
+            resource_path_binding,
+            ..
+        } => PreparedWrite {
+            table: document.table.clone(),
+            table_id: None,
+            op_type: WriteOpType::Insert,
+            doc_id: document.id.clone(),
+            resource_path_binding: resource_path_binding.clone(),
+            trigger_write_origin: trigger_write_origin.cloned(),
+            previous: None,
+            current: Some(PreparedDocument::Full(document.clone())),
+        },
+        ResolvedWrite::Update {
+            previous,
+            current,
+            resource_path_binding,
+            ..
+        } => PreparedWrite {
+            table: current.table.clone(),
+            table_id: None,
+            op_type: WriteOpType::Update,
+            doc_id: current.id.clone(),
+            resource_path_binding: resource_path_binding.clone(),
+            trigger_write_origin: trigger_write_origin.cloned(),
+            previous: Some(previous.clone()),
+            current: Some(PreparedDocument::Full(current.clone())),
+        },
+        ResolvedWrite::Delete { previous, .. } => PreparedWrite {
+            table: previous.table.clone(),
+            table_id: None,
+            op_type: WriteOpType::Delete,
+            doc_id: previous.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: trigger_write_origin.cloned(),
+            previous: Some(previous.clone()),
+            current: None,
+        },
+    }
+}
+
+fn prepared_index_deltas_for_resolved(
+    write: &ResolvedWrite,
+) -> impl Iterator<Item = PreparedIndexDelta> + '_ {
+    let (table, doc_id, indexes) = match write {
+        ResolvedWrite::Insert {
+            document, indexes, ..
+        } => (&document.table, &document.id, indexes),
+        ResolvedWrite::Update {
+            current, indexes, ..
+        } => (&current.table, &current.id, indexes),
+        ResolvedWrite::Delete { previous, indexes } => (&previous.table, &previous.id, indexes),
+    };
+    indexes.iter().cloned().map(|index| PreparedIndexDelta {
+        table: table.clone(),
+        doc_id: doc_id.clone(),
+        index,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use nimbus_core::{IndexId, IndexState, Mutation, ScheduledJob, TenantEventKind};
+    use serde_json::json;
+
+    use super::*;
+
+    fn table() -> TableName {
+        TableName::new("prepared_tasks").expect("table should parse")
+    }
+
+    fn document(id: &str, value: &str) -> Document {
+        Document {
+            id: DocumentId::from_key(id).expect("document id should parse"),
+            table: table(),
+            creation_time: Timestamp(100),
+            update_time: Timestamp(101),
+            fields: serde_json::Map::from_iter([("value".to_string(), json!(value))]),
+            typed_fields: BTreeMap::new(),
+        }
+    }
+
+    fn table_id() -> TableId {
+        TableId::try_from("prepared-table-id".to_string()).expect("table id should parse")
+    }
+
+    fn index() -> IndexDefinition {
+        IndexDefinition {
+            id: IndexId::try_from("prepared-index-id".to_string()).expect("index id should parse"),
+            name: "by_value".to_string(),
+            fields: vec!["value".to_string()],
+            state: IndexState::Enabled,
+        }
+    }
+
+    #[test]
+    fn journal_prepared_commit_captures_complete_write_and_empty_conflict_metadata() {
+        let current = document("journal-doc", "current");
+        let write = WriteOp {
+            table: table(),
+            table_id: table_id(),
+            op_type: WriteOpType::Insert,
+            doc_id: current.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
+            previous: None,
+            current: Some(current.clone()),
+        };
+
+        let prepared = PreparedCommit::for_journal(
+            SequenceNumber(40),
+            vec![write],
+            Some("scheduled-40".to_string()),
+        );
+
+        assert_eq!(prepared.snapshot_sequence, SequenceNumber(40));
+        assert!(prepared.read_set.is_empty());
+        assert!(prepared.index_deltas.is_empty());
+        assert_eq!(prepared.write_set.len(), 1);
+        assert_eq!(prepared.write_set[0].table_id, Some(table_id()));
+        assert_eq!(
+            prepared.write_set[0].current,
+            Some(PreparedDocument::Full(current))
+        );
+        assert!(matches!(
+            prepared.serialized_effects,
+            PreparedSerializedEffects::Journal {
+                scheduled_execution_id: Some(ref execution_id)
+            } if execution_id == "scheduled-40"
+        ));
+    }
+
+    #[test]
+    fn direct_prepared_commits_capture_sparse_insert_update_and_delete_intents() {
+        let insert_document = document("direct-insert", "insert");
+        let insert = PreparedCommit::for_direct_insert(SequenceNumber(50), insert_document.clone());
+        let patch = serde_json::Map::from_iter([("value".to_string(), json!("updated"))]);
+        let update = PreparedCommit::for_direct_update(
+            SequenceNumber(51),
+            table(),
+            DocumentId::from_key("direct-update").expect("document id should parse"),
+            patch.clone(),
+        );
+        let delete = PreparedCommit::for_direct_delete(
+            SequenceNumber(52),
+            table(),
+            DocumentId::from_key("direct-delete").expect("document id should parse"),
+        );
+
+        assert_eq!(insert.direct_insert_document().unwrap(), &insert_document);
+        assert_eq!(insert.write_set[0].table_id, None);
+        assert_eq!(insert.write_set[0].previous, None);
+        assert!(insert.read_set.is_empty());
+        assert!(insert.index_deltas.is_empty());
+
+        let (update_table, update_id, update_patch) = update.direct_update_parts().unwrap();
+        assert_eq!(update_table, &table());
+        assert_eq!(update_id.as_str(), "direct-update");
+        assert_eq!(update_patch, &patch);
+        assert_eq!(update.write_set[0].previous, None);
+        assert!(update.read_set.is_empty());
+
+        let (delete_table, delete_id) = delete.direct_delete_parts().unwrap();
+        assert_eq!(delete_table, &table());
+        assert_eq!(delete_id.as_str(), "direct-delete");
+        assert_eq!(delete.write_set[0].previous, None);
+        assert_eq!(delete.write_set[0].current, None);
+        assert!(delete.read_set.is_empty());
+    }
+
+    #[test]
+    fn execution_unit_prepared_commit_preserves_dependencies_indexes_and_effects() {
+        let previous = document("execution-unit-doc", "previous");
+        let mut current = previous.clone();
+        current.fields.insert("value".to_string(), json!("current"));
+        let mut read_set = DependencySet::default();
+        read_set.record_document(&table(), &table_id(), previous.id.clone());
+        let scheduled_job = ScheduledJob {
+            id: DocumentId::from_key("scheduled-job").expect("job id should parse"),
+            run_at: Timestamp(500),
+            mutation: Mutation::Delete {
+                table: table(),
+                id: previous.id.clone(),
+            },
+            created_at: Timestamp(400),
+        };
+        let resolved_write = ResolvedWrite::Update {
+            previous: previous.clone(),
+            current: current.clone(),
+            indexes: vec![index()],
+            resource_path_binding: None,
+        };
+
+        let prepared = PreparedCommit::for_execution_unit(
+            SequenceNumber(60),
+            read_set.clone(),
+            vec![resolved_write],
+            vec![ResolvedScheduleOp::Insert {
+                job: scheduled_job.clone(),
+            }],
+            None,
+        );
+
+        assert_eq!(prepared.snapshot_sequence, SequenceNumber(60));
+        assert_eq!(prepared.read_set, read_set);
+        assert_eq!(prepared.write_set.len(), 1);
+        assert_eq!(prepared.write_set[0].previous, Some(previous));
+        assert_eq!(
+            prepared.write_set[0].current,
+            Some(PreparedDocument::Full(current))
+        );
+        assert_eq!(
+            prepared.index_deltas,
+            vec![PreparedIndexDelta {
+                table: table(),
+                doc_id: DocumentId::from_key("execution-unit-doc")
+                    .expect("document id should parse"),
+                index: index(),
+            }]
+        );
+        let (writes, schedule_ops, origin) = prepared.execution_unit_effects().unwrap();
+        assert_eq!(writes.len(), 1);
+        assert!(matches!(writes[0], ResolvedWrite::Update { .. }));
+        assert!(matches!(
+            schedule_ops,
+            [ResolvedScheduleOp::Insert { job }] if job == &scheduled_job
+        ));
+        assert_eq!(origin, None);
+        assert!(prepared.has_scheduled_insert());
+    }
+
+    #[test]
+    fn into_record_matches_the_former_journal_record_shape() {
+        let current = document("record-doc", "current");
+        let writes = vec![WriteOp {
+            table: table(),
+            table_id: table_id(),
+            op_type: WriteOpType::Insert,
+            doc_id: current.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
+            previous: None,
+            current: Some(current),
+        }];
+        let sequence = SequenceNumber(70);
+        let timestamp = Timestamp(700);
+        let scheduled_execution_id = Some("scheduled-70".to_string());
+
+        let record = PreparedCommit::for_journal(
+            SequenceNumber(69),
+            writes.clone(),
+            scheduled_execution_id.clone(),
+        )
+        .into_record(sequence, timestamp)
+        .expect("journal prepared commit should become a record");
+        let former_shape = TenantEventRecord::compatibility_document_record(
+            sequence,
+            timestamp,
+            writes.clone(),
+            scheduled_execution_id.clone(),
+        )
+        .expect("former journal record shape should construct");
+
+        assert_eq!(record, former_shape);
+        assert_eq!(record.sequence, sequence);
+        assert_eq!(record.timestamp, timestamp);
+        assert_eq!(record.writes, writes);
+        assert_eq!(record.scheduled_execution_id, scheduled_execution_id);
+        assert!(matches!(
+            record.events.as_slice(),
+            [TenantEventKind::DocumentWrite { .. }, TenantEventKind::ScheduledExecution { execution_id }]
+                if execution_id == "scheduled-70"
+        ));
+        record
+            .validate_integrity()
+            .expect("prepared record integrity should validate");
+    }
+}
