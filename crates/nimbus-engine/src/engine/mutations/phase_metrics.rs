@@ -38,6 +38,7 @@ pub struct CommitPhaseMetricsSnapshot {
     pub shadow_conflict_total: u64,
     pub shadow_window_size: u64,
     pub shadow_window_truncated_total: u64,
+    pub shadow_checks_sampled: u64,
 }
 
 pub(crate) struct CommitPhaseMetrics {
@@ -53,6 +54,8 @@ pub(crate) struct CommitPhaseMetrics {
     shadow_conflict_total: AtomicU64,
     shadow_window_size: AtomicU64,
     shadow_window_truncated_total: AtomicU64,
+    shadow_checks_sampled: AtomicU64,
+    shadow_sample_ticks: AtomicU64,
 }
 
 impl CommitPhaseMetrics {
@@ -70,7 +73,18 @@ impl CommitPhaseMetrics {
             shadow_conflict_total: AtomicU64::new(0),
             shadow_window_size: AtomicU64::new(0),
             shadow_window_truncated_total: AtomicU64::new(0),
+            shadow_checks_sampled: AtomicU64::new(0),
+            shadow_sample_ticks: AtomicU64::new(0),
         }
+    }
+
+    /// Deterministic shadow-observation sampler: the first eligible
+    /// observation is always taken, then every `every`-th after it. Ticks
+    /// advance only for eligible (non-empty) observations so sparse
+    /// workloads still produce data.
+    pub(crate) fn shadow_sample_tick(&self, every: usize) -> bool {
+        let tick = self.shadow_sample_ticks.fetch_add(1, Ordering::Relaxed);
+        every <= 1 || tick.is_multiple_of(every as u64)
     }
 
     pub(crate) fn record_sample(
@@ -114,6 +128,7 @@ impl CommitPhaseMetrics {
             self.shadow_window_truncated_total
                 .fetch_add(1, Ordering::Relaxed);
         }
+        self.shadow_checks_sampled.fetch_add(1, Ordering::Relaxed);
     }
 
     pub(crate) fn snapshot(&self) -> CommitPhaseMetricsSnapshot {
@@ -132,6 +147,7 @@ impl CommitPhaseMetrics {
             shadow_window_truncated_total: self
                 .shadow_window_truncated_total
                 .load(Ordering::Relaxed),
+            shadow_checks_sampled: self.shadow_checks_sampled.load(Ordering::Relaxed),
         }
     }
 }
@@ -287,6 +303,7 @@ mod tests {
                 shadow_conflict_total: 1,
                 shadow_window_size: 6,
                 shadow_window_truncated_total: 1,
+                shadow_checks_sampled: 2,
             }
         );
     }

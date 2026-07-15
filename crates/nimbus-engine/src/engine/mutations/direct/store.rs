@@ -205,6 +205,10 @@ fn observe_direct_shadow(
     let dependencies = prepared_document_dependencies(prepared_commit, |table| {
         runtime.store.table_id(table).ok().flatten()
     });
-    observe_shadow_conflicts(runtime, prepared_commit.snapshot_sequence, &dependencies);
+    observe_shadow_conflicts(
+        runtime,
+        prepared_commit.snapshot_sequence,
+        std::slice::from_ref(&dependencies),
+    );
     phases.add_conflict_check(conflict_check_started.elapsed());
 }

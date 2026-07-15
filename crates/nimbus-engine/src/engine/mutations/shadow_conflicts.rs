@@ -15,10 +15,19 @@ use super::prepared::PreparedCommit;
 /// because the scan runs under the sequence gate, an unbounded scan feeds
 /// back into longer gate holds and deeper queues (measured as a collapse
 /// from ~16.6k to ~0.6k mut/s at N=256 before this bound existed). The
-/// clamp keeps the per-batch cost constant; conflicts older than the window
-/// are not counted and the truncation is recorded instead, so the metric
-/// stays honest about what it skipped.
-const DEFAULT_SHADOW_CONFLICT_WINDOW_MAX: usize = 256;
+/// clamp keeps the per-observation cost constant; conflicts older than the
+/// window are not counted and the truncation is recorded instead, so the
+/// metric stays honest about what it skipped.
+const DEFAULT_SHADOW_CONFLICT_WINDOW_MAX: usize = 64;
+
+/// Observe only every N-th eligible batch/mutation. Even a bounded scan is
+/// a storage read of full commit entries under the sequence gate; at
+/// saturation the observation *frequency* — one scan per batch — is itself
+/// a material tax (measured ~95% of under-gate time at N=256 with
+/// per-request unsampled observation). Shadow metrics exist to
+/// characterize workloads, so a deterministic sample is sufficient; the
+/// first eligible observation is always taken.
+const DEFAULT_SHADOW_CONFLICT_SAMPLE_EVERY: usize = 16;
 
 /// Derives observational document dependencies without changing the real OCC
 /// read set. Paths A and B remain serialized committers; these dependencies are
@@ -65,21 +74,33 @@ fn shadow_scan_start(
     }
 }
 
-/// Counts conflicts against durable commits newer than the observed planning
-/// snapshot, scanning at most `NIMBUS_SHADOW_CONFLICT_WINDOW_MAX` (default
-/// 256) trailing commits. Errors are deliberately swallowed after a warning:
-/// shadow observation must never reject, retry, or otherwise change a
-/// mutation — and its cost must stay constant per batch (see the bound's
-/// doc comment).
+/// Counts conflicts for one batch of prepared mutations against durable
+/// commits newer than the batch's earliest planning snapshot.
+///
+/// One observation per batch (paths A) or per mutation (path B), sampled
+/// every `NIMBUS_SHADOW_CONFLICT_SAMPLE_EVERY`-th eligible observation
+/// (default 16, first always taken) and scanning at most
+/// `NIMBUS_SHADOW_CONFLICT_WINDOW_MAX` trailing commits (default 64).
+/// `shadow_checks_sampled` records how many observations actually ran, so
+/// conflict totals read as a sampled rate, not an absolute count. Errors
+/// are deliberately swallowed after a warning: shadow observation must
+/// never reject, retry, or otherwise change a mutation.
 pub(super) fn observe_shadow_conflicts(
     runtime: &TenantRuntime,
     snapshot_sequence: SequenceNumber,
-    dependencies: &DependencySet,
+    dependency_sets: &[DependencySet],
 ) {
-    if dependencies.is_empty() {
-        runtime
-            .commit_phase_metrics()
-            .record_shadow_check(0, false, false);
+    if dependency_sets.iter().all(DependencySet::is_empty) {
+        return;
+    }
+    let sample_every = env_positive_usize(
+        "NIMBUS_SHADOW_CONFLICT_SAMPLE_EVERY",
+        DEFAULT_SHADOW_CONFLICT_SAMPLE_EVERY,
+    );
+    if !runtime
+        .commit_phase_metrics()
+        .shadow_sample_tick(sample_every)
+    {
         return;
     }
 
@@ -106,8 +127,11 @@ pub(super) fn observe_shadow_conflicts(
     };
     let window_size = commits.len();
     let conflicting = commits.iter().any(|commit| {
-        commit_intersects_dependency_set(commit, dependencies, &[], |table, document_id| {
-            runtime.store.get(table, &document_id)
+        dependency_sets.iter().any(|dependencies| {
+            !dependencies.is_empty()
+                && commit_intersects_dependency_set(commit, dependencies, &[], {
+                    |table, document_id| runtime.store.get(table, &document_id)
+                })
         })
     });
     runtime

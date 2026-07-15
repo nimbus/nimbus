@@ -39,6 +39,10 @@ async fn queue_update_behind_pause(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shadow_conflict_total_increments_for_conflicting_queued_and_direct_mutations_without_rejection()
  {
+    // Observe every eligible batch: sampling defaults to 1-in-16, which
+    // would make this small scenario nondeterministic. Safe under nextest
+    // (process-per-test isolation).
+    unsafe { std::env::set_var("NIMBUS_SHADOW_CONFLICT_SAMPLE_EVERY", "1") };
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("shadow-conflict", Engine::create_tenant);
@@ -89,6 +93,8 @@ async fn shadow_conflict_total_increments_for_conflicting_queued_and_direct_muta
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shadow_conflict_total_stays_zero_for_disjoint_queued_and_direct_mutations() {
+    // Observe every eligible batch (see the conflicting-workload test).
+    unsafe { std::env::set_var("NIMBUS_SHADOW_CONFLICT_SAMPLE_EVERY", "1") };
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("shadow-disjoint", Engine::create_tenant);

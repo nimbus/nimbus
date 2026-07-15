@@ -245,6 +245,8 @@ fn process_queued_mutation_batch(
     let mut active = Vec::new();
     let mut records = Vec::new();
     let mut sample_started_at = None::<Instant>;
+    let mut batch_shadow_dependencies = Vec::new();
+    let mut batch_shadow_snapshot = None::<nimbus_core::SequenceNumber>;
     let mut next_sequence = runtime.durable_head().0.saturating_add(1);
     for planned_request in planned {
         let PlannedQueuedMutation {
@@ -268,13 +270,11 @@ fn process_queued_mutation_batch(
                 .map(|started_at| started_at.min(enqueued_at))
                 .unwrap_or(enqueued_at),
         );
-        let conflict_started = Instant::now();
-        observe_shadow_conflicts(
-            runtime.as_ref(),
-            shadow_snapshot_sequence,
-            &shadow_dependencies,
-        );
-        phases.add_conflict_check(conflict_started.elapsed());
+        batch_shadow_dependencies.push(shadow_dependencies);
+        batch_shadow_snapshot = Some(match batch_shadow_snapshot {
+            Some(existing) => existing.min(shadow_snapshot_sequence),
+            None => shadow_snapshot_sequence,
+        });
         let serialize_started = Instant::now();
         let record = match prepared_commit.into_record(
             nimbus_core::SequenceNumber(next_sequence),
@@ -301,6 +301,14 @@ fn process_queued_mutation_batch(
             applied: Vec::new(),
             responses: Vec::new(),
         });
+    }
+
+    // One sampled shadow observation per batch (pre-append, so the batch
+    // never self-conflicts), against the batch's earliest planning snapshot.
+    if let Some(batch_snapshot) = batch_shadow_snapshot {
+        let conflict_started = Instant::now();
+        observe_shadow_conflicts(runtime.as_ref(), batch_snapshot, &batch_shadow_dependencies);
+        phases.add_conflict_check(conflict_started.elapsed());
     }
 
     let durable_append_started = Instant::now();
