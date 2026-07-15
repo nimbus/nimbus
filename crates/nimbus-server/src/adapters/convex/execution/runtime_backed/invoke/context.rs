@@ -16,6 +16,7 @@ use crate::execution::invocations::{
 };
 use nimbus_auth::normalize_principal_context;
 use nimbus_bridge::admission::RuntimeExecutionAdmission;
+use nimbus_bridge::mutation_retry::{MutationOccConflictDecision, MutationOccRetryPolicy};
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::{
     RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
@@ -67,6 +68,84 @@ impl<'a> RuntimeInvocationContext<'a> {
     }
 
     pub(in crate::adapters::convex) async fn invoke_with_trace_async_cancellable(
+        &self,
+        request: InvocationRequest,
+        cancellation: HostCallCancellation,
+        server_request_id: Option<String>,
+    ) -> Result<(Value, RuntimeReadSet), Error> {
+        if !matches!(request.kind, InvocationKind::Mutation) {
+            return self
+                .invoke_once_with_trace_async_cancellable(request, cancellation, server_request_id)
+                .await;
+        }
+
+        let policy = MutationOccRetryPolicy::from_env();
+        let tenant_id = self.isolation.tenant_id().clone();
+        let mut attempt = 1;
+        loop {
+            match self
+                .invoke_once_with_trace_async_cancellable(
+                    request.clone(),
+                    cancellation.clone(),
+                    server_request_id.clone(),
+                )
+                .await
+            {
+                Ok(result) => return Ok(result),
+                Err(error) => match policy.classify(&error, attempt) {
+                    MutationOccConflictDecision::NotRetryable => return Err(error),
+                    MutationOccConflictDecision::Exhausted => {
+                        if let Err(metrics_error) =
+                            self.engine.record_mutation_conflict_exhausted(&tenant_id)
+                        {
+                            tracing::warn!(
+                                tenant = %tenant_id,
+                                error = %metrics_error,
+                                "failed to record exhausted mutation conflict"
+                            );
+                        }
+                        return Err(error.with_conflict_attempts(attempt));
+                    }
+                    MutationOccConflictDecision::Retry {
+                        conflicting_sequence,
+                        backoff,
+                    } => {
+                        // Transparent retries are safe only while guest
+                        // mutations are deterministic and side-effect-free
+                        // between attempts. `invoke_once` builds a fresh host
+                        // bridge and execution unit; failed staged writes are
+                        // never reused or re-applied.
+                        if let Some(sequence) = conflicting_sequence {
+                            let cancel_wait = cancellation.clone();
+                            self.engine
+                                .wait_for_applied_sequence_cancellable(
+                                    &tenant_id,
+                                    sequence,
+                                    async move { cancel_wait.cancelled().await },
+                                )
+                                .await?;
+                        }
+                        tokio::select! {
+                            _ = tokio::time::sleep(backoff) => {}
+                            _ = cancellation.cancelled() => return Err(Error::Cancelled),
+                        }
+                        if let Err(metrics_error) =
+                            self.engine.record_mutation_conflict_retry(&tenant_id)
+                        {
+                            tracing::warn!(
+                                tenant = %tenant_id,
+                                error = %metrics_error,
+                                "failed to record mutation conflict retry"
+                            );
+                        }
+                        attempt += 1;
+                    }
+                },
+            }
+        }
+    }
+
+    async fn invoke_once_with_trace_async_cancellable(
         &self,
         request: InvocationRequest,
         cancellation: HostCallCancellation,

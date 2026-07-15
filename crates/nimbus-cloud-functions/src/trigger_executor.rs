@@ -11,6 +11,7 @@ use nimbus_tenant::{
     admit_runtime_invocation_decision,
 };
 
+use crate::retry::execute_mutation_with_occ_retries;
 use crate::{
     CloudFunctionsHostBridge, CloudFunctionsRegistry, CloudFunctionsRuntimeInvocation,
     CloudFunctionsRuntimeInvoker,
@@ -109,37 +110,39 @@ impl CloudFunctionsTriggerExecutor {
             auth: None,
             services: services.clone(),
         };
-        let bridge = Arc::new(CloudFunctionsHostBridge::build(
-            RuntimeHostScope::new(
-                self.engine.clone(),
-                self.registry.runtime_policy(),
-                decision.clone(),
-            ),
-            RuntimeHostInvocation::new(
-                record.event.execution.principal().clone(),
-                Some(server_request_id.clone()),
-                InvocationKind::Mutation,
-                target.entrypoint.clone(),
-            )
-            .with_trigger_write_origin(nimbus_core::TriggerWriteOrigin::new(
-                record.key.clone(),
-                record.depth(),
-            )),
-        )?);
+        execute_mutation_with_occ_retries(self.engine.as_ref(), tenant_id, || {
+            let bridge = Arc::new(CloudFunctionsHostBridge::build(
+                RuntimeHostScope::new(
+                    self.engine.clone(),
+                    self.registry.runtime_policy(),
+                    decision.clone(),
+                ),
+                RuntimeHostInvocation::new(
+                    record.event.execution.principal().clone(),
+                    Some(server_request_id.clone()),
+                    InvocationKind::Mutation,
+                    target.entrypoint.clone(),
+                )
+                .with_trigger_write_origin(nimbus_core::TriggerWriteOrigin::new(
+                    record.key.clone(),
+                    record.depth(),
+                )),
+            )?);
 
-        self.runtime_invoker
-            .invoke_runtime_bundle(CloudFunctionsRuntimeInvocation {
-                runtime_executor: self.registry.runtime_executor(),
-                runtime_policy: self.registry.runtime_policy(),
-                host_bridge: bridge.clone(),
-                bundle,
-                request,
-                tenant_id: decision.tenant_id().clone(),
-                server_request_id: Some(server_request_id),
-                provenance_gate: self.registry.runtime_bundle_provenance().cloned(),
-            })?;
-        bridge.commit_mutation_execution_unit()?;
-        Ok(())
+            self.runtime_invoker
+                .invoke_runtime_bundle(CloudFunctionsRuntimeInvocation {
+                    runtime_executor: self.registry.runtime_executor(),
+                    runtime_policy: self.registry.runtime_policy(),
+                    host_bridge: bridge.clone(),
+                    bundle: bundle.clone(),
+                    request: request.clone(),
+                    tenant_id: decision.tenant_id().clone(),
+                    server_request_id: Some(server_request_id.clone()),
+                    provenance_gate: self.registry.runtime_bundle_provenance().cloned(),
+                })?;
+            bridge.commit_mutation_execution_unit()?;
+            Ok(())
+        })
     }
 }
 

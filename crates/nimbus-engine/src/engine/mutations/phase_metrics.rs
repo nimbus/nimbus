@@ -39,6 +39,8 @@ pub struct CommitPhaseMetricsSnapshot {
     pub shadow_window_size: u64,
     pub shadow_window_truncated_total: u64,
     pub shadow_checks_sampled: u64,
+    pub mutation_conflict_retries_total: u64,
+    pub mutation_conflict_exhausted_total: u64,
 }
 
 pub(crate) struct CommitPhaseMetrics {
@@ -56,6 +58,8 @@ pub(crate) struct CommitPhaseMetrics {
     shadow_window_truncated_total: AtomicU64,
     shadow_checks_sampled: AtomicU64,
     shadow_sample_ticks: AtomicU64,
+    mutation_conflict_retries_total: AtomicU64,
+    mutation_conflict_exhausted_total: AtomicU64,
 }
 
 impl CommitPhaseMetrics {
@@ -75,6 +79,8 @@ impl CommitPhaseMetrics {
             shadow_window_truncated_total: AtomicU64::new(0),
             shadow_checks_sampled: AtomicU64::new(0),
             shadow_sample_ticks: AtomicU64::new(0),
+            mutation_conflict_retries_total: AtomicU64::new(0),
+            mutation_conflict_exhausted_total: AtomicU64::new(0),
         }
     }
 
@@ -131,6 +137,16 @@ impl CommitPhaseMetrics {
         self.shadow_checks_sampled.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub(crate) fn record_mutation_conflict_retry(&self) {
+        self.mutation_conflict_retries_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_mutation_conflict_exhausted(&self) {
+        self.mutation_conflict_exhausted_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     pub(crate) fn snapshot(&self) -> CommitPhaseMetricsSnapshot {
         CommitPhaseMetricsSnapshot {
             sample_count: self.sample_count.load(Ordering::Relaxed),
@@ -148,6 +164,12 @@ impl CommitPhaseMetrics {
                 .shadow_window_truncated_total
                 .load(Ordering::Relaxed),
             shadow_checks_sampled: self.shadow_checks_sampled.load(Ordering::Relaxed),
+            mutation_conflict_retries_total: self
+                .mutation_conflict_retries_total
+                .load(Ordering::Relaxed),
+            mutation_conflict_exhausted_total: self
+                .mutation_conflict_exhausted_total
+                .load(Ordering::Relaxed),
         }
     }
 }
@@ -287,6 +309,8 @@ mod tests {
         );
         metrics.record_shadow_check(4, true, false);
         metrics.record_shadow_check(2, false, true);
+        metrics.record_mutation_conflict_retry();
+        metrics.record_mutation_conflict_exhausted();
 
         assert_eq!(
             metrics.snapshot(),
@@ -304,6 +328,8 @@ mod tests {
                 shadow_window_size: 6,
                 shadow_window_truncated_total: 1,
                 shadow_checks_sampled: 2,
+                mutation_conflict_retries_total: 1,
+                mutation_conflict_exhausted_total: 1,
             }
         );
     }

@@ -9,6 +9,7 @@ mod latency;
 mod mutations;
 mod object_placement;
 mod objects;
+mod occ_retry;
 mod provider_hints;
 mod queries;
 mod scheduler;

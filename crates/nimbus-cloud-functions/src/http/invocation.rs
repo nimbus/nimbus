@@ -14,6 +14,7 @@ use nimbus_tenant::{
 use serde_json::Value;
 
 use super::response::{CloudFunctionsHttpResponseParts, build_http_response_parts};
+use crate::retry::execute_mutation_with_occ_retries;
 use crate::{
     CloudFunctionsHostBridge, CloudFunctionsRegistry, CloudFunctionsRuntimeInvocation,
     CloudFunctionsRuntimeInvoker,
@@ -104,34 +105,34 @@ pub fn execute_http_target(
         auth: auth.as_ref().map(InvocationAuth::to_runtime_payload),
         services: services.clone(),
     };
-    let bridge = Arc::new(CloudFunctionsHostBridge::build(
-        RuntimeHostScope::new(
-            runtime_context.engine.clone(),
-            registry.runtime_policy(),
-            decision.clone(),
-        ),
-        RuntimeHostInvocation::new(
-            normalize_principal_context(auth.as_ref()),
-            Some(server_request_id.clone()),
-            InvocationKind::Mutation,
-            request.function_name.clone(),
-        ),
-    )?);
-
-    let runtime_response =
-        runtime_context
-            .runtime_invoker
-            .invoke_runtime_bundle(CloudFunctionsRuntimeInvocation {
+    execute_mutation_with_occ_retries(runtime_context.engine.as_ref(), &tenant_id, || {
+        let bridge = Arc::new(CloudFunctionsHostBridge::build(
+            RuntimeHostScope::new(
+                runtime_context.engine.clone(),
+                registry.runtime_policy(),
+                decision.clone(),
+            ),
+            RuntimeHostInvocation::new(
+                normalize_principal_context(auth.as_ref()),
+                Some(server_request_id.clone()),
+                InvocationKind::Mutation,
+                request.function_name.clone(),
+            ),
+        )?);
+        let runtime_response = runtime_context.runtime_invoker.invoke_runtime_bundle(
+            CloudFunctionsRuntimeInvocation {
                 runtime_executor: registry.runtime_executor(),
                 runtime_policy: registry.runtime_policy(),
                 host_bridge: bridge.clone(),
-                bundle,
-                request,
+                bundle: bundle.clone(),
+                request: request.clone(),
                 tenant_id: decision.tenant_id().clone(),
-                server_request_id: Some(server_request_id),
+                server_request_id: Some(server_request_id.clone()),
                 provenance_gate: registry.runtime_bundle_provenance().cloned(),
-            })?;
-    let response = build_http_response_parts(runtime_response)?;
-    bridge.commit_mutation_execution_unit()?;
-    Ok(response)
+            },
+        )?;
+        let response = build_http_response_parts(runtime_response)?;
+        bridge.commit_mutation_execution_unit()?;
+        Ok(response)
+    })
 }
