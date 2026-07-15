@@ -1,8 +1,11 @@
+use std::time::Instant;
+
 use nimbus_core::{
     CommitEntry, DependencySet, Error, Result, SequenceNumber, TableName, Timestamp,
     commit_intersects_dependency_set,
 };
 
+use super::super::mutations::phase_metrics::{CommitPhaseDurations, maybe_warn_wide_read_set};
 use super::super::mutations::prepared::PreparedCommit;
 use super::state::ExecutionUnitLifecycle;
 use super::{MutationExecutionUnit, labels};
@@ -30,8 +33,10 @@ impl MutationExecutionUnit {
         &self,
         commit_timestamp: Option<Timestamp>,
     ) -> Result<Option<CommitEntry>> {
+        let total_started = Instant::now();
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
         let finalization_guard = FinalizationGuard { unit: self };
+        let prepare_started = Instant::now();
         let prepared_commit = {
             let mut state = self.active_state()?;
             state.lifecycle = ExecutionUnitLifecycle::Finalizing;
@@ -47,21 +52,30 @@ impl MutationExecutionUnit {
                 state.trigger_write_origin.clone(),
             )
         };
+        let mut phases = CommitPhaseDurations {
+            prepare: prepare_started.elapsed(),
+            ..CommitPhaseDurations::default()
+        };
         if prepared_commit.is_empty_execution_unit() {
             return Ok(None);
         }
+        maybe_warn_wide_read_set(&self.tenant_id, &prepared_commit.read_set);
         self.engine
             .wait_for_commit_fault(labels::PREPARE_COMPLETE)?;
 
         let result = (|| -> Result<Option<CommitEntry>> {
             self.engine.wait_for_commit_fault(labels::PRE_ASSIGN)?;
             let commit = {
+                let queue_wait_started = Instant::now();
                 let _sequence_guard = self.runtime.lock_mutation_sequence();
+                phases.queue_wait = queue_wait_started.elapsed();
+                let conflict_check_started = Instant::now();
                 self.ensure_schema_unchanged(&prepared_commit.read_set)?;
                 self.ensure_no_conflicts(
                     prepared_commit.snapshot_sequence,
                     &prepared_commit.read_set,
                 )?;
+                phases.conflict_check = conflict_check_started.elapsed();
                 self.engine
                     .wait_for_commit_fault(labels::POST_VALIDATE_PRE_STAGE)?;
                 // Staging and persistence are one storage call today, so this
@@ -70,21 +84,44 @@ impl MutationExecutionUnit {
                 self.engine.wait_for_commit_fault(labels::PRE_PERSIST)?;
                 let (writes, schedule_ops, trigger_write_origin) =
                     prepared_commit.execution_unit_effects()?;
+                let durable_append_started = Instant::now();
+                // The current storage contract atomically combines persistence
+                // and storage-layer application. Until that seam is split, the
+                // full call is attributed to durable append; `apply` below is
+                // engine cache/bookkeeping work. Direct commits have the same
+                // intentional collapse.
                 let commit = self.runtime.store.apply_execution_unit_batch_with_origin(
                     writes,
                     schedule_ops,
                     trigger_write_origin,
                     commit_timestamp,
                 )?;
+                phases.durable_append = durable_append_started.elapsed();
+                self.engine
+                    .wait_for_commit_fault(labels::DURABLE_BEFORE_PUBLISH)?;
                 if let Some(commit) = &commit {
+                    let publish_started = Instant::now();
                     self.runtime.mark_durable_head(commit.sequence);
+                    phases.add_publish(publish_started.elapsed());
+                    let apply_started = Instant::now();
                     self.runtime.invalidate_document_cache_for_commit(commit);
+                    phases.apply = apply_started.elapsed();
+                    let publish_started = Instant::now();
                     self.runtime.mark_applied_head(commit.sequence);
+                    phases.add_publish(publish_started.elapsed());
                 }
                 commit
             };
             self.engine
                 .wait_for_commit_fault(labels::POST_PUBLISH_PRE_FANOUT)?;
+            if commit.is_some() {
+                self.runtime.record_commit_phase_sample(
+                    "execution-unit",
+                    1,
+                    phases,
+                    total_started.elapsed(),
+                );
+            }
             Ok(commit)
         })();
         drop(finalization_guard);

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
-use nimbus_core::{DocumentId, Mutation, PrincipalContext, Result};
+use nimbus_core::{DocumentId, Mutation, PrincipalContext, Result, SequenceNumber};
 use tokio::sync::oneshot;
 
 use super::super::TenantOperationGuard;
@@ -24,4 +24,8 @@ pub(crate) struct QueuedMutationRequest {
     pub response: oneshot::Sender<Result<QueuedMutationResult>>,
     #[cfg_attr(not(test), allow(dead_code))]
     pub enqueued_at: Instant,
+    /// Durable head observed at admission, used only by path A's shadow OCC
+    /// instrumentation. Real serialization continues to use the head sampled
+    /// under the sequence gate.
+    pub shadow_snapshot_sequence: SequenceNumber,
 }

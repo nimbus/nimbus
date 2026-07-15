@@ -21,6 +21,7 @@ fn queued_request(enqueued_at: Instant) -> QueuedMutationRequest {
         },
         response,
         enqueued_at,
+        shadow_snapshot_sequence: nimbus_core::SequenceNumber(0),
     }
 }
 

@@ -1,4 +1,4 @@
-use std::{future, sync::Arc};
+use std::{future, sync::Arc, time::Instant};
 
 use nimbus_core::{
     AccessAction, Document, DocumentId, Mutation, PrincipalContext, Result, Schema, TableName,
@@ -10,6 +10,7 @@ use crate::{Engine, tenant::TenantRuntime};
 
 use super::super::enforce_mutation_authorization;
 use super::super::prepared::PreparedCommit;
+use super::store::DirectMutationProfile;
 use super::types::{MutationExecutionMode, MutationExecutionResult, UpdateMutationRequest};
 
 impl Engine {
@@ -107,6 +108,7 @@ impl Engine {
         fields: serde_json::Map<String, serde_json::Value>,
         principal: &PrincipalContext,
     ) -> Result<MutationExecutionResult> {
+        let commit_started_at = Instant::now();
         let table_schema = schema.get_table(&table).cloned();
         let indexes = table_schema
             .as_ref()
@@ -129,36 +131,55 @@ impl Engine {
         )?;
         let document_id = document.id.clone();
         let prepared_commit = PreparedCommit::for_direct_insert(runtime.durable_head(), document);
+        let profile = DirectMutationProfile::after_prepare(commit_started_at);
 
         match mode {
             MutationExecutionMode::Immediate => {
                 if indexes.is_empty() {
-                    self.run_store_mutation(runtime, prepared_commit, |store, prepared| {
-                        store.insert(prepared.direct_insert_document()?)
-                    })?;
+                    self.run_store_mutation(
+                        runtime,
+                        prepared_commit,
+                        profile,
+                        |store, prepared| store.insert(prepared.direct_insert_document()?),
+                    )?;
                 } else {
-                    self.run_store_mutation(runtime, prepared_commit, |store, prepared| {
-                        store.insert_with_indexes(prepared.direct_insert_document()?, &indexes)
-                    })?;
+                    self.run_store_mutation(
+                        runtime,
+                        prepared_commit,
+                        profile,
+                        |store, prepared| {
+                            store.insert_with_indexes(prepared.direct_insert_document()?, &indexes)
+                        },
+                    )?;
                 }
                 Ok(MutationExecutionResult::Immediate(Some(document_id)))
             }
             MutationExecutionMode::Scheduled { execution_id } => {
                 let applied = if indexes.is_empty() {
-                    self.run_store_mutation_once(runtime, prepared_commit, |store, prepared| {
-                        store.insert_once(
-                            prepared.direct_insert_document()?,
-                            Some(execution_id.as_str()),
-                        )
-                    })?
+                    self.run_store_mutation_once(
+                        runtime,
+                        prepared_commit,
+                        profile,
+                        |store, prepared| {
+                            store.insert_once(
+                                prepared.direct_insert_document()?,
+                                Some(execution_id.as_str()),
+                            )
+                        },
+                    )?
                 } else {
-                    self.run_store_mutation_once(runtime, prepared_commit, |store, prepared| {
-                        store.insert_with_indexes_once(
-                            prepared.direct_insert_document()?,
-                            &indexes,
-                            Some(execution_id.as_str()),
-                        )
-                    })?
+                    self.run_store_mutation_once(
+                        runtime,
+                        prepared_commit,
+                        profile,
+                        |store, prepared| {
+                            store.insert_with_indexes_once(
+                                prepared.direct_insert_document()?,
+                                &indexes,
+                                Some(execution_id.as_str()),
+                            )
+                        },
+                    )?
                 };
                 Ok(MutationExecutionResult::Scheduled(applied))
             }
@@ -172,6 +193,7 @@ impl Engine {
         mode: MutationExecutionMode,
         request: UpdateMutationRequest<'_>,
     ) -> Result<MutationExecutionResult> {
+        let commit_started_at = Instant::now();
         let UpdateMutationRequest {
             table,
             id,
@@ -182,29 +204,35 @@ impl Engine {
         let table_schema = schema.get_table(&table).cloned();
         let prepared_commit =
             PreparedCommit::for_direct_update(runtime.durable_head(), table, id, patch);
+        let profile = DirectMutationProfile::after_prepare(commit_started_at);
         match table_schema {
             Some(table_schema) if table_schema.indexes.is_empty() => match mode {
                 MutationExecutionMode::Immediate => {
                     let authorization_schema = table_schema.clone();
                     let principal = principal.clone();
-                    self.run_store_mutation(runtime, prepared_commit, move |store, prepared| {
-                        let (table, document_id, patch) = prepared.direct_update_parts()?;
-                        store.update_validated(
-                            table,
-                            document_id,
-                            patch,
-                            move |existing, document| {
-                                table_schema.validate(&document.fields)?;
-                                enforce_mutation_authorization(
-                                    Some(&authorization_schema),
-                                    AccessAction::Update,
-                                    &principal,
-                                    Some(document),
-                                    Some(existing),
-                                )
-                            },
-                        )
-                    })?;
+                    self.run_store_mutation(
+                        runtime,
+                        prepared_commit,
+                        profile,
+                        move |store, prepared| {
+                            let (table, document_id, patch) = prepared.direct_update_parts()?;
+                            store.update_validated(
+                                table,
+                                document_id,
+                                patch,
+                                move |existing, document| {
+                                    table_schema.validate(&document.fields)?;
+                                    enforce_mutation_authorization(
+                                        Some(&authorization_schema),
+                                        AccessAction::Update,
+                                        &principal,
+                                        Some(document),
+                                        Some(existing),
+                                    )
+                                },
+                            )
+                        },
+                    )?;
                     Ok(MutationExecutionResult::Immediate(Some(result_document_id)))
                 }
                 MutationExecutionMode::Scheduled { execution_id } => {
@@ -213,6 +241,7 @@ impl Engine {
                     let applied = self.run_store_mutation_once(
                         runtime,
                         prepared_commit,
+                        profile,
                         move |store, prepared| {
                             let (table, document_id, patch) = prepared.direct_update_parts()?;
                             store.update_validated_once(
@@ -245,6 +274,7 @@ impl Engine {
                         self.run_store_mutation(
                             runtime,
                             prepared_commit,
+                            profile,
                             move |store, prepared| {
                                 let (table, document_id, patch) = prepared.direct_update_parts()?;
                                 store.update_with_indexes_validated(
@@ -273,6 +303,7 @@ impl Engine {
                         let applied = self.run_store_mutation_once(
                             runtime,
                             prepared_commit,
+                            profile,
                             move |store, prepared| {
                                 let (table, document_id, patch) = prepared.direct_update_parts()?;
                                 store.update_with_indexes_validated_once(
@@ -301,23 +332,28 @@ impl Engine {
             None => match mode {
                 MutationExecutionMode::Immediate => {
                     let principal = principal.clone();
-                    self.run_store_mutation(runtime, prepared_commit, move |store, prepared| {
-                        let (table, document_id, patch) = prepared.direct_update_parts()?;
-                        store.update_validated(
-                            table,
-                            document_id,
-                            patch,
-                            move |existing, document| {
-                                enforce_mutation_authorization(
-                                    None,
-                                    AccessAction::Update,
-                                    &principal,
-                                    Some(document),
-                                    Some(existing),
-                                )
-                            },
-                        )
-                    })?;
+                    self.run_store_mutation(
+                        runtime,
+                        prepared_commit,
+                        profile,
+                        move |store, prepared| {
+                            let (table, document_id, patch) = prepared.direct_update_parts()?;
+                            store.update_validated(
+                                table,
+                                document_id,
+                                patch,
+                                move |existing, document| {
+                                    enforce_mutation_authorization(
+                                        None,
+                                        AccessAction::Update,
+                                        &principal,
+                                        Some(document),
+                                        Some(existing),
+                                    )
+                                },
+                            )
+                        },
+                    )?;
                     Ok(MutationExecutionResult::Immediate(Some(result_document_id)))
                 }
                 MutationExecutionMode::Scheduled { execution_id } => {
@@ -325,6 +361,7 @@ impl Engine {
                     let applied = self.run_store_mutation_once(
                         runtime,
                         prepared_commit,
+                        profile,
                         move |store, prepared| {
                             let (table, document_id, patch) = prepared.direct_update_parts()?;
                             store.update_validated_once(
@@ -359,12 +396,14 @@ impl Engine {
         id: DocumentId,
         principal: &PrincipalContext,
     ) -> Result<MutationExecutionResult> {
+        let commit_started_at = Instant::now();
         let table_schema = schema.get_table(&table).cloned();
         let indexes = table_schema
             .as_ref()
             .map(|table_schema| table_schema.indexes.clone())
             .unwrap_or_default();
         let prepared_commit = PreparedCommit::for_direct_delete(runtime.durable_head(), table, id);
+        let profile = DirectMutationProfile::after_prepare(commit_started_at);
 
         match mode {
             MutationExecutionMode::Immediate => {
@@ -374,6 +413,7 @@ impl Engine {
                     self.run_store_delete_mutation(
                         runtime,
                         prepared_commit,
+                        profile,
                         move |store, prepared| {
                             let (table, document_id) = prepared.direct_delete_parts()?;
                             store.delete_validated_returning_document(
@@ -397,6 +437,7 @@ impl Engine {
                     self.run_store_delete_mutation(
                         runtime,
                         prepared_commit,
+                        profile,
                         move |store, prepared| {
                             let (table, document_id) = prepared.direct_delete_parts()?;
                             store.delete_with_indexes_validated_returning_document(
@@ -425,6 +466,7 @@ impl Engine {
                     self.run_store_delete_mutation_once(
                         runtime,
                         prepared_commit,
+                        profile,
                         move |store, prepared| {
                             let (table, document_id) = prepared.direct_delete_parts()?;
                             store.delete_validated_once(
@@ -449,6 +491,7 @@ impl Engine {
                     self.run_store_delete_mutation_once(
                         runtime,
                         prepared_commit,
+                        profile,
                         move |store, prepared| {
                             let (table, document_id) = prepared.direct_delete_parts()?;
                             store.delete_with_indexes_validated_once(

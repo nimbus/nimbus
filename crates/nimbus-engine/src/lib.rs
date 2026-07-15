@@ -12,10 +12,10 @@ mod triggers;
 mod verification;
 
 pub use engine::{
-    AsyncMutationContext, CommittedMutationEvent, CommittedMutationObserver, EncryptionStatus,
-    Engine, InitializedKeyProvider, MutationActor, MutationExecutionUnit, SubscribeOptions,
-    SubscriptionBootstrapCancellation, TableSchemaChangeEvent, TableSchemaChangeObserver,
-    TenantObjectMeta,
+    AsyncMutationContext, CommitPhaseMetricsSnapshot, CommittedMutationEvent,
+    CommittedMutationObserver, EncryptionStatus, Engine, InitializedKeyProvider, MutationActor,
+    MutationExecutionUnit, SubscribeOptions, SubscriptionBootstrapCancellation,
+    TableSchemaChangeEvent, TableSchemaChangeObserver, TenantObjectMeta,
 };
 pub use evaluator::{
     encode_cursor, evaluate_paginated, evaluate_paginated_with_docs, evaluate_query,

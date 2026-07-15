@@ -56,6 +56,15 @@ async fn mutation_execution_unit_commits_through_memory_persistence() {
     assert_eq!(journal.len(), 1);
     assert_eq!(journal[0].sequence, commit.sequence);
     assert_eq!(journal[0].writes, commit.writes);
+    let metrics = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("execution-unit phase metrics should be observable")
+        .commit_phases;
+    assert_eq!(metrics.sample_count, 1);
+    assert_eq!(metrics.commit_count, 1);
+    assert!(metrics.prepare_nanos > 0);
+    assert!(metrics.durable_append_nanos > 0);
+    assert!(metrics.total_commit_nanos > 0);
 }
 
 #[test]
