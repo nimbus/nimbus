@@ -19,7 +19,11 @@ const DEFAULT_WIDE_READ_SET_WARN_THRESHOLD: usize = 1_000;
 /// execution-unit commits are one sample each. `queue_wait_nanos` is summed per
 /// committed request on the journal path and records sequence-gate wait on the
 /// direct and execution-unit paths. `shadow_window_size` is the cumulative
-/// number of recent commit entries examined by paths A and B.
+/// number of recent commit entries examined by paths A and B;
+/// `shadow_window_truncated_total` counts observations whose scan was clamped
+/// to the trailing `NIMBUS_SHADOW_CONFLICT_WINDOW_MAX` commits (conflicts
+/// older than the clamp are not counted — nonzero truncation means the
+/// conflict totals are a lower bound).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct CommitPhaseMetricsSnapshot {
     pub sample_count: u64,
@@ -33,6 +37,8 @@ pub struct CommitPhaseMetricsSnapshot {
     pub total_commit_nanos: u64,
     pub shadow_conflict_total: u64,
     pub shadow_window_size: u64,
+    pub shadow_window_truncated_total: u64,
+    pub shadow_checks_sampled: u64,
 }
 
 pub(crate) struct CommitPhaseMetrics {
@@ -47,6 +53,9 @@ pub(crate) struct CommitPhaseMetrics {
     total_commit_nanos: AtomicU64,
     shadow_conflict_total: AtomicU64,
     shadow_window_size: AtomicU64,
+    shadow_window_truncated_total: AtomicU64,
+    shadow_checks_sampled: AtomicU64,
+    shadow_sample_ticks: AtomicU64,
 }
 
 impl CommitPhaseMetrics {
@@ -63,7 +72,19 @@ impl CommitPhaseMetrics {
             total_commit_nanos: AtomicU64::new(0),
             shadow_conflict_total: AtomicU64::new(0),
             shadow_window_size: AtomicU64::new(0),
+            shadow_window_truncated_total: AtomicU64::new(0),
+            shadow_checks_sampled: AtomicU64::new(0),
+            shadow_sample_ticks: AtomicU64::new(0),
         }
+    }
+
+    /// Deterministic shadow-observation sampler: the first eligible
+    /// observation is always taken, then every `every`-th after it. Ticks
+    /// advance only for eligible (non-empty) observations so sparse
+    /// workloads still produce data.
+    pub(crate) fn shadow_sample_tick(&self, every: usize) -> bool {
+        let tick = self.shadow_sample_ticks.fetch_add(1, Ordering::Relaxed);
+        every <= 1 || tick.is_multiple_of(every as u64)
     }
 
     pub(crate) fn record_sample(
@@ -90,7 +111,12 @@ impl CommitPhaseMetrics {
             .fetch_add(duration_nanos(total), Ordering::Relaxed);
     }
 
-    pub(crate) fn record_shadow_check(&self, window_size: usize, conflicting: bool) {
+    pub(crate) fn record_shadow_check(
+        &self,
+        window_size: usize,
+        conflicting: bool,
+        truncated: bool,
+    ) {
         self.shadow_window_size.fetch_add(
             u64::try_from(window_size).unwrap_or(u64::MAX),
             Ordering::Relaxed,
@@ -98,6 +124,11 @@ impl CommitPhaseMetrics {
         if conflicting {
             self.shadow_conflict_total.fetch_add(1, Ordering::Relaxed);
         }
+        if truncated {
+            self.shadow_window_truncated_total
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        self.shadow_checks_sampled.fetch_add(1, Ordering::Relaxed);
     }
 
     pub(crate) fn snapshot(&self) -> CommitPhaseMetricsSnapshot {
@@ -113,6 +144,10 @@ impl CommitPhaseMetrics {
             total_commit_nanos: self.total_commit_nanos.load(Ordering::Relaxed),
             shadow_conflict_total: self.shadow_conflict_total.load(Ordering::Relaxed),
             shadow_window_size: self.shadow_window_size.load(Ordering::Relaxed),
+            shadow_window_truncated_total: self
+                .shadow_window_truncated_total
+                .load(Ordering::Relaxed),
+            shadow_checks_sampled: self.shadow_checks_sampled.load(Ordering::Relaxed),
         }
     }
 }
@@ -219,7 +254,7 @@ fn dependency_cardinality(dependencies: &DependencySet) -> usize {
         .saturating_add(dependencies.paginated_windows.len())
 }
 
-fn env_positive_usize(key: &str, default: usize) -> usize {
+pub(super) fn env_positive_usize(key: &str, default: usize) -> usize {
     std::env::var(key)
         .ok()
         .and_then(|value| value.trim().parse::<usize>().ok())
@@ -250,8 +285,8 @@ mod tests {
             },
             Duration::from_nanos(81),
         );
-        metrics.record_shadow_check(4, true);
-        metrics.record_shadow_check(2, false);
+        metrics.record_shadow_check(4, true, false);
+        metrics.record_shadow_check(2, false, true);
 
         assert_eq!(
             metrics.snapshot(),
@@ -267,6 +302,8 @@ mod tests {
                 total_commit_nanos: 81,
                 shadow_conflict_total: 1,
                 shadow_window_size: 6,
+                shadow_window_truncated_total: 1,
+                shadow_checks_sampled: 2,
             }
         );
     }
