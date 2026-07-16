@@ -1,4 +1,5 @@
 mod authorization;
+pub(in crate::engine) mod caps;
 mod commit_processing;
 mod direct;
 mod journal;

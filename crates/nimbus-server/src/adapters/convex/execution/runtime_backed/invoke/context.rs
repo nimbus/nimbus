@@ -140,6 +140,24 @@ impl<'a> RuntimeInvocationContext<'a> {
                         }
                         attempt += 1;
                     }
+                    MutationOccConflictDecision::RestartTransaction { backoff } => {
+                        // The next invoke builds a fresh host bridge and OCC
+                        // snapshot; no wait on an obsolete sequence is needed.
+                        tokio::select! {
+                            _ = tokio::time::sleep(backoff) => {}
+                            _ = cancellation.cancelled() => return Err(Error::Cancelled),
+                        }
+                        if let Err(metrics_error) =
+                            self.engine.record_mutation_conflict_retry(&tenant_id)
+                        {
+                            tracing::warn!(
+                                tenant = %tenant_id,
+                                error = %metrics_error,
+                                "failed to record mutation transaction restart"
+                            );
+                        }
+                        attempt += 1;
+                    }
                 },
             }
         }

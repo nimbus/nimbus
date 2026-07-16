@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use nimbus_core::{DependencySet, TenantId};
+use nimbus_core::{DependencySet, MutationCap, TenantId};
 use serde::Serialize;
 use tracing::warn;
 
@@ -11,6 +11,8 @@ const DEFAULT_COMMIT_TRACE_THRESHOLD_MS: u64 = 500;
 // avoids noise while flagging commits whose conflict validation and future
 // in-memory-window footprint deserve investigation.
 const DEFAULT_WIDE_READ_SET_WARN_THRESHOLD: usize = 1_000;
+const DEFAULT_OVERLOAD_ERROR_REPORT_EVERY: usize = 100;
+const DEFAULT_SHADOW_CAP_REPORT_EVERY: usize = 100;
 
 /// Cumulative per-tenant committer observations.
 ///
@@ -47,6 +49,14 @@ pub struct CommitPhaseMetricsSnapshot {
     pub shadow_checks_sampled: u64,
     pub mutation_conflict_retries_total: u64,
     pub mutation_conflict_exhausted_total: u64,
+    pub overload_errors_total: u64,
+    pub overload_errors_reported_total: u64,
+    pub shadow_cap_read_bytes_total: u64,
+    pub shadow_cap_write_bytes_total: u64,
+    pub shadow_cap_documents_scanned_total: u64,
+    pub shadow_cap_documents_written_total: u64,
+    pub shadow_cap_index_range_calls_total: u64,
+    pub shadow_cap_logs_total: u64,
 }
 
 pub(crate) struct CommitPhaseMetrics {
@@ -68,6 +78,12 @@ pub(crate) struct CommitPhaseMetrics {
     shadow_sample_ticks: AtomicU64,
     mutation_conflict_retries_total: AtomicU64,
     mutation_conflict_exhausted_total: AtomicU64,
+    overload_errors_total: AtomicU64,
+    overload_errors_reported_total: AtomicU64,
+    overload_error_report_ticks: AtomicU64,
+    shadow_cap_violations: [AtomicU64; 5],
+    shadow_cap_logs_total: AtomicU64,
+    shadow_cap_report_ticks: AtomicU64,
 }
 
 impl CommitPhaseMetrics {
@@ -91,6 +107,12 @@ impl CommitPhaseMetrics {
             shadow_sample_ticks: AtomicU64::new(0),
             mutation_conflict_retries_total: AtomicU64::new(0),
             mutation_conflict_exhausted_total: AtomicU64::new(0),
+            overload_errors_total: AtomicU64::new(0),
+            overload_errors_reported_total: AtomicU64::new(0),
+            overload_error_report_ticks: AtomicU64::new(0),
+            shadow_cap_violations: std::array::from_fn(|_| AtomicU64::new(0)),
+            shadow_cap_logs_total: AtomicU64::new(0),
+            shadow_cap_report_ticks: AtomicU64::new(0),
         }
     }
 
@@ -163,6 +185,48 @@ impl CommitPhaseMetrics {
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Records every overload-class error and deterministically selects only
+    /// the first and each configured Nth successor for reporting.
+    pub(crate) fn record_overload_error(&self) -> bool {
+        let every = env_positive_usize(
+            "NIMBUS_OVERLOAD_ERROR_REPORT_EVERY",
+            DEFAULT_OVERLOAD_ERROR_REPORT_EVERY,
+        );
+        self.record_overload_error_with_sample_rate(every)
+    }
+
+    fn record_overload_error_with_sample_rate(&self, every: usize) -> bool {
+        self.overload_errors_total.fetch_add(1, Ordering::Relaxed);
+        let tick = self
+            .overload_error_report_ticks
+            .fetch_add(1, Ordering::Relaxed);
+        let sampled = every <= 1 || tick.is_multiple_of(every as u64);
+        if sampled {
+            self.overload_errors_reported_total
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        sampled
+    }
+
+    pub(crate) fn record_shadow_cap_violation(&self, cap: MutationCap) -> bool {
+        self.shadow_cap_violations[cap_index(cap)].fetch_add(1, Ordering::Relaxed);
+        let every = env_positive_usize(
+            "NIMBUS_SHADOW_CAP_REPORT_EVERY",
+            DEFAULT_SHADOW_CAP_REPORT_EVERY,
+        );
+        let tick = self.shadow_cap_report_ticks.fetch_add(1, Ordering::Relaxed);
+        let sampled = every <= 1 || tick.is_multiple_of(every as u64);
+        if sampled {
+            self.shadow_cap_logs_total.fetch_add(1, Ordering::Relaxed);
+        }
+        sampled
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shadow_cap_violations(&self, cap: MutationCap) -> u64 {
+        self.shadow_cap_violations[cap_index(cap)].load(Ordering::Relaxed)
+    }
+
     pub(crate) fn snapshot(&self) -> CommitPhaseMetricsSnapshot {
         CommitPhaseMetricsSnapshot {
             sample_count: self.sample_count.load(Ordering::Relaxed),
@@ -188,6 +252,19 @@ impl CommitPhaseMetrics {
             mutation_conflict_exhausted_total: self
                 .mutation_conflict_exhausted_total
                 .load(Ordering::Relaxed),
+            overload_errors_total: self.overload_errors_total.load(Ordering::Relaxed),
+            overload_errors_reported_total: self
+                .overload_errors_reported_total
+                .load(Ordering::Relaxed),
+            shadow_cap_read_bytes_total: self.shadow_cap_violations[0].load(Ordering::Relaxed),
+            shadow_cap_write_bytes_total: self.shadow_cap_violations[1].load(Ordering::Relaxed),
+            shadow_cap_documents_scanned_total: self.shadow_cap_violations[2]
+                .load(Ordering::Relaxed),
+            shadow_cap_documents_written_total: self.shadow_cap_violations[3]
+                .load(Ordering::Relaxed),
+            shadow_cap_index_range_calls_total: self.shadow_cap_violations[4]
+                .load(Ordering::Relaxed),
+            shadow_cap_logs_total: self.shadow_cap_logs_total.load(Ordering::Relaxed),
         }
     }
 }
@@ -294,9 +371,19 @@ fn dependency_cardinality(dependencies: &DependencySet) -> usize {
         .saturating_add(dependencies.paginated_windows.len())
 }
 
+fn cap_index(cap: MutationCap) -> usize {
+    match cap {
+        MutationCap::ReadBytes => 0,
+        MutationCap::WriteBytes => 1,
+        MutationCap::DocumentsScanned => 2,
+        MutationCap::DocumentsWritten => 3,
+        MutationCap::IndexRangeCalls => 4,
+    }
+}
+
 pub(super) fn env_positive_usize(key: &str, default: usize) -> usize {
-    std::env::var(key)
-        .ok()
+    std::env::var_os(key)
+        .and_then(|value| value.into_string().ok())
         .and_then(|value| value.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(default)
@@ -351,8 +438,29 @@ mod tests {
                 shadow_checks_sampled: 2,
                 mutation_conflict_retries_total: 1,
                 mutation_conflict_exhausted_total: 1,
+                overload_errors_total: 0,
+                overload_errors_reported_total: 0,
+                shadow_cap_read_bytes_total: 0,
+                shadow_cap_write_bytes_total: 0,
+                shadow_cap_documents_scanned_total: 0,
+                shadow_cap_documents_written_total: 0,
+                shadow_cap_index_range_calls_total: 0,
+                shadow_cap_logs_total: 0,
             }
         );
+    }
+
+    #[test]
+    fn overload_error_reporting_is_first_always_then_one_in_n() {
+        let metrics = CommitPhaseMetrics::new();
+        let sampled = (0..201)
+            .filter(|_| metrics.record_overload_error_with_sample_rate(100))
+            .count();
+
+        assert_eq!(sampled, 3, "ticks 0, 100, and 200 should be reported");
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.overload_errors_total, 201);
+        assert_eq!(snapshot.overload_errors_reported_total, 3);
     }
 
     #[test]

@@ -8,6 +8,7 @@ use nimbus_core::{
 use crate::engine::tenants::with_tenant_runtime_operation;
 use crate::{Engine, tenant::TenantRuntime};
 
+use super::super::caps::check_mutation_caps;
 use super::super::enforce_mutation_authorization;
 use super::super::prepared::PreparedCommit;
 use super::store::DirectMutationProfile;
@@ -130,7 +131,17 @@ impl Engine {
             None,
         )?;
         let document_id = document.id.clone();
-        let prepared_commit = PreparedCommit::for_direct_insert(runtime.durable_head(), document);
+        let scheduled_execution_id = match &mode {
+            MutationExecutionMode::Immediate => None,
+            MutationExecutionMode::Scheduled { execution_id } => Some(execution_id.as_str()),
+        };
+        let prepared_commit = PreparedCommit::for_direct_insert(
+            runtime.durable_head(),
+            document,
+            scheduled_execution_id,
+        );
+        check_mutation_caps(&runtime, prepared_commit.usage())?;
+        runtime.check_tenant_write_rate(self.now(), prepared_commit.usage().total_write_bytes())?;
         let profile = DirectMutationProfile::after_prepare(commit_started_at);
 
         match mode {
@@ -191,8 +202,19 @@ impl Engine {
         } = request;
         let result_document_id = id.clone();
         let table_schema = schema.get_table(&table).cloned();
-        let prepared_commit =
-            PreparedCommit::for_direct_update(runtime.durable_head(), table, id, patch);
+        let scheduled_execution_id = match &mode {
+            MutationExecutionMode::Immediate => None,
+            MutationExecutionMode::Scheduled { execution_id } => Some(execution_id.as_str()),
+        };
+        let prepared_commit = PreparedCommit::for_direct_update(
+            runtime.durable_head(),
+            table,
+            id,
+            patch,
+            scheduled_execution_id,
+        );
+        check_mutation_caps(&runtime, prepared_commit.usage())?;
+        runtime.check_tenant_write_rate(self.now(), prepared_commit.usage().total_write_bytes())?;
         let profile = DirectMutationProfile::after_prepare(commit_started_at);
         match table_schema {
             Some(table_schema) if table_schema.indexes.is_empty() => match mode {
@@ -423,7 +445,18 @@ impl Engine {
             .as_ref()
             .map(|table_schema| table_schema.indexes.clone())
             .unwrap_or_default();
-        let prepared_commit = PreparedCommit::for_direct_delete(runtime.durable_head(), table, id);
+        let scheduled_execution_id = match &mode {
+            MutationExecutionMode::Immediate => None,
+            MutationExecutionMode::Scheduled { execution_id } => Some(execution_id.as_str()),
+        };
+        let prepared_commit = PreparedCommit::for_direct_delete(
+            runtime.durable_head(),
+            table,
+            id,
+            scheduled_execution_id,
+        );
+        check_mutation_caps(&runtime, prepared_commit.usage())?;
+        runtime.check_tenant_write_rate(self.now(), prepared_commit.usage().total_write_bytes())?;
         let profile = DirectMutationProfile::after_prepare(commit_started_at);
 
         match mode {

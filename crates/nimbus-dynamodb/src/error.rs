@@ -34,13 +34,16 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
         | CoreError::MissingIndex { .. }
         | CoreError::SchemaValidation(_)
         | CoreError::Serialization(_)
-        | CoreError::HistoricalRead { .. } => DynamoDbError::ValidationException(message),
+        | CoreError::HistoricalRead { .. }
+        | CoreError::CapExceeded { .. } => DynamoDbError::ValidationException(message),
 
         // Authorization.
         CoreError::PermissionDenied(_) => DynamoDbError::AccessDeniedException(message),
 
         // Optimistic-concurrency / write conflict.
-        CoreError::Conflict { .. } => DynamoDbError::TransactionConflictException(message),
+        CoreError::Conflict { .. } | CoreError::OutOfRetention { .. } => {
+            DynamoDbError::TransactionConflictException(message)
+        }
 
         // Failed generation / existence preconditions map to DynamoDB's
         // conditional-write failure class.
@@ -49,7 +52,11 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
         }
 
         // Quota/throttle.
-        CoreError::ResourceExhausted(_) => {
+        CoreError::ResourceExhausted(_)
+        | CoreError::Overloaded { .. }
+        | CoreError::CommitterFull { .. }
+        | CoreError::RejectedBeforeExecution { .. }
+        | CoreError::RateLimited { .. } => {
             DynamoDbError::ProvisionedThroughputExceededException(message)
         }
 

@@ -147,6 +147,58 @@ impl RuntimeHostPublicError {
                     "Resolve the conflicting state and retry.",
                 )),
             ),
+            Error::Overloaded { .. }
+            | Error::CommitterFull { .. }
+            | Error::RejectedBeforeExecution { .. } => Self::new(
+                "rate.overloaded",
+                error.to_string(),
+                RuntimeHostErrorSeverity::Error,
+                true,
+                Value::Null,
+                Some(RuntimeHostErrorRemediation::new(
+                    "wait_and_retry",
+                    "Wait for mutation capacity to recover before retrying.",
+                )),
+            ),
+            Error::RateLimited { retry_after, .. } => Self::new(
+                "rate.limited",
+                error.to_string(),
+                RuntimeHostErrorSeverity::Error,
+                true,
+                json!({ "retryAfterMs": retry_after.as_millis() }),
+                Some(RuntimeHostErrorRemediation::new(
+                    "wait_and_retry",
+                    "Retry after the indicated delay.",
+                )),
+            ),
+            Error::OutOfRetention {
+                minimum_sequence, ..
+            } => Self::new(
+                "op.out_of_retention",
+                error.to_string(),
+                RuntimeHostErrorSeverity::Error,
+                true,
+                json!({ "minimumSequence": minimum_sequence.map(|sequence| sequence.0) }),
+                Some(RuntimeHostErrorRemediation::new(
+                    "restart_transaction",
+                    "Restart the transaction from a fresh snapshot.",
+                )),
+            ),
+            Error::CapExceeded {
+                cap,
+                observed,
+                limit,
+            } => Self::new(
+                "op.cap_exceeded",
+                error.to_string(),
+                RuntimeHostErrorSeverity::Error,
+                false,
+                json!({ "cap": cap.as_str(), "observed": observed, "limit": limit }),
+                Some(RuntimeHostErrorRemediation::new(
+                    "reduce_request",
+                    "Reduce the mutation's resource usage before retrying.",
+                )),
+            ),
             Error::PreconditionFailed(_) => Self::new(
                 "op.precondition_failed",
                 error.to_string(),

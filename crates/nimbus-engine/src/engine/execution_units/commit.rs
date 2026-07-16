@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use nimbus_core::{CommitEntry, DependencySet, Error, Result, SequenceNumber};
 
+use super::super::mutations::caps::check_mutation_caps;
 use super::super::mutations::phase_metrics::{CommitPhaseDurations, maybe_warn_wide_read_set};
 use super::super::mutations::prepared::PreparedCommit;
 use super::super::mutations::write_log::ValidationSource;
@@ -38,12 +39,18 @@ impl MutationExecutionUnit {
                 schedule_ops,
                 state.trigger_write_origin.clone(),
                 state.deferred_server_timestamp_fields.clone(),
+                state.usage,
             )
         };
         let mut phases = CommitPhaseDurations {
             prepare: prepare_started.elapsed(),
             ..CommitPhaseDurations::default()
         };
+        check_mutation_caps(&self.runtime, prepared_commit.usage())?;
+        self.runtime.check_tenant_write_rate(
+            self.engine.now(),
+            prepared_commit.usage().total_write_bytes(),
+        )?;
         if prepared_commit.is_empty_execution_unit() {
             return Ok(None);
         }
@@ -219,7 +226,7 @@ impl MutationExecutionUnit {
 fn map_fallback_floor_error(error: Error, snapshot_sequence: SequenceNumber) -> Error {
     match error {
         Error::InvalidInput(message) if message.contains("retention floor") => {
-            Error::retryable_conflict(
+            Error::out_of_retention(
                 format!(
                     "transaction snapshot {snapshot_sequence} is older than the durable commit-log retention horizon; retry from a fresh snapshot"
                 ),
@@ -243,10 +250,9 @@ mod tests {
 
         assert!(matches!(
             error,
-            Error::Conflict {
+            Error::OutOfRetention {
                 ref message,
-                retryable: true,
-                ..
+                minimum_sequence: None,
             } if message.contains("durable commit-log retention horizon")
         ));
     }

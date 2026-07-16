@@ -65,6 +65,7 @@ impl MutationExecutionUnit {
         }
 
         let merged_query = authorization.merge_query(query);
+        self.active_state()?.usage.record_index_range_call();
         self.record_query_dependency(&merged_query)?;
         let documents = self.materialize_table_view(&query.table, check_cancel)?;
         let mut include_document =
@@ -179,6 +180,7 @@ impl MutationExecutionUnit {
             page_size: query.page_size,
             after: query.after.clone(),
         };
+        self.active_state()?.usage.record_index_range_call();
         let documents = self.materialize_table_view(&query.query.table, check_cancel)?;
         let mut include_document =
             |document: &Document| authorization.allows_document(&self.principal, document);
@@ -206,7 +208,13 @@ impl MutationExecutionUnit {
             return Ok(entry.current.clone());
         }
         drop(state);
-        self.snapshot.get(table, document_id)
+        let document = self.snapshot.get(table, document_id)?;
+        if let Some(document) = document.as_ref() {
+            self.active_state()?
+                .usage
+                .record_documents_read(std::iter::once(document));
+        }
+        Ok(document)
     }
 
     fn materialize_table_view(
@@ -218,6 +226,9 @@ impl MutationExecutionUnit {
         let mut documents =
             self.snapshot
                 .scan_table_matching_cancellable(table, check_cancel, |_document| Ok(true))?;
+        self.active_state()?
+            .usage
+            .record_documents_read(documents.iter());
         let state = self.active_state()?;
         let staged_ids = state
             .staged_writes

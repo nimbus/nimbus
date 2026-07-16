@@ -53,7 +53,7 @@ impl MutationAdmissionGate {
         let capacity = self.capacity.load(Ordering::Acquire).max(1);
         if state.queue.len() >= capacity {
             self.queue_rejection_count.fetch_add(1, Ordering::Relaxed);
-            return Err(Error::ResourceExhausted(format!(
+            return Err(Error::overloaded(format!(
                 "mutation admission gate full (capacity {capacity})"
             )));
         }
@@ -81,7 +81,7 @@ impl MutationAdmissionGate {
             self.shed_count.fetch_add(1, Ordering::Relaxed);
             return MutationAdmissionDecision::Reject {
                 request,
-                error: Error::ResourceExhausted("mutation shed by admission gate".to_string()),
+                error: Error::rejected_before_execution("mutation shed by admission gate"),
             };
         }
 
@@ -134,5 +134,10 @@ impl MutationAdmissionGate {
             .lock()
             .expect("mutation admission gate lock should not be poisoned");
         state.codel = CoDelState::new(target, interval);
+    }
+
+    #[cfg(test)]
+    pub(in crate::tenant) fn set_capacity_for_testing(&self, capacity: usize) {
+        self.capacity.store(capacity.max(1), Ordering::Release);
     }
 }

@@ -51,6 +51,19 @@ where
                     }
                     attempt += 1;
                 }
+                MutationOccConflictDecision::RestartTransaction { backoff } => {
+                    // Out-of-retention means the old snapshot is unusable.
+                    // The closure creates a fresh execution unit on every call.
+                    thread::sleep(backoff);
+                    if let Err(metrics_error) = engine.record_mutation_conflict_retry(tenant_id) {
+                        tracing::warn!(
+                            tenant = %tenant_id,
+                            error = %metrics_error,
+                            "failed to record mutation transaction restart"
+                        );
+                    }
+                    attempt += 1;
+                }
             },
         }
     }

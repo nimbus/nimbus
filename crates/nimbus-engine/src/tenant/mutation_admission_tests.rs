@@ -45,7 +45,7 @@ fn mutation_admission_gate_codel_sheds_stale_request_after_interval() {
         MutationAdmissionDecision::Reject { error, .. } => {
             assert!(matches!(
                 error,
-                Error::ResourceExhausted(message)
+                Error::RejectedBeforeExecution { message }
                     if message.contains("mutation shed by admission gate")
             ));
         }
@@ -68,4 +68,26 @@ fn mutation_admission_gate_codel_sheds_stale_request_after_interval() {
     assert_eq!(stats.shed_count, 1);
     assert_eq!(stats.queue_rejection_count, 0);
     assert_eq!(stats.codel_phase, MutationAdmissionPhase::Idle);
+}
+
+#[test]
+fn mutation_admission_gate_full_is_typed_overload() {
+    let gate = MutationAdmissionGate::new();
+    gate.set_capacity_for_testing(1);
+    let now = Instant::now();
+    gate.enqueue(queued_request(now))
+        .expect("first request should enqueue");
+
+    let error = gate
+        .enqueue(queued_request(now))
+        .expect_err("request beyond the bounded admission queue should fail");
+
+    assert!(matches!(
+        error,
+        Error::Overloaded { ref message }
+            if message.contains("mutation admission gate full (capacity 1)")
+    ));
+    let stats = gate.stats();
+    assert_eq!(stats.queue_depth, 1);
+    assert_eq!(stats.queue_rejection_count, 1);
 }

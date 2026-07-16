@@ -64,8 +64,22 @@ impl TenantRuntime {
         &self,
         request: QueuedMutationRequest,
     ) -> Result<bool> {
-        self.mutation_admission.enqueue(request)?;
+        if let Err(error) = self.mutation_admission.enqueue(request) {
+            self.maybe_report_overload_error(&error);
+            return Err(error);
+        }
         Ok(self.mutation_journal.try_start_worker())
+    }
+
+    fn maybe_report_overload_error(&self, error: &nimbus_core::Error) {
+        if error.is_overload_class() && self.commit_phases.record_overload_error() {
+            tracing::warn!(
+                tenant = %self.tenant_id,
+                error = %error,
+                retryability = ?error.retryability(),
+                "mutation overload-class error"
+            );
+        }
     }
 
     pub(crate) fn drain_mutation_admission_queue(&self) {
@@ -74,10 +88,12 @@ impl TenantRuntime {
                 MutationAdmissionDecision::Admit(request) => {
                     if let Err(enqueue_error) = self.mutation_journal.enqueue(request) {
                         let (request, error) = *enqueue_error;
+                        self.maybe_report_overload_error(&error);
                         let _ = request.response.send(Err(error));
                     }
                 }
                 MutationAdmissionDecision::Reject { request, error } => {
+                    self.maybe_report_overload_error(&error);
                     let _ = request.response.send(Err(error));
                 }
                 MutationAdmissionDecision::Empty => break,
@@ -127,6 +143,7 @@ impl TenantRuntime {
             match self.mutation_admission.pop_next_at(Instant::now()) {
                 MutationAdmissionDecision::Admit(request) => batch.push(request),
                 MutationAdmissionDecision::Reject { request, error } => {
+                    self.maybe_report_overload_error(&error);
                     let _ = request.response.send(Err(error));
                 }
                 MutationAdmissionDecision::Empty => break,
