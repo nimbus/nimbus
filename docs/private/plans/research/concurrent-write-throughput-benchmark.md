@@ -134,3 +134,33 @@ gate (#191) feeding back into queue depth. Fixed in #192 (window clamp 64 +
 batch-merge + 1-in-16 deterministic sampling + separate conflict-check
 split column). The instrumentation caught its own regression: working as
 designed.
+
+## PPSC2-C adaptive batching (2026-07-16, PR #196, main @24eb0a473)
+
+Adaptive journal batching landed: base drain cap stays 32; under observed
+backlog (journal + admission queue depth at drain time) the cap grows to
+`NIMBUS_MUTATION_JOURNAL_BATCH_MAX` (default 256), with an off-by-default
+Tokio-time coalescing window (`NIMBUS_MUTATION_JOURNAL_COALESCE_MICROS`).
+One durable append per drained batch is preserved; effective batch size is
+recorded in the phase metrics (`journal_batch_size_sum / journal_batch_count`)
+and reported by the bench split as "avg effective batch."
+
+Short ladder (SQLite, release, `NIMBUS_CWB_LADDER=1,32,256`, 5 rounds):
+
+| N | fixed cap (mean mut/s) | adaptive (mean mut/s) | Δ | avg batch | p50/p95/p99 µs (adaptive) |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 2,013 | 2,002 | −0.5% (CI overlap) | 1.00 | 489 / 557 / 686 |
+| 32 | 18,880 | 18,292 | −3.1% (CI overlap) | 31.55 | 1,697 / 2,092 / 4,664 |
+| 256 | 18,974 | **25,593** | **+34.9%** | 246.97 | 9,953 / 14,934 / 18,309 |
+
+The fsync-ratio gate: a fixed 32 cap needs ≥8 durable appends per 256-write
+burst; the adaptive committer averaged 246.97 writes per append ≈ **1.04
+appends per 256 writes**. Tail latency at N=256 *improved* (p50 13.5→10.0 ms)
+because requests spend less time queued behind fsyncs.
+
+Provider lane (PR #197): the deterministic postgres test
+`postgres_adaptive_batch_commits_a_burst_in_one_durable_round_trip` proves a
+paused 96-insert concurrent burst commits in **one durable network round
+trip** (>32 ops/RTT, past the fixed cap) while an idle arrival keeps the
+1-op/1-round-trip baseline — the ops-per-RTT lever the provider-arm analysis
+identified, live-Postgres-verified (PostgreSQL 17.9).
