@@ -1019,3 +1019,311 @@ mod tests {
         assert_eq!(decoded.paginated_windows.len(), 1);
     }
 }
+
+/// Property tests over the conflict predicate's interval edges (PPSC2
+/// criterion). Every case supplies the written document through
+/// `candidate_documents` so the decision comes from the document image, never
+/// from the fail-closed resolver fallback; a separate case pins that fallback.
+#[cfg(test)]
+mod interval_edge_proptests {
+    use proptest::prelude::*;
+    use serde_json::json;
+
+    use super::*;
+    use crate::{FilterOp, SequenceNumber, TableId, Timestamp, WriteOp};
+
+    const RANK_FIELD: &str = "rank";
+
+    fn ranked_document(table: &TableName, rank: Option<Value>) -> Document {
+        let mut fields = serde_json::Map::new();
+        if let Some(rank) = rank {
+            fields.insert(RANK_FIELD.to_string(), rank);
+        }
+        Document {
+            id: DocumentId::new(),
+            table: table.clone(),
+            creation_time: Timestamp::now(),
+            update_time: Timestamp::now(),
+            fields,
+            typed_fields: Default::default(),
+        }
+    }
+
+    fn insert_commit(table: &TableName, table_id: &TableId, document: &Document) -> CommitEntry {
+        CommitEntry {
+            sequence: SequenceNumber(1),
+            timestamp: Timestamp::now(),
+            writes: vec![WriteOp {
+                table: table.clone(),
+                table_id: table_id.clone(),
+                op_type: WriteOpType::Insert,
+                doc_id: document.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: None,
+                current: Some(document.clone()),
+            }],
+        }
+    }
+
+    fn index_range_dependencies(
+        table: &TableName,
+        table_id: &TableId,
+        start: Option<Value>,
+        end: Option<Value>,
+        start_inclusive: bool,
+        end_inclusive: bool,
+    ) -> DependencySet {
+        let mut dependencies = DependencySet::default();
+        dependencies.record_index_range(IndexRangeDependency {
+            table: table.clone(),
+            table_id: table_id.clone(),
+            index_id: IndexId::new(),
+            index_name: "by_rank".to_string(),
+            field: RANK_FIELD.to_string(),
+            start,
+            end,
+            start_inclusive,
+            end_inclusive,
+        });
+        dependencies
+    }
+
+    fn intersects(commit: &CommitEntry, dependencies: &DependencySet, document: &Document) -> bool {
+        commit_intersects_dependency_set(
+            commit,
+            dependencies,
+            std::slice::from_ref(document),
+            |_, _| Ok(None),
+        )
+    }
+
+    /// Independent oracle for a closed/open numeric interval.
+    fn interval_oracle(
+        value: i64,
+        start: Option<i64>,
+        end: Option<i64>,
+        start_inclusive: bool,
+        end_inclusive: bool,
+    ) -> bool {
+        let above_start = match start {
+            Some(start) if start_inclusive => value >= start,
+            Some(start) => value > start,
+            None => true,
+        };
+        let below_end = match end {
+            Some(end) if end_inclusive => value <= end,
+            Some(end) => value < end,
+            None => true,
+        };
+        above_start && below_end
+    }
+
+    proptest! {
+        /// Index-range decisions agree with the interval oracle across the
+        /// whole numeric lattice, including both-edge equality with every
+        /// inclusivity combination.
+        #[test]
+        fn index_range_numeric_edges_match_interval_oracle(
+            value in -8i64..=8,
+            bound_a in -8i64..=8,
+            bound_b in -8i64..=8,
+            start_bounded in any::<bool>(),
+            end_bounded in any::<bool>(),
+            start_inclusive in any::<bool>(),
+            end_inclusive in any::<bool>(),
+        ) {
+            let (start, end) = (bound_a.min(bound_b), bound_a.max(bound_b));
+            let start = start_bounded.then_some(start);
+            let end = end_bounded.then_some(end);
+            let table = TableName::new("ranked").expect("table should be valid");
+            let table_id = TableId::new();
+            let document = ranked_document(&table, Some(json!(value)));
+            let commit = insert_commit(&table, &table_id, &document);
+            let dependencies = index_range_dependencies(
+                &table,
+                &table_id,
+                start.map(|bound| json!(bound)),
+                end.map(|bound| json!(bound)),
+                start_inclusive,
+                end_inclusive,
+            );
+
+            prop_assert_eq!(
+                intersects(&commit, &dependencies, &document),
+                interval_oracle(value, start, end, start_inclusive, end_inclusive),
+            );
+        }
+
+        /// A value sitting exactly on a bound conflicts iff that bound is
+        /// inclusive — the half-open edge cannot leak a phantom in either
+        /// direction.
+        #[test]
+        fn index_range_equal_edge_follows_inclusivity(
+            value in -8i64..=8,
+            inclusive in any::<bool>(),
+            edge_is_start in any::<bool>(),
+        ) {
+            let table = TableName::new("ranked").expect("table should be valid");
+            let table_id = TableId::new();
+            let document = ranked_document(&table, Some(json!(value)));
+            let commit = insert_commit(&table, &table_id, &document);
+            let (start, end) = if edge_is_start {
+                (Some(json!(value)), None)
+            } else {
+                (None, Some(json!(value)))
+            };
+            let dependencies =
+                index_range_dependencies(&table, &table_id, start, end, inclusive, inclusive);
+
+            prop_assert_eq!(intersects(&commit, &dependencies, &document), inclusive);
+        }
+
+        /// Cross-type comparisons are unorderable, so the predicate must fail
+        /// closed and report a conflict regardless of the bounds.
+        #[test]
+        fn index_range_incomparable_types_fail_closed(
+            bound in -8i64..=8,
+            start_inclusive in any::<bool>(),
+            end_inclusive in any::<bool>(),
+        ) {
+            let table = TableName::new("ranked").expect("table should be valid");
+            let table_id = TableId::new();
+            let document = ranked_document(&table, Some(json!("not-a-number")));
+            let commit = insert_commit(&table, &table_id, &document);
+            let dependencies = index_range_dependencies(
+                &table,
+                &table_id,
+                Some(json!(bound)),
+                Some(json!(bound)),
+                start_inclusive,
+                end_inclusive,
+            );
+
+            prop_assert!(intersects(&commit, &dependencies, &document));
+        }
+
+        /// A document without the indexed field can never satisfy the range,
+        /// so it must not conflict no matter where the bounds sit.
+        #[test]
+        fn index_range_missing_field_never_matches(
+            bound in -8i64..=8,
+            start_inclusive in any::<bool>(),
+            end_inclusive in any::<bool>(),
+        ) {
+            let table = TableName::new("ranked").expect("table should be valid");
+            let table_id = TableId::new();
+            let document = ranked_document(&table, None);
+            let commit = insert_commit(&table, &table_id, &document);
+            let dependencies = index_range_dependencies(
+                &table,
+                &table_id,
+                Some(json!(bound)),
+                Some(json!(bound)),
+                start_inclusive,
+                end_inclusive,
+            );
+
+            prop_assert!(!intersects(&commit, &dependencies, &document));
+        }
+
+        /// Predicate-dependency filters (Gt/Gte/Lt/Lte) agree with the same
+        /// interval oracle at and around their comparison edges.
+        #[test]
+        fn predicate_filter_numeric_edges_match_interval_oracle(
+            value in -8i64..=8,
+            bound_a in -8i64..=8,
+            bound_b in -8i64..=8,
+            start_inclusive in any::<bool>(),
+            end_inclusive in any::<bool>(),
+        ) {
+            let (start, end) = (bound_a.min(bound_b), bound_a.max(bound_b));
+            let table = TableName::new("ranked").expect("table should be valid");
+            let table_id = TableId::new();
+            let document = ranked_document(&table, Some(json!(value)));
+            let commit = insert_commit(&table, &table_id, &document);
+            let mut dependencies = DependencySet::default();
+            dependencies.record_predicate(PredicateDependency {
+                table: table.clone(),
+                table_id: table_id.clone(),
+                filters: vec![
+                    Filter {
+                        field: RANK_FIELD.to_string(),
+                        op: if start_inclusive { FilterOp::Gte } else { FilterOp::Gt },
+                        value: json!(start),
+                    },
+                    Filter {
+                        field: RANK_FIELD.to_string(),
+                        op: if end_inclusive { FilterOp::Lte } else { FilterOp::Lt },
+                        value: json!(end),
+                    },
+                ],
+            });
+
+            prop_assert_eq!(
+                intersects(&commit, &dependencies, &document),
+                interval_oracle(value, Some(start), Some(end), start_inclusive, end_inclusive),
+            );
+        }
+
+        /// String bounds order lexicographically with the same edge
+        /// inclusivity semantics as numbers.
+        #[test]
+        fn index_range_string_equal_edge_follows_inclusivity(
+            raw in "[a-c]{1,3}",
+            inclusive in any::<bool>(),
+            edge_is_start in any::<bool>(),
+        ) {
+            let table = TableName::new("ranked").expect("table should be valid");
+            let table_id = TableId::new();
+            let document = ranked_document(&table, Some(json!(raw.clone())));
+            let commit = insert_commit(&table, &table_id, &document);
+            let (start, end) = if edge_is_start {
+                (Some(json!(raw)), None)
+            } else {
+                (None, Some(json!(raw)))
+            };
+            let dependencies =
+                index_range_dependencies(&table, &table_id, start, end, inclusive, inclusive);
+
+            prop_assert_eq!(intersects(&commit, &dependencies, &document), inclusive);
+        }
+    }
+
+    /// The resolver fallback itself stays fail-closed: with no document image
+    /// available anywhere, an unresolvable write conflicts.
+    #[test]
+    fn unresolvable_write_fails_closed_against_an_index_range() {
+        let table = TableName::new("ranked").expect("table should be valid");
+        let table_id = TableId::new();
+        let dependencies = index_range_dependencies(
+            &table,
+            &table_id,
+            Some(json!(0)),
+            Some(json!(0)),
+            true,
+            true,
+        );
+        let commit = CommitEntry {
+            sequence: SequenceNumber(1),
+            timestamp: Timestamp::now(),
+            writes: vec![WriteOp {
+                table: table.clone(),
+                table_id,
+                op_type: WriteOpType::Update,
+                doc_id: DocumentId::new(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: None,
+                current: None,
+            }],
+        };
+
+        assert!(commit_intersects_dependency_set(
+            &commit,
+            &dependencies,
+            &[],
+            |_, _| Ok(None),
+        ));
+    }
+}
