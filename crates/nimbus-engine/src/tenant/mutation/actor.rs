@@ -43,6 +43,42 @@ pub(crate) fn assign_and_validate(
         .collect()
 }
 
+/// Cheap always-on guard at the append boundary. An actor may assign only the
+/// exact contiguous suffix following the tenant's prior durable sequence.
+pub(crate) fn validate_append_sequences(
+    previous: SequenceNumber,
+    appended: impl IntoIterator<Item = SequenceNumber>,
+) -> Result<()> {
+    let mut expected = previous;
+    for actual in appended {
+        expected = SequenceNumber(
+            expected
+                .0
+                .checked_add(1)
+                .ok_or_else(|| Error::Internal("tenant commit sequence exhausted".to_string()))?,
+        );
+        if actual != expected {
+            return Err(Error::Internal(format!(
+                "committer append sequence invariant violated: expected {expected} after {previous}, got {actual}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod serial_invariant_tests {
+    use super::*;
+
+    #[test]
+    fn append_validation_rejects_an_interior_sequence_hole() {
+        let error =
+            validate_append_sequences(SequenceNumber(3), [SequenceNumber(4), SequenceNumber(6)])
+                .expect_err("an out-of-order append must fail before persistence");
+        assert!(matches!(error, Error::Internal(message) if message.contains("expected 5")));
+    }
+}
+
 pub(crate) enum CommitterMessage {
     QueuedBatch { engine: Arc<Engine> },
     DirectCommit(CommitterJob),
@@ -202,6 +238,46 @@ impl CommitterActor {
                 }
             }
         }
+    }
+
+    /// Runs `after_commit` on the caller before the actor accepts its next
+    /// message. This is used only for non-reentrant subscription/trigger
+    /// enqueueing; arbitrary observer callbacks run after this boundary.
+    pub(crate) fn submit_blocking_then<T, F, A>(
+        &self,
+        wrap: impl FnOnce(CommitterJob) -> CommitterMessage,
+        task: F,
+        after_commit: A,
+    ) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T> + Send + 'static,
+        A: FnOnce(&T),
+    {
+        let (response_tx, response_rx) = std::sync::mpsc::sync_channel(0);
+        let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(0);
+        self.send_blocking(wrap(Box::new(move || {
+            if response_tx.send(task()).is_ok() {
+                let _ = ack_rx.recv();
+            }
+        })))?;
+        let result = response_rx.recv().map_err(|_| {
+            Error::Internal("tenant committer actor dropped a blocking response".to_string())
+        })?;
+        struct AckOnDrop(Option<std::sync::mpsc::SyncSender<()>>);
+        impl Drop for AckOnDrop {
+            fn drop(&mut self) {
+                if let Some(sender) = self.0.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+        let ack = AckOnDrop(Some(ack_tx));
+        if let Ok(value) = &result {
+            after_commit(value);
+        }
+        drop(ack);
+        result
     }
 
     pub(crate) async fn submit_async<T, F>(

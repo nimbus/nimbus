@@ -63,6 +63,7 @@ pub(crate) use self::mutation::MutationJournalPauseHandle;
 use self::mutation::MutationJournalPauseState;
 pub(crate) use self::mutation::{
     CommitterActor, CommitterMessage, assign_and_validate, run_committer_actor,
+    validate_append_sequences,
 };
 use self::mutation::{MutationAdmissionDecision, MutationAdmissionGate, MutationJournalState};
 pub use self::mutation::{MutationAdmissionPhase, MutationAdmissionStats, MutationJournalStats};

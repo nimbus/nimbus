@@ -62,28 +62,40 @@ impl TenantRuntime {
         result
     }
 
-    pub(crate) fn submit_direct_committer<T, F>(&self, task: F) -> Result<T>
+    pub(crate) fn submit_direct_committer_then<T, F, A>(
+        &self,
+        task: F,
+        after_commit: A,
+    ) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce() -> Result<T> + Send + 'static,
+        A: FnOnce(&T),
     {
-        let result = self
-            .committer
-            .submit_blocking(CommitterMessage::DirectCommit, task);
+        let result =
+            self.committer
+                .submit_blocking_then(CommitterMessage::DirectCommit, task, after_commit);
         if let Err(error) = &result {
             self.maybe_report_overload_error(error);
         }
         result
     }
 
-    pub(crate) fn submit_execution_unit_committer<T, F>(&self, task: F) -> Result<T>
+    pub(crate) fn submit_execution_unit_committer_then<T, F, A>(
+        &self,
+        task: F,
+        after_commit: A,
+    ) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce() -> Result<T> + Send + 'static,
+        A: FnOnce(&T),
     {
-        let result = self
-            .committer
-            .submit_blocking(CommitterMessage::ExecutionUnitCommit, task);
+        let result = self.committer.submit_blocking_then(
+            CommitterMessage::ExecutionUnitCommit,
+            task,
+            after_commit,
+        );
         if let Err(error) = &result {
             self.maybe_report_overload_error(error);
         }

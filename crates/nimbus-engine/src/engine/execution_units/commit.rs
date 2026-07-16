@@ -76,71 +76,86 @@ impl MutationExecutionUnit {
             }
             let runtime_for_commit = self.runtime.clone();
             let engine_for_commit = self.engine.clone();
+            let engine_for_fanout = self.engine.clone();
+            let runtime_for_fanout = self.runtime.clone();
             let schema_epoch_snapshot = self.schema_epoch_snapshot.clone();
             let schema_snapshot = self.schema_snapshot.clone();
-            let (commit, phases) = self.runtime.submit_execution_unit_committer(move || {
-                let runtime = runtime_for_commit;
-                let engine = engine_for_commit;
-                let queue_wait_started = Instant::now();
-                phases.queue_wait = queue_wait_started.elapsed();
-                let conflict_check_started = Instant::now();
-                ensure_schema_unchanged(
-                    &runtime,
-                    &schema_epoch_snapshot,
-                    &schema_snapshot,
-                    &prepared_commit.read_set,
-                )?;
-                ensure_no_conflicts(
-                    &runtime,
-                    prepared_commit.snapshot_sequence,
-                    &prepared_commit.read_set,
-                )?;
-                phases.conflict_check = conflict_check_started.elapsed();
-                engine.wait_for_commit_fault(labels::POST_VALIDATE_PRE_STAGE)?;
-                // Staging and persistence are one storage call today, so this
-                // remains the closest pre-persist boundary. PreparedCommit now
-                // carries the exact storage payload without changing that call.
-                engine.wait_for_commit_fault(labels::PRE_PERSIST)?;
-                let expected_sequence =
-                    crate::tenant::assign_and_validate(runtime.durable_head(), 1)?[0];
-                let commit_timestamp = runtime.assign_commit_timestamp();
-                prepared_commit.stamp_for_assignment(commit_timestamp)?;
-                let (writes, schedule_ops, trigger_write_origin) =
-                    prepared_commit.execution_unit_effects()?;
-                let durable_append_started = Instant::now();
-                // The current storage contract atomically combines persistence
-                // and storage-layer application. Until that seam is split, the
-                // full call is attributed to durable append; `apply` below is
-                // engine cache/bookkeeping work. Direct commits have the same
-                // intentional collapse.
-                let write_log_guard = runtime.arm_write_log_append();
-                let commit = runtime.store.apply_execution_unit_batch_with_origin(
-                    writes,
-                    schedule_ops,
-                    trigger_write_origin,
-                    Some(commit_timestamp),
-                )?;
-                if let Some(commit) = &commit {
-                    debug_assert_eq!(commit.sequence, expected_sequence);
-                }
-                phases.durable_append = durable_append_started.elapsed();
-                engine.wait_for_commit_fault(labels::DURABLE_BEFORE_PUBLISH)?;
-                if let Some(commit) = &commit {
-                    let publish_started = Instant::now();
-                    runtime.stage_pending_write_log_commits([commit.clone()], runtime.store.now());
-                    runtime.publish_write_log_through(commit.sequence);
-                    runtime.mark_durable_head(commit.sequence);
-                    phases.add_publish(publish_started.elapsed());
-                    let apply_started = Instant::now();
-                    runtime.invalidate_document_cache_for_commit(commit);
-                    phases.apply = apply_started.elapsed();
-                    let publish_started = Instant::now();
-                    runtime.mark_applied_head(commit.sequence);
-                    phases.add_publish(publish_started.elapsed());
-                }
-                write_log_guard.disarm();
-                Ok((commit, phases))
-            })?;
+            let (commit, phases) = self.runtime.submit_execution_unit_committer_then(
+                move || {
+                    let runtime = runtime_for_commit;
+                    let engine = engine_for_commit;
+                    let queue_wait_started = Instant::now();
+                    phases.queue_wait = queue_wait_started.elapsed();
+                    let conflict_check_started = Instant::now();
+                    ensure_schema_unchanged(
+                        &runtime,
+                        &schema_epoch_snapshot,
+                        &schema_snapshot,
+                        &prepared_commit.read_set,
+                    )?;
+                    ensure_no_conflicts(
+                        &runtime,
+                        prepared_commit.snapshot_sequence,
+                        &prepared_commit.read_set,
+                    )?;
+                    phases.conflict_check = conflict_check_started.elapsed();
+                    engine.wait_for_commit_fault(labels::POST_VALIDATE_PRE_STAGE)?;
+                    // Staging and persistence are one storage call today, so this
+                    // remains the closest pre-persist boundary. PreparedCommit now
+                    // carries the exact storage payload without changing that call.
+                    engine.wait_for_commit_fault(labels::PRE_PERSIST)?;
+                    let previous_sequence = runtime.durable_head();
+                    let expected_sequence =
+                        crate::tenant::assign_and_validate(previous_sequence, 1)?[0];
+                    let commit_timestamp = runtime.assign_commit_timestamp();
+                    prepared_commit.stamp_for_assignment(commit_timestamp)?;
+                    let (writes, schedule_ops, trigger_write_origin) =
+                        prepared_commit.execution_unit_effects()?;
+                    let durable_append_started = Instant::now();
+                    // The current storage contract atomically combines persistence
+                    // and storage-layer application. Until that seam is split, the
+                    // full call is attributed to durable append; `apply` below is
+                    // engine cache/bookkeeping work. Direct commits have the same
+                    // intentional collapse.
+                    let write_log_guard = runtime.arm_write_log_append();
+                    let commit = runtime.store.apply_execution_unit_batch_with_origin(
+                        writes,
+                        schedule_ops,
+                        trigger_write_origin,
+                        Some(commit_timestamp),
+                    )?;
+                    if let Some(commit) = &commit {
+                        crate::tenant::validate_append_sequences(
+                            previous_sequence,
+                            [commit.sequence],
+                        )?;
+                        debug_assert_eq!(commit.sequence, expected_sequence);
+                    }
+                    phases.durable_append = durable_append_started.elapsed();
+                    engine.wait_for_commit_fault(labels::DURABLE_BEFORE_PUBLISH)?;
+                    if let Some(commit) = &commit {
+                        let publish_started = Instant::now();
+                        runtime
+                            .stage_pending_write_log_commits([commit.clone()], runtime.store.now());
+                        runtime.publish_write_log_through(commit.sequence);
+                        runtime.mark_durable_head(commit.sequence);
+                        phases.add_publish(publish_started.elapsed());
+                        let apply_started = Instant::now();
+                        runtime.invalidate_document_cache_for_commit(commit);
+                        phases.apply = apply_started.elapsed();
+                        let publish_started = Instant::now();
+                        runtime.mark_applied_head(commit.sequence);
+                        phases.add_publish(publish_started.elapsed());
+                    }
+                    write_log_guard.disarm();
+                    Ok((commit, phases))
+                },
+                |(commit, _)| {
+                    if let Some(commit) = commit {
+                        engine_for_fanout.process_commit_fanout(runtime_for_fanout, commit);
+                    }
+                },
+            )?;
             self.engine
                 .wait_for_commit_fault(labels::POST_PUBLISH_PRE_FANOUT)?;
             if commit.is_some() {
@@ -157,7 +172,8 @@ impl MutationExecutionUnit {
         let commit = result?;
 
         if let Some(commit) = &commit {
-            self.engine.process_commit(self.runtime.clone(), commit);
+            self.engine
+                .notify_committed_mutation_observers(self.runtime.as_ref(), commit);
         }
         if has_scheduled_insert {
             self.engine.wake_scheduler();

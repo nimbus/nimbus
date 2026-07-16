@@ -152,7 +152,10 @@ impl Engine {
         metrics.record_dispatch_stats(stats);
     }
 
-    pub(crate) fn process_commit(&self, runtime: Arc<TenantRuntime>, commit: &CommitEntry) {
+    /// Enqueues subscription and trigger work without invoking extension
+    /// callbacks. The committer uses this as its ordered publication boundary;
+    /// observer callbacks remain outside it so they may safely write again.
+    pub(crate) fn process_commit_fanout(&self, runtime: Arc<TenantRuntime>, commit: &CommitEntry) {
         let candidate_documents = candidate_documents_for_commit(commit);
         let subscription_ids = runtime
             .subscriptions
@@ -166,10 +169,25 @@ impl Engine {
             self.dispatch_or_enqueue_subscription_work(runtime.clone(), work);
         }
         self.dispatch_or_enqueue_trigger_candidates(runtime.clone(), vec![commit.clone()]);
-        self.notify_committed_mutation_observers(runtime.as_ref(), commit);
     }
 
     pub(in crate::engine) fn process_applied_commit_batch(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        applied: &[CommitEntry],
+        commit_identity: Option<CommitEntry>,
+        emit_trigger_candidates: bool,
+    ) {
+        self.process_applied_commit_batch_fanout(
+            runtime.clone(),
+            applied,
+            commit_identity,
+            emit_trigger_candidates,
+        );
+        self.notify_applied_commit_batch_observers(runtime, applied);
+    }
+
+    pub(in crate::engine) fn process_applied_commit_batch_fanout(
         &self,
         runtime: Arc<TenantRuntime>,
         applied: &[CommitEntry],
@@ -227,6 +245,13 @@ impl Engine {
         if emit_trigger_candidates {
             self.dispatch_or_enqueue_trigger_candidates(runtime.clone(), applied.to_vec());
         }
+    }
+
+    pub(in crate::engine) fn notify_applied_commit_batch_observers(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        applied: &[CommitEntry],
+    ) {
         for commit in applied {
             self.notify_committed_mutation_observers(runtime.as_ref(), commit);
         }

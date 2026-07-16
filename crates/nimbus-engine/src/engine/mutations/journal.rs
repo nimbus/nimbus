@@ -147,9 +147,6 @@ impl Engine {
 
         match batch_result {
             Ok(Ok(batch_result)) => {
-                for pending_response in batch_result.responses {
-                    let _ = pending_response.response.send(Ok(pending_response.result));
-                }
                 // Real document commits only: this batch is drained from
                 // the mutation admission queue, never mixed with a
                 // zero-write commit from another source (the
@@ -160,12 +157,16 @@ impl Engine {
                 // provider catch-up path requires.
                 let commit_identity =
                     (batch_result.applied.len() == 1).then(|| batch_result.applied[0].clone());
-                self.process_applied_commit_batch(
+                self.process_applied_commit_batch_fanout(
                     runtime.clone(),
                     &batch_result.applied,
                     commit_identity,
                     true,
                 );
+                for pending_response in batch_result.responses {
+                    let _ = pending_response.response.send(Ok(pending_response.result));
+                }
+                self.notify_applied_commit_batch_observers(runtime, &batch_result.applied);
             }
             Ok(Err(error)) => {
                 runtime.record_mutation_worker_failure();
@@ -365,6 +366,10 @@ fn process_queued_mutation_batch(
     }
 
     let durable_append_started = Instant::now();
+    crate::tenant::validate_append_sequences(
+        runtime.durable_head(),
+        records.iter().map(|record| record.sequence),
+    )?;
     let write_log_guard = runtime.arm_write_log_append();
     if let Err(error) = runtime.store.append_durable_records_batch(&records) {
         let mapped_error = map_durable_journal_append_error(&error);
