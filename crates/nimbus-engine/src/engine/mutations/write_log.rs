@@ -210,6 +210,36 @@ impl WriteLog {
         self.stage_entries(entries);
     }
 
+    /// Removes an assigned suffix after storage proves that append never
+    /// advanced. Ambiguous exits keep the suffix and mark coverage unknown.
+    pub(crate) fn discard_unpersisted_suffix(&self, first: SequenceNumber) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("write-log lock should not be poisoned");
+        let removed = state
+            .pending
+            .range(first..)
+            .map(|(sequence, entry)| (*sequence, entry.clone()))
+            .collect::<Vec<_>>();
+        for (sequence, entry) in removed {
+            state.pending.remove(&sequence);
+            state.accounted_bytes = state.accounted_bytes.saturating_sub(entry.accounted_bytes);
+            if let WindowChange::WholeTables(tables) = &entry.change {
+                for table in tables.iter() {
+                    if let Some(history) = state.schema_epoch_history.get_mut(table) {
+                        history.remove(&sequence);
+                    }
+                }
+            }
+        }
+        state.assigned_through = state
+            .pending
+            .get_max()
+            .map_or(state.published_through, |(sequence, _)| *sequence);
+        state.covered_through = state.covered_through.min(state.assigned_through);
+    }
+
     /// Stages a zero-write schema/table-lifecycle record as a dedicated
     /// whole-table marker. Inert zero-write records only advance coverage.
     pub(crate) fn stage_zero_write_record(

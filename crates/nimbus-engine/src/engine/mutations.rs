@@ -4,7 +4,7 @@ mod commit_processing;
 mod direct;
 mod journal;
 pub(in crate::engine) mod phase_metrics;
-pub(in crate::engine) mod prepared;
+pub(crate) mod prepared;
 mod shadow_conflicts;
 pub(crate) mod write_log;
 

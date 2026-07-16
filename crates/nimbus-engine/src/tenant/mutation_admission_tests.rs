@@ -2,19 +2,20 @@ use super::*;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use nimbus_core::{Error, Mutation, PrincipalContext, TableName};
+use nimbus_core::{DependencySet, Error, SequenceNumber};
 use tokio::sync::oneshot;
 
 fn queued_request(enqueued_at: Instant) -> QueuedMutationRequest {
     let (response, _response_rx) = oneshot::channel();
     QueuedMutationRequest {
-        mutation: Mutation::Insert {
-            table: TableName::new("tasks").expect("table name should build"),
-            id: None,
-            fields: serde_json::Map::new(),
-        },
-        principal: PrincipalContext::anonymous(),
-        scheduled_execution_id: None,
+        prepared_commit: crate::engine::PreparedCommit::for_journal(
+            SequenceNumber(0),
+            Vec::new(),
+            None,
+        ),
+        conflict_dependencies: DependencySet::default(),
+        result: QueuedMutationResult::Immediate(None),
+        prepare_nanos: 0,
         cancelled: Arc::new(AtomicBool::new(false)),
         _operation: TenantOperationGuard {
             lifecycle: Arc::new(TenantLifecycle::new()),

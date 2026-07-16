@@ -307,6 +307,10 @@ impl TenantRuntime {
         self.write_log.stage_pending(commits, observed_at);
     }
 
+    pub(crate) fn discard_unpersisted_write_log_suffix(&self, first: SequenceNumber) {
+        self.write_log.discard_unpersisted_suffix(first);
+    }
+
     pub(crate) fn publish_write_log_through(&self, applied_head: SequenceNumber) {
         let reader_frontier = self
             .subscription_registry()

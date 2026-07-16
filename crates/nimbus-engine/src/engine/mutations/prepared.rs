@@ -96,17 +96,17 @@ pub(in crate::engine) enum PreparedSerializedEffects {
 
 /// Engine-owned representation of a mutation after planning and before persistence.
 #[derive(Debug, Clone)]
-pub(in crate::engine) struct PreparedCommit {
+pub(crate) struct PreparedCommit {
     /// Sequence context observed while preparing the mutation. Path A records the durable
     /// head under its exclusive sequence guard and path B records the durable head before its
     /// lock-serialized typed call; neither uses the value for OCC. Path C is fully populated
     /// with the applied sequence of the opened read snapshot and uses it as the OCC pin.
-    pub(in crate::engine) snapshot_sequence: SequenceNumber,
+    pub(crate) snapshot_sequence: SequenceNumber,
     /// Dependencies used for assign-time conflict detection. This is empty on paths A and B:
     /// both serialize through the per-tenant sequence lock, and path A additionally plans each
     /// batch in strict order against an overlay. Path C is fully populated with its read and
     /// write dependencies.
-    pub(in crate::engine) read_set: DependencySet,
+    pub(crate) read_set: DependencySet,
     /// Engine-visible write intents. Path A is fully populated, including stable table identity
     /// and both document images. Path B is intentionally sparse: storage resolves table identity
     /// and the previous image under its lock, while an update's current value is the incoming
@@ -128,7 +128,24 @@ pub(in crate::engine) struct PreparedCommit {
 }
 
 impl PreparedCommit {
-    pub(in crate::engine) fn for_journal(
+    pub(crate) fn scheduled_execution_id(&self) -> Option<&str> {
+        match &self.serialized_effects {
+            PreparedSerializedEffects::Journal {
+                scheduled_execution_id,
+            } => scheduled_execution_id.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn is_empty_journal(&self) -> bool {
+        self.write_set.is_empty()
+            && matches!(
+                self.serialized_effects,
+                PreparedSerializedEffects::Journal { .. }
+            )
+    }
+
+    pub(crate) fn for_journal(
         snapshot_sequence: SequenceNumber,
         writes: Vec<WriteOp>,
         scheduled_execution_id: Option<String>,
@@ -289,7 +306,7 @@ impl PreparedCommit {
         prepared
     }
 
-    pub(in crate::engine) fn into_record(
+    pub(crate) fn into_record(
         mut self,
         sequence: SequenceNumber,
         timestamp: Timestamp,

@@ -2,8 +2,10 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
-use nimbus_core::{DocumentId, Mutation, PrincipalContext, Result, SequenceNumber};
+use nimbus_core::{DependencySet, DocumentId, Result, SequenceNumber};
 use tokio::sync::oneshot;
+
+use crate::engine::PreparedCommit;
 
 use super::super::TenantOperationGuard;
 
@@ -16,9 +18,10 @@ pub(crate) enum QueuedMutationResult {
 }
 
 pub(crate) struct QueuedMutationRequest {
-    pub mutation: Mutation,
-    pub principal: PrincipalContext,
-    pub scheduled_execution_id: Option<String>,
+    pub prepared_commit: PreparedCommit,
+    pub conflict_dependencies: DependencySet,
+    pub result: QueuedMutationResult,
+    pub prepare_nanos: u64,
     pub cancelled: Arc<AtomicBool>,
     pub _operation: TenantOperationGuard,
     pub response: oneshot::Sender<Result<QueuedMutationResult>>,

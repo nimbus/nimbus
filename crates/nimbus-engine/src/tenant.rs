@@ -1,9 +1,10 @@
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
-use nimbus_core::{Result, Schema, TenantId, Timestamp};
+use nimbus_core::{Result, Schema, TableId, TableName, TenantId, Timestamp};
 use nimbus_storage::LibsqlReplicaFreshnessStats;
 use serde::Serialize;
 
@@ -116,6 +117,7 @@ pub struct TenantRuntime {
     committer: Arc<CommitterActor>,
     write_rate: TenantWriteRateLimiter,
     last_assigned_commit_timestamp: AtomicU64,
+    prepared_table_ids: Mutex<HashMap<TableName, TableId>>,
     #[cfg(any(test, feature = "test-hooks"))]
     subscription_bootstrap_pause: Arc<MutationJournalPauseState>,
 }
@@ -191,6 +193,7 @@ impl TenantRuntime {
             committer: Arc::new(CommitterActor::new()),
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
+            prepared_table_ids: Mutex::new(HashMap::new()),
             #[cfg(any(test, feature = "test-hooks"))]
             subscription_bootstrap_pause: Arc::new(MutationJournalPauseState::default()),
         }
@@ -296,6 +299,24 @@ impl TenantRuntime {
 
     pub(crate) fn store(&self) -> &TenantPersistence {
         &self.store
+    }
+
+    /// Reserves one stable identity while concurrent prepares race to create a
+    /// schemaless table. The durable table identity wins after the first apply.
+    pub(crate) fn prepared_table_id(&self, table: &TableName, durable: Option<TableId>) -> TableId {
+        if let Some(table_id) = durable {
+            self.prepared_table_ids
+                .lock()
+                .expect("prepared table-id lock should not be poisoned")
+                .insert(table.clone(), table_id.clone());
+            return table_id;
+        }
+        self.prepared_table_ids
+            .lock()
+            .expect("prepared table-id lock should not be poisoned")
+            .entry(table.clone())
+            .or_default()
+            .clone()
     }
 
     pub(crate) fn read_storage(&self) -> &TenantPersistenceExecutor {
