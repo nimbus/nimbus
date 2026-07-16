@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use nimbus_core::{CommitEntry, DependencySet, Error, Result, SequenceNumber, Timestamp};
+use nimbus_core::{CommitEntry, DependencySet, Error, Result, SequenceNumber};
 
 use super::super::mutations::phase_metrics::{CommitPhaseDurations, maybe_warn_wide_read_set};
 use super::super::mutations::prepared::PreparedCommit;
@@ -20,22 +20,11 @@ impl Drop for FinalizationGuard<'_> {
 
 impl MutationExecutionUnit {
     pub fn commit(&self) -> Result<Option<CommitEntry>> {
-        self.commit_with_timestamp(None)
-    }
-
-    pub(super) fn commit_at(&self, commit_timestamp: Timestamp) -> Result<Option<CommitEntry>> {
-        self.commit_with_timestamp(Some(commit_timestamp))
-    }
-
-    fn commit_with_timestamp(
-        &self,
-        commit_timestamp: Option<Timestamp>,
-    ) -> Result<Option<CommitEntry>> {
         let total_started = Instant::now();
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
         let finalization_guard = FinalizationGuard { unit: self };
         let prepare_started = Instant::now();
-        let prepared_commit = {
+        let mut prepared_commit = {
             let mut state = self.active_state()?;
             state.lifecycle = ExecutionUnitLifecycle::Finalizing;
             let writes = self.build_resolved_writes(&state);
@@ -48,6 +37,7 @@ impl MutationExecutionUnit {
                 writes,
                 schedule_ops,
                 state.trigger_write_origin.clone(),
+                state.deferred_server_timestamp_fields.clone(),
             )
         };
         let mut phases = CommitPhaseDurations {
@@ -80,6 +70,8 @@ impl MutationExecutionUnit {
                 // remains the closest pre-persist boundary. PreparedCommit now
                 // carries the exact storage payload without changing that call.
                 self.engine.wait_for_commit_fault(labels::PRE_PERSIST)?;
+                let commit_timestamp = self.runtime.assign_commit_timestamp();
+                prepared_commit.stamp_for_assignment(commit_timestamp)?;
                 let (writes, schedule_ops, trigger_write_origin) =
                     prepared_commit.execution_unit_effects()?;
                 let durable_append_started = Instant::now();
@@ -93,7 +85,7 @@ impl MutationExecutionUnit {
                     writes,
                     schedule_ops,
                     trigger_write_origin,
-                    commit_timestamp,
+                    Some(commit_timestamp),
                 )?;
                 phases.durable_append = durable_append_started.elapsed();
                 self.engine

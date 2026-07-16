@@ -2,7 +2,7 @@ use std::{future, sync::Arc, time::Instant};
 
 use nimbus_core::{
     AccessAction, Document, DocumentId, Mutation, PrincipalContext, Result, Schema, TableName,
-    TenantId,
+    TenantId, Timestamp,
 };
 
 use crate::engine::tenants::with_tenant_runtime_operation;
@@ -119,8 +119,8 @@ impl Engine {
             .transpose()?
             .unwrap_or_default();
         let document = match document_id {
-            Some(document_id) => Document::with_id(document_id, table, fields),
-            None => Document::with_id(self.next_document_id(), table, fields),
+            Some(document_id) => Document::with_id_at(document_id, table, fields, Timestamp(0)),
+            None => Document::with_id_at(self.next_document_id(), table, fields, Timestamp(0)),
         };
         enforce_mutation_authorization(
             table_schema.as_ref(),
@@ -140,15 +140,47 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        |store, prepared| store.insert(prepared.direct_insert_document()?),
+                        |store, prepared, timestamp| {
+                            store
+                                .apply_execution_unit_batch_with_origin(
+                                    &[nimbus_storage::ResolvedWrite::Insert {
+                                        document: prepared.direct_insert_document()?.clone(),
+                                        indexes: Vec::new(),
+                                        resource_path_binding: None,
+                                    }],
+                                    &[],
+                                    None,
+                                    Some(timestamp),
+                                )?
+                                .ok_or_else(|| {
+                                    nimbus_core::Error::Internal(
+                                        "direct insert should produce a commit".to_string(),
+                                    )
+                                })
+                        },
                     )?;
                 } else {
                     self.run_store_mutation(
                         runtime,
                         prepared_commit,
                         profile,
-                        |store, prepared| {
-                            store.insert_with_indexes(prepared.direct_insert_document()?, &indexes)
+                        |store, prepared, timestamp| {
+                            store
+                                .apply_execution_unit_batch_with_origin(
+                                    &[nimbus_storage::ResolvedWrite::Insert {
+                                        document: prepared.direct_insert_document()?.clone(),
+                                        indexes,
+                                        resource_path_binding: None,
+                                    }],
+                                    &[],
+                                    None,
+                                    Some(timestamp),
+                                )?
+                                .ok_or_else(|| {
+                                    nimbus_core::Error::Internal(
+                                        "direct indexed insert should produce a commit".to_string(),
+                                    )
+                                })
                         },
                     )?;
                 }
@@ -160,7 +192,7 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        |store, prepared| {
+                        |store, prepared, _timestamp| {
                             store.insert_once(
                                 prepared.direct_insert_document()?,
                                 Some(execution_id.as_str()),
@@ -172,7 +204,7 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        |store, prepared| {
+                        |store, prepared, _timestamp| {
                             store.insert_with_indexes_once(
                                 prepared.direct_insert_document()?,
                                 &indexes,
@@ -214,7 +246,7 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared| {
+                        move |store, prepared, _timestamp| {
                             let (table, document_id, patch) = prepared.direct_update_parts()?;
                             store.update_validated(
                                 table,
@@ -242,7 +274,7 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared| {
+                        move |store, prepared, _timestamp| {
                             let (table, document_id, patch) = prepared.direct_update_parts()?;
                             store.update_validated_once(
                                 table,
@@ -275,7 +307,7 @@ impl Engine {
                             runtime,
                             prepared_commit,
                             profile,
-                            move |store, prepared| {
+                            move |store, prepared, _timestamp| {
                                 let (table, document_id, patch) = prepared.direct_update_parts()?;
                                 store.update_with_indexes_validated(
                                     table,
@@ -304,7 +336,7 @@ impl Engine {
                             runtime,
                             prepared_commit,
                             profile,
-                            move |store, prepared| {
+                            move |store, prepared, _timestamp| {
                                 let (table, document_id, patch) = prepared.direct_update_parts()?;
                                 store.update_with_indexes_validated_once(
                                     table,
@@ -336,7 +368,7 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared| {
+                        move |store, prepared, _timestamp| {
                             let (table, document_id, patch) = prepared.direct_update_parts()?;
                             store.update_validated(
                                 table,
@@ -362,7 +394,7 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared| {
+                        move |store, prepared, _timestamp| {
                             let (table, document_id, patch) = prepared.direct_update_parts()?;
                             store.update_validated_once(
                                 table,
@@ -414,7 +446,7 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared| {
+                        move |store, prepared, _timestamp| {
                             let (table, document_id) = prepared.direct_delete_parts()?;
                             store.delete_validated_returning_document(
                                 table,
@@ -438,7 +470,7 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared| {
+                        move |store, prepared, _timestamp| {
                             let (table, document_id) = prepared.direct_delete_parts()?;
                             store.delete_with_indexes_validated_returning_document(
                                 table,
@@ -467,7 +499,7 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared| {
+                        move |store, prepared, _timestamp| {
                             let (table, document_id) = prepared.direct_delete_parts()?;
                             store.delete_validated_once(
                                 table,
@@ -492,7 +524,7 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared| {
+                        move |store, prepared, _timestamp| {
                             let (table, document_id) = prepared.direct_delete_parts()?;
                             store.delete_with_indexes_validated_once(
                                 table,

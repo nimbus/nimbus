@@ -8,7 +8,7 @@ use std::{
 
 use nimbus_core::{
     AccessAction, CommitEntry, DependencySet, Document, DocumentId, Error, IdSource, Mutation,
-    Result, SequenceNumber, TableId, TableName, TenantId,
+    Result, SequenceNumber, TableId, TableName, TenantId, Timestamp,
 };
 use tokio::sync::oneshot;
 use tracing::warn;
@@ -278,7 +278,7 @@ fn process_queued_mutation_batch(
         let serialize_started = Instant::now();
         let record = match prepared_commit.into_record(
             nimbus_core::SequenceNumber(next_sequence),
-            runtime.store.now(),
+            runtime.assign_commit_timestamp(),
         ) {
             Ok(record) => record,
             Err(error) => {
@@ -451,8 +451,15 @@ fn plan_queued_mutation_request(
                 return None;
             }
             let document = match id {
-                Some(document_id) => Document::with_id(document_id, table.clone(), fields),
-                None => Document::with_id(id_source.next_document_id(), table.clone(), fields),
+                Some(document_id) => {
+                    Document::with_id_at(document_id, table.clone(), fields, Timestamp(0))
+                }
+                None => Document::with_id_at(
+                    id_source.next_document_id(),
+                    table.clone(),
+                    fields,
+                    Timestamp(0),
+                ),
             };
             if let Err(error) = enforce_mutation_authorization(
                 table_schema.as_ref(),

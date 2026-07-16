@@ -18,18 +18,6 @@ impl TenantPersistence {
         })
     }
 
-    pub(crate) fn insert(&self, document: &Document) -> Result<CommitEntry> {
-        match_tenant_persistence!(self, |store| store.insert(document))
-    }
-
-    pub(crate) fn insert_with_indexes(
-        &self,
-        document: &Document,
-        indexes: &[nimbus_core::IndexDefinition],
-    ) -> Result<CommitEntry> {
-        match_tenant_persistence!(self, |store| store.insert_with_indexes(document, indexes))
-    }
-
     pub(crate) fn insert_once(
         &self,
         document: &Document,

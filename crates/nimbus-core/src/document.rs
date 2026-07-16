@@ -30,12 +30,21 @@ impl Document {
         table: TableName,
         fields: serde_json::Map<String, Value>,
     ) -> Self {
-        let now = Timestamp::now();
+        Self::with_id_at(id, table, fields, Timestamp::now())
+    }
+
+    /// Creates a new document with an explicit identifier and lifecycle timestamp.
+    pub fn with_id_at(
+        id: DocumentId,
+        table: TableName,
+        fields: serde_json::Map<String, Value>,
+        timestamp: Timestamp,
+    ) -> Self {
         Self {
             id,
             table,
-            creation_time: now,
-            update_time: now,
+            creation_time: timestamp,
+            update_time: timestamp,
             fields,
             typed_fields: BTreeMap::new(),
         }

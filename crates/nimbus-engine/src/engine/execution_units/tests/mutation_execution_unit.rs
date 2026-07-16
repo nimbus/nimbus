@@ -311,6 +311,122 @@ async fn mutation_execution_unit_pre_assign_label_forces_commit_interleaving() {
 }
 
 #[tokio::test]
+async fn commit_timestamps_are_monotonic_with_sequence_across_paths() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let clock = Arc::new(ManualClock::new(Timestamp(30_000)));
+    let engine = Arc::new(
+        Engine::new_with_simulation(data_dir.path(), clock.clone(), Arc::new(NoopFaultInjector))
+            .expect("engine should create"),
+    );
+    let tenant_id = TenantId::new("timestamp-paths").expect("tenant id should build");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    let execution_table = messages_table("timestamp_paths_execution");
+    let direct_table = messages_table("timestamp_paths_direct");
+    let queued_table = messages_table("timestamp_paths_queued");
+
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should begin");
+    let execution_unit_id = execution_unit
+        .insert_document(
+            execution_table.clone(),
+            serde_json::Map::from_iter([("path".to_string(), json!("execution-unit"))]),
+        )
+        .expect("execution-unit insert should stage");
+    let faults = engine.commit_fault_handle_for_testing();
+    faults.arm(labels::PRE_ASSIGN);
+    let execution_commit = tokio::task::spawn_blocking({
+        let execution_unit = execution_unit.clone();
+        move || execution_unit.commit()
+    });
+    assert!(
+        tokio::task::spawn_blocking({
+            let faults = faults.clone();
+            move || faults.wait_until_entered(labels::PRE_ASSIGN, Duration::from_secs(5))
+        })
+        .await
+        .expect("pause wait should join"),
+        "execution-unit commit should pause after prepare and before assignment"
+    );
+
+    clock.set(Timestamp(10_000));
+    let direct_id = engine
+        .insert_document(
+            &tenant_id,
+            direct_table.clone(),
+            serde_json::Map::from_iter([("path".to_string(), json!("direct"))]),
+        )
+        .expect("direct insert should commit");
+
+    clock.set(Timestamp(20_000));
+    let queued_id = engine
+        .insert_document_async(
+            tenant_id.clone(),
+            queued_table.clone(),
+            serde_json::Map::from_iter([("path".to_string(), json!("queued"))]),
+        )
+        .await
+        .expect("queued insert should commit");
+
+    clock.set(Timestamp(5_000));
+    faults.release(labels::PRE_ASSIGN);
+    execution_commit
+        .await
+        .expect("execution-unit task should join")
+        .expect("execution-unit commit should succeed")
+        .expect("execution-unit insert should produce a commit");
+
+    let runtime = engine
+        .get_existing_tenant(&tenant_id)
+        .expect("tenant runtime should remain loaded");
+    let records = runtime
+        .store()
+        .read_durable_journal_from(SequenceNumber(1))
+        .expect("durable records should read");
+    let document_records = records
+        .iter()
+        .filter(|record| !record.writes.is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(document_records.len(), 3);
+    assert!(document_records.windows(2).all(|pair| {
+        pair[0].sequence < pair[1].sequence && pair[0].timestamp <= pair[1].timestamp
+    }));
+    assert_eq!(
+        document_records
+            .iter()
+            .map(|record| record.timestamp)
+            .collect::<Vec<_>>(),
+        vec![Timestamp(10_000), Timestamp(20_000), Timestamp(20_000)]
+    );
+
+    for (table, document_id) in [
+        (direct_table, direct_id),
+        (queued_table, queued_id),
+        (execution_table, execution_unit_id),
+    ] {
+        let record = document_records
+            .iter()
+            .find(|record| record.writes[0].doc_id == document_id)
+            .expect("each inserted document should have one record");
+        let current = record.writes[0]
+            .current
+            .as_ref()
+            .expect("insert record should contain a current image");
+        assert_eq!(current.creation_time, record.timestamp);
+        assert_eq!(current.update_time, record.timestamp);
+        assert_eq!(
+            engine
+                .get_document(&tenant_id, &table, document_id)
+                .expect("inserted document should be visible")
+                .creation_time,
+            record.timestamp
+        );
+    }
+}
+
+#[tokio::test]
 async fn schema_epoch_race_pending_index_add_conflicts_concurrent_write() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();

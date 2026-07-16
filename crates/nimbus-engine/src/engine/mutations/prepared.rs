@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use nimbus_core::{
     DependencySet, Document, DocumentId, Error, IndexDefinition, ResourcePathBinding, Result,
     SequenceNumber, TableId, TableName, TenantEventRecord, Timestamp, TriggerWriteOrigin, WriteOp,
@@ -86,6 +88,7 @@ pub(in crate::engine) enum PreparedSerializedEffects {
         writes: Vec<ResolvedWrite>,
         schedule_ops: Vec<ResolvedScheduleOp>,
         trigger_write_origin: Option<TriggerWriteOrigin>,
+        deferred_server_timestamp_fields: HashMap<(TableName, DocumentId), HashSet<String>>,
     },
 }
 
@@ -214,6 +217,7 @@ impl PreparedCommit {
         writes: Vec<ResolvedWrite>,
         schedule_ops: Vec<ResolvedScheduleOp>,
         trigger_write_origin: Option<TriggerWriteOrigin>,
+        deferred_server_timestamp_fields: HashMap<(TableName, DocumentId), HashSet<String>>,
     ) -> Self {
         let write_set = writes
             .iter()
@@ -235,6 +239,7 @@ impl PreparedCommit {
                 writes,
                 schedule_ops,
                 trigger_write_origin,
+                deferred_server_timestamp_fields,
             },
         };
         debug_assert!(prepared.index_deltas.iter().all(|delta| {
@@ -247,10 +252,11 @@ impl PreparedCommit {
     }
 
     pub(in crate::engine) fn into_record(
-        self,
+        mut self,
         sequence: SequenceNumber,
         timestamp: Timestamp,
     ) -> Result<TenantEventRecord> {
+        self.stamp_for_assignment(timestamp)?;
         let PreparedSerializedEffects::Journal {
             scheduled_execution_id,
         } = self.serialized_effects
@@ -265,6 +271,37 @@ impl PreparedCommit {
             .map(PreparedWrite::into_complete)
             .collect::<Result<Vec<_>>>()?;
         TenantEventRecord::new(sequence, timestamp, writes, scheduled_execution_id)
+    }
+
+    /// Applies the one authoritative lifecycle timestamp after validation and while the
+    /// tenant sequence gate is held. Persisted/replayed images consume these values verbatim.
+    pub(in crate::engine) fn stamp_for_assignment(&mut self, timestamp: Timestamp) -> Result<()> {
+        for write in &mut self.write_set {
+            stamp_prepared_write(write, timestamp);
+        }
+        if let PreparedSerializedEffects::ExecutionUnit {
+            writes,
+            deferred_server_timestamp_fields,
+            ..
+        } = &mut self.serialized_effects
+        {
+            for write in writes {
+                stamp_resolved_write(write, timestamp);
+                let fields = resolved_write_key(write)
+                    .and_then(|key| deferred_server_timestamp_fields.get(&key).cloned());
+                if let Some(fields) = fields
+                    && let Some(current) = resolved_write_current(write)
+                {
+                    for field in fields {
+                        current.set_typed_field(
+                            field,
+                            nimbus_core::TypedScalarValue::Timestamp { value: timestamp },
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(in crate::engine) fn direct_insert_document(&self) -> Result<&Document> {
@@ -340,6 +377,7 @@ impl PreparedCommit {
                 writes,
                 schedule_ops,
                 trigger_write_origin,
+                ..
             } => Ok((writes, schedule_ops, trigger_write_origin.as_ref())),
             _ => Err(Error::Internal(
                 "execution-unit prepared commit has an invalid effect shape".to_string(),
@@ -366,6 +404,59 @@ impl PreparedCommit {
                     .iter()
                     .any(|operation| matches!(operation, ResolvedScheduleOp::Insert { .. }))
         )
+    }
+}
+
+fn stamp_prepared_write(write: &mut PreparedWrite, timestamp: Timestamp) {
+    let Some(PreparedDocument::Full(current)) = write.current.as_mut() else {
+        return;
+    };
+    match write.op_type {
+        WriteOpType::Insert => {
+            current.creation_time = timestamp;
+            current.update_time = timestamp;
+        }
+        WriteOpType::Update => {
+            if let Some(previous) = write.previous.as_ref() {
+                current.creation_time = previous.creation_time;
+            }
+            current.update_time = timestamp;
+        }
+        WriteOpType::Delete => {}
+    }
+}
+
+fn stamp_resolved_write(write: &mut ResolvedWrite, timestamp: Timestamp) {
+    match write {
+        ResolvedWrite::Insert { document, .. } => {
+            document.creation_time = timestamp;
+            document.update_time = timestamp;
+        }
+        ResolvedWrite::Update {
+            previous, current, ..
+        } => {
+            current.creation_time = previous.creation_time;
+            current.update_time = timestamp;
+        }
+        ResolvedWrite::Delete { .. } => {}
+    }
+}
+
+fn resolved_write_key(write: &ResolvedWrite) -> Option<(TableName, DocumentId)> {
+    match write {
+        ResolvedWrite::Insert { document, .. } => {
+            Some((document.table.clone(), document.id.clone()))
+        }
+        ResolvedWrite::Update { current, .. } => Some((current.table.clone(), current.id.clone())),
+        ResolvedWrite::Delete { .. } => None,
+    }
+}
+
+fn resolved_write_current(write: &mut ResolvedWrite) -> Option<&mut Document> {
+    match write {
+        ResolvedWrite::Insert { document, .. } => Some(document),
+        ResolvedWrite::Update { current, .. } => Some(current),
+        ResolvedWrite::Delete { .. } => None,
     }
 }
 
@@ -578,6 +669,7 @@ mod tests {
                 job: scheduled_job.clone(),
             }],
             None,
+            HashMap::new(),
         );
 
         assert_eq!(prepared.snapshot_sequence, SequenceNumber(60));

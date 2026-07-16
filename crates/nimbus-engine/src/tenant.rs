@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
@@ -105,6 +106,7 @@ pub struct TenantRuntime {
     lifecycle: Arc<TenantLifecycle>,
     mutation_admission: Arc<MutationAdmissionGate>,
     mutation_journal: Arc<MutationJournalState>,
+    last_assigned_commit_timestamp: AtomicU64,
     #[cfg(any(test, feature = "test-hooks"))]
     subscription_bootstrap_pause: Arc<MutationJournalPauseState>,
 }
@@ -118,6 +120,7 @@ pub struct TenantDeletionGuard;
 pub(crate) struct TenantRuntimeInitialState {
     pub schema: Schema,
     pub progress: nimbus_storage::JournalProgress,
+    pub last_commit_timestamp: Timestamp,
 }
 
 pub(crate) struct TenantRuntimeInitialStateProfile {
@@ -151,6 +154,7 @@ impl TenantRuntime {
         read_storage: TenantPersistenceExecutor,
         schema: Schema,
         progress: nimbus_storage::JournalProgress,
+        last_commit_timestamp: Timestamp,
     ) -> Self {
         Self {
             tenant_id,
@@ -174,6 +178,7 @@ impl TenantRuntime {
             lifecycle: Arc::new(TenantLifecycle::new()),
             mutation_admission: Arc::new(MutationAdmissionGate::new()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
+            last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             #[cfg(any(test, feature = "test-hooks"))]
             subscription_bootstrap_pause: Arc::new(MutationJournalPauseState::default()),
         }
@@ -191,6 +196,7 @@ impl TenantRuntime {
             read_storage,
             initial_state.schema,
             initial_state.progress,
+            initial_state.last_commit_timestamp,
         )
     }
 
@@ -204,9 +210,23 @@ impl TenantRuntime {
         let schema_load = schema_started.elapsed();
         let progress_started = Instant::now();
         let progress = store.journal_progress_async(read_storage).await?;
+        let last_commit_timestamp = if progress.durable_head.0 == 0 {
+            Timestamp(0)
+        } else {
+            store
+                .read_durable_journal_from_async(read_storage, progress.durable_head)
+                .await?
+                .into_iter()
+                .find(|record| record.sequence == progress.durable_head)
+                .map_or(Timestamp(0), |record| record.timestamp)
+        };
         let journal_progress = progress_started.elapsed();
         Ok((
-            TenantRuntimeInitialState { schema, progress },
+            TenantRuntimeInitialState {
+                schema,
+                progress,
+                last_commit_timestamp,
+            },
             TenantRuntimeInitialStateProfile {
                 schema_load,
                 journal_progress,
@@ -223,12 +243,22 @@ impl TenantRuntime {
     ) -> Result<Self> {
         let schema = store.load_schema()?;
         let progress = store.journal_progress()?;
+        let last_commit_timestamp = if progress.durable_head.0 == 0 {
+            Timestamp(0)
+        } else {
+            store
+                .read_durable_journal_from(progress.durable_head)?
+                .into_iter()
+                .find(|record| record.sequence == progress.durable_head)
+                .map_or(Timestamp(0), |record| record.timestamp)
+        };
         Ok(Self::from_initialized_parts(
             tenant_id,
             store,
             read_storage,
             schema,
             progress,
+            last_commit_timestamp,
         ))
     }
 

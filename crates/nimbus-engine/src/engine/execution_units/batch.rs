@@ -11,10 +11,10 @@ use super::MutationExecutionUnit;
 struct PendingAtomicWriteResult {
     update_time: Option<nimbus_core::Timestamp>,
     transform_results: Vec<StoredValue>,
+    server_timestamp_results: Vec<usize>,
 }
 
 struct PreparedAtomicWriteBatch {
-    timestamp: Timestamp,
     results: Vec<PendingAtomicWriteResult>,
 }
 
@@ -24,7 +24,7 @@ impl MutationExecutionUnit {
         batch: AtomicWriteBatch,
     ) -> Result<AtomicWriteBatchOutcome> {
         let prepared = self.prepare_atomic_write_batch(batch)?;
-        Ok(self.atomic_write_batch_outcome(None, prepared.timestamp, prepared.results))
+        Ok(self.atomic_write_batch_outcome(None, Timestamp(0), prepared.results))
     }
 
     pub fn execute_atomic_write_batch(
@@ -33,11 +33,11 @@ impl MutationExecutionUnit {
     ) -> Result<AtomicWriteBatchOutcome> {
         let prepared = self.prepare_atomic_write_batch(batch)?;
 
-        let commit = self.commit_at(prepared.timestamp)?;
+        let commit = self.commit()?;
         let commit_time = commit
             .as_ref()
             .map(|commit| commit.timestamp)
-            .unwrap_or(prepared.timestamp);
+            .unwrap_or(Timestamp(0));
         Ok(self.atomic_write_batch_outcome(commit, commit_time, prepared.results))
     }
 
@@ -87,13 +87,12 @@ impl MutationExecutionUnit {
             ));
         }
 
-        let timestamp = self.engine.now();
+        let timestamp = Timestamp(0);
         let mut pending_results = Vec::with_capacity(batch.writes.len());
         for write in batch.writes {
             pending_results.push(self.apply_atomic_write(write, timestamp)?);
         }
         Ok(PreparedAtomicWriteBatch {
-            timestamp,
             results: pending_results,
         })
     }
@@ -106,9 +105,16 @@ impl MutationExecutionUnit {
     ) -> AtomicWriteBatchOutcome {
         let write_results = pending_results
             .into_iter()
-            .map(|result| AtomicWriteResult {
-                update_time: result.update_time.map(|_| commit_time),
-                transform_results: result.transform_results,
+            .map(|mut result| {
+                for index in result.server_timestamp_results {
+                    result.transform_results[index] = StoredValue::TypedScalar {
+                        value: TypedScalarValue::Timestamp { value: commit_time },
+                    };
+                }
+                AtomicWriteResult {
+                    update_time: result.update_time.map(|_| commit_time),
+                    transform_results: result.transform_results,
+                }
             })
             .collect();
 
@@ -129,6 +135,13 @@ impl MutationExecutionUnit {
         write_time: Timestamp,
     ) -> Result<PendingAtomicWriteResult> {
         precondition.validate()?;
+
+        let (replace_document, overwritten_fields) = match &mode {
+            WriteSetMode::Create | WriteSetMode::Overwrite => (true, Vec::new()),
+            WriteSetMode::MergeAll => (false, document.keys().cloned().collect()),
+            WriteSetMode::MergeFields(mask) => (false, mask.clone()),
+        };
+        let server_timestamp_results = server_timestamp_result_indexes(&transforms);
 
         let locator = key.locator().clone();
         let table = locator.table.clone();
@@ -200,10 +213,17 @@ impl MutationExecutionUnit {
             indexes,
             key.resource_path_binding().cloned(),
         )?;
+        self.update_deferred_server_timestamp_fields(
+            &locator,
+            replace_document,
+            &overwritten_fields,
+            &transforms,
+        )?;
 
         Ok(PendingAtomicWriteResult {
             update_time: Some(write_time),
             transform_results,
+            server_timestamp_results,
         })
     }
 
@@ -217,6 +237,13 @@ impl MutationExecutionUnit {
         write_time: Timestamp,
     ) -> Result<PendingAtomicWriteResult> {
         precondition.validate()?;
+
+        let overwritten_fields = if mask.is_empty() {
+            field_patch.keys().cloned().collect::<Vec<_>>()
+        } else {
+            mask.clone()
+        };
+        let server_timestamp_results = server_timestamp_result_indexes(&transforms);
 
         let locator = key.locator().clone();
         let table = locator.table.clone();
@@ -257,10 +284,17 @@ impl MutationExecutionUnit {
             indexes,
             key.resource_path_binding().cloned(),
         )?;
+        self.update_deferred_server_timestamp_fields(
+            &locator,
+            false,
+            &overwritten_fields,
+            &transforms,
+        )?;
 
         Ok(PendingAtomicWriteResult {
             update_time: Some(write_time),
             transform_results,
+            server_timestamp_results,
         })
     }
 
@@ -279,6 +313,7 @@ impl MutationExecutionUnit {
             return Ok(PendingAtomicWriteResult {
                 update_time: None,
                 transform_results: Vec::new(),
+                server_timestamp_results: Vec::new(),
             });
         }
         self.ensure_write_precondition(&locator, existing.as_ref(), &precondition)?;
@@ -311,6 +346,7 @@ impl MutationExecutionUnit {
         Ok(PendingAtomicWriteResult {
             update_time: None,
             transform_results: Vec::new(),
+            server_timestamp_results: Vec::new(),
         })
     }
 
@@ -341,6 +377,7 @@ impl MutationExecutionUnit {
         Ok(PendingAtomicWriteResult {
             update_time: None,
             transform_results: Vec::new(),
+            server_timestamp_results: Vec::new(),
         })
     }
 
@@ -357,6 +394,7 @@ impl MutationExecutionUnit {
                 "transform writes must include at least one field transform".to_string(),
             ));
         }
+        let server_timestamp_results = server_timestamp_result_indexes(&transforms);
 
         let locator = key.locator().clone();
         let table = locator.table.clone();
@@ -396,11 +434,52 @@ impl MutationExecutionUnit {
             indexes,
             key.resource_path_binding().cloned(),
         )?;
+        self.update_deferred_server_timestamp_fields(&locator, false, &[], &transforms)?;
 
         Ok(PendingAtomicWriteResult {
             update_time: Some(write_time),
             transform_results,
+            server_timestamp_results,
         })
+    }
+
+    fn update_deferred_server_timestamp_fields(
+        &self,
+        locator: &nimbus_core::DocumentLocator,
+        replace_document: bool,
+        overwritten_fields: &[String],
+        transforms: &[FieldTransform],
+    ) -> Result<()> {
+        let mut state = self.active_state()?;
+        let key = (locator.table.clone(), locator.id.clone());
+        let fields = state
+            .deferred_server_timestamp_fields
+            .entry(key)
+            .or_default();
+        if replace_document {
+            fields.clear();
+        }
+        for field in overwritten_fields {
+            if let Some(top_level) = field.split('.').next() {
+                fields.remove(top_level);
+            }
+        }
+        for transform in transforms {
+            let field = top_level_transform_field_name(&transform.field)?.to_string();
+            fields.remove(&field);
+            if matches!(
+                &transform.transform,
+                FieldTransformOperation::ServerTimestamp
+            ) {
+                fields.insert(field);
+            }
+        }
+        if fields.is_empty() {
+            state
+                .deferred_server_timestamp_fields
+                .remove(&(locator.table.clone(), locator.id.clone()));
+        }
+        Ok(())
     }
 
     fn load_batch_document(&self, key: &WriteKey) -> Result<Option<Document>> {
@@ -787,6 +866,20 @@ fn apply_field_transforms_at(
         results.push(result);
     }
     Ok(results)
+}
+
+fn server_timestamp_result_indexes(transforms: &[FieldTransform]) -> Vec<usize> {
+    transforms
+        .iter()
+        .enumerate()
+        .filter_map(|(index, transform)| {
+            matches!(
+                &transform.transform,
+                FieldTransformOperation::ServerTimestamp
+            )
+            .then_some(index)
+        })
+        .collect()
 }
 
 fn apply_field_transform(

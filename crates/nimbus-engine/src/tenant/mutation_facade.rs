@@ -1,3 +1,4 @@
+use std::sync::atomic::Ordering;
 #[cfg(test)]
 use std::time::Duration;
 use std::time::Instant;
@@ -48,6 +49,19 @@ fn append_exit_requires_storage_fallback(
 }
 
 impl TenantRuntime {
+    /// Samples and advances the tenant commit clock while the sequence gate is held.
+    pub(crate) fn assign_commit_timestamp(&self) -> Timestamp {
+        let previous = self.last_assigned_commit_timestamp.load(Ordering::Relaxed);
+        let timestamp = Timestamp(self.store.now().0.max(previous));
+        debug_assert!(
+            timestamp.0 >= previous,
+            "assigned commit timestamps must be monotonic"
+        );
+        self.last_assigned_commit_timestamp
+            .store(timestamp.0, Ordering::Relaxed);
+        timestamp
+    }
+
     pub(crate) fn enqueue_mutation_admission_request(
         &self,
         request: QueuedMutationRequest,
