@@ -9,6 +9,7 @@ use super::*;
 
 pub(crate) struct WriteLogAppendGuard<'a> {
     runtime: &'a TenantRuntime,
+    baseline_durable_head: SequenceNumber,
     armed: bool,
 }
 
@@ -20,9 +21,29 @@ impl WriteLogAppendGuard<'_> {
 
 impl Drop for WriteLogAppendGuard<'_> {
     fn drop(&mut self) {
-        if self.armed {
-            self.runtime.write_log.mark_coverage_unknown();
+        if !self.armed || !self.runtime.store.has_process_local_sequence_authority() {
+            return;
         }
+        let progress = self.runtime.store.journal_progress();
+        if append_exit_requires_storage_fallback(self.baseline_durable_head, &progress) {
+            self.runtime.write_log.mark_coverage_unknown();
+            tracing::warn!(
+                tenant = %self.runtime.tenant_id(),
+                baseline_durable_head = %self.baseline_durable_head,
+                observed_progress = ?progress,
+                "write-log coverage became unknown after an ambiguous persistence exit; using storage conflict validation until tenant runtime restart"
+            );
+        }
+    }
+}
+
+fn append_exit_requires_storage_fallback(
+    baseline_durable_head: SequenceNumber,
+    progress: &Result<JournalProgress>,
+) -> bool {
+    match progress {
+        Ok(progress) => progress.durable_head > baseline_durable_head,
+        Err(_) => true,
     }
 }
 
@@ -143,6 +164,7 @@ impl TenantRuntime {
     pub(crate) fn arm_write_log_append(&self) -> WriteLogAppendGuard<'_> {
         WriteLogAppendGuard {
             runtime: self,
+            baseline_durable_head: self.durable_head(),
             armed: true,
         }
     }
@@ -221,5 +243,40 @@ impl TenantRuntime {
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) async fn wait_if_subscription_bootstrap_pause_armed(&self) {
         self.subscription_bootstrap_pause.wait_if_armed().await;
+    }
+}
+
+#[cfg(test)]
+mod write_log_append_guard_tests {
+    use nimbus_core::{Error, SequenceNumber};
+    use nimbus_storage::JournalProgress;
+
+    use super::append_exit_requires_storage_fallback;
+
+    #[test]
+    fn write_log_append_guard_distinguishes_clean_rollback_from_ambiguous_exit() {
+        let baseline = SequenceNumber(4);
+        let clean_rollback = Ok(JournalProgress {
+            durable_head: baseline,
+            applied_head: baseline,
+        });
+        let durable_advance = Ok(JournalProgress {
+            durable_head: SequenceNumber(5),
+            applied_head: SequenceNumber(5),
+        });
+        let unknown_progress = Err(Error::Internal("progress unavailable".to_string()));
+
+        assert!(!append_exit_requires_storage_fallback(
+            baseline,
+            &clean_rollback
+        ));
+        assert!(append_exit_requires_storage_fallback(
+            baseline,
+            &durable_advance
+        ));
+        assert!(append_exit_requires_storage_fallback(
+            baseline,
+            &unknown_progress
+        ));
     }
 }

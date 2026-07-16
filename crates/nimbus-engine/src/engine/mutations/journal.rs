@@ -312,6 +312,7 @@ fn process_queued_mutation_batch(
     }
 
     let durable_append_started = Instant::now();
+    let write_log_guard = runtime.arm_write_log_append();
     if let Err(error) = runtime.store.append_durable_records_batch(&records) {
         let mapped_error = map_durable_journal_append_error(&error);
         for active_request in active {
@@ -331,6 +332,7 @@ fn process_queued_mutation_batch(
             .map(nimbus_core::TenantEventRecord::as_commit_entry),
         runtime.store.now(),
     );
+    write_log_guard.disarm();
     phases.durable_append = durable_append_started.elapsed();
 
     let mut applied = Vec::with_capacity(records.len());
