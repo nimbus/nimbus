@@ -1,6 +1,10 @@
 use std::time::Instant;
 
-use nimbus_core::{CommitEntry, DependencySet, Error, Result, SequenceNumber};
+use nimbus_core::{
+    CommitEntry, DependencySet, DocumentLocator, Error, Result, SequenceNumber, TenantEventRecord,
+    Timestamp, TriggerWriteOrigin, WriteOp, WriteOpType,
+};
+use nimbus_storage::ResolvedWrite;
 
 use super::super::mutations::caps::check_mutation_caps;
 use super::super::mutations::phase_metrics::{CommitPhaseDurations, maybe_warn_wide_read_set};
@@ -25,10 +29,17 @@ impl MutationExecutionUnit {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
         let finalization_guard = FinalizationGuard { unit: self };
         let prepare_started = Instant::now();
+        let _prepare_permit = self.runtime.acquire_prepare_permit_blocking()?;
         let mut prepared_commit = {
             let mut state = self.active_state()?;
             state.lifecycle = ExecutionUnitLifecycle::Finalizing;
             let writes = self.build_resolved_writes(&state);
+            let record = prepare_execution_unit_record(
+                &self.runtime,
+                &self.snapshot,
+                &writes,
+                state.trigger_write_origin.as_ref(),
+            )?;
             let schedule_ops = self.build_resolved_schedule_ops(&state);
             let mut conflict_dependencies = state.read_dependencies.clone();
             conflict_dependencies.extend(&state.write_dependencies);
@@ -36,12 +47,16 @@ impl MutationExecutionUnit {
                 self.snapshot_sequence,
                 conflict_dependencies,
                 writes,
+                record,
                 schedule_ops,
-                state.trigger_write_origin.clone(),
                 state.deferred_server_timestamp_fields.clone(),
                 state.usage,
-            )
+            )?
         };
+        drop(_prepare_permit);
+        self.runtime
+            .commit_phase_metrics()
+            .record_prepare_pool(prepare_started.elapsed());
         let mut phases = CommitPhaseDurations {
             prepare: prepare_started.elapsed(),
             ..CommitPhaseDurations::default()
@@ -54,6 +69,10 @@ impl MutationExecutionUnit {
         if prepared_commit.is_empty_execution_unit() {
             return Ok(None);
         }
+        let _prepared_payload = crate::tenant::PreparedPayloadAccounting::new(
+            self.runtime.clone(),
+            prepared_commit.accounted_bytes(),
+        );
         maybe_warn_wide_read_set(&self.tenant_id, &prepared_commit.read_set);
         self.engine
             .wait_for_commit_fault(labels::PREPARE_COMPLETE)?;
@@ -110,17 +129,21 @@ impl MutationExecutionUnit {
                     )?;
                     phases.conflict_check = conflict_check_started.elapsed();
                     engine.wait_for_commit_fault(labels::POST_VALIDATE_PRE_STAGE)?;
-                    // Staging and persistence are one storage call today, so this
-                    // remains the closest pre-persist boundary. PreparedCommit now
-                    // carries the exact storage payload without changing that call.
+                    // This retained fault seam sits immediately before assignment;
+                    // pending-window staging follows the assignment stamp below.
                     engine.wait_for_commit_fault(labels::PRE_PERSIST)?;
                     let previous_sequence = runtime.durable_head();
                     let expected_sequence =
                         crate::tenant::assign_and_validate(previous_sequence, 1)?[0];
                     let commit_timestamp = runtime.assign_commit_timestamp();
                     prepared_commit.stamp_for_assignment(expected_sequence, commit_timestamp)?;
-                    let (writes, schedule_ops, trigger_write_origin) =
-                        prepared_commit.execution_unit_effects()?;
+                    let (record, schedule_ops) = prepared_commit.execution_unit_effects()?;
+                    if let Some(record) = record {
+                        runtime.stage_pending_write_log_commits(
+                            [record.as_commit_entry()],
+                            runtime.store.now(),
+                        );
+                    }
                     let durable_append_started = Instant::now();
                     // The current storage contract atomically combines persistence
                     // and storage-layer application. Until that seam is split, the
@@ -128,12 +151,22 @@ impl MutationExecutionUnit {
                     // engine cache/bookkeeping work. Direct commits have the same
                     // intentional collapse.
                     let write_log_guard = runtime.arm_write_log_append();
-                    let commit = runtime.store.apply_execution_unit_batch_with_origin(
-                        writes,
-                        schedule_ops,
-                        trigger_write_origin,
-                        Some(commit_timestamp),
-                    )?;
+                    let commit = match runtime
+                        .store
+                        .apply_prepared_execution_unit_batch(record, schedule_ops)
+                    {
+                        Ok(commit) => commit,
+                        Err(error) => {
+                            if record.is_some()
+                                && runtime.store.journal_progress().is_ok_and(|progress| {
+                                    progress.durable_head == previous_sequence
+                                })
+                            {
+                                runtime.discard_unpersisted_write_log_suffix(expected_sequence);
+                            }
+                            return Err(error);
+                        }
+                    };
                     if let Some(commit) = &commit {
                         crate::tenant::validate_append_sequences(
                             previous_sequence,
@@ -145,8 +178,6 @@ impl MutationExecutionUnit {
                     engine.wait_for_commit_fault(labels::DURABLE_BEFORE_PUBLISH)?;
                     if let Some(commit) = &commit {
                         let publish_started = Instant::now();
-                        runtime
-                            .stage_pending_write_log_commits([commit.clone()], runtime.store.now());
                         runtime.publish_write_log_through(commit.sequence);
                         runtime.mark_durable_head(commit.sequence);
                         phases.add_publish(publish_started.elapsed());
@@ -190,6 +221,86 @@ impl MutationExecutionUnit {
         }
         Ok(commit)
     }
+}
+
+fn prepare_execution_unit_record(
+    runtime: &crate::tenant::TenantRuntime,
+    snapshot: &crate::persistence::TenantPersistenceSnapshot,
+    writes: &[ResolvedWrite],
+    trigger_write_origin: Option<&TriggerWriteOrigin>,
+) -> Result<Option<TenantEventRecord>> {
+    if writes.is_empty() {
+        // Schedule-only execution units intentionally have no journal record
+        // under the existing storage contract, so there is nothing to serialize.
+        return Ok(None);
+    }
+    let mut prepared_writes = Vec::with_capacity(writes.len());
+    for write in writes {
+        let (table, document_id) = match write {
+            ResolvedWrite::Insert { document, .. } => (&document.table, &document.id),
+            ResolvedWrite::Update { current, .. } => (&current.table, &current.id),
+            ResolvedWrite::Delete { previous, .. } => (&previous.table, &previous.id),
+        };
+        let table_id = match write {
+            ResolvedWrite::Insert { .. } => {
+                runtime.prepared_table_id(table, snapshot.table_id(table)?)
+            }
+            ResolvedWrite::Update { .. } | ResolvedWrite::Delete { .. } => snapshot
+                .table_id(table)?
+                .ok_or_else(|| Error::DocumentNotFound(document_id.clone()))?,
+        };
+        let prepared = match write {
+            ResolvedWrite::Insert {
+                document,
+                resource_path_binding,
+                ..
+            } => WriteOp {
+                table: table.clone(),
+                table_id,
+                op_type: WriteOpType::Insert,
+                doc_id: document_id.clone(),
+                resource_path_binding: resource_path_binding.clone(),
+                trigger_write_origin: trigger_write_origin.cloned(),
+                previous: None,
+                current: Some(document.clone()),
+            },
+            ResolvedWrite::Update {
+                previous,
+                current,
+                resource_path_binding,
+                ..
+            } => WriteOp {
+                table: table.clone(),
+                table_id,
+                op_type: WriteOpType::Update,
+                doc_id: document_id.clone(),
+                resource_path_binding: resource_path_binding.clone(),
+                trigger_write_origin: trigger_write_origin.cloned(),
+                previous: Some(previous.clone()),
+                current: Some(current.clone()),
+            },
+            ResolvedWrite::Delete { previous, .. } => WriteOp {
+                table: table.clone(),
+                table_id,
+                op_type: WriteOpType::Delete,
+                doc_id: document_id.clone(),
+                resource_path_binding: snapshot.resource_path_binding(&DocumentLocator::new(
+                    table.clone(),
+                    document_id.clone(),
+                ))?,
+                trigger_write_origin: trigger_write_origin.cloned(),
+                previous: Some(previous.clone()),
+                current: None,
+            },
+        };
+        prepared_writes.push(prepared);
+    }
+    Ok(Some(TenantEventRecord::new(
+        SequenceNumber(0),
+        Timestamp(0),
+        prepared_writes,
+        None,
+    )?))
 }
 
 fn ensure_schema_unchanged(

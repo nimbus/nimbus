@@ -85,9 +85,8 @@ pub(in crate::engine) enum PreparedSerializedEffects {
         scheduled_execution_id: Option<String>,
     },
     ExecutionUnit {
-        writes: Vec<ResolvedWrite>,
+        record: Option<TenantEventRecord>,
         schedule_ops: Vec<ResolvedScheduleOp>,
-        trigger_write_origin: Option<TriggerWriteOrigin>,
         deferred_server_timestamp_fields: HashMap<(TableName, DocumentId), HashSet<String>>,
     },
 }
@@ -232,11 +231,11 @@ impl PreparedCommit {
         snapshot_sequence: SequenceNumber,
         read_set: DependencySet,
         writes: Vec<ResolvedWrite>,
+        record: Option<TenantEventRecord>,
         schedule_ops: Vec<ResolvedScheduleOp>,
-        trigger_write_origin: Option<TriggerWriteOrigin>,
         deferred_server_timestamp_fields: HashMap<(TableName, DocumentId), HashSet<String>>,
         mut usage: MutationUsage,
-    ) -> Self {
+    ) -> Result<Self> {
         for write in &writes {
             add_resolved_write_usage(&mut usage, write);
         }
@@ -246,10 +245,22 @@ impl PreparedCommit {
                 ResolvedScheduleOp::Cancel { job_id } => usage.add_system_write(job_id),
             }
         }
-        let write_set = writes
-            .iter()
-            .map(|write| prepared_write_for_resolved(write, trigger_write_origin.as_ref()))
-            .collect();
+        let write_set: Vec<PreparedWrite> = record
+            .as_ref()
+            .map(|record| {
+                record
+                    .writes
+                    .iter()
+                    .cloned()
+                    .map(PreparedWrite::from_complete)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if write_set.len() != writes.len() {
+            return Err(Error::Internal(
+                "execution-unit prepared record diverged from resolved writes".to_string(),
+            ));
+        }
         let index_deltas = writes
             .iter()
             .flat_map(prepared_index_deltas_for_resolved)
@@ -259,13 +270,12 @@ impl PreparedCommit {
             read_set,
             write_set,
             index_deltas,
-            // Scheduler operations and trigger origin are transaction-level side effects rather
-            // than document writes, so they ride with the exact storage payload instead of being
-            // forced into `write_set` and losing their established semantics.
+            // Scheduler operations remain transaction-level side effects. Record-bearing units
+            // carry their complete placeholder journal record; schedule-only units deliberately
+            // carry `None` because the durable contract emits no TenantEventRecord for them.
             serialized_effects: PreparedSerializedEffects::ExecutionUnit {
-                writes,
+                record,
                 schedule_ops,
-                trigger_write_origin,
                 deferred_server_timestamp_fields,
             },
             usage,
@@ -276,7 +286,7 @@ impl PreparedCommit {
                 .iter()
                 .any(|write| write.table == delta.table && write.doc_id == delta.doc_id)
         }));
-        prepared
+        Ok(prepared)
     }
 
     pub(crate) fn into_record(
@@ -312,26 +322,32 @@ impl PreparedCommit {
             stamp_prepared_write(write, timestamp);
         }
         if let PreparedSerializedEffects::ExecutionUnit {
-            writes,
+            record,
             schedule_ops,
             deferred_server_timestamp_fields,
             ..
         } = &mut self.serialized_effects
         {
-            for write in writes {
-                stamp_resolved_write(write, timestamp);
-                let fields = resolved_write_key(write)
-                    .and_then(|key| deferred_server_timestamp_fields.get(&key).cloned());
-                if let Some(fields) = fields
-                    && let Some(current) = resolved_write_current(write)
-                {
-                    for field in fields {
-                        current.set_typed_field(
-                            field,
-                            nimbus_core::TypedScalarValue::Timestamp { value: timestamp },
-                        );
+            if let Some(record) = record {
+                for write in &mut record.writes {
+                    let fields = deferred_server_timestamp_fields
+                        .get(&(write.table.clone(), write.doc_id.clone()))
+                        .cloned();
+                    if let Some(fields) = fields
+                        && let Some(current) = write.current.as_mut()
+                    {
+                        for field in fields {
+                            current.set_typed_field(
+                                field,
+                                nimbus_core::TypedScalarValue::Timestamp { value: timestamp },
+                            );
+                        }
                     }
                 }
+                // Lifecycle/server timestamps, sequence, and the integrity hash
+                // are the only record fields that depend on assignment. The event
+                // and document shape was serialized during caller-side prepare.
+                record.assign_prepared_document_record(sequence, timestamp)?;
             }
             for schedule_op in schedule_ops {
                 if let ResolvedScheduleOp::Insert { job } = schedule_op {
@@ -367,18 +383,13 @@ impl PreparedCommit {
 
     pub(in crate::engine) fn execution_unit_effects(
         &self,
-    ) -> Result<(
-        &[ResolvedWrite],
-        &[ResolvedScheduleOp],
-        Option<&TriggerWriteOrigin>,
-    )> {
+    ) -> Result<(Option<&TenantEventRecord>, &[ResolvedScheduleOp])> {
         match &self.serialized_effects {
             PreparedSerializedEffects::ExecutionUnit {
-                writes,
+                record,
                 schedule_ops,
-                trigger_write_origin,
                 ..
-            } => Ok((writes, schedule_ops, trigger_write_origin.as_ref())),
+            } => Ok((record.as_ref(), schedule_ops)),
             _ => Err(Error::Internal(
                 "execution-unit prepared commit has an invalid effect shape".to_string(),
             )),
@@ -389,10 +400,10 @@ impl PreparedCommit {
         matches!(
             &self.serialized_effects,
             PreparedSerializedEffects::ExecutionUnit {
-                writes,
+                record,
                 schedule_ops,
                 ..
-            } if writes.is_empty() && schedule_ops.is_empty()
+            } if record.is_none() && schedule_ops.is_empty()
         )
     }
 
@@ -462,71 +473,6 @@ fn stamp_resolved_write(write: &mut ResolvedWrite, timestamp: Timestamp) {
             current.update_time = timestamp;
         }
         ResolvedWrite::Delete { .. } => {}
-    }
-}
-
-fn resolved_write_key(write: &ResolvedWrite) -> Option<(TableName, DocumentId)> {
-    match write {
-        ResolvedWrite::Insert { document, .. } => {
-            Some((document.table.clone(), document.id.clone()))
-        }
-        ResolvedWrite::Update { current, .. } => Some((current.table.clone(), current.id.clone())),
-        ResolvedWrite::Delete { .. } => None,
-    }
-}
-
-fn resolved_write_current(write: &mut ResolvedWrite) -> Option<&mut Document> {
-    match write {
-        ResolvedWrite::Insert { document, .. } => Some(document),
-        ResolvedWrite::Update { current, .. } => Some(current),
-        ResolvedWrite::Delete { .. } => None,
-    }
-}
-
-fn prepared_write_for_resolved(
-    write: &ResolvedWrite,
-    trigger_write_origin: Option<&TriggerWriteOrigin>,
-) -> PreparedWrite {
-    match write {
-        ResolvedWrite::Insert {
-            document,
-            resource_path_binding,
-            ..
-        } => PreparedWrite {
-            table: document.table.clone(),
-            table_id: None,
-            op_type: WriteOpType::Insert,
-            doc_id: document.id.clone(),
-            resource_path_binding: resource_path_binding.clone(),
-            trigger_write_origin: trigger_write_origin.cloned(),
-            previous: None,
-            current: Some(PreparedDocument::Full(document.clone())),
-        },
-        ResolvedWrite::Update {
-            previous,
-            current,
-            resource_path_binding,
-            ..
-        } => PreparedWrite {
-            table: current.table.clone(),
-            table_id: None,
-            op_type: WriteOpType::Update,
-            doc_id: current.id.clone(),
-            resource_path_binding: resource_path_binding.clone(),
-            trigger_write_origin: trigger_write_origin.cloned(),
-            previous: Some(previous.clone()),
-            current: Some(PreparedDocument::Full(current.clone())),
-        },
-        ResolvedWrite::Delete { previous, .. } => PreparedWrite {
-            table: previous.table.clone(),
-            table_id: None,
-            op_type: WriteOpType::Delete,
-            doc_id: previous.id.clone(),
-            resource_path_binding: None,
-            trigger_write_origin: trigger_write_origin.cloned(),
-            previous: Some(previous.clone()),
-            current: None,
-        },
     }
 }
 
@@ -698,6 +644,22 @@ mod tests {
             indexes: vec![index()],
             resource_path_binding: None,
         };
+        let record = TenantEventRecord::new(
+            SequenceNumber(0),
+            Timestamp(0),
+            vec![WriteOp {
+                table: table(),
+                table_id: table_id(),
+                op_type: WriteOpType::Update,
+                doc_id: previous.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: Some(previous.clone()),
+                current: Some(current.clone()),
+            }],
+            None,
+        )
+        .expect("execution-unit record should serialize during prepare");
 
         let read_usage = MutationUsage {
             read_bytes: 123,
@@ -709,13 +671,14 @@ mod tests {
             SequenceNumber(60),
             read_set.clone(),
             vec![resolved_write],
+            Some(record),
             vec![ResolvedScheduleOp::Insert {
                 job: scheduled_job.clone(),
             }],
-            None,
             HashMap::new(),
             read_usage,
-        );
+        )
+        .expect("execution-unit prepare should succeed");
 
         assert_eq!(prepared.snapshot_sequence, SequenceNumber(60));
         assert_eq!(prepared.read_set, read_set);
@@ -734,14 +697,15 @@ mod tests {
                 index: index(),
             }]
         );
-        let (writes, schedule_ops, origin) = prepared.execution_unit_effects().unwrap();
-        assert_eq!(writes.len(), 1);
-        assert!(matches!(writes[0], ResolvedWrite::Update { .. }));
+        let (record, schedule_ops) = prepared.execution_unit_effects().unwrap();
+        let record = record.expect("document unit should carry a prepared record");
+        assert_eq!(record.sequence, SequenceNumber(0));
+        assert_eq!(record.timestamp, Timestamp(0));
+        assert_eq!(record.writes.len(), 1);
         assert!(matches!(
             schedule_ops,
             [ResolvedScheduleOp::Insert { job }] if job == &scheduled_job
         ));
-        assert_eq!(origin, None);
         assert!(prepared.has_scheduled_insert());
         assert_eq!(prepared.usage.read_bytes, 123);
         assert_eq!(prepared.usage.documents_scanned, 4);
@@ -755,11 +719,61 @@ mod tests {
         assigned
             .stamp_for_assignment(SequenceNumber(61), Timestamp(600))
             .expect("assignment stamping should succeed");
-        let (_, assigned_schedule_ops, _) = assigned
+        let (assigned_record, assigned_schedule_ops) = assigned
             .execution_unit_effects()
             .expect("assigned execution-unit effects should remain available");
+        let assigned_record = assigned_record.expect("assigned record should remain available");
+        assert_eq!(assigned_record.sequence, SequenceNumber(61));
+        assert_eq!(assigned_record.timestamp, Timestamp(600));
+        assert_eq!(
+            assigned_record.writes[0]
+                .current
+                .as_ref()
+                .expect("update should retain current image")
+                .update_time,
+            Timestamp(600)
+        );
+        assigned_record.validate_integrity().unwrap();
         assert!(matches!(
             assigned_schedule_ops,
+            [ResolvedScheduleOp::Insert { job }] if job.created_at == Timestamp(600)
+        ));
+    }
+
+    #[test]
+    fn schedule_only_execution_unit_has_no_prepared_record_by_contract() {
+        let job = ScheduledJob {
+            id: DocumentId::from_key("schedule-only-job").expect("job id should parse"),
+            run_at: Timestamp(500),
+            mutation: Mutation::Delete {
+                table: table(),
+                id: DocumentId::from_key("schedule-only-target").expect("document id should parse"),
+            },
+            created_at: Timestamp(0),
+        };
+        let mut prepared = PreparedCommit::for_execution_unit(
+            SequenceNumber(60),
+            DependencySet::default(),
+            vec![],
+            None,
+            vec![ResolvedScheduleOp::Insert { job }],
+            HashMap::new(),
+            MutationUsage::default(),
+        )
+        .expect("schedule-only prepare should succeed");
+
+        let (record, schedule_ops) = prepared.execution_unit_effects().unwrap();
+        assert!(record.is_none());
+        assert_eq!(schedule_ops.len(), 1);
+        assert!(!prepared.is_empty_execution_unit());
+
+        prepared
+            .stamp_for_assignment(SequenceNumber(61), Timestamp(600))
+            .expect("schedule-only assignment should stamp its job");
+        let (record, schedule_ops) = prepared.execution_unit_effects().unwrap();
+        assert!(record.is_none());
+        assert!(matches!(
+            schedule_ops,
             [ResolvedScheduleOp::Insert { job }] if job.created_at == Timestamp(600)
         ));
     }
