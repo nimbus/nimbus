@@ -367,3 +367,171 @@ async fn postgres_listener_reconnect_recovers_missed_schema_and_journal_hints() 
     })
     .await;
 }
+
+/// PPSC2-C provider-lane evidence: on a provider backend every drained
+/// journal batch is one durable network round trip, so the adaptive cap
+/// directly sets ops-per-round-trip. A paused concurrent burst above the
+/// base cap must commit in a single append (ops/RTT > 32), while an idle
+/// arrival keeps the one-op/one-round-trip baseline.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial(postgres_provider)]
+async fn postgres_adaptive_batch_commits_a_burst_in_one_durable_round_trip() {
+    with_postgres_engine_config(|engine_config, _provider_config| async move {
+        expect_external_provider_future_within(
+            "postgres adaptive burst should commit promptly",
+            Duration::from_secs(90),
+            Duration::from_secs(360),
+            async {
+                const BURST: usize = 96;
+                let tenant_id = TenantId::new("pg-adaptive-batch").expect("tenant id should build");
+                let engine = Arc::new(
+                    Engine::new_with_persistence_config(engine_config)
+                        .await
+                        .expect("postgres-backed engine should create"),
+                );
+                engine
+                    .create_tenant_async(tenant_id.clone())
+                    .await
+                    .expect("tenant should create");
+                engine
+                    .set_mutation_admission_codel_for_testing(
+                        &tenant_id,
+                        Duration::from_secs(60),
+                        Duration::from_secs(60),
+                    )
+                    .expect("the burst should not be shed by CoDel");
+
+                let before = engine
+                    .tenant_engine_diagnostics(&tenant_id)
+                    .expect("phase metrics before burst should load")
+                    .commit_phases;
+                let pause = engine
+                    .mutation_journal_pause_handle_for_testing(&tenant_id)
+                    .expect("journal pause handle should load");
+                pause.arm();
+
+                let mut inserts = Vec::with_capacity(BURST);
+                inserts.push(tokio::spawn({
+                    let engine = Arc::clone(&engine);
+                    let tenant_id = tenant_id.clone();
+                    async move {
+                        engine
+                            .insert_document_async(
+                                tenant_id,
+                                tasks_table(),
+                                serde_json::Map::from_iter([(
+                                    "title".to_string(),
+                                    json!("burst-0"),
+                                )]),
+                            )
+                            .await
+                    }
+                }));
+                let entered = tokio::task::spawn_blocking({
+                    let pause = pause.clone();
+                    move || pause.wait_until_entered(Duration::from_secs(30))
+                })
+                .await
+                .expect("pause wait task should join");
+                assert!(
+                    entered,
+                    "journal worker should pause with the first burst mutation admitted"
+                );
+
+                for index in 1..BURST {
+                    inserts.push(tokio::spawn({
+                        let engine = Arc::clone(&engine);
+                        let tenant_id = tenant_id.clone();
+                        async move {
+                            engine
+                                .insert_document_async(
+                                    tenant_id,
+                                    tasks_table(),
+                                    serde_json::Map::from_iter([(
+                                        "title".to_string(),
+                                        json!(format!("burst-{index}")),
+                                    )]),
+                                )
+                                .await
+                        }
+                    }));
+                }
+                let backlog_deadline = std::time::Instant::now() + Duration::from_secs(30);
+                loop {
+                    let stats = engine
+                        .mutation_admission_stats_for_testing(&tenant_id)
+                        .expect("admission stats should load");
+                    if stats.queue_depth == BURST - 1 {
+                        break;
+                    }
+                    assert!(
+                        std::time::Instant::now() < backlog_deadline,
+                        "the rest of the burst should queue behind the paused drainer \
+                         (saw depth {})",
+                        stats.queue_depth
+                    );
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                pause.release();
+                for insert in inserts {
+                    insert
+                        .await
+                        .expect("burst task should join")
+                        .expect("burst mutation should succeed");
+                }
+
+                let after_burst = engine
+                    .tenant_engine_diagnostics(&tenant_id)
+                    .expect("phase metrics after burst should load")
+                    .commit_phases;
+                let burst_ops = after_burst
+                    .journal_batch_size_sum
+                    .saturating_sub(before.journal_batch_size_sum);
+                let burst_round_trips = after_burst
+                    .journal_batch_count
+                    .saturating_sub(before.journal_batch_count);
+                assert_eq!(burst_ops, BURST as u64);
+                assert_eq!(
+                    burst_round_trips, 1,
+                    "the provider backlog should commit in one durable round trip"
+                );
+                assert!(
+                    burst_ops / burst_round_trips > 32,
+                    "ops-per-round-trip should scale past the fixed base cap"
+                );
+
+                engine
+                    .insert_document_async(
+                        tenant_id.clone(),
+                        tasks_table(),
+                        serde_json::Map::from_iter([("title".to_string(), json!("idle"))]),
+                    )
+                    .await
+                    .expect("idle mutation should succeed");
+                let after_idle = engine
+                    .tenant_engine_diagnostics(&tenant_id)
+                    .expect("phase metrics after idle mutation should load")
+                    .commit_phases;
+                assert_eq!(
+                    after_idle
+                        .journal_batch_count
+                        .saturating_sub(after_burst.journal_batch_count),
+                    1
+                );
+                assert_eq!(
+                    after_idle
+                        .journal_batch_size_sum
+                        .saturating_sub(after_burst.journal_batch_size_sum),
+                    1,
+                    "an idle arrival should keep the one-op round-trip baseline"
+                );
+
+                tokio::time::timeout(Duration::from_secs(5), engine.quiesce())
+                    .await
+                    .expect("engine should quiesce after the adaptive burst");
+            },
+        )
+        .await;
+    })
+    .await;
+}
