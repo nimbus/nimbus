@@ -94,6 +94,13 @@ impl MutationJournalState {
         queue.drain(..batch_size).collect()
     }
 
+    pub(in crate::tenant) fn queue_depth(&self) -> usize {
+        self.queue
+            .lock()
+            .expect("mutation journal queue lock should not be poisoned")
+            .len()
+    }
+
     #[cfg(test)]
     pub(in crate::tenant) async fn wait_before_drain(&self) {
         self.pause_before_drain.wait_if_armed().await;

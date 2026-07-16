@@ -127,6 +127,180 @@ async fn concurrent_mutations_do_not_strand_the_journal_worker() {
     assert_eq!(stats.worker_failure_count, 0, "no worker failures");
 }
 
+async fn run_paused_insert_burst(engine: &Arc<Engine>, tenant_id: &TenantId, count: usize) {
+    assert!(count > 0, "a burst must contain at least one mutation");
+    engine
+        .set_mutation_admission_codel_for_testing(
+            tenant_id,
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        )
+        .expect("the burst should not be shed by CoDel");
+    let pause = engine
+        .mutation_journal_pause_handle_for_testing(tenant_id)
+        .expect("journal pause handle should load");
+    pause.arm();
+
+    let mut inserts = Vec::with_capacity(count);
+    inserts.push(tokio::spawn({
+        let engine = Arc::clone(engine);
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("burst-0"))]),
+                )
+                .await
+        }
+    }));
+    expect_blocking_wait_reaches_state(
+        "journal worker should pause with the first burst mutation admitted",
+        {
+            let pause = pause.clone();
+            move |timeout| pause.wait_until_entered(timeout)
+        },
+    )
+    .await;
+
+    for index in 1..count {
+        inserts.push(tokio::spawn({
+            let engine = Arc::clone(engine);
+            let tenant_id = tenant_id.clone();
+            async move {
+                engine
+                    .insert_document_async(
+                        tenant_id,
+                        tasks_table(),
+                        serde_json::Map::from_iter([(
+                            "title".to_string(),
+                            json!(format!("burst-{index}")),
+                        )]),
+                    )
+                    .await
+            }
+        }));
+    }
+    if count > 1 {
+        wait_for_mutation_admission_stats(
+            engine,
+            tenant_id,
+            "the rest of the burst should be queued behind the paused drainer",
+            |stats| stats.queue_depth == count - 1,
+        )
+        .await;
+    }
+    pause.release();
+
+    for insert in inserts {
+        expect_catch_up_future_within(insert, "every mutation in the paused burst should commit")
+            .await
+            .expect("burst task should join")
+            .expect("burst mutation should succeed");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn adaptive_batch_grows_under_backlog_and_shrinks_when_idle() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("adaptive-batch", Engine::create_tenant);
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("phase metrics before burst should load")
+        .commit_phases;
+
+    run_paused_insert_burst(&engine, &tenant_id, 96).await;
+    let after_burst = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("phase metrics after burst should load")
+        .commit_phases;
+    let burst_size_sum = after_burst
+        .journal_batch_size_sum
+        .saturating_sub(before.journal_batch_size_sum);
+    let burst_count = after_burst
+        .journal_batch_count
+        .saturating_sub(before.journal_batch_count);
+    assert_eq!(
+        burst_count, 1,
+        "the paused backlog should drain as one batch"
+    );
+    assert_eq!(burst_size_sum, 96);
+    assert!(
+        burst_size_sum / burst_count > 32,
+        "backlog should raise the effective batch above the base cap"
+    );
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("idle"))]),
+        )
+        .await
+        .expect("idle mutation should succeed");
+    let after_idle = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("phase metrics after idle mutation should load")
+        .commit_phases;
+    assert_eq!(
+        after_idle
+            .journal_batch_count
+            .saturating_sub(after_burst.journal_batch_count),
+        1
+    );
+    assert_eq!(
+        after_idle
+            .journal_batch_size_sum
+            .saturating_sub(after_burst.journal_batch_size_sum),
+        1,
+        "an idle arrival should retain base behavior rather than waiting for a max batch"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn adaptive_batch_never_splits_the_durable_round_trip() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let faults =
+        CountedFaultInjector::fail_nth_call(FaultPoint::JournalDurableAppendBeforeApply, u64::MAX);
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(43_500))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(43_500)),
+        )
+        .expect("memory engine should create"),
+    );
+    let tenant_id = TenantId::new("adaptive-round-trip").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    let visits_before = faults.visit_count();
+    let metrics_before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("phase metrics before burst should load")
+        .commit_phases;
+
+    run_paused_insert_burst(&engine, &tenant_id, 65).await;
+
+    let metrics_after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("phase metrics after burst should load")
+        .commit_phases;
+    let drained_batches = metrics_after
+        .journal_batch_count
+        .saturating_sub(metrics_before.journal_batch_count);
+    let append_boundaries = faults.visit_count().saturating_sub(visits_before);
+    assert_eq!(drained_batches, 1);
+    assert_eq!(
+        append_boundaries, drained_batches,
+        "each adaptive drain must cross the post-append fault boundary exactly once; the record slice is passed to one append_durable_records_batch call"
+    );
+}
+
 #[tokio::test]
 async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_in_flight_response()
 {

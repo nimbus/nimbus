@@ -3,7 +3,7 @@ use std::{
     future,
     sync::Arc,
     sync::atomic::AtomicBool,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use nimbus_core::{
@@ -26,6 +26,49 @@ use super::prepared::PreparedCommit;
 use super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
 
 const MUTATION_JOURNAL_BATCH_SIZE: usize = 32;
+const DEFAULT_MUTATION_JOURNAL_BATCH_MAX: usize = 256;
+const DEFAULT_MUTATION_JOURNAL_COALESCE_MICROS: u64 = 0;
+
+#[derive(Debug, Clone, Copy)]
+struct MutationJournalBatchPolicy {
+    base: usize,
+    max: usize,
+    coalesce: Duration,
+}
+
+impl MutationJournalBatchPolicy {
+    fn from_env() -> Self {
+        let max = env_positive_usize(
+            "NIMBUS_MUTATION_JOURNAL_BATCH_MAX",
+            DEFAULT_MUTATION_JOURNAL_BATCH_MAX,
+        )
+        .max(MUTATION_JOURNAL_BATCH_SIZE);
+        let coalesce_micros = env_nonnegative_u64(
+            "NIMBUS_MUTATION_JOURNAL_COALESCE_MICROS",
+            DEFAULT_MUTATION_JOURNAL_COALESCE_MICROS,
+        );
+        Self {
+            base: MUTATION_JOURNAL_BATCH_SIZE,
+            max,
+            coalesce: Duration::from_micros(coalesce_micros),
+        }
+    }
+}
+
+fn env_positive_usize(key: &str, default: usize) -> usize {
+    std::env::var_os(key)
+        .and_then(|value| value.into_string().ok())
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
+
+fn env_nonnegative_u64(key: &str, default: u64) -> u64 {
+    std::env::var_os(key)
+        .and_then(|value| value.into_string().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(default)
+}
 
 struct PendingMutationResponseGuard {
     runtime: Arc<TenantRuntime>,
@@ -78,10 +121,15 @@ impl Engine {
         #[cfg(any(test, debug_assertions))]
         Engine::assert_running_on_background_task("mutation_journal");
 
+        let batch_policy = MutationJournalBatchPolicy::from_env();
         loop {
             runtime.drain_mutation_admission_queue();
             let batch = runtime
-                .drain_mutation_batch(MUTATION_JOURNAL_BATCH_SIZE)
+                .drain_mutation_batch_adaptive(
+                    batch_policy.base,
+                    batch_policy.max,
+                    batch_policy.coalesce,
+                )
                 .await;
             if batch.is_empty() {
                 if runtime.release_mutation_worker() {
@@ -371,9 +419,13 @@ fn process_queued_mutation_batch(
 
     let sample_started_at = sample_started_at
         .expect("a non-empty active batch must retain an admitted request timestamp");
+    let committed_batch_size = u64::try_from(records.len()).unwrap_or(u64::MAX);
+    runtime
+        .commit_phase_metrics()
+        .record_journal_batch(committed_batch_size);
     runtime.record_commit_phase_sample(
         "journal",
-        u64::try_from(records.len()).unwrap_or(u64::MAX),
+        committed_batch_size,
         phases,
         sample_started_at.elapsed(),
     );

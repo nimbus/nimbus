@@ -1,7 +1,5 @@
 use std::sync::atomic::Ordering;
-#[cfg(test)]
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use nimbus_core::{CommitEntry, Result, SequenceNumber, TableName, TenantEventRecord, Timestamp};
 use nimbus_storage::JournalProgress;
@@ -87,14 +85,44 @@ impl TenantRuntime {
         }
     }
 
-    pub(crate) async fn drain_mutation_batch(
+    pub(crate) async fn drain_mutation_batch_adaptive(
         &self,
+        base_batch_size: usize,
         max_batch_size: usize,
+        coalesce: Duration,
     ) -> Vec<QueuedMutationRequest> {
         #[cfg(test)]
         self.mutation_journal.wait_before_drain().await;
-        let mut batch = self.mutation_journal.drain_batch(max_batch_size).await;
-        let batch_limit = max_batch_size.max(1);
+
+        let base_batch_size = base_batch_size.max(1);
+        let max_batch_size = max_batch_size.max(base_batch_size);
+        let initial_backlog = self
+            .mutation_journal
+            .queue_depth()
+            .saturating_add(self.mutation_admission.queue_depth());
+        if !coalesce.is_zero() && (1..=base_batch_size).contains(&initial_backlog) {
+            // Tokio time is intentional: tests may use a paused/advanced Tokio
+            // clock, and the committer must never consult ambient wall time for
+            // scheduling decisions.
+            tokio::time::sleep(coalesce).await;
+        }
+
+        // Include arrivals admitted while the optional coalescing window or
+        // deterministic pre-drain pause was active before choosing the cap.
+        // Do not first transfer them into the bounded journal queue: that
+        // queue may already be full while the worker is paused. Draining the
+        // journal first and then admitting directly into this batch preserves
+        // the admission buffer instead of spuriously rejecting queued work.
+        let backlog = self
+            .mutation_journal
+            .queue_depth()
+            .saturating_add(self.mutation_admission.queue_depth());
+        let batch_limit = if backlog > base_batch_size {
+            max_batch_size
+        } else {
+            base_batch_size
+        };
+        let mut batch = self.mutation_journal.drain_batch(batch_limit).await;
         while batch.len() < batch_limit {
             match self.mutation_admission.pop_next_at(Instant::now()) {
                 MutationAdmissionDecision::Admit(request) => batch.push(request),
