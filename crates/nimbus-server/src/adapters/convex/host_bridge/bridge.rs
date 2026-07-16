@@ -226,6 +226,10 @@ impl ConvexHostBridge {
         nested
     }
 
+    pub(in crate::adapters::convex) fn invocation_kind(&self) -> &InvocationKind {
+        &self.invocation_kind
+    }
+
     pub(crate) fn auth(&self) -> Option<&InvocationAuth> {
         self.auth.as_ref()
     }

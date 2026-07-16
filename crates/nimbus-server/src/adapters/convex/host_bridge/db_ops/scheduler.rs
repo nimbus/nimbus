@@ -1,18 +1,29 @@
 use super::*;
-use nimbus_bridge::capabilities::RuntimeCapabilityHost;
 
 impl ConvexHostBridge {
+    /// Convex parity: `ctx.scheduler` exists on mutation AND action contexts
+    /// (mutations schedule transactionally on commit; actions schedule
+    /// immediately through the engine). Queries have no scheduler surface, so
+    /// only query-class invocations are rejected here — unlike direct
+    /// database writes, which stay mutation-only.
+    fn scheduling_allowed(&self) -> Result<(), Error> {
+        match self.invocation_kind() {
+            InvocationKind::Mutation | InvocationKind::Action => Ok(()),
+            InvocationKind::Query
+            | InvocationKind::PaginatedQuery
+            | InvocationKind::CloudflareWorkerFetch => Err(Error::PermissionDenied(
+                "query invocations cannot schedule functions; scheduling requires a mutation or action"
+                    .to_string(),
+            )),
+        }
+    }
+
     pub(in crate::adapters::convex) async fn execute_schedule_command_with_execution_context_async(
         &self,
         command: ConvexScheduledCommand,
         cancellation: &HostCallCancellation,
     ) -> Result<Value, Error> {
-        if !RuntimeCapabilityHost::direct_host_writes_allowed(self) {
-            return Err(Error::PermissionDenied(
-                "query and action invocations cannot schedule direct host writes; use a mutation or action ctx.runMutation"
-                    .to_string(),
-            ));
-        }
+        self.scheduling_allowed()?;
         if let Some(execution_unit) = self.mutation_execution_unit() {
             return match command {
                 ConvexScheduledCommand::RunAfter {
@@ -69,12 +80,7 @@ impl ConvexHostBridge {
         &self,
         command: ConvexScheduledCommand,
     ) -> Result<Value, Error> {
-        if !RuntimeCapabilityHost::direct_host_writes_allowed(self) {
-            return Err(Error::PermissionDenied(
-                "query and action invocations cannot schedule direct host writes; use a mutation or action ctx.runMutation"
-                    .to_string(),
-            ));
-        }
+        self.scheduling_allowed()?;
         if let Some(execution_unit) = self.mutation_execution_unit() {
             return match command {
                 ConvexScheduledCommand::RunAfter {
