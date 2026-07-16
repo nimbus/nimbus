@@ -172,6 +172,7 @@ fn apply_set_table_schema(
 ) -> Result<()> {
     let _sequence_guard = runtime.lock_mutation_sequence();
     let _operation = runtime.enter_operation(tenant_id)?;
+    let previous_durable_head = runtime.durable_head();
     let table = table_schema.table.clone();
     let mut table_schema = table_schema;
     let previous_schema = runtime.schema();
@@ -223,7 +224,8 @@ fn apply_set_table_schema(
             .subscription_registry()
             .finish_policy_revision_mismatches(pending, POLICY_REVISION_CHANGED_MESSAGE);
     }
-    runtime.sync_mutation_journal_progress(journal_progress);
+    advance_write_log_for_local_schema_record(runtime, previous_durable_head, journal_progress);
+    runtime.sync_mutation_journal_progress_locked(journal_progress);
     Ok(())
 }
 
@@ -234,6 +236,7 @@ fn apply_delete_table_schema(
 ) -> Result<()> {
     let _sequence_guard = runtime.lock_mutation_sequence();
     let _operation = runtime.enter_operation(tenant_id)?;
+    let previous_durable_head = runtime.durable_head();
     let previous_schema = runtime.schema();
     let previous_policy_revision = previous_schema
         .get_table(table)
@@ -279,8 +282,22 @@ fn apply_delete_table_schema(
             .subscription_registry()
             .finish_policy_revision_mismatches(pending, POLICY_REVISION_CHANGED_MESSAGE);
     }
-    runtime.sync_mutation_journal_progress(journal_progress);
+    advance_write_log_for_local_schema_record(runtime, previous_durable_head, journal_progress);
+    runtime.sync_mutation_journal_progress_locked(journal_progress);
     Ok(())
+}
+
+fn advance_write_log_for_local_schema_record(
+    runtime: &TenantRuntime,
+    previous_durable_head: nimbus_core::SequenceNumber,
+    progress: nimbus_storage::JournalProgress,
+) {
+    let at_most_one_local_record = progress.durable_head.0
+        <= previous_durable_head.0.saturating_add(1)
+        && progress.applied_head == progress.durable_head;
+    if runtime.store().has_process_local_sequence_authority() && at_most_one_local_record {
+        runtime.advance_write_log_zero_write_coverage(progress.durable_head);
+    }
 }
 
 fn map_schema_task_join_error(error: tokio::task::JoinError) -> Error {

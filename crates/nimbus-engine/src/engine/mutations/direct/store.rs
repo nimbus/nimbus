@@ -45,9 +45,11 @@ impl Engine {
             profile.phases.queue_wait = queue_wait_started.elapsed();
             observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
             let durable_append_started = Instant::now();
+            let write_log_guard = runtime.arm_write_log_append();
             let commit = mutate(runtime.store(), &prepared_commit)?;
             profile.phases.durable_append = durable_append_started.elapsed();
             let publish_started = Instant::now();
+            publish_direct_commit_to_write_log(&runtime, &commit);
             runtime.mark_durable_head(commit.sequence);
             profile.phases.add_publish(publish_started.elapsed());
             let apply_started = Instant::now();
@@ -56,6 +58,7 @@ impl Engine {
             let publish_started = Instant::now();
             runtime.mark_applied_head(commit.sequence);
             profile.phases.add_publish(publish_started.elapsed());
+            write_log_guard.disarm();
             commit
         };
         runtime.record_commit_phase_sample(
@@ -84,10 +87,12 @@ impl Engine {
             profile.phases.queue_wait = queue_wait_started.elapsed();
             observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
             let durable_append_started = Instant::now();
+            let write_log_guard = runtime.arm_write_log_append();
             let commit = mutate(runtime.store(), &prepared_commit)?;
             profile.phases.durable_append = durable_append_started.elapsed();
             if let Some(commit) = &commit {
                 let publish_started = Instant::now();
+                publish_direct_commit_to_write_log(&runtime, commit);
                 runtime.mark_durable_head(commit.sequence);
                 profile.phases.add_publish(publish_started.elapsed());
                 let apply_started = Instant::now();
@@ -97,6 +102,7 @@ impl Engine {
                 runtime.mark_applied_head(commit.sequence);
                 profile.phases.add_publish(publish_started.elapsed());
             }
+            write_log_guard.disarm();
             commit
         };
         let Some(commit) = commit else {
@@ -128,9 +134,11 @@ impl Engine {
             profile.phases.queue_wait = queue_wait_started.elapsed();
             observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
             let durable_append_started = Instant::now();
+            let write_log_guard = runtime.arm_write_log_append();
             let (commit, deleted_document) = mutate(runtime.store(), &prepared_commit)?;
             profile.phases.durable_append = durable_append_started.elapsed();
             let publish_started = Instant::now();
+            publish_direct_commit_to_write_log(&runtime, &commit);
             runtime.mark_durable_head(commit.sequence);
             profile.phases.add_publish(publish_started.elapsed());
             let apply_started = Instant::now();
@@ -139,6 +147,7 @@ impl Engine {
             let publish_started = Instant::now();
             runtime.mark_applied_head(commit.sequence);
             profile.phases.add_publish(publish_started.elapsed());
+            write_log_guard.disarm();
             (commit, deleted_document)
         };
         runtime.record_commit_phase_sample(
@@ -167,10 +176,12 @@ impl Engine {
             profile.phases.queue_wait = queue_wait_started.elapsed();
             observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
             let durable_append_started = Instant::now();
+            let write_log_guard = runtime.arm_write_log_append();
             let commit = mutate(runtime.store(), &prepared_commit)?;
             profile.phases.durable_append = durable_append_started.elapsed();
             if let Some((commit, _deleted_document)) = &commit {
                 let publish_started = Instant::now();
+                publish_direct_commit_to_write_log(&runtime, commit);
                 runtime.mark_durable_head(commit.sequence);
                 profile.phases.add_publish(publish_started.elapsed());
                 let apply_started = Instant::now();
@@ -180,6 +191,7 @@ impl Engine {
                 runtime.mark_applied_head(commit.sequence);
                 profile.phases.add_publish(publish_started.elapsed());
             }
+            write_log_guard.disarm();
             commit
         };
         let Some((commit, _deleted_document)) = commit else {
@@ -194,6 +206,11 @@ impl Engine {
         self.process_commit(runtime, &commit);
         Ok(true)
     }
+}
+
+fn publish_direct_commit_to_write_log(runtime: &TenantRuntime, commit: &CommitEntry) {
+    runtime.stage_pending_write_log_commits([commit.clone()], runtime.store.now());
+    runtime.publish_write_log_through(commit.sequence);
 }
 
 fn observe_direct_shadow(

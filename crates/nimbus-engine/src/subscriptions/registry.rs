@@ -222,6 +222,23 @@ impl SubscriptionRegistry {
         self.state.len()
     }
 
+    pub(crate) fn lowest_active_delivery_sequence(
+        &self,
+        fallback: SequenceNumber,
+    ) -> SequenceNumber {
+        self.state
+            .subscriptions
+            .read()
+            .expect("subscription lock should not be poisoned")
+            .values()
+            .filter(|subscription| subscription.active)
+            .map(|subscription| {
+                SequenceNumber(subscription.last_delivered_sequence.load(Ordering::Acquire))
+            })
+            .min()
+            .unwrap_or(fallback)
+    }
+
     pub(super) fn delivery(&self, subscription_id: u64) -> Option<SubscriptionDelivery> {
         let subscription = self
             .state

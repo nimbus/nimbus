@@ -10,6 +10,19 @@ pub(crate) struct TenantProviderRefreshPlan {
 }
 
 impl TenantPersistence {
+    /// True when this runtime is the only process that can assign tenant
+    /// sequences. Shared provider backends receive foreign commits through
+    /// asynchronous catch-up, so their local write log cannot be authoritative
+    /// without a storage watermark read (PPSC5 owns that publisher protocol).
+    pub(crate) fn has_process_local_sequence_authority(&self) -> bool {
+        match self {
+            Self::Redb(_) | Self::Sqlite(_) => true,
+            Self::Postgres(_) | Self::LibsqlReplica(_) | Self::MySql(_) => false,
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => true,
+        }
+    }
+
     pub(crate) async fn load_schema_async(
         &self,
         read_storage: &TenantPersistenceExecutor,

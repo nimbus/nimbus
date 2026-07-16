@@ -2,11 +2,11 @@ use std::time::Instant;
 
 use nimbus_core::{
     CommitEntry, DependencySet, Error, Result, SequenceNumber, TableName, Timestamp,
-    commit_intersects_dependency_set,
 };
 
 use super::super::mutations::phase_metrics::{CommitPhaseDurations, maybe_warn_wide_read_set};
 use super::super::mutations::prepared::PreparedCommit;
+use super::super::mutations::write_log::ValidationSource;
 use super::state::ExecutionUnitLifecycle;
 use super::{MutationExecutionUnit, labels};
 
@@ -90,6 +90,7 @@ impl MutationExecutionUnit {
                 // full call is attributed to durable append; `apply` below is
                 // engine cache/bookkeeping work. Direct commits have the same
                 // intentional collapse.
+                let write_log_guard = self.runtime.arm_write_log_append();
                 let commit = self.runtime.store.apply_execution_unit_batch_with_origin(
                     writes,
                     schedule_ops,
@@ -101,6 +102,11 @@ impl MutationExecutionUnit {
                     .wait_for_commit_fault(labels::DURABLE_BEFORE_PUBLISH)?;
                 if let Some(commit) = &commit {
                     let publish_started = Instant::now();
+                    self.runtime.stage_pending_write_log_commits(
+                        [commit.clone()],
+                        self.runtime.store.now(),
+                    );
+                    self.runtime.publish_write_log_through(commit.sequence);
                     self.runtime.mark_durable_head(commit.sequence);
                     phases.add_publish(publish_started.elapsed());
                     let apply_started = Instant::now();
@@ -110,6 +116,7 @@ impl MutationExecutionUnit {
                     self.runtime.mark_applied_head(commit.sequence);
                     phases.add_publish(publish_started.elapsed());
                 }
+                write_log_guard.disarm();
                 commit
             };
             self.engine
@@ -158,21 +165,68 @@ impl MutationExecutionUnit {
             return Ok(());
         }
 
-        let commits = self
-            .runtime
-            .store
-            .read_commit_log_from(SequenceNumber(snapshot_sequence.0.saturating_add(1)))?;
-        for commit in commits {
-            if commit_intersects_dependency_set(&commit, dependencies, &[], |table, document_id| {
-                self.runtime.store.get(table, &document_id)
-            }) {
-                return Err(Error::retryable_conflict(
-                    "transaction conflict detected; retry the mutation",
-                    Some(commit.sequence),
-                ));
+        let head = self.runtime.durable_head();
+        let validation_source = if self.runtime.store.has_process_local_sequence_authority() {
+            self.runtime
+                .write_log
+                .validation_source(snapshot_sequence, head)?
+        } else {
+            // Postgres/MySQL/remote-libSQL can accept a foreign process's
+            // commit before its notification advances this runtime's head.
+            // Until PPSC5 supplies a storage-coordinated publish watermark,
+            // their process-local window is not an authoritative upper bound.
+            ValidationSource::StorageFallback
+        };
+        let conflicting_sequence = match validation_source {
+            ValidationSource::InMemory(view) => view
+                .first_conflicting_sequence(dependencies, |table, document_id| {
+                    self.runtime.store.get(table, &document_id)
+                }),
+            ValidationSource::StorageFallback => {
+                // `read_commit_log_from` intentionally returns the available
+                // suffix and does not enforce journal retention itself. Probe
+                // the cursor contract first so a truncated prefix can never
+                // turn into a silent validation pass.
+                self.runtime
+                    .store
+                    .stream_durable_journal(snapshot_sequence, 1)
+                    .map_err(|error| map_fallback_floor_error(error, snapshot_sequence))?;
+                let commits = self
+                    .runtime
+                    .store
+                    .read_commit_log_from(SequenceNumber(snapshot_sequence.0.saturating_add(1)))?;
+                commits.into_iter().find_map(|commit| {
+                    nimbus_core::commit_intersects_dependency_set(
+                        &commit,
+                        dependencies,
+                        &[],
+                        |table, document_id| self.runtime.store.get(table, &document_id),
+                    )
+                    .then_some(commit.sequence)
+                })
             }
+        };
+        if let Some(conflicting_sequence) = conflicting_sequence {
+            return Err(Error::retryable_conflict(
+                "transaction conflict detected; retry the mutation",
+                Some(conflicting_sequence),
+            ));
         }
         Ok(())
+    }
+}
+
+fn map_fallback_floor_error(error: Error, snapshot_sequence: SequenceNumber) -> Error {
+    match error {
+        Error::InvalidInput(message) if message.contains("retention floor") => {
+            Error::retryable_conflict(
+                format!(
+                    "transaction snapshot {snapshot_sequence} is older than the durable commit-log retention horizon; retry from a fresh snapshot"
+                ),
+                None,
+            )
+        }
+        other => other,
     }
 }
 
@@ -228,4 +282,26 @@ fn touched_tables(dependencies: &DependencySet) -> Vec<TableName> {
         }
     }
     tables
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn storage_fallback_retention_floor_fails_closed() {
+        let error = map_fallback_floor_error(
+            Error::InvalidInput("journal cursor 1 is behind the retention floor 2".to_string()),
+            SequenceNumber(1),
+        );
+
+        assert!(matches!(
+            error,
+            Error::Conflict {
+                ref message,
+                retryable: true,
+                ..
+            } if message.contains("durable commit-log retention horizon")
+        ));
+    }
 }

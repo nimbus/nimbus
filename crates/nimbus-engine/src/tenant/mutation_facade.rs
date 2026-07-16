@@ -2,10 +2,50 @@
 use std::time::Duration;
 use std::time::Instant;
 
-use nimbus_core::{Result, SequenceNumber};
+use nimbus_core::{CommitEntry, Result, SequenceNumber, Timestamp};
 use nimbus_storage::JournalProgress;
 
 use super::*;
+
+pub(crate) struct WriteLogAppendGuard<'a> {
+    runtime: &'a TenantRuntime,
+    baseline_durable_head: SequenceNumber,
+    armed: bool,
+}
+
+impl WriteLogAppendGuard<'_> {
+    pub(crate) fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for WriteLogAppendGuard<'_> {
+    fn drop(&mut self) {
+        if !self.armed || !self.runtime.store.has_process_local_sequence_authority() {
+            return;
+        }
+        let progress = self.runtime.store.journal_progress();
+        if append_exit_requires_storage_fallback(self.baseline_durable_head, &progress) {
+            self.runtime.write_log.mark_coverage_unknown();
+            tracing::warn!(
+                tenant = %self.runtime.tenant_id(),
+                baseline_durable_head = %self.baseline_durable_head,
+                observed_progress = ?progress,
+                "write-log coverage became unknown after an ambiguous persistence exit; using storage conflict validation until tenant runtime restart"
+            );
+        }
+    }
+}
+
+fn append_exit_requires_storage_fallback(
+    baseline_durable_head: SequenceNumber,
+    progress: &Result<JournalProgress>,
+) -> bool {
+    match progress {
+        Ok(progress) => progress.durable_head > baseline_durable_head,
+        Err(_) => true,
+    }
+}
 
 impl TenantRuntime {
     pub(crate) fn enqueue_mutation_admission_request(
@@ -98,6 +138,37 @@ impl TenantRuntime {
         self.mutation_journal.mark_applied_head(sequence);
     }
 
+    pub(crate) fn stage_pending_write_log_commits(
+        &self,
+        commits: impl IntoIterator<Item = CommitEntry>,
+        observed_at: Timestamp,
+    ) {
+        self.write_log.stage_pending(commits, observed_at);
+    }
+
+    pub(crate) fn publish_write_log_through(&self, applied_head: SequenceNumber) {
+        let reader_frontier = self
+            .subscription_registry()
+            .lowest_active_delivery_sequence(applied_head)
+            .min(applied_head);
+        self.write_log
+            .publish_pending_through(applied_head, self.store.now(), reader_frontier);
+    }
+
+    pub(crate) fn advance_write_log_zero_write_coverage(&self, sequence: SequenceNumber) {
+        self.write_log.advance_known_zero_write_through(sequence);
+    }
+
+    /// Arms a fail-safe around a persistence attempt. The caller disarms only
+    /// after every returned commit image has been staged in the write log.
+    pub(crate) fn arm_write_log_append(&self) -> WriteLogAppendGuard<'_> {
+        WriteLogAppendGuard {
+            runtime: self,
+            baseline_durable_head: self.durable_head(),
+            armed: true,
+        }
+    }
+
     pub(crate) async fn wait_for_applied_sequence_cancellable<Fut>(
         &self,
         sequence: SequenceNumber,
@@ -117,7 +188,40 @@ impl TenantRuntime {
     }
 
     pub(crate) fn sync_mutation_journal_progress(&self, progress: JournalProgress) {
+        let _sequence_guard = self.lock_mutation_sequence();
+        self.sync_mutation_journal_progress_locked(progress);
+    }
+
+    /// Async-context form of [`Self::sync_mutation_journal_progress`].
+    ///
+    /// The gated sync blocks on the sequence gate (a std mutex). Blocking a
+    /// tokio worker on it can starve the reactor while a gate holder drives
+    /// provider storage I/O through a runtime bridge — a real deadlock
+    /// observed on postgres-backed tenants (provider notification listener
+    /// vs a direct mutation holding the gate). Async callers must use this
+    /// form, which parks the wait on the blocking pool instead.
+    pub(crate) async fn sync_mutation_journal_progress_async(
+        self: &Arc<Self>,
+        progress: JournalProgress,
+    ) {
+        let runtime = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            runtime.sync_mutation_journal_progress(progress);
+        })
+        .await
+        .expect("sync_mutation_journal_progress task panicked");
+    }
+
+    /// Synchronizes recovered heads while the caller holds the mutation
+    /// sequence gate. Callers already inside a serial mutation section use
+    /// this non-reentrant form; all other callers use the gated wrapper above.
+    pub(crate) fn sync_mutation_journal_progress_locked(&self, progress: JournalProgress) {
+        self.write_log
+            .observe_assigned_through_without_coverage(progress.durable_head);
+        self.write_log
+            .rebase_empty_after_recovery(progress.applied_head, progress.durable_head);
         self.mark_durable_head(progress.durable_head);
+        self.publish_write_log_through(progress.applied_head);
         self.mark_applied_head(progress.applied_head);
     }
 
@@ -159,5 +263,40 @@ impl TenantRuntime {
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) async fn wait_if_subscription_bootstrap_pause_armed(&self) {
         self.subscription_bootstrap_pause.wait_if_armed().await;
+    }
+}
+
+#[cfg(test)]
+mod write_log_append_guard_tests {
+    use nimbus_core::{Error, SequenceNumber};
+    use nimbus_storage::JournalProgress;
+
+    use super::append_exit_requires_storage_fallback;
+
+    #[test]
+    fn write_log_append_guard_distinguishes_clean_rollback_from_ambiguous_exit() {
+        let baseline = SequenceNumber(4);
+        let clean_rollback = Ok(JournalProgress {
+            durable_head: baseline,
+            applied_head: baseline,
+        });
+        let durable_advance = Ok(JournalProgress {
+            durable_head: SequenceNumber(5),
+            applied_head: SequenceNumber(5),
+        });
+        let unknown_progress = Err(Error::Internal("progress unavailable".to_string()));
+
+        assert!(!append_exit_requires_storage_fallback(
+            baseline,
+            &clean_rollback
+        ));
+        assert!(append_exit_requires_storage_fallback(
+            baseline,
+            &durable_advance
+        ));
+        assert!(append_exit_requires_storage_fallback(
+            baseline,
+            &unknown_progress
+        ));
     }
 }

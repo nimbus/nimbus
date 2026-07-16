@@ -344,7 +344,7 @@ impl Engine {
         self.with_runtime_for_testing(tenant_id, |runtime| {
             let _sequence_guard = runtime.lock_mutation_sequence();
             runtime.store.set_trigger_delivery_cursor(cursor)?;
-            runtime.sync_mutation_journal_progress(runtime.store.journal_progress()?);
+            runtime.sync_mutation_journal_progress_locked(runtime.store.journal_progress()?);
             Ok(())
         })??;
         Ok(())
