@@ -200,7 +200,7 @@ impl MemoryState {
         Ok(())
     }
 
-    fn apply_record(&mut self, record: &TenantEventRecord) -> Result<()> {
+    pub(super) fn apply_record(&mut self, record: &TenantEventRecord) -> Result<()> {
         record.validate_integrity()?;
         if record.events.is_empty() {
             for write in &record.writes {

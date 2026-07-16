@@ -348,6 +348,22 @@ impl TenantRuntime {
             .map_err(|_| nimbus_core::Error::Internal("tenant prepare pool closed".to_string()))
     }
 
+    pub(crate) fn acquire_prepare_permit_blocking(&self) -> Result<OwnedSemaphorePermit> {
+        loop {
+            match Arc::clone(&self.prepare_permits).try_acquire_owned() {
+                Ok(permit) => return Ok(permit),
+                Err(tokio::sync::TryAcquireError::Closed) => {
+                    return Err(nimbus_core::Error::Internal(
+                        "tenant prepare pool closed before accepting work".to_string(),
+                    ));
+                }
+                Err(tokio::sync::TryAcquireError::NoPermits) => {
+                    std::thread::park_timeout(Duration::from_millis(1));
+                }
+            }
+        }
+    }
+
     pub(crate) fn read_storage(&self) -> &TenantPersistenceExecutor {
         &self.read_storage
     }

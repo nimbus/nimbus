@@ -1,4 +1,4 @@
-use nimbus_core::{DocumentId, Error, PrincipalContext, Result, TableName};
+use nimbus_core::{DocumentId, Error, PrincipalContext, Result};
 
 #[derive(Clone, Copy, Default)]
 pub enum MutationActor<'a> {
@@ -61,13 +61,6 @@ pub(in crate::engine::mutations) enum MutationExecutionMode {
 pub(in crate::engine::mutations) enum MutationExecutionResult {
     Immediate(Option<DocumentId>),
     Scheduled(bool),
-}
-
-pub(super) struct UpdateMutationRequest<'a> {
-    pub(super) table: TableName,
-    pub(super) id: DocumentId,
-    pub(super) patch: serde_json::Map<String, serde_json::Value>,
-    pub(super) principal: &'a PrincipalContext,
 }
 
 pub(super) fn expect_immediate_result(

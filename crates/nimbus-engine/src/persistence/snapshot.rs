@@ -48,6 +48,23 @@ impl TenantPersistenceSnapshot {
         }
     }
 
+    pub(crate) fn resource_path_binding(
+        &self,
+        locator: &nimbus_core::DocumentLocator,
+    ) -> Result<Option<ResourcePathBinding>> {
+        match self {
+            Self::Redb(snapshot) => snapshot.resource_path_binding(locator),
+            Self::Sqlite(snapshot) | Self::LibsqlReplica(snapshot) => snapshot
+                .lock()
+                .expect("sqlite read snapshot lock should not be poisoned")
+                .resource_path_binding(locator),
+            Self::Postgres(snapshot) => snapshot.resource_path_binding(locator),
+            Self::MySql(snapshot) => snapshot.resource_path_binding(locator),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(snapshot) => snapshot.resource_path_binding(locator),
+        }
+    }
+
     pub(crate) fn scan_table_matching_cancellable<F>(
         &self,
         table: &TableName,

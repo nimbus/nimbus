@@ -276,6 +276,7 @@ pub struct SqliteWriteTransaction {
     fault_injector: Arc<dyn FaultInjector>,
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
+    prepared_record: Option<TenantEventRecord>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
     commit_timestamp: Option<Timestamp>,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,

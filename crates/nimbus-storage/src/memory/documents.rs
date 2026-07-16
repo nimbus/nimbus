@@ -177,6 +177,41 @@ impl MemoryState {
 }
 
 impl MemoryTenantStore {
+    pub fn apply_prepared_write_batch(
+        &self,
+        record: &nimbus_core::TenantEventRecord,
+        schedule_ops: &[ResolvedScheduleOp],
+        scheduled_execution_id: Option<&str>,
+    ) -> Result<Option<CommitEntry>> {
+        if record.writes.is_empty() {
+            return Err(Error::Internal(
+                "prepared write batch must contain at least one document write".to_string(),
+            ));
+        }
+        self.transact(|state| {
+            let mut events = Vec::new();
+            if !state.begin_scheduled_execution(scheduled_execution_id, &mut events) {
+                return Ok(None);
+            }
+            state.apply_record(record)?;
+            state.apply_schedule_ops(schedule_ops)?;
+            record.validate_integrity()?;
+            let expected = state.durable_head.0.saturating_add(1);
+            if record.sequence.0 != expected {
+                return Err(Error::conflict(format!(
+                    "prepared commit expected storage sequence {expected}, got {}",
+                    record.sequence.0
+                )));
+            }
+            state
+                .durable_journal
+                .insert(record.sequence.0, record.clone());
+            state.durable_head = record.sequence;
+            state.applied_head = record.sequence;
+            Ok(Some(record.as_commit_entry()))
+        })
+    }
+
     pub fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
         Ok(self.read_state()?.get(table, id))
     }

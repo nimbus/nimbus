@@ -309,11 +309,11 @@ impl Engine {
     }
 }
 
-fn mutation_occ_max_attempts() -> usize {
+pub(super) fn mutation_occ_max_attempts() -> usize {
     env_positive_usize("NIMBUS_MUTATION_OCC_MAX_RETRIES", 4)
 }
 
-fn mutation_occ_backoff(attempt: usize) -> Duration {
+pub(super) fn mutation_occ_backoff(attempt: usize) -> Duration {
     let initial = env_nonnegative_u64("NIMBUS_MUTATION_OCC_INITIAL_BACKOFF_MS", 100);
     let maximum = env_nonnegative_u64("NIMBUS_MUTATION_OCC_MAX_BACKOFF_MS", 2_000).max(initial);
     let shift = u32::try_from(attempt.saturating_sub(1))
@@ -665,7 +665,7 @@ fn prepare_queued_mutation(
     })
 }
 
-fn validate_prepared_for_provider(
+pub(super) fn validate_prepared_for_provider(
     runtime: &TenantRuntime,
     snapshot_sequence: SequenceNumber,
     dependencies: &DependencySet,
@@ -716,7 +716,7 @@ fn validate_prepared_window_view(
     Ok(())
 }
 
-fn validate_prepared_against_window(
+pub(super) fn validate_prepared_against_window(
     runtime: &TenantRuntime,
     snapshot_sequence: SequenceNumber,
     dependencies: &DependencySet,

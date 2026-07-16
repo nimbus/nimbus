@@ -4,6 +4,29 @@ use super::super::{ResolvedScheduleOp, ResolvedWrite, TenantStore};
 use super::scheduled::apply_schedule_ops;
 
 impl TenantStore {
+    pub fn apply_prepared_write_batch(
+        &self,
+        record: &nimbus_core::TenantEventRecord,
+        schedule_ops: &[ResolvedScheduleOp],
+        scheduled_execution_id: Option<&str>,
+    ) -> Result<Option<CommitEntry>> {
+        if record.writes.is_empty() {
+            return Err(Error::Internal(
+                "prepared write batch must contain at least one document write".to_string(),
+            ));
+        }
+        let committed = self.execute_write(|transaction| {
+            if !transaction.begin_scheduled_execution(scheduled_execution_id)? {
+                return Ok(false);
+            }
+            transaction.apply_prepared_record(record)?;
+            apply_schedule_ops(transaction.write_txn()?, schedule_ops)?;
+            transaction.set_prepared_record(record.clone());
+            Ok(true)
+        })?;
+        Ok(committed.value.then_some(committed.commit).flatten())
+    }
+
     pub fn apply_resolved_write_batch(&self, writes: &[ResolvedWrite]) -> Result<CommitEntry> {
         self.apply_execution_unit_batch(writes, &[])?
             .ok_or_else(|| {

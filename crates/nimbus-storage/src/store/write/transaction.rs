@@ -5,7 +5,7 @@ use nimbus_core::{CommitEntry, Error, Result, TenantEventKind, Timestamp, WriteO
 use crate::simulation::{Clock, FaultInjector};
 
 use super::super::TenantWriteTransaction;
-use super::super::journal::{append_commit, commit_write_txn_cancellable};
+use super::super::journal::{append_commit, append_prepared_commit, commit_write_txn_cancellable};
 
 impl TenantWriteTransaction {
     pub(super) fn new<Check>(
@@ -23,6 +23,7 @@ impl TenantWriteTransaction {
             fault_injector,
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
+            prepared_record: None,
             check_cancel: Box::new(check_cancel),
         }
     }
@@ -49,6 +50,24 @@ impl TenantWriteTransaction {
         self.tenant_events.push(event);
     }
 
+    pub(crate) fn set_prepared_record(&mut self, record: nimbus_core::TenantEventRecord) {
+        self.commit_writes = record.writes.clone();
+        self.tenant_events = record
+            .events
+            .iter()
+            .filter(|event| !matches!(event, TenantEventKind::DocumentWrite { .. }))
+            .cloned()
+            .collect();
+        self.prepared_record = Some(record);
+    }
+
+    pub(crate) fn apply_prepared_record(
+        &mut self,
+        record: &nimbus_core::TenantEventRecord,
+    ) -> Result<()> {
+        super::super::journal::apply_durable_record_in_write_txn(self.write_txn()?, record)
+    }
+
     pub fn commit(self) -> Result<Option<CommitEntry>> {
         self.commit_with_timestamp(None)
     }
@@ -67,6 +86,7 @@ impl TenantWriteTransaction {
         let fault_injector = self.fault_injector.clone();
         let commit_writes = std::mem::take(&mut self.commit_writes);
         let mut tenant_events = std::mem::take(&mut self.tenant_events);
+        let prepared_record = self.prepared_record.take();
         let check_cancel = self.check_cancel;
 
         if !commit_writes.is_empty() {
@@ -78,7 +98,10 @@ impl TenantWriteTransaction {
             );
         }
 
-        let commit = if tenant_events.is_empty() {
+        let commit = if let Some(record) = prepared_record {
+            crate::store::validate_prepared_record_shape(&record, &commit_writes, &tenant_events)?;
+            Some(append_prepared_commit(&write_txn, &record)?)
+        } else if tenant_events.is_empty() {
             None
         } else {
             Some(append_commit(

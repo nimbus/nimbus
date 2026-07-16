@@ -46,6 +46,7 @@ pub(crate) trait SqlWriteBackend {
     fn prepend_tenant_event(&mut self, event: TenantEventKind);
     fn tenant_events_is_empty(&self) -> bool;
     fn take_tenant_events(&mut self) -> Vec<TenantEventKind>;
+    fn take_prepared_record(&mut self) -> Option<TenantEventRecord>;
 
     // Durable-journal application.
     fn applied_sequence(&mut self) -> Result<SequenceNumber>;
@@ -58,6 +59,7 @@ pub(crate) trait SqlWriteBackend {
         writes: Vec<WriteOp>,
         events: Vec<TenantEventKind>,
     ) -> Result<CommitEntry>;
+    fn append_prepared_record(&mut self, record: &TenantEventRecord) -> Result<CommitEntry>;
     /// PostgreSQL enqueues a `LISTEN/NOTIFY` payload here; MySQL has no
     /// notification channel and implements this as a no-op.
     fn enqueue_notification(&mut self) -> Result<()>;
@@ -267,7 +269,12 @@ pub(crate) fn sql_commit<B: SqlWriteBackend>(mut backend: B) -> Result<Option<Co
             writes: writes.clone(),
         });
     }
-    let commit = if backend.tenant_events_is_empty() {
+    let prepared_record = backend.take_prepared_record();
+    let commit = if let Some(record) = prepared_record {
+        let events = backend.take_tenant_events();
+        crate::store::validate_prepared_record_shape(&record, &writes, &events)?;
+        Some(backend.append_prepared_record(&record)?)
+    } else if backend.tenant_events_is_empty() {
         None
     } else {
         let events = backend.take_tenant_events();

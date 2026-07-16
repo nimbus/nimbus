@@ -13,7 +13,6 @@ use super::caps::MutationUsage;
 #[derive(Debug, Clone, PartialEq)]
 pub(in crate::engine) enum PreparedDocument {
     Full(Document),
-    Patch(serde_json::Map<String, serde_json::Value>),
 }
 
 /// One engine-layer write intent, with unavailable storage-owned details left absent.
@@ -51,11 +50,6 @@ impl PreparedWrite {
         })?;
         let current = match self.current {
             Some(PreparedDocument::Full(document)) => Some(document),
-            Some(PreparedDocument::Patch(_)) => {
-                return Err(Error::Internal(
-                    "journal prepared write must contain a full current document".to_string(),
-                ));
-            }
             None => None,
         };
         Ok(WriteOp {
@@ -85,7 +79,11 @@ pub(in crate::engine) enum PreparedSerializedEffects {
     Journal {
         scheduled_execution_id: Option<String>,
     },
-    Direct,
+    Direct {
+        record: TenantEventRecord,
+        writes: Vec<ResolvedWrite>,
+        scheduled_execution_id: Option<String>,
+    },
     ExecutionUnit {
         writes: Vec<ResolvedWrite>,
         schedule_ops: Vec<ResolvedScheduleOp>,
@@ -97,31 +95,21 @@ pub(in crate::engine) enum PreparedSerializedEffects {
 /// Engine-owned representation of a mutation after planning and before persistence.
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedCommit {
-    /// Sequence context observed while preparing the mutation. Path A records the durable
-    /// head under its exclusive sequence guard and path B records the durable head before its
-    /// lock-serialized typed call; neither uses the value for OCC. Path C is fully populated
-    /// with the applied sequence of the opened read snapshot and uses it as the OCC pin.
+    /// Sequence context observed while preparing the mutation. Every path uses the opened
+    /// snapshot's applied sequence as its OCC pin.
     pub(crate) snapshot_sequence: SequenceNumber,
-    /// Dependencies used for assign-time conflict detection. This is empty on paths A and B:
-    /// both serialize through the per-tenant sequence lock, and path A additionally plans each
-    /// batch in strict order against an overlay. Path C is fully populated with its read and
-    /// write dependencies.
+    /// Dependencies used for assign-time conflict detection against committed and assigned,
+    /// unpublished writes in the in-memory window.
     pub(crate) read_set: DependencySet,
-    /// Engine-visible write intents. Path A is fully populated, including stable table identity
-    /// and both document images. Path B is intentionally sparse: storage resolves table identity
-    /// and the previous image under its lock, while an update's current value is the incoming
-    /// patch. Path C has full previous/current images but leaves table identity absent because
-    /// the existing execution-unit storage call resolves it atomically.
+    /// Engine-visible write intents. Paths A and C are fully populated, including stable table
+    /// identity and both document images. Path B is completed by the execution-unit prepare.
     pub(in crate::engine) write_set: Vec<PreparedWrite>,
-    /// Index work known before persistence. Paths A and B leave this empty because their existing
-    /// storage paths resolve index effects under the storage lock. Path C partially populates it
-    /// with each affected index definition; storage still materializes the concrete old/new keys.
+    /// Index work selected during prepare. Storage materializes the concrete old/new keys while
+    /// atomically applying the already-resolved record.
     pub(in crate::engine) index_deltas: Vec<PreparedIndexDelta>,
-    /// Persistence-ready path-specific effects. Path A carries the scheduled-execution marker
-    /// alongside the fully populated `write_set`; path B has no serialized engine payload because
-    /// its typed storage method owns validation and serialization; path C fully preserves the
-    /// resolved writes, scheduler operations, and trigger origin consumed by its unchanged atomic
-    /// storage call.
+    /// Persistence-ready path-specific effects. Path A carries a fully serialized placeholder
+    /// record and the scheduled-execution marker. Path B is completed by the execution-unit
+    /// prepare. Path C preserves the inputs used to serialize its journal record.
     pub(in crate::engine) serialized_effects: PreparedSerializedEffects,
     /// Resource usage frozen during prepare and checked before sequence assignment.
     pub(in crate::engine) usage: MutationUsage,
@@ -178,87 +166,66 @@ impl PreparedCommit {
         }
     }
 
-    pub(in crate::engine) fn for_direct_insert(
+    pub(in crate::engine) fn for_direct(
         snapshot_sequence: SequenceNumber,
-        document: Document,
+        read_set: DependencySet,
+        write: WriteOp,
+        indexes: Vec<IndexDefinition>,
         scheduled_execution_id: Option<&str>,
-    ) -> Self {
-        let write = PreparedWrite {
-            table: document.table.clone(),
-            table_id: None,
-            op_type: WriteOpType::Insert,
-            doc_id: document.id.clone(),
-            resource_path_binding: None,
-            trigger_write_origin: None,
-            previous: None,
-            current: Some(PreparedDocument::Full(document)),
-        };
-        Self::for_direct(snapshot_sequence, write, scheduled_execution_id)
-    }
-
-    pub(in crate::engine) fn for_direct_update(
-        snapshot_sequence: SequenceNumber,
-        table: TableName,
-        doc_id: DocumentId,
-        patch: serde_json::Map<String, serde_json::Value>,
-        scheduled_execution_id: Option<&str>,
-    ) -> Self {
-        Self::for_direct(
-            snapshot_sequence,
-            PreparedWrite {
-                table,
-                table_id: None,
-                op_type: WriteOpType::Update,
-                doc_id,
-                resource_path_binding: None,
-                trigger_write_origin: None,
-                previous: None,
-                current: Some(PreparedDocument::Patch(patch)),
-            },
-            scheduled_execution_id,
-        )
-    }
-
-    pub(in crate::engine) fn for_direct_delete(
-        snapshot_sequence: SequenceNumber,
-        table: TableName,
-        doc_id: DocumentId,
-        scheduled_execution_id: Option<&str>,
-    ) -> Self {
-        Self::for_direct(
-            snapshot_sequence,
-            PreparedWrite {
-                table,
-                table_id: None,
-                op_type: WriteOpType::Delete,
-                doc_id,
-                resource_path_binding: None,
-                trigger_write_origin: None,
-                previous: None,
-                current: None,
-            },
-            scheduled_execution_id,
-        )
-    }
-
-    fn for_direct(
-        snapshot_sequence: SequenceNumber,
-        write: PreparedWrite,
-        scheduled_execution_id: Option<&str>,
-    ) -> Self {
+    ) -> Result<Self> {
+        let prepared_write = PreparedWrite::from_complete(write.clone());
         let mut usage = MutationUsage::default();
-        add_prepared_write_usage(&mut usage, &write);
+        add_prepared_write_usage(&mut usage, &prepared_write);
         if let Some(execution_id) = scheduled_execution_id {
             usage.add_system_write(&execution_id);
         }
-        Self {
+        let resolved_write = match (&write.previous, &write.current) {
+            (None, Some(document)) => ResolvedWrite::Insert {
+                document: document.clone(),
+                indexes: indexes.clone(),
+                resource_path_binding: write.resource_path_binding.clone(),
+            },
+            (Some(previous), Some(current)) => ResolvedWrite::Update {
+                previous: previous.clone(),
+                current: current.clone(),
+                indexes: indexes.clone(),
+                resource_path_binding: write.resource_path_binding.clone(),
+            },
+            (Some(previous), None) => ResolvedWrite::Delete {
+                previous: previous.clone(),
+                indexes: indexes.clone(),
+            },
+            (None, None) => {
+                return Err(Error::Internal(
+                    "direct prepared write must include a previous or current document".to_string(),
+                ));
+            }
+        };
+        let record = TenantEventRecord::new(
+            SequenceNumber(0),
+            Timestamp(0),
+            vec![write],
+            scheduled_execution_id.map(str::to_string),
+        )?;
+        Ok(Self {
             snapshot_sequence,
-            read_set: DependencySet::default(),
-            write_set: vec![write],
-            index_deltas: Vec::new(),
-            serialized_effects: PreparedSerializedEffects::Direct,
+            read_set,
+            write_set: vec![prepared_write.clone()],
+            index_deltas: indexes
+                .into_iter()
+                .map(|index| PreparedIndexDelta {
+                    table: prepared_write.table.clone(),
+                    doc_id: prepared_write.doc_id.clone(),
+                    index,
+                })
+                .collect(),
+            serialized_effects: PreparedSerializedEffects::Direct {
+                record,
+                writes: vec![resolved_write],
+                scheduled_execution_id: scheduled_execution_id.map(str::to_string),
+            },
             usage,
-        }
+        })
     }
 
     pub(in crate::engine) fn for_execution_unit(
@@ -317,7 +284,7 @@ impl PreparedCommit {
         sequence: SequenceNumber,
         timestamp: Timestamp,
     ) -> Result<TenantEventRecord> {
-        self.stamp_for_assignment(timestamp)?;
+        self.stamp_for_assignment(sequence, timestamp)?;
         let PreparedSerializedEffects::Journal {
             scheduled_execution_id,
         } = self.serialized_effects
@@ -336,7 +303,11 @@ impl PreparedCommit {
 
     /// Applies the one authoritative lifecycle timestamp after validation and while the
     /// tenant committer owns assignment. Persisted/replayed images consume these values verbatim.
-    pub(in crate::engine) fn stamp_for_assignment(&mut self, timestamp: Timestamp) -> Result<()> {
+    pub(in crate::engine) fn stamp_for_assignment(
+        &mut self,
+        sequence: SequenceNumber,
+        timestamp: Timestamp,
+    ) -> Result<()> {
         for write in &mut self.write_set {
             stamp_prepared_write(write, timestamp);
         }
@@ -368,66 +339,28 @@ impl PreparedCommit {
                 }
             }
         }
+        if let PreparedSerializedEffects::Direct { record, writes, .. } =
+            &mut self.serialized_effects
+        {
+            for write in writes {
+                stamp_resolved_write(write, timestamp);
+            }
+            record.assign_prepared_document_record(sequence, timestamp)?;
+        }
         Ok(())
     }
 
-    pub(in crate::engine) fn direct_insert_document(&self) -> Result<&Document> {
-        match self.write_set.as_slice() {
-            [
-                PreparedWrite {
-                    op_type: WriteOpType::Insert,
-                    current: Some(PreparedDocument::Full(document)),
-                    ..
-                },
-            ] if matches!(self.serialized_effects, PreparedSerializedEffects::Direct) => {
-                Ok(document)
-            }
-            _ => Err(Error::Internal(
-                "direct insert prepared commit has an invalid shape".to_string(),
-            )),
-        }
-    }
-
-    pub(in crate::engine) fn direct_update_parts(
+    pub(in crate::engine) fn direct_effects(
         &self,
-    ) -> Result<(
-        &TableName,
-        &DocumentId,
-        &serde_json::Map<String, serde_json::Value>,
-    )> {
-        match self.write_set.as_slice() {
-            [
-                PreparedWrite {
-                    table,
-                    op_type: WriteOpType::Update,
-                    doc_id,
-                    current: Some(PreparedDocument::Patch(patch)),
-                    ..
-                },
-            ] if matches!(self.serialized_effects, PreparedSerializedEffects::Direct) => {
-                Ok((table, doc_id, patch))
-            }
+    ) -> Result<(&TenantEventRecord, &[ResolvedWrite], Option<&str>)> {
+        match &self.serialized_effects {
+            PreparedSerializedEffects::Direct {
+                record,
+                writes,
+                scheduled_execution_id,
+            } => Ok((record, writes, scheduled_execution_id.as_deref())),
             _ => Err(Error::Internal(
-                "direct update prepared commit has an invalid shape".to_string(),
-            )),
-        }
-    }
-
-    pub(in crate::engine) fn direct_delete_parts(&self) -> Result<(&TableName, &DocumentId)> {
-        match self.write_set.as_slice() {
-            [
-                PreparedWrite {
-                    table,
-                    op_type: WriteOpType::Delete,
-                    doc_id,
-                    current: None,
-                    ..
-                },
-            ] if matches!(self.serialized_effects, PreparedSerializedEffects::Direct) => {
-                Ok((table, doc_id))
-            }
-            _ => Err(Error::Internal(
-                "direct delete prepared commit has an invalid shape".to_string(),
+                "direct prepared commit has an invalid effect shape".to_string(),
             )),
         }
     }
@@ -481,7 +414,6 @@ impl PreparedCommit {
 fn add_prepared_write_usage(usage: &mut MutationUsage, write: &PreparedWrite) {
     match &write.current {
         Some(PreparedDocument::Full(document)) => usage.add_user_write(document),
-        Some(PreparedDocument::Patch(patch)) => usage.add_user_write(patch),
         None => usage.add_user_write(&(write.table.as_str(), write.doc_id.as_str(), write.op_type)),
     }
 }
@@ -695,51 +627,53 @@ mod tests {
     }
 
     #[test]
-    fn direct_prepared_commits_capture_sparse_insert_update_and_delete_intents() {
+    fn direct_prepared_commit_captures_full_serialized_record_and_index_work() {
         let insert_document = document("direct-insert", "insert");
-        let insert = PreparedCommit::for_direct_insert(
+        let write = WriteOp {
+            table: table(),
+            table_id: table_id(),
+            op_type: WriteOpType::Insert,
+            doc_id: insert_document.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
+            previous: None,
+            current: Some(insert_document.clone()),
+        };
+        let mut dependencies = DependencySet::default();
+        dependencies.record_document(&table(), &table_id(), insert_document.id.clone());
+        let mut insert = PreparedCommit::for_direct(
             SequenceNumber(50),
-            insert_document.clone(),
+            dependencies.clone(),
+            write,
+            vec![index()],
             Some("scheduled-direct"),
-        );
-        let patch = serde_json::Map::from_iter([("value".to_string(), json!("updated"))]);
-        let update = PreparedCommit::for_direct_update(
-            SequenceNumber(51),
-            table(),
-            DocumentId::from_key("direct-update").expect("document id should parse"),
-            patch.clone(),
-            None,
-        );
-        let delete = PreparedCommit::for_direct_delete(
-            SequenceNumber(52),
-            table(),
-            DocumentId::from_key("direct-delete").expect("document id should parse"),
-            None,
-        );
+        )
+        .expect("direct prepare should serialize");
 
-        assert_eq!(insert.direct_insert_document().unwrap(), &insert_document);
-        assert_eq!(insert.write_set[0].table_id, None);
+        assert_eq!(insert.write_set[0].table_id, Some(table_id()));
         assert_eq!(insert.write_set[0].previous, None);
-        assert!(insert.read_set.is_empty());
-        assert!(insert.index_deltas.is_empty());
+        assert_eq!(insert.read_set, dependencies);
+        assert_eq!(insert.index_deltas.len(), 1);
         assert_eq!(insert.usage.documents_written, 1);
         assert!(insert.usage.write_bytes > 0);
         assert_eq!(insert.usage.system_documents_written, 1);
         assert!(insert.usage.system_write_bytes > 0);
+        let (placeholder, _, scheduled) = insert.direct_effects().unwrap();
+        assert_eq!(placeholder.sequence, SequenceNumber(0));
+        assert_eq!(placeholder.timestamp, Timestamp(0));
+        assert_eq!(scheduled, Some("scheduled-direct"));
 
-        let (update_table, update_id, update_patch) = update.direct_update_parts().unwrap();
-        assert_eq!(update_table, &table());
-        assert_eq!(update_id.as_str(), "direct-update");
-        assert_eq!(update_patch, &patch);
-        assert_eq!(update.write_set[0].previous, None);
-        assert!(update.read_set.is_empty());
-
-        let (delete_table, delete_id) = delete.direct_delete_parts().unwrap();
-        assert_eq!(delete_table, &table());
-        assert_eq!(delete_id.as_str(), "direct-delete");
-        assert_eq!(delete.write_set[0].previous, None);
-        assert_eq!(delete.write_set[0].current, None);
-        assert!(delete.read_set.is_empty());
+        insert
+            .stamp_for_assignment(SequenceNumber(51), Timestamp(500))
+            .expect("assignment should stamp the placeholder record");
+        let (record, _, _) = insert.direct_effects().unwrap();
+        assert_eq!(record.sequence, SequenceNumber(51));
+        assert_eq!(record.timestamp, Timestamp(500));
+        assert_eq!(
+            record.writes[0].current.as_ref().unwrap().update_time,
+            Timestamp(500)
+        );
+        record.validate_integrity().unwrap();
     }
 
     #[test]
@@ -819,7 +753,7 @@ mod tests {
 
         let mut assigned = prepared.clone();
         assigned
-            .stamp_for_assignment(Timestamp(600))
+            .stamp_for_assignment(SequenceNumber(61), Timestamp(600))
             .expect("assignment stamping should succeed");
         let (_, assigned_schedule_ops, _) = assigned
             .execution_unit_effects()

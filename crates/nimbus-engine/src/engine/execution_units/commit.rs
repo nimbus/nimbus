@@ -118,7 +118,7 @@ impl MutationExecutionUnit {
                     let expected_sequence =
                         crate::tenant::assign_and_validate(previous_sequence, 1)?[0];
                     let commit_timestamp = runtime.assign_commit_timestamp();
-                    prepared_commit.stamp_for_assignment(commit_timestamp)?;
+                    prepared_commit.stamp_for_assignment(expected_sequence, commit_timestamp)?;
                     let (writes, schedule_ops, trigger_write_origin) =
                         prepared_commit.execution_unit_effects()?;
                     let durable_append_started = Instant::now();
