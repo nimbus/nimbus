@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -104,7 +104,7 @@ pub(crate) struct CommitterActor {
     receiver: Mutex<Option<mpsc::Receiver<CommitterMessage>>>,
     started: AtomicBool,
     inbox_capacity: usize,
-    inbox_depth: AtomicUsize,
+    send_timeout: Duration,
     send_timeout_count: AtomicU64,
 }
 
@@ -112,13 +112,17 @@ impl CommitterActor {
     pub(crate) fn new() -> Self {
         let inbox_capacity =
             env_positive_usize("NIMBUS_COMMITTER_INBOX_SIZE", DEFAULT_COMMITTER_INBOX_SIZE);
+        let send_timeout = Duration::from_millis(env_nonnegative_u64(
+            "NIMBUS_COMMITTER_SEND_TIMEOUT_MS",
+            DEFAULT_COMMITTER_SEND_TIMEOUT_MS,
+        ));
         let (sender, receiver) = mpsc::channel(inbox_capacity);
         Self {
             sender,
             receiver: Mutex::new(Some(receiver)),
             started: AtomicBool::new(false),
             inbox_capacity,
-            inbox_depth: AtomicUsize::new(0),
+            send_timeout,
             send_timeout_count: AtomicU64::new(0),
         }
     }
@@ -137,22 +141,14 @@ impl CommitterActor {
 
     pub(crate) async fn send_async(&self, message: CommitterMessage) -> Result<()> {
         assert_not_reentrant();
-        let timeout = self.send_timeout();
-        // Reserve the observable depth before publishing the message. The
-        // receiver may run immediately after `send` completes, so incrementing
-        // afterward can race its decrement and transiently underflow.
-        self.inbox_depth.fetch_add(1, Ordering::Relaxed);
+        let timeout = self.send_timeout;
         match tokio::time::timeout(timeout, self.sender.send(message)).await {
             Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => {
-                self.inbox_depth.fetch_sub(1, Ordering::Relaxed);
-                Err(Error::Internal(format!(
-                    "tenant committer actor stopped before accepting {} work",
-                    error.0.kind()
-                )))
-            }
+            Ok(Err(error)) => Err(Error::Internal(format!(
+                "tenant committer actor stopped before accepting {} work",
+                error.0.kind()
+            ))),
             Err(_) => {
-                self.inbox_depth.fetch_sub(1, Ordering::Relaxed);
                 self.send_timeout_count.fetch_add(1, Ordering::Relaxed);
                 Err(Error::committer_full(
                     format!(
@@ -168,14 +164,12 @@ impl CommitterActor {
 
     pub(crate) fn send_blocking(&self, mut message: CommitterMessage) -> Result<()> {
         assert_not_reentrant();
-        let timeout = self.send_timeout();
+        let timeout = self.send_timeout;
         let deadline = Instant::now() + timeout;
-        self.inbox_depth.fetch_add(1, Ordering::Relaxed);
         loop {
             match self.sender.try_send(message) {
                 Ok(()) => return Ok(()),
                 Err(mpsc::error::TrySendError::Closed(returned)) => {
-                    self.inbox_depth.fetch_sub(1, Ordering::Relaxed);
                     return Err(Error::Internal(format!(
                         "tenant committer actor stopped before accepting {} work",
                         returned.kind()
@@ -185,7 +179,6 @@ impl CommitterActor {
                     message = returned;
                     let now = Instant::now();
                     if now >= deadline {
-                        self.inbox_depth.fetch_sub(1, Ordering::Relaxed);
                         self.send_timeout_count.fetch_add(1, Ordering::Relaxed);
                         return Err(Error::committer_full(
                             format!(
@@ -300,7 +293,9 @@ impl CommitterActor {
     }
 
     pub(crate) fn depth(&self) -> usize {
-        self.inbox_depth.load(Ordering::Relaxed)
+        self.sender
+            .max_capacity()
+            .saturating_sub(self.sender.capacity())
     }
 
     pub(crate) fn capacity(&self) -> usize {
@@ -309,17 +304,6 @@ impl CommitterActor {
 
     pub(crate) fn send_timeout_count(&self) -> u64 {
         self.send_timeout_count.load(Ordering::Relaxed)
-    }
-
-    fn received(&self) {
-        self.inbox_depth.fetch_sub(1, Ordering::Relaxed);
-    }
-
-    fn send_timeout(&self) -> Duration {
-        Duration::from_millis(env_nonnegative_u64(
-            "NIMBUS_COMMITTER_SEND_TIMEOUT_MS",
-            DEFAULT_COMMITTER_SEND_TIMEOUT_MS,
-        ))
     }
 }
 
@@ -356,7 +340,6 @@ async fn run_committer_actor_loop(
         let Some(runtime) = runtime.upgrade() else {
             break;
         };
-        runtime.committer.received();
         if let CommitterMessage::QueuedBatch { engine } = message {
             engine
                 .run_one_committer_journal_batch(runtime.clone())

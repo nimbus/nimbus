@@ -80,12 +80,12 @@ impl MutationExecutionUnit {
             let runtime_for_fanout = self.runtime.clone();
             let schema_epoch_snapshot = self.schema_epoch_snapshot.clone();
             let schema_snapshot = self.schema_snapshot.clone();
+            let queued_at = Instant::now();
             let (commit, phases) = self.runtime.submit_execution_unit_committer_then(
                 move || {
                     let runtime = runtime_for_commit;
                     let engine = engine_for_commit;
-                    let queue_wait_started = Instant::now();
-                    phases.queue_wait = queue_wait_started.elapsed();
+                    phases.queue_wait = queued_at.elapsed();
                     let conflict_check_started = Instant::now();
                     ensure_schema_unchanged(
                         &runtime,

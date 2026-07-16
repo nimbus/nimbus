@@ -47,11 +47,11 @@ impl Engine {
     {
         let runtime_for_commit = runtime.clone();
         let runtime_for_fanout = runtime.clone();
+        let queued_at = Instant::now();
         let commit = runtime.submit_direct_committer_then(
             move || {
                 let runtime = runtime_for_commit;
-                let queue_wait_started = Instant::now();
-                profile.phases.queue_wait = queue_wait_started.elapsed();
+                profile.phases.queue_wait = queued_at.elapsed();
                 observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
                 let previous_sequence = runtime.durable_head();
                 let expected_sequence =
@@ -110,11 +110,11 @@ impl Engine {
     {
         let runtime_for_commit = runtime.clone();
         let runtime_for_fanout = runtime.clone();
+        let queued_at = Instant::now();
         let (commit, profile) = runtime.submit_direct_committer_then(
             move || {
                 let runtime = runtime_for_commit;
-                let queue_wait_started = Instant::now();
-                profile.phases.queue_wait = queue_wait_started.elapsed();
+                profile.phases.queue_wait = queued_at.elapsed();
                 observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
                 let previous_sequence = runtime.durable_head();
                 let expected_sequence =
@@ -181,11 +181,11 @@ impl Engine {
     {
         let runtime_for_commit = runtime.clone();
         let runtime_for_fanout = runtime.clone();
+        let queued_at = Instant::now();
         let ((commit, _deleted_document), profile) = runtime.submit_direct_committer_then(
             move || {
                 let runtime = runtime_for_commit;
-                let queue_wait_started = Instant::now();
-                profile.phases.queue_wait = queue_wait_started.elapsed();
+                profile.phases.queue_wait = queued_at.elapsed();
                 observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
                 let previous_sequence = runtime.durable_head();
                 let expected_sequence =
@@ -244,11 +244,11 @@ impl Engine {
     {
         let runtime_for_commit = runtime.clone();
         let runtime_for_fanout = runtime.clone();
+        let queued_at = Instant::now();
         let (commit, profile) = runtime.submit_direct_committer_then(
             move || {
                 let runtime = runtime_for_commit;
-                let queue_wait_started = Instant::now();
-                profile.phases.queue_wait = queue_wait_started.elapsed();
+                profile.phases.queue_wait = queued_at.elapsed();
                 observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
                 let previous_sequence = runtime.durable_head();
                 let expected_sequence =

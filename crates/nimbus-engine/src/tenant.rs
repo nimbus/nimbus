@@ -394,14 +394,19 @@ impl TenantRuntime {
     }
 
     pub(crate) fn engine_diagnostics_snapshot(&self) -> TenantEngineDiagnosticsSnapshot {
+        let mutation_journal = self.mutation_journal_stats();
+        let mut commit_phases = self.commit_phases.snapshot();
+        commit_phases.committer_inbox_depth =
+            u64::try_from(mutation_journal.committer_inbox_depth).unwrap_or(u64::MAX);
+        commit_phases.committer_send_timeout_total = mutation_journal.committer_send_timeout_count;
         TenantEngineDiagnosticsSnapshot {
             mutation_admission: self.mutation_admission_stats(),
-            mutation_journal: self.mutation_journal_stats(),
+            mutation_journal,
             subscription_delivery: self.subscription_delivery_stats(),
             materialized_read_surface: self.materialized_read_surface_stats(),
             serving_snapshot_manager: self.serving_snapshot_manager_stats(),
             query_planning: self.query_planning_stats(),
-            commit_phases: self.commit_phases.snapshot(),
+            commit_phases,
             tenant_write_rate: self.write_rate.stats(),
             libsql_replica_freshness: self.store.libsql_replica_freshness_stats(),
         }

@@ -19,8 +19,8 @@ const DEFAULT_SHADOW_CAP_REPORT_EVERY: usize = 100;
 /// Phase durations are wall-clock nanoseconds summed once per committer sample.
 /// A journal batch is one sample and can contain multiple commits; direct and
 /// execution-unit commits are one sample each. `queue_wait_nanos` is summed per
-/// committed request on the journal path and records sequence-gate wait on the
-/// direct and execution-unit paths. `shadow_window_size` is the cumulative
+/// committed request on the journal path and records committer-inbox wait on
+/// the direct and execution-unit paths. `shadow_window_size` is the cumulative
 /// number of recent commit entries examined by paths A and B;
 /// `shadow_window_truncated_total` counts observations whose scan was clamped
 /// to the trailing `NIMBUS_SHADOW_CONFLICT_WINDOW_MAX` commits (conflicts
@@ -51,6 +51,11 @@ pub struct CommitPhaseMetricsSnapshot {
     pub mutation_conflict_exhausted_total: u64,
     pub overload_errors_total: u64,
     pub overload_errors_reported_total: u64,
+    /// Point-in-time number of accepted messages waiting in the bounded
+    /// per-tenant committer inbox.
+    pub committer_inbox_depth: u64,
+    /// Cumulative sends rejected after waiting for the committer inbox.
+    pub committer_send_timeout_total: u64,
     pub shadow_cap_read_bytes_total: u64,
     pub shadow_cap_write_bytes_total: u64,
     pub shadow_cap_documents_scanned_total: u64,
@@ -256,6 +261,8 @@ impl CommitPhaseMetrics {
             overload_errors_reported_total: self
                 .overload_errors_reported_total
                 .load(Ordering::Relaxed),
+            committer_inbox_depth: 0,
+            committer_send_timeout_total: 0,
             shadow_cap_read_bytes_total: self.shadow_cap_violations[0].load(Ordering::Relaxed),
             shadow_cap_write_bytes_total: self.shadow_cap_violations[1].load(Ordering::Relaxed),
             shadow_cap_documents_scanned_total: self.shadow_cap_violations[2]
@@ -440,6 +447,8 @@ mod tests {
                 mutation_conflict_exhausted_total: 1,
                 overload_errors_total: 0,
                 overload_errors_reported_total: 0,
+                committer_inbox_depth: 0,
+                committer_send_timeout_total: 0,
                 shadow_cap_read_bytes_total: 0,
                 shadow_cap_write_bytes_total: 0,
                 shadow_cap_documents_scanned_total: 0,
