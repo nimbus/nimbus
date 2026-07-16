@@ -1,3 +1,5 @@
+pub mod commit_taxonomy;
+
 mod elle;
 mod engine_fixture;
 mod eventual;

@@ -166,7 +166,7 @@ impl std::fmt::Display for MutationCap {
 }
 
 /// Core Nimbus error type.
-#[derive(Debug, ThisError)]
+#[derive(Debug, Clone, ThisError)]
 pub enum Error {
     #[error("operation canceled")]
     Cancelled,

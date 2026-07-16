@@ -799,64 +799,38 @@ pub(crate) const FATAL_PROTOCOL_CLOSE_CODE: u16 = close_code::POLICY;
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
-    use nimbus_core::MutationCap;
+    use nimbus_core::{CommitErrorClass, Retryability};
+    use nimbus_testing::commit_taxonomy::assert_commit_taxonomy_mapping;
 
     #[test]
     fn server_envelope_encodes_full_commit_taxonomy_for_sdk_decoders() {
-        let cases = [
-            (
-                Error::retryable_conflict("race", None),
-                "op.conflict",
-                "retryable",
-            ),
-            (
-                Error::overloaded("busy"),
-                "rate.overloaded",
-                "retryable_after_backoff",
-            ),
-            (
-                Error::committer_full("full", 128),
-                "rate.committer_full",
-                "retryable_after_backoff",
-            ),
-            (
-                Error::rejected_before_execution("not started"),
-                "rate.rejected_before_execution",
-                "retryable",
-            ),
-            (
-                Error::rate_limited("hot", Duration::from_millis(250)),
-                "rate.limited",
-                "retryable_after_backoff",
-            ),
-            (
-                Error::out_of_retention("expired", None),
-                "op.out_of_retention",
-                "restart_transaction",
-            ),
-            (
-                Error::cap_exceeded(MutationCap::WriteBytes, 2, 1),
-                "op.cap_exceeded",
-                "terminal",
-            ),
+        #[rustfmt::skip]
+        let expectations = [
+            (CommitErrorClass::Conflict, ("op.conflict", true, "retryable".to_string(), Retryability::Retryable)),
+            (CommitErrorClass::Overloaded, ("rate.overloaded", true, "retryable_after_backoff".to_string(), Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::CommitterFull, ("rate.committer_full", true, "retryable_after_backoff".to_string(), Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::RejectedBeforeExecution, ("rate.rejected_before_execution", true, "retryable".to_string(), Retryability::Retryable)),
+            (CommitErrorClass::RateLimited, ("rate.limited", true, "retryable_after_backoff".to_string(), Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::OutOfRetention, ("op.out_of_retention", true, "restart_transaction".to_string(), Retryability::RestartTransaction)),
+            (CommitErrorClass::CapExceeded, ("op.cap_exceeded", false, "terminal".to_string(), Retryability::Terminal)),
         ];
 
-        for (error, code, retryability) in cases {
-            let public = PublicError::from_core_error(&error);
-            assert_eq!(public.code, code, "{error}");
-            assert_eq!(
-                public.retryable,
-                error.retryability() != nimbus_core::Retryability::Terminal
-            );
-            assert_eq!(
-                public.detail["retryability"],
-                json!(retryability),
-                "{error}"
-            );
-        }
+        assert_commit_taxonomy_mapping(
+            |error| {
+                let public = PublicError::from_core_error(error);
+                (
+                    public.code,
+                    public.retryable,
+                    public.detail["retryability"]
+                        .as_str()
+                        .expect("commit detail should encode retryability")
+                        .to_string(),
+                    error.retryability(),
+                )
+            },
+            &expectations,
+        );
     }
 
     #[test]

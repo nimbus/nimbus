@@ -190,72 +190,35 @@ pub fn firebase_error_response_json(error: Error) -> (StatusCode, Value) {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
-    use nimbus_core::{MutationCap, Retryability, TenantId};
+    use nimbus_core::{CommitErrorClass, Retryability, TenantId};
+    use nimbus_testing::commit_taxonomy::assert_commit_taxonomy_mapping;
 
     #[test]
     fn firebase_surfaces_full_commit_taxonomy() {
-        let cases = [
-            (
-                Error::retryable_conflict("race", None),
-                Code::Aborted,
-                StatusCode::CONFLICT,
-                "ABORTED",
-                Retryability::Retryable,
-            ),
-            (
-                Error::overloaded("busy"),
-                Code::ResourceExhausted,
-                StatusCode::TOO_MANY_REQUESTS,
-                "RESOURCE_EXHAUSTED",
-                Retryability::RetryableAfterBackoff,
-            ),
-            (
-                Error::committer_full("full", 128),
-                Code::ResourceExhausted,
-                StatusCode::TOO_MANY_REQUESTS,
-                "RESOURCE_EXHAUSTED",
-                Retryability::RetryableAfterBackoff,
-            ),
-            (
-                Error::rejected_before_execution("not started"),
-                Code::Unavailable,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "UNAVAILABLE",
-                Retryability::Retryable,
-            ),
-            (
-                Error::rate_limited("hot", Duration::from_millis(100)),
-                Code::ResourceExhausted,
-                StatusCode::TOO_MANY_REQUESTS,
-                "RESOURCE_EXHAUSTED",
-                Retryability::RetryableAfterBackoff,
-            ),
-            (
-                Error::out_of_retention("expired", None),
-                Code::FailedPrecondition,
-                StatusCode::PRECONDITION_FAILED,
-                "FAILED_PRECONDITION",
-                Retryability::RestartTransaction,
-            ),
-            (
-                Error::cap_exceeded(MutationCap::DocumentsScanned, 11, 10),
-                Code::InvalidArgument,
-                StatusCode::BAD_REQUEST,
-                "INVALID_ARGUMENT",
-                Retryability::Terminal,
-            ),
+        #[rustfmt::skip]
+        let expectations = [
+            (CommitErrorClass::Conflict, (Code::Aborted, StatusCode::CONFLICT, "ABORTED", Retryability::Retryable)),
+            (CommitErrorClass::Overloaded, (Code::ResourceExhausted, StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED", Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::CommitterFull, (Code::ResourceExhausted, StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED", Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::RejectedBeforeExecution, (Code::Unavailable, StatusCode::SERVICE_UNAVAILABLE, "UNAVAILABLE", Retryability::Retryable)),
+            (CommitErrorClass::RateLimited, (Code::ResourceExhausted, StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED", Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::OutOfRetention, (Code::FailedPrecondition, StatusCode::PRECONDITION_FAILED, "FAILED_PRECONDITION", Retryability::RestartTransaction)),
+            (CommitErrorClass::CapExceeded, (Code::InvalidArgument, StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", Retryability::Terminal)),
         ];
 
-        for (error, grpc_code, http_code, status, retryability) in cases {
-            assert_eq!(firestore_grpc_code(&error), grpc_code, "{error}");
-            assert_eq!(error.retryability(), retryability, "{error}");
-            let (actual_http_code, body) = firebase_error_response_json(error);
-            assert_eq!(actual_http_code, http_code);
-            assert_eq!(body["error"]["status"], json!(status));
-        }
+        assert_commit_taxonomy_mapping(
+            |error| {
+                let rest = firebase_rest_error(error);
+                (
+                    firestore_grpc_code(error),
+                    rest.http_code,
+                    rest.status,
+                    error.retryability(),
+                )
+            },
+            &expectations,
+        );
     }
 
     #[test]

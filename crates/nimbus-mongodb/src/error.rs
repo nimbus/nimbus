@@ -184,10 +184,9 @@ pub fn error_doc(code: i32, code_name: &str, errmsg: &str) -> bson::Document {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
-    use nimbus_core::{MutationCap, Retryability};
+    use nimbus_core::{CommitErrorClass, Retryability};
+    use nimbus_testing::commit_taxonomy::assert_commit_taxonomy_mapping;
 
     fn command_vocabulary(error: nimbus_core::Error) -> (i32, String) {
         match MongoError::from(error) {
@@ -200,50 +199,24 @@ mod tests {
 
     #[test]
     fn mongodb_surfaces_full_commit_taxonomy() {
-        let cases = [
-            (
-                nimbus_core::Error::retryable_conflict("race", None),
-                WRITE_CONFLICT,
-                Retryability::Retryable,
-            ),
-            (
-                nimbus_core::Error::overloaded("busy"),
-                TEMPORARILY_UNAVAILABLE,
-                Retryability::RetryableAfterBackoff,
-            ),
-            (
-                nimbus_core::Error::committer_full("full", 128),
-                TEMPORARILY_UNAVAILABLE,
-                Retryability::RetryableAfterBackoff,
-            ),
-            (
-                nimbus_core::Error::rejected_before_execution("not started"),
-                TEMPORARILY_UNAVAILABLE,
-                Retryability::Retryable,
-            ),
-            (
-                nimbus_core::Error::rate_limited("hot", Duration::from_millis(100)),
-                RATE_LIMIT_EXCEEDED,
-                Retryability::RetryableAfterBackoff,
-            ),
-            (
-                nimbus_core::Error::out_of_retention("expired", None),
-                SNAPSHOT_TOO_OLD,
-                Retryability::RestartTransaction,
-            ),
-            (
-                nimbus_core::Error::cap_exceeded(MutationCap::DocumentsWritten, 17, 16),
-                TRANSACTION_TOO_LARGE_FOR_CACHE,
-                Retryability::Terminal,
-            ),
+        #[rustfmt::skip]
+        let expectations = [
+            (CommitErrorClass::Conflict, (WRITE_CONFLICT.code, WRITE_CONFLICT.code_name.to_string(), Retryability::Retryable)),
+            (CommitErrorClass::Overloaded, (TEMPORARILY_UNAVAILABLE.code, TEMPORARILY_UNAVAILABLE.code_name.to_string(), Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::CommitterFull, (TEMPORARILY_UNAVAILABLE.code, TEMPORARILY_UNAVAILABLE.code_name.to_string(), Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::RejectedBeforeExecution, (TEMPORARILY_UNAVAILABLE.code, TEMPORARILY_UNAVAILABLE.code_name.to_string(), Retryability::Retryable)),
+            (CommitErrorClass::RateLimited, (RATE_LIMIT_EXCEEDED.code, RATE_LIMIT_EXCEEDED.code_name.to_string(), Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::OutOfRetention, (SNAPSHOT_TOO_OLD.code, SNAPSHOT_TOO_OLD.code_name.to_string(), Retryability::RestartTransaction)),
+            (CommitErrorClass::CapExceeded, (TRANSACTION_TOO_LARGE_FOR_CACHE.code, TRANSACTION_TOO_LARGE_FOR_CACHE.code_name.to_string(), Retryability::Terminal)),
         ];
 
-        for (error, expected, retryability) in cases {
-            assert_eq!(error.retryability(), retryability, "{error}");
-            let (code, code_name) = command_vocabulary(error);
-            assert_eq!(code, expected.code);
-            assert_eq!(code_name, expected.code_name);
-        }
+        assert_commit_taxonomy_mapping(
+            |error| {
+                let (code, code_name) = command_vocabulary(error.clone());
+                (code, code_name, error.retryability())
+            },
+            &expectations,
+        );
     }
 
     #[test]

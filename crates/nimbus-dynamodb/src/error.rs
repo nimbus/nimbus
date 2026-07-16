@@ -79,11 +79,10 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
     use crate::wire::render_error;
-    use nimbus_core::{HistoricalReadErrorKind, MutationCap, Retryability, StorageErrorKind};
+    use nimbus_core::{CommitErrorClass, HistoricalReadErrorKind, Retryability, StorageErrorKind};
+    use nimbus_testing::commit_taxonomy::assert_commit_taxonomy_mapping;
 
     fn code(error: &DynamoDbError) -> &str {
         error.error_type()
@@ -91,57 +90,28 @@ mod tests {
 
     #[test]
     fn dynamodb_surfaces_full_commit_taxonomy() {
-        let cases = [
-            (
-                CoreError::retryable_conflict("race", None),
-                "TransactionConflictException",
-                400,
-                Retryability::Retryable,
-            ),
-            (
-                CoreError::overloaded("busy"),
-                "ProvisionedThroughputExceededException",
-                400,
-                Retryability::RetryableAfterBackoff,
-            ),
-            (
-                CoreError::committer_full("full", 128),
-                "ProvisionedThroughputExceededException",
-                400,
-                Retryability::RetryableAfterBackoff,
-            ),
-            (
-                CoreError::rejected_before_execution("not started"),
-                "ServiceUnavailable",
-                503,
-                Retryability::Retryable,
-            ),
-            (
-                CoreError::rate_limited("hot", Duration::from_millis(100)),
-                "RequestLimitExceeded",
-                400,
-                Retryability::RetryableAfterBackoff,
-            ),
-            (
-                CoreError::out_of_retention("expired", None),
-                "TransactionConflictException",
-                400,
-                Retryability::RestartTransaction,
-            ),
-            (
-                CoreError::cap_exceeded(MutationCap::WriteBytes, 2, 1),
-                "ValidationException",
-                400,
-                Retryability::Terminal,
-            ),
+        #[rustfmt::skip]
+        let expectations = [
+            (CommitErrorClass::Conflict, ("TransactionConflictException".to_string(), 400, Retryability::Retryable)),
+            (CommitErrorClass::Overloaded, ("ProvisionedThroughputExceededException".to_string(), 400, Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::CommitterFull, ("ProvisionedThroughputExceededException".to_string(), 400, Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::RejectedBeforeExecution, ("ServiceUnavailable".to_string(), 503, Retryability::Retryable)),
+            (CommitErrorClass::RateLimited, ("RequestLimitExceeded".to_string(), 400, Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::OutOfRetention, ("TransactionConflictException".to_string(), 400, Retryability::RestartTransaction)),
+            (CommitErrorClass::CapExceeded, ("ValidationException".to_string(), 400, Retryability::Terminal)),
         ];
 
-        for (error, expected_code, expected_status, retryability) in cases {
-            assert_eq!(error.retryability(), retryability, "{error}");
-            let mapped = map_core_error(error);
-            assert_eq!(code(&mapped), expected_code);
-            assert_eq!(mapped.status_code(), expected_status);
-        }
+        assert_commit_taxonomy_mapping(
+            |error| {
+                let mapped = map_core_error(error.clone());
+                (
+                    code(&mapped).to_string(),
+                    mapped.status_code(),
+                    error.retryability(),
+                )
+            },
+            &expectations,
+        );
     }
 
     #[test]

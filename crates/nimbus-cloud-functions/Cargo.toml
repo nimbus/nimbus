@@ -30,4 +30,5 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 nimbus-egress = { path = "../nimbus-egress" }
+nimbus-testing = { path = "../nimbus-testing" }
 tempfile.workspace = true
