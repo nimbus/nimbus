@@ -73,9 +73,10 @@ impl MutationJournalState {
             self.queue_rejection_count.fetch_add(1, Ordering::Relaxed);
             return Err(Box::new((
                 request,
-                Error::ResourceExhausted(format!(
-                    "mutation journal queue full (capacity {capacity})"
-                )),
+                Error::committer_full(
+                    format!("mutation journal queue full (capacity {capacity})"),
+                    capacity,
+                ),
             )));
         }
         queue.push_back(request);

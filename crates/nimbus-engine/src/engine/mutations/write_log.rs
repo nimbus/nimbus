@@ -404,7 +404,7 @@ impl WriteLog {
             .lock()
             .expect("write-log lock should not be poisoned");
         if snapshot_sequence < state.purged_sequence {
-            return Err(Error::retryable_conflict(
+            return Err(Error::out_of_retention(
                 format!(
                     "transaction snapshot {} is older than the in-memory write-log retention horizon {}; retry from a fresh snapshot",
                     snapshot_sequence, state.purged_sequence
@@ -747,11 +747,9 @@ mod tests {
             .expect("snapshot older than the purge horizon must fail closed");
         assert!(matches!(
             error,
-            Error::Conflict {
+            Error::OutOfRetention {
                 ref message,
-                conflicting_sequence: Some(SequenceNumber(2)),
-                retryable: true,
-                ..
+                minimum_sequence: Some(SequenceNumber(2)),
             } if message.contains("retention horizon")
         ));
     }

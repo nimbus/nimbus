@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use nimbus_core::{Error, SequenceNumber};
+use nimbus_core::{Error, Retryability, SequenceNumber};
 
 const DEFAULT_MAX_ATTEMPTS: usize = 4;
 const DEFAULT_INITIAL_BACKOFF_MS: u64 = 100;
@@ -21,6 +21,9 @@ pub enum MutationOccConflictDecision {
     NotRetryable,
     Retry {
         conflicting_sequence: Option<SequenceNumber>,
+        backoff: Duration,
+    },
+    RestartTransaction {
         backoff: Duration,
     },
     Exhausted,
@@ -55,20 +58,29 @@ impl MutationOccRetryPolicy {
     }
 
     pub fn classify(self, error: &Error, attempt: usize) -> MutationOccConflictDecision {
-        let Error::Conflict {
-            conflicting_sequence,
-            retryable: true,
-            ..
-        } = error
-        else {
+        let retryability = error.retryability();
+        if !matches!(
+            retryability,
+            Retryability::Retryable | Retryability::RestartTransaction
+        ) {
             return MutationOccConflictDecision::NotRetryable;
-        };
+        }
         if attempt >= self.max_attempts {
             return MutationOccConflictDecision::Exhausted;
         }
-        MutationOccConflictDecision::Retry {
-            conflicting_sequence: *conflicting_sequence,
-            backoff: self.jittered_backoff(attempt, *conflicting_sequence),
+        let conflicting_sequence = error.conflicting_sequence();
+        let backoff = self.jittered_backoff(attempt, conflicting_sequence);
+        match retryability {
+            Retryability::Retryable => MutationOccConflictDecision::Retry {
+                conflicting_sequence,
+                backoff,
+            },
+            Retryability::RestartTransaction => {
+                MutationOccConflictDecision::RestartTransaction { backoff }
+            }
+            Retryability::RetryableAfterBackoff | Retryability::Terminal => {
+                unreachable!("non-transparent retry classes returned above")
+            }
         }
     }
 
@@ -124,7 +136,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn policy_retries_only_retryable_conflicts_and_exhausts_at_attempt_cap() {
+    fn retry_driver_honors_retryability_and_exhausts_at_attempt_cap() {
         let policy = MutationOccRetryPolicy {
             max_attempts: 2,
             initial_backoff: Duration::from_millis(100),
@@ -148,6 +160,27 @@ mod tests {
             policy.classify(&Error::conflict("not OCC"), 1),
             MutationOccConflictDecision::NotRetryable
         );
+        assert_eq!(
+            policy.classify(
+                &Error::rate_limited("tenant rate", Duration::from_millis(10)),
+                1
+            ),
+            MutationOccConflictDecision::NotRetryable
+        );
+        assert_eq!(
+            policy.classify(
+                &Error::cap_exceeded(nimbus_core::MutationCap::WriteBytes, 11, 10),
+                1
+            ),
+            MutationOccConflictDecision::NotRetryable
+        );
+        assert!(matches!(
+            policy.classify(
+                &Error::out_of_retention("snapshot expired", Some(SequenceNumber(9))),
+                1
+            ),
+            MutationOccConflictDecision::RestartTransaction { .. }
+        ));
     }
 
     #[test]

@@ -219,7 +219,7 @@ impl MutationExecutionUnit {
 fn map_fallback_floor_error(error: Error, snapshot_sequence: SequenceNumber) -> Error {
     match error {
         Error::InvalidInput(message) if message.contains("retention floor") => {
-            Error::retryable_conflict(
+            Error::out_of_retention(
                 format!(
                     "transaction snapshot {snapshot_sequence} is older than the durable commit-log retention horizon; retry from a fresh snapshot"
                 ),
@@ -243,10 +243,9 @@ mod tests {
 
         assert!(matches!(
             error,
-            Error::Conflict {
+            Error::OutOfRetention {
                 ref message,
-                retryable: true,
-                ..
+                minimum_sequence: None,
             } if message.contains("durable commit-log retention horizon")
         ));
     }

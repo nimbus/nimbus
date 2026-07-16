@@ -272,6 +272,67 @@ impl PublicError {
                     "Resolve the conflicting state and retry.",
                 )),
             ),
+            Error::Overloaded { .. } | Error::CommitterFull { .. } => Self::new(
+                "rate.overloaded",
+                error.to_string(),
+                ErrorSeverity::Error,
+                true,
+                Value::Null,
+                Some(ErrorRemediation::new(
+                    "wait_and_retry",
+                    "Wait for mutation capacity to recover before retrying.",
+                )),
+            ),
+            Error::RejectedBeforeExecution { .. } => Self::new(
+                "rate.rejected_before_execution",
+                error.to_string(),
+                ErrorSeverity::Error,
+                true,
+                Value::Null,
+                Some(ErrorRemediation::new(
+                    "retry",
+                    "The mutation did not start and is safe to retry.",
+                )),
+            ),
+            Error::RateLimited { retry_after, .. } => Self::new(
+                "rate.limited",
+                error.to_string(),
+                ErrorSeverity::Error,
+                true,
+                json!({ "retryAfterMs": retry_after.as_millis() }),
+                Some(ErrorRemediation::new(
+                    "wait_and_retry",
+                    "Retry after the indicated delay.",
+                )),
+            ),
+            Error::OutOfRetention {
+                minimum_sequence, ..
+            } => Self::new(
+                "op.out_of_retention",
+                error.to_string(),
+                ErrorSeverity::Error,
+                true,
+                json!({ "minimumSequence": minimum_sequence.map(|sequence| sequence.0) }),
+                Some(ErrorRemediation::new(
+                    "restart_transaction",
+                    "Restart the transaction from a fresh snapshot.",
+                )),
+            ),
+            Error::CapExceeded {
+                cap,
+                observed,
+                limit,
+            } => Self::new(
+                "op.cap_exceeded",
+                error.to_string(),
+                ErrorSeverity::Error,
+                false,
+                json!({ "cap": cap.as_str(), "observed": observed, "limit": limit }),
+                Some(ErrorRemediation::new(
+                    "reduce_request",
+                    "Reduce the mutation's resource usage before retrying.",
+                )),
+            ),
             Error::PreconditionFailed(_) => Self::new(
                 "op.precondition_failed",
                 error.to_string(),
@@ -539,13 +600,17 @@ impl StructuredHttpError {
                     | Error::ScheduledJobNotFound(_)
                     | Error::SchemaNotFound(_)
                     | Error::NotFound(_) => StatusCode::NOT_FOUND,
-                    Error::Conflict { .. } => StatusCode::CONFLICT,
+                    Error::Conflict { .. } | Error::OutOfRetention { .. } => StatusCode::CONFLICT,
                     Error::PreconditionFailed(_) | Error::MissingIndex { .. } => {
                         StatusCode::PRECONDITION_FAILED
                     }
-                    Error::ResourceExhausted(_) => StatusCode::TOO_MANY_REQUESTS,
+                    Error::ResourceExhausted(_)
+                    | Error::Overloaded { .. }
+                    | Error::CommitterFull { .. }
+                    | Error::RejectedBeforeExecution { .. }
+                    | Error::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
                     Error::PermissionDenied(_) => StatusCode::FORBIDDEN,
-                    Error::InvalidInput(_) => StatusCode::BAD_REQUEST,
+                    Error::InvalidInput(_) | Error::CapExceeded { .. } => StatusCode::BAD_REQUEST,
                     Error::SchemaValidation(_) => StatusCode::UNPROCESSABLE_ENTITY,
                     Error::AlreadyExists(_) => StatusCode::CONFLICT,
                     Error::HistoricalRead { kind, .. } => match kind {

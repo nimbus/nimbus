@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -28,6 +29,29 @@ pub enum ConvexRuntimeEncodedError {
         conflicting_sequence: Option<nimbus_core::SequenceNumber>,
         retryable: bool,
         attempts: Option<usize>,
+    },
+    Overloaded {
+        message: String,
+    },
+    CommitterFull {
+        message: String,
+        capacity: usize,
+    },
+    RejectedBeforeExecution {
+        message: String,
+    },
+    RateLimited {
+        message: String,
+        retry_after: Duration,
+    },
+    OutOfRetention {
+        message: String,
+        minimum_sequence: Option<nimbus_core::SequenceNumber>,
+    },
+    CapExceeded {
+        cap: nimbus_core::MutationCap,
+        observed: u64,
+        limit: u64,
     },
     PreconditionFailed {
         message: String,
@@ -116,6 +140,32 @@ impl ConvexRuntimeEncodedError {
                 retryable,
                 attempts,
             },
+            Error::Overloaded { message } => Self::Overloaded { message },
+            Error::CommitterFull { message, capacity } => Self::CommitterFull { message, capacity },
+            Error::RejectedBeforeExecution { message } => Self::RejectedBeforeExecution { message },
+            Error::RateLimited {
+                message,
+                retry_after,
+            } => Self::RateLimited {
+                message,
+                retry_after,
+            },
+            Error::OutOfRetention {
+                message,
+                minimum_sequence,
+            } => Self::OutOfRetention {
+                message,
+                minimum_sequence,
+            },
+            Error::CapExceeded {
+                cap,
+                observed,
+                limit,
+            } => Self::CapExceeded {
+                cap,
+                observed,
+                limit,
+            },
             Error::PreconditionFailed(message) => Self::PreconditionFailed { message },
             Error::ResourceExhausted(message) => Self::ResourceExhausted { message },
             Error::PermissionDenied(message) => Self::PermissionDenied { message },
@@ -165,6 +215,32 @@ impl ConvexRuntimeEncodedError {
                 conflicting_sequence,
                 retryable,
                 attempts,
+            },
+            Self::Overloaded { message } => Error::Overloaded { message },
+            Self::CommitterFull { message, capacity } => Error::CommitterFull { message, capacity },
+            Self::RejectedBeforeExecution { message } => Error::RejectedBeforeExecution { message },
+            Self::RateLimited {
+                message,
+                retry_after,
+            } => Error::RateLimited {
+                message,
+                retry_after,
+            },
+            Self::OutOfRetention {
+                message,
+                minimum_sequence,
+            } => Error::OutOfRetention {
+                message,
+                minimum_sequence,
+            },
+            Self::CapExceeded {
+                cap,
+                observed,
+                limit,
+            } => Error::CapExceeded {
+                cap,
+                observed,
+                limit,
             },
             Self::PreconditionFailed { message } => Error::PreconditionFailed(message),
             Self::ResourceExhausted { message } => Error::ResourceExhausted(message),
@@ -282,5 +358,23 @@ mod tests {
             decoded,
             Error::MissingIndex { fields } if fields == vec!["state".to_string(), "rank".to_string()]
         ));
+    }
+
+    #[test]
+    fn commit_taxonomy_round_trips_through_runtime_encoding() {
+        let errors = [
+            Error::overloaded("node pressure"),
+            Error::committer_full("inbox full", 64),
+            Error::rejected_before_execution("admission shed"),
+            Error::rate_limited("tenant rate", Duration::from_millis(250)),
+            Error::out_of_retention("snapshot expired", Some(nimbus_core::SequenceNumber(9))),
+            Error::cap_exceeded(nimbus_core::MutationCap::WriteBytes, 11, 10),
+        ];
+
+        for error in errors {
+            let expected = error.to_string();
+            let decoded = ConvexRuntimeEncodedError::from_core_error(error).into_core_error();
+            assert_eq!(decoded.to_string(), expected);
+        }
     }
 }

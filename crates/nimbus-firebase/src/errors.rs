@@ -59,13 +59,18 @@ pub fn firestore_grpc_code(error: &Error) -> Code {
         | Error::ScheduledJobNotFound(_)
         | Error::SchemaNotFound(_)
         | Error::NotFound(_) => Code::NotFound,
-        Error::Conflict { .. } => Code::Aborted,
+        Error::Conflict { .. } | Error::OutOfRetention { .. } => Code::Aborted,
         Error::PreconditionFailed(_) | Error::MissingIndex { .. } => Code::FailedPrecondition,
-        Error::ResourceExhausted(_) => Code::ResourceExhausted,
+        Error::ResourceExhausted(_)
+        | Error::Overloaded { .. }
+        | Error::CommitterFull { .. }
+        | Error::RejectedBeforeExecution { .. }
+        | Error::RateLimited { .. } => Code::ResourceExhausted,
         Error::PermissionDenied(_) => Code::PermissionDenied,
-        Error::InvalidInput(_) | Error::SchemaValidation(_) | Error::HistoricalRead { .. } => {
-            Code::InvalidArgument
-        }
+        Error::InvalidInput(_)
+        | Error::SchemaValidation(_)
+        | Error::HistoricalRead { .. }
+        | Error::CapExceeded { .. } => Code::InvalidArgument,
         Error::AlreadyExists(_) => Code::AlreadyExists,
         Error::Transport(_) => Code::Unavailable,
         Error::Storage { kind, .. } => match kind {
@@ -107,15 +112,20 @@ fn firebase_rest_error(error: &Error) -> FirestoreRestError {
         | Error::ScheduledJobNotFound(_)
         | Error::SchemaNotFound(_)
         | Error::NotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND"),
-        Error::Conflict { .. } => (StatusCode::CONFLICT, "ABORTED"),
+        Error::Conflict { .. } | Error::OutOfRetention { .. } => (StatusCode::CONFLICT, "ABORTED"),
         Error::PreconditionFailed(_) | Error::MissingIndex { .. } => {
             (StatusCode::PRECONDITION_FAILED, "FAILED_PRECONDITION")
         }
-        Error::ResourceExhausted(_) => (StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED"),
+        Error::ResourceExhausted(_)
+        | Error::Overloaded { .. }
+        | Error::CommitterFull { .. }
+        | Error::RejectedBeforeExecution { .. }
+        | Error::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED"),
         Error::PermissionDenied(_) => (StatusCode::FORBIDDEN, "PERMISSION_DENIED"),
-        Error::InvalidInput(_) | Error::SchemaValidation(_) | Error::HistoricalRead { .. } => {
-            (StatusCode::BAD_REQUEST, "INVALID_ARGUMENT")
-        }
+        Error::InvalidInput(_)
+        | Error::SchemaValidation(_)
+        | Error::HistoricalRead { .. }
+        | Error::CapExceeded { .. } => (StatusCode::BAD_REQUEST, "INVALID_ARGUMENT"),
         Error::AlreadyExists(_) => (StatusCode::CONFLICT, "ALREADY_EXISTS"),
         Error::Transport(_) => (StatusCode::SERVICE_UNAVAILABLE, "UNAVAILABLE"),
         Error::Storage { kind, .. } => match kind {

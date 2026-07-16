@@ -44,7 +44,9 @@ pub use encoding::{
     base64_decode_standard, base64_decode_url_safe_no_pad, base64_encode_standard,
     base64_encode_url_safe_no_pad, hex_encode,
 };
-pub use error::{Error, HistoricalReadErrorKind, Result, StorageErrorKind, non_empty};
+pub use error::{
+    Error, HistoricalReadErrorKind, MutationCap, Result, Retryability, StorageErrorKind, non_empty,
+};
 pub use firestore::{
     DEFAULT_FIRESTORE_DATABASE_ID, locator_for_document_path, parse_document_path,
     storage_table_for_collection_path, validate_default_database_id,

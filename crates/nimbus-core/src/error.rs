@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error as ThisError;
@@ -84,6 +85,49 @@ impl std::fmt::Display for HistoricalReadErrorKind {
     }
 }
 
+/// Machine-readable guidance for retrying an operation failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Retryability {
+    /// The operation may be retried immediately by a bounded transparent loop.
+    Retryable,
+    /// Retry only at the caller boundary after applying backoff.
+    RetryableAfterBackoff,
+    /// Discard the transaction snapshot and execute again from a fresh snapshot.
+    RestartTransaction,
+    /// Repeating the same operation cannot resolve the failure.
+    Terminal,
+}
+
+/// The prepare-time resource dimension that exceeded its transaction cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MutationCap {
+    ReadBytes,
+    WriteBytes,
+    DocumentsScanned,
+    DocumentsWritten,
+    IndexRangeCalls,
+}
+
+impl MutationCap {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadBytes => "read_bytes",
+            Self::WriteBytes => "write_bytes",
+            Self::DocumentsScanned => "documents_scanned",
+            Self::DocumentsWritten => "documents_written",
+            Self::IndexRangeCalls => "index_range_calls",
+        }
+    }
+}
+
+impl std::fmt::Display for MutationCap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Core Nimbus error type.
 #[derive(Debug, ThisError)]
 pub enum Error {
@@ -117,6 +161,34 @@ pub enum Error {
         conflicting_sequence: Option<SequenceNumber>,
         retryable: bool,
         attempts: Option<usize>,
+    },
+
+    #[error("overloaded: {message}")]
+    Overloaded { message: String },
+
+    #[error("committer full: {message}")]
+    CommitterFull { message: String, capacity: usize },
+
+    #[error("rejected before execution: {message}")]
+    RejectedBeforeExecution { message: String },
+
+    #[error("rate limited: {message} (retry after {retry_after:?})")]
+    RateLimited {
+        message: String,
+        retry_after: Duration,
+    },
+
+    #[error("out of retention: {message}")]
+    OutOfRetention {
+        message: String,
+        minimum_sequence: Option<SequenceNumber>,
+    },
+
+    #[error("mutation cap exceeded [{cap}]: observed {observed}, limit {limit}")]
+    CapExceeded {
+        cap: MutationCap,
+        observed: u64,
+        limit: u64,
     },
 
     #[error("precondition failed: {0}")]
@@ -191,6 +263,162 @@ impl Error {
             retryable: true,
             attempts: None,
         }
+    }
+
+    pub fn overloaded(message: impl Into<String>) -> Self {
+        Self::Overloaded {
+            message: message.into(),
+        }
+    }
+
+    pub fn committer_full(message: impl Into<String>, capacity: usize) -> Self {
+        Self::CommitterFull {
+            message: message.into(),
+            capacity,
+        }
+    }
+
+    pub fn rejected_before_execution(message: impl Into<String>) -> Self {
+        Self::RejectedBeforeExecution {
+            message: message.into(),
+        }
+    }
+
+    pub fn rate_limited(message: impl Into<String>, retry_after: Duration) -> Self {
+        Self::RateLimited {
+            message: message.into(),
+            retry_after,
+        }
+    }
+
+    pub fn out_of_retention(
+        message: impl Into<String>,
+        minimum_sequence: Option<SequenceNumber>,
+    ) -> Self {
+        Self::OutOfRetention {
+            message: message.into(),
+            minimum_sequence,
+        }
+    }
+
+    pub fn cap_exceeded(cap: MutationCap, observed: u64, limit: u64) -> Self {
+        Self::CapExceeded {
+            cap,
+            observed,
+            limit,
+        }
+    }
+
+    pub fn retryability(&self) -> Retryability {
+        match self {
+            Self::Conflict {
+                retryable: true, ..
+            }
+            | Self::RejectedBeforeExecution { .. } => Retryability::Retryable,
+            Self::Overloaded { .. } | Self::CommitterFull { .. } | Self::RateLimited { .. } => {
+                Retryability::RetryableAfterBackoff
+            }
+            Self::OutOfRetention { .. } => Retryability::RestartTransaction,
+            Self::Storage {
+                kind:
+                    StorageErrorKind::Busy
+                    | StorageErrorKind::Io
+                    | StorageErrorKind::Transient
+                    | StorageErrorKind::Unavailable,
+                ..
+            }
+            | Self::Transport(_) => Retryability::RetryableAfterBackoff,
+            Self::HistoricalRead {
+                kind: HistoricalReadErrorKind::SnapshotUnavailable,
+                ..
+            } => Retryability::RetryableAfterBackoff,
+            Self::Cancelled
+            | Self::TenantNotFound(_)
+            | Self::DocumentNotFound(_)
+            | Self::ScheduledJobNotFound(_)
+            | Self::NotFound(_)
+            | Self::AlreadyExists(_)
+            | Self::ResourceExhausted(_)
+            | Self::PermissionDenied(_)
+            | Self::Conflict { .. }
+            | Self::CapExceeded { .. }
+            | Self::PreconditionFailed(_)
+            | Self::InvalidInput(_)
+            | Self::MissingIndex { .. }
+            | Self::SchemaValidation(_)
+            | Self::SchemaNotFound(_)
+            | Self::Storage { .. }
+            | Self::HistoricalRead { .. }
+            | Self::Serialization(_)
+            | Self::Internal(_) => Retryability::Terminal,
+        }
+    }
+
+    /// Whether this error is stable for the same user-supplied operation.
+    ///
+    /// Environmental failures are deliberately excluded so callers never
+    /// cache transient infrastructure conditions as user bugs.
+    pub fn is_deterministic_user_error(&self) -> bool {
+        matches!(
+            self,
+            Self::TenantNotFound(_)
+                | Self::DocumentNotFound(_)
+                | Self::ScheduledJobNotFound(_)
+                | Self::NotFound(_)
+                | Self::AlreadyExists(_)
+                | Self::PermissionDenied(_)
+                | Self::PreconditionFailed(_)
+                | Self::InvalidInput(_)
+                | Self::MissingIndex { .. }
+                | Self::SchemaValidation(_)
+                | Self::SchemaNotFound(_)
+                | Self::CapExceeded { .. }
+        )
+    }
+
+    pub fn is_environmental(&self) -> bool {
+        matches!(
+            self,
+            Self::Cancelled
+                | Self::ResourceExhausted(_)
+                | Self::Overloaded { .. }
+                | Self::CommitterFull { .. }
+                | Self::RejectedBeforeExecution { .. }
+                | Self::RateLimited { .. }
+                | Self::OutOfRetention { .. }
+                | Self::Storage { .. }
+                | Self::HistoricalRead { .. }
+                | Self::Serialization(_)
+                | Self::Transport(_)
+                | Self::Internal(_)
+        )
+    }
+
+    pub fn conflicting_sequence(&self) -> Option<SequenceNumber> {
+        match self {
+            Self::Conflict {
+                conflicting_sequence,
+                ..
+            } => *conflicting_sequence,
+            _ => None,
+        }
+    }
+
+    pub fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Self::RateLimited { retry_after, .. } => Some(*retry_after),
+            _ => None,
+        }
+    }
+
+    pub fn is_overload_class(&self) -> bool {
+        matches!(
+            self,
+            Self::Overloaded { .. }
+                | Self::CommitterFull { .. }
+                | Self::RejectedBeforeExecution { .. }
+                | Self::RateLimited { .. }
+        )
     }
 
     pub fn with_conflict_attempts(self, attempts: usize) -> Self {
@@ -276,6 +504,71 @@ mod tests {
                 attempts: Some(4),
             } if message == "write raced"
         ));
+    }
+
+    #[test]
+    fn retryability_is_explicit_for_each_commit_error_class() {
+        let cases = [
+            (
+                Error::retryable_conflict("race", Some(SequenceNumber(1))),
+                Retryability::Retryable,
+            ),
+            (Error::conflict("terminal conflict"), Retryability::Terminal),
+            (
+                Error::overloaded("node pressure"),
+                Retryability::RetryableAfterBackoff,
+            ),
+            (
+                Error::committer_full("bounded inbox", 64),
+                Retryability::RetryableAfterBackoff,
+            ),
+            (
+                Error::rejected_before_execution("admission shed"),
+                Retryability::Retryable,
+            ),
+            (
+                Error::rate_limited("tenant write rate", Duration::from_millis(250)),
+                Retryability::RetryableAfterBackoff,
+            ),
+            (
+                Error::out_of_retention("snapshot expired", Some(SequenceNumber(9))),
+                Retryability::RestartTransaction,
+            ),
+            (
+                Error::cap_exceeded(MutationCap::WriteBytes, 11, 10),
+                Retryability::Terminal,
+            ),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(
+                error.retryability(),
+                expected,
+                "unexpected class for {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn environmental_errors_are_never_deterministic_user_errors() {
+        let errors = [
+            Error::storage(StorageErrorKind::Io, "disk read failed"),
+            Error::storage(StorageErrorKind::Unavailable, "provider unavailable"),
+            Error::Transport("connection timed out".to_string()),
+            Error::Internal("provider timeout".to_string()),
+            Error::overloaded("node pressure"),
+            Error::rate_limited("tenant write rate", Duration::from_secs(1)),
+            Error::out_of_retention("snapshot expired", None),
+        ];
+
+        for error in errors {
+            assert!(error.is_environmental(), "expected environmental: {error}");
+            assert!(
+                !error.is_deterministic_user_error(),
+                "environmental error was classified as deterministic: {error}"
+            );
+        }
+        assert!(Error::cap_exceeded(MutationCap::ReadBytes, 2, 1).is_deterministic_user_error());
     }
 
     #[test]
