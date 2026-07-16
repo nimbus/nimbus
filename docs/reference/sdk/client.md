@@ -316,6 +316,52 @@ Notes:
 - `Subscription.subscriptionId` is typed `string`, but the wire value is a
   number; treat it as opaque and pass it back to `unsubscribe` unchanged.
 
+## Typed commit errors
+
+`@nimbus/nimbus`, `@nimbus/nimbus/browser`, and
+`@nimbus/nimbus/transports/rest` export the canonical commit error hierarchy.
+Deployment and native REST clients decode structured server envelopes into
+these classes automatically. The Convex compatibility package keeps the
+upstream Convex export surface unchanged; errors thrown by its clients are
+still instances of the Nimbus classes and can be narrowed with a separate
+Nimbus import.
+
+```typescript
+import { ConvexHttpClient } from "convex/browser";
+import {
+  NimbusCommitError,
+  NimbusRateLimitedError,
+} from "@nimbus/nimbus/browser";
+
+try {
+  await new ConvexHttpClient(deploymentUrl).mutation("messages:send", args);
+} catch (error) {
+  if (error instanceof NimbusRateLimitedError) {
+    await delay(error.retryAfterMs ?? 1000);
+  } else if (error instanceof NimbusCommitError && error.retryable) {
+    // Retry the complete operation according to error.retryability.
+  } else {
+    throw error;
+  }
+}
+```
+
+| Export | Purpose |
+| --- | --- |
+| `NimbusCommitError` | Base class with `kind`, `code`, `retryability`, `retryable`, `retryAfterMs?`, and `detail`. |
+| `NimbusConflictError` | `kind: "conflict"`. |
+| `NimbusOverloadedError` | `kind: "overloaded"`. |
+| `NimbusCommitterFullError` | `kind: "committer_full"`. |
+| `NimbusRejectedBeforeExecutionError` | `kind: "rejected_before_execution"`. |
+| `NimbusRateLimitedError` | `kind: "rate_limited"`; normally carries `retryAfterMs`. |
+| `NimbusOutOfRetentionError` | `kind: "out_of_retention"`; restart the transaction. |
+| `NimbusCapExceededError` | `kind: "cap_exceeded"`; terminal for the unchanged request. |
+| `NimbusCommitPathError` | Union of the seven concrete classes. |
+| `NimbusCommitErrorKind` | Discriminant union for the seven `kind` strings. |
+| `NimbusRetryability` | `"retryable" | "retryable_after_backoff" | "restart_transaction" | "terminal"`. |
+| `isNimbusCommitError(value)` | Type guard for the concrete hierarchy. |
+| `decodeNimbusErrorEnvelope(value, fallback?)` | Decode a raw `{ error: ... }` envelope. Clients call this internally. |
+
 ## Exports — `@nimbus/nimbus/browser`
 
 Classes and functions: `NimbusClient`, `NimbusHttpClient`,

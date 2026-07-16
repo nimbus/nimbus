@@ -93,6 +93,82 @@ Two variants of the path deserve a note:
   (optimistic concurrency validation). On conflict the unit fails as a
   whole rather than committing an interleaved partial result.
 
+## First committer wins
+
+Every write surface has the same concurrency contract: **first committer
+wins**. A mutation prepares against a snapshot. If a commit that lands first
+changes something the mutation depends on, Nimbus rejects that prepared result
+instead of overwriting the newer state. Nimbus does not promise
+last-write-wins behavior on any adapter.
+
+Nimbus transparently reruns retryable conflicts from a fresh snapshot within a
+bounded server-side budget. The default budget is four total attempts, with
+jittered exponential backoff starting at 100 ms and capped at 2 seconds. The
+operator knobs are `NIMBUS_MUTATION_OCC_MAX_RETRIES`,
+`NIMBUS_MUTATION_OCC_INITIAL_BACKOFF_MS`, and
+`NIMBUS_MUTATION_OCC_MAX_BACKOFF_MS`. If the budget is exhausted, the client
+receives a typed conflict and may retry the complete mutation. This contract
+applies to immediate, journaled, and transactional writes even while immediate
+and journaled writes use a serial committer internally.
+
+Do not retry every failure indiscriminately. The
+[error taxonomy](/reference/native/errors/#commit-path-taxonomy) distinguishes
+immediate retries, backoff, transaction restarts, and terminal request errors.
+
+## Derived dependency semantics
+
+The conflict set includes dependencies derived from writes, not only values
+the function explicitly read. These rules are normative:
+
+- **Written document id.** Staging a write derives a dependency on the exact
+  table identity and document id. A later commit to that id conflicts even if
+  the mutation never read the document first. A table that did not exist at
+  the snapshot instead derives a missing-table dependency, so concurrent table
+  creation conflicts.
+- **Schema.** Every table reached by a read or derived write dependency also
+  depends on that table's schema epoch and definition. Creating, replacing, or
+  removing the schema after the snapshot conflicts before any staged write is
+  persisted.
+- **Generated id.** Nimbus chooses a generated document id before staging the
+  insert. That concrete id becomes the written-document dependency: a commit
+  that claims it after the snapshot conflicts, while an id already in use
+  makes the atomic insert fail. A retry starts a new mutation execution and
+  must not reuse effects from the failed attempt.
+
+A conflict therefore means that committing the prepared result could violate
+one of the proposal's observed or derived assumptions. It does not mean merely
+that two mutations wrote somewhere in the same tenant.
+
+## Mutation caps and tenant write rate
+
+Prepare accounts for user read bytes, write bytes, documents scanned,
+documents written, and index-range calls. Proposed limits are enabled in
+**shadow mode** by default: Nimbus records and samples would-be violations but
+does not reject them. Setting the corresponding non-`PROPOSED` knob enables
+enforcement; values exactly at the limit are accepted and values above it
+return the deterministic `cap_exceeded` error.
+
+| Resource | Shadow knob and default | Enforcement knob (default) |
+| --- | --- | --- |
+| Read bytes | `NIMBUS_PROPOSED_MUTATION_READ_BYTES=16777216` | `NIMBUS_MUTATION_READ_BYTES` (unset) |
+| Write bytes | `NIMBUS_PROPOSED_MUTATION_WRITE_BYTES=16777216` | `NIMBUS_MUTATION_WRITE_BYTES` (unset) |
+| Documents scanned | `NIMBUS_PROPOSED_MUTATION_DOCUMENTS_SCANNED=32000` | `NIMBUS_MUTATION_DOCUMENTS_SCANNED` (unset) |
+| Documents written | `NIMBUS_PROPOSED_MUTATION_DOCUMENTS_WRITTEN=16000` | `NIMBUS_MUTATION_DOCUMENTS_WRITTEN` (unset) |
+| Index-range calls | `NIMBUS_PROPOSED_MUTATION_INDEX_RANGE_CALLS=4096` | `NIMBUS_MUTATION_INDEX_RANGE_CALLS` (unset) |
+| System write bytes | `NIMBUS_PROPOSED_SYSTEM_MUTATION_WRITE_BYTES=134217728` | `NIMBUS_SYSTEM_MUTATION_WRITE_BYTES` (unset) |
+| System documents written | `NIMBUS_PROPOSED_SYSTEM_MUTATION_DOCUMENTS_WRITTEN=40000` | `NIMBUS_SYSTEM_MUTATION_DOCUMENTS_WRITTEN` (unset) |
+
+System bookkeeping has separate, higher write limits so application-controlled
+usage and Nimbus-owned effects are not charged against one another.
+
+Tenant protection is separate from per-mutation caps. Nimbus keeps a sliding
+window of committed and admitted write bytes for each tenant. The default
+shadow posture is `NIMBUS_PROPOSED_TENANT_WRITE_BYTES_PER_SEC=1048576` over
+`NIMBUS_TENANT_WRITE_RATE_WINDOW_MS=1000`; sampled warnings use
+`NIMBUS_TENANT_WRITE_RATE_REPORT_EVERY=100`. Enforcement remains off until
+`NIMBUS_TENANT_WRITE_BYTES_PER_SEC` is set. An enforced overflow returns
+`rate_limited` with a `retryAfterMs` hint; clients should wait for that delay.
+
 ## Durability, then visibility
 
 Nimbus separates "your write is safe" from "your write is readable", and
