@@ -96,11 +96,18 @@ fn machine_client_error_to_sandbox_error(error: Error) -> SandboxError {
         | Error::SchemaValidation(_)
         | Error::SchemaNotFound(_)
         | Error::HistoricalRead { .. }
-        | Error::Serialization(_) => SandboxError::InvalidSpec { message: rendered },
+        | Error::Serialization(_)
+        | Error::CapExceeded { .. } => SandboxError::InvalidSpec { message: rendered },
         Error::ResourceExhausted(_)
         | Error::PermissionDenied(_)
         | Error::Storage { .. }
-        | Error::Transport(_) => SandboxError::BackendUnavailable { message: rendered },
+        | Error::Transport(_)
+        | Error::Overloaded { .. }
+        | Error::CommitterFull { .. }
+        | Error::RateLimited { .. }
+        | Error::RejectedBeforeExecution { .. } => {
+            SandboxError::BackendUnavailable { message: rendered }
+        }
         Error::Internal(message)
             if message.contains("failed to connect to machine API socket")
                 || message.contains("failed to read machine API response")
@@ -117,6 +124,7 @@ fn machine_client_error_to_sandbox_error(error: Error) -> SandboxError {
         | Error::DocumentNotFound(_)
         | Error::ScheduledJobNotFound(_)
         | Error::NotFound(_)
+        | Error::OutOfRetention { .. }
         | Error::Internal(_) => SandboxError::OperationFailed { message: rendered },
     }
 }
