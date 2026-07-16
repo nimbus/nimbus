@@ -7,6 +7,25 @@ use nimbus_storage::JournalProgress;
 
 use super::*;
 
+pub(crate) struct WriteLogAppendGuard<'a> {
+    runtime: &'a TenantRuntime,
+    armed: bool,
+}
+
+impl WriteLogAppendGuard<'_> {
+    pub(crate) fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for WriteLogAppendGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.runtime.write_log.mark_coverage_unknown();
+        }
+    }
+}
+
 impl TenantRuntime {
     pub(crate) fn enqueue_mutation_admission_request(
         &self,
@@ -117,6 +136,15 @@ impl TenantRuntime {
 
     pub(crate) fn advance_write_log_zero_write_coverage(&self, sequence: SequenceNumber) {
         self.write_log.advance_known_zero_write_through(sequence);
+    }
+
+    /// Arms a fail-safe around a persistence attempt. The caller disarms only
+    /// after every returned commit image has been staged in the write log.
+    pub(crate) fn arm_write_log_append(&self) -> WriteLogAppendGuard<'_> {
+        WriteLogAppendGuard {
+            runtime: self,
+            armed: true,
+        }
     }
 
     pub(crate) async fn wait_for_applied_sequence_cancellable<Fut>(

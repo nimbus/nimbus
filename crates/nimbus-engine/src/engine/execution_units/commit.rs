@@ -90,6 +90,7 @@ impl MutationExecutionUnit {
                 // full call is attributed to durable append; `apply` below is
                 // engine cache/bookkeeping work. Direct commits have the same
                 // intentional collapse.
+                let write_log_guard = self.runtime.arm_write_log_append();
                 let commit = self.runtime.store.apply_execution_unit_batch_with_origin(
                     writes,
                     schedule_ops,
@@ -115,6 +116,7 @@ impl MutationExecutionUnit {
                     self.runtime.mark_applied_head(commit.sequence);
                     phases.add_publish(publish_started.elapsed());
                 }
+                write_log_guard.disarm();
                 commit
             };
             self.engine

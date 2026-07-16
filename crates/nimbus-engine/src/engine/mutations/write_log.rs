@@ -111,6 +111,10 @@ struct WriteLogState {
     assigned_through: SequenceNumber,
     /// Highest sequence removed from the front of the retained window.
     purged_sequence: SequenceNumber,
+    /// False after a persistence attempt may have committed without staging
+    /// its full image. Such a runtime uses authoritative storage validation
+    /// until restart rather than risking a false in-memory pass.
+    coverage_known: bool,
 }
 
 /// Per-tenant, structurally shared mirror of recent full commit images.
@@ -145,6 +149,7 @@ impl WriteLog {
                 bootstrap_sequence: covered_through,
                 assigned_through,
                 purged_sequence: SequenceNumber(0),
+                coverage_known: true,
             }),
         }
     }
@@ -241,6 +246,13 @@ impl WriteLog {
         state.assigned_through = state.assigned_through.max(sequence);
     }
 
+    pub(crate) fn mark_coverage_unknown(&self) {
+        self.state
+            .lock()
+            .expect("write-log lock should not be poisoned")
+            .coverage_known = false;
+    }
+
     /// Records a proven zero-write sequence span without allocating entries.
     pub(crate) fn advance_known_zero_write_through(&self, sequence: SequenceNumber) {
         let mut state = self
@@ -303,6 +315,9 @@ impl WriteLog {
                 ),
                 Some(state.purged_sequence),
             ));
+        }
+        if !state.coverage_known {
+            return Ok(ValidationSource::StorageFallback);
         }
         if snapshot_sequence < state.bootstrap_sequence
             || snapshot_sequence > state.covered_through
@@ -553,6 +568,21 @@ mod tests {
 
         assert!(matches!(
             log.validation_source(SequenceNumber(1), SequenceNumber(4)),
+            Ok(ValidationSource::StorageFallback)
+        ));
+    }
+
+    #[test]
+    fn ambiguous_append_marks_coverage_unknown_and_forces_storage_fallback() {
+        let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
+        log.stage_pending([commit(1, 8)], Timestamp(1_000));
+        log.publish_pending_through(SequenceNumber(1), Timestamp(1_000), SequenceNumber(0));
+
+        log.mark_coverage_unknown();
+        log.advance_known_zero_write_through(SequenceNumber(2));
+
+        assert!(matches!(
+            log.validation_source(SequenceNumber(0), SequenceNumber(2)),
             Ok(ValidationSource::StorageFallback)
         ));
     }
