@@ -484,16 +484,19 @@ mod tests {
     }
 
     #[test]
-    fn zero_write_sequence_preserves_coverage_for_later_commits() {
+    fn lagged_trigger_cursor_zero_write_sequence_preserves_coverage_for_later_commits() {
         let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
         log.stage_pending([commit(1, 8)], Timestamp(1_000));
-        log.publish_pending_through(SequenceNumber(1), Timestamp(1_000), SequenceNumber(0));
-        log.advance_known_zero_write_through(SequenceNumber(2));
-        log.stage_pending([commit(3, 8)], Timestamp(1_000));
-        log.publish_pending_through(SequenceNumber(3), Timestamp(1_000), SequenceNumber(0));
+        log.stage_pending([commit(2, 8)], Timestamp(1_000));
+        log.publish_pending_through(SequenceNumber(2), Timestamp(1_000), SequenceNumber(0));
+        // The trigger worker for commit 1 lags until commit 2 is already
+        // staged, then appends its own zero-write cursor record at sequence 3.
+        log.advance_known_zero_write_through(SequenceNumber(3));
+        log.stage_pending([commit(4, 8)], Timestamp(1_000));
+        log.publish_pending_through(SequenceNumber(4), Timestamp(1_000), SequenceNumber(0));
 
         assert!(matches!(
-            log.validation_source(SequenceNumber(1), SequenceNumber(3)),
+            log.validation_source(SequenceNumber(0), SequenceNumber(4)),
             Ok(ValidationSource::InMemory(_))
         ));
     }

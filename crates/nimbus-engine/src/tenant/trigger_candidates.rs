@@ -420,6 +420,16 @@ fn materialize_trigger_invocations_and_sync(
     // behave as they did pre-TI7 and reload on their next query.
     // Correctness over optimization.
     let floor = cursor.materialized_through;
+    // On a process-local sequence authority the durable head is either
+    // unchanged or the cursor record just appended above: the sequence gate
+    // excludes every document writer, and no foreign process can assign a
+    // sequence. Account that known zero-write record independently of the
+    // wider materialized-read gap below. The wider gap may contain an already
+    // staged document commit when this worker lags, which must not strand
+    // write-log coverage behind the cursor sequence.
+    if runtime.store().has_process_local_sequence_authority() {
+        runtime.advance_write_log_zero_write_coverage(progress.durable_head);
+    }
     if progress.durable_head.0 > floor.0 {
         let gap_is_inert = runtime
             .store
@@ -431,9 +441,6 @@ fn materialize_trigger_invocations_and_sync(
                 floor,
                 progress.durable_head,
             );
-            if runtime.store().has_process_local_sequence_authority() {
-                runtime.advance_write_log_zero_write_coverage(progress.durable_head);
-            }
         }
     }
     runtime.sync_mutation_journal_progress_locked(progress);
