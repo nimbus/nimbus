@@ -4,13 +4,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    CommitEntry, Document, DocumentId, Error, Filter, IndexId, OrderBy, Query, Result, TableId,
-    TableName, TenantEventRecord, WriteOpType,
+    CollectionName, CommitEntry, Document, DocumentId, Error, Filter, IndexId, OrderBy, Query,
+    Result, TableId, TableName, TenantEventRecord, WriteOpType,
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DependencySet {
     pub tables: HashSet<TableDependency>,
+    #[serde(default)]
+    pub collection_groups: HashSet<CollectionName>,
     #[serde(default)]
     pub missing_tables: HashSet<TableName>,
     #[serde(default)]
@@ -30,6 +32,7 @@ pub struct DependencySet {
 impl PartialEq for DependencySet {
     fn eq(&self, other: &Self) -> bool {
         self.tables == other.tables
+            && self.collection_groups == other.collection_groups
             && self.missing_tables == other.missing_tables
             && self.missing_predicates == other.missing_predicates
             && self.documents == other.documents
@@ -40,6 +43,43 @@ impl PartialEq for DependencySet {
 }
 
 impl DependencySet {
+    pub fn touched_tables(&self) -> HashSet<TableName> {
+        self.tables
+            .iter()
+            .map(|dependency| dependency.table.clone())
+            .chain(self.missing_tables.iter().cloned())
+            .chain(
+                self.missing_predicates
+                    .iter()
+                    .map(|dependency| dependency.table.clone()),
+            )
+            .chain(
+                self.documents
+                    .iter()
+                    .map(|dependency| dependency.table.clone()),
+            )
+            .chain(
+                self.index_ranges
+                    .iter()
+                    .map(|dependency| dependency.table.clone()),
+            )
+            .chain(
+                self.predicates
+                    .iter()
+                    .map(|dependency| dependency.table.clone()),
+            )
+            .chain(
+                self.paginated_windows
+                    .iter()
+                    .map(|dependency| dependency.table.clone()),
+            )
+            .collect()
+    }
+
+    pub fn touches_table(&self, table: &TableName) -> bool {
+        self.touched_tables().contains(table)
+    }
+
     pub fn from_engine_query(query: &Query, table_id: Option<TableId>) -> Self {
         let mut dependencies = Self::default();
         let Some(table_id) = table_id else {
@@ -68,6 +108,10 @@ impl DependencySet {
             table: table.clone(),
             table_id: table_id.clone(),
         });
+    }
+
+    pub fn record_collection_group(&mut self, collection_group: &CollectionName) {
+        self.collection_groups.insert(collection_group.clone());
     }
 
     pub fn record_missing_table(&mut self, table: &TableName) {
@@ -129,6 +173,9 @@ impl DependencySet {
         for dependency in &other.tables {
             self.record_table(&dependency.table, &dependency.table_id);
         }
+        for collection_group in &other.collection_groups {
+            self.record_collection_group(collection_group);
+        }
         for table in &other.missing_tables {
             self.record_missing_table(table);
         }
@@ -155,6 +202,7 @@ impl DependencySet {
 
     pub fn is_empty(&self) -> bool {
         self.tables.is_empty()
+            && self.collection_groups.is_empty()
             && self.missing_tables.is_empty()
             && self.missing_predicates.is_empty()
             && self.documents.is_empty()
@@ -300,6 +348,14 @@ fn write_intersects_dependency_set<F>(
 where
     F: FnMut(&TableName, DocumentId) -> Result<Option<Document>>,
 {
+    if write.resource_path_binding.as_ref().is_some_and(|binding| {
+        dependencies
+            .collection_groups
+            .contains(binding.collection_group())
+    }) {
+        return true;
+    }
+
     if dependencies.missing_tables.contains(&write.table) {
         return true;
     }

@@ -32,21 +32,27 @@ impl Engine {
     pub(super) fn run_store_mutation<F>(
         &self,
         runtime: Arc<TenantRuntime>,
-        prepared_commit: PreparedCommit,
+        mut prepared_commit: PreparedCommit,
         mut profile: DirectMutationProfile,
         mutate: F,
     ) -> Result<CommitEntry>
     where
-        F: FnOnce(&TenantPersistence, &PreparedCommit) -> Result<CommitEntry>,
+        F: FnOnce(
+            &TenantPersistence,
+            &PreparedCommit,
+            nimbus_core::Timestamp,
+        ) -> Result<CommitEntry>,
     {
         let commit = {
             let queue_wait_started = Instant::now();
             let _sequence_guard = runtime.lock_mutation_sequence();
             profile.phases.queue_wait = queue_wait_started.elapsed();
             observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
+            let assignment_timestamp = runtime.assign_commit_timestamp();
+            prepared_commit.stamp_for_assignment(assignment_timestamp)?;
             let durable_append_started = Instant::now();
             let write_log_guard = runtime.arm_write_log_append();
-            let commit = mutate(runtime.store(), &prepared_commit)?;
+            let commit = mutate(runtime.store(), &prepared_commit, assignment_timestamp)?;
             profile.phases.durable_append = durable_append_started.elapsed();
             let publish_started = Instant::now();
             publish_direct_commit_to_write_log(&runtime, &commit);
@@ -74,21 +80,27 @@ impl Engine {
     pub(super) fn run_store_mutation_once<F>(
         &self,
         runtime: Arc<TenantRuntime>,
-        prepared_commit: PreparedCommit,
+        mut prepared_commit: PreparedCommit,
         mut profile: DirectMutationProfile,
         mutate: F,
     ) -> Result<bool>
     where
-        F: FnOnce(&TenantPersistence, &PreparedCommit) -> Result<Option<CommitEntry>>,
+        F: FnOnce(
+            &TenantPersistence,
+            &PreparedCommit,
+            nimbus_core::Timestamp,
+        ) -> Result<Option<CommitEntry>>,
     {
         let commit = {
             let queue_wait_started = Instant::now();
             let _sequence_guard = runtime.lock_mutation_sequence();
             profile.phases.queue_wait = queue_wait_started.elapsed();
             observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
+            let assignment_timestamp = runtime.assign_commit_timestamp();
+            prepared_commit.stamp_for_assignment(assignment_timestamp)?;
             let durable_append_started = Instant::now();
             let write_log_guard = runtime.arm_write_log_append();
-            let commit = mutate(runtime.store(), &prepared_commit)?;
+            let commit = mutate(runtime.store(), &prepared_commit, assignment_timestamp)?;
             profile.phases.durable_append = durable_append_started.elapsed();
             if let Some(commit) = &commit {
                 let publish_started = Instant::now();
@@ -121,21 +133,28 @@ impl Engine {
     pub(super) fn run_store_delete_mutation<F>(
         &self,
         runtime: Arc<TenantRuntime>,
-        prepared_commit: PreparedCommit,
+        mut prepared_commit: PreparedCommit,
         mut profile: DirectMutationProfile,
         mutate: F,
     ) -> Result<CommitEntry>
     where
-        F: FnOnce(&TenantPersistence, &PreparedCommit) -> Result<(CommitEntry, Document)>,
+        F: FnOnce(
+            &TenantPersistence,
+            &PreparedCommit,
+            nimbus_core::Timestamp,
+        ) -> Result<(CommitEntry, Document)>,
     {
         let (commit, _deleted_document) = {
             let queue_wait_started = Instant::now();
             let _sequence_guard = runtime.lock_mutation_sequence();
             profile.phases.queue_wait = queue_wait_started.elapsed();
             observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
+            let assignment_timestamp = runtime.assign_commit_timestamp();
+            prepared_commit.stamp_for_assignment(assignment_timestamp)?;
             let durable_append_started = Instant::now();
             let write_log_guard = runtime.arm_write_log_append();
-            let (commit, deleted_document) = mutate(runtime.store(), &prepared_commit)?;
+            let (commit, deleted_document) =
+                mutate(runtime.store(), &prepared_commit, assignment_timestamp)?;
             profile.phases.durable_append = durable_append_started.elapsed();
             let publish_started = Instant::now();
             publish_direct_commit_to_write_log(&runtime, &commit);
@@ -163,21 +182,27 @@ impl Engine {
     pub(super) fn run_store_delete_mutation_once<F>(
         &self,
         runtime: Arc<TenantRuntime>,
-        prepared_commit: PreparedCommit,
+        mut prepared_commit: PreparedCommit,
         mut profile: DirectMutationProfile,
         mutate: F,
     ) -> Result<bool>
     where
-        F: FnOnce(&TenantPersistence, &PreparedCommit) -> Result<Option<(CommitEntry, Document)>>,
+        F: FnOnce(
+            &TenantPersistence,
+            &PreparedCommit,
+            nimbus_core::Timestamp,
+        ) -> Result<Option<(CommitEntry, Document)>>,
     {
         let commit = {
             let queue_wait_started = Instant::now();
             let _sequence_guard = runtime.lock_mutation_sequence();
             profile.phases.queue_wait = queue_wait_started.elapsed();
             observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
+            let assignment_timestamp = runtime.assign_commit_timestamp();
+            prepared_commit.stamp_for_assignment(assignment_timestamp)?;
             let durable_append_started = Instant::now();
             let write_log_guard = runtime.arm_write_log_append();
-            let commit = mutate(runtime.store(), &prepared_commit)?;
+            let commit = mutate(runtime.store(), &prepared_commit, assignment_timestamp)?;
             profile.phases.durable_append = durable_append_started.elapsed();
             if let Some((commit, _deleted_document)) = &commit {
                 let publish_started = Instant::now();

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::MutexGuard;
 
 use nimbus_core::{
@@ -32,6 +32,7 @@ pub(super) struct MutationExecutionUnitState {
     pub(super) trigger_write_origin: Option<TriggerWriteOrigin>,
     pub(super) staged_writes: HashMap<(TableName, DocumentId), StagedWriteEntry>,
     pub(super) write_order: Vec<(TableName, DocumentId)>,
+    pub(super) deferred_server_timestamp_fields: HashMap<(TableName, DocumentId), HashSet<String>>,
     pub(super) staged_scheduler_jobs: HashMap<nimbus_core::JobId, StagedSchedulerEntry>,
     pub(super) scheduler_order: Vec<nimbus_core::JobId>,
 }
@@ -84,6 +85,7 @@ impl MutationExecutionUnit {
         state.lifecycle = ExecutionUnitLifecycle::Finalized;
         state.staged_writes.clear();
         state.write_order.clear();
+        state.deferred_server_timestamp_fields.clear();
         state.staged_scheduler_jobs.clear();
         state.scheduler_order.clear();
         state.read_dependencies = DependencySet::default();

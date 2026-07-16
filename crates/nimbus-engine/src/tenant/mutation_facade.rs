@@ -1,8 +1,9 @@
+use std::sync::atomic::Ordering;
 #[cfg(test)]
 use std::time::Duration;
 use std::time::Instant;
 
-use nimbus_core::{CommitEntry, Result, SequenceNumber, Timestamp};
+use nimbus_core::{CommitEntry, Result, SequenceNumber, TableName, TenantEventRecord, Timestamp};
 use nimbus_storage::JournalProgress;
 
 use super::*;
@@ -48,6 +49,19 @@ fn append_exit_requires_storage_fallback(
 }
 
 impl TenantRuntime {
+    /// Samples and advances the tenant commit clock while the sequence gate is held.
+    pub(crate) fn assign_commit_timestamp(&self) -> Timestamp {
+        let previous = self.last_assigned_commit_timestamp.load(Ordering::Relaxed);
+        let timestamp = Timestamp(self.store.now().0.max(previous));
+        debug_assert!(
+            timestamp.0 >= previous,
+            "assigned commit timestamps must be monotonic"
+        );
+        self.last_assigned_commit_timestamp
+            .store(timestamp.0, Ordering::Relaxed);
+        timestamp
+    }
+
     pub(crate) fn enqueue_mutation_admission_request(
         &self,
         request: QueuedMutationRequest,
@@ -157,6 +171,21 @@ impl TenantRuntime {
 
     pub(crate) fn advance_write_log_zero_write_coverage(&self, sequence: SequenceNumber) {
         self.write_log.advance_known_zero_write_through(sequence);
+    }
+
+    pub(crate) fn stage_zero_write_record_in_write_log(&self, record: &TenantEventRecord) {
+        self.write_log
+            .stage_zero_write_record(record, self.store.now());
+    }
+
+    pub(crate) fn published_schema_epoch_snapshot(
+        &self,
+    ) -> std::collections::HashMap<TableName, SequenceNumber> {
+        self.write_log.published_schema_epoch_snapshot()
+    }
+
+    pub(crate) fn current_schema_epoch(&self, table: &TableName) -> SequenceNumber {
+        self.write_log.current_schema_epoch(table)
     }
 
     /// Arms a fail-safe around a persistence attempt. The caller disarms only

@@ -1,8 +1,6 @@
 use std::time::Instant;
 
-use nimbus_core::{
-    CommitEntry, DependencySet, Error, Result, SequenceNumber, TableName, Timestamp,
-};
+use nimbus_core::{CommitEntry, DependencySet, Error, Result, SequenceNumber};
 
 use super::super::mutations::phase_metrics::{CommitPhaseDurations, maybe_warn_wide_read_set};
 use super::super::mutations::prepared::PreparedCommit;
@@ -22,22 +20,11 @@ impl Drop for FinalizationGuard<'_> {
 
 impl MutationExecutionUnit {
     pub fn commit(&self) -> Result<Option<CommitEntry>> {
-        self.commit_with_timestamp(None)
-    }
-
-    pub(super) fn commit_at(&self, commit_timestamp: Timestamp) -> Result<Option<CommitEntry>> {
-        self.commit_with_timestamp(Some(commit_timestamp))
-    }
-
-    fn commit_with_timestamp(
-        &self,
-        commit_timestamp: Option<Timestamp>,
-    ) -> Result<Option<CommitEntry>> {
         let total_started = Instant::now();
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
         let finalization_guard = FinalizationGuard { unit: self };
         let prepare_started = Instant::now();
-        let prepared_commit = {
+        let mut prepared_commit = {
             let mut state = self.active_state()?;
             state.lifecycle = ExecutionUnitLifecycle::Finalizing;
             let writes = self.build_resolved_writes(&state);
@@ -50,6 +37,7 @@ impl MutationExecutionUnit {
                 writes,
                 schedule_ops,
                 state.trigger_write_origin.clone(),
+                state.deferred_server_timestamp_fields.clone(),
             )
         };
         let mut phases = CommitPhaseDurations {
@@ -82,6 +70,8 @@ impl MutationExecutionUnit {
                 // remains the closest pre-persist boundary. PreparedCommit now
                 // carries the exact storage payload without changing that call.
                 self.engine.wait_for_commit_fault(labels::PRE_PERSIST)?;
+                let commit_timestamp = self.runtime.assign_commit_timestamp();
+                prepared_commit.stamp_for_assignment(commit_timestamp)?;
                 let (writes, schedule_ops, trigger_write_origin) =
                     prepared_commit.execution_unit_effects()?;
                 let durable_append_started = Instant::now();
@@ -95,7 +85,7 @@ impl MutationExecutionUnit {
                     writes,
                     schedule_ops,
                     trigger_write_origin,
-                    commit_timestamp,
+                    Some(commit_timestamp),
                 )?;
                 phases.durable_append = durable_append_started.elapsed();
                 self.engine
@@ -145,11 +135,21 @@ impl MutationExecutionUnit {
 
     fn ensure_schema_unchanged(&self, dependencies: &DependencySet) -> Result<()> {
         let current_schema = self.runtime.schema();
-        for table in touched_tables(dependencies) {
-            if current_schema.get_table(&table) != self.schema_snapshot.get_table(&table) {
+        for table in dependencies.touched_tables() {
+            let observed_epoch = self
+                .schema_epoch_snapshot
+                .get(&table)
+                .copied()
+                .unwrap_or(SequenceNumber(0));
+            let current_epoch = self.runtime.current_schema_epoch(&table);
+            if observed_epoch != current_epoch
+                || current_schema.get_table(&table) != self.schema_snapshot.get_table(&table)
+            {
                 return Err(Error::retryable_conflict(
-                    format!("table schema changed during transaction: {table}"),
-                    None,
+                    format!(
+                        "table schema changed during transaction: {table} (epoch {observed_epoch} -> {current_epoch})"
+                    ),
+                    (current_epoch != SequenceNumber(0)).then_some(current_epoch),
                 ));
             }
         }
@@ -228,60 +228,6 @@ fn map_fallback_floor_error(error: Error, snapshot_sequence: SequenceNumber) -> 
         }
         other => other,
     }
-}
-
-fn touched_tables(dependencies: &DependencySet) -> Vec<TableName> {
-    let mut tables = dependencies
-        .tables
-        .iter()
-        .map(|dependency| dependency.table.clone())
-        .collect::<Vec<_>>();
-    for table in &dependencies.missing_tables {
-        if !tables.iter().any(|candidate| candidate == table) {
-            tables.push(table.clone());
-        }
-    }
-    for dependency in &dependencies.missing_predicates {
-        if !tables
-            .iter()
-            .any(|candidate| candidate == &dependency.table)
-        {
-            tables.push(dependency.table.clone());
-        }
-    }
-    for dependency in &dependencies.documents {
-        if !tables
-            .iter()
-            .any(|candidate| candidate == &dependency.table)
-        {
-            tables.push(dependency.table.clone());
-        }
-    }
-    for dependency in &dependencies.index_ranges {
-        if !tables
-            .iter()
-            .any(|candidate| candidate == &dependency.table)
-        {
-            tables.push(dependency.table.clone());
-        }
-    }
-    for dependency in &dependencies.predicates {
-        if !tables
-            .iter()
-            .any(|candidate| candidate == &dependency.table)
-        {
-            tables.push(dependency.table.clone());
-        }
-    }
-    for dependency in &dependencies.paginated_windows {
-        if !tables
-            .iter()
-            .any(|candidate| candidate == &dependency.table)
-        {
-            tables.push(dependency.table.clone());
-        }
-    }
-    tables
 }
 
 #[cfg(test)]

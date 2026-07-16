@@ -1,7 +1,7 @@
 use nimbus_core::{CommitEntry, Document, DocumentId, IndexDefinition, Result, TableName};
 use serde_json::Value;
 
-use crate::store::TenantStore;
+use crate::store::{DirectWriteAssignment, TenantStore};
 
 fn require_commit(commit: Option<CommitEntry>, error_message: &str) -> Result<CommitEntry> {
     commit.ok_or_else(|| nimbus_core::Error::Internal(error_message.to_string()))
@@ -34,6 +34,31 @@ impl TenantStore {
             transaction.insert_document_with_indexes(document, indexes)?;
             Ok(true)
         })?;
+        Ok(if committed.value {
+            Some(require_commit(
+                committed.commit,
+                "deduplicated indexed insert should record a commit entry",
+            )?)
+        } else {
+            None
+        })
+    }
+
+    pub fn insert_with_indexes_once_at(
+        &self,
+        document: &Document,
+        assignment: DirectWriteAssignment<'_>,
+    ) -> Result<Option<CommitEntry>> {
+        let committed = self.execute_write_with_commit_timestamp(
+            Some(assignment.commit_timestamp),
+            move |transaction| {
+                if !transaction.begin_scheduled_execution(assignment.execution_id)? {
+                    return Ok(false);
+                }
+                transaction.insert_document_with_indexes(document, assignment.indexes)?;
+                Ok(true)
+            },
+        )?;
         Ok(if committed.value {
             Some(require_commit(
                 committed.commit,
@@ -94,6 +119,44 @@ impl TenantStore {
                 .update_document_with_indexes_validated(table, id, patch, indexes, validate)?;
             Ok(true)
         })?;
+        Ok(if committed.value {
+            Some(require_commit(
+                committed.commit,
+                "deduplicated indexed update should record a commit entry",
+            )?)
+        } else {
+            None
+        })
+    }
+
+    pub fn update_with_indexes_validated_once_at<F>(
+        &self,
+        table: &TableName,
+        id: &DocumentId,
+        patch: &serde_json::Map<String, Value>,
+        assignment: DirectWriteAssignment<'_>,
+        validate: F,
+    ) -> Result<Option<CommitEntry>>
+    where
+        F: FnOnce(&Document, &Document) -> Result<()>,
+    {
+        let committed = self.execute_write_with_commit_timestamp(
+            Some(assignment.commit_timestamp),
+            move |transaction| {
+                if !transaction.begin_scheduled_execution(assignment.execution_id)? {
+                    return Ok(false);
+                }
+                transaction.update_document_with_indexes_validated_at(
+                    table,
+                    id,
+                    patch,
+                    assignment.indexes,
+                    assignment.commit_timestamp,
+                    validate,
+                )?;
+                Ok(true)
+            },
+        )?;
         Ok(if committed.value {
             Some(require_commit(
                 committed.commit,
@@ -180,6 +243,44 @@ impl TenantStore {
                 transaction.delete_document_with_indexes_validated(table, id, indexes, validate)?;
             Ok(Some(removed_document))
         })?;
+        Ok(if let Some(removed_document) = committed.value {
+            Some((
+                require_commit(
+                    committed.commit,
+                    "deduplicated indexed delete should record a commit entry",
+                )?,
+                removed_document,
+            ))
+        } else {
+            None
+        })
+    }
+
+    pub fn delete_with_indexes_validated_once_at<F>(
+        &self,
+        table: &TableName,
+        id: &DocumentId,
+        assignment: DirectWriteAssignment<'_>,
+        validate: F,
+    ) -> Result<Option<(CommitEntry, Document)>>
+    where
+        F: FnOnce(&Document) -> Result<()>,
+    {
+        let committed = self.execute_write_with_commit_timestamp(
+            Some(assignment.commit_timestamp),
+            move |transaction| {
+                if !transaction.begin_scheduled_execution(assignment.execution_id)? {
+                    return Ok(None);
+                }
+                let removed_document = transaction.delete_document_with_indexes_validated(
+                    table,
+                    id,
+                    assignment.indexes,
+                    validate,
+                )?;
+                Ok(Some(removed_document))
+            },
+        )?;
         Ok(if let Some(removed_document) = committed.value {
             Some((
                 require_commit(

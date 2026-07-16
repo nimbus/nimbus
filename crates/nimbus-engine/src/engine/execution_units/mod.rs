@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use nimbus_core::{DependencySet, PrincipalContext, Result, Schema, SequenceNumber};
+use nimbus_core::{DependencySet, PrincipalContext, Result, Schema, SequenceNumber, TableName};
 
 use crate::persistence::TenantPersistenceSnapshot;
 use crate::tenant::TenantRuntime;
@@ -30,6 +31,7 @@ pub struct MutationExecutionUnit {
     tenant_id: nimbus_core::TenantId,
     principal: PrincipalContext,
     schema_snapshot: Arc<Schema>,
+    schema_epoch_snapshot: HashMap<TableName, SequenceNumber>,
     snapshot: TenantPersistenceSnapshot,
     snapshot_sequence: SequenceNumber,
     state: Mutex<MutationExecutionUnitState>,
@@ -45,12 +47,14 @@ impl Engine {
         let snapshot = runtime.store().read_snapshot()?;
         let snapshot_sequence = snapshot.applied_sequence()?;
         let schema_snapshot = runtime.schema();
+        let schema_epoch_snapshot = runtime.published_schema_epoch_snapshot();
         Ok(Arc::new(MutationExecutionUnit {
             engine: self.clone(),
             runtime,
             tenant_id,
             principal,
             schema_snapshot,
+            schema_epoch_snapshot,
             snapshot,
             snapshot_sequence,
             state: Mutex::new(MutationExecutionUnitState::default()),

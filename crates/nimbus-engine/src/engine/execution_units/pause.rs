@@ -26,6 +26,7 @@ pub mod labels {
     pub const POST_VALIDATE_PRE_STAGE: Label = Label::new("POST_VALIDATE_PRE_STAGE");
     pub const PRE_PERSIST: Label = Label::new("PRE_PERSIST");
     pub const DURABLE_BEFORE_PUBLISH: Label = Label::new("DURABLE_BEFORE_PUBLISH");
+    pub const SCHEMA_ASSIGNED_BEFORE_VISIBLE: Label = Label::new("SCHEMA_ASSIGNED_BEFORE_VISIBLE");
     pub const POST_PUBLISH_PRE_FANOUT: Label = Label::new("POST_PUBLISH_PRE_FANOUT");
 }
 
@@ -66,6 +67,23 @@ impl CommitFaultClient {
         {
             let _ = label;
             Fault::Noop
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_armed(&self, label: Label) -> bool {
+        #[cfg(any(test, feature = "test-hooks"))]
+        {
+            self.state
+                .armed
+                .lock()
+                .expect("execution unit commit fault lock should not be poisoned")
+                .contains_key(&label)
+        }
+        #[cfg(not(any(test, feature = "test-hooks")))]
+        {
+            let _ = label;
+            false
         }
     }
 

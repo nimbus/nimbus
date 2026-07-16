@@ -1,5 +1,59 @@
 use super::*;
 
+#[test]
+fn collection_group_read_conflicts_with_first_insert_into_new_binding() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("collection-group-occ", Engine::create_tenant);
+    let collection_group = CollectionName::new("posts").expect("collection group should parse");
+
+    let reader = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("reader execution unit should begin");
+    let rows = reader
+        .query_collection_group_documents_structured_cancellable(
+            &collection_group,
+            None,
+            &StructuredQuery::default(),
+            &mut || Ok(()),
+        )
+        .expect("empty collection-group scan should succeed");
+    assert!(rows.is_empty());
+
+    let bound_table = messages_table("users_999_posts");
+    let bound_document_id =
+        DocumentId::from_key("first-post").expect("bound document id should parse");
+    let binding = ResourcePathBinding::new(
+        DocumentLocator::new(bound_table, bound_document_id),
+        DocumentPath::from_segments(["users", "999", "posts", "first-post"])
+            .expect("bound document path should parse"),
+    );
+    let batch = AtomicWriteBatch::new(vec![AtomicWrite::Set {
+        key: WriteKey::from(binding),
+        document: serde_json::Map::from_iter([("body".to_string(), json!("first"))]),
+        mode: WriteSetMode::Overwrite,
+        precondition: WritePrecondition::default(),
+        transforms: Vec::new(),
+    }])
+    .expect("atomic write batch should build");
+    engine
+        .begin_mutation_execution_unit(tenant_id, PrincipalContext::anonymous())
+        .expect("writer execution unit should begin")
+        .execute_atomic_write_batch(batch)
+        .expect("first bound insert should commit");
+
+    reader
+        .insert_document(
+            messages_table("collection_group_reader_writes"),
+            serde_json::Map::from_iter([("body".to_string(), json!("reader"))]),
+        )
+        .expect("reader write should stage");
+    let error = reader
+        .commit()
+        .expect_err("the first insert into a scanned group must conflict");
+    assert!(matches!(error, Error::Conflict { .. }));
+}
+
 #[tokio::test]
 async fn mutation_execution_unit_commits_through_memory_persistence() {
     let harness = DeterministicHarness::scenario("memory-committer", 41, Timestamp(25_000));
@@ -254,6 +308,292 @@ async fn mutation_execution_unit_pre_assign_label_forces_commit_interleaving() {
             .get_field("body"),
         Some(&json!("First"))
     );
+}
+
+#[tokio::test]
+async fn commit_timestamps_are_monotonic_with_sequence_across_paths() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let clock = Arc::new(ManualClock::new(Timestamp(30_000)));
+    let engine = Arc::new(
+        Engine::new_with_simulation(data_dir.path(), clock.clone(), Arc::new(NoopFaultInjector))
+            .expect("engine should create"),
+    );
+    let tenant_id = TenantId::new("timestamp-paths").expect("tenant id should build");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    let execution_table = messages_table("timestamp_paths_execution");
+    let direct_table = messages_table("timestamp_paths_direct");
+    let queued_table = messages_table("timestamp_paths_queued");
+
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should begin");
+    let execution_unit_id = execution_unit
+        .insert_document(
+            execution_table.clone(),
+            serde_json::Map::from_iter([("path".to_string(), json!("execution-unit"))]),
+        )
+        .expect("execution-unit insert should stage");
+    let faults = engine.commit_fault_handle_for_testing();
+    faults.arm(labels::PRE_ASSIGN);
+    let execution_commit = tokio::task::spawn_blocking({
+        let execution_unit = execution_unit.clone();
+        move || execution_unit.commit()
+    });
+    assert!(
+        tokio::task::spawn_blocking({
+            let faults = faults.clone();
+            move || faults.wait_until_entered(labels::PRE_ASSIGN, Duration::from_secs(5))
+        })
+        .await
+        .expect("pause wait should join"),
+        "execution-unit commit should pause after prepare and before assignment"
+    );
+
+    clock.set(Timestamp(10_000));
+    let direct_id = engine
+        .insert_document(
+            &tenant_id,
+            direct_table.clone(),
+            serde_json::Map::from_iter([("path".to_string(), json!("direct"))]),
+        )
+        .expect("direct insert should commit");
+
+    clock.set(Timestamp(5_000));
+    engine
+        .update_document(
+            &tenant_id,
+            direct_table.clone(),
+            direct_id.clone(),
+            serde_json::Map::from_iter([("updated".to_string(), json!(true))]),
+        )
+        .expect("direct update should reuse its clamped assignment timestamp");
+
+    clock.set(Timestamp(20_000));
+    let queued_id = engine
+        .insert_document_async(
+            tenant_id.clone(),
+            queued_table.clone(),
+            serde_json::Map::from_iter([("path".to_string(), json!("queued"))]),
+        )
+        .await
+        .expect("queued insert should commit");
+
+    clock.set(Timestamp(5_000));
+    faults.release(labels::PRE_ASSIGN);
+    execution_commit
+        .await
+        .expect("execution-unit task should join")
+        .expect("execution-unit commit should succeed")
+        .expect("execution-unit insert should produce a commit");
+
+    let runtime = engine
+        .get_existing_tenant(&tenant_id)
+        .expect("tenant runtime should remain loaded");
+    let records = runtime
+        .store()
+        .read_durable_journal_from(SequenceNumber(1))
+        .expect("durable records should read");
+    let document_records = records
+        .iter()
+        .filter(|record| !record.writes.is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(document_records.len(), 4);
+    assert!(document_records.windows(2).all(|pair| {
+        pair[0].sequence < pair[1].sequence && pair[0].timestamp <= pair[1].timestamp
+    }));
+    assert_eq!(
+        document_records
+            .iter()
+            .map(|record| record.timestamp)
+            .collect::<Vec<_>>(),
+        vec![
+            Timestamp(10_000),
+            Timestamp(10_000),
+            Timestamp(20_000),
+            Timestamp(20_000),
+        ]
+    );
+
+    let direct_update_record = document_records
+        .iter()
+        .find(|record| {
+            record.writes[0].doc_id == direct_id
+                && record.writes[0].op_type == nimbus_core::WriteOpType::Update
+        })
+        .expect("direct update should have a durable record");
+    let direct_update = direct_update_record.writes[0]
+        .current
+        .as_ref()
+        .expect("direct update should contain a current image");
+    assert_eq!(direct_update.creation_time, Timestamp(10_000));
+    assert_eq!(direct_update.update_time, direct_update_record.timestamp);
+
+    for (table, document_id) in [
+        (direct_table, direct_id),
+        (queued_table, queued_id),
+        (execution_table, execution_unit_id),
+    ] {
+        let record = document_records
+            .iter()
+            .find(|record| record.writes[0].doc_id == document_id)
+            .expect("each inserted document should have one record");
+        let current = record.writes[0]
+            .current
+            .as_ref()
+            .expect("insert record should contain a current image");
+        assert_eq!(current.creation_time, record.timestamp);
+        assert_eq!(current.update_time, record.timestamp);
+        assert_eq!(
+            engine
+                .get_document(&tenant_id, &table, document_id)
+                .expect("inserted document should be visible")
+                .creation_time,
+            record.timestamp
+        );
+    }
+}
+
+#[tokio::test]
+async fn schema_epoch_race_pending_index_add_conflicts_concurrent_write() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table_name = "messages_schema_epoch_pending";
+    let table = messages_table(table_name);
+    engine
+        .set_table_schema(&tenant_id, messages_schema(table_name, Vec::new(), None))
+        .expect("initial schema should save");
+
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should capture the initial schema epoch");
+    execution_unit
+        .insert_document(
+            table,
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("prepared before index add")),
+            ]),
+        )
+        .expect("write should stage against the initial schema");
+
+    let faults = engine.commit_fault_handle_for_testing();
+    faults.arm(labels::SCHEMA_ASSIGNED_BEFORE_VISIBLE);
+    let schema_change = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .set_table_schema_async(
+                    tenant_id,
+                    messages_schema(
+                        table_name,
+                        vec![IndexDefinition {
+                            id: nimbus_core::IndexId::new(),
+                            state: nimbus_core::IndexState::Enabled,
+                            name: "by_body".to_string(),
+                            fields: vec!["body".to_string()],
+                        }],
+                        None,
+                    ),
+                )
+                .await
+        }
+    });
+    let reached = tokio::task::spawn_blocking({
+        let faults = faults.clone();
+        move || {
+            faults.wait_until_entered(
+                labels::SCHEMA_ASSIGNED_BEFORE_VISIBLE,
+                Duration::from_secs(5),
+            )
+        }
+    })
+    .await
+    .expect("schema pause wait should join");
+    assert!(reached, "schema change should pause after epoch assignment");
+
+    let error = tokio::task::spawn_blocking(move || execution_unit.commit())
+        .await
+        .expect("execution-unit commit task should join")
+        .expect_err("assigned-but-unpublished schema epoch must conflict");
+    assert!(matches!(error, Error::Conflict { .. }));
+
+    faults.release(labels::SCHEMA_ASSIGNED_BEFORE_VISIBLE);
+    schema_change
+        .await
+        .expect("schema task should join")
+        .expect("schema publication should finish after release");
+}
+
+#[test]
+fn missing_table_phantom_conflicts_when_table_created_concurrently() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_missing_lifecycle_phantom");
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start before the table exists");
+    let visible = execution_unit
+        .query_documents_cancellable(
+            &Query {
+                table: table.clone(),
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+            &mut || Ok(()),
+        )
+        .expect("missing-table scan should succeed");
+    assert!(visible.is_empty());
+    execution_unit
+        .insert_document(
+            messages_table("messages_lifecycle_side_effect"),
+            serde_json::Map::from_iter([("body".to_string(), json!("side effect"))]),
+        )
+        .expect("disjoint write should make the execution unit commit");
+
+    let runtime = engine
+        .get_existing_tenant(&tenant_id)
+        .expect("tenant runtime should exist");
+    let _sequence_guard = runtime.lock_mutation_sequence();
+    let table_id = TableId::new();
+    match runtime.store() {
+        crate::persistence::TenantPersistence::Redb(store) => store
+            .stage_hidden_table_identity(&table, &table_id)
+            .expect("hidden table identity should stage"),
+        crate::persistence::TenantPersistence::Sqlite(store) => store
+            .stage_hidden_table_identity(&table, &table_id)
+            .expect("hidden table identity should stage"),
+        crate::persistence::TenantPersistence::LibsqlReplica(_)
+        | crate::persistence::TenantPersistence::Postgres(_)
+        | crate::persistence::TenantPersistence::MySql(_)
+        | crate::persistence::TenantPersistence::Memory(_) => {
+            panic!("engine fixture should use an embedded persistence provider")
+        }
+    }
+    let progress = runtime
+        .store()
+        .journal_progress()
+        .expect("lifecycle journal progress should load");
+    let record = runtime
+        .store()
+        .read_durable_journal_from(progress.durable_head)
+        .expect("lifecycle record should read")
+        .into_iter()
+        .find(|record| record.sequence == progress.durable_head)
+        .expect("assigned lifecycle record should exist");
+    runtime.stage_zero_write_record_in_write_log(&record);
+    runtime.sync_mutation_journal_progress_locked(progress);
+    drop(_sequence_guard);
+
+    let error = execution_unit
+        .commit()
+        .expect_err("whole-table lifecycle marker must conflict with missing-table dependency");
+    assert!(matches!(error, Error::Conflict { .. }));
 }
 
 #[test]

@@ -126,7 +126,11 @@ impl SubscriptionRegistry {
 
 #[cfg(test)]
 mod tests {
-    use nimbus_core::{PrincipalContext, Query, TableName};
+    use nimbus_core::{
+        CollectionName, CommitEntry, DependencySet, Document, DocumentId, DocumentLocator,
+        DocumentPath, PrincipalContext, Query, ResourcePathBinding, SequenceNumber, TableId,
+        TableName, Timestamp, WriteOp, WriteOpType,
+    };
     use tokio::sync::mpsc;
 
     use super::SubscriptionRegistry;
@@ -163,5 +167,58 @@ mod tests {
         assert!(stored.missing_tables.contains(&query.table));
         assert!(stored.tables.is_empty());
         assert!(stored.predicates.is_empty());
+    }
+
+    #[test]
+    fn collection_group_subscription_wakes_on_first_insert_into_new_binding() {
+        let registry = SubscriptionRegistry::new();
+        let (tx, _rx) = mpsc::channel(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
+        let query = Query {
+            table: TableName::new("subscription_placeholder").expect("table should parse"),
+            filters: Vec::new(),
+            order: None,
+            limit: None,
+        };
+        let registration = registry.register(
+            query,
+            PrincipalContext::anonymous(),
+            "policy-v1".to_string(),
+            tx,
+            false,
+        );
+        let mut dependencies = DependencySet::default();
+        dependencies.record_collection_group(
+            &CollectionName::new("posts").expect("collection group should parse"),
+        );
+        registry.activate_with_dependencies(registration.id(), SequenceNumber(0), dependencies);
+
+        let table = TableName::new("users_999_posts").expect("table should parse");
+        let table_id = TableId::new();
+        let document_id = DocumentId::from_key("first-post").expect("document id should parse");
+        let document =
+            Document::with_id(document_id.clone(), table.clone(), serde_json::Map::new());
+        let commit = CommitEntry {
+            sequence: SequenceNumber(1),
+            timestamp: Timestamp(1),
+            writes: vec![WriteOp {
+                table: table.clone(),
+                table_id,
+                op_type: WriteOpType::Insert,
+                doc_id: document_id.clone(),
+                resource_path_binding: Some(ResourcePathBinding::new(
+                    DocumentLocator::new(table, document_id),
+                    DocumentPath::from_segments(["users", "999", "posts", "first-post"])
+                        .expect("document path should parse"),
+                )),
+                trigger_write_origin: None,
+                previous: None,
+                current: Some(document.clone()),
+            }],
+        };
+
+        assert_eq!(
+            registry.affected_subscription_ids(&commit, &[document]),
+            vec![registration.id()]
+        );
     }
 }

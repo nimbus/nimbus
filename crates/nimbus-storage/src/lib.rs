@@ -112,11 +112,11 @@ pub use sqlite::{
     sqlite_init_sql,
 };
 pub use store::{
-    DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DurableJournalBootstrap, DurableJournalPage,
-    HistoricalIndexDocumentPage, JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT,
-    MaterializedJournalSnapshot, PointInTimeRestoreArchive, PointInTimeRestoreTarget,
-    ResolvedScheduleOp, ResolvedWrite, TenantReadSnapshot, TenantStore, TenantWriteCommit,
-    TenantWriteTransaction,
+    DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DirectWriteAssignment, DurableJournalBootstrap,
+    DurableJournalPage, HistoricalIndexDocumentPage, JournalProgress,
+    MAX_DURABLE_JOURNAL_STREAM_LIMIT, MaterializedJournalSnapshot, PointInTimeRestoreArchive,
+    PointInTimeRestoreTarget, ResolvedScheduleOp, ResolvedWrite, TenantReadSnapshot, TenantStore,
+    TenantWriteCommit, TenantWriteTransaction,
 };
 pub use table_identity::{
     TableBackendLayout, TableIdentityDiagnostic, TableIdentitySnapshotEntry,

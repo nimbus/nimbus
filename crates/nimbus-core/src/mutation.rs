@@ -181,6 +181,27 @@ pub struct TenantEventRecord {
 }
 
 impl TenantEventRecord {
+    /// Returns the logical tables whose schema/table identity epoch advances
+    /// when this record is assigned.
+    pub fn schema_epoch_tables(&self) -> HashSet<TableName> {
+        self.events
+            .iter()
+            .filter_map(|event| match event {
+                TenantEventKind::SchemaChange { change } => Some(match change.as_ref() {
+                    SchemaChangeEvent::SetTable { table, .. }
+                    | SchemaChangeEvent::DeleteTable { table, .. } => table.clone(),
+                }),
+                TenantEventKind::TableLifecycle { lifecycle } => Some(match lifecycle {
+                    TableLifecycleEvent::StageHidden { table, .. }
+                    | TableLifecycleEvent::ActivateHidden { table, .. }
+                    | TableLifecycleEvent::MarkDeleting { table, .. }
+                    | TableLifecycleEvent::HardDelete { table, .. } => table.clone(),
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn new(
         sequence: SequenceNumber,
         timestamp: Timestamp,

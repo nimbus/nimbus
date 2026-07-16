@@ -32,8 +32,15 @@ impl MutationExecutionUnit {
             .transpose()?
             .unwrap_or_default();
         let document = match document_id {
-            Some(document_id) => Document::with_id(document_id, table.clone(), fields),
-            None => Document::with_id(self.engine.next_document_id(), table.clone(), fields),
+            Some(document_id) => {
+                Document::with_id_at(document_id, table.clone(), fields, Timestamp(0))
+            }
+            None => Document::with_id_at(
+                self.engine.next_document_id(),
+                table.clone(),
+                fields,
+                Timestamp(0),
+            ),
         };
         enforce_mutation_authorization(
             table_schema.as_ref(),
@@ -43,13 +50,16 @@ impl MutationExecutionUnit {
             None,
         )?;
         self.stage_write(
-            table,
+            table.clone(),
             document.id.clone(),
             None,
             Some(document.clone()),
             indexes,
             None,
         )?;
+        self.active_state()?
+            .deferred_server_timestamp_fields
+            .remove(&(table, document.id.clone()));
         Ok(document.id)
     }
 
@@ -69,6 +79,7 @@ impl MutationExecutionUnit {
             .current_document(&table, &document_id)?
             .ok_or(Error::DocumentNotFound(document_id.clone()))?;
         let mut document = existing.clone();
+        let patched_fields = patch.keys().cloned().collect::<Vec<_>>();
         for (field, value) in patch {
             document.fields.insert(field, value);
         }
@@ -83,13 +94,20 @@ impl MutationExecutionUnit {
             Some(&existing),
         )?;
         self.stage_write(
-            table,
+            table.clone(),
             document_id.clone(),
             Some(existing),
             Some(document),
             indexes,
             None,
         )?;
+        if let Some(fields) = self
+            .active_state()?
+            .deferred_server_timestamp_fields
+            .get_mut(&(table, document_id.clone()))
+        {
+            fields.retain(|field| !patched_fields.contains(field));
+        }
         Ok(document_id)
     }
 
@@ -132,7 +150,7 @@ impl MutationExecutionUnit {
             id: self.engine.next_document_id(),
             run_at: Timestamp(now.0.saturating_add(delay_ms)),
             mutation,
-            created_at: now,
+            created_at: Timestamp(0),
         };
         let job_id = job.id.clone();
         self.stage_scheduled_job(job)?;
@@ -150,7 +168,7 @@ impl MutationExecutionUnit {
             id: self.engine.next_document_id(),
             run_at: Timestamp(timestamp_ms.max(now.0)),
             mutation,
-            created_at: now,
+            created_at: Timestamp(0),
         };
         let job_id = job.id.clone();
         self.stage_scheduled_job(job)?;
@@ -198,7 +216,11 @@ impl MutationExecutionUnit {
         if entry.original == entry.current {
             state.staged_writes.remove(&key);
             state.write_order.retain(|existing| existing != &key);
+            state.deferred_server_timestamp_fields.remove(&key);
         } else {
+            if entry.current.is_none() {
+                state.deferred_server_timestamp_fields.remove(&key);
+            }
             match table_id.as_ref() {
                 Some(table_id) => {
                     state

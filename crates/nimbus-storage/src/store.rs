@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use nimbus_core::{
     CommitEntry, Document, Error, IndexDefinition, JobId, ResourcePathBinding, Result,
-    ScheduledJob, SequenceNumber, TenantEventKind, WriteOp,
+    ScheduledJob, SequenceNumber, TenantEventKind, Timestamp, WriteOp,
 };
 use redb::{Database, ReadTransaction, TableDefinition};
 
@@ -92,6 +92,13 @@ pub struct TenantStore {
     pub(crate) fault_injector: Arc<dyn FaultInjector>,
     pub(crate) retention_floor: Arc<RetentionFloor>,
     scan_metrics: Arc<ScanMetrics>,
+}
+
+#[derive(Clone, Copy)]
+pub struct DirectWriteAssignment<'a> {
+    pub indexes: &'a [IndexDefinition],
+    pub execution_id: Option<&'a str>,
+    pub commit_timestamp: Timestamp,
 }
 
 /// Execution-unit document diff that has already been validated by the engine.
