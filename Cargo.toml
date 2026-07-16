@@ -53,6 +53,7 @@ license-file = "LICENSE"
 
 [workspace.lints.rust]
 unused = "deny"
+unexpected_cfgs = { level = "warn", priority = 1, check-cfg = ["cfg(loom)"] }
 
 [workspace.lints.clippy]
 all = "deny"

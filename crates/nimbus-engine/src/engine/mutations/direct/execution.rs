@@ -150,7 +150,7 @@ impl Engine {
                     runtime,
                     prepared_commit,
                     profile,
-                    |store, prepared, timestamp| {
+                    move |store, prepared, timestamp| {
                         store
                             .insert_with_indexes_once_at(
                                 prepared.direct_insert_document()?,
@@ -170,7 +170,7 @@ impl Engine {
                     runtime,
                     prepared_commit,
                     profile,
-                    |store, prepared, timestamp| {
+                    move |store, prepared, timestamp| {
                         store.insert_with_indexes_once_at(
                             prepared.direct_insert_document()?,
                             direct_write_assignment(

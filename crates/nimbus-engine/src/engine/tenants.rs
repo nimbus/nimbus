@@ -62,6 +62,7 @@ impl Engine {
             TenantRuntime::from_parts_async(tenant_id.clone(), opened.persistence, opened.executor)
                 .await?,
         );
+        self.start_committer_actor(runtime.clone());
         if !self.provider_background_ready() {
             self.catch_up_loaded_provider_tenant_async(
                 runtime.clone(),
@@ -275,6 +276,7 @@ impl Engine {
             opened_executor,
             initial_state,
         ));
+        self.start_committer_actor(runtime.clone());
         let runtime_init_elapsed = runtime_init_started.elapsed();
         let recover_started = Instant::now();
         let progress = if runtime.applied_head().0 < runtime.durable_head().0 {

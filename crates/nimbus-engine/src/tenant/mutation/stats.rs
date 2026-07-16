@@ -34,4 +34,7 @@ pub struct MutationJournalStats {
     pub worker_failure_count: u64,
     pub read_wait_count: u64,
     pub total_read_wait_nanos: u64,
+    pub committer_inbox_depth: usize,
+    pub committer_inbox_capacity: usize,
+    pub committer_send_timeout_count: u64,
 }

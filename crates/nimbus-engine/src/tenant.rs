@@ -61,6 +61,10 @@ pub(crate) use self::mutation::DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY;
 pub(crate) use self::mutation::MutationJournalPauseHandle;
 #[cfg(any(test, feature = "test-hooks"))]
 use self::mutation::MutationJournalPauseState;
+pub(crate) use self::mutation::{
+    CommitterActor, CommitterMessage, assign_and_validate, run_committer_actor,
+    validate_append_sequences,
+};
 use self::mutation::{MutationAdmissionDecision, MutationAdmissionGate, MutationJournalState};
 pub use self::mutation::{MutationAdmissionPhase, MutationAdmissionStats, MutationJournalStats};
 pub(crate) use self::mutation::{QueuedMutationRequest, QueuedMutationResult};
@@ -109,6 +113,7 @@ pub struct TenantRuntime {
     lifecycle: Arc<TenantLifecycle>,
     mutation_admission: Arc<MutationAdmissionGate>,
     mutation_journal: Arc<MutationJournalState>,
+    committer: Arc<CommitterActor>,
     write_rate: TenantWriteRateLimiter,
     last_assigned_commit_timestamp: AtomicU64,
     #[cfg(any(test, feature = "test-hooks"))]
@@ -183,6 +188,7 @@ impl TenantRuntime {
             lifecycle: Arc::new(TenantLifecycle::new()),
             mutation_admission: Arc::new(MutationAdmissionGate::new()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
+            committer: Arc::new(CommitterActor::new()),
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -388,14 +394,19 @@ impl TenantRuntime {
     }
 
     pub(crate) fn engine_diagnostics_snapshot(&self) -> TenantEngineDiagnosticsSnapshot {
+        let mutation_journal = self.mutation_journal_stats();
+        let mut commit_phases = self.commit_phases.snapshot();
+        commit_phases.committer_inbox_depth =
+            u64::try_from(mutation_journal.committer_inbox_depth).unwrap_or(u64::MAX);
+        commit_phases.committer_send_timeout_total = mutation_journal.committer_send_timeout_count;
         TenantEngineDiagnosticsSnapshot {
             mutation_admission: self.mutation_admission_stats(),
-            mutation_journal: self.mutation_journal_stats(),
+            mutation_journal,
             subscription_delivery: self.subscription_delivery_stats(),
             materialized_read_surface: self.materialized_read_surface_stats(),
             serving_snapshot_manager: self.serving_snapshot_manager_stats(),
             query_planning: self.query_planning_stats(),
-            commit_phases: self.commit_phases.snapshot(),
+            commit_phases,
             tenant_write_rate: self.write_rate.stats(),
             libsql_replica_freshness: self.store.libsql_replica_freshness_stats(),
         }

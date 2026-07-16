@@ -23,7 +23,6 @@ pub(in crate::tenant) struct MutationJournalState {
     queue_rejection_count: AtomicU64,
     worker_failure_count: AtomicU64,
     pending_response_count: AtomicU64,
-    sequence_gate: Mutex<()>,
     applied_wait_lock: Mutex<()>,
     applied_wait: Condvar,
     durable_head: AtomicU64,
@@ -47,7 +46,6 @@ impl MutationJournalState {
             queue_rejection_count: AtomicU64::new(0),
             worker_failure_count: AtomicU64::new(0),
             pending_response_count: AtomicU64::new(0),
-            sequence_gate: Mutex::new(()),
             applied_wait_lock: Mutex::new(()),
             applied_wait: Condvar::new(),
             durable_head: AtomicU64::new(progress.durable_head.0),
@@ -107,45 +105,14 @@ impl MutationJournalState {
         self.pause_before_drain.wait_if_armed().await;
     }
 
-    /// Attempts to retire the drain worker. Clears `worker_running` FIRST, then
-    /// evaluates whether more work is pending.
-    ///
-    /// `gate_has_more` (the admission-queue check) MUST be a closure evaluated
-    /// AFTER the store, never a pre-computed `bool` argument. Ordering matters:
-    /// if the admission queue is read before `worker_running` is cleared, a
-    /// producer that enqueues in the window between that read and the store is
-    /// invisible to both sides — its `try_start_worker` CAS fails against the
-    /// not-yet-cleared flag (so it declines to spawn, trusting this worker), and
-    /// this worker's stale check misses the request (so it retires) — leaving the
-    /// mutation stranded with no drainer: a lost-wakeup deadlock. With the store
-    /// sequenced-before the check, any missed enqueue is guaranteed to observe
-    /// `worker_running == false` and spawn its own worker (happens-before:
-    /// store → check → producer-enqueue → producer-CAS forces the CAS to read the
-    /// cleared flag). Existing Release/AcqRel orderings are sufficient; the fix is
-    /// purely program order.
-    pub(in crate::tenant) fn release_worker(&self, gate_has_more: impl FnOnce() -> bool) -> bool {
-        self.worker_running.store(false, Ordering::Release);
-        let queue_has_more = gate_has_more()
-            || !self
-                .queue
-                .lock()
-                .expect("mutation journal queue lock should not be poisoned")
-                .is_empty();
-        queue_has_more
-            && self
-                .worker_running
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-    }
-
-    pub(in crate::tenant) fn try_start_worker(&self) -> bool {
-        self.worker_running
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-    }
-
     pub(in crate::tenant) fn record_worker_start(&self) {
-        self.worker_start_count.fetch_add(1, Ordering::Relaxed);
+        let _ = self
+            .worker_start_count
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire);
+    }
+
+    pub(in crate::tenant) fn set_worker_running(&self, running: bool) {
+        self.worker_running.store(running, Ordering::Release);
     }
 
     pub(in crate::tenant) fn record_worker_failure(&self) {
@@ -162,12 +129,6 @@ impl MutationJournalState {
 
     pub(in crate::tenant) fn durable_head(&self) -> SequenceNumber {
         SequenceNumber(self.durable_head.load(Ordering::Acquire))
-    }
-
-    pub(in crate::tenant) fn lock_sequence_gate(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.sequence_gate
-            .lock()
-            .expect("mutation journal sequence gate should not be poisoned")
     }
 
     pub(in crate::tenant) fn applied_head(&self) -> SequenceNumber {
@@ -281,17 +242,15 @@ impl MutationJournalState {
             worker_failure_count: self.worker_failure_count.load(Ordering::Relaxed),
             read_wait_count: self.read_wait_count.load(Ordering::Relaxed),
             total_read_wait_nanos: self.total_read_wait_nanos.load(Ordering::Relaxed),
+            committer_inbox_depth: 0,
+            committer_inbox_capacity: 0,
+            committer_send_timeout_count: 0,
         }
     }
 
     #[cfg(test)]
     pub(in crate::tenant) fn set_capacity_for_testing(&self, capacity: usize) {
         self.capacity.store(capacity.max(1), Ordering::Release);
-    }
-
-    #[cfg(test)]
-    pub(in crate::tenant) fn worker_running_for_testing(&self) -> bool {
-        self.worker_running.load(Ordering::Acquire)
     }
 
     #[cfg(test)]
@@ -358,44 +317,5 @@ mod tests {
             .wait_for_applied_sequence_cancellable(SequenceNumber(2), std::future::pending())
             .await
             .expect("an already-applied sequence should not wait");
-    }
-
-    /// Regression for a lost-wakeup deadlock in the drain worker's release path.
-    ///
-    /// `release_worker` must clear `worker_running` BEFORE it evaluates the
-    /// pending gate. If the gate (the admission-queue check, threaded in as the
-    /// closure) is read first, a producer that enqueues in the window between
-    /// that read and the store is invisible to both sides — its
-    /// `try_start_worker` CAS fails against the still-set flag (so it declines to
-    /// spawn, trusting the running worker) and the stale gate misses its request
-    /// (so the worker retires) — stranding the mutation with no drainer forever.
-    /// This was originally a `bool` argument evaluated *before* the call, and was
-    /// found by the concurrent write-throughput benchmark hanging ~1 run in 4.
-    ///
-    /// The check is exact and deterministic: from inside the gate closure, a
-    /// racing producer could only ever start its own worker once `worker_running`
-    /// is already `false`, so the gate MUST observe it cleared.
-    #[test]
-    fn release_worker_clears_running_before_evaluating_the_gate() {
-        let state = empty_state();
-        assert!(state.try_start_worker(), "a fresh worker should start");
-        assert!(state.worker_running_for_testing());
-
-        let running_when_gate_ran = std::cell::Cell::new(true);
-        let re_armed = state.release_worker(|| {
-            running_when_gate_ran.set(state.worker_running_for_testing());
-            false // no work pending from this worker's perspective
-        });
-
-        assert!(
-            !running_when_gate_ran.get(),
-            "release_worker must clear worker_running BEFORE evaluating the pending \
-             gate; evaluating it earlier reopens the lost-wakeup deadlock"
-        );
-        assert!(!re_armed, "with no pending work the worker retires");
-        assert!(
-            !state.worker_running_for_testing(),
-            "a retired worker leaves worker_running cleared"
-        );
     }
 }

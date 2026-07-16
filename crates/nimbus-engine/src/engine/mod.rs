@@ -299,6 +299,15 @@ impl Engine {
             .expect("engine executor should accept background work before quiesce")
     }
 
+    pub(crate) fn start_committer_actor(&self, runtime: Arc<TenantRuntime>) {
+        let receiver = runtime.take_committer_receiver();
+        let shutdown = self.engine_executor.shutdown_token();
+        let runtime = Arc::downgrade(&runtime);
+        self.spawn_background("mutation_committer", async move {
+            crate::tenant::run_committer_actor(runtime, receiver, shutdown).await;
+        });
+    }
+
     pub async fn quiesce(&self) {
         self.engine_executor.quiesce().await;
         self.storage_executor.quiesce().await;
@@ -363,6 +372,7 @@ impl Engine {
             store.clone(),
             read_storage,
         )?);
+        self.start_committer_actor(runtime.clone());
         runtime.replace_trigger_registrations(
             self.trigger_registrations
                 .read()

@@ -110,91 +110,87 @@ struct QueuedMutationBatchResult {
 }
 
 impl Engine {
-    pub(super) fn spawn_journal_mutation_worker(self: &Arc<Self>, runtime: Arc<TenantRuntime>) {
-        let engine = self.clone();
-        runtime.record_mutation_worker_start();
-        self.spawn_background("mutation_journal", async move {
-            engine.run_journal_mutation_worker(runtime).await;
-        });
-    }
-
-    async fn run_journal_mutation_worker(self: Arc<Self>, runtime: Arc<TenantRuntime>) {
+    pub(crate) async fn run_one_committer_journal_batch(
+        self: Arc<Self>,
+        runtime: Arc<TenantRuntime>,
+    ) {
         #[cfg(any(test, debug_assertions))]
-        Engine::assert_running_on_background_task("mutation_journal");
+        Engine::assert_running_on_background_task("mutation_committer");
 
         let batch_policy = MutationJournalBatchPolicy::from_env();
-        loop {
-            runtime.drain_mutation_admission_queue();
-            let batch = runtime
-                .drain_mutation_batch_adaptive(
-                    batch_policy.base,
-                    batch_policy.max,
-                    batch_policy.coalesce,
-                )
-                .await;
-            if batch.is_empty() {
-                if runtime.release_mutation_worker() {
-                    continue;
-                }
-                break;
-            }
-
-            let runtime_for_task = runtime.clone();
-            let id_source = Arc::clone(&self.id_source);
-            let commit_faults = self.commit_faults.clone();
-            let batch_result = tokio::task::spawn_blocking(move || {
-                process_queued_mutation_batch(
-                    runtime_for_task,
-                    batch,
-                    id_source.as_ref(),
-                    &commit_faults,
-                )
-            })
+        runtime.drain_mutation_admission_queue();
+        #[cfg(test)]
+        runtime.wait_before_mutation_drain().await;
+        let batch = runtime
+            .drain_mutation_batch_adaptive(
+                batch_policy.base,
+                batch_policy.max,
+                batch_policy.coalesce,
+            )
             .await;
+        if batch.is_empty() {
+            return;
+        }
 
-            match batch_result {
-                Ok(Ok(batch_result)) => {
-                    for pending_response in batch_result.responses {
-                        let _ = pending_response.response.send(Ok(pending_response.result));
-                    }
-                    // Real document commits only: this batch is drained from
-                    // the mutation admission queue, never mixed with a
-                    // zero-write commit from another source (the
-                    // trigger-candidate feed's own cursor advance is
-                    // appended through a separate path that never reaches
-                    // here). So `len() == 1` alone is an exact identity
-                    // check -- no need for the kind-aware records check the
-                    // provider catch-up path requires.
-                    let commit_identity =
-                        (batch_result.applied.len() == 1).then(|| batch_result.applied[0].clone());
-                    self.process_applied_commit_batch(
-                        runtime.clone(),
-                        &batch_result.applied,
-                        commit_identity,
-                        true,
-                    );
+        let runtime_for_task = runtime.clone();
+        let id_source = Arc::clone(&self.id_source);
+        let commit_faults = self.commit_faults.clone();
+        let batch_result = tokio::task::spawn_blocking(move || {
+            process_queued_mutation_batch(
+                runtime_for_task,
+                batch,
+                id_source.as_ref(),
+                &commit_faults,
+            )
+        })
+        .await;
+
+        match batch_result {
+            Ok(Ok(batch_result)) => {
+                // Real document commits only: this batch is drained from
+                // the mutation admission queue, never mixed with a
+                // zero-write commit from another source (the
+                // trigger-candidate feed's own cursor advance is
+                // appended through a separate path that never reaches
+                // here). So `len() == 1` alone is an exact identity
+                // check -- no need for the kind-aware records check the
+                // provider catch-up path requires.
+                let commit_identity =
+                    (batch_result.applied.len() == 1).then(|| batch_result.applied[0].clone());
+                self.process_applied_commit_batch_fanout(
+                    runtime.clone(),
+                    &batch_result.applied,
+                    commit_identity,
+                    true,
+                );
+                for pending_response in batch_result.responses {
+                    let _ = pending_response.response.send(Ok(pending_response.result));
                 }
-                Ok(Err(error)) => {
-                    runtime.record_mutation_worker_failure();
-                    warn!(error = %error, "mutation journal batch failed");
-                    if let Ok(progress) = runtime
-                        .read_storage
-                        .execute(|store| store.recover_durable_journal())
-                        .await
-                    {
-                        runtime.sync_mutation_journal_progress_async(progress).await;
-                    }
+                self.notify_applied_commit_batch_observers(runtime, &batch_result.applied);
+            }
+            Ok(Err(error)) => {
+                runtime.record_mutation_worker_failure();
+                warn!(error = %error, "mutation journal batch failed");
+                if let Ok(progress) = runtime
+                    .read_storage
+                    .execute(|store| store.recover_durable_journal())
+                    .await
+                {
+                    // Already on the tenant's committer task: sending a
+                    // JournalProgressSync message here would wait on our own
+                    // inbox forever.
+                    runtime.sync_mutation_journal_progress_in_actor(progress);
                 }
-                Err(error) => {
-                    runtime.record_mutation_worker_failure();
-                    warn!(error = %error, "mutation journal worker panicked");
-                    if let Ok(progress) = runtime
-                        .read_storage
-                        .execute(|store| store.recover_durable_journal())
-                        .await
-                    {
-                        runtime.sync_mutation_journal_progress_async(progress).await;
-                    }
+            }
+            Err(error) => {
+                runtime.record_mutation_worker_failure();
+                warn!(error = %error, "committer queued batch panicked");
+                if let Ok(progress) = runtime
+                    .read_storage
+                    .execute(|store| store.recover_durable_journal())
+                    .await
+                {
+                    runtime.sync_mutation_journal_progress_in_actor(progress);
                 }
             }
         }
@@ -228,22 +224,22 @@ impl Engine {
         };
         let enqueued_at = Instant::now();
         let shadow_snapshot_sequence = runtime.durable_head();
-        let should_start_worker =
-            runtime.enqueue_mutation_admission_request(QueuedMutationRequest {
-                mutation,
-                principal,
-                scheduled_execution_id: match mode {
-                    MutationExecutionMode::Immediate => None,
-                    MutationExecutionMode::Scheduled { execution_id } => Some(execution_id),
-                },
-                cancelled: request_cancelled,
-                _operation: operation,
-                response: response_tx,
-                enqueued_at,
-                shadow_snapshot_sequence,
-            })?;
-        if should_start_worker {
-            self.spawn_journal_mutation_worker(runtime.clone());
+        runtime.enqueue_mutation_admission_request(QueuedMutationRequest {
+            mutation,
+            principal,
+            scheduled_execution_id: match mode {
+                MutationExecutionMode::Immediate => None,
+                MutationExecutionMode::Scheduled { execution_id } => Some(execution_id),
+            },
+            cancelled: request_cancelled,
+            _operation: operation,
+            response: response_tx,
+            enqueued_at,
+            shadow_snapshot_sequence,
+        })?;
+        if let Err(error) = runtime.send_queued_committer_batch(self.clone()).await {
+            cancelled.store(true, std::sync::atomic::Ordering::Release);
+            return Err(error);
         }
 
         tokio::pin!(cancel_wait);
@@ -257,7 +253,7 @@ impl Engine {
                 (&mut response_rx).await
             }
         }
-        .map_err(|_| Error::Internal("mutation journal worker dropped response".to_string()))??;
+        .map_err(|_| Error::Internal("committer actor dropped mutation response".to_string()))??;
         Ok(match result {
             QueuedMutationResult::Immediate(document_id) => {
                 MutationExecutionResult::Immediate(document_id)
@@ -273,7 +269,6 @@ fn process_queued_mutation_batch(
     id_source: &dyn IdSource,
     commit_faults: &CommitFaultClient,
 ) -> Result<QueuedMutationBatchResult> {
-    let sequence_guard = runtime.lock_mutation_sequence();
     let mut phases = CommitPhaseDurations::default();
     let mut overlay = HashMap::<(TableName, DocumentId), Option<Document>>::new();
     let mut table_id_overlay = HashMap::<TableName, TableId>::new();
@@ -302,7 +297,9 @@ fn process_queued_mutation_batch(
     let mut sample_started_at = None::<Instant>;
     let mut batch_shadow_dependencies = Vec::new();
     let mut batch_shadow_snapshot = None::<nimbus_core::SequenceNumber>;
-    let mut next_sequence = runtime.durable_head().0.saturating_add(1);
+    let assignment_candidates =
+        crate::tenant::assign_and_validate(runtime.durable_head(), planned.len())?;
+    let mut assignment_candidates = assignment_candidates.into_iter();
     for planned_request in planned {
         let PlannedQueuedMutation {
             cancelled,
@@ -331,10 +328,11 @@ fn process_queued_mutation_batch(
             None => shadow_snapshot_sequence,
         });
         let serialize_started = Instant::now();
-        let record = match prepared_commit.into_record(
-            nimbus_core::SequenceNumber(next_sequence),
-            runtime.assign_commit_timestamp(),
-        ) {
+        let sequence = assignment_candidates
+            .next()
+            .expect("pure assignment produces one candidate per planned commit");
+        let record = match prepared_commit.into_record(sequence, runtime.assign_commit_timestamp())
+        {
             Ok(record) => record,
             Err(error) => {
                 let _ = response.send(Err(error));
@@ -342,7 +340,6 @@ fn process_queued_mutation_batch(
             }
         };
         phases.add_prepare(serialize_started.elapsed());
-        next_sequence = next_sequence.saturating_add(1);
         active.push(ActiveQueuedMutation {
             _operation,
             response,
@@ -367,6 +364,10 @@ fn process_queued_mutation_batch(
     }
 
     let durable_append_started = Instant::now();
+    crate::tenant::validate_append_sequences(
+        runtime.durable_head(),
+        records.iter().map(|record| record.sequence),
+    )?;
     let write_log_guard = runtime.arm_write_log_append();
     if let Err(error) = runtime.store.append_durable_records_batch(&records) {
         let mapped_error = map_durable_journal_append_error(&error);
@@ -422,8 +423,6 @@ fn process_queued_mutation_batch(
     let publish_started = Instant::now();
     runtime.mark_applied_head(applied_head);
     phases.publish = publish_started.elapsed();
-    drop(sequence_guard);
-
     let sample_started_at = sample_started_at
         .expect("a non-empty active batch must retain an admitted request timestamp");
     let committed_batch_size = u64::try_from(records.len()).unwrap_or(u64::MAX);

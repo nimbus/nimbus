@@ -179,6 +179,7 @@ impl Engine {
             )
             .await?,
         );
+        self.start_committer_actor(runtime.clone());
         let progress = opened
             .persistence
             .recover_durable_journal_async(&opened.executor)

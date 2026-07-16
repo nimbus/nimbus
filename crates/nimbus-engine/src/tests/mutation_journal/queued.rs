@@ -65,13 +65,9 @@ async fn async_schema_write_advances_runtime_journal_before_next_queued_document
 /// catches gross liveness regressions.
 ///
 /// It is deliberately NOT presented as a reliable reproducer of the specific
-/// lost-wakeup race it was born from — that window is nanosecond-scale (the
-/// benchmark that found it needed concurrency up to 256 to hit it ~1 run in 4),
-/// so at this scale it will not, on its own, catch a call-site regression that
-/// hoists `has_pending()` out of the closure. The precise, deterministic guard
-/// for the race is
-/// `tenant::mutation::journal::tests::release_worker_clears_running_before_evaluating_the_gate`;
-/// a full revert of the closure signature is caught by compilation. Counts are
+/// old lost-wakeup race it was born from. The committer actor never retires or
+/// re-arms, so that interleaving is structurally absent; the loom handoff model
+/// permanently contrasts the old protocol with the actor topology. Counts are
 /// modest because `cargo test` builds unoptimized (durable commits are ~10-50x
 /// slower than the release build the benchmark uses).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -125,6 +121,160 @@ async fn concurrent_mutations_do_not_strand_the_journal_worker() {
         .expect("journal stats should load");
     assert_eq!(stats.queue_depth, 0, "all mutations drained");
     assert_eq!(stats.worker_failure_count, 0, "no worker failures");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_reports_depth() {
+    struct RestoreEnv {
+        inbox: Option<std::ffi::OsString>,
+        timeout: Option<std::ffi::OsString>,
+    }
+    impl Drop for RestoreEnv {
+        fn drop(&mut self) {
+            unsafe {
+                match self.inbox.take() {
+                    Some(value) => std::env::set_var("NIMBUS_COMMITTER_INBOX_SIZE", value),
+                    None => std::env::remove_var("NIMBUS_COMMITTER_INBOX_SIZE"),
+                }
+                match self.timeout.take() {
+                    Some(value) => std::env::set_var("NIMBUS_COMMITTER_SEND_TIMEOUT_MS", value),
+                    None => std::env::remove_var("NIMBUS_COMMITTER_SEND_TIMEOUT_MS"),
+                }
+            }
+        }
+    }
+
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let restore = RestoreEnv {
+        inbox: std::env::var_os("NIMBUS_COMMITTER_INBOX_SIZE"),
+        timeout: std::env::var_os("NIMBUS_COMMITTER_SEND_TIMEOUT_MS"),
+    };
+    unsafe {
+        std::env::set_var("NIMBUS_COMMITTER_INBOX_SIZE", "2");
+        std::env::set_var("NIMBUS_COMMITTER_SEND_TIMEOUT_MS", "25");
+    }
+    let tenant_id = fixture.create_tenant("bounded-committer", Engine::create_tenant);
+    drop(restore);
+
+    let pause = engine
+        .mutation_journal_pause_handle_for_testing(&tenant_id)
+        .expect("committer pause handle should load");
+    pause.arm();
+    let spawn_insert = |title: &'static str| {
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        tokio::spawn(async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!(title))]),
+                )
+                .await
+        })
+    };
+
+    let first = spawn_insert("actor-held");
+    expect_blocking_wait_reaches_state(
+        "the first mutation should hold the committer at the pause seam",
+        {
+            let pause = pause.clone();
+            move |timeout| pause.wait_until_entered(timeout)
+        },
+    )
+    .await;
+
+    let schema = |table: &'static str| TableSchema {
+        table: TableName::new(table).expect("test table name should build"),
+        fields: vec![],
+        indexes: vec![],
+        access_policy: None,
+    };
+    let spawn_schema = |table: &'static str| {
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        tokio::spawn(async move {
+            engine
+                .set_table_schema_async(tenant_id, schema(table))
+                .await
+        })
+    };
+    let second = spawn_schema("inbox_one");
+    let third = spawn_schema("inbox_two");
+    let full = wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "both bounded committer slots should become observable",
+        |stats| stats.committer_inbox_depth == 2,
+    )
+    .await;
+    assert_eq!(full.committer_inbox_capacity, 2);
+
+    let started = std::time::Instant::now();
+    let rejected = [spawn_insert("rejected_one"), spawn_insert("rejected_two")];
+    let mut errors = Vec::new();
+    for rejected_insert in rejected {
+        errors.push(
+            expect_future_within(rejected_insert, "a full-inbox sender must time out")
+                .await
+                .expect("rejected insert task should join")
+                .expect_err("each sender beyond the bounded inbox must time out"),
+        );
+    }
+    assert!(
+        started.elapsed() < Duration::from_millis(250),
+        "the configured 25ms send timeout must not turn into unbounded queueing"
+    );
+    for error in &errors {
+        assert!(matches!(
+            error,
+            nimbus_core::Error::CommitterFull { capacity: 2, .. }
+        ));
+        assert_eq!(
+            error.retryability(),
+            nimbus_core::Retryability::RetryableAfterBackoff
+        );
+    }
+
+    let diagnostics = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("committer diagnostics should load while saturated");
+    assert_eq!(diagnostics.mutation_journal.committer_inbox_depth, 2);
+    assert_eq!(diagnostics.mutation_journal.committer_send_timeout_count, 2);
+    assert_eq!(diagnostics.commit_phases.committer_inbox_depth, 2);
+    assert_eq!(diagnostics.commit_phases.committer_send_timeout_total, 2);
+
+    pause.release();
+    expect_future_within(first, "the held queued mutation should drain after release")
+        .await
+        .expect("accepted insert task should join")
+        .expect("accepted insert should commit");
+    for schema_write in [second, third] {
+        expect_future_within(
+            schema_write,
+            "accepted direct committer work should drain after release",
+        )
+        .await
+        .expect("accepted schema task should join")
+        .expect("accepted schema write should commit");
+    }
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("cleanup-wake"))]),
+        )
+        .await
+        .expect("a later queued wake should drain cancelled timed-out requests");
+    let drained = wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "the bounded committer inbox should fully drain",
+        |stats| stats.committer_inbox_depth == 0 && stats.pending_response_count == 0,
+    )
+    .await;
+    assert_eq!(drained.committer_send_timeout_count, 2);
 }
 
 async fn run_paused_insert_burst(engine: &Arc<Engine>, tenant_id: &TenantId, count: usize) {

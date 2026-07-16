@@ -312,7 +312,7 @@ impl PreparedCommit {
     }
 
     /// Applies the one authoritative lifecycle timestamp after validation and while the
-    /// tenant sequence gate is held. Persisted/replayed images consume these values verbatim.
+    /// tenant committer owns assignment. Persisted/replayed images consume these values verbatim.
     pub(in crate::engine) fn stamp_for_assignment(&mut self, timestamp: Timestamp) -> Result<()> {
         for write in &mut self.write_set {
             stamp_prepared_write(write, timestamp);

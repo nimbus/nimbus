@@ -135,6 +135,10 @@ struct WriteLogState {
     /// Highest assigned sequence observed by this runtime, including the
     /// durable-but-unapplied startup tail.
     assigned_through: SequenceNumber,
+    /// Highest sequence whose publish position has been crossed. This tracks
+    /// zero-write/recovered positions too, while entry publication below is
+    /// still asserted strictly monotonic.
+    published_through: SequenceNumber,
     /// Highest sequence removed from the front of the retained window.
     purged_sequence: SequenceNumber,
     /// False after a persistence attempt may have committed without staging
@@ -154,7 +158,7 @@ struct WriteLogState {
 /// Mutation publication takes the mutex only to replace persistent-map roots.
 /// Validation clones those roots in O(1), releases the mutex, then scans its
 /// stable view. The pending map is intentionally present before publish is
-/// pipelined: today's serial sequence gate normally makes it empty whenever a
+/// pipelined: today's serial committer normally makes it empty whenever a
 /// validator runs, while PPSC5 will consume the same API directly.
 pub(crate) struct WriteLog {
     config: WriteLogConfig,
@@ -181,6 +185,7 @@ impl WriteLog {
                 covered_through,
                 bootstrap_sequence: covered_through,
                 assigned_through,
+                published_through: covered_through,
                 purged_sequence: SequenceNumber(0),
                 coverage_known: true,
                 schema_epoch_history: HashMap::new(),
@@ -234,11 +239,15 @@ impl WriteLog {
             .expect("write-log lock should not be poisoned");
         let mut previous = state.assigned_through;
         for entry in &entries {
-            assert!(
-                entry.sequence > previous,
-                "write-log sequences must append strictly monotonically: {} after {}",
-                entry.sequence,
+            let expected = SequenceNumber(
                 previous
+                    .0
+                    .checked_add(1)
+                    .expect("write-log sequence must not overflow"),
+            );
+            assert_eq!(
+                entry.sequence, expected,
+                "write-log sequences must append without interior holes"
             );
             previous = entry.sequence;
         }
@@ -315,6 +324,7 @@ impl WriteLog {
         state.bootstrap_sequence = applied_through;
         state.covered_through = applied_through;
         state.assigned_through = state.assigned_through.max(assigned_through);
+        state.published_through = state.published_through.max(applied_through);
     }
 
     /// Observes sequence assignment without claiming conflict-image coverage.
@@ -331,7 +341,7 @@ impl WriteLog {
             .lock()
             .expect("write-log lock should not be poisoned");
         // Progress may have been read before this caller waited for the
-        // sequence gate, so ignore a stale observation rather than regressing.
+        // committer actor, so ignore a stale observation rather than regressing.
         state.assigned_through = state.assigned_through.max(sequence);
     }
 
@@ -359,6 +369,7 @@ impl WriteLog {
             state.covered_through = sequence;
         }
         state.assigned_through = sequence;
+        state.published_through = state.published_through.max(sequence);
     }
 
     /// Publishes pending entries through `applied_head`, then applies retention.
@@ -378,6 +389,12 @@ impl WriteLog {
             .map(|(sequence, _)| *sequence)
             .collect::<Vec<_>>();
         for sequence in publish_sequences {
+            assert!(
+                sequence > state.published_through,
+                "write-log publish order must follow assignment order: {} after {}",
+                sequence,
+                state.published_through
+            );
             let entry = state
                 .pending
                 .remove(&sequence)
@@ -390,7 +407,9 @@ impl WriteLog {
                 }
             }
             state.published.insert(sequence, entry);
+            state.published_through = sequence;
         }
+        state.published_through = state.published_through.max(applied_head);
         self.trim_locked(&mut state, now, reader_frontier.min(applied_head));
     }
 
@@ -772,11 +791,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "write-log sequences must append strictly monotonically")]
-    fn window_append_asserts_sequence_monotonicity() {
+    #[should_panic(expected = "write-log sequences must append without interior holes")]
+    fn window_append_asserts_sequence_contiguity() {
         let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
-        log.stage_pending([commit(2, 8)], Timestamp(0));
-        log.stage_pending([commit(1, 8)], Timestamp(0));
+        log.stage_pending([commit(1, 8), commit(3, 8)], Timestamp(0));
     }
 
     #[test]
