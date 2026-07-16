@@ -40,7 +40,8 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
         // Authorization.
         CoreError::PermissionDenied(_) => DynamoDbError::AccessDeniedException(message),
 
-        // Optimistic-concurrency / write conflict.
+        // Optimistic-concurrency / stale transaction snapshot. Both require a
+        // transaction-level retry in DynamoDB's vocabulary.
         CoreError::Conflict { .. } | CoreError::OutOfRetention { .. } => {
             DynamoDbError::TransactionConflictException(message)
         }
@@ -51,14 +52,20 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
             DynamoDbError::ConditionalCheckFailedException(message, None)
         }
 
-        // Quota/throttle.
+        // Capacity pressure is the DynamoDB exception that SDKs conventionally
+        // retry with exponential backoff.
         CoreError::ResourceExhausted(_)
         | CoreError::Overloaded { .. }
-        | CoreError::CommitterFull { .. }
-        | CoreError::RejectedBeforeExecution { .. }
-        | CoreError::RateLimited { .. } => {
+        | CoreError::CommitterFull { .. } => {
             DynamoDbError::ProvisionedThroughputExceededException(message)
         }
+
+        // Guaranteed pre-execution rejection is an unavailable service, so an
+        // idempotent-safe retry is truthful without claiming provisioned capacity.
+        CoreError::RejectedBeforeExecution { .. } => DynamoDbError::ServiceUnavailable(message),
+
+        // The per-tenant limiter is closest to DynamoDB's account request cap.
+        CoreError::RateLimited { .. } => DynamoDbError::RequestLimitExceeded(message),
 
         // Internal/transport/storage faults and cancellation have no client-facing
         // DynamoDB code → InternalServerError (HTTP 500). (Cancellation reporting is
@@ -72,12 +79,69 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::wire::render_error;
-    use nimbus_core::{HistoricalReadErrorKind, StorageErrorKind};
+    use nimbus_core::{HistoricalReadErrorKind, MutationCap, Retryability, StorageErrorKind};
 
     fn code(error: &DynamoDbError) -> &str {
         error.error_type()
+    }
+
+    #[test]
+    fn dynamodb_surfaces_full_commit_taxonomy() {
+        let cases = [
+            (
+                CoreError::retryable_conflict("race", None),
+                "TransactionConflictException",
+                400,
+                Retryability::Retryable,
+            ),
+            (
+                CoreError::overloaded("busy"),
+                "ProvisionedThroughputExceededException",
+                400,
+                Retryability::RetryableAfterBackoff,
+            ),
+            (
+                CoreError::committer_full("full", 128),
+                "ProvisionedThroughputExceededException",
+                400,
+                Retryability::RetryableAfterBackoff,
+            ),
+            (
+                CoreError::rejected_before_execution("not started"),
+                "ServiceUnavailable",
+                503,
+                Retryability::Retryable,
+            ),
+            (
+                CoreError::rate_limited("hot", Duration::from_millis(100)),
+                "RequestLimitExceeded",
+                400,
+                Retryability::RetryableAfterBackoff,
+            ),
+            (
+                CoreError::out_of_retention("expired", None),
+                "TransactionConflictException",
+                400,
+                Retryability::RestartTransaction,
+            ),
+            (
+                CoreError::cap_exceeded(MutationCap::WriteBytes, 2, 1),
+                "ValidationException",
+                400,
+                Retryability::Terminal,
+            ),
+        ];
+
+        for (error, expected_code, expected_status, retryability) in cases {
+            assert_eq!(error.retryability(), retryability, "{error}");
+            let mapped = map_core_error(error);
+            assert_eq!(code(&mapped), expected_code);
+            assert_eq!(mapped.status_code(), expected_status);
+        }
     }
 
     #[test]

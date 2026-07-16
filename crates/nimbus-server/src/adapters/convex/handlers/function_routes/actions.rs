@@ -81,6 +81,6 @@ pub(crate) async fn action(
     trace
         .record(&service, &tenant_id, status, error.as_deref())
         .await;
-    let value = result?;
+    let value = result.map_err(convex_function_error)?;
     Ok(Json(value))
 }

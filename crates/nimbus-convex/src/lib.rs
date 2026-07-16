@@ -20,6 +20,7 @@ pub(crate) use serde_json::Value;
 
 mod auth;
 mod document_identity;
+mod error;
 pub mod host_bridge;
 mod manifest;
 mod registry;
@@ -32,6 +33,7 @@ pub use document_identity::{
     document_to_convex_json, documents_to_convex_json, encode_convex_document_id,
     page_to_convex_json, replace_id_in_value, resolve_convex_document_id,
 };
+pub use error::{ConvexCommitErrorVocabulary, convex_commit_error_vocabulary};
 pub use host_bridge::{
     ConvexHostCallFamily, ConvexHostCallOperation, ConvexHostCallRequest, ConvexHttpResponseParts,
     ConvexRuntimeActionPayload, ConvexRuntimeDbDeletePayload, ConvexRuntimeDbGetPayload,

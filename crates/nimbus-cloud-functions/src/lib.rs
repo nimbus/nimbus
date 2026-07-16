@@ -1,6 +1,7 @@
 //! Cloud Functions-compatible adapter contracts and runtime bridge.
 
 pub mod app_contract;
+mod error;
 mod host_bridge;
 pub mod http;
 mod registry;
@@ -20,6 +21,7 @@ pub use app_contract::{
     CloudFunctionsResolvedAppRoot, covered_admin_app_methods, covered_admin_firestore_methods,
     resolve_cloud_functions_app_root, validate_admin_method_support,
 };
+pub use error::{CloudFunctionsCommitErrorVocabulary, cloud_functions_commit_error_vocabulary};
 pub use host_bridge::CloudFunctionsHostBridge;
 pub use http::{
     CloudFunctionsHttpResponseParts, CloudFunctionsRuntimeContext, build_callable_request_args,

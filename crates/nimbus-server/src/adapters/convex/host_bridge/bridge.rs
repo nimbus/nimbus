@@ -92,6 +92,7 @@ pub(crate) struct ConvexHostBridge {
     egress_readiness: EgressGatewayEnforcementReadiness,
     principal: nimbus_core::PrincipalContext,
     execution_unit: Option<Arc<nimbus_engine::MutationExecutionUnit>>,
+    invocation_kind: InvocationKind,
     state: Arc<RuntimeHostState>,
     query_builders: Arc<Mutex<ConvexRuntimeQueryBuilders>>,
     function_name: String,
@@ -114,6 +115,7 @@ impl ConvexHostBridge {
         let egress_readiness = scope.egress_readiness.clone().unwrap_or_else(|| {
             EgressGatewayEnforcementReadiness::ready_for_decision(&scope.decision)
         });
+        let invocation_kind = invocation.invocation_kind.clone();
         let bootstrap = build_runtime_host_bootstrap(RuntimeHostBootstrapRequest {
             engine: &scope.engine,
             tenant_id: scope.decision.tenant_id(),
@@ -141,6 +143,7 @@ impl ConvexHostBridge {
             egress_readiness,
             principal: bootstrap.principal,
             execution_unit: bootstrap.execution_unit,
+            invocation_kind,
             state: bootstrap.state,
             query_builders: Arc::new(Mutex::new(ConvexRuntimeQueryBuilders::default())),
             function_name: invocation.function_name,
@@ -214,11 +217,17 @@ impl ConvexHostBridge {
     /// lane past the first hop.
     pub(in crate::adapters::convex) fn retargeted_for_nested_invocation(
         &self,
+        invocation_kind: InvocationKind,
         function_name: impl Into<String>,
     ) -> Self {
         let mut nested = self.clone();
+        nested.invocation_kind = invocation_kind;
         nested.function_name = function_name.into();
         nested
+    }
+
+    pub(in crate::adapters::convex) fn invocation_kind(&self) -> &InvocationKind {
+        &self.invocation_kind
     }
 
     pub(crate) fn auth(&self) -> Option<&InvocationAuth> {
@@ -278,6 +287,10 @@ impl RuntimeCapabilityHost for ConvexHostBridge {
 
     fn mutation_execution_unit(&self) -> Option<&Arc<nimbus_engine::MutationExecutionUnit>> {
         ConvexHostBridge::mutation_execution_unit(self)
+    }
+
+    fn direct_host_writes_allowed(&self) -> bool {
+        matches!(self.invocation_kind, InvocationKind::Mutation)
     }
 
     fn engine(&self) -> &Arc<nimbus_engine::Engine> {

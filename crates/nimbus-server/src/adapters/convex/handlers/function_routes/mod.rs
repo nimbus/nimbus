@@ -3,6 +3,8 @@ use super::*;
 use std::time::Instant;
 use tracing::warn;
 
+use crate::error_envelope::StructuredHttpError;
+
 mod actions;
 mod mutations;
 mod queries;
@@ -10,6 +12,10 @@ mod queries;
 pub(crate) use actions::action;
 pub(crate) use mutations::mutation;
 pub(crate) use queries::{paginated_query, query};
+
+fn convex_function_error(error: nimbus_core::Error) -> AppError {
+    AppError::Structured(Box::new(StructuredHttpError::from_convex_core_error(error)))
+}
 
 struct RunTrace {
     function_path: String,

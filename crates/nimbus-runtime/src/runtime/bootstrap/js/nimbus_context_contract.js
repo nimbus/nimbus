@@ -191,6 +191,7 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
   functionRef,
   args = {},
   localInvoker = null,
+  callerKind = null,
 ) {
   const normalized = __nimbusNormalizeFunctionReference(functionRef, label);
   const nestedAuthContext = authContext
@@ -210,6 +211,19 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
   // import node builtins inside the web isolate.
   const useLocalDispatch = (() => {
     if (typeof localInvoker !== "function") {
+      return false;
+    }
+    // A nested MUTATION called from a non-mutation invocation (an action's
+    // ctx.runMutation) must be its own serialized transaction on the engine's
+    // mutation path — OCC snapshot, atomic multi-write commit, server-side
+    // retry. Local dispatch cannot provide that: the callee would run on the
+    // caller's host session (no execution unit), turning each write into an
+    // independent raw commit — non-transactional, outside OCC, and rejected
+    // by the host's invocation-kind write guard. Host dispatch creates the
+    // proper nested mutation invocation. A mutation calling runMutation
+    // stays on local dispatch: the callee joins the caller's transaction
+    // (Convex sub-mutation semantics).
+    if (kind === "mutation" && callerKind !== "mutation") {
       return false;
     }
     // `__nimbusRuntimeEnvironmentLane` is frozen at bootstrap
@@ -595,6 +609,7 @@ const __nimbusCreateContextImpl = function(options = {}) {
         functionRef,
         args,
         localInvoker,
+        requestKind,
       );
     },
     runMutation(functionRef, args = {}) {
@@ -612,6 +627,7 @@ const __nimbusCreateContextImpl = function(options = {}) {
         functionRef,
         args,
         localInvoker,
+        requestKind,
       );
     },
     runAction(functionRef, args = {}) {
@@ -629,6 +645,7 @@ const __nimbusCreateContextImpl = function(options = {}) {
         functionRef,
         args,
         localInvoker,
+        requestKind,
       );
     },
   };

@@ -22,6 +22,15 @@ pub trait RuntimeCapabilityHost {
 
     fn mutation_execution_unit(&self) -> Option<&Arc<MutationExecutionUnit>>;
 
+    /// Whether this invocation may issue direct write host calls.
+    ///
+    /// Ordinary mutation hosts have an execution unit. Convex overrides this
+    /// for a nested action `runMutation`, which is a separate serialized
+    /// mutation invocation and intentionally has no parent execution unit.
+    fn direct_host_writes_allowed(&self) -> bool {
+        self.mutation_execution_unit().is_some()
+    }
+
     fn engine(&self) -> &Arc<Engine>;
 
     fn storage_access(&self) -> &TenantStorageAccessDecision;
@@ -136,9 +145,15 @@ pub fn execute_atomic_write_batch<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
+    ensure_direct_host_writes_allowed(host)?;
     if let Some(execution_unit) = host.mutation_execution_unit() {
         execution_unit.stage_atomic_write_batch(batch)
     } else {
+        // PPSC3 parity exclusion: this fallback is reserved for an allowed
+        // mutation invocation whose transaction is independent of its caller
+        // (notably an action's nested `runMutation`). Queries and actions are
+        // rejected above, so `None` can no longer bypass OCC via a raw host
+        // write. Nested mutations remain serialized through the engine path.
         host.engine()
             .begin_mutation_execution_unit(
                 host.storage_access().tenant_id().clone(),
@@ -156,6 +171,7 @@ pub async fn execute_atomic_write_batch_async<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
+    ensure_direct_host_writes_allowed(host)?;
     if let Some(execution_unit) = host.mutation_execution_unit() {
         return execution_unit.stage_atomic_write_batch(batch);
     }
@@ -176,6 +192,7 @@ pub fn insert_document<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
+    ensure_direct_host_writes_allowed(host)?;
     if let Some(execution_unit) = host.mutation_execution_unit() {
         execution_unit.insert_document(table, fields)
     } else {
@@ -198,6 +215,7 @@ pub async fn insert_document_async<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
+    ensure_direct_host_writes_allowed(host)?;
     if let Some(execution_unit) = host.mutation_execution_unit() {
         return execution_unit.insert_document(table, fields);
     }
@@ -233,6 +251,7 @@ pub fn update_document<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
+    ensure_direct_host_writes_allowed(host)?;
     if let Some(execution_unit) = host.mutation_execution_unit() {
         execution_unit.update_document(table, document_id, patch)
     } else {
@@ -256,6 +275,7 @@ pub async fn update_document_async<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
+    ensure_direct_host_writes_allowed(host)?;
     if let Some(execution_unit) = host.mutation_execution_unit() {
         return execution_unit.update_document(table, document_id, patch);
     }
@@ -290,6 +310,7 @@ pub fn delete_document<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
+    ensure_direct_host_writes_allowed(host)?;
     if let Some(execution_unit) = host.mutation_execution_unit() {
         execution_unit.delete_document(table, document_id)
     } else {
@@ -311,6 +332,7 @@ pub async fn delete_document_async<H>(
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
+    ensure_direct_host_writes_allowed(host)?;
     if let Some(execution_unit) = host.mutation_execution_unit() {
         return execution_unit.delete_document(table, document_id);
     }
@@ -334,6 +356,19 @@ where
             ),
         )
         .await
+}
+
+fn ensure_direct_host_writes_allowed<H>(host: &H) -> Result<()>
+where
+    H: RuntimeCapabilityHost + ?Sized,
+{
+    if host.direct_host_writes_allowed() {
+        return Ok(());
+    }
+    Err(Error::PermissionDenied(
+        "query and action invocations cannot perform direct host writes; use a mutation or action ctx.runMutation"
+            .to_string(),
+    ))
 }
 
 #[cfg(test)]
@@ -407,7 +442,11 @@ mod tests {
         }
     }
 
-    fn query_host(engine: Arc<Engine>, tenant_id: &TenantId) -> RuntimeHostContext {
+    fn non_mutation_host(
+        engine: Arc<Engine>,
+        tenant_id: &TenantId,
+        invocation_kind: InvocationKind,
+    ) -> RuntimeHostContext {
         let policy = Arc::new(RuntimePolicy::new(RuntimeLimits::application_web_standard()));
         let isolation = TenantIsolationContext::application(
             tenant_id.clone(),
@@ -429,7 +468,7 @@ mod tests {
             RuntimeHostInvocation::new(
                 PrincipalContext::anonymous(),
                 None,
-                InvocationKind::Query,
+                invocation_kind,
                 "bridge_capability_test",
             ),
         )
@@ -437,51 +476,47 @@ mod tests {
     }
 
     #[test]
-    fn async_atomic_write_batch_without_bootstrap_unit_commits_through_engine_path() {
+    fn query_and_action_host_writes_are_rejected() {
         let harness = EngineHarness::new();
         let engine = harness.engine();
         let tenant_id = TenantId::new("tenant-a").expect("tenant id should parse");
         engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
-        let host = query_host(engine.clone(), &tenant_id);
-        assert!(
-            RuntimeCapabilityHost::mutation_execution_unit(&host).is_none(),
-            "query host should exercise the no-execution-unit fallback"
-        );
-
         let table = TableName::new("messages").expect("table should parse");
         let document_id = DocumentId::from_key("message-1").expect("document id should parse");
-        let batch = AtomicWriteBatch::new(vec![AtomicWrite::Set {
-            key: WriteKey::from(DocumentLocator::new(table.clone(), document_id.clone())),
-            document: serde_json::Map::from_iter([(
-                "body".to_string(),
-                json!("written by async fallback"),
-            )]),
-            mode: WriteSetMode::Overwrite,
-            precondition: WritePrecondition::default(),
-            transforms: Vec::new(),
-        }])
-        .expect("batch should build");
+        for invocation_kind in [InvocationKind::Query, InvocationKind::Action] {
+            let host = non_mutation_host(engine.clone(), &tenant_id, invocation_kind.clone());
+            assert!(
+                RuntimeCapabilityHost::mutation_execution_unit(&host).is_none(),
+                "non-mutation host should have no execution unit"
+            );
+            let batch = AtomicWriteBatch::new(vec![AtomicWrite::Set {
+                key: WriteKey::from(DocumentLocator::new(table.clone(), document_id.clone())),
+                document: serde_json::Map::from_iter([(
+                    "body".to_string(),
+                    json!("must not commit"),
+                )]),
+                mode: WriteSetMode::Overwrite,
+                precondition: WritePrecondition::default(),
+                transforms: Vec::new(),
+            }])
+            .expect("batch should build");
 
-        let outcome = run_ready(execute_atomic_write_batch_async(
-            &host,
-            batch,
-            &HostCallCancellation::default(),
-        ))
-        .expect("async fallback should commit through the engine path");
+            let error = run_ready(execute_atomic_write_batch_async(
+                &host,
+                batch,
+                &HostCallCancellation::default(),
+            ))
+            .expect_err("query and action host writes must be rejected");
+            assert!(matches!(error, Error::PermissionDenied(_)), "{error}");
+        }
 
-        assert_eq!(outcome.write_results.len(), 1);
         assert!(
-            outcome.commit.is_some(),
-            "fallback should execute, not merely stage the batch"
-        );
-        let document = engine
-            .get_document(&tenant_id, &table, document_id)
-            .expect("committed document should be visible");
-        assert_eq!(
-            document.fields.get("body"),
-            Some(&json!("written by async fallback"))
+            engine
+                .get_document(&tenant_id, &table, document_id)
+                .is_err_and(|error| matches!(error, Error::DocumentNotFound(_))),
+            "rejected host writes must leave no document"
         );
     }
 
@@ -501,7 +536,7 @@ mod tests {
                 serde_json::Map::from_iter([("body".to_string(), json!("existing"))]),
             )
             .expect("fixture document should insert");
-        let host = query_host(engine, &tenant_id);
+        let host = non_mutation_host(engine, &tenant_id, InvocationKind::Query);
         let missing_id = DocumentId::from_key("missing-message").expect("document id should parse");
         let locator = DocumentLocator::new(table.clone(), missing_id.clone());
 

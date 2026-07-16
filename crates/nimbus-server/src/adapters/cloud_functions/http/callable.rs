@@ -127,6 +127,24 @@ pub(super) fn build_callable_preflight_response(
 }
 
 pub(super) fn callable_response_for_app_error(headers: &HeaderMap, error: AppError) -> Response {
+    if let AppError::Core(core_error) = &error
+        && let Some(mapped) =
+            nimbus_cloud_functions::cloud_functions_commit_error_vocabulary(core_error)
+    {
+        let mut details = serde_json::json!({
+            "retryability": core_error.retryability(),
+        });
+        if let Some(retry_after) = core_error.retry_after() {
+            details["retryAfterMs"] = serde_json::json!(retry_after.as_millis());
+        }
+        return callable_error_response(
+            headers,
+            mapped.http_status,
+            mapped.status,
+            &core_error.to_string(),
+            Some(details),
+        );
+    }
     if let Some(response) = callable_legacy_status_override(headers, &error) {
         return response;
     }
@@ -213,6 +231,7 @@ fn callable_status_for_http_status(status: StatusCode) -> &'static str {
         StatusCode::FORBIDDEN => "PERMISSION_DENIED",
         StatusCode::NOT_FOUND => "NOT_FOUND",
         StatusCode::CONFLICT => "ABORTED",
+        StatusCode::PRECONDITION_FAILED => "FAILED_PRECONDITION",
         StatusCode::TOO_MANY_REQUESTS => "RESOURCE_EXHAUSTED",
         StatusCode::SERVICE_UNAVAILABLE => "UNAVAILABLE",
         _ => "INTERNAL",

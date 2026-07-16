@@ -37,7 +37,41 @@ async function main() {
   await assertServiceDefinitionRoutes(indexBundle);
   await assertSandboxRoutes(indexBundle);
   await assertSessionRoutes(indexBundle);
+  await assertCommitErrorEnvelopeDecoding(indexBundle);
   await typecheckNimbusAuthExtension();
+}
+
+async function assertCommitErrorEnvelopeDecoding(indexBundle) {
+  const sdk = await import(`${pathToFileURL(indexBundle).href}?errors=${Date.now()}`);
+  const cases = [
+    ["op.conflict", "conflict", "NimbusConflictError", "retryable", true],
+    ["rate.overloaded", "overloaded", "NimbusOverloadedError", "retryable_after_backoff", true],
+    ["rate.committer_full", "committer_full", "NimbusCommitterFullError", "retryable_after_backoff", true],
+    ["rate.rejected_before_execution", "rejected_before_execution", "NimbusRejectedBeforeExecutionError", "retryable", true],
+    ["rate.limited", "rate_limited", "NimbusRateLimitedError", "retryable_after_backoff", true],
+    ["op.out_of_retention", "out_of_retention", "NimbusOutOfRetentionError", "restart_transaction", true],
+    ["op.cap_exceeded", "cap_exceeded", "NimbusCapExceededError", "terminal", false],
+  ];
+
+  for (const [code, kind, name, retryability, retryable] of cases) {
+    const error = sdk.decodeNimbusErrorEnvelope({
+      error: {
+        code,
+        message: `${kind} fixture`,
+        retryable,
+        detail: {
+          retryability,
+          ...(code === "rate.limited" ? { retryAfterMs: 250 } : {}),
+        },
+      },
+    });
+    assert.ok(error instanceof sdk.NimbusCommitError);
+    assert.equal(error.name, name);
+    assert.equal(error.kind, kind);
+    assert.equal(error.retryability, retryability);
+    assert.equal(error.retryable, retryable);
+    assert.equal(error.retryAfterMs, code === "rate.limited" ? 250 : undefined);
+  }
 }
 
 async function assertControlPlaneRouteManifest(controlPlaneRoutesBundle) {
@@ -457,7 +491,15 @@ async function typecheckNimbusAuthExtension() {
   await fs.writeFile(
     path.join(fixtureDir, "fixture.ts"),
     `
-	import { Nimbus, type NimbusSandboxSpec, type NimbusSandboxSpecResponse } from "@nimbus/nimbus";
+\timport {
+  Nimbus,
+  NimbusCommitError,
+  type NimbusCommitErrorKind,
+  type NimbusCommitPathError,
+  type NimbusRetryability,
+  type NimbusSandboxSpec,
+  type NimbusSandboxSpecResponse,
+} from "@nimbus/nimbus";
 import { NimbusHttpClient, NimbusReactClient } from "@nimbus/nimbus/browser";
 import {
   NimbusProvider,
@@ -484,6 +526,30 @@ const _sdk = new Nimbus({
   token: "test-token",
   fetch: async () => new Response("{}"),
 });
+declare const commitError: NimbusCommitPathError;
+const _commitKind: NimbusCommitErrorKind = commitError.kind;
+const _commitRetryability: NimbusRetryability = commitError.retryability;
+const _commitRetryable: boolean = commitError.retryable;
+if (commitError instanceof NimbusCommitError) {
+  const _retryAfterMs: number | undefined = commitError.retryAfterMs;
+}
+function exhaustCommitErrorKinds(kind: NimbusCommitErrorKind): string {
+  switch (kind) {
+    case "conflict":
+    case "overloaded":
+    case "committer_full":
+    case "rejected_before_execution":
+    case "rate_limited":
+    case "out_of_retention":
+    case "cap_exceeded":
+      return kind;
+    default: {
+      const neverKind: never = kind;
+      return neverKind;
+    }
+  }
+}
+void exhaustCommitErrorKinds;
 const _serviceStart = _sdk.services.start({ name: "db" });
 const _serviceStartReady = _sdk.services.start({ name: "db", waitUntil: "ready" });
 const _serviceStartHealthy = _sdk.services.start({ name: "db", waitUntil: "healthy" });

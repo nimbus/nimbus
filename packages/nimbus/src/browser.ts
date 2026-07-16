@@ -40,6 +40,7 @@ export type {
 } from "./internal/shared.ts";
 export { NimbusHttpClient } from "./http-client.ts";
 export type { AuthTokenFetcher } from "./http-client.ts";
+export * from "./errors.ts";
 
 import { NimbusHttpClient } from "./http-client.ts";
 import type {
