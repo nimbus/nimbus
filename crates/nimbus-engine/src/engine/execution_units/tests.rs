@@ -26,4 +26,5 @@ pub(crate) use nimbus_storage::{
 };
 
 mod atomic_write_batch;
+mod hermitage;
 mod mutation_execution_unit;
