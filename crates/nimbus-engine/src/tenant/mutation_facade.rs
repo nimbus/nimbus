@@ -2,7 +2,7 @@
 use std::time::Duration;
 use std::time::Instant;
 
-use nimbus_core::{Result, SequenceNumber};
+use nimbus_core::{CommitEntry, Result, SequenceNumber, Timestamp};
 use nimbus_storage::JournalProgress;
 
 use super::*;
@@ -98,6 +98,27 @@ impl TenantRuntime {
         self.mutation_journal.mark_applied_head(sequence);
     }
 
+    pub(crate) fn stage_pending_write_log_commits(
+        &self,
+        commits: impl IntoIterator<Item = CommitEntry>,
+        observed_at: Timestamp,
+    ) {
+        self.write_log.stage_pending(commits, observed_at);
+    }
+
+    pub(crate) fn publish_write_log_through(&self, applied_head: SequenceNumber) {
+        let reader_frontier = self
+            .subscription_registry()
+            .lowest_active_delivery_sequence(applied_head)
+            .min(applied_head);
+        self.write_log
+            .publish_pending_through(applied_head, self.store.now(), reader_frontier);
+    }
+
+    pub(crate) fn advance_write_log_zero_write_coverage(&self, sequence: SequenceNumber) {
+        self.write_log.advance_known_zero_write_through(sequence);
+    }
+
     pub(crate) async fn wait_for_applied_sequence_cancellable<Fut>(
         &self,
         sequence: SequenceNumber,
@@ -117,7 +138,10 @@ impl TenantRuntime {
     }
 
     pub(crate) fn sync_mutation_journal_progress(&self, progress: JournalProgress) {
+        self.write_log
+            .rebase_empty_after_recovery(progress.applied_head, progress.durable_head);
         self.mark_durable_head(progress.durable_head);
+        self.publish_write_log_through(progress.applied_head);
         self.mark_applied_head(progress.applied_head);
     }
 

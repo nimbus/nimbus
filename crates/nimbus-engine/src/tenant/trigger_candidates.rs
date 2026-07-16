@@ -431,6 +431,7 @@ fn materialize_trigger_invocations_and_sync(
                 floor,
                 progress.durable_head,
             );
+            runtime.advance_write_log_zero_write_coverage(progress.durable_head);
         }
     }
     runtime.sync_mutation_journal_progress(progress);

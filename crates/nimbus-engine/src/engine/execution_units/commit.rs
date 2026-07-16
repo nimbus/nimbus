@@ -164,21 +164,36 @@ impl MutationExecutionUnit {
         }
 
         let head = self.runtime.durable_head();
-        let conflicting_sequence = match self
-            .runtime
-            .write_log
-            .validation_source(snapshot_sequence, head)?
-        {
+        let validation_source = if self.runtime.store.has_process_local_sequence_authority() {
+            self.runtime
+                .write_log
+                .validation_source(snapshot_sequence, head)?
+        } else {
+            // Postgres/MySQL/remote-libSQL can accept a foreign process's
+            // commit before its notification advances this runtime's head.
+            // Until PPSC5 supplies a storage-coordinated publish watermark,
+            // their process-local window is not an authoritative upper bound.
+            ValidationSource::StorageFallback
+        };
+        let conflicting_sequence = match validation_source {
             ValidationSource::InMemory(view) => view
                 .first_conflicting_sequence(dependencies, |table, document_id| {
                     self.runtime.store.get(table, &document_id)
                 }),
-            ValidationSource::StorageFallback => self
-                .runtime
-                .store
-                .read_commit_log_from(SequenceNumber(snapshot_sequence.0.saturating_add(1)))?
-                .into_iter()
-                .find_map(|commit| {
+            ValidationSource::StorageFallback => {
+                // `read_commit_log_from` intentionally returns the available
+                // suffix and does not enforce journal retention itself. Probe
+                // the cursor contract first so a truncated prefix can never
+                // turn into a silent validation pass.
+                self.runtime
+                    .store
+                    .stream_durable_journal(snapshot_sequence, 1)
+                    .map_err(|error| map_fallback_floor_error(error, snapshot_sequence))?;
+                let commits = self
+                    .runtime
+                    .store
+                    .read_commit_log_from(SequenceNumber(snapshot_sequence.0.saturating_add(1)))?;
+                commits.into_iter().find_map(|commit| {
                     nimbus_core::commit_intersects_dependency_set(
                         &commit,
                         dependencies,
@@ -186,7 +201,8 @@ impl MutationExecutionUnit {
                         |table, document_id| self.runtime.store.get(table, &document_id),
                     )
                     .then_some(commit.sequence)
-                }),
+                })
+            }
         };
         if let Some(conflicting_sequence) = conflicting_sequence {
             return Err(Error::retryable_conflict(
@@ -195,6 +211,20 @@ impl MutationExecutionUnit {
             ));
         }
         Ok(())
+    }
+}
+
+fn map_fallback_floor_error(error: Error, snapshot_sequence: SequenceNumber) -> Error {
+    match error {
+        Error::InvalidInput(message) if message.contains("retention floor") => {
+            Error::retryable_conflict(
+                format!(
+                    "transaction snapshot {snapshot_sequence} is older than the durable commit-log retention horizon; retry from a fresh snapshot"
+                ),
+                None,
+            )
+        }
+        other => other,
     }
 }
 
@@ -250,4 +280,26 @@ fn touched_tables(dependencies: &DependencySet) -> Vec<TableName> {
         }
     }
     tables
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn storage_fallback_retention_floor_fails_closed() {
+        let error = map_fallback_floor_error(
+            Error::InvalidInput("journal cursor 1 is behind the retention floor 2".to_string()),
+            SequenceNumber(1),
+        );
+
+        assert!(matches!(
+            error,
+            Error::Conflict {
+                ref message,
+                retryable: true,
+                ..
+            } if message.contains("durable commit-log retention horizon")
+        ));
+    }
 }

@@ -192,6 +192,37 @@ impl WriteLog {
         }
     }
 
+    /// Re-bases a still-empty startup window after recovery/catch-up.
+    ///
+    /// No historical images are claimed: snapshots below the new bootstrap
+    /// sequence still fall back to storage. This only prevents an
+    /// assigned-before-applied startup gap from disabling all future live
+    /// suffix coverage after recovery catches up.
+    pub(crate) fn rebase_empty_after_recovery(
+        &self,
+        applied_through: SequenceNumber,
+        assigned_through: SequenceNumber,
+    ) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("write-log lock should not be poisoned");
+        if !state.published.is_empty()
+            || !state.pending.is_empty()
+            || state.purged_sequence != SequenceNumber(0)
+            || state.covered_through >= applied_through
+        {
+            return;
+        }
+        assert!(
+            applied_through <= assigned_through,
+            "write-log recovery coverage cannot exceed assigned sequence"
+        );
+        state.bootstrap_sequence = applied_through;
+        state.covered_through = applied_through;
+        state.assigned_through = assigned_through;
+    }
+
     /// Records a proven zero-write sequence span without allocating entries.
     pub(crate) fn advance_known_zero_write_through(&self, sequence: SequenceNumber) {
         let mut state = self
@@ -453,6 +484,40 @@ mod tests {
     }
 
     #[test]
+    fn zero_write_sequence_preserves_coverage_for_later_commits() {
+        let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
+        log.stage_pending([commit(1, 8)], Timestamp(1_000));
+        log.publish_pending_through(SequenceNumber(1), Timestamp(1_000), SequenceNumber(0));
+        log.advance_known_zero_write_through(SequenceNumber(2));
+        log.stage_pending([commit(3, 8)], Timestamp(1_000));
+        log.publish_pending_through(SequenceNumber(3), Timestamp(1_000), SequenceNumber(0));
+
+        assert!(matches!(
+            log.validation_source(SequenceNumber(1), SequenceNumber(3)),
+            Ok(ValidationSource::InMemory(_))
+        ));
+    }
+
+    #[test]
+    fn recovered_empty_window_rebases_without_claiming_history() {
+        let log = WriteLog::new(
+            WriteLogConfig::for_tests(30, 300, usize::MAX),
+            SequenceNumber(2),
+            SequenceNumber(3),
+        );
+        log.rebase_empty_after_recovery(SequenceNumber(3), SequenceNumber(3));
+
+        assert!(matches!(
+            log.validation_source(SequenceNumber(2), SequenceNumber(3)),
+            Ok(ValidationSource::StorageFallback)
+        ));
+        assert!(matches!(
+            log.validation_source(SequenceNumber(3), SequenceNumber(3)),
+            Ok(ValidationSource::InMemory(_))
+        ));
+    }
+
+    #[test]
     fn pending_stage_validation_sees_pending_entries() {
         let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
         let pending = commit(1, 8);
@@ -463,7 +528,7 @@ mod tests {
         dependencies.record_table(&table, &table_id);
 
         let ValidationSource::InMemory(view) = log
-            .validation_source(SequenceNumber(0), SequenceNumber(1))
+            .validation_source(SequenceNumber(0), SequenceNumber(0))
             .expect("pending window should cover the validation range")
         else {
             panic!("covered pending entry should not require storage fallback");

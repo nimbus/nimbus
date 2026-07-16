@@ -48,6 +48,7 @@ impl Engine {
             let commit = mutate(runtime.store(), &prepared_commit)?;
             profile.phases.durable_append = durable_append_started.elapsed();
             let publish_started = Instant::now();
+            publish_direct_commit_to_write_log(&runtime, &commit);
             runtime.mark_durable_head(commit.sequence);
             profile.phases.add_publish(publish_started.elapsed());
             let apply_started = Instant::now();
@@ -88,6 +89,7 @@ impl Engine {
             profile.phases.durable_append = durable_append_started.elapsed();
             if let Some(commit) = &commit {
                 let publish_started = Instant::now();
+                publish_direct_commit_to_write_log(&runtime, commit);
                 runtime.mark_durable_head(commit.sequence);
                 profile.phases.add_publish(publish_started.elapsed());
                 let apply_started = Instant::now();
@@ -131,6 +133,7 @@ impl Engine {
             let (commit, deleted_document) = mutate(runtime.store(), &prepared_commit)?;
             profile.phases.durable_append = durable_append_started.elapsed();
             let publish_started = Instant::now();
+            publish_direct_commit_to_write_log(&runtime, &commit);
             runtime.mark_durable_head(commit.sequence);
             profile.phases.add_publish(publish_started.elapsed());
             let apply_started = Instant::now();
@@ -171,6 +174,7 @@ impl Engine {
             profile.phases.durable_append = durable_append_started.elapsed();
             if let Some((commit, _deleted_document)) = &commit {
                 let publish_started = Instant::now();
+                publish_direct_commit_to_write_log(&runtime, commit);
                 runtime.mark_durable_head(commit.sequence);
                 profile.phases.add_publish(publish_started.elapsed());
                 let apply_started = Instant::now();
@@ -194,6 +198,11 @@ impl Engine {
         self.process_commit(runtime, &commit);
         Ok(true)
     }
+}
+
+fn publish_direct_commit_to_write_log(runtime: &TenantRuntime, commit: &CommitEntry) {
+    runtime.stage_pending_write_log_commits([commit.clone()], runtime.store.now());
+    runtime.publish_write_log_through(commit.sequence);
 }
 
 fn observe_direct_shadow(

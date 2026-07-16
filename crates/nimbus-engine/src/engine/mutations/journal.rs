@@ -325,6 +325,12 @@ fn process_queued_mutation_batch(
     if let Some(last_record) = records.last() {
         runtime.mark_durable_head(last_record.sequence);
     }
+    runtime.stage_pending_write_log_commits(
+        records
+            .iter()
+            .map(nimbus_core::TenantEventRecord::as_commit_entry),
+        runtime.store.now(),
+    );
     phases.durable_append = durable_append_started.elapsed();
 
     let mut applied = Vec::with_capacity(records.len());
@@ -353,6 +359,7 @@ fn process_queued_mutation_batch(
         }
     };
     retain_commits_through_applied_head(&mut applied, applied_head);
+    runtime.publish_write_log_through(applied_head);
     runtime.invalidate_document_cache_for_commits(applied.iter());
     phases.apply = apply_started.elapsed();
     let publish_started = Instant::now();
