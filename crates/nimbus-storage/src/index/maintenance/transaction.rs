@@ -1,4 +1,4 @@
-use nimbus_core::{Document, DocumentId, IndexDefinition, Result, TableName};
+use nimbus_core::{Document, DocumentId, IndexDefinition, Result, TableName, Timestamp};
 use serde_json::Value;
 
 use crate::store::TenantWriteTransaction;
@@ -23,12 +23,35 @@ impl TenantWriteTransaction {
     where
         F: FnOnce(&Document, &Document) -> Result<()>,
     {
+        let update_time = self.now();
+        self.update_document_with_indexes_validated_at(
+            table,
+            id,
+            patch,
+            indexes,
+            update_time,
+            validate,
+        )
+    }
+
+    pub fn update_document_with_indexes_validated_at<F>(
+        &mut self,
+        table: &TableName,
+        id: &DocumentId,
+        patch: &serde_json::Map<String, Value>,
+        indexes: &[IndexDefinition],
+        update_time: Timestamp,
+        validate: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(&Document, &Document) -> Result<()>,
+    {
         let old_document = self.read_existing_document_for_point_write(table, id)?;
         let mut new_document = old_document.clone();
         for (field, value) in patch {
             new_document.set_field(field.clone(), value.clone());
         }
-        new_document.update_time = self.now();
+        new_document.update_time = update_time;
         validate(&old_document, &new_document)?;
         self.apply_point_document_update(&old_document, &new_document, indexes)
     }

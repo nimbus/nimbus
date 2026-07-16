@@ -272,6 +272,31 @@ impl MySqlTenantStore {
         self.insert_once(document, execution_id)
     }
 
+    pub fn insert_with_indexes_once_at(
+        &self,
+        document: &Document,
+        assignment: crate::DirectWriteAssignment<'_>,
+    ) -> Result<Option<CommitEntry>> {
+        let document = document.clone();
+        let execution_id = assignment.execution_id.map(str::to_string);
+        let committed = self.execute_write(move |transaction| {
+            transaction.set_commit_timestamp(Some(assignment.commit_timestamp));
+            if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
+                return Ok(false);
+            }
+            transaction.insert_document(&document)?;
+            Ok(true)
+        })?;
+        Ok(if committed.value {
+            Some(expect_write_commit(
+                committed.commit,
+                "deduplicated insert should record a commit entry",
+            )?)
+        } else {
+            None
+        })
+    }
+
     pub fn update_validated<F>(
         &self,
         table: &TableName,
@@ -347,6 +372,39 @@ impl MySqlTenantStore {
         self.update_validated_once(table, id, patch, execution_id, validate)
     }
 
+    pub fn update_with_indexes_validated_once_at<F>(
+        &self,
+        table: &TableName,
+        id: &DocumentId,
+        patch: &serde_json::Map<String, Value>,
+        assignment: crate::DirectWriteAssignment<'_>,
+        validate: F,
+    ) -> Result<Option<CommitEntry>>
+    where
+        F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
+    {
+        let table = table.clone();
+        let id = id.clone();
+        let patch = patch.clone();
+        let execution_id = assignment.execution_id.map(str::to_string);
+        let committed = self.execute_write(move |transaction| {
+            transaction.set_commit_timestamp(Some(assignment.commit_timestamp));
+            if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
+                return Ok(false);
+            }
+            transaction.update_document_validated(&table, &id, &patch, validate)?;
+            Ok(true)
+        })?;
+        Ok(if committed.value {
+            Some(expect_write_commit(
+                committed.commit,
+                "deduplicated update should record a commit entry",
+            )?)
+        } else {
+            None
+        })
+    }
+
     pub fn delete_validated_returning_document<F>(
         &self,
         table: &TableName,
@@ -418,6 +476,40 @@ impl MySqlTenantStore {
         F: FnOnce(&Document) -> Result<()> + Send + 'static,
     {
         self.delete_validated_once(table, id, execution_id, validate)
+    }
+
+    pub fn delete_with_indexes_validated_once_at<F>(
+        &self,
+        table: &TableName,
+        id: &DocumentId,
+        assignment: crate::DirectWriteAssignment<'_>,
+        validate: F,
+    ) -> Result<Option<(CommitEntry, Document)>>
+    where
+        F: FnOnce(&Document) -> Result<()> + Send + 'static,
+    {
+        let table = table.clone();
+        let id = id.clone();
+        let execution_id = assignment.execution_id.map(str::to_string);
+        let committed = self.execute_write(move |transaction| {
+            transaction.set_commit_timestamp(Some(assignment.commit_timestamp));
+            if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
+                return Ok(None);
+            }
+            let removed_document = transaction.delete_document_validated(&table, &id, validate)?;
+            Ok(Some(removed_document))
+        })?;
+        Ok(if let Some(removed_document) = committed.value {
+            Some((
+                expect_write_commit(
+                    committed.commit,
+                    "deduplicated delete should record a commit entry",
+                )?,
+                removed_document,
+            ))
+        } else {
+            None
+        })
     }
 }
 
@@ -633,7 +725,9 @@ impl MySqlWriteTransaction {
         for (field, value) in patch {
             document.set_field(field.clone(), value.clone());
         }
-        document.update_time = self.provider.clock.now();
+        document.update_time = self
+            .commit_timestamp
+            .unwrap_or_else(|| self.provider.clock.now());
         validate(&existing_document, &document)?;
         let table_id = self
             .load_table_id(table)?

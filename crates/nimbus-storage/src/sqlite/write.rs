@@ -182,6 +182,29 @@ impl SqliteTenantStore {
         self.insert_once(document, execution_id)
     }
 
+    pub fn insert_with_indexes_once_at(
+        &self,
+        document: &Document,
+        assignment: crate::DirectWriteAssignment<'_>,
+    ) -> Result<Option<CommitEntry>> {
+        let committed = self.execute_write(move |transaction| {
+            transaction.set_commit_timestamp(Some(assignment.commit_timestamp));
+            if !transaction.begin_scheduled_execution(assignment.execution_id)? {
+                return Ok(false);
+            }
+            transaction.insert_document(document)?;
+            Ok(true)
+        })?;
+        Ok(if committed.value {
+            Some(expect_write_commit(
+                committed.commit,
+                "deduplicated insert should record a commit entry",
+            )?)
+        } else {
+            None
+        })
+    }
+
     pub fn update_with_indexes(
         &self,
         table: &TableName,
@@ -219,6 +242,35 @@ impl SqliteTenantStore {
         F: FnOnce(&Document, &Document) -> Result<()>,
     {
         self.update_validated_once(table, id, patch, execution_id, validate)
+    }
+
+    pub fn update_with_indexes_validated_once_at<F>(
+        &self,
+        table: &TableName,
+        id: &DocumentId,
+        patch: &serde_json::Map<String, serde_json::Value>,
+        assignment: crate::DirectWriteAssignment<'_>,
+        validate: F,
+    ) -> Result<Option<CommitEntry>>
+    where
+        F: FnOnce(&Document, &Document) -> Result<()>,
+    {
+        let committed = self.execute_write(move |transaction| {
+            transaction.set_commit_timestamp(Some(assignment.commit_timestamp));
+            if !transaction.begin_scheduled_execution(assignment.execution_id)? {
+                return Ok(false);
+            }
+            transaction.update_document_validated(table, id, patch, validate)?;
+            Ok(true)
+        })?;
+        Ok(if committed.value {
+            Some(expect_write_commit(
+                committed.commit,
+                "deduplicated update should record a commit entry",
+            )?)
+        } else {
+            None
+        })
     }
 
     pub fn delete_with_indexes(
@@ -274,6 +326,37 @@ impl SqliteTenantStore {
         F: FnOnce(&Document) -> Result<()>,
     {
         self.delete_validated_once(table, id, execution_id, validate)
+    }
+
+    pub fn delete_with_indexes_validated_once_at<F>(
+        &self,
+        table: &TableName,
+        id: &DocumentId,
+        assignment: crate::DirectWriteAssignment<'_>,
+        validate: F,
+    ) -> Result<Option<(CommitEntry, Document)>>
+    where
+        F: FnOnce(&Document) -> Result<()>,
+    {
+        let committed = self.execute_write(move |transaction| {
+            transaction.set_commit_timestamp(Some(assignment.commit_timestamp));
+            if !transaction.begin_scheduled_execution(assignment.execution_id)? {
+                return Ok(None);
+            }
+            let removed_document = transaction.delete_document_validated(table, id, validate)?;
+            Ok(Some(removed_document))
+        })?;
+        Ok(if let Some(removed_document) = committed.value {
+            Some((
+                expect_write_commit(
+                    committed.commit,
+                    "deduplicated delete should record a commit entry",
+                )?,
+                removed_document,
+            ))
+        } else {
+            None
+        })
     }
 
     pub fn apply_resolved_write_batch(&self, writes: &[ResolvedWrite]) -> Result<CommitEntry> {
@@ -461,7 +544,7 @@ impl SqliteWriteTransaction {
         for (field, value) in patch {
             document.set_field(field.clone(), value.clone());
         }
-        document.update_time = self.clock.now();
+        document.update_time = self.commit_timestamp.unwrap_or_else(|| self.clock.now());
         validate(&existing_document, &document)?;
         let table_id = resolve_table_id_in_conn(self.connection_mut()?, table)?
             .ok_or(Error::DocumentNotFound(id.clone()))?;

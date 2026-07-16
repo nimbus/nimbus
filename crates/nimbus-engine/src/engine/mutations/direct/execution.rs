@@ -135,84 +135,41 @@ impl Engine {
 
         match mode {
             MutationExecutionMode::Immediate => {
-                if indexes.is_empty() {
-                    self.run_store_mutation(
-                        runtime,
-                        prepared_commit,
-                        profile,
-                        |store, prepared, timestamp| {
-                            store
-                                .apply_execution_unit_batch_with_origin(
-                                    &[nimbus_storage::ResolvedWrite::Insert {
-                                        document: prepared.direct_insert_document()?.clone(),
-                                        indexes: Vec::new(),
-                                        resource_path_binding: None,
-                                    }],
-                                    &[],
-                                    None,
-                                    Some(timestamp),
-                                )?
-                                .ok_or_else(|| {
-                                    nimbus_core::Error::Internal(
-                                        "direct insert should produce a commit".to_string(),
-                                    )
-                                })
-                        },
-                    )?;
-                } else {
-                    self.run_store_mutation(
-                        runtime,
-                        prepared_commit,
-                        profile,
-                        |store, prepared, timestamp| {
-                            store
-                                .apply_execution_unit_batch_with_origin(
-                                    &[nimbus_storage::ResolvedWrite::Insert {
-                                        document: prepared.direct_insert_document()?.clone(),
-                                        indexes,
-                                        resource_path_binding: None,
-                                    }],
-                                    &[],
-                                    None,
-                                    Some(timestamp),
-                                )?
-                                .ok_or_else(|| {
-                                    nimbus_core::Error::Internal(
-                                        "direct indexed insert should produce a commit".to_string(),
-                                    )
-                                })
-                        },
-                    )?;
-                }
+                self.run_store_mutation(
+                    runtime,
+                    prepared_commit,
+                    profile,
+                    |store, prepared, timestamp| {
+                        store
+                            .insert_with_indexes_once_at(
+                                prepared.direct_insert_document()?,
+                                direct_write_assignment(&indexes, None, timestamp),
+                            )?
+                            .ok_or_else(|| {
+                                nimbus_core::Error::Internal(
+                                    "direct insert should produce a commit".to_string(),
+                                )
+                            })
+                    },
+                )?;
                 Ok(MutationExecutionResult::Immediate(Some(document_id)))
             }
             MutationExecutionMode::Scheduled { execution_id } => {
-                let applied = if indexes.is_empty() {
-                    self.run_store_mutation_once(
-                        runtime,
-                        prepared_commit,
-                        profile,
-                        |store, prepared, _timestamp| {
-                            store.insert_once(
-                                prepared.direct_insert_document()?,
-                                Some(execution_id.as_str()),
-                            )
-                        },
-                    )?
-                } else {
-                    self.run_store_mutation_once(
-                        runtime,
-                        prepared_commit,
-                        profile,
-                        |store, prepared, _timestamp| {
-                            store.insert_with_indexes_once(
-                                prepared.direct_insert_document()?,
+                let applied = self.run_store_mutation_once(
+                    runtime,
+                    prepared_commit,
+                    profile,
+                    |store, prepared, timestamp| {
+                        store.insert_with_indexes_once_at(
+                            prepared.direct_insert_document()?,
+                            direct_write_assignment(
                                 &indexes,
                                 Some(execution_id.as_str()),
-                            )
-                        },
-                    )?
-                };
+                                timestamp,
+                            ),
+                        )
+                    },
+                )?;
                 Ok(MutationExecutionResult::Scheduled(applied))
             }
         }
@@ -246,23 +203,30 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared, _timestamp| {
+                        move |store, prepared, timestamp| {
                             let (table, document_id, patch) = prepared.direct_update_parts()?;
-                            store.update_validated(
-                                table,
-                                document_id,
-                                patch,
-                                move |existing, document| {
-                                    table_schema.validate(&document.fields)?;
-                                    enforce_mutation_authorization(
-                                        Some(&authorization_schema),
-                                        AccessAction::Update,
-                                        &principal,
-                                        Some(document),
-                                        Some(existing),
+                            store
+                                .update_with_indexes_validated_once_at(
+                                    table,
+                                    document_id,
+                                    patch,
+                                    direct_write_assignment(&[], None, timestamp),
+                                    move |existing, document| {
+                                        table_schema.validate(&document.fields)?;
+                                        enforce_mutation_authorization(
+                                            Some(&authorization_schema),
+                                            AccessAction::Update,
+                                            &principal,
+                                            Some(document),
+                                            Some(existing),
+                                        )
+                                    },
+                                )?
+                                .ok_or_else(|| {
+                                    nimbus_core::Error::Internal(
+                                        "direct update should produce a commit".to_string(),
                                     )
-                                },
-                            )
+                                })
                         },
                     )?;
                     Ok(MutationExecutionResult::Immediate(Some(result_document_id)))
@@ -274,13 +238,17 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared, _timestamp| {
+                        move |store, prepared, timestamp| {
                             let (table, document_id, patch) = prepared.direct_update_parts()?;
-                            store.update_validated_once(
+                            store.update_with_indexes_validated_once_at(
                                 table,
                                 document_id,
                                 patch,
-                                Some(execution_id.as_str()),
+                                direct_write_assignment(
+                                    &[],
+                                    Some(execution_id.as_str()),
+                                    timestamp,
+                                ),
                                 move |existing, document| {
                                     table_schema.validate(&document.fields)?;
                                     enforce_mutation_authorization(
@@ -307,24 +275,31 @@ impl Engine {
                             runtime,
                             prepared_commit,
                             profile,
-                            move |store, prepared, _timestamp| {
+                            move |store, prepared, timestamp| {
                                 let (table, document_id, patch) = prepared.direct_update_parts()?;
-                                store.update_with_indexes_validated(
-                                    table,
-                                    document_id,
-                                    patch,
-                                    &indexes,
-                                    move |existing, document| {
-                                        table_schema.validate(&document.fields)?;
-                                        enforce_mutation_authorization(
-                                            Some(&authorization_schema),
-                                            AccessAction::Update,
-                                            &principal,
-                                            Some(document),
-                                            Some(existing),
+                                store
+                                    .update_with_indexes_validated_once_at(
+                                        table,
+                                        document_id,
+                                        patch,
+                                        direct_write_assignment(&indexes, None, timestamp),
+                                        move |existing, document| {
+                                            table_schema.validate(&document.fields)?;
+                                            enforce_mutation_authorization(
+                                                Some(&authorization_schema),
+                                                AccessAction::Update,
+                                                &principal,
+                                                Some(document),
+                                                Some(existing),
+                                            )
+                                        },
+                                    )?
+                                    .ok_or_else(|| {
+                                        nimbus_core::Error::Internal(
+                                            "direct indexed update should produce a commit"
+                                                .to_string(),
                                         )
-                                    },
-                                )
+                                    })
                             },
                         )?;
                         Ok(MutationExecutionResult::Immediate(Some(result_document_id)))
@@ -336,14 +311,17 @@ impl Engine {
                             runtime,
                             prepared_commit,
                             profile,
-                            move |store, prepared, _timestamp| {
+                            move |store, prepared, timestamp| {
                                 let (table, document_id, patch) = prepared.direct_update_parts()?;
-                                store.update_with_indexes_validated_once(
+                                store.update_with_indexes_validated_once_at(
                                     table,
                                     document_id,
                                     patch,
-                                    &indexes,
-                                    Some(execution_id.as_str()),
+                                    direct_write_assignment(
+                                        &indexes,
+                                        Some(execution_id.as_str()),
+                                        timestamp,
+                                    ),
                                     move |existing, document| {
                                         table_schema.validate(&document.fields)?;
                                         enforce_mutation_authorization(
@@ -368,22 +346,29 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared, _timestamp| {
+                        move |store, prepared, timestamp| {
                             let (table, document_id, patch) = prepared.direct_update_parts()?;
-                            store.update_validated(
-                                table,
-                                document_id,
-                                patch,
-                                move |existing, document| {
-                                    enforce_mutation_authorization(
-                                        None,
-                                        AccessAction::Update,
-                                        &principal,
-                                        Some(document),
-                                        Some(existing),
+                            store
+                                .update_with_indexes_validated_once_at(
+                                    table,
+                                    document_id,
+                                    patch,
+                                    direct_write_assignment(&[], None, timestamp),
+                                    move |existing, document| {
+                                        enforce_mutation_authorization(
+                                            None,
+                                            AccessAction::Update,
+                                            &principal,
+                                            Some(document),
+                                            Some(existing),
+                                        )
+                                    },
+                                )?
+                                .ok_or_else(|| {
+                                    nimbus_core::Error::Internal(
+                                        "direct update should produce a commit".to_string(),
                                     )
-                                },
-                            )
+                                })
                         },
                     )?;
                     Ok(MutationExecutionResult::Immediate(Some(result_document_id)))
@@ -394,13 +379,17 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared, _timestamp| {
+                        move |store, prepared, timestamp| {
                             let (table, document_id, patch) = prepared.direct_update_parts()?;
-                            store.update_validated_once(
+                            store.update_with_indexes_validated_once_at(
                                 table,
                                 document_id,
                                 patch,
-                                Some(execution_id.as_str()),
+                                direct_write_assignment(
+                                    &[],
+                                    Some(execution_id.as_str()),
+                                    timestamp,
+                                ),
                                 move |existing, document| {
                                     enforce_mutation_authorization(
                                         None,
@@ -446,21 +435,28 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared, _timestamp| {
+                        move |store, prepared, timestamp| {
                             let (table, document_id) = prepared.direct_delete_parts()?;
-                            store.delete_validated_returning_document(
-                                table,
-                                document_id,
-                                move |existing| {
-                                    enforce_mutation_authorization(
-                                        table_schema.as_ref(),
-                                        AccessAction::Delete,
-                                        &principal,
-                                        None,
-                                        Some(existing),
+                            store
+                                .delete_with_indexes_validated_once_at(
+                                    table,
+                                    document_id,
+                                    direct_write_assignment(&[], None, timestamp),
+                                    move |existing| {
+                                        enforce_mutation_authorization(
+                                            table_schema.as_ref(),
+                                            AccessAction::Delete,
+                                            &principal,
+                                            None,
+                                            Some(existing),
+                                        )
+                                    },
+                                )?
+                                .ok_or_else(|| {
+                                    nimbus_core::Error::Internal(
+                                        "direct delete should produce a commit".to_string(),
                                     )
-                                },
-                            )
+                                })
                         },
                     )?;
                 } else {
@@ -470,22 +466,28 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared, _timestamp| {
+                        move |store, prepared, timestamp| {
                             let (table, document_id) = prepared.direct_delete_parts()?;
-                            store.delete_with_indexes_validated_returning_document(
-                                table,
-                                document_id,
-                                &indexes,
-                                move |existing| {
-                                    enforce_mutation_authorization(
-                                        table_schema.as_ref(),
-                                        AccessAction::Delete,
-                                        &principal,
-                                        None,
-                                        Some(existing),
+                            store
+                                .delete_with_indexes_validated_once_at(
+                                    table,
+                                    document_id,
+                                    direct_write_assignment(&indexes, None, timestamp),
+                                    move |existing| {
+                                        enforce_mutation_authorization(
+                                            table_schema.as_ref(),
+                                            AccessAction::Delete,
+                                            &principal,
+                                            None,
+                                            Some(existing),
+                                        )
+                                    },
+                                )?
+                                .ok_or_else(|| {
+                                    nimbus_core::Error::Internal(
+                                        "direct indexed delete should produce a commit".to_string(),
                                     )
-                                },
-                            )
+                                })
                         },
                     )?;
                 }
@@ -499,12 +501,16 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared, _timestamp| {
+                        move |store, prepared, timestamp| {
                             let (table, document_id) = prepared.direct_delete_parts()?;
-                            store.delete_validated_once(
+                            store.delete_with_indexes_validated_once_at(
                                 table,
                                 document_id,
-                                Some(execution_id.as_str()),
+                                direct_write_assignment(
+                                    &[],
+                                    Some(execution_id.as_str()),
+                                    timestamp,
+                                ),
                                 move |existing| {
                                     enforce_mutation_authorization(
                                         table_schema.as_ref(),
@@ -524,13 +530,16 @@ impl Engine {
                         runtime,
                         prepared_commit,
                         profile,
-                        move |store, prepared, _timestamp| {
+                        move |store, prepared, timestamp| {
                             let (table, document_id) = prepared.direct_delete_parts()?;
-                            store.delete_with_indexes_validated_once(
+                            store.delete_with_indexes_validated_once_at(
                                 table,
                                 document_id,
-                                &indexes,
-                                Some(execution_id.as_str()),
+                                direct_write_assignment(
+                                    &indexes,
+                                    Some(execution_id.as_str()),
+                                    timestamp,
+                                ),
                                 move |existing| {
                                     enforce_mutation_authorization(
                                         table_schema.as_ref(),
@@ -547,5 +556,17 @@ impl Engine {
                 Ok(MutationExecutionResult::Scheduled(applied))
             }
         }
+    }
+}
+
+fn direct_write_assignment<'a>(
+    indexes: &'a [nimbus_core::IndexDefinition],
+    execution_id: Option<&'a str>,
+    commit_timestamp: Timestamp,
+) -> nimbus_storage::DirectWriteAssignment<'a> {
+    nimbus_storage::DirectWriteAssignment {
+        indexes,
+        execution_id,
+        commit_timestamp,
     }
 }

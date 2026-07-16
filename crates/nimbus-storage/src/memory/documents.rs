@@ -212,14 +212,29 @@ impl MemoryTenantStore {
         execution_id: Option<&str>,
     ) -> Result<Option<CommitEntry>> {
         let timestamp = self.now();
+        self.insert_with_indexes_once_at(
+            document,
+            crate::DirectWriteAssignment {
+                indexes,
+                execution_id,
+                commit_timestamp: timestamp,
+            },
+        )
+    }
+
+    pub fn insert_with_indexes_once_at(
+        &self,
+        document: &Document,
+        assignment: crate::DirectWriteAssignment<'_>,
+    ) -> Result<Option<CommitEntry>> {
         self.transact(|state| {
             let mut events = Vec::new();
-            if !state.begin_scheduled_execution(execution_id, &mut events) {
+            if !state.begin_scheduled_execution(assignment.execution_id, &mut events) {
                 return Ok(None);
             }
-            let write = state.apply_insert(document, indexes, None, None)?;
+            let write = state.apply_insert(document, assignment.indexes, None, None)?;
             state
-                .append_events(timestamp, vec![write], events)
+                .append_events(assignment.commit_timestamp, vec![write], events)
                 .map(Some)
         })
     }
@@ -282,9 +297,33 @@ impl MemoryTenantStore {
         F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
     {
         let timestamp = self.now();
+        self.update_with_indexes_validated_once_at(
+            table,
+            id,
+            patch,
+            crate::DirectWriteAssignment {
+                indexes,
+                execution_id,
+                commit_timestamp: timestamp,
+            },
+            validate,
+        )
+    }
+
+    pub fn update_with_indexes_validated_once_at<F>(
+        &self,
+        table: &TableName,
+        id: &DocumentId,
+        patch: &Map<String, Value>,
+        assignment: crate::DirectWriteAssignment<'_>,
+        validate: F,
+    ) -> Result<Option<CommitEntry>>
+    where
+        F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
+    {
         self.transact(|state| {
             let mut events = Vec::new();
-            if !state.begin_scheduled_execution(execution_id, &mut events) {
+            if !state.begin_scheduled_execution(assignment.execution_id, &mut events) {
                 return Ok(None);
             }
             let previous = state
@@ -294,18 +333,18 @@ impl MemoryTenantStore {
             for (field, value) in patch {
                 current.set_field(field.clone(), value.clone());
             }
-            current.update_time = timestamp;
+            current.update_time = assignment.commit_timestamp;
             validate(&previous, &current)?;
             let write = state.apply_update(
                 &previous,
                 &current,
-                indexes,
+                assignment.indexes,
                 None,
                 None,
                 WriteExpectation::Point,
             )?;
             state
-                .append_events(timestamp, vec![write], events)
+                .append_events(assignment.commit_timestamp, vec![write], events)
                 .map(Some)
         })
     }
@@ -364,17 +403,40 @@ impl MemoryTenantStore {
         F: FnOnce(&Document) -> Result<()> + Send + 'static,
     {
         let timestamp = self.now();
+        self.delete_with_indexes_validated_once_at(
+            table,
+            id,
+            crate::DirectWriteAssignment {
+                indexes,
+                execution_id,
+                commit_timestamp: timestamp,
+            },
+            validate,
+        )
+    }
+
+    pub fn delete_with_indexes_validated_once_at<F>(
+        &self,
+        table: &TableName,
+        id: &DocumentId,
+        assignment: crate::DirectWriteAssignment<'_>,
+        validate: F,
+    ) -> Result<Option<(CommitEntry, Document)>>
+    where
+        F: FnOnce(&Document) -> Result<()> + Send + 'static,
+    {
         self.transact(|state| {
             let mut events = Vec::new();
-            if !state.begin_scheduled_execution(execution_id, &mut events) {
+            if !state.begin_scheduled_execution(assignment.execution_id, &mut events) {
                 return Ok(None);
             }
             let previous = state
                 .get(table, id)
                 .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
             validate(&previous)?;
-            let write = state.apply_delete(&previous, indexes, None, WriteExpectation::Point)?;
-            let commit = state.append_events(timestamp, vec![write], events)?;
+            let write =
+                state.apply_delete(&previous, assignment.indexes, None, WriteExpectation::Point)?;
+            let commit = state.append_events(assignment.commit_timestamp, vec![write], events)?;
             Ok(Some((commit, previous)))
         })
     }

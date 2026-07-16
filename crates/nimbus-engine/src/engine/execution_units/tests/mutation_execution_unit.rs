@@ -360,6 +360,16 @@ async fn commit_timestamps_are_monotonic_with_sequence_across_paths() {
         )
         .expect("direct insert should commit");
 
+    clock.set(Timestamp(5_000));
+    engine
+        .update_document(
+            &tenant_id,
+            direct_table.clone(),
+            direct_id.clone(),
+            serde_json::Map::from_iter([("updated".to_string(), json!(true))]),
+        )
+        .expect("direct update should reuse its clamped assignment timestamp");
+
     clock.set(Timestamp(20_000));
     let queued_id = engine
         .insert_document_async(
@@ -389,7 +399,7 @@ async fn commit_timestamps_are_monotonic_with_sequence_across_paths() {
         .iter()
         .filter(|record| !record.writes.is_empty())
         .collect::<Vec<_>>();
-    assert_eq!(document_records.len(), 3);
+    assert_eq!(document_records.len(), 4);
     assert!(document_records.windows(2).all(|pair| {
         pair[0].sequence < pair[1].sequence && pair[0].timestamp <= pair[1].timestamp
     }));
@@ -398,8 +408,27 @@ async fn commit_timestamps_are_monotonic_with_sequence_across_paths() {
             .iter()
             .map(|record| record.timestamp)
             .collect::<Vec<_>>(),
-        vec![Timestamp(10_000), Timestamp(20_000), Timestamp(20_000)]
+        vec![
+            Timestamp(10_000),
+            Timestamp(10_000),
+            Timestamp(20_000),
+            Timestamp(20_000),
+        ]
     );
+
+    let direct_update_record = document_records
+        .iter()
+        .find(|record| {
+            record.writes[0].doc_id == direct_id
+                && record.writes[0].op_type == nimbus_core::WriteOpType::Update
+        })
+        .expect("direct update should have a durable record");
+    let direct_update = direct_update_record.writes[0]
+        .current
+        .as_ref()
+        .expect("direct update should contain a current image");
+    assert_eq!(direct_update.creation_time, Timestamp(10_000));
+    assert_eq!(direct_update.update_time, direct_update_record.timestamp);
 
     for (table, document_id) in [
         (direct_table, direct_id),
