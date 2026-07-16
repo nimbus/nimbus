@@ -723,8 +723,7 @@ mod tests {
                 let window_conflict = view
                     .first_conflicting_sequence(&dependencies, |table, id| store.get(table, &id));
                 assert_eq!(
-                    window_conflict.is_some(),
-                    storage_conflict.is_some(),
+                    window_conflict, storage_conflict,
                     "differential case {checked} disagreed at snapshot {snapshot}"
                 );
                 checked += 1;

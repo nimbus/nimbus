@@ -225,7 +225,7 @@ fn apply_set_table_schema(
             .finish_policy_revision_mismatches(pending, POLICY_REVISION_CHANGED_MESSAGE);
     }
     advance_write_log_for_local_schema_record(runtime, previous_durable_head, journal_progress);
-    runtime.sync_mutation_journal_progress(journal_progress);
+    runtime.sync_mutation_journal_progress_locked(journal_progress);
     Ok(())
 }
 
@@ -283,7 +283,7 @@ fn apply_delete_table_schema(
             .finish_policy_revision_mismatches(pending, POLICY_REVISION_CHANGED_MESSAGE);
     }
     advance_write_log_for_local_schema_record(runtime, previous_durable_head, journal_progress);
-    runtime.sync_mutation_journal_progress(journal_progress);
+    runtime.sync_mutation_journal_progress_locked(journal_progress);
     Ok(())
 }
 

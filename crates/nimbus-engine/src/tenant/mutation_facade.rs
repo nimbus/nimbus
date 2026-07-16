@@ -138,6 +138,14 @@ impl TenantRuntime {
     }
 
     pub(crate) fn sync_mutation_journal_progress(&self, progress: JournalProgress) {
+        let _sequence_guard = self.lock_mutation_sequence();
+        self.sync_mutation_journal_progress_locked(progress);
+    }
+
+    /// Synchronizes recovered heads while the caller holds the mutation
+    /// sequence gate. Callers already inside a serial mutation section use
+    /// this non-reentrant form; all other callers use the gated wrapper above.
+    pub(crate) fn sync_mutation_journal_progress_locked(&self, progress: JournalProgress) {
         self.write_log
             .rebase_empty_after_recovery(progress.applied_head, progress.durable_head);
         self.mark_durable_head(progress.durable_head);
