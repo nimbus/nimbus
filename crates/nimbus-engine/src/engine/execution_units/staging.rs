@@ -150,7 +150,7 @@ impl MutationExecutionUnit {
             id: self.engine.next_document_id(),
             run_at: Timestamp(now.0.saturating_add(delay_ms)),
             mutation,
-            created_at: now,
+            created_at: Timestamp(0),
         };
         let job_id = job.id.clone();
         self.stage_scheduled_job(job)?;
@@ -168,7 +168,7 @@ impl MutationExecutionUnit {
             id: self.engine.next_document_id(),
             run_at: Timestamp(timestamp_ms.max(now.0)),
             mutation,
-            created_at: now,
+            created_at: Timestamp(0),
         };
         let job_id = job.id.clone();
         self.stage_scheduled_job(job)?;

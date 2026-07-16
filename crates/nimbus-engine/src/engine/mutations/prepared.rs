@@ -281,6 +281,7 @@ impl PreparedCommit {
         }
         if let PreparedSerializedEffects::ExecutionUnit {
             writes,
+            schedule_ops,
             deferred_server_timestamp_fields,
             ..
         } = &mut self.serialized_effects
@@ -298,6 +299,11 @@ impl PreparedCommit {
                             nimbus_core::TypedScalarValue::Timestamp { value: timestamp },
                         );
                     }
+                }
+            }
+            for schedule_op in schedule_ops {
+                if let ResolvedScheduleOp::Insert { job } = schedule_op {
+                    job.created_at = timestamp;
                 }
             }
         }
@@ -698,6 +704,18 @@ mod tests {
         ));
         assert_eq!(origin, None);
         assert!(prepared.has_scheduled_insert());
+
+        let mut assigned = prepared.clone();
+        assigned
+            .stamp_for_assignment(Timestamp(600))
+            .expect("assignment stamping should succeed");
+        let (_, assigned_schedule_ops, _) = assigned
+            .execution_unit_effects()
+            .expect("assigned execution-unit effects should remain available");
+        assert!(matches!(
+            assigned_schedule_ops,
+            [ResolvedScheduleOp::Insert { job }] if job.created_at == Timestamp(600)
+        ));
     }
 
     #[test]
