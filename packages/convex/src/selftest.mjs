@@ -37,6 +37,7 @@ async function main() {
   await testIifeBundleBuild();
   const browserModule = await loadBundledBrowserModule();
   await testStringRefsAndAnyApiUseNamedRequests(browserModule);
+  await testCommitErrorEnvelopeUsesNimbusTypedError(browserModule);
   await testLiveQueryClientsCoerceAllRefKindsAtRuntime(browserModule);
   await testInjectedNodeSocketSupportsAnyApiSubscriptions(browserModule);
   await testNamedLiveQueriesRejectPaginationOptions(browserModule);
@@ -52,6 +53,41 @@ async function main() {
   );
   await testUnchangedSubscriptionResultsDoNotNotifyAgain(browserModule);
   await testReconnectDoesNotNotifyWhenResubscribedResultIsUnchanged(browserModule);
+}
+
+async function testCommitErrorEnvelopeUsesNimbusTypedError(browserModule) {
+  const client = new browserModule.ConvexHttpClient(
+    "http://localhost:8080/convex/demo",
+    {
+      skipConvexDeploymentUrlCheck: true,
+      fetch: async () => new Response(JSON.stringify({
+        error: {
+          code: "rate.limited",
+          message: "tenant write rate exceeded",
+          retryable: true,
+          detail: {
+            retryability: "retryable_after_backoff",
+            retryAfterMs: 125,
+          },
+        },
+      }), {
+        status: 429,
+        headers: { "content-type": "application/json" },
+      }),
+    },
+  );
+
+  await assert.rejects(
+    () => client.mutation("messages:send", { body: "hello" }),
+    (error) => {
+      assert.equal(error.name, "NimbusRateLimitedError");
+      assert.equal(error.kind, "rate_limited");
+      assert.equal(error.retryable, true);
+      assert.equal(error.retryability, "retryable_after_backoff");
+      assert.equal(error.retryAfterMs, 125);
+      return true;
+    },
+  );
 }
 
 async function testConvexCliCodegenSmoke() {
@@ -135,6 +171,9 @@ async function typecheckConvexSurface() {
   const reactEntry = normalize(path.join(packageRoot, "src", "react.ts"));
   const serverEntry = normalize(path.join(packageRoot, "src", "server.ts"));
   const valuesEntry = normalize(path.join(packageRoot, "src", "values.ts"));
+  const nimbusBrowserEntry = normalize(
+    path.join(packageRoot, "..", "nimbus", "src", "browser.ts"),
+  );
 
   await fs.writeFile(
     path.join(fixtureDir, "tsconfig.json"),
@@ -154,6 +193,7 @@ async function typecheckConvexSurface() {
             "convex/react": [reactEntry],
             "convex/server": [serverEntry],
             "convex/values": [valuesEntry],
+            "@nimbus/nimbus/browser": [nimbusBrowserEntry],
           },
         },
         files: ["fixture.ts"],
@@ -167,7 +207,8 @@ async function typecheckConvexSurface() {
   await fs.writeFile(
     path.join(fixtureDir, "fixture.ts"),
     `
-	import { ConvexClient, ConvexHttpClient, ConvexReactClient, anyApi, makeQueryReference } from "convex/browser";
+\timport { ConvexClient, ConvexHttpClient, ConvexReactClient, anyApi, makeQueryReference } from "convex/browser";
+import { NimbusCommitError, type NimbusCommitErrorKind } from "@nimbus/nimbus/browser";
 import {
   ConvexProvider,
   ConvexProviderWithAuth,
@@ -203,6 +244,22 @@ const _useConvex = useConvex;
 	const _useConvexConnectionState = useConvexConnectionState;
 	const _authState = null as ConvexAuthState | null;
 	const _anyApi = anyApi;
+
+async function typedConvexFailure() {
+  try {
+    await _convexHttpClient.mutation("messages:send", {});
+  } catch (error) {
+    if (error instanceof NimbusCommitError) {
+      const kind: NimbusCommitErrorKind = error.kind;
+      const retryable: boolean = error.retryable;
+      const retryAfterMs: number | undefined = error.retryAfterMs;
+      void kind;
+      void retryable;
+      void retryAfterMs;
+    }
+  }
+}
+void typedConvexFailure;
 
 	declare const auth: Auth;
 	declare const queryCtx: QueryCtx;

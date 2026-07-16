@@ -1,3 +1,5 @@
+import { decodeNimbusErrorEnvelope } from "../errors.ts";
+
 export type JsonValue =
   | null
   | boolean
@@ -212,16 +214,5 @@ export function normalizeArgs<Args>(args: Args | undefined): Args {
 }
 
 export function createApiError(response: unknown, fallback: string) {
-  if (typeof response === "string" && response.length > 0) {
-    return new Error(response);
-  }
-  if (
-    response &&
-    typeof response === "object" &&
-    "error" in response &&
-    typeof response.error === "string"
-  ) {
-    return new Error(response.error);
-  }
-  return new Error(fallback);
+  return decodeNimbusErrorEnvelope(response, fallback);
 }

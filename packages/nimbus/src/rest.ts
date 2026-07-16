@@ -1,3 +1,6 @@
+import { decodeNimbusErrorEnvelope } from "./errors.ts";
+export * from "./errors.ts";
+
 export interface RequestOptions extends Omit<RequestInit, "headers"> {
   headers?: Record<string, string>;
 }
@@ -177,11 +180,7 @@ export class NimbusRestClient {
       : await response.text();
 
     if (!response.ok) {
-      const message =
-        typeof body === "string"
-          ? body
-          : (body as { message?: string })?.message ?? JSON.stringify(body, null, 2);
-      throw new Error(message || `request failed with ${response.status}`);
+      throw decodeNimbusErrorEnvelope(body, `request failed with ${response.status}`);
     }
 
     return body as T;

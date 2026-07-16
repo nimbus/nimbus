@@ -266,21 +266,35 @@ impl PublicError {
                 error.to_string(),
                 ErrorSeverity::Error,
                 *retryable,
-                conflict_detail(*conflicting_sequence, *attempts),
+                conflict_detail(*conflicting_sequence, *attempts, error.retryability()),
                 Some(ErrorRemediation::new(
                     "fix_request",
                     "Resolve the conflicting state and retry.",
                 )),
             ),
-            Error::Overloaded { .. } | Error::CommitterFull { .. } => Self::new(
+            Error::Overloaded { .. } => Self::new(
                 "rate.overloaded",
                 error.to_string(),
                 ErrorSeverity::Error,
                 true,
-                Value::Null,
+                retryability_detail(error.retryability()),
                 Some(ErrorRemediation::new(
                     "wait_and_retry",
                     "Wait for mutation capacity to recover before retrying.",
+                )),
+            ),
+            Error::CommitterFull { capacity, .. } => Self::new(
+                "rate.committer_full",
+                error.to_string(),
+                ErrorSeverity::Error,
+                true,
+                json!({
+                    "capacity": capacity,
+                    "retryability": error.retryability(),
+                }),
+                Some(ErrorRemediation::new(
+                    "wait_and_retry",
+                    "Wait for committer capacity to recover before retrying.",
                 )),
             ),
             Error::RejectedBeforeExecution { .. } => Self::new(
@@ -288,7 +302,7 @@ impl PublicError {
                 error.to_string(),
                 ErrorSeverity::Error,
                 true,
-                Value::Null,
+                retryability_detail(error.retryability()),
                 Some(ErrorRemediation::new(
                     "retry",
                     "The mutation did not start and is safe to retry.",
@@ -299,7 +313,10 @@ impl PublicError {
                 error.to_string(),
                 ErrorSeverity::Error,
                 true,
-                json!({ "retryAfterMs": retry_after.as_millis() }),
+                json!({
+                    "retryAfterMs": retry_after.as_millis(),
+                    "retryability": error.retryability(),
+                }),
                 Some(ErrorRemediation::new(
                     "wait_and_retry",
                     "Retry after the indicated delay.",
@@ -312,7 +329,10 @@ impl PublicError {
                 error.to_string(),
                 ErrorSeverity::Error,
                 true,
-                json!({ "minimumSequence": minimum_sequence.map(|sequence| sequence.0) }),
+                json!({
+                    "minimumSequence": minimum_sequence.map(|sequence| sequence.0),
+                    "retryability": error.retryability(),
+                }),
                 Some(ErrorRemediation::new(
                     "restart_transaction",
                     "Restart the transaction from a fresh snapshot.",
@@ -327,7 +347,12 @@ impl PublicError {
                 error.to_string(),
                 ErrorSeverity::Error,
                 false,
-                json!({ "cap": cap.as_str(), "observed": observed, "limit": limit }),
+                json!({
+                    "cap": cap.as_str(),
+                    "observed": observed,
+                    "limit": limit,
+                    "retryability": error.retryability(),
+                }),
                 Some(ErrorRemediation::new(
                     "reduce_request",
                     "Reduce the mutation's resource usage before retrying.",
@@ -666,8 +691,10 @@ impl StructuredHttpError {
 fn conflict_detail(
     conflicting_sequence: Option<nimbus_core::SequenceNumber>,
     attempts: Option<usize>,
+    retryability: nimbus_core::Retryability,
 ) -> Value {
     let mut detail = serde_json::Map::new();
+    detail.insert("retryability".to_string(), json!(retryability));
     if let Some(sequence) = conflicting_sequence {
         detail.insert("conflictingSequence".to_string(), json!(sequence.0));
     }
@@ -675,6 +702,10 @@ fn conflict_detail(
         detail.insert("attempts".to_string(), json!(attempts));
     }
     Value::Object(detail)
+}
+
+fn retryability_detail(retryability: nimbus_core::Retryability) -> Value {
+    json!({ "retryability": retryability })
 }
 
 impl std::fmt::Display for StructuredHttpError {
@@ -713,7 +744,65 @@ pub(crate) const FATAL_PROTOCOL_CLOSE_CODE: u16 = close_code::POLICY;
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
+    use nimbus_core::MutationCap;
+
+    #[test]
+    fn server_envelope_encodes_full_commit_taxonomy_for_sdk_decoders() {
+        let cases = [
+            (
+                Error::retryable_conflict("race", None),
+                "op.conflict",
+                "retryable",
+            ),
+            (
+                Error::overloaded("busy"),
+                "rate.overloaded",
+                "retryable_after_backoff",
+            ),
+            (
+                Error::committer_full("full", 128),
+                "rate.committer_full",
+                "retryable_after_backoff",
+            ),
+            (
+                Error::rejected_before_execution("not started"),
+                "rate.rejected_before_execution",
+                "retryable",
+            ),
+            (
+                Error::rate_limited("hot", Duration::from_millis(250)),
+                "rate.limited",
+                "retryable_after_backoff",
+            ),
+            (
+                Error::out_of_retention("expired", None),
+                "op.out_of_retention",
+                "restart_transaction",
+            ),
+            (
+                Error::cap_exceeded(MutationCap::WriteBytes, 2, 1),
+                "op.cap_exceeded",
+                "terminal",
+            ),
+        ];
+
+        for (error, code, retryability) in cases {
+            let public = PublicError::from_core_error(&error);
+            assert_eq!(public.code, code, "{error}");
+            assert_eq!(
+                public.retryable,
+                error.retryability() != nimbus_core::Retryability::Terminal
+            );
+            assert_eq!(
+                public.detail["retryability"],
+                json!(retryability),
+                "{error}"
+            );
+        }
+    }
 
     #[test]
     fn convex_http_commit_errors_use_convex_vocabulary() {
