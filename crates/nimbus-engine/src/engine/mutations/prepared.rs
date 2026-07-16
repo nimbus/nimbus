@@ -724,10 +724,17 @@ mod tests {
         )
         .into_record(sequence, timestamp)
         .expect("journal prepared commit should become a record");
+        let mut stamped_writes = writes.clone();
+        let stamped_document = stamped_writes[0]
+            .current
+            .as_mut()
+            .expect("insert should carry its current document");
+        stamped_document.creation_time = timestamp;
+        stamped_document.update_time = timestamp;
         let former_shape = TenantEventRecord::compatibility_document_record(
             sequence,
             timestamp,
-            writes.clone(),
+            stamped_writes.clone(),
             scheduled_execution_id.clone(),
         )
         .expect("former journal record shape should construct");
@@ -735,7 +742,7 @@ mod tests {
         assert_eq!(record, former_shape);
         assert_eq!(record.sequence, sequence);
         assert_eq!(record.timestamp, timestamp);
-        assert_eq!(record.writes, writes);
+        assert_eq!(record.writes, stamped_writes);
         assert_eq!(record.scheduled_execution_id, scheduled_execution_id);
         assert!(matches!(
             record.events.as_slice(),
