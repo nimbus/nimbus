@@ -222,7 +222,9 @@ impl Engine {
             let principal_for_prepare = principal.clone();
             let scheduled_for_prepare = scheduled_execution_id.clone();
             let id_source = Arc::clone(&self.id_source);
+            let prepare_permit = runtime.acquire_prepare_permit().await?;
             let prepared = tokio::task::spawn_blocking(move || {
+                let _prepare_permit = prepare_permit;
                 prepare_queued_mutation(
                     runtime_for_prepare.as_ref(),
                     mutation_for_prepare,
@@ -233,6 +235,9 @@ impl Engine {
             })
             .await
             .map_err(|error| Error::Internal(format!("mutation prepare task failed: {error}")))??;
+            runtime
+                .commit_phase_metrics()
+                .record_prepare_pool(Duration::from_nanos(prepared.prepare_nanos));
             let shadow_snapshot_sequence = prepared.prepared_commit.snapshot_sequence;
             let prepared_bytes = prepared.prepared_commit.accounted_bytes();
             let (response_tx, mut response_rx) = tokio::sync::oneshot::channel();
@@ -241,7 +246,6 @@ impl Engine {
                 prepared_commit: prepared.prepared_commit,
                 conflict_dependencies: prepared.conflict_dependencies,
                 result: prepared.result,
-                prepare_nanos: prepared.prepare_nanos,
                 prepared_payload_accounting: Some(PreparedPayloadAccounting::new(
                     runtime.clone(),
                     prepared_bytes,
@@ -337,7 +341,6 @@ fn process_queued_mutation_batch(
             prepared_commit,
             conflict_dependencies,
             result,
-            prepare_nanos,
             prepared_payload_accounting,
             cancelled,
             _operation,
@@ -371,7 +374,6 @@ fn process_queued_mutation_batch(
             continue;
         }
         phases.add_conflict_check(conflict_started.elapsed());
-        phases.add_prepare(Duration::from_nanos(prepare_nanos));
         let queue_wait = enqueued_at.elapsed();
         phases.add_queue_wait(queue_wait);
         sample_started_at = Some(
@@ -802,5 +804,51 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![SequenceNumber(20), SequenceNumber(21)]
         );
+    }
+
+    #[test]
+    fn prepared_ab_ops_validate_against_pending_writes() {
+        let table = nimbus_core::TableName::new("tasks").expect("table should build");
+        let table_id = nimbus_core::TableId::new();
+        let document_id = nimbus_core::DocumentId::from_key("same").expect("id should build");
+        let document = Document::with_id_at(
+            document_id.clone(),
+            table.clone(),
+            serde_json::Map::new(),
+            Timestamp(1),
+        );
+        let log = super::super::write_log::WriteLog::new(
+            super::super::write_log::WriteLogConfig::from_env(),
+            SequenceNumber(0),
+            SequenceNumber(0),
+        );
+        log.stage_pending(
+            [CommitEntry {
+                sequence: SequenceNumber(1),
+                timestamp: Timestamp(1),
+                writes: vec![nimbus_core::WriteOp {
+                    table: table.clone(),
+                    table_id: table_id.clone(),
+                    op_type: nimbus_core::WriteOpType::Insert,
+                    doc_id: document_id.clone(),
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
+                    previous: None,
+                    current: Some(document),
+                }],
+            }],
+            Timestamp(1),
+        );
+        let mut dependencies = DependencySet::default();
+        dependencies.record_document(&table, &table_id, document_id);
+        let super::super::write_log::ValidationSource::InMemory(view) = log
+            .validation_source(SequenceNumber(0), SequenceNumber(0))
+            .expect("pending window should cover the snapshot")
+        else {
+            panic!("pending window should validate in memory")
+        };
+        let error = validate_prepared_window_view(&view, &dependencies)
+            .expect_err("the later prepare must see the pending write");
+        assert_eq!(error.conflicting_sequence(), Some(SequenceNumber(1)));
     }
 }

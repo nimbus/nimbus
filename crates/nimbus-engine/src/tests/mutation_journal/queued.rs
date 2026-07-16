@@ -3,6 +3,7 @@ use super::support::{
     expect_future_within, new_faulted_engine,
 };
 use super::*;
+use nimbus_storage::NoopFaultInjector;
 
 #[tokio::test]
 async fn async_schema_write_advances_runtime_journal_before_next_queued_document_write() {
@@ -121,6 +122,179 @@ async fn concurrent_mutations_do_not_strand_the_journal_worker() {
         .expect("journal stats should load");
     assert_eq!(stats.queue_depth, 0, "all mutations drained");
     assert_eq!(stats.worker_failure_count, 0, "no worker failures");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_disjoint_ab_commits_all_succeed_without_retry() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("prepared-disjoint", Engine::create_tenant);
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+
+    run_paused_insert_burst(&engine, &tenant_id, 32).await;
+
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+    assert_eq!(
+        after.reprepare_total.saturating_sub(before.reprepare_total),
+        0,
+        "disjoint prepared writes must not amplify into retries"
+    );
+    assert_eq!(after.prepared_payload_bytes_current, 0);
+    assert!(after.prepared_payload_bytes_peak > 0);
+}
+
+async fn run_same_document_prepare_race() -> (
+    EngineFixture<Engine>,
+    Arc<Engine>,
+    TenantId,
+    nimbus_core::DocumentId,
+    u64,
+    u64,
+) {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("prepared-hot-key", Engine::create_tenant);
+    let document_id = engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("original"))]),
+        )
+        .await
+        .expect("seed insert should succeed");
+    let before_diagnostics = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load");
+    let pause = engine
+        .mutation_journal_pause_handle_for_testing(&tenant_id)
+        .expect("pause handle should load");
+    pause.arm();
+
+    let first = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        async move {
+            engine
+                .update_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    document_id,
+                    serde_json::Map::from_iter([("first".to_string(), json!(1))]),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state(
+        "first same-document prepare should reach the paused drainer",
+        {
+            let pause = pause.clone();
+            move |timeout| pause.wait_until_entered(timeout)
+        },
+    )
+    .await;
+    let second = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        async move {
+            engine
+                .update_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    document_id,
+                    serde_json::Map::from_iter([("second".to_string(), json!(2))]),
+                )
+                .await
+        }
+    });
+    wait_for_mutation_admission_stats(
+        &engine,
+        &tenant_id,
+        "second same-document prepare should queue behind the paused drainer",
+        |stats| stats.queue_depth == 1,
+    )
+    .await;
+    pause.release();
+    first
+        .await
+        .expect("first task should join")
+        .expect("first update should succeed");
+    second
+        .await
+        .expect("second task should join")
+        .expect("second update should re-prepare");
+
+    (
+        fixture,
+        engine,
+        tenant_id,
+        document_id,
+        before_diagnostics.mutation_journal.read_wait_count,
+        before_diagnostics.commit_phases.reprepare_total,
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stale_prepare_waits_for_applied_then_re_prepares() {
+    let (_fixture, engine, tenant_id, _, waits_before, retries_before) =
+        run_same_document_prepare_race().await;
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load");
+    assert!(after.mutation_journal.read_wait_count > waits_before);
+    assert_eq!(after.commit_phases.reprepare_total - retries_before, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sequential_same_doc_writes_match_overlay_semantics() {
+    let (_fixture, engine, tenant_id, document_id, _, _) = run_same_document_prepare_race().await;
+    let visible = engine
+        .query_documents_async(tenant_id, query_for("tasks"))
+        .await
+        .expect("final query should succeed");
+    let document = visible
+        .iter()
+        .find(|document| document.id == document_id)
+        .expect("updated document should remain visible");
+    assert_eq!(document.fields.get("first"), Some(&json!(1)));
+    assert_eq!(document.fields.get("second"), Some(&json!(2)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn assign_time_stamping_is_monotonic_under_concurrent_prepares() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(55_000))),
+            Arc::new(NoopFaultInjector),
+            Arc::new(nimbus_core::SeededIdSource::new(55_000)),
+        )
+        .expect("memory engine should create"),
+    );
+    let tenant_id = TenantId::new("prepared-stamps").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    run_paused_insert_burst(&engine, &tenant_id, 16).await;
+    let commits = durable_journal_commits(engine.as_ref(), &tenant_id, SequenceNumber(0));
+    assert_eq!(commits.len(), 16);
+    assert!(commits.windows(2).all(|pair| {
+        pair[0].sequence < pair[1].sequence && pair[0].timestamp.0 <= pair[1].timestamp.0
+    }));
+    assert!(
+        commits
+            .iter()
+            .all(|commit| commit.timestamp == Timestamp(55_000))
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

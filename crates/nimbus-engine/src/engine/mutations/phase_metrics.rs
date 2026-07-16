@@ -38,6 +38,9 @@ pub struct CommitPhaseMetricsSnapshot {
     pub journal_batch_count: u64,
     pub queue_wait_nanos: u64,
     pub prepare_nanos: u64,
+    /// Caller-side prepare work completed before committer admission. Unlike
+    /// `prepare_nanos`, this is outside the actor's serial critical section.
+    pub prepare_pool_nanos: u64,
     pub conflict_check_nanos: u64,
     pub durable_append_nanos: u64,
     pub apply_nanos: u64,
@@ -75,6 +78,7 @@ pub(crate) struct CommitPhaseMetrics {
     journal_batch_count: AtomicU64,
     queue_wait_nanos: AtomicU64,
     prepare_nanos: AtomicU64,
+    prepare_pool_nanos: AtomicU64,
     conflict_check_nanos: AtomicU64,
     durable_append_nanos: AtomicU64,
     apply_nanos: AtomicU64,
@@ -108,6 +112,7 @@ impl CommitPhaseMetrics {
             journal_batch_count: AtomicU64::new(0),
             queue_wait_nanos: AtomicU64::new(0),
             prepare_nanos: AtomicU64::new(0),
+            prepare_pool_nanos: AtomicU64::new(0),
             conflict_check_nanos: AtomicU64::new(0),
             durable_append_nanos: AtomicU64::new(0),
             apply_nanos: AtomicU64::new(0),
@@ -198,6 +203,11 @@ impl CommitPhaseMetrics {
         self.reprepare_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub(crate) fn record_prepare_pool(&self, elapsed: Duration) {
+        self.prepare_pool_nanos
+            .fetch_add(duration_nanos(elapsed), Ordering::Relaxed);
+    }
+
     pub(crate) fn accept_prepared_payload(&self, bytes: u64) {
         let current = self
             .prepared_payload_bytes_current
@@ -269,6 +279,7 @@ impl CommitPhaseMetrics {
             journal_batch_count: self.journal_batch_count.load(Ordering::Relaxed),
             queue_wait_nanos: self.queue_wait_nanos.load(Ordering::Relaxed),
             prepare_nanos: self.prepare_nanos.load(Ordering::Relaxed),
+            prepare_pool_nanos: self.prepare_pool_nanos.load(Ordering::Relaxed),
             conflict_check_nanos: self.conflict_check_nanos.load(Ordering::Relaxed),
             durable_append_nanos: self.durable_append_nanos.load(Ordering::Relaxed),
             apply_nanos: self.apply_nanos.load(Ordering::Relaxed),
@@ -469,6 +480,7 @@ mod tests {
                 journal_batch_count: 1,
                 queue_wait_nanos: 11,
                 prepare_nanos: 12,
+                prepare_pool_nanos: 0,
                 conflict_check_nanos: 13,
                 durable_append_nanos: 14,
                 apply_nanos: 15,

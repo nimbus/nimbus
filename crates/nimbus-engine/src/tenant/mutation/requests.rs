@@ -43,7 +43,6 @@ pub(crate) struct QueuedMutationRequest {
     pub prepared_commit: PreparedCommit,
     pub conflict_dependencies: DependencySet,
     pub result: QueuedMutationResult,
-    pub prepare_nanos: u64,
     pub prepared_payload_accounting: Option<PreparedPayloadAccounting>,
     pub cancelled: Arc<AtomicBool>,
     pub _operation: TenantOperationGuard,

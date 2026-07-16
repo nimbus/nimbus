@@ -15,7 +15,6 @@ fn queued_request(enqueued_at: Instant) -> QueuedMutationRequest {
         ),
         conflict_dependencies: DependencySet::default(),
         result: QueuedMutationResult::Immediate(None),
-        prepare_nanos: 0,
         prepared_payload_accounting: None,
         cancelled: Arc::new(AtomicBool::new(false)),
         _operation: TenantOperationGuard {
