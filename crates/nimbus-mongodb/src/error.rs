@@ -46,6 +46,26 @@ pub const WRITE_CONFLICT: MongoErrorCode = MongoErrorCode {
     code: 112,
     code_name: "WriteConflict",
 };
+pub const SNAPSHOT_TOO_OLD: MongoErrorCode = MongoErrorCode {
+    code: 239,
+    code_name: "SnapshotTooOld",
+};
+pub const TEMPORARILY_UNAVAILABLE: MongoErrorCode = MongoErrorCode {
+    code: 365,
+    code_name: "TemporarilyUnavailable",
+};
+pub const TRANSACTION_TOO_LARGE_FOR_CACHE: MongoErrorCode = MongoErrorCode {
+    code: 388,
+    code_name: "TransactionTooLargeForCache",
+};
+pub const RESOURCE_EXHAUSTED: MongoErrorCode = MongoErrorCode {
+    code: 402,
+    code_name: "ResourceExhausted",
+};
+pub const RATE_LIMIT_EXCEEDED: MongoErrorCode = MongoErrorCode {
+    code: 449,
+    code_name: "RateLimitExceeded",
+};
 pub const DUPLICATE_KEY: MongoErrorCode = MongoErrorCode {
     code: 11000,
     code_name: "DuplicateKey",
@@ -91,21 +111,44 @@ impl MongoError {
 impl From<nimbus_core::Error> for MongoError {
     fn from(err: nimbus_core::Error) -> Self {
         let (ec, msg) = match &err {
-            nimbus_core::Error::DocumentNotFound(_) => (NAMESPACE_NOT_FOUND, err.to_string()),
-            nimbus_core::Error::TenantNotFound(_) => (NAMESPACE_NOT_FOUND, err.to_string()),
-            nimbus_core::Error::SchemaNotFound(_) => (NAMESPACE_NOT_FOUND, err.to_string()),
+            nimbus_core::Error::TenantNotFound(_)
+            | nimbus_core::Error::DocumentNotFound(_)
+            | nimbus_core::Error::ScheduledJobNotFound(_)
+            | nimbus_core::Error::NotFound(_)
+            | nimbus_core::Error::SchemaNotFound(_) => (NAMESPACE_NOT_FOUND, err.to_string()),
             nimbus_core::Error::AlreadyExists(msg) if msg.contains("document") => {
                 (DUPLICATE_KEY, err.to_string())
             }
             nimbus_core::Error::AlreadyExists(_) => (NAMESPACE_EXISTS, err.to_string()),
-            nimbus_core::Error::InvalidInput(_) => (BAD_VALUE, err.to_string()),
-            nimbus_core::Error::SchemaValidation(_) => (BAD_VALUE, err.to_string()),
+            nimbus_core::Error::InvalidInput(_)
+            | nimbus_core::Error::MissingIndex { .. }
+            | nimbus_core::Error::SchemaValidation(_)
+            | nimbus_core::Error::HistoricalRead { .. }
+            | nimbus_core::Error::Serialization(_) => (BAD_VALUE, err.to_string()),
             nimbus_core::Error::PermissionDenied(_) => (UNAUTHORIZED, err.to_string()),
             nimbus_core::Error::Conflict { .. } | nimbus_core::Error::PreconditionFailed(_) => {
                 (WRITE_CONFLICT, err.to_string())
             }
-            nimbus_core::Error::Serialization(_) => (BAD_VALUE, err.to_string()),
-            _ => (INTERNAL_ERROR, err.to_string()),
+            nimbus_core::Error::Overloaded { .. }
+            | nimbus_core::Error::CommitterFull { .. }
+            | nimbus_core::Error::RejectedBeforeExecution { .. }
+            | nimbus_core::Error::Transport(_) => (TEMPORARILY_UNAVAILABLE, err.to_string()),
+            nimbus_core::Error::RateLimited { .. } => (RATE_LIMIT_EXCEEDED, err.to_string()),
+            nimbus_core::Error::OutOfRetention { .. } => (SNAPSHOT_TOO_OLD, err.to_string()),
+            nimbus_core::Error::CapExceeded { .. } => {
+                (TRANSACTION_TOO_LARGE_FOR_CACHE, err.to_string())
+            }
+            nimbus_core::Error::ResourceExhausted(_) => (RESOURCE_EXHAUSTED, err.to_string()),
+            nimbus_core::Error::Storage {
+                kind:
+                    nimbus_core::StorageErrorKind::Busy
+                    | nimbus_core::StorageErrorKind::Transient
+                    | nimbus_core::StorageErrorKind::Unavailable,
+                ..
+            } => (TEMPORARILY_UNAVAILABLE, err.to_string()),
+            nimbus_core::Error::Cancelled
+            | nimbus_core::Error::Storage { .. }
+            | nimbus_core::Error::Internal(_) => (INTERNAL_ERROR, err.to_string()),
         };
         Self::Command {
             code: ec.code,
@@ -140,7 +183,67 @@ pub fn error_doc(code: i32, code_name: &str, errmsg: &str) -> bson::Document {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
+    use nimbus_core::{MutationCap, Retryability};
+
+    fn command_vocabulary(error: nimbus_core::Error) -> (i32, String) {
+        match MongoError::from(error) {
+            MongoError::Command {
+                code, code_name, ..
+            } => (code, code_name),
+            other => panic!("expected Command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mongodb_surfaces_full_commit_taxonomy() {
+        let cases = [
+            (
+                nimbus_core::Error::retryable_conflict("race", None),
+                WRITE_CONFLICT,
+                Retryability::Retryable,
+            ),
+            (
+                nimbus_core::Error::overloaded("busy"),
+                TEMPORARILY_UNAVAILABLE,
+                Retryability::RetryableAfterBackoff,
+            ),
+            (
+                nimbus_core::Error::committer_full("full", 128),
+                TEMPORARILY_UNAVAILABLE,
+                Retryability::RetryableAfterBackoff,
+            ),
+            (
+                nimbus_core::Error::rejected_before_execution("not started"),
+                TEMPORARILY_UNAVAILABLE,
+                Retryability::Retryable,
+            ),
+            (
+                nimbus_core::Error::rate_limited("hot", Duration::from_millis(100)),
+                RATE_LIMIT_EXCEEDED,
+                Retryability::RetryableAfterBackoff,
+            ),
+            (
+                nimbus_core::Error::out_of_retention("expired", None),
+                SNAPSHOT_TOO_OLD,
+                Retryability::RestartTransaction,
+            ),
+            (
+                nimbus_core::Error::cap_exceeded(MutationCap::DocumentsWritten, 17, 16),
+                TRANSACTION_TOO_LARGE_FOR_CACHE,
+                Retryability::Terminal,
+            ),
+        ];
+
+        for (error, expected, retryability) in cases {
+            assert_eq!(error.retryability(), retryability, "{error}");
+            let (code, code_name) = command_vocabulary(error);
+            assert_eq!(code, expected.code);
+            assert_eq!(code_name, expected.code_name);
+        }
+    }
 
     #[test]
     fn ok_doc_has_ok_field() {

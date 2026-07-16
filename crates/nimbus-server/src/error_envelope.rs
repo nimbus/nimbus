@@ -644,6 +644,23 @@ impl StructuredHttpError {
             }
         }
     }
+
+    pub(crate) fn from_convex_core_error(error: Error) -> Self {
+        let Some(vocabulary) = nimbus_convex::convex_commit_error_vocabulary(&error) else {
+            return Self::from_app_error(crate::state::AppError::Core(error));
+        };
+        let mut public = PublicError::from_core_error(&error);
+        public.code = vocabulary.code;
+        let mut detail = match public.detail {
+            Value::Object(detail) => detail,
+            Value::Null => serde_json::Map::new(),
+            other => serde_json::Map::from_iter([("nimbusDetail".to_string(), other)]),
+        };
+        detail.insert("shortName".to_string(), json!(vocabulary.short_name));
+        detail.insert("retryability".to_string(), json!(vocabulary.retryability));
+        public.detail = Value::Object(detail);
+        Self::new(vocabulary.http_status, public)
+    }
 }
 
 fn conflict_detail(
@@ -697,6 +714,23 @@ pub(crate) const FATAL_PROTOCOL_CLOSE_CODE: u16 = close_code::POLICY;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn convex_http_commit_errors_use_convex_vocabulary() {
+        let error = Error::overloaded("busy");
+        let structured = StructuredHttpError::from_convex_core_error(error);
+
+        assert_eq!(structured.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(structured.envelope.error.code, "Overloaded");
+        assert_eq!(
+            structured.envelope.error.detail["shortName"],
+            json!("Overloaded")
+        );
+        assert_eq!(
+            structured.envelope.error.detail["retryability"],
+            json!("retryable_after_backoff")
+        );
+    }
 
     #[test]
     fn snapshot_unavailable_historical_read_maps_to_service_unavailable() {

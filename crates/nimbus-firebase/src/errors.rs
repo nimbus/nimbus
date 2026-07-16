@@ -59,13 +59,15 @@ pub fn firestore_grpc_code(error: &Error) -> Code {
         | Error::ScheduledJobNotFound(_)
         | Error::SchemaNotFound(_)
         | Error::NotFound(_) => Code::NotFound,
-        Error::Conflict { .. } | Error::OutOfRetention { .. } => Code::Aborted,
-        Error::PreconditionFailed(_) | Error::MissingIndex { .. } => Code::FailedPrecondition,
+        Error::Conflict { .. } => Code::Aborted,
+        Error::OutOfRetention { .. }
+        | Error::PreconditionFailed(_)
+        | Error::MissingIndex { .. } => Code::FailedPrecondition,
         Error::ResourceExhausted(_)
         | Error::Overloaded { .. }
         | Error::CommitterFull { .. }
-        | Error::RejectedBeforeExecution { .. }
         | Error::RateLimited { .. } => Code::ResourceExhausted,
+        Error::RejectedBeforeExecution { .. } => Code::Unavailable,
         Error::PermissionDenied(_) => Code::PermissionDenied,
         Error::InvalidInput(_)
         | Error::SchemaValidation(_)
@@ -112,15 +114,15 @@ fn firebase_rest_error(error: &Error) -> FirestoreRestError {
         | Error::ScheduledJobNotFound(_)
         | Error::SchemaNotFound(_)
         | Error::NotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND"),
-        Error::Conflict { .. } | Error::OutOfRetention { .. } => (StatusCode::CONFLICT, "ABORTED"),
-        Error::PreconditionFailed(_) | Error::MissingIndex { .. } => {
-            (StatusCode::PRECONDITION_FAILED, "FAILED_PRECONDITION")
-        }
+        Error::Conflict { .. } => (StatusCode::CONFLICT, "ABORTED"),
+        Error::OutOfRetention { .. }
+        | Error::PreconditionFailed(_)
+        | Error::MissingIndex { .. } => (StatusCode::PRECONDITION_FAILED, "FAILED_PRECONDITION"),
         Error::ResourceExhausted(_)
         | Error::Overloaded { .. }
         | Error::CommitterFull { .. }
-        | Error::RejectedBeforeExecution { .. }
         | Error::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED"),
+        Error::RejectedBeforeExecution { .. } => (StatusCode::SERVICE_UNAVAILABLE, "UNAVAILABLE"),
         Error::PermissionDenied(_) => (StatusCode::FORBIDDEN, "PERMISSION_DENIED"),
         Error::InvalidInput(_)
         | Error::SchemaValidation(_)
@@ -165,8 +167,73 @@ pub fn firebase_error_response_json(error: Error) -> (StatusCode, Value) {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
-    use nimbus_core::TenantId;
+    use nimbus_core::{MutationCap, Retryability, TenantId};
+
+    #[test]
+    fn firebase_surfaces_full_commit_taxonomy() {
+        let cases = [
+            (
+                Error::retryable_conflict("race", None),
+                Code::Aborted,
+                StatusCode::CONFLICT,
+                "ABORTED",
+                Retryability::Retryable,
+            ),
+            (
+                Error::overloaded("busy"),
+                Code::ResourceExhausted,
+                StatusCode::TOO_MANY_REQUESTS,
+                "RESOURCE_EXHAUSTED",
+                Retryability::RetryableAfterBackoff,
+            ),
+            (
+                Error::committer_full("full", 128),
+                Code::ResourceExhausted,
+                StatusCode::TOO_MANY_REQUESTS,
+                "RESOURCE_EXHAUSTED",
+                Retryability::RetryableAfterBackoff,
+            ),
+            (
+                Error::rejected_before_execution("not started"),
+                Code::Unavailable,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "UNAVAILABLE",
+                Retryability::Retryable,
+            ),
+            (
+                Error::rate_limited("hot", Duration::from_millis(100)),
+                Code::ResourceExhausted,
+                StatusCode::TOO_MANY_REQUESTS,
+                "RESOURCE_EXHAUSTED",
+                Retryability::RetryableAfterBackoff,
+            ),
+            (
+                Error::out_of_retention("expired", None),
+                Code::FailedPrecondition,
+                StatusCode::PRECONDITION_FAILED,
+                "FAILED_PRECONDITION",
+                Retryability::RestartTransaction,
+            ),
+            (
+                Error::cap_exceeded(MutationCap::DocumentsScanned, 11, 10),
+                Code::InvalidArgument,
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                Retryability::Terminal,
+            ),
+        ];
+
+        for (error, grpc_code, http_code, status, retryability) in cases {
+            assert_eq!(firestore_grpc_code(&error), grpc_code, "{error}");
+            assert_eq!(error.retryability(), retryability, "{error}");
+            let (actual_http_code, body) = firebase_error_response_json(error);
+            assert_eq!(actual_http_code, http_code);
+            assert_eq!(body["error"]["status"], json!(status));
+        }
+    }
 
     #[test]
     fn firebase_rest_error_maps_core_statuses() {
