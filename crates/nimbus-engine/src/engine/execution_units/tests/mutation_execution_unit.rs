@@ -256,6 +256,147 @@ async fn mutation_execution_unit_pre_assign_label_forces_commit_interleaving() {
     );
 }
 
+#[tokio::test]
+async fn schema_epoch_race_pending_index_add_conflicts_concurrent_write() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table_name = "messages_schema_epoch_pending";
+    let table = messages_table(table_name);
+    engine
+        .set_table_schema(&tenant_id, messages_schema(table_name, Vec::new(), None))
+        .expect("initial schema should save");
+
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should capture the initial schema epoch");
+    execution_unit
+        .insert_document(
+            table,
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("prepared before index add")),
+            ]),
+        )
+        .expect("write should stage against the initial schema");
+
+    let faults = engine.commit_fault_handle_for_testing();
+    faults.arm(labels::SCHEMA_ASSIGNED_BEFORE_VISIBLE);
+    let schema_change = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .set_table_schema_async(
+                    tenant_id,
+                    messages_schema(
+                        table_name,
+                        vec![IndexDefinition {
+                            id: nimbus_core::IndexId::new(),
+                            state: nimbus_core::IndexState::Enabled,
+                            name: "by_body".to_string(),
+                            fields: vec!["body".to_string()],
+                        }],
+                        None,
+                    ),
+                )
+                .await
+        }
+    });
+    let reached = tokio::task::spawn_blocking({
+        let faults = faults.clone();
+        move || {
+            faults.wait_until_entered(
+                labels::SCHEMA_ASSIGNED_BEFORE_VISIBLE,
+                Duration::from_secs(5),
+            )
+        }
+    })
+    .await
+    .expect("schema pause wait should join");
+    assert!(reached, "schema change should pause after epoch assignment");
+
+    let error = tokio::task::spawn_blocking(move || execution_unit.commit())
+        .await
+        .expect("execution-unit commit task should join")
+        .expect_err("assigned-but-unpublished schema epoch must conflict");
+    assert!(matches!(error, Error::Conflict { .. }));
+
+    faults.release(labels::SCHEMA_ASSIGNED_BEFORE_VISIBLE);
+    schema_change
+        .await
+        .expect("schema task should join")
+        .expect("schema publication should finish after release");
+}
+
+#[test]
+fn missing_table_phantom_conflicts_when_table_created_concurrently() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_missing_lifecycle_phantom");
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start before the table exists");
+    let visible = execution_unit
+        .query_documents_cancellable(
+            &Query {
+                table: table.clone(),
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+            &mut || Ok(()),
+        )
+        .expect("missing-table scan should succeed");
+    assert!(visible.is_empty());
+    execution_unit
+        .insert_document(
+            messages_table("messages_lifecycle_side_effect"),
+            serde_json::Map::from_iter([("body".to_string(), json!("side effect"))]),
+        )
+        .expect("disjoint write should make the execution unit commit");
+
+    let runtime = engine
+        .get_existing_tenant(&tenant_id)
+        .expect("tenant runtime should exist");
+    let _sequence_guard = runtime.lock_mutation_sequence();
+    let table_id = TableId::new();
+    match runtime.store() {
+        crate::persistence::TenantPersistence::Redb(store) => store
+            .stage_hidden_table_identity(&table, &table_id)
+            .expect("hidden table identity should stage"),
+        crate::persistence::TenantPersistence::Sqlite(store) => store
+            .stage_hidden_table_identity(&table, &table_id)
+            .expect("hidden table identity should stage"),
+        crate::persistence::TenantPersistence::LibsqlReplica(_)
+        | crate::persistence::TenantPersistence::Postgres(_)
+        | crate::persistence::TenantPersistence::MySql(_)
+        | crate::persistence::TenantPersistence::Memory(_) => {
+            panic!("engine fixture should use an embedded persistence provider")
+        }
+    }
+    let progress = runtime
+        .store()
+        .journal_progress()
+        .expect("lifecycle journal progress should load");
+    let record = runtime
+        .store()
+        .read_durable_journal_from(progress.durable_head)
+        .expect("lifecycle record should read")
+        .into_iter()
+        .find(|record| record.sequence == progress.durable_head)
+        .expect("assigned lifecycle record should exist");
+    runtime.stage_zero_write_record_in_write_log(&record);
+    runtime.sync_mutation_journal_progress_locked(progress);
+    drop(_sequence_guard);
+
+    let error = execution_unit
+        .commit()
+        .expect_err("whole-table lifecycle marker must conflict with missing-table dependency");
+    assert!(matches!(error, Error::Conflict { .. }));
+}
+
 #[test]
 fn mutation_execution_unit_pre_persist_fault_leaves_no_partial_state() {
     let fixture = EngineFixture::new(|path| Engine::new(path));

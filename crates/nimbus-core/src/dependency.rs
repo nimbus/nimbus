@@ -40,6 +40,43 @@ impl PartialEq for DependencySet {
 }
 
 impl DependencySet {
+    pub fn touched_tables(&self) -> HashSet<TableName> {
+        self.tables
+            .iter()
+            .map(|dependency| dependency.table.clone())
+            .chain(self.missing_tables.iter().cloned())
+            .chain(
+                self.missing_predicates
+                    .iter()
+                    .map(|dependency| dependency.table.clone()),
+            )
+            .chain(
+                self.documents
+                    .iter()
+                    .map(|dependency| dependency.table.clone()),
+            )
+            .chain(
+                self.index_ranges
+                    .iter()
+                    .map(|dependency| dependency.table.clone()),
+            )
+            .chain(
+                self.predicates
+                    .iter()
+                    .map(|dependency| dependency.table.clone()),
+            )
+            .chain(
+                self.paginated_windows
+                    .iter()
+                    .map(|dependency| dependency.table.clone()),
+            )
+            .collect()
+    }
+
+    pub fn touches_table(&self, table: &TableName) -> bool {
+        self.touched_tables().contains(table)
+    }
+
     pub fn from_engine_query(query: &Query, table_id: Option<TableId>) -> Self {
         let mut dependencies = Self::default();
         let Some(table_id) = table_id else {

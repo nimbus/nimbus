@@ -1,10 +1,11 @@
+use std::collections::{HashMap, HashSet};
 use std::ops::Bound::{Excluded, Included};
 use std::sync::{Arc, Mutex};
 
 use imbl::OrdMap;
 use nimbus_core::{
     CommitEntry, DependencySet, Document, DocumentId, Error, Result, SequenceNumber, TableName,
-    Timestamp, commit_intersects_dependency_set,
+    TenantEventRecord, Timestamp, commit_intersects_dependency_set,
 };
 
 const DEFAULT_MIN_RETENTION_SECS: usize = 30;
@@ -71,13 +72,20 @@ fn env_positive_usize(key: &str, default: usize) -> usize {
 
 #[derive(Debug, Clone)]
 struct WindowEntry {
-    commit: Arc<CommitEntry>,
+    sequence: SequenceNumber,
+    change: WindowChange,
     observed_at: Timestamp,
     accounted_bytes: usize,
 }
 
+#[derive(Debug, Clone)]
+enum WindowChange {
+    DocumentCommit(Arc<CommitEntry>),
+    WholeTables(Arc<HashSet<TableName>>),
+}
+
 impl WindowEntry {
-    fn new(commit: CommitEntry, observed_at: Timestamp) -> Self {
+    fn document_commit(commit: CommitEntry, observed_at: Timestamp) -> Self {
         // Serialized size deliberately includes both full document images in
         // every WriteOp. It is a stable conservative payload budget rather
         // than a key-only estimate; fixed map/Arc overhead is added as well.
@@ -88,10 +96,28 @@ impl WindowEntry {
             .saturating_add(std::mem::size_of::<CommitEntry>())
             .saturating_add(std::mem::size_of::<WindowEntry>());
         Self {
-            commit: Arc::new(commit),
+            sequence: commit.sequence,
+            change: WindowChange::DocumentCommit(Arc::new(commit)),
             observed_at,
             accounted_bytes,
         }
+    }
+
+    fn whole_tables(record: &TenantEventRecord, observed_at: Timestamp) -> Option<Self> {
+        let tables = record.schema_epoch_tables();
+        if tables.is_empty() {
+            return None;
+        }
+        let accounted_bytes = serde_json::to_vec(record)
+            .expect("TenantEventRecord values must always serialize")
+            .len()
+            .saturating_add(std::mem::size_of::<WindowEntry>());
+        Some(Self {
+            sequence: record.sequence,
+            change: WindowChange::WholeTables(Arc::new(tables)),
+            observed_at,
+            accounted_bytes,
+        })
     }
 }
 
@@ -115,6 +141,12 @@ struct WriteLogState {
     /// its full image. Such a runtime uses authoritative storage validation
     /// until restart rather than risking a false in-memory pass.
     coverage_known: bool,
+    /// Assignment epochs are retained independently from conflict-window
+    /// trimming. Schema changes are rare and an execution unit may need to
+    /// compare its published schema snapshot with a newer assigned epoch even
+    /// after the corresponding conflict marker ages out.
+    schema_epoch_history: HashMap<TableName, OrdMap<SequenceNumber, SequenceNumber>>,
+    published_schema_epochs: HashMap<TableName, SequenceNumber>,
 }
 
 /// Per-tenant, structurally shared mirror of recent full commit images.
@@ -151,6 +183,8 @@ impl WriteLog {
                 assigned_through,
                 purged_sequence: SequenceNumber(0),
                 coverage_known: true,
+                schema_epoch_history: HashMap::new(),
+                published_schema_epochs: HashMap::new(),
             }),
         }
     }
@@ -166,8 +200,30 @@ impl WriteLog {
     ) {
         let entries = commits
             .into_iter()
-            .map(|commit| Arc::new(WindowEntry::new(commit, observed_at)))
+            .map(|commit| Arc::new(WindowEntry::document_commit(commit, observed_at)))
             .collect::<Vec<_>>();
+        self.stage_entries(entries);
+    }
+
+    /// Stages a zero-write schema/table-lifecycle record as a dedicated
+    /// whole-table marker. Inert zero-write records only advance coverage.
+    pub(crate) fn stage_zero_write_record(
+        &self,
+        record: &TenantEventRecord,
+        observed_at: Timestamp,
+    ) {
+        assert!(
+            record.writes.is_empty(),
+            "zero-write window staging requires an empty writes projection"
+        );
+        let Some(entry) = WindowEntry::whole_tables(record, observed_at) else {
+            self.advance_known_zero_write_through(record.sequence);
+            return;
+        };
+        self.stage_entries(vec![Arc::new(entry)]);
+    }
+
+    fn stage_entries(&self, entries: Vec<Arc<WindowEntry>>) {
         if entries.is_empty() {
             return;
         }
@@ -179,16 +235,25 @@ impl WriteLog {
         let mut previous = state.assigned_through;
         for entry in &entries {
             assert!(
-                entry.commit.sequence > previous,
+                entry.sequence > previous,
                 "write-log sequences must append strictly monotonically: {} after {}",
-                entry.commit.sequence,
+                entry.sequence,
                 previous
             );
-            previous = entry.commit.sequence;
+            previous = entry.sequence;
         }
 
         for entry in entries {
-            let sequence = entry.commit.sequence;
+            let sequence = entry.sequence;
+            if let WindowChange::WholeTables(tables) = &entry.change {
+                for table in tables.iter() {
+                    state
+                        .schema_epoch_history
+                        .entry(table.clone())
+                        .or_default()
+                        .insert(sequence, sequence);
+                }
+            }
             state.accounted_bytes = state.accounted_bytes.saturating_add(entry.accounted_bytes);
             state.pending.insert(sequence, entry);
             if sequence.0 == state.covered_through.0.saturating_add(1) {
@@ -196,6 +261,32 @@ impl WriteLog {
             }
             state.assigned_through = sequence;
         }
+    }
+
+    pub(crate) fn published_schema_epoch_snapshot(&self) -> HashMap<TableName, SequenceNumber> {
+        self.state
+            .lock()
+            .expect("write-log lock should not be poisoned")
+            .published_schema_epochs
+            .clone()
+    }
+
+    pub(crate) fn current_schema_epoch(&self, table: &TableName) -> SequenceNumber {
+        self.schema_epoch_at(table, SequenceNumber(u64::MAX))
+    }
+
+    pub(crate) fn schema_epoch_at(
+        &self,
+        table: &TableName,
+        sequence: SequenceNumber,
+    ) -> SequenceNumber {
+        self.state
+            .lock()
+            .expect("write-log lock should not be poisoned")
+            .schema_epoch_history
+            .get(table)
+            .and_then(|history| history.range(..=sequence).next_back())
+            .map_or(SequenceNumber(0), |(_, epoch)| *epoch)
     }
 
     /// Re-bases a still-empty startup window after recovery/catch-up.
@@ -291,6 +382,13 @@ impl WriteLog {
                 .pending
                 .remove(&sequence)
                 .expect("selected pending write-log entry must still exist");
+            if let WindowChange::WholeTables(tables) = &entry.change {
+                for table in tables.iter() {
+                    state
+                        .published_schema_epochs
+                        .insert(table.clone(), sequence);
+                }
+            }
             state.published.insert(sequence, entry);
         }
         self.trim_locked(&mut state, now, reader_frontier.min(applied_head));
@@ -392,23 +490,23 @@ pub(crate) struct WriteLogView {
 }
 
 impl WriteLogView {
-    fn commits(&self) -> Vec<Arc<CommitEntry>> {
+    fn entries(&self) -> Vec<Arc<WindowEntry>> {
         let pending_head = self
             .pending
             .get_max()
             .map_or(self.head, |(sequence, _)| self.head.max(*sequence));
-        let mut commits = self
+        let mut entries = self
             .published
             .range((Excluded(self.snapshot_sequence), Included(self.head)))
-            .map(|(_, entry)| entry.commit.clone())
+            .map(|(_, entry)| entry.clone())
             .chain(
                 self.pending
                     .range((Excluded(self.snapshot_sequence), Included(pending_head)))
-                    .map(|(_, entry)| entry.commit.clone()),
+                    .map(|(_, entry)| entry.clone()),
             )
             .collect::<Vec<_>>();
-        commits.sort_unstable_by_key(|commit| commit.sequence);
-        commits
+        entries.sort_unstable_by_key(|entry| entry.sequence);
+        entries
     }
 
     pub(crate) fn first_conflicting_sequence<F>(
@@ -419,11 +517,19 @@ impl WriteLogView {
     where
         F: FnMut(&TableName, DocumentId) -> Result<Option<Document>>,
     {
-        self.commits().into_iter().find_map(|commit| {
-            commit_intersects_dependency_set(&commit, dependencies, &[], |table, document_id| {
-                resolve_document(table, document_id)
-            })
-            .then_some(commit.sequence)
+        self.entries().into_iter().find_map(|entry| {
+            let intersects = match &entry.change {
+                WindowChange::DocumentCommit(commit) => commit_intersects_dependency_set(
+                    commit,
+                    dependencies,
+                    &[],
+                    |table, document_id| resolve_document(table, document_id),
+                ),
+                WindowChange::WholeTables(tables) => {
+                    tables.iter().any(|table| dependencies.touches_table(table))
+                }
+            };
+            intersects.then_some(entry.sequence)
         })
     }
 }
@@ -652,7 +758,7 @@ mod tests {
 
     #[test]
     fn stalled_reader_size_cap_trim_respects_min_retention_floor() {
-        let probe = WindowEntry::new(commit(1, 1_024), Timestamp(0)).accounted_bytes;
+        let probe = WindowEntry::document_commit(commit(1, 1_024), Timestamp(0)).accounted_bytes;
         let log = test_log(WriteLogConfig::for_tests(30, 300, probe + 1));
         log.stage_pending([commit(1, 1_024), commit(2, 1_024)], Timestamp(0));
         log.publish_pending_through(SequenceNumber(2), Timestamp(29_999), SequenceNumber(0));

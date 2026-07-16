@@ -1,8 +1,6 @@
 use std::time::Instant;
 
-use nimbus_core::{
-    CommitEntry, DependencySet, Error, Result, SequenceNumber, TableName, Timestamp,
-};
+use nimbus_core::{CommitEntry, DependencySet, Error, Result, SequenceNumber, Timestamp};
 
 use super::super::mutations::phase_metrics::{CommitPhaseDurations, maybe_warn_wide_read_set};
 use super::super::mutations::prepared::PreparedCommit;
@@ -145,11 +143,21 @@ impl MutationExecutionUnit {
 
     fn ensure_schema_unchanged(&self, dependencies: &DependencySet) -> Result<()> {
         let current_schema = self.runtime.schema();
-        for table in touched_tables(dependencies) {
-            if current_schema.get_table(&table) != self.schema_snapshot.get_table(&table) {
+        for table in dependencies.touched_tables() {
+            let observed_epoch = self
+                .schema_epoch_snapshot
+                .get(&table)
+                .copied()
+                .unwrap_or(SequenceNumber(0));
+            let current_epoch = self.runtime.current_schema_epoch(&table);
+            if observed_epoch != current_epoch
+                || current_schema.get_table(&table) != self.schema_snapshot.get_table(&table)
+            {
                 return Err(Error::retryable_conflict(
-                    format!("table schema changed during transaction: {table}"),
-                    None,
+                    format!(
+                        "table schema changed during transaction: {table} (epoch {observed_epoch} -> {current_epoch})"
+                    ),
+                    (current_epoch != SequenceNumber(0)).then_some(current_epoch),
                 ));
             }
         }
@@ -228,60 +236,6 @@ fn map_fallback_floor_error(error: Error, snapshot_sequence: SequenceNumber) -> 
         }
         other => other,
     }
-}
-
-fn touched_tables(dependencies: &DependencySet) -> Vec<TableName> {
-    let mut tables = dependencies
-        .tables
-        .iter()
-        .map(|dependency| dependency.table.clone())
-        .collect::<Vec<_>>();
-    for table in &dependencies.missing_tables {
-        if !tables.iter().any(|candidate| candidate == table) {
-            tables.push(table.clone());
-        }
-    }
-    for dependency in &dependencies.missing_predicates {
-        if !tables
-            .iter()
-            .any(|candidate| candidate == &dependency.table)
-        {
-            tables.push(dependency.table.clone());
-        }
-    }
-    for dependency in &dependencies.documents {
-        if !tables
-            .iter()
-            .any(|candidate| candidate == &dependency.table)
-        {
-            tables.push(dependency.table.clone());
-        }
-    }
-    for dependency in &dependencies.index_ranges {
-        if !tables
-            .iter()
-            .any(|candidate| candidate == &dependency.table)
-        {
-            tables.push(dependency.table.clone());
-        }
-    }
-    for dependency in &dependencies.predicates {
-        if !tables
-            .iter()
-            .any(|candidate| candidate == &dependency.table)
-        {
-            tables.push(dependency.table.clone());
-        }
-    }
-    for dependency in &dependencies.paginated_windows {
-        if !tables
-            .iter()
-            .any(|candidate| candidate == &dependency.table)
-        {
-            tables.push(dependency.table.clone());
-        }
-    }
-    tables
 }
 
 #[cfg(test)]

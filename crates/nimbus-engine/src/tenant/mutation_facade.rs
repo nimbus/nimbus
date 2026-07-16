@@ -2,7 +2,7 @@
 use std::time::Duration;
 use std::time::Instant;
 
-use nimbus_core::{CommitEntry, Result, SequenceNumber, Timestamp};
+use nimbus_core::{CommitEntry, Result, SequenceNumber, TableName, TenantEventRecord, Timestamp};
 use nimbus_storage::JournalProgress;
 
 use super::*;
@@ -157,6 +157,21 @@ impl TenantRuntime {
 
     pub(crate) fn advance_write_log_zero_write_coverage(&self, sequence: SequenceNumber) {
         self.write_log.advance_known_zero_write_through(sequence);
+    }
+
+    pub(crate) fn stage_zero_write_record_in_write_log(&self, record: &TenantEventRecord) {
+        self.write_log
+            .stage_zero_write_record(record, self.store.now());
+    }
+
+    pub(crate) fn published_schema_epoch_snapshot(
+        &self,
+    ) -> std::collections::HashMap<TableName, SequenceNumber> {
+        self.write_log.published_schema_epoch_snapshot()
+    }
+
+    pub(crate) fn current_schema_epoch(&self, table: &TableName) -> SequenceNumber {
+        self.write_log.current_schema_epoch(table)
     }
 
     /// Arms a fail-safe around a persistence attempt. The caller disarms only
