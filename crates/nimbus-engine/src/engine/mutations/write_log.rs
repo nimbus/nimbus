@@ -135,10 +135,11 @@ impl WriteLog {
         covered_through: SequenceNumber,
         assigned_through: SequenceNumber,
     ) -> Self {
-        assert!(
-            covered_through <= assigned_through,
-            "write-log applied coverage cannot exceed assigned sequence"
-        );
+        // Shared providers read durable/applied heads in separate statements,
+        // so a foreign commit can transiently produce applied > durable. Treat
+        // the applied observation as assignment too; this only widens the
+        // bootstrap/fallback boundary and never claims historical images.
+        let assigned_through = assigned_through.max(covered_through);
         Self {
             config,
             state: Mutex::new(WriteLogState {
@@ -219,10 +220,7 @@ impl WriteLog {
         {
             return;
         }
-        assert!(
-            applied_through <= assigned_through,
-            "write-log recovery coverage cannot exceed assigned sequence"
-        );
+        let assigned_through = assigned_through.max(applied_through);
         state.bootstrap_sequence = applied_through;
         state.covered_through = applied_through;
         state.assigned_through = state.assigned_through.max(assigned_through);
@@ -550,6 +548,26 @@ mod tests {
         assert!(matches!(
             log.validation_source(SequenceNumber(3), SequenceNumber(3)),
             Ok(ValidationSource::InMemory(_))
+        ));
+    }
+
+    #[test]
+    fn skewed_shared_progress_normalizes_without_claiming_history() {
+        let log = WriteLog::new(
+            WriteLogConfig::for_tests(30, 300, usize::MAX),
+            SequenceNumber(5),
+            SequenceNumber(4),
+        );
+        assert!(matches!(
+            log.validation_source(SequenceNumber(4), SequenceNumber(5)),
+            Ok(ValidationSource::StorageFallback)
+        ));
+
+        let recovered = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
+        recovered.rebase_empty_after_recovery(SequenceNumber(5), SequenceNumber(4));
+        assert!(matches!(
+            recovered.validation_source(SequenceNumber(4), SequenceNumber(5)),
+            Ok(ValidationSource::StorageFallback)
         ));
     }
 
