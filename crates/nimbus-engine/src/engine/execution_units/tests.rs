@@ -2,12 +2,13 @@ pub(crate) use std::sync::Arc;
 pub(crate) use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(crate) use nimbus_core::{
-    ArrayPopSide, AtomicWrite, AtomicWriteBatch, BitwiseOperation, DocumentId, DocumentLocator,
-    Error, FieldTransform, FieldTransformOperation, IndexDefinition, NumericValue, OrderBy,
-    OrderDirection, PaginatedQuery, PrincipalContext, Query, QueryDirection, SeededIdSource,
-    SequenceNumber, SpecialDouble, StorageErrorKind, StoredValue, StructuredOrder, StructuredQuery,
-    TableId, TenantId, Timestamp, TriggerInvocationKey, TriggerWriteOrigin, TypedScalarValue,
-    WriteKey, WritePrecondition, WriteSetMode,
+    ArrayPopSide, AtomicWrite, AtomicWriteBatch, BitwiseOperation, CollectionName, DocumentId,
+    DocumentLocator, DocumentPath, Error, FieldTransform, FieldTransformOperation, IndexDefinition,
+    NumericValue, OrderBy, OrderDirection, PaginatedQuery, PrincipalContext, Query, QueryDirection,
+    ResourcePathBinding, SeededIdSource, SequenceNumber, SpecialDouble, StorageErrorKind,
+    StoredValue, StructuredOrder, StructuredQuery, TableId, TenantId, Timestamp,
+    TriggerInvocationKey, TriggerWriteOrigin, TypedScalarValue, WriteKey, WritePrecondition,
+    WriteSetMode,
 };
 pub(crate) use nimbus_testing::{BlockingFaultInjector, EngineFixture};
 pub(crate) use serde_json::json;

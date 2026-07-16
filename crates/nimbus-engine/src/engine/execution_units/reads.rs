@@ -102,6 +102,9 @@ impl MutationExecutionUnit {
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<(DocumentPath, Document)>> {
         let prepared = prepare_collection_group_structured_query(query)?;
+        self.active_state()?
+            .read_dependencies
+            .record_collection_group(collection_group);
         let mut bindings = self
             .snapshot
             .scan_collection_group_bindings(collection_group)?;

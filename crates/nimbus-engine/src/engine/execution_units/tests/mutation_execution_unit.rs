@@ -1,5 +1,59 @@
 use super::*;
 
+#[test]
+fn collection_group_read_conflicts_with_first_insert_into_new_binding() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("collection-group-occ", Engine::create_tenant);
+    let collection_group = CollectionName::new("posts").expect("collection group should parse");
+
+    let reader = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("reader execution unit should begin");
+    let rows = reader
+        .query_collection_group_documents_structured_cancellable(
+            &collection_group,
+            None,
+            &StructuredQuery::default(),
+            &mut || Ok(()),
+        )
+        .expect("empty collection-group scan should succeed");
+    assert!(rows.is_empty());
+
+    let bound_table = messages_table("users_999_posts");
+    let bound_document_id =
+        DocumentId::from_key("first-post").expect("bound document id should parse");
+    let binding = ResourcePathBinding::new(
+        DocumentLocator::new(bound_table, bound_document_id),
+        DocumentPath::from_segments(["users", "999", "posts", "first-post"])
+            .expect("bound document path should parse"),
+    );
+    let batch = AtomicWriteBatch::new(vec![AtomicWrite::Set {
+        key: WriteKey::from(binding),
+        document: serde_json::Map::from_iter([("body".to_string(), json!("first"))]),
+        mode: WriteSetMode::Overwrite,
+        precondition: WritePrecondition::default(),
+        transforms: Vec::new(),
+    }])
+    .expect("atomic write batch should build");
+    engine
+        .begin_mutation_execution_unit(tenant_id, PrincipalContext::anonymous())
+        .expect("writer execution unit should begin")
+        .execute_atomic_write_batch(batch)
+        .expect("first bound insert should commit");
+
+    reader
+        .insert_document(
+            messages_table("collection_group_reader_writes"),
+            serde_json::Map::from_iter([("body".to_string(), json!("reader"))]),
+        )
+        .expect("reader write should stage");
+    let error = reader
+        .commit()
+        .expect_err("the first insert into a scanned group must conflict");
+    assert!(matches!(error, Error::Conflict { .. }));
+}
+
 #[tokio::test]
 async fn mutation_execution_unit_commits_through_memory_persistence() {
     let harness = DeterministicHarness::scenario("memory-committer", 41, Timestamp(25_000));
