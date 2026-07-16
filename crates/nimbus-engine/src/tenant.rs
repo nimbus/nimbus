@@ -34,6 +34,7 @@ mod subscription_delivery;
 mod subscription_delivery_facade;
 mod trigger_candidates;
 mod trigger_execution;
+mod write_rate;
 
 #[cfg(test)]
 pub(crate) use self::document_cache::DocumentCacheStats;
@@ -77,6 +78,8 @@ use self::trigger_candidates::TriggerCandidateFeed;
 #[cfg(test)]
 pub(crate) use self::trigger_candidates::TriggerCandidatePauseHandle;
 use self::trigger_execution::TriggerExecutionQueue;
+use self::write_rate::TenantWriteRateLimiter;
+pub use self::write_rate::TenantWriteRateStats;
 #[cfg(test)]
 pub(crate) use crate::subscriptions::SubscriptionDeliveryPublishPauseHandle;
 
@@ -106,6 +109,7 @@ pub struct TenantRuntime {
     lifecycle: Arc<TenantLifecycle>,
     mutation_admission: Arc<MutationAdmissionGate>,
     mutation_journal: Arc<MutationJournalState>,
+    write_rate: TenantWriteRateLimiter,
     last_assigned_commit_timestamp: AtomicU64,
     #[cfg(any(test, feature = "test-hooks"))]
     subscription_bootstrap_pause: Arc<MutationJournalPauseState>,
@@ -138,6 +142,7 @@ pub struct TenantEngineDiagnosticsSnapshot {
     pub serving_snapshot_manager: ServingSnapshotManagerStats,
     pub query_planning: QueryPlanningStats,
     pub commit_phases: CommitPhaseMetricsSnapshot,
+    pub tenant_write_rate: TenantWriteRateStats,
     pub libsql_replica_freshness: Option<LibsqlReplicaFreshnessStats>,
 }
 
@@ -178,6 +183,7 @@ impl TenantRuntime {
             lifecycle: Arc::new(TenantLifecycle::new()),
             mutation_admission: Arc::new(MutationAdmissionGate::new()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
+            write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             #[cfg(any(test, feature = "test-hooks"))]
             subscription_bootstrap_pause: Arc::new(MutationJournalPauseState::default()),
@@ -390,6 +396,7 @@ impl TenantRuntime {
             serving_snapshot_manager: self.serving_snapshot_manager_stats(),
             query_planning: self.query_planning_stats(),
             commit_phases: self.commit_phases.snapshot(),
+            tenant_write_rate: self.write_rate.stats(),
             libsql_replica_freshness: self.store.libsql_replica_freshness_stats(),
         }
     }

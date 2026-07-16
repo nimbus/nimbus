@@ -218,6 +218,7 @@ impl Engine {
             matches!(&mode, MutationExecutionMode::Scheduled { .. }),
         );
         check_mutation_caps(&runtime, usage)?;
+        runtime.check_tenant_write_rate(self.now(), usage.total_write_bytes())?;
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let request_cancelled = cancelled.clone();
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();

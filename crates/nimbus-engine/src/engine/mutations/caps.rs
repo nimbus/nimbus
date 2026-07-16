@@ -33,9 +33,11 @@ impl MutationUsage {
         Self {
             write_bytes: serialized_len(mutation),
             documents_written: 1,
-            system_write_bytes: has_scheduled_bookkeeping
-                .then(|| serialized_len(&"scheduled_execution"))
-                .unwrap_or(0),
+            system_write_bytes: if has_scheduled_bookkeeping {
+                serialized_len(&"scheduled_execution")
+            } else {
+                0
+            },
             system_documents_written: u64::from(has_scheduled_bookkeeping),
             ..Self::default()
         }
@@ -65,6 +67,10 @@ impl MutationUsage {
         self.system_write_bytes = self
             .system_write_bytes
             .saturating_add(serialized_len(value));
+    }
+
+    pub(in crate::engine) fn total_write_bytes(self) -> u64 {
+        self.write_bytes.saturating_add(self.system_write_bytes)
     }
 
     fn observed(self, cap: MutationCap) -> u64 {

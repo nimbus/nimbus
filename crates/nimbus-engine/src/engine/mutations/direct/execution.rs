@@ -133,6 +133,7 @@ impl Engine {
         let document_id = document.id.clone();
         let prepared_commit = PreparedCommit::for_direct_insert(runtime.durable_head(), document);
         check_mutation_caps(&runtime, prepared_commit.usage())?;
+        runtime.check_tenant_write_rate(self.now(), prepared_commit.usage().total_write_bytes())?;
         let profile = DirectMutationProfile::after_prepare(commit_started_at);
 
         match mode {
@@ -196,6 +197,7 @@ impl Engine {
         let prepared_commit =
             PreparedCommit::for_direct_update(runtime.durable_head(), table, id, patch);
         check_mutation_caps(&runtime, prepared_commit.usage())?;
+        runtime.check_tenant_write_rate(self.now(), prepared_commit.usage().total_write_bytes())?;
         let profile = DirectMutationProfile::after_prepare(commit_started_at);
         match table_schema {
             Some(table_schema) if table_schema.indexes.is_empty() => match mode {
@@ -428,6 +430,7 @@ impl Engine {
             .unwrap_or_default();
         let prepared_commit = PreparedCommit::for_direct_delete(runtime.durable_head(), table, id);
         check_mutation_caps(&runtime, prepared_commit.usage())?;
+        runtime.check_tenant_write_rate(self.now(), prepared_commit.usage().total_write_bytes())?;
         let profile = DirectMutationProfile::after_prepare(commit_started_at);
 
         match mode {
