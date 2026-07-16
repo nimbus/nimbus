@@ -128,6 +128,12 @@ pub(crate) struct PreparedCommit {
 }
 
 impl PreparedCommit {
+    pub(crate) fn accounted_bytes(&self) -> u64 {
+        self.usage
+            .total_write_bytes()
+            .saturating_add(u64::try_from(std::mem::size_of_val(self)).unwrap_or(u64::MAX))
+    }
+
     pub(crate) fn scheduled_execution_id(&self) -> Option<&str> {
         match &self.serialized_effects {
             PreparedSerializedEffects::Journal {

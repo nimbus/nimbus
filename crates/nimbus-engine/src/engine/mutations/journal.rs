@@ -15,7 +15,8 @@ use tracing::warn;
 use crate::Engine;
 use crate::engine::execution_units::{CommitFaultClient, labels};
 use crate::tenant::{
-    QueuedMutationRequest, QueuedMutationResult, TenantOperationGuard, TenantRuntime,
+    PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult, TenantOperationGuard,
+    TenantRuntime,
 };
 
 use super::caps::{MutationUsage, check_mutation_caps};
@@ -233,6 +234,7 @@ impl Engine {
             .await
             .map_err(|error| Error::Internal(format!("mutation prepare task failed: {error}")))??;
             let shadow_snapshot_sequence = prepared.prepared_commit.snapshot_sequence;
+            let prepared_bytes = prepared.prepared_commit.accounted_bytes();
             let (response_tx, mut response_rx) = tokio::sync::oneshot::channel();
             let enqueued_at = Instant::now();
             runtime.enqueue_mutation_admission_request(QueuedMutationRequest {
@@ -240,6 +242,10 @@ impl Engine {
                 conflict_dependencies: prepared.conflict_dependencies,
                 result: prepared.result,
                 prepare_nanos: prepared.prepare_nanos,
+                prepared_payload_accounting: Some(PreparedPayloadAccounting::new(
+                    runtime.clone(),
+                    prepared_bytes,
+                )),
                 cancelled: cancelled.clone(),
                 _operation: operation,
                 response: response_tx,
@@ -332,12 +338,14 @@ fn process_queued_mutation_batch(
             conflict_dependencies,
             result,
             prepare_nanos,
+            prepared_payload_accounting,
             cancelled,
             _operation,
             response,
             shadow_snapshot_sequence,
             enqueued_at,
         } = request;
+        drop(prepared_payload_accounting);
         if cancelled.load(std::sync::atomic::Ordering::Acquire) {
             let _ = response.send(Err(Error::Cancelled));
             continue;

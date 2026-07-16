@@ -68,7 +68,9 @@ pub(crate) use self::mutation::{
 };
 use self::mutation::{MutationAdmissionDecision, MutationAdmissionGate, MutationJournalState};
 pub use self::mutation::{MutationAdmissionPhase, MutationAdmissionStats, MutationJournalStats};
-pub(crate) use self::mutation::{QueuedMutationRequest, QueuedMutationResult};
+pub(crate) use self::mutation::{
+    PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult,
+};
 use self::query_planning::QueryPlanningMetrics;
 pub use self::query_planning::QueryPlanningStats;
 pub(crate) use self::query_planning::{QueryPlanMetricKind, QueryPlanMetricOperation};

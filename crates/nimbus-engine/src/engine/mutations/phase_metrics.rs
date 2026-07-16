@@ -49,6 +49,10 @@ pub struct CommitPhaseMetricsSnapshot {
     pub shadow_checks_sampled: u64,
     pub mutation_conflict_retries_total: u64,
     pub mutation_conflict_exhausted_total: u64,
+    pub prepared_payload_bytes_current: u64,
+    pub prepared_payload_bytes_peak: u64,
+    pub prepared_payload_bytes_total: u64,
+    pub reprepare_total: u64,
     pub overload_errors_total: u64,
     pub overload_errors_reported_total: u64,
     /// Point-in-time number of accepted messages waiting in the bounded
@@ -83,6 +87,10 @@ pub(crate) struct CommitPhaseMetrics {
     shadow_sample_ticks: AtomicU64,
     mutation_conflict_retries_total: AtomicU64,
     mutation_conflict_exhausted_total: AtomicU64,
+    prepared_payload_bytes_current: AtomicU64,
+    prepared_payload_bytes_peak: AtomicU64,
+    prepared_payload_bytes_total: AtomicU64,
+    reprepare_total: AtomicU64,
     overload_errors_total: AtomicU64,
     overload_errors_reported_total: AtomicU64,
     overload_error_report_ticks: AtomicU64,
@@ -112,6 +120,10 @@ impl CommitPhaseMetrics {
             shadow_sample_ticks: AtomicU64::new(0),
             mutation_conflict_retries_total: AtomicU64::new(0),
             mutation_conflict_exhausted_total: AtomicU64::new(0),
+            prepared_payload_bytes_current: AtomicU64::new(0),
+            prepared_payload_bytes_peak: AtomicU64::new(0),
+            prepared_payload_bytes_total: AtomicU64::new(0),
+            reprepare_total: AtomicU64::new(0),
             overload_errors_total: AtomicU64::new(0),
             overload_errors_reported_total: AtomicU64::new(0),
             overload_error_report_ticks: AtomicU64::new(0),
@@ -183,6 +195,23 @@ impl CommitPhaseMetrics {
     pub(crate) fn record_mutation_conflict_retry(&self) {
         self.mutation_conflict_retries_total
             .fetch_add(1, Ordering::Relaxed);
+        self.reprepare_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn accept_prepared_payload(&self, bytes: u64) {
+        let current = self
+            .prepared_payload_bytes_current
+            .fetch_add(bytes, Ordering::AcqRel)
+            .saturating_add(bytes);
+        self.prepared_payload_bytes_peak
+            .fetch_max(current, Ordering::Relaxed);
+        self.prepared_payload_bytes_total
+            .fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    pub(crate) fn release_prepared_payload(&self, bytes: u64) {
+        self.prepared_payload_bytes_current
+            .fetch_sub(bytes, Ordering::AcqRel);
     }
 
     pub(crate) fn record_mutation_conflict_exhausted(&self) {
@@ -257,6 +286,12 @@ impl CommitPhaseMetrics {
             mutation_conflict_exhausted_total: self
                 .mutation_conflict_exhausted_total
                 .load(Ordering::Relaxed),
+            prepared_payload_bytes_current: self
+                .prepared_payload_bytes_current
+                .load(Ordering::Relaxed),
+            prepared_payload_bytes_peak: self.prepared_payload_bytes_peak.load(Ordering::Relaxed),
+            prepared_payload_bytes_total: self.prepared_payload_bytes_total.load(Ordering::Relaxed),
+            reprepare_total: self.reprepare_total.load(Ordering::Relaxed),
             overload_errors_total: self.overload_errors_total.load(Ordering::Relaxed),
             overload_errors_reported_total: self
                 .overload_errors_reported_total
@@ -445,6 +480,10 @@ mod tests {
                 shadow_checks_sampled: 2,
                 mutation_conflict_retries_total: 1,
                 mutation_conflict_exhausted_total: 1,
+                prepared_payload_bytes_current: 0,
+                prepared_payload_bytes_peak: 0,
+                prepared_payload_bytes_total: 0,
+                reprepare_total: 1,
                 overload_errors_total: 0,
                 overload_errors_reported_total: 0,
                 committer_inbox_depth: 0,

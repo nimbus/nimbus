@@ -21,5 +21,7 @@ pub(in crate::tenant) use self::pause::MutationJournalPauseState;
 pub(crate) use self::requests::{
     DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY, DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY,
 };
-pub(crate) use self::requests::{QueuedMutationRequest, QueuedMutationResult};
+pub(crate) use self::requests::{
+    PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult,
+};
 pub use self::stats::{MutationAdmissionPhase, MutationAdmissionStats, MutationJournalStats};
