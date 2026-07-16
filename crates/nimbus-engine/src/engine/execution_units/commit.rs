@@ -74,6 +74,16 @@ impl MutationExecutionUnit {
                     &prepared_commit.read_set,
                 )?;
             }
+            // Provider scans and any document resolution happen on the caller
+            // before actor admission. The actor repeats only the process-local
+            // full-image check so pending assignments cannot be missed.
+            if !self.runtime.store.has_process_local_sequence_authority() {
+                ensure_no_conflicts(
+                    &self.runtime,
+                    prepared_commit.snapshot_sequence,
+                    &prepared_commit.read_set,
+                )?;
+            }
             let runtime_for_commit = self.runtime.clone();
             let engine_for_commit = self.engine.clone();
             let engine_for_fanout = self.engine.clone();
@@ -93,7 +103,7 @@ impl MutationExecutionUnit {
                         &schema_snapshot,
                         &prepared_commit.read_set,
                     )?;
-                    ensure_no_conflicts(
+                    ensure_no_conflicts_in_window(
                         &runtime,
                         prepared_commit.snapshot_sequence,
                         &prepared_commit.read_set,
@@ -262,6 +272,39 @@ fn ensure_no_conflicts(
         return Err(Error::retryable_conflict(
             "transaction conflict detected; retry the mutation",
             Some(conflicting_sequence),
+        ));
+    }
+    Ok(())
+}
+
+/// Assign-time conflict validation over plain, full-image window data. This
+/// boundary performs no storage I/O and cannot await.
+fn ensure_no_conflicts_in_window(
+    runtime: &crate::tenant::TenantRuntime,
+    snapshot_sequence: SequenceNumber,
+    dependencies: &DependencySet,
+) -> Result<()> {
+    if dependencies.is_empty() || !runtime.store.has_process_local_sequence_authority() {
+        return Ok(());
+    }
+    let head = runtime.durable_head();
+    let ValidationSource::InMemory(view) = runtime
+        .write_log
+        .validation_source(snapshot_sequence, head)?
+    else {
+        return Err(Error::retryable_conflict(
+            "execution-unit prepare fell outside the process-local conflict window",
+            Some(runtime.applied_head()),
+        ));
+    };
+    if let Some(sequence) = view.first_conflicting_sequence(dependencies, |_, _| {
+        Err(Error::Internal(
+            "full-image execution-unit validation unexpectedly requested storage".to_string(),
+        ))
+    }) {
+        return Err(Error::retryable_conflict(
+            "transaction conflict detected; retry the mutation",
+            Some(sequence),
         ));
     }
     Ok(())
