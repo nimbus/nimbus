@@ -220,7 +220,25 @@ impl WriteLog {
         );
         state.bootstrap_sequence = applied_through;
         state.covered_through = applied_through;
-        state.assigned_through = assigned_through;
+        state.assigned_through = state.assigned_through.max(assigned_through);
+    }
+
+    /// Observes sequence assignment without claiming conflict-image coverage.
+    ///
+    /// Recovery can reveal an ambiguously committed document record that
+    /// failed before the live append path staged its full image. A non-empty
+    /// window must remember that hole so a later zero-write schema/cursor
+    /// record cannot bridge over it. Empty startup windows may subsequently
+    /// rebase at the applied head, raising their bootstrap boundary instead of
+    /// claiming the missing history.
+    pub(crate) fn observe_assigned_through_without_coverage(&self, sequence: SequenceNumber) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("write-log lock should not be poisoned");
+        // Progress may have been read before this caller waited for the
+        // sequence gate, so ignore a stale observation rather than regressing.
+        state.assigned_through = state.assigned_through.max(sequence);
     }
 
     /// Records a proven zero-write sequence span without allocating entries.
@@ -517,6 +535,25 @@ mod tests {
         assert!(matches!(
             log.validation_source(SequenceNumber(3), SequenceNumber(3)),
             Ok(ValidationSource::InMemory(_))
+        ));
+    }
+
+    #[test]
+    fn recovered_unstaged_commits_cannot_be_absorbed_by_zero_write_coverage() {
+        let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
+        log.stage_pending([commit(1, 8)], Timestamp(1_000));
+        log.publish_pending_through(SequenceNumber(1), Timestamp(1_000), SequenceNumber(0));
+
+        // An ambiguous append durably committed document records 2 and 3 but
+        // returned before the live path could stage their images.
+        log.observe_assigned_through_without_coverage(SequenceNumber(3));
+        // A subsequent schema/trigger record is known zero-write, but must not
+        // make the unstaged recovered document span look covered.
+        log.advance_known_zero_write_through(SequenceNumber(4));
+
+        assert!(matches!(
+            log.validation_source(SequenceNumber(1), SequenceNumber(4)),
+            Ok(ValidationSource::StorageFallback)
         ));
     }
 

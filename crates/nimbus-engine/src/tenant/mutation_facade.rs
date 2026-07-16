@@ -147,6 +147,8 @@ impl TenantRuntime {
     /// this non-reentrant form; all other callers use the gated wrapper above.
     pub(crate) fn sync_mutation_journal_progress_locked(&self, progress: JournalProgress) {
         self.write_log
+            .observe_assigned_through_without_coverage(progress.durable_head);
+        self.write_log
             .rebase_empty_after_recovery(progress.applied_head, progress.durable_head);
         self.mark_durable_head(progress.durable_head);
         self.publish_write_log_through(progress.applied_head);
