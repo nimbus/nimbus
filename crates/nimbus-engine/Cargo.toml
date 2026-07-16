@@ -46,6 +46,7 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 [dev-dependencies]
 hyper.workspace = true
 libsql.workspace = true
+loom = "0.7"
 mysql_async.workspace = true
 nimbus-testing = { path = "../nimbus-testing" }
 proptest = "1"
