@@ -538,7 +538,9 @@ mod tests {
     use nimbus_bridge::capabilities::RuntimeCapabilityHost;
     use nimbus_core::{DocumentLocator, PrincipalContext, TenantId};
     use nimbus_engine::{Engine, MutationExecutionUnit};
-    use nimbus_runtime::{HostCallCancellation, NimbusRuntimeError, RuntimeLimits, RuntimePolicy};
+    use nimbus_runtime::{
+        HostCallCancellation, InvocationKind, NimbusRuntimeError, RuntimeLimits, RuntimePolicy,
+    };
     use nimbus_tenant::{
         RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
         TenantStorageAccessDecision, admit_runtime_invocation_decision,
@@ -621,6 +623,12 @@ mod tests {
 
         fn mutation_execution_unit(&self) -> Option<&Arc<MutationExecutionUnit>> {
             Some(&self.execution_unit)
+        }
+
+        fn invocation_kind(&self) -> InvocationKind {
+            // Firebase Admin Firestore calls execute inside the Cloud
+            // Functions mutation invocation today.
+            InvocationKind::Mutation
         }
 
         fn engine(&self) -> &Arc<Engine> {

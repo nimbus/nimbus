@@ -151,12 +151,14 @@ pub struct RuntimeHostContext {
     storage_access: TenantStorageAccessDecision,
     principal: nimbus_core::PrincipalContext,
     execution_unit: Option<Arc<nimbus_engine::MutationExecutionUnit>>,
+    invocation_kind: InvocationKind,
     state: Arc<RuntimeHostState>,
 }
 
 impl RuntimeHostContext {
     pub fn build(scope: RuntimeHostScope, invocation: RuntimeHostInvocation) -> Result<Self> {
         let binding = LocalEnforcementBinding::from_decision(&scope.decision)?;
+        let invocation_kind = invocation.invocation_kind.clone();
         let bootstrap = build_runtime_host_bootstrap(RuntimeHostBootstrapRequest {
             engine: &scope.engine,
             tenant_id: scope.decision.tenant_id(),
@@ -176,6 +178,7 @@ impl RuntimeHostContext {
             storage_access: binding.storage_access().clone(),
             principal: bootstrap.principal,
             execution_unit: bootstrap.execution_unit,
+            invocation_kind,
             state: bootstrap.state,
         })
     }
@@ -224,6 +227,12 @@ impl capabilities::RuntimeCapabilityHost for RuntimeHostContext {
 
     fn mutation_execution_unit(&self) -> Option<&Arc<nimbus_engine::MutationExecutionUnit>> {
         self.execution_unit.as_ref()
+    }
+
+    fn invocation_kind(&self) -> InvocationKind {
+        // Cloud Functions currently builds this context with `Mutation`; the
+        // stored value keeps the shared context truthful for every caller.
+        self.invocation_kind.clone()
     }
 
     fn engine(&self) -> &Arc<Engine> {

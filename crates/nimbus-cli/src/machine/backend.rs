@@ -1,6 +1,6 @@
 use nimbus::{
-    Error, SandboxBackend, SandboxBackendKind, SandboxError, SandboxHandle, SandboxId,
-    SandboxOciImageSource, SandboxRootSpec, SandboxSpec,
+    CommitErrorClass, Error, SandboxBackend, SandboxBackendKind, SandboxError, SandboxHandle,
+    SandboxId, SandboxOciImageSource, SandboxRootSpec, SandboxSpec,
 };
 use nimbus_sandbox::SandboxFuture;
 
@@ -90,24 +90,32 @@ where
 
 fn machine_client_error_to_sandbox_error(error: Error) -> SandboxError {
     let rendered = error.to_string();
+    if let Some(class) = error.commit_class() {
+        return match class {
+            CommitErrorClass::Conflict | CommitErrorClass::OutOfRetention => {
+                SandboxError::OperationFailed { message: rendered }
+            }
+            CommitErrorClass::Overloaded
+            | CommitErrorClass::CommitterFull
+            | CommitErrorClass::RejectedBeforeExecution
+            | CommitErrorClass::RateLimited => {
+                SandboxError::BackendUnavailable { message: rendered }
+            }
+            CommitErrorClass::CapExceeded => SandboxError::InvalidSpec { message: rendered },
+        };
+    }
+
     match error {
         Error::InvalidInput(_)
         | Error::MissingIndex { .. }
         | Error::SchemaValidation(_)
         | Error::SchemaNotFound(_)
         | Error::HistoricalRead { .. }
-        | Error::Serialization(_)
-        | Error::CapExceeded { .. } => SandboxError::InvalidSpec { message: rendered },
+        | Error::Serialization(_) => SandboxError::InvalidSpec { message: rendered },
         Error::ResourceExhausted(_)
         | Error::PermissionDenied(_)
         | Error::Storage { .. }
-        | Error::Transport(_)
-        | Error::Overloaded { .. }
-        | Error::CommitterFull { .. }
-        | Error::RateLimited { .. }
-        | Error::RejectedBeforeExecution { .. } => {
-            SandboxError::BackendUnavailable { message: rendered }
-        }
+        | Error::Transport(_) => SandboxError::BackendUnavailable { message: rendered },
         Error::Internal(message)
             if message.contains("failed to connect to machine API socket")
                 || message.contains("failed to read machine API response")
@@ -117,15 +125,14 @@ fn machine_client_error_to_sandbox_error(error: Error) -> SandboxError {
             SandboxError::BackendUnavailable { message: rendered }
         }
         Error::AlreadyExists(_)
-        | Error::Conflict { .. }
         | Error::PreconditionFailed(_)
         | Error::Cancelled
         | Error::TenantNotFound(_)
         | Error::DocumentNotFound(_)
         | Error::ScheduledJobNotFound(_)
         | Error::NotFound(_)
-        | Error::OutOfRetention { .. }
         | Error::Internal(_) => SandboxError::OperationFailed { message: rendered },
+        _ => SandboxError::OperationFailed { message: rendered },
     }
 }
 

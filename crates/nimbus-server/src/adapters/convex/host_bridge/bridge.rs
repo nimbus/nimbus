@@ -289,8 +289,8 @@ impl RuntimeCapabilityHost for ConvexHostBridge {
         ConvexHostBridge::mutation_execution_unit(self)
     }
 
-    fn direct_host_writes_allowed(&self) -> bool {
-        matches!(self.invocation_kind, InvocationKind::Mutation)
+    fn invocation_kind(&self) -> InvocationKind {
+        ConvexHostBridge::invocation_kind(self).clone()
     }
 
     fn engine(&self) -> &Arc<nimbus_engine::Engine> {

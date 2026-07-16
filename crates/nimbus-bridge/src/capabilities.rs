@@ -5,7 +5,7 @@ use nimbus_core::{
     Result, TableName,
 };
 use nimbus_engine::{Engine, MutationExecutionUnit};
-use nimbus_runtime::{HostCallCancellation, NimbusRuntimeError};
+use nimbus_runtime::{HostCallCancellation, InvocationKind, NimbusRuntimeError};
 use nimbus_tenant::TenantServiceAccessDecision;
 use nimbus_workloads::LocalEnforcementBinding;
 use serde_json::{Map, Value};
@@ -22,14 +22,7 @@ pub trait RuntimeCapabilityHost {
 
     fn mutation_execution_unit(&self) -> Option<&Arc<MutationExecutionUnit>>;
 
-    /// Whether this invocation may issue direct write host calls.
-    ///
-    /// Ordinary mutation hosts have an execution unit. Convex overrides this
-    /// for a nested action `runMutation`, which is a separate serialized
-    /// mutation invocation and intentionally has no parent execution unit.
-    fn direct_host_writes_allowed(&self) -> bool {
-        self.mutation_execution_unit().is_some()
-    }
+    fn invocation_kind(&self) -> InvocationKind;
 
     fn engine(&self) -> &Arc<Engine>;
 
@@ -38,6 +31,39 @@ pub trait RuntimeCapabilityHost {
     fn principal(&self) -> &PrincipalContext;
 
     fn record_document_read(&self, locator: &DocumentLocator);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostWritePosture {
+    Allowed,
+    Rejected,
+}
+
+/// Bridge-owned direct-host-write policy for every runtime invocation kind.
+pub fn host_write_posture(kind: &InvocationKind) -> HostWritePosture {
+    match kind {
+        InvocationKind::Mutation => HostWritePosture::Allowed,
+        InvocationKind::Query
+        | InvocationKind::PaginatedQuery
+        | InvocationKind::Action
+        | InvocationKind::CloudflareWorkerFetch => HostWritePosture::Rejected,
+    }
+}
+
+/// Convex-parity scheduling policy shared by every runtime capability host.
+pub fn ensure_scheduling_allowed<H>(host: &H) -> Result<()>
+where
+    H: RuntimeCapabilityHost + ?Sized,
+{
+    match host.invocation_kind() {
+        InvocationKind::Mutation | InvocationKind::Action => Ok(()),
+        InvocationKind::Query
+        | InvocationKind::PaginatedQuery
+        | InvocationKind::CloudflareWorkerFetch => Err(Error::PermissionDenied(
+            "query invocations cannot schedule functions; scheduling requires a mutation or action"
+                .to_string(),
+        )),
+    }
 }
 
 pub trait RuntimeServiceCapabilityHost {
@@ -362,7 +388,7 @@ fn ensure_direct_host_writes_allowed<H>(host: &H) -> Result<()>
 where
     H: RuntimeCapabilityHost + ?Sized,
 {
-    if host.direct_host_writes_allowed() {
+    if host_write_posture(&host.invocation_kind()) == HostWritePosture::Allowed {
         return Ok(());
     }
     Err(Error::PermissionDenied(
@@ -518,6 +544,54 @@ mod tests {
                 .is_err_and(|error| matches!(error, Error::DocumentNotFound(_))),
             "rejected host writes must leave no document"
         );
+    }
+
+    #[test]
+    fn host_write_posture_is_mutation_only() {
+        let cases = [
+            (InvocationKind::Query, HostWritePosture::Rejected),
+            (InvocationKind::PaginatedQuery, HostWritePosture::Rejected),
+            (InvocationKind::Mutation, HostWritePosture::Allowed),
+            (InvocationKind::Action, HostWritePosture::Rejected),
+            (
+                InvocationKind::CloudflareWorkerFetch,
+                HostWritePosture::Rejected,
+            ),
+        ];
+
+        for (kind, expected) in cases {
+            assert_eq!(host_write_posture(&kind), expected, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn scheduling_posture_allows_mutation_and_action_rejects_queries() {
+        let harness = EngineHarness::new();
+        let engine = harness.engine();
+        let tenant_id = TenantId::new("tenant-scheduling").expect("tenant id should parse");
+        engine
+            .create_tenant(tenant_id.clone())
+            .expect("tenant should create");
+        let cases = [
+            (InvocationKind::Query, false),
+            (InvocationKind::PaginatedQuery, false),
+            (InvocationKind::Mutation, true),
+            (InvocationKind::Action, true),
+            (InvocationKind::CloudflareWorkerFetch, false),
+        ];
+
+        for (kind, expected_allowed) in cases {
+            let host = non_mutation_host(engine.clone(), &tenant_id, kind.clone());
+            let result = ensure_scheduling_allowed(&host);
+            if expected_allowed {
+                assert!(result.is_ok(), "{kind:?}: {result:?}");
+            } else {
+                assert!(
+                    matches!(result, Err(Error::PermissionDenied(_))),
+                    "{kind:?}: {result:?}"
+                );
+            }
+        }
     }
 
     #[test]

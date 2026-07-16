@@ -99,6 +99,43 @@ pub enum Retryability {
     Terminal,
 }
 
+/// Closed taxonomy of failures produced by the mutation commit path.
+///
+/// This enum is intentionally exhaustive. Protocol adapters match it without
+/// a wildcard so adding a commit class forces every wire mapping to be updated,
+/// while adding an unrelated [`Error`] variant does not affect those mappings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitErrorClass {
+    Conflict,
+    Overloaded,
+    CommitterFull,
+    RejectedBeforeExecution,
+    RateLimited,
+    OutOfRetention,
+    CapExceeded,
+}
+
+impl CommitErrorClass {
+    /// Returns the retry policy for this commit class.
+    ///
+    /// `conflict_retryable` preserves the per-instance policy carried by
+    /// [`Error::Conflict`] and is ignored for every other class. Keeping that
+    /// exceptional datum as an argument lets the class remain a simple closed
+    /// taxonomy while making this the single source of commit retry policy.
+    pub fn retryability(&self, conflict_retryable: bool) -> Retryability {
+        match self {
+            Self::Conflict if conflict_retryable => Retryability::Retryable,
+            Self::Conflict | Self::CapExceeded => Retryability::Terminal,
+            Self::Overloaded | Self::CommitterFull | Self::RateLimited => {
+                Retryability::RetryableAfterBackoff
+            }
+            Self::RejectedBeforeExecution => Retryability::Retryable,
+            Self::OutOfRetention => Retryability::RestartTransaction,
+        }
+    }
+}
+
 /// The prepare-time resource dimension that exceeded its transaction cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -129,7 +166,7 @@ impl std::fmt::Display for MutationCap {
 }
 
 /// Core Nimbus error type.
-#[derive(Debug, ThisError)]
+#[derive(Debug, Clone, ThisError)]
 pub enum Error {
     #[error("operation canceled")]
     Cancelled,
@@ -309,16 +346,33 @@ impl Error {
         }
     }
 
-    pub fn retryability(&self) -> Retryability {
+    /// Returns the closed commit-path class, or `None` for non-commit errors.
+    pub fn commit_class(&self) -> Option<CommitErrorClass> {
         match self {
-            Self::Conflict {
-                retryable: true, ..
-            }
-            | Self::RejectedBeforeExecution { .. } => Retryability::Retryable,
-            Self::Overloaded { .. } | Self::CommitterFull { .. } | Self::RateLimited { .. } => {
-                Retryability::RetryableAfterBackoff
-            }
-            Self::OutOfRetention { .. } => Retryability::RestartTransaction,
+            Self::Conflict { .. } => Some(CommitErrorClass::Conflict),
+            Self::Overloaded { .. } => Some(CommitErrorClass::Overloaded),
+            Self::CommitterFull { .. } => Some(CommitErrorClass::CommitterFull),
+            Self::RejectedBeforeExecution { .. } => Some(CommitErrorClass::RejectedBeforeExecution),
+            Self::RateLimited { .. } => Some(CommitErrorClass::RateLimited),
+            Self::OutOfRetention { .. } => Some(CommitErrorClass::OutOfRetention),
+            Self::CapExceeded { .. } => Some(CommitErrorClass::CapExceeded),
+            _ => None,
+        }
+    }
+
+    pub fn retryability(&self) -> Retryability {
+        if let Some(class) = self.commit_class() {
+            let conflict_retryable = matches!(
+                self,
+                Self::Conflict {
+                    retryable: true,
+                    ..
+                }
+            );
+            return class.retryability(conflict_retryable);
+        }
+
+        match self {
             Self::Storage {
                 kind:
                     StorageErrorKind::Busy
@@ -341,6 +395,11 @@ impl Error {
             | Self::ResourceExhausted(_)
             | Self::PermissionDenied(_)
             | Self::Conflict { .. }
+            | Self::Overloaded { .. }
+            | Self::CommitterFull { .. }
+            | Self::RejectedBeforeExecution { .. }
+            | Self::RateLimited { .. }
+            | Self::OutOfRetention { .. }
             | Self::CapExceeded { .. }
             | Self::PreconditionFailed(_)
             | Self::InvalidInput(_)
@@ -546,6 +605,53 @@ mod tests {
                 expected,
                 "unexpected class for {error}"
             );
+        }
+    }
+
+    #[test]
+    fn commit_class_covers_every_commit_error_variant() {
+        let cases = [
+            (
+                Error::retryable_conflict("race", Some(SequenceNumber(1))),
+                CommitErrorClass::Conflict,
+            ),
+            (
+                Error::overloaded("node pressure"),
+                CommitErrorClass::Overloaded,
+            ),
+            (
+                Error::committer_full("bounded inbox", 64),
+                CommitErrorClass::CommitterFull,
+            ),
+            (
+                Error::rejected_before_execution("admission shed"),
+                CommitErrorClass::RejectedBeforeExecution,
+            ),
+            (
+                Error::rate_limited("tenant write rate", Duration::from_millis(250)),
+                CommitErrorClass::RateLimited,
+            ),
+            (
+                Error::out_of_retention("snapshot expired", Some(SequenceNumber(9))),
+                CommitErrorClass::OutOfRetention,
+            ),
+            (
+                Error::cap_exceeded(MutationCap::WriteBytes, 11, 10),
+                CommitErrorClass::CapExceeded,
+            ),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(error.commit_class(), Some(expected), "{error}");
+        }
+
+        for error in [
+            Error::storage(StorageErrorKind::Unavailable, "provider unavailable"),
+            Error::Transport("connection timed out".to_string()),
+            Error::InvalidInput("bad request".to_string()),
+            Error::SchemaValidation("wrong shape".to_string()),
+        ] {
+            assert_eq!(error.commit_class(), None, "{error}");
         }
     }
 

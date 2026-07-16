@@ -8,16 +8,31 @@
 //!
 //! Both `nimbus_core::Error` and `extenddb_core::DynamoDbError` are foreign to
 //! this crate, so this is a free function (the orphan rule forbids a `From`
-//! impl). The match is exhaustive: a new `nimbus_core::Error` variant is a
-//! compile error here, forcing a deliberate mapping rather than a silent 500.
+//! impl). Commit failures are matched through the closed `CommitErrorClass`
+//! taxonomy, so a new commit class is a compile error here while unrelated
+//! core errors retain a safe internal-error fallback.
 
 use extenddb_core::error::DynamoDbError;
-use nimbus_core::Error as CoreError;
+use nimbus_core::{CommitErrorClass, Error as CoreError};
 
 /// Map a Nimbus core error to the DynamoDB error taxonomy.
 #[must_use]
 pub fn map_core_error(error: CoreError) -> DynamoDbError {
     let message = error.to_string();
+    if let Some(class) = error.commit_class() {
+        return match class {
+            CommitErrorClass::Conflict | CommitErrorClass::OutOfRetention => {
+                DynamoDbError::TransactionConflictException(message)
+            }
+            CommitErrorClass::Overloaded | CommitErrorClass::CommitterFull => {
+                DynamoDbError::ProvisionedThroughputExceededException(message)
+            }
+            CommitErrorClass::RejectedBeforeExecution => DynamoDbError::ServiceUnavailable(message),
+            CommitErrorClass::RateLimited => DynamoDbError::RequestLimitExceeded(message),
+            CommitErrorClass::CapExceeded => DynamoDbError::ValidationException(message),
+        };
+    }
+
     match error {
         // Missing resources → ResourceNotFoundException (HTTP 400).
         CoreError::DocumentNotFound(_)
@@ -34,17 +49,10 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
         | CoreError::MissingIndex { .. }
         | CoreError::SchemaValidation(_)
         | CoreError::Serialization(_)
-        | CoreError::HistoricalRead { .. }
-        | CoreError::CapExceeded { .. } => DynamoDbError::ValidationException(message),
+        | CoreError::HistoricalRead { .. } => DynamoDbError::ValidationException(message),
 
         // Authorization.
         CoreError::PermissionDenied(_) => DynamoDbError::AccessDeniedException(message),
-
-        // Optimistic-concurrency / stale transaction snapshot. Both require a
-        // transaction-level retry in DynamoDB's vocabulary.
-        CoreError::Conflict { .. } | CoreError::OutOfRetention { .. } => {
-            DynamoDbError::TransactionConflictException(message)
-        }
 
         // Failed generation / existence preconditions map to DynamoDB's
         // conditional-write failure class.
@@ -54,18 +62,9 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
 
         // Capacity pressure is the DynamoDB exception that SDKs conventionally
         // retry with exponential backoff.
-        CoreError::ResourceExhausted(_)
-        | CoreError::Overloaded { .. }
-        | CoreError::CommitterFull { .. } => {
+        CoreError::ResourceExhausted(_) => {
             DynamoDbError::ProvisionedThroughputExceededException(message)
         }
-
-        // Guaranteed pre-execution rejection is an unavailable service, so an
-        // idempotent-safe retry is truthful without claiming provisioned capacity.
-        CoreError::RejectedBeforeExecution { .. } => DynamoDbError::ServiceUnavailable(message),
-
-        // The per-tenant limiter is closest to DynamoDB's account request cap.
-        CoreError::RateLimited { .. } => DynamoDbError::RequestLimitExceeded(message),
 
         // Internal/transport/storage faults and cancellation have no client-facing
         // DynamoDB code → InternalServerError (HTTP 500). (Cancellation reporting is
@@ -74,16 +73,16 @@ pub fn map_core_error(error: CoreError) -> DynamoDbError {
         | CoreError::Storage { .. }
         | CoreError::Transport(_)
         | CoreError::Internal(_) => DynamoDbError::InternalServerError(message),
+        _ => DynamoDbError::InternalServerError(message),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
     use crate::wire::render_error;
-    use nimbus_core::{HistoricalReadErrorKind, MutationCap, Retryability, StorageErrorKind};
+    use nimbus_core::{CommitErrorClass, HistoricalReadErrorKind, Retryability, StorageErrorKind};
+    use nimbus_testing::commit_taxonomy::assert_commit_taxonomy_mapping;
 
     fn code(error: &DynamoDbError) -> &str {
         error.error_type()
@@ -91,57 +90,28 @@ mod tests {
 
     #[test]
     fn dynamodb_surfaces_full_commit_taxonomy() {
-        let cases = [
-            (
-                CoreError::retryable_conflict("race", None),
-                "TransactionConflictException",
-                400,
-                Retryability::Retryable,
-            ),
-            (
-                CoreError::overloaded("busy"),
-                "ProvisionedThroughputExceededException",
-                400,
-                Retryability::RetryableAfterBackoff,
-            ),
-            (
-                CoreError::committer_full("full", 128),
-                "ProvisionedThroughputExceededException",
-                400,
-                Retryability::RetryableAfterBackoff,
-            ),
-            (
-                CoreError::rejected_before_execution("not started"),
-                "ServiceUnavailable",
-                503,
-                Retryability::Retryable,
-            ),
-            (
-                CoreError::rate_limited("hot", Duration::from_millis(100)),
-                "RequestLimitExceeded",
-                400,
-                Retryability::RetryableAfterBackoff,
-            ),
-            (
-                CoreError::out_of_retention("expired", None),
-                "TransactionConflictException",
-                400,
-                Retryability::RestartTransaction,
-            ),
-            (
-                CoreError::cap_exceeded(MutationCap::WriteBytes, 2, 1),
-                "ValidationException",
-                400,
-                Retryability::Terminal,
-            ),
+        #[rustfmt::skip]
+        let expectations = [
+            (CommitErrorClass::Conflict, ("TransactionConflictException".to_string(), 400, Retryability::Retryable)),
+            (CommitErrorClass::Overloaded, ("ProvisionedThroughputExceededException".to_string(), 400, Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::CommitterFull, ("ProvisionedThroughputExceededException".to_string(), 400, Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::RejectedBeforeExecution, ("ServiceUnavailable".to_string(), 503, Retryability::Retryable)),
+            (CommitErrorClass::RateLimited, ("RequestLimitExceeded".to_string(), 400, Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::OutOfRetention, ("TransactionConflictException".to_string(), 400, Retryability::RestartTransaction)),
+            (CommitErrorClass::CapExceeded, ("ValidationException".to_string(), 400, Retryability::Terminal)),
         ];
 
-        for (error, expected_code, expected_status, retryability) in cases {
-            assert_eq!(error.retryability(), retryability, "{error}");
-            let mapped = map_core_error(error);
-            assert_eq!(code(&mapped), expected_code);
-            assert_eq!(mapped.status_code(), expected_status);
-        }
+        assert_commit_taxonomy_mapping(
+            |error| {
+                let mapped = map_core_error(error.clone());
+                (
+                    code(&mapped).to_string(),
+                    mapped.status_code(),
+                    error.retryability(),
+                )
+            },
+            &expectations,
+        );
     }
 
     #[test]

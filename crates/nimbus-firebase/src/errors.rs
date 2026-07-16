@@ -1,5 +1,5 @@
 use http::StatusCode;
-use nimbus_core::{Error, StorageErrorKind};
+use nimbus_core::{CommitErrorClass, Error, StorageErrorKind};
 use serde_json::{Value, json};
 use tonic::Code;
 
@@ -52,6 +52,18 @@ pub fn firestore_grpc_code(error: &Error) -> Code {
         return Code::FailedPrecondition;
     }
 
+    if let Some(class) = error.commit_class() {
+        return match class {
+            CommitErrorClass::Conflict => Code::Aborted,
+            CommitErrorClass::Overloaded
+            | CommitErrorClass::CommitterFull
+            | CommitErrorClass::RateLimited => Code::ResourceExhausted,
+            CommitErrorClass::RejectedBeforeExecution => Code::Unavailable,
+            CommitErrorClass::OutOfRetention => Code::FailedPrecondition,
+            CommitErrorClass::CapExceeded => Code::InvalidArgument,
+        };
+    }
+
     match error {
         Error::Cancelled => Code::Cancelled,
         Error::TenantNotFound(_)
@@ -59,20 +71,12 @@ pub fn firestore_grpc_code(error: &Error) -> Code {
         | Error::ScheduledJobNotFound(_)
         | Error::SchemaNotFound(_)
         | Error::NotFound(_) => Code::NotFound,
-        Error::Conflict { .. } => Code::Aborted,
-        Error::OutOfRetention { .. }
-        | Error::PreconditionFailed(_)
-        | Error::MissingIndex { .. } => Code::FailedPrecondition,
-        Error::ResourceExhausted(_)
-        | Error::Overloaded { .. }
-        | Error::CommitterFull { .. }
-        | Error::RateLimited { .. } => Code::ResourceExhausted,
-        Error::RejectedBeforeExecution { .. } => Code::Unavailable,
+        Error::PreconditionFailed(_) | Error::MissingIndex { .. } => Code::FailedPrecondition,
+        Error::ResourceExhausted(_) => Code::ResourceExhausted,
         Error::PermissionDenied(_) => Code::PermissionDenied,
-        Error::InvalidInput(_)
-        | Error::SchemaValidation(_)
-        | Error::HistoricalRead { .. }
-        | Error::CapExceeded { .. } => Code::InvalidArgument,
+        Error::InvalidInput(_) | Error::SchemaValidation(_) | Error::HistoricalRead { .. } => {
+            Code::InvalidArgument
+        }
         Error::AlreadyExists(_) => Code::AlreadyExists,
         Error::Transport(_) => Code::Unavailable,
         Error::Storage { kind, .. } => match kind {
@@ -84,6 +88,7 @@ pub fn firestore_grpc_code(error: &Error) -> Code {
             }
         },
         Error::Serialization(_) | Error::Internal(_) => Code::Internal,
+        _ => Code::Internal,
     }
 }
 
@@ -107,6 +112,29 @@ fn firebase_rest_error(error: &Error) -> FirestoreRestError {
         };
     }
 
+    if let Some(class) = error.commit_class() {
+        let (http_code, status) = match class {
+            CommitErrorClass::Conflict => (StatusCode::CONFLICT, "ABORTED"),
+            CommitErrorClass::Overloaded
+            | CommitErrorClass::CommitterFull
+            | CommitErrorClass::RateLimited => {
+                (StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED")
+            }
+            CommitErrorClass::RejectedBeforeExecution => {
+                (StatusCode::SERVICE_UNAVAILABLE, "UNAVAILABLE")
+            }
+            CommitErrorClass::OutOfRetention => {
+                (StatusCode::PRECONDITION_FAILED, "FAILED_PRECONDITION")
+            }
+            CommitErrorClass::CapExceeded => (StatusCode::BAD_REQUEST, "INVALID_ARGUMENT"),
+        };
+        return FirestoreRestError {
+            http_code,
+            status,
+            details: Vec::new(),
+        };
+    }
+
     let (http_code, status) = match error {
         Error::Cancelled => (cancelled_status_code(), "CANCELLED"),
         Error::TenantNotFound(_)
@@ -114,20 +142,14 @@ fn firebase_rest_error(error: &Error) -> FirestoreRestError {
         | Error::ScheduledJobNotFound(_)
         | Error::SchemaNotFound(_)
         | Error::NotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND"),
-        Error::Conflict { .. } => (StatusCode::CONFLICT, "ABORTED"),
-        Error::OutOfRetention { .. }
-        | Error::PreconditionFailed(_)
-        | Error::MissingIndex { .. } => (StatusCode::PRECONDITION_FAILED, "FAILED_PRECONDITION"),
-        Error::ResourceExhausted(_)
-        | Error::Overloaded { .. }
-        | Error::CommitterFull { .. }
-        | Error::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED"),
-        Error::RejectedBeforeExecution { .. } => (StatusCode::SERVICE_UNAVAILABLE, "UNAVAILABLE"),
+        Error::PreconditionFailed(_) | Error::MissingIndex { .. } => {
+            (StatusCode::PRECONDITION_FAILED, "FAILED_PRECONDITION")
+        }
+        Error::ResourceExhausted(_) => (StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED"),
         Error::PermissionDenied(_) => (StatusCode::FORBIDDEN, "PERMISSION_DENIED"),
-        Error::InvalidInput(_)
-        | Error::SchemaValidation(_)
-        | Error::HistoricalRead { .. }
-        | Error::CapExceeded { .. } => (StatusCode::BAD_REQUEST, "INVALID_ARGUMENT"),
+        Error::InvalidInput(_) | Error::SchemaValidation(_) | Error::HistoricalRead { .. } => {
+            (StatusCode::BAD_REQUEST, "INVALID_ARGUMENT")
+        }
         Error::AlreadyExists(_) => (StatusCode::CONFLICT, "ALREADY_EXISTS"),
         Error::Transport(_) => (StatusCode::SERVICE_UNAVAILABLE, "UNAVAILABLE"),
         Error::Storage { kind, .. } => match kind {
@@ -141,6 +163,7 @@ fn firebase_rest_error(error: &Error) -> FirestoreRestError {
         Error::Serialization(_) | Error::Internal(_) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL")
         }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL"),
     };
     FirestoreRestError {
         http_code,
@@ -167,72 +190,35 @@ pub fn firebase_error_response_json(error: Error) -> (StatusCode, Value) {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
-    use nimbus_core::{MutationCap, Retryability, TenantId};
+    use nimbus_core::{CommitErrorClass, Retryability, TenantId};
+    use nimbus_testing::commit_taxonomy::assert_commit_taxonomy_mapping;
 
     #[test]
     fn firebase_surfaces_full_commit_taxonomy() {
-        let cases = [
-            (
-                Error::retryable_conflict("race", None),
-                Code::Aborted,
-                StatusCode::CONFLICT,
-                "ABORTED",
-                Retryability::Retryable,
-            ),
-            (
-                Error::overloaded("busy"),
-                Code::ResourceExhausted,
-                StatusCode::TOO_MANY_REQUESTS,
-                "RESOURCE_EXHAUSTED",
-                Retryability::RetryableAfterBackoff,
-            ),
-            (
-                Error::committer_full("full", 128),
-                Code::ResourceExhausted,
-                StatusCode::TOO_MANY_REQUESTS,
-                "RESOURCE_EXHAUSTED",
-                Retryability::RetryableAfterBackoff,
-            ),
-            (
-                Error::rejected_before_execution("not started"),
-                Code::Unavailable,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "UNAVAILABLE",
-                Retryability::Retryable,
-            ),
-            (
-                Error::rate_limited("hot", Duration::from_millis(100)),
-                Code::ResourceExhausted,
-                StatusCode::TOO_MANY_REQUESTS,
-                "RESOURCE_EXHAUSTED",
-                Retryability::RetryableAfterBackoff,
-            ),
-            (
-                Error::out_of_retention("expired", None),
-                Code::FailedPrecondition,
-                StatusCode::PRECONDITION_FAILED,
-                "FAILED_PRECONDITION",
-                Retryability::RestartTransaction,
-            ),
-            (
-                Error::cap_exceeded(MutationCap::DocumentsScanned, 11, 10),
-                Code::InvalidArgument,
-                StatusCode::BAD_REQUEST,
-                "INVALID_ARGUMENT",
-                Retryability::Terminal,
-            ),
+        #[rustfmt::skip]
+        let expectations = [
+            (CommitErrorClass::Conflict, (Code::Aborted, StatusCode::CONFLICT, "ABORTED", Retryability::Retryable)),
+            (CommitErrorClass::Overloaded, (Code::ResourceExhausted, StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED", Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::CommitterFull, (Code::ResourceExhausted, StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED", Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::RejectedBeforeExecution, (Code::Unavailable, StatusCode::SERVICE_UNAVAILABLE, "UNAVAILABLE", Retryability::Retryable)),
+            (CommitErrorClass::RateLimited, (Code::ResourceExhausted, StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED", Retryability::RetryableAfterBackoff)),
+            (CommitErrorClass::OutOfRetention, (Code::FailedPrecondition, StatusCode::PRECONDITION_FAILED, "FAILED_PRECONDITION", Retryability::RestartTransaction)),
+            (CommitErrorClass::CapExceeded, (Code::InvalidArgument, StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", Retryability::Terminal)),
         ];
 
-        for (error, grpc_code, http_code, status, retryability) in cases {
-            assert_eq!(firestore_grpc_code(&error), grpc_code, "{error}");
-            assert_eq!(error.retryability(), retryability, "{error}");
-            let (actual_http_code, body) = firebase_error_response_json(error);
-            assert_eq!(actual_http_code, http_code);
-            assert_eq!(body["error"]["status"], json!(status));
-        }
+        assert_commit_taxonomy_mapping(
+            |error| {
+                let rest = firebase_rest_error(error);
+                (
+                    firestore_grpc_code(error),
+                    rest.http_code,
+                    rest.status,
+                    error.retryability(),
+                )
+            },
+            &expectations,
+        );
     }
 
     #[test]
