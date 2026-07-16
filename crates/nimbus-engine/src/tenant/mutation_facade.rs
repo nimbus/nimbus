@@ -51,15 +51,19 @@ impl TenantRuntime {
         self.committer.take_receiver()
     }
 
-    pub(crate) async fn send_committer_message_async(
+    pub(crate) async fn send_queued_committer_batch(
         &self,
-        message: CommitterMessage,
+        engine: Arc<crate::Engine>,
     ) -> Result<()> {
-        let result = self.committer.send_async(message).await;
+        let result = self.committer.send_queued_batch_async(engine).await;
         if let Err(error) = &result {
             self.maybe_report_overload_error(error);
         }
         result
+    }
+
+    pub(crate) fn accept_queued_committer_batch(&self, owns_pending_wake: bool) {
+        self.committer.accept_queued_batch(owns_pending_wake);
     }
 
     pub(crate) fn submit_direct_committer_then<T, F, A>(
@@ -154,7 +158,7 @@ impl TenantRuntime {
         self.mutation_journal.wait_before_drain().await;
     }
 
-    /// Samples and advances the tenant commit clock while the sequence gate is held.
+    /// Samples and advances the tenant commit clock on the committer actor.
     pub(crate) fn assign_commit_timestamp(&self) -> Timestamp {
         let previous = self.last_assigned_commit_timestamp.load(Ordering::Relaxed);
         let timestamp = Timestamp(self.store.now().0.max(previous));
@@ -263,6 +267,10 @@ impl TenantRuntime {
         self.mutation_journal.record_worker_start();
     }
 
+    pub(crate) fn set_mutation_worker_running(&self, running: bool) {
+        self.mutation_journal.set_worker_running(running);
+    }
+
     pub(crate) fn record_mutation_worker_failure(&self) {
         self.mutation_journal.record_worker_failure();
     }
@@ -366,12 +374,9 @@ impl TenantRuntime {
 
     /// Async-context form of [`Self::sync_mutation_journal_progress`].
     ///
-    /// The gated sync blocks on the sequence gate (a std mutex). Blocking a
-    /// tokio worker on it can starve the reactor while a gate holder drives
-    /// provider storage I/O through a runtime bridge — a real deadlock
-    /// observed on postgres-backed tenants (provider notification listener
-    /// vs a direct mutation holding the gate). Async callers must use this
-    /// form, which parks the wait on the blocking pool instead.
+    /// Async callers enqueue without blocking a Tokio worker and await the
+    /// actor's response. This preserves the PPSC2-A provider-listener
+    /// deadlock fix without a blocking gate bridge.
     pub(crate) async fn sync_mutation_journal_progress_async(
         self: &Arc<Self>,
         progress: JournalProgress,
@@ -381,9 +386,8 @@ impl TenantRuntime {
             .expect("tenant committer should synchronize journal progress");
     }
 
-    /// Synchronizes recovered heads while the caller holds the mutation
-    /// sequence gate. Callers already inside a serial mutation section use
-    /// this non-reentrant form; all other callers use the gated wrapper above.
+    /// Synchronizes recovered heads from within the committer task. Callers
+    /// already inside that serial section must use this non-reentrant form.
     pub(crate) fn sync_mutation_journal_progress_in_actor(&self, progress: JournalProgress) {
         self.write_log
             .observe_assigned_through_without_coverage(progress.durable_head);

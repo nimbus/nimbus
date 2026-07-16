@@ -436,7 +436,7 @@ fn materialize_trigger_invocations_and_sync_in_actor(
     // Correctness over optimization.
     let floor = cursor.materialized_through;
     // On a process-local sequence authority the durable head is either
-    // unchanged or the cursor record just appended above: the sequence gate
+    // unchanged or the cursor record just appended above: the committer actor
     // excludes every document writer, and no foreign process can assign a
     // sequence. Account that known zero-write record independently of the
     // wider materialized-read gap below. The wider gap may contain an already

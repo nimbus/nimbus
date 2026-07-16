@@ -14096,6 +14096,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-core",
+ "tracing-subscriber",
  "typenum",
  "uncased",
  "url",

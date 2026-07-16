@@ -176,18 +176,21 @@ impl Engine {
                     .execute(|store| store.recover_durable_journal())
                     .await
                 {
-                    runtime.sync_mutation_journal_progress_async(progress).await;
+                    // Already on the tenant's committer task: sending a
+                    // JournalProgressSync message here would wait on our own
+                    // inbox forever.
+                    runtime.sync_mutation_journal_progress_in_actor(progress);
                 }
             }
             Err(error) => {
                 runtime.record_mutation_worker_failure();
-                warn!(error = %error, "mutation journal worker panicked");
+                warn!(error = %error, "committer queued batch panicked");
                 if let Ok(progress) = runtime
                     .read_storage
                     .execute(|store| store.recover_durable_journal())
                     .await
                 {
-                    runtime.sync_mutation_journal_progress_async(progress).await;
+                    runtime.sync_mutation_journal_progress_in_actor(progress);
                 }
             }
         }
@@ -234,12 +237,7 @@ impl Engine {
             enqueued_at,
             shadow_snapshot_sequence,
         })?;
-        if let Err(error) = runtime
-            .send_committer_message_async(crate::tenant::CommitterMessage::QueuedBatch {
-                engine: self.clone(),
-            })
-            .await
-        {
+        if let Err(error) = runtime.send_queued_committer_batch(self.clone()).await {
             cancelled.store(true, std::sync::atomic::Ordering::Release);
             return Err(error);
         }
@@ -255,7 +253,7 @@ impl Engine {
                 (&mut response_rx).await
             }
         }
-        .map_err(|_| Error::Internal("mutation journal worker dropped response".to_string()))??;
+        .map_err(|_| Error::Internal("committer actor dropped mutation response".to_string()))??;
         Ok(match result {
             QueuedMutationResult::Immediate(document_id) => {
                 MutationExecutionResult::Immediate(document_id)

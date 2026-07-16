@@ -26,6 +26,6 @@ pub(crate) struct QueuedMutationRequest {
     pub enqueued_at: Instant,
     /// Durable head observed at admission, used only by path A's shadow OCC
     /// instrumentation. Real serialization continues to use the head sampled
-    /// under the sequence gate.
+    /// on the serial committer.
     pub shadow_snapshot_sequence: SequenceNumber,
 }

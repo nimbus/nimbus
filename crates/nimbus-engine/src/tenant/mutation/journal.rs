@@ -106,8 +106,13 @@ impl MutationJournalState {
     }
 
     pub(in crate::tenant) fn record_worker_start(&self) {
-        self.worker_running.store(true, Ordering::Release);
-        self.worker_start_count.fetch_add(1, Ordering::Relaxed);
+        let _ = self
+            .worker_start_count
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire);
+    }
+
+    pub(in crate::tenant) fn set_worker_running(&self, running: bool) {
+        self.worker_running.store(running, Ordering::Release);
     }
 
     pub(in crate::tenant) fn record_worker_failure(&self) {

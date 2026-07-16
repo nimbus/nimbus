@@ -12,7 +12,7 @@ use super::prepared::PreparedCommit;
 ///
 /// The observation window opens at the request's enqueue-time snapshot, so
 /// under sustained load the un-clamped window grows with queue depth — and
-/// because the scan runs under the sequence gate, an unbounded scan feeds
+/// because the scan runs on the serial committer, an unbounded scan feeds
 /// back into longer gate holds and deeper queues (measured as a collapse
 /// from ~16.6k to ~0.6k mut/s at N=256 before this bound existed). The
 /// clamp keeps the per-observation cost constant; conflicts older than the
@@ -21,7 +21,7 @@ use super::prepared::PreparedCommit;
 const DEFAULT_SHADOW_CONFLICT_WINDOW_MAX: usize = 64;
 
 /// Observe only every N-th eligible batch/mutation. Even a bounded scan is
-/// a storage read of full commit entries under the sequence gate; at
+/// a storage read of full commit entries on the serial committer; at
 /// saturation the observation *frequency* — one scan per batch — is itself
 /// a material tax (measured ~95% of under-gate time at N=256 with
 /// per-request unsampled observation). Shadow metrics exist to

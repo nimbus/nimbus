@@ -21,7 +21,23 @@ thread_local! {
     static COMMITTER_HANDLER_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-pub(super) type CommitterJob = Box<dyn FnOnce() + Send + 'static>;
+pub(crate) struct CommitterJob {
+    task: Box<dyn FnOnce() + Send + 'static>,
+    completed: oneshot::Sender<()>,
+}
+
+impl CommitterJob {
+    fn new(task: impl FnOnce() + Send + 'static) -> (Self, oneshot::Receiver<()>) {
+        let (completed, completion) = oneshot::channel();
+        (
+            Self {
+                task: Box::new(task),
+                completed,
+            },
+            completion,
+        )
+    }
+}
 
 /// Pure serial assignment boundary. It accepts only plain sequence data,
 /// performs no storage access, and cannot await. Validation that may consult
@@ -66,21 +82,11 @@ pub(crate) fn validate_append_sequences(
     Ok(())
 }
 
-#[cfg(test)]
-mod serial_invariant_tests {
-    use super::*;
-
-    #[test]
-    fn append_validation_rejects_an_interior_sequence_hole() {
-        let error =
-            validate_append_sequences(SequenceNumber(3), [SequenceNumber(4), SequenceNumber(6)])
-                .expect_err("an out-of-order append must fail before persistence");
-        assert!(matches!(error, Error::Internal(message) if message.contains("expected 5")));
-    }
-}
-
 pub(crate) enum CommitterMessage {
-    QueuedBatch { engine: Arc<Engine> },
+    QueuedBatch {
+        engine: Arc<Engine>,
+        owns_pending_wake: bool,
+    },
     DirectCommit(CommitterJob),
     ExecutionUnitCommit(CommitterJob),
     JournalProgressSync(CommitterJob),
@@ -103,6 +109,7 @@ pub(crate) struct CommitterActor {
     sender: mpsc::Sender<CommitterMessage>,
     receiver: Mutex<Option<mpsc::Receiver<CommitterMessage>>>,
     started: AtomicBool,
+    queued_batch_pending: AtomicBool,
     inbox_capacity: usize,
     send_timeout: Duration,
     send_timeout_count: AtomicU64,
@@ -121,6 +128,7 @@ impl CommitterActor {
             sender,
             receiver: Mutex::new(Some(receiver)),
             started: AtomicBool::new(false),
+            queued_batch_pending: AtomicBool::new(false),
             inbox_capacity,
             send_timeout,
             send_timeout_count: AtomicU64::new(0),
@@ -159,6 +167,49 @@ impl CommitterActor {
                     self.inbox_capacity,
                 ))
             }
+        }
+    }
+
+    pub(crate) async fn send_queued_batch_async(&self, engine: Arc<Engine>) -> Result<()> {
+        assert_not_reentrant();
+        if self.queued_batch_pending.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        match self.sender.try_reserve() {
+            Ok(permit) => {
+                if self
+                    .queued_batch_pending
+                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    permit.send(CommitterMessage::QueuedBatch {
+                        engine,
+                        owns_pending_wake: true,
+                    });
+                }
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Closed(())) => Err(Error::Internal(
+                "tenant committer actor stopped before accepting queued-batch work".to_string(),
+            )),
+            Err(mpsc::error::TrySendError::Full(())) => {
+                // Coalesce only once a channel slot is already reserved. If
+                // the inbox is full, this request retains its own bounded send
+                // and timeout; no follower can trust a wake that may still
+                // fail to enter the channel.
+                self.send_async(CommitterMessage::QueuedBatch {
+                    engine,
+                    owns_pending_wake: false,
+                })
+                .await
+            }
+        }
+    }
+
+    pub(crate) fn accept_queued_batch(&self, owns_pending_wake: bool) {
+        if owns_pending_wake {
+            let pending = self.queued_batch_pending.swap(false, Ordering::AcqRel);
+            debug_assert!(pending, "a tracked queued-batch wake must be pending");
         }
     }
 
@@ -208,29 +259,24 @@ impl CommitterActor {
         T: Send + 'static,
         F: FnOnce() -> Result<T> + Send + 'static,
     {
-        let (response_tx, response_rx) = oneshot::channel();
-        self.send_blocking(wrap(Box::new(move || {
-            let _ = response_tx.send(task());
-        })))?;
-        let mut response_rx = response_rx;
-        loop {
-            match response_rx.try_recv() {
-                Ok(result) => return result,
-                Err(oneshot::error::TryRecvError::Closed) => {
-                    return Err(Error::Internal(
-                        "tenant committer actor dropped a blocking response".to_string(),
-                    ));
-                }
-                Err(oneshot::error::TryRecvError::Empty) => {
-                    // Sync engine APIs are intentionally callable from a
-                    // current-thread Tokio context. `blocking_recv` panics in
-                    // that context, while this bounded park lets the actor on
-                    // the Engine-owned runtime make progress without entering
-                    // or blocking that runtime's worker.
-                    std::thread::park_timeout(Duration::from_millis(1));
-                }
-            }
+        if on_actor_task() {
+            return task();
         }
+        let (response_tx, response_rx) = oneshot::channel();
+        let (job, completion) = CommitterJob::new(move || {
+            let _ = response_tx.send(task());
+        });
+        self.send_blocking(wrap(job))?;
+        let result = blocking_receive(
+            response_rx,
+            "tenant committer actor dropped a blocking response",
+        );
+        let completion = blocking_receive(
+            completion,
+            "tenant committer actor dropped a blocking completion",
+        );
+        completion?;
+        result?
     }
 
     /// Runs `after_commit` on the caller before the actor accepts its next
@@ -247,16 +293,24 @@ impl CommitterActor {
         F: FnOnce() -> Result<T> + Send + 'static,
         A: FnOnce(&T),
     {
+        if on_actor_task() {
+            let result = task();
+            if let Ok(value) = &result {
+                after_commit(value);
+            }
+            return result;
+        }
         let (response_tx, response_rx) = std::sync::mpsc::sync_channel(0);
         let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(0);
-        self.send_blocking(wrap(Box::new(move || {
+        let (job, completion) = CommitterJob::new(move || {
             if response_tx.send(task()).is_ok() {
                 let _ = ack_rx.recv();
             }
-        })))?;
+        });
+        self.send_blocking(wrap(job))?;
         let result = response_rx.recv().map_err(|_| {
             Error::Internal("tenant committer actor dropped a blocking response".to_string())
-        })?;
+        });
         struct AckOnDrop(Option<std::sync::mpsc::SyncSender<()>>);
         impl Drop for AckOnDrop {
             fn drop(&mut self) {
@@ -266,11 +320,16 @@ impl CommitterActor {
             }
         }
         let ack = AckOnDrop(Some(ack_tx));
-        if let Ok(value) = &result {
+        if let Ok(Ok(value)) = &result {
             after_commit(value);
         }
         drop(ack);
-        result
+        let completion = blocking_receive(
+            completion,
+            "tenant committer actor dropped a blocking completion",
+        );
+        completion?;
+        result?
     }
 
     pub(crate) async fn submit_async<T, F>(
@@ -282,14 +341,22 @@ impl CommitterActor {
         T: Send + 'static,
         F: FnOnce() -> Result<T> + Send + 'static,
     {
+        if on_actor_task() {
+            return task();
+        }
         let (response_tx, response_rx) = oneshot::channel();
-        self.send_async(wrap(Box::new(move || {
+        let (job, completion) = CommitterJob::new(move || {
             let _ = response_tx.send(task());
-        })))
-        .await?;
-        response_rx.await.map_err(|_| {
+        });
+        self.send_async(wrap(job)).await?;
+        let result = response_rx.await.map_err(|_| {
             Error::Internal("tenant committer actor dropped an async response".to_string())
-        })?
+        });
+        let completion = completion.await.map_err(|_| {
+            Error::Internal("tenant committer actor dropped an async completion".to_string())
+        });
+        completion?;
+        result?
     }
 
     pub(crate) fn depth(&self) -> usize {
@@ -304,6 +371,28 @@ impl CommitterActor {
 
     pub(crate) fn send_timeout_count(&self) -> u64 {
         self.send_timeout_count.load(Ordering::Relaxed)
+    }
+}
+
+fn blocking_receive<T>(
+    mut receiver: oneshot::Receiver<T>,
+    dropped_message: &'static str,
+) -> Result<T> {
+    loop {
+        match receiver.try_recv() {
+            Ok(result) => return Ok(result),
+            Err(oneshot::error::TryRecvError::Closed) => {
+                return Err(Error::Internal(dropped_message.to_string()));
+            }
+            Err(oneshot::error::TryRecvError::Empty) => {
+                // Sync engine APIs are intentionally callable from a
+                // current-thread Tokio context. `blocking_recv` panics in
+                // that context, while this bounded park lets the actor on
+                // the Engine-owned runtime make progress without entering
+                // or blocking that runtime's worker.
+                std::thread::park_timeout(Duration::from_millis(1));
+            }
+        }
     }
 }
 
@@ -327,7 +416,6 @@ async fn run_committer_actor_loop(
     // protocol and its lost-wakeup interleaving no longer exist.
     loop {
         let message = tokio::select! {
-            biased;
             message = receiver.recv() => message,
             _ = shutdown.cancelled() => {
                 receiver.close();
@@ -340,7 +428,25 @@ async fn run_committer_actor_loop(
         let Some(runtime) = runtime.upgrade() else {
             break;
         };
-        if let CommitterMessage::QueuedBatch { engine } = message {
+        if let CommitterMessage::QueuedBatch {
+            engine,
+            owns_pending_wake,
+        } = message
+        {
+            struct WorkerRunning<'a>(&'a TenantRuntime);
+            impl Drop for WorkerRunning<'_> {
+                fn drop(&mut self) {
+                    self.0.set_mutation_worker_running(false);
+                }
+            }
+            // Clear only after receiving the message. A producer that already
+            // observed the pending wake enqueued before that observation, so
+            // this drain sees its work; a later producer installs the next
+            // wake. At most one such wake occupies the bounded inbox.
+            runtime.accept_queued_committer_batch(owns_pending_wake);
+            runtime.record_mutation_worker_start();
+            runtime.set_mutation_worker_running(true);
+            let _running = WorkerRunning(runtime.as_ref());
             engine
                 .run_one_committer_journal_batch(runtime.clone())
                 .await;
@@ -353,16 +459,18 @@ async fn run_committer_actor_loop(
             | CommitterMessage::InternalSerial(job) => job,
             CommitterMessage::QueuedBatch { .. } => unreachable!(),
         };
-        if tokio::task::spawn_blocking(move || run_job(job))
+        let CommitterJob { task, completed } = job;
+        let failed = tokio::task::spawn_blocking(move || run_job(task))
             .await
-            .is_err()
-        {
+            .is_err();
+        let _ = completed.send(());
+        if failed {
             runtime.record_mutation_worker_failure();
         }
     }
 }
 
-pub(crate) fn run_job(job: CommitterJob) {
+pub(crate) fn run_job(job: Box<dyn FnOnce() + Send + 'static>) {
     COMMITTER_HANDLER_ACTIVE.with(|active| {
         debug_assert!(!active.replace(true), "committer handler must not nest");
         struct Reset<'a>(&'a std::cell::Cell<bool>);
@@ -377,11 +485,34 @@ pub(crate) fn run_job(job: CommitterJob) {
 }
 
 fn assert_not_reentrant() {
+    // Audited re-entry points: scheduler jobs, trigger execution, and nested
+    // runMutation dispatch all execute on independent tasks; ordered commit
+    // fanout only enqueues subscription/trigger work; the installed system
+    // projection observer also spawns its async write. Recovery reached from
+    // this actor calls `sync_mutation_journal_progress_in_actor` directly.
+    // Keep both guards so any future inline path fails loudly in debug builds
+    // instead of becoming a send-and-wait self-deadlock.
     debug_assert!(
         COMMITTER_ACTOR_ACTIVE.try_with(|()| ()).is_err()
             && !COMMITTER_HANDLER_ACTIVE.with(std::cell::Cell::get),
         "committer work must never send-and-wait on its own inbox"
     );
+}
+
+fn on_actor_task() -> bool {
+    if COMMITTER_ACTOR_ACTIVE.try_with(|()| ()).is_ok() {
+        // Observer callbacks for queued commits intentionally execute after
+        // publication on the actor task. Preserve their historical ability
+        // to perform a synchronous nested write by handling it directly in
+        // the serial loop instead of sending-and-waiting on this same inbox.
+        debug_assert!(
+            !COMMITTER_HANDLER_ACTIVE.with(std::cell::Cell::get),
+            "blocking committer handlers must not re-enter serial commit"
+        );
+        true
+    } else {
+        false
+    }
 }
 
 fn env_positive_usize(key: &str, default: usize) -> usize {
@@ -397,4 +528,17 @@ fn env_nonnegative_u64(key: &str, default: u64) -> u64 {
         .and_then(|value| value.into_string().ok())
         .and_then(|value| value.trim().parse::<u64>().ok())
         .unwrap_or(default)
+}
+
+#[cfg(test)]
+mod serial_invariant_tests {
+    use super::*;
+
+    #[test]
+    fn append_validation_rejects_an_interior_sequence_hole() {
+        let error =
+            validate_append_sequences(SequenceNumber(3), [SequenceNumber(4), SequenceNumber(6)])
+                .expect_err("an out-of-order append must fail before persistence");
+        assert!(matches!(error, Error::Internal(message) if message.contains("expected 5")));
+    }
 }

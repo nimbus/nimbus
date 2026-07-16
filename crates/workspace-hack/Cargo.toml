@@ -75,7 +75,7 @@ rand-93f6ce9d446188ac = { package = "rand", version = "0.10" }
 rand-c38e5c1d305a1b54 = { package = "rand", version = "0.8", features = ["small_rng"] }
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
 regex = { version = "1" }
-regex-automata = { version = "0.4", default-features = false, features = ["dfa-onepass", "dfa-search", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
+regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
 regex-syntax = { version = "0.8" }
 reqwest = { version = "0.13", default-features = false, features = ["http2", "json", "query", "rustls", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["logging", "prefer-post-quantum", "ring", "std", "tls12"] }
@@ -100,6 +100,7 @@ toml_parser = { version = "1" }
 tower = { version = "0.5", default-features = false, features = ["balance", "buffer", "limit", "load-shed", "log"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-core = { version = "0.1" }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 typenum = { version = "1", default-features = false, features = ["const-generics"] }
 uncased = { version = "0.9" }
 url = { version = "2", features = ["expose_internals", "serde"] }
@@ -144,7 +145,7 @@ quote = { version = "1" }
 rand-c38e5c1d305a1b54 = { package = "rand", version = "0.8", features = ["small_rng"] }
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
 regex = { version = "1" }
-regex-automata = { version = "0.4", default-features = false, features = ["dfa-onepass", "dfa-search", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
+regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
 regex-syntax = { version = "0.8" }
 serde = { version = "1", features = ["alloc", "derive", "rc"] }
 serde_core = { version = "1", features = ["alloc", "rc"] }

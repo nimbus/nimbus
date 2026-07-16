@@ -158,7 +158,7 @@ struct WriteLogState {
 /// Mutation publication takes the mutex only to replace persistent-map roots.
 /// Validation clones those roots in O(1), releases the mutex, then scans its
 /// stable view. The pending map is intentionally present before publish is
-/// pipelined: today's serial sequence gate normally makes it empty whenever a
+/// pipelined: today's serial committer normally makes it empty whenever a
 /// validator runs, while PPSC5 will consume the same API directly.
 pub(crate) struct WriteLog {
     config: WriteLogConfig,
@@ -341,7 +341,7 @@ impl WriteLog {
             .lock()
             .expect("write-log lock should not be poisoned");
         // Progress may have been read before this caller waited for the
-        // sequence gate, so ignore a stale observation rather than regressing.
+        // committer actor, so ignore a stale observation rather than regressing.
         state.assigned_through = state.assigned_through.max(sequence);
     }
 

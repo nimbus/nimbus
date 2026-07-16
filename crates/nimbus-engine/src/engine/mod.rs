@@ -302,7 +302,6 @@ impl Engine {
     pub(crate) fn start_committer_actor(&self, runtime: Arc<TenantRuntime>) {
         let receiver = runtime.take_committer_receiver();
         let shutdown = self.engine_executor.shutdown_token();
-        runtime.record_mutation_worker_start();
         let runtime = Arc::downgrade(&runtime);
         self.spawn_background("mutation_committer", async move {
             crate::tenant::run_committer_actor(runtime, receiver, shutdown).await;

@@ -76,8 +76,8 @@ async fn assert_engine_reload_recovers_durable_journal_before_serving_async_read
             queue_capacity: crate::tenant::DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY,
             oldest_queue_age_nanos: 0,
             pending_response_count: 0,
-            worker_running: true,
-            worker_start_count: 1,
+            worker_running: false,
+            worker_start_count: 0,
             worker_restart_count: 0,
             queue_rejection_count: 0,
             worker_failure_count: 0,
@@ -118,8 +118,8 @@ async fn assert_engine_reload_recovers_durable_journal_before_serving_async_read
     let recovered_stats = wait_for_mutation_journal_stats(
         &reopened,
         &tenant_id,
-        "mutation committer to drain after the follow-up async write",
-        |stats| stats.queue_depth == 0 && stats.pending_response_count == 0,
+        "mutation journal worker to go idle after the follow-up async write",
+        |stats| !stats.worker_running,
     )
     .await;
     assert_eq!(recovered_stats.durable_head, SequenceNumber(2));
@@ -132,7 +132,7 @@ async fn assert_engine_reload_recovers_durable_journal_before_serving_async_read
     );
     assert_eq!(recovered_stats.oldest_queue_age_nanos, 0);
     assert_eq!(recovered_stats.pending_response_count, 0);
-    assert!(recovered_stats.worker_running);
+    assert!(!recovered_stats.worker_running);
     assert_eq!(recovered_stats.worker_start_count, 1);
     assert_eq!(recovered_stats.worker_restart_count, 0);
     assert_eq!(recovered_stats.queue_rejection_count, 0);
