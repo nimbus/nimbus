@@ -23,11 +23,17 @@ const DEFAULT_WIDE_READ_SET_WARN_THRESHOLD: usize = 1_000;
 /// `shadow_window_truncated_total` counts observations whose scan was clamped
 /// to the trailing `NIMBUS_SHADOW_CONFLICT_WINDOW_MAX` commits (conflicts
 /// older than the clamp are not counted — nonzero truncation means the
-/// conflict totals are a lower bound).
+/// conflict totals are a lower bound). `journal_batch_size_sum /
+/// journal_batch_count` is the effective journal batch size, recorded for the
+/// exact record slice passed to the journal path's single durable append.
+/// `commit_count / sample_count` remains the blended average across journal,
+/// direct, and execution-unit paths.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct CommitPhaseMetricsSnapshot {
     pub sample_count: u64,
     pub commit_count: u64,
+    pub journal_batch_size_sum: u64,
+    pub journal_batch_count: u64,
     pub queue_wait_nanos: u64,
     pub prepare_nanos: u64,
     pub conflict_check_nanos: u64,
@@ -46,6 +52,8 @@ pub struct CommitPhaseMetricsSnapshot {
 pub(crate) struct CommitPhaseMetrics {
     sample_count: AtomicU64,
     commit_count: AtomicU64,
+    journal_batch_size_sum: AtomicU64,
+    journal_batch_count: AtomicU64,
     queue_wait_nanos: AtomicU64,
     prepare_nanos: AtomicU64,
     conflict_check_nanos: AtomicU64,
@@ -67,6 +75,8 @@ impl CommitPhaseMetrics {
         Self {
             sample_count: AtomicU64::new(0),
             commit_count: AtomicU64::new(0),
+            journal_batch_size_sum: AtomicU64::new(0),
+            journal_batch_count: AtomicU64::new(0),
             queue_wait_nanos: AtomicU64::new(0),
             prepare_nanos: AtomicU64::new(0),
             conflict_check_nanos: AtomicU64::new(0),
@@ -117,6 +127,12 @@ impl CommitPhaseMetrics {
             .fetch_add(duration_nanos(total), Ordering::Relaxed);
     }
 
+    pub(crate) fn record_journal_batch(&self, batch_size: u64) {
+        self.journal_batch_size_sum
+            .fetch_add(batch_size, Ordering::Relaxed);
+        self.journal_batch_count.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub(crate) fn record_shadow_check(
         &self,
         window_size: usize,
@@ -151,6 +167,8 @@ impl CommitPhaseMetrics {
         CommitPhaseMetricsSnapshot {
             sample_count: self.sample_count.load(Ordering::Relaxed),
             commit_count: self.commit_count.load(Ordering::Relaxed),
+            journal_batch_size_sum: self.journal_batch_size_sum.load(Ordering::Relaxed),
+            journal_batch_count: self.journal_batch_count.load(Ordering::Relaxed),
             queue_wait_nanos: self.queue_wait_nanos.load(Ordering::Relaxed),
             prepare_nanos: self.prepare_nanos.load(Ordering::Relaxed),
             conflict_check_nanos: self.conflict_check_nanos.load(Ordering::Relaxed),
@@ -307,6 +325,7 @@ mod tests {
             },
             Duration::from_nanos(81),
         );
+        metrics.record_journal_batch(3);
         metrics.record_shadow_check(4, true, false);
         metrics.record_shadow_check(2, false, true);
         metrics.record_mutation_conflict_retry();
@@ -317,6 +336,8 @@ mod tests {
             CommitPhaseMetricsSnapshot {
                 sample_count: 1,
                 commit_count: 3,
+                journal_batch_size_sum: 3,
+                journal_batch_count: 1,
                 queue_wait_nanos: 11,
                 prepare_nanos: 12,
                 conflict_check_nanos: 13,

@@ -1,3 +1,4 @@
+mod elle;
 mod engine_fixture;
 mod eventual;
 mod faults;
@@ -10,6 +11,7 @@ mod tenant_isolation_fixture;
 mod timing;
 mod websocket_fixture;
 
+pub use elle::{ElleEventType, ElleHistoryRecorder, ElleListAppendOp, validate_elle_edn_history};
 pub use engine_fixture::EngineFixture;
 pub use eventual::{wait_for_condition, wait_for_value};
 pub use faults::{ArmedBlockingFaultInjector, BlockingFaultInjector, CountedFaultInjector};

@@ -506,6 +506,8 @@ fn render_report(
 
 fn phase_totals(snapshot: CommitPhaseMetricsSnapshot) -> PhaseTotals {
     PhaseTotals {
+        journal_batch_size_sum: snapshot.journal_batch_size_sum,
+        journal_batch_count: snapshot.journal_batch_count,
         prepare_nanos: snapshot.prepare_nanos,
         conflict_check_nanos: snapshot.conflict_check_nanos,
         apply_nanos: snapshot.apply_nanos,

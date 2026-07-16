@@ -1,5 +1,7 @@
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PhaseTotals {
+    pub(crate) journal_batch_size_sum: u64,
+    pub(crate) journal_batch_count: u64,
     pub(crate) prepare_nanos: u64,
     pub(crate) conflict_check_nanos: u64,
     pub(crate) apply_nanos: u64,
@@ -9,6 +11,8 @@ pub(crate) struct PhaseTotals {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PhaseSplit {
+    journal_batch_size_sum: u64,
+    journal_batch_count: u64,
     plan_cpu_nanos: u64,
     conflict_check_nanos: u64,
     apply_nanos: u64,
@@ -18,6 +22,12 @@ pub(crate) struct PhaseSplit {
 impl PhaseSplit {
     pub(crate) fn between(before: PhaseTotals, after: PhaseTotals) -> Self {
         Self {
+            journal_batch_size_sum: after
+                .journal_batch_size_sum
+                .saturating_sub(before.journal_batch_size_sum),
+            journal_batch_count: after
+                .journal_batch_count
+                .saturating_sub(before.journal_batch_count),
             plan_cpu_nanos: after.prepare_nanos.saturating_sub(before.prepare_nanos),
             conflict_check_nanos: after
                 .conflict_check_nanos
@@ -47,6 +57,14 @@ impl PhaseSplit {
             nanos as f64 / total as f64 * 100.0
         }
     }
+
+    fn average_batch_size(self) -> f64 {
+        if self.journal_batch_count == 0 {
+            0.0
+        } else {
+            self.journal_batch_size_sum as f64 / self.journal_batch_count as f64
+        }
+    }
 }
 
 pub(crate) fn render_phase_split_section(rows: &[(usize, PhaseSplit)]) -> String {
@@ -56,15 +74,16 @@ pub(crate) fn render_phase_split_section(rows: &[(usize, PhaseSplit)]) -> String
 
     let mut out = String::from("\n## Under-gate phase split\n\n");
     out.push_str(
-        "Shares use measured-round committer wall time: `plan-CPU = prepare` (validation, authorization, serialization); `conflict-check` (path C real OCC scan; paths A/B bounded shadow observation) is reported separately so the true plan-CPU baseline is not conflated with observation cost; `apply = apply + publish` (storage apply plus engine visibility bookkeeping); `fsync/append = durable-append`.\n\n",
+        "Shares use measured-round committer wall time: `plan-CPU = prepare` (validation, authorization, serialization); `conflict-check` (path C real OCC scan; paths A/B bounded shadow observation) is reported separately so the true plan-CPU baseline is not conflated with observation cost; `apply = apply + publish` (storage apply plus engine visibility bookkeeping); `fsync/append = durable-append`. Average effective batch is `journal_batch_size_sum / journal_batch_count`; each journal batch performs one durable append.\n\n",
     );
     out.push_str(
-        "| N | plan-CPU | conflict-check | apply | fsync/append | measured under-gate |\n",
+        "| N | avg effective batch | plan-CPU | conflict-check | apply | fsync/append | measured under-gate |\n",
     );
-    out.push_str("|---|---|---|---|---|---|\n");
+    out.push_str("|---|---|---|---|---|---|---|\n");
     for (n, split) in rows {
         out.push_str(&format!(
-            "| {n} | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.3} ms |\n",
+            "| {n} | {:.2} | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.3} ms |\n",
+            split.average_batch_size(),
             split.share(split.plan_cpu_nanos),
             split.share(split.conflict_check_nanos),
             split.share(split.apply_nanos),

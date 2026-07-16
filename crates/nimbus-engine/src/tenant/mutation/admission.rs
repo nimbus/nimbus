@@ -97,6 +97,14 @@ impl MutationAdmissionGate {
             .is_empty()
     }
 
+    pub(in crate::tenant) fn queue_depth(&self) -> usize {
+        self.state
+            .lock()
+            .expect("mutation admission gate lock should not be poisoned")
+            .queue
+            .len()
+    }
+
     pub(in crate::tenant) fn stats(&self) -> MutationAdmissionStats {
         let state = self
             .state
