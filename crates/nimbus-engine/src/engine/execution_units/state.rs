@@ -7,6 +7,7 @@ use nimbus_core::{
 };
 use nimbus_storage::{ResolvedScheduleOp, ResolvedWrite};
 
+use super::super::mutations::caps::MutationUsage;
 use super::MutationExecutionUnit;
 
 #[derive(Debug, Clone)]
@@ -35,6 +36,7 @@ pub(super) struct MutationExecutionUnitState {
     pub(super) deferred_server_timestamp_fields: HashMap<(TableName, DocumentId), HashSet<String>>,
     pub(super) staged_scheduler_jobs: HashMap<nimbus_core::JobId, StagedSchedulerEntry>,
     pub(super) scheduler_order: Vec<nimbus_core::JobId>,
+    pub(super) usage: MutationUsage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -91,6 +93,7 @@ impl MutationExecutionUnit {
         state.read_dependencies = DependencySet::default();
         state.write_dependencies = DependencySet::default();
         state.trigger_write_origin = None;
+        state.usage = MutationUsage::default();
     }
 
     pub(super) fn build_resolved_writes(

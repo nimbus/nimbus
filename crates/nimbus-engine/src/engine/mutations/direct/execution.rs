@@ -8,6 +8,7 @@ use nimbus_core::{
 use crate::engine::tenants::with_tenant_runtime_operation;
 use crate::{Engine, tenant::TenantRuntime};
 
+use super::super::caps::check_mutation_caps;
 use super::super::enforce_mutation_authorization;
 use super::super::prepared::PreparedCommit;
 use super::store::DirectMutationProfile;
@@ -131,6 +132,7 @@ impl Engine {
         )?;
         let document_id = document.id.clone();
         let prepared_commit = PreparedCommit::for_direct_insert(runtime.durable_head(), document);
+        check_mutation_caps(&runtime, prepared_commit.usage())?;
         let profile = DirectMutationProfile::after_prepare(commit_started_at);
 
         match mode {
@@ -193,6 +195,7 @@ impl Engine {
         let table_schema = schema.get_table(&table).cloned();
         let prepared_commit =
             PreparedCommit::for_direct_update(runtime.durable_head(), table, id, patch);
+        check_mutation_caps(&runtime, prepared_commit.usage())?;
         let profile = DirectMutationProfile::after_prepare(commit_started_at);
         match table_schema {
             Some(table_schema) if table_schema.indexes.is_empty() => match mode {
@@ -424,6 +427,7 @@ impl Engine {
             .map(|table_schema| table_schema.indexes.clone())
             .unwrap_or_default();
         let prepared_commit = PreparedCommit::for_direct_delete(runtime.durable_head(), table, id);
+        check_mutation_caps(&runtime, prepared_commit.usage())?;
         let profile = DirectMutationProfile::after_prepare(commit_started_at);
 
         match mode {

@@ -19,6 +19,7 @@ use crate::tenant::{
     QueuedMutationRequest, QueuedMutationResult, TenantOperationGuard, TenantRuntime,
 };
 
+use super::caps::{MutationUsage, check_mutation_caps};
 use super::direct::{MutationExecutionMode, MutationExecutionResult};
 use super::enforce_mutation_authorization;
 use super::phase_metrics::CommitPhaseDurations;
@@ -212,6 +213,11 @@ impl Engine {
         Fut: future::Future<Output = ()> + Send + 'static,
     {
         let operation = runtime.enter_operation(tenant_id)?;
+        let usage = MutationUsage::for_journal_admission(
+            &mutation,
+            matches!(&mode, MutationExecutionMode::Scheduled { .. }),
+        );
+        check_mutation_caps(&runtime, usage)?;
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let request_cancelled = cancelled.clone();
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();

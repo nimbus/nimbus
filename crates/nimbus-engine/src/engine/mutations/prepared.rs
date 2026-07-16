@@ -7,6 +7,8 @@ use nimbus_core::{
 };
 use nimbus_storage::{ResolvedScheduleOp, ResolvedWrite};
 
+use super::caps::MutationUsage;
+
 /// The document material known to the engine before persistence.
 #[derive(Debug, Clone, PartialEq)]
 pub(in crate::engine) enum PreparedDocument {
@@ -121,6 +123,8 @@ pub(in crate::engine) struct PreparedCommit {
     /// resolved writes, scheduler operations, and trigger origin consumed by its unchanged atomic
     /// storage call.
     pub(in crate::engine) serialized_effects: PreparedSerializedEffects,
+    /// Resource usage frozen during prepare and checked before sequence assignment.
+    pub(in crate::engine) usage: MutationUsage,
 }
 
 impl PreparedCommit {
@@ -129,6 +133,13 @@ impl PreparedCommit {
         writes: Vec<WriteOp>,
         scheduled_execution_id: Option<String>,
     ) -> Self {
+        let mut usage = MutationUsage::default();
+        for write in &writes {
+            usage.add_user_write(write);
+        }
+        if let Some(execution_id) = scheduled_execution_id.as_ref() {
+            usage.add_system_write(execution_id);
+        }
         Self {
             snapshot_sequence,
             read_set: DependencySet::default(),
@@ -140,6 +151,7 @@ impl PreparedCommit {
             serialized_effects: PreparedSerializedEffects::Journal {
                 scheduled_execution_id,
             },
+            usage,
         }
     }
 
@@ -202,12 +214,15 @@ impl PreparedCommit {
     }
 
     fn for_direct(snapshot_sequence: SequenceNumber, write: PreparedWrite) -> Self {
+        let mut usage = MutationUsage::default();
+        add_prepared_write_usage(&mut usage, &write);
         Self {
             snapshot_sequence,
             read_set: DependencySet::default(),
             write_set: vec![write],
             index_deltas: Vec::new(),
             serialized_effects: PreparedSerializedEffects::Direct,
+            usage,
         }
     }
 
@@ -218,7 +233,17 @@ impl PreparedCommit {
         schedule_ops: Vec<ResolvedScheduleOp>,
         trigger_write_origin: Option<TriggerWriteOrigin>,
         deferred_server_timestamp_fields: HashMap<(TableName, DocumentId), HashSet<String>>,
+        mut usage: MutationUsage,
     ) -> Self {
+        for write in &writes {
+            add_resolved_write_usage(&mut usage, write);
+        }
+        for schedule_op in &schedule_ops {
+            match schedule_op {
+                ResolvedScheduleOp::Insert { job } => usage.add_system_write(job),
+                ResolvedScheduleOp::Cancel { job_id } => usage.add_system_write(job_id),
+            }
+        }
         let write_set = writes
             .iter()
             .map(|write| prepared_write_for_resolved(write, trigger_write_origin.as_ref()))
@@ -241,6 +266,7 @@ impl PreparedCommit {
                 trigger_write_origin,
                 deferred_server_timestamp_fields,
             },
+            usage,
         };
         debug_assert!(prepared.index_deltas.iter().all(|delta| {
             prepared
@@ -410,6 +436,30 @@ impl PreparedCommit {
                     .iter()
                     .any(|operation| matches!(operation, ResolvedScheduleOp::Insert { .. }))
         )
+    }
+
+    pub(in crate::engine) fn usage(&self) -> MutationUsage {
+        self.usage
+    }
+}
+
+fn add_prepared_write_usage(usage: &mut MutationUsage, write: &PreparedWrite) {
+    match &write.current {
+        Some(PreparedDocument::Full(document)) => usage.add_user_write(document),
+        Some(PreparedDocument::Patch(patch)) => usage.add_user_write(patch),
+        None => usage.add_user_write(&(write.table.as_str(), write.doc_id.as_str(), write.op_type)),
+    }
+}
+
+fn add_resolved_write_usage(usage: &mut MutationUsage, write: &ResolvedWrite) {
+    match write {
+        ResolvedWrite::Insert { document, .. } => usage.add_user_write(document),
+        ResolvedWrite::Update { current, .. } => usage.add_user_write(current),
+        ResolvedWrite::Delete { previous, .. } => usage.add_user_write(&(
+            previous.table.as_str(),
+            previous.id.as_str(),
+            WriteOpType::Delete,
+        )),
     }
 }
 
@@ -593,6 +643,9 @@ mod tests {
         assert!(prepared.read_set.is_empty());
         assert!(prepared.index_deltas.is_empty());
         assert_eq!(prepared.write_set.len(), 1);
+        assert_eq!(prepared.usage.documents_written, 1);
+        assert!(prepared.usage.write_bytes > 0);
+        assert_eq!(prepared.usage.system_documents_written, 1);
         assert_eq!(prepared.write_set[0].table_id, Some(table_id()));
         assert_eq!(
             prepared.write_set[0].current,
@@ -628,6 +681,8 @@ mod tests {
         assert_eq!(insert.write_set[0].previous, None);
         assert!(insert.read_set.is_empty());
         assert!(insert.index_deltas.is_empty());
+        assert_eq!(insert.usage.documents_written, 1);
+        assert!(insert.usage.write_bytes > 0);
 
         let (update_table, update_id, update_patch) = update.direct_update_parts().unwrap();
         assert_eq!(update_table, &table());
@@ -667,6 +722,12 @@ mod tests {
             resource_path_binding: None,
         };
 
+        let read_usage = MutationUsage {
+            read_bytes: 123,
+            documents_scanned: 4,
+            index_range_calls: 2,
+            ..MutationUsage::default()
+        };
         let prepared = PreparedCommit::for_execution_unit(
             SequenceNumber(60),
             read_set.clone(),
@@ -676,6 +737,7 @@ mod tests {
             }],
             None,
             HashMap::new(),
+            read_usage,
         );
 
         assert_eq!(prepared.snapshot_sequence, SequenceNumber(60));
@@ -704,6 +766,13 @@ mod tests {
         ));
         assert_eq!(origin, None);
         assert!(prepared.has_scheduled_insert());
+        assert_eq!(prepared.usage.read_bytes, 123);
+        assert_eq!(prepared.usage.documents_scanned, 4);
+        assert_eq!(prepared.usage.index_range_calls, 2);
+        assert_eq!(prepared.usage.documents_written, 1);
+        assert!(prepared.usage.write_bytes > 0);
+        assert_eq!(prepared.usage.system_documents_written, 1);
+        assert!(prepared.usage.system_write_bytes > 0);
 
         let mut assigned = prepared.clone();
         assigned

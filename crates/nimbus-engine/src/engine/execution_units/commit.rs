@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use nimbus_core::{CommitEntry, DependencySet, Error, Result, SequenceNumber};
 
+use super::super::mutations::caps::check_mutation_caps;
 use super::super::mutations::phase_metrics::{CommitPhaseDurations, maybe_warn_wide_read_set};
 use super::super::mutations::prepared::PreparedCommit;
 use super::super::mutations::write_log::ValidationSource;
@@ -38,12 +39,14 @@ impl MutationExecutionUnit {
                 schedule_ops,
                 state.trigger_write_origin.clone(),
                 state.deferred_server_timestamp_fields.clone(),
+                state.usage,
             )
         };
         let mut phases = CommitPhaseDurations {
             prepare: prepare_started.elapsed(),
             ..CommitPhaseDurations::default()
         };
+        check_mutation_caps(&self.runtime, prepared_commit.usage())?;
         if prepared_commit.is_empty_execution_unit() {
             return Ok(None);
         }
