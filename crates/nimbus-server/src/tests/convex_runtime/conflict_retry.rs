@@ -218,8 +218,13 @@ async fn retry_exhaustion_test() {
         .json::<serde_json::Value>()
         .await
         .expect("exhausted conflict response should parse");
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(body["error"]["code"], json!("op.conflict"));
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["error"]["code"], json!("OCC"));
+    assert_eq!(
+        body["error"]["detail"]["shortName"],
+        json!("OptimisticConcurrencyControlFailure")
+    );
+    assert_eq!(body["error"]["detail"]["retryability"], json!("retryable"));
     assert_eq!(body["error"]["detail"]["attempts"], json!(3));
     assert_eq!(
         body["error"]["detail"]["conflictingSequence"],
