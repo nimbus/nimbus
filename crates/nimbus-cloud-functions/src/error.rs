@@ -1,5 +1,5 @@
 use http::StatusCode;
-use nimbus_core::{Error, Retryability};
+use nimbus_core::{CommitErrorClass, Error, Retryability};
 
 /// Firebase callable/Google RPC vocabulary for commit-path failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,16 +13,20 @@ pub struct CloudFunctionsCommitErrorVocabulary {
 pub fn cloud_functions_commit_error_vocabulary(
     error: &Error,
 ) -> Option<CloudFunctionsCommitErrorVocabulary> {
-    let (http_status, status) = match error {
-        Error::Conflict { .. } => (StatusCode::CONFLICT, "ABORTED"),
-        Error::Overloaded { .. } | Error::CommitterFull { .. } => {
+    let class = error.commit_class()?;
+    let (http_status, status) = match class {
+        CommitErrorClass::Conflict => (StatusCode::CONFLICT, "ABORTED"),
+        CommitErrorClass::Overloaded | CommitErrorClass::CommitterFull => {
             (StatusCode::SERVICE_UNAVAILABLE, "UNAVAILABLE")
         }
-        Error::RejectedBeforeExecution { .. } => (StatusCode::SERVICE_UNAVAILABLE, "UNAVAILABLE"),
-        Error::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED"),
-        Error::OutOfRetention { .. } => (StatusCode::PRECONDITION_FAILED, "FAILED_PRECONDITION"),
-        Error::CapExceeded { .. } => (StatusCode::BAD_REQUEST, "INVALID_ARGUMENT"),
-        _ => return None,
+        CommitErrorClass::RejectedBeforeExecution => {
+            (StatusCode::SERVICE_UNAVAILABLE, "UNAVAILABLE")
+        }
+        CommitErrorClass::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED"),
+        CommitErrorClass::OutOfRetention => {
+            (StatusCode::PRECONDITION_FAILED, "FAILED_PRECONDITION")
+        }
+        CommitErrorClass::CapExceeded => (StatusCode::BAD_REQUEST, "INVALID_ARGUMENT"),
     };
     Some(CloudFunctionsCommitErrorVocabulary {
         http_status,

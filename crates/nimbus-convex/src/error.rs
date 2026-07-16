@@ -1,5 +1,5 @@
 use http::StatusCode;
-use nimbus_core::{Error, MutationCap, Retryability};
+use nimbus_core::{CommitErrorClass, Error, MutationCap, Retryability};
 
 /// Convex's documented error vocabulary for commit-path failures.
 ///
@@ -15,35 +15,44 @@ pub struct ConvexCommitErrorVocabulary {
 
 #[must_use]
 pub fn convex_commit_error_vocabulary(error: &Error) -> Option<ConvexCommitErrorVocabulary> {
-    let (http_status, code, short_name) = match error {
-        Error::Conflict { .. } => (
+    let class = error.commit_class()?;
+    let (http_status, code, short_name) = match class {
+        CommitErrorClass::Conflict => (
             StatusCode::SERVICE_UNAVAILABLE,
             "OCC",
             "OptimisticConcurrencyControlFailure",
         ),
-        Error::Overloaded { .. } => (StatusCode::SERVICE_UNAVAILABLE, "Overloaded", "Overloaded"),
-        Error::CommitterFull { .. } => (
+        CommitErrorClass::Overloaded => {
+            (StatusCode::SERVICE_UNAVAILABLE, "Overloaded", "Overloaded")
+        }
+        CommitErrorClass::CommitterFull => (
             StatusCode::SERVICE_UNAVAILABLE,
             "Overloaded",
             "CommitterFullError",
         ),
-        Error::RejectedBeforeExecution { .. } => (
+        CommitErrorClass::RejectedBeforeExecution => (
             StatusCode::SERVICE_UNAVAILABLE,
             "RejectedBeforeExecution",
             "RejectedBeforeExecution",
         ),
-        Error::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "RateLimited", "RateLimited"),
-        Error::OutOfRetention { .. } => (
+        CommitErrorClass::RateLimited => {
+            (StatusCode::TOO_MANY_REQUESTS, "RateLimited", "RateLimited")
+        }
+        CommitErrorClass::OutOfRetention => (
             StatusCode::SERVICE_UNAVAILABLE,
             "OutOfRetention",
             "OutOfRetention",
         ),
-        Error::CapExceeded { cap, .. } => (
-            StatusCode::BAD_REQUEST,
-            "PaginationLimit",
-            convex_cap_short_name(*cap),
-        ),
-        _ => return None,
+        CommitErrorClass::CapExceeded => {
+            let Error::CapExceeded { cap, .. } = error else {
+                unreachable!("commit class and error variant must agree")
+            };
+            (
+                StatusCode::BAD_REQUEST,
+                "PaginationLimit",
+                convex_cap_short_name(*cap),
+            )
+        }
     };
     Some(ConvexCommitErrorVocabulary {
         http_status,

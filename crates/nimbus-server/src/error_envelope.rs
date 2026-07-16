@@ -1,7 +1,7 @@
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use nimbus_core::{Error, HistoricalReadErrorKind, StorageErrorKind};
+use nimbus_core::{CommitErrorClass, Error, HistoricalReadErrorKind, StorageErrorKind};
 use serde::Serialize;
 use serde_json::{Value, json};
 use time::OffsetDateTime;
@@ -196,6 +196,141 @@ impl PublicError {
     }
 
     pub(crate) fn from_core_error(error: &Error) -> Self {
+        if let Some(class) = error.commit_class() {
+            return match class {
+                CommitErrorClass::Conflict => {
+                    let Error::Conflict {
+                        conflicting_sequence,
+                        retryable,
+                        attempts,
+                        ..
+                    } = error
+                    else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::new(
+                        "op.conflict",
+                        error.to_string(),
+                        ErrorSeverity::Error,
+                        *retryable,
+                        conflict_detail(*conflicting_sequence, *attempts, error.retryability()),
+                        Some(ErrorRemediation::new(
+                            "fix_request",
+                            "Resolve the conflicting state and retry.",
+                        )),
+                    )
+                }
+                CommitErrorClass::Overloaded => Self::new(
+                    "rate.overloaded",
+                    error.to_string(),
+                    ErrorSeverity::Error,
+                    true,
+                    retryability_detail(error.retryability()),
+                    Some(ErrorRemediation::new(
+                        "wait_and_retry",
+                        "Wait for mutation capacity to recover before retrying.",
+                    )),
+                ),
+                CommitErrorClass::CommitterFull => {
+                    let Error::CommitterFull { capacity, .. } = error else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::new(
+                        "rate.committer_full",
+                        error.to_string(),
+                        ErrorSeverity::Error,
+                        true,
+                        json!({
+                            "capacity": capacity,
+                            "retryability": error.retryability(),
+                        }),
+                        Some(ErrorRemediation::new(
+                            "wait_and_retry",
+                            "Wait for committer capacity to recover before retrying.",
+                        )),
+                    )
+                }
+                CommitErrorClass::RejectedBeforeExecution => Self::new(
+                    "rate.rejected_before_execution",
+                    error.to_string(),
+                    ErrorSeverity::Error,
+                    true,
+                    retryability_detail(error.retryability()),
+                    Some(ErrorRemediation::new(
+                        "retry",
+                        "The mutation did not start and is safe to retry.",
+                    )),
+                ),
+                CommitErrorClass::RateLimited => {
+                    let Error::RateLimited { retry_after, .. } = error else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::new(
+                        "rate.limited",
+                        error.to_string(),
+                        ErrorSeverity::Error,
+                        true,
+                        json!({
+                            "retryAfterMs": retry_after.as_millis(),
+                            "retryability": error.retryability(),
+                        }),
+                        Some(ErrorRemediation::new(
+                            "wait_and_retry",
+                            "Retry after the indicated delay.",
+                        )),
+                    )
+                }
+                CommitErrorClass::OutOfRetention => {
+                    let Error::OutOfRetention {
+                        minimum_sequence, ..
+                    } = error
+                    else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::new(
+                        "op.out_of_retention",
+                        error.to_string(),
+                        ErrorSeverity::Error,
+                        true,
+                        json!({
+                            "minimumSequence": minimum_sequence.map(|sequence| sequence.0),
+                            "retryability": error.retryability(),
+                        }),
+                        Some(ErrorRemediation::new(
+                            "restart_transaction",
+                            "Restart the transaction from a fresh snapshot.",
+                        )),
+                    )
+                }
+                CommitErrorClass::CapExceeded => {
+                    let Error::CapExceeded {
+                        cap,
+                        observed,
+                        limit,
+                    } = error
+                    else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::new(
+                        "op.cap_exceeded",
+                        error.to_string(),
+                        ErrorSeverity::Error,
+                        false,
+                        json!({
+                            "cap": cap.as_str(),
+                            "observed": observed,
+                            "limit": limit,
+                            "retryability": error.retryability(),
+                        }),
+                        Some(ErrorRemediation::new(
+                            "reduce_request",
+                            "Reduce the mutation's resource usage before retrying.",
+                        )),
+                    )
+                }
+            };
+        }
+
         match error {
             Error::Cancelled => Self::new(
                 "op.cancelled",
@@ -255,108 +390,6 @@ impl PublicError {
                 false,
                 Value::Null,
                 None,
-            ),
-            Error::Conflict {
-                conflicting_sequence,
-                retryable,
-                attempts,
-                ..
-            } => Self::new(
-                "op.conflict",
-                error.to_string(),
-                ErrorSeverity::Error,
-                *retryable,
-                conflict_detail(*conflicting_sequence, *attempts, error.retryability()),
-                Some(ErrorRemediation::new(
-                    "fix_request",
-                    "Resolve the conflicting state and retry.",
-                )),
-            ),
-            Error::Overloaded { .. } => Self::new(
-                "rate.overloaded",
-                error.to_string(),
-                ErrorSeverity::Error,
-                true,
-                retryability_detail(error.retryability()),
-                Some(ErrorRemediation::new(
-                    "wait_and_retry",
-                    "Wait for mutation capacity to recover before retrying.",
-                )),
-            ),
-            Error::CommitterFull { capacity, .. } => Self::new(
-                "rate.committer_full",
-                error.to_string(),
-                ErrorSeverity::Error,
-                true,
-                json!({
-                    "capacity": capacity,
-                    "retryability": error.retryability(),
-                }),
-                Some(ErrorRemediation::new(
-                    "wait_and_retry",
-                    "Wait for committer capacity to recover before retrying.",
-                )),
-            ),
-            Error::RejectedBeforeExecution { .. } => Self::new(
-                "rate.rejected_before_execution",
-                error.to_string(),
-                ErrorSeverity::Error,
-                true,
-                retryability_detail(error.retryability()),
-                Some(ErrorRemediation::new(
-                    "retry",
-                    "The mutation did not start and is safe to retry.",
-                )),
-            ),
-            Error::RateLimited { retry_after, .. } => Self::new(
-                "rate.limited",
-                error.to_string(),
-                ErrorSeverity::Error,
-                true,
-                json!({
-                    "retryAfterMs": retry_after.as_millis(),
-                    "retryability": error.retryability(),
-                }),
-                Some(ErrorRemediation::new(
-                    "wait_and_retry",
-                    "Retry after the indicated delay.",
-                )),
-            ),
-            Error::OutOfRetention {
-                minimum_sequence, ..
-            } => Self::new(
-                "op.out_of_retention",
-                error.to_string(),
-                ErrorSeverity::Error,
-                true,
-                json!({
-                    "minimumSequence": minimum_sequence.map(|sequence| sequence.0),
-                    "retryability": error.retryability(),
-                }),
-                Some(ErrorRemediation::new(
-                    "restart_transaction",
-                    "Restart the transaction from a fresh snapshot.",
-                )),
-            ),
-            Error::CapExceeded {
-                cap,
-                observed,
-                limit,
-            } => Self::new(
-                "op.cap_exceeded",
-                error.to_string(),
-                ErrorSeverity::Error,
-                false,
-                json!({
-                    "cap": cap.as_str(),
-                    "observed": observed,
-                    "limit": limit,
-                    "retryability": error.retryability(),
-                }),
-                Some(ErrorRemediation::new(
-                    "reduce_request",
-                    "Reduce the mutation's resource usage before retrying.",
-                )),
             ),
             Error::PreconditionFailed(_) => Self::new(
                 "op.precondition_failed",
@@ -528,6 +561,17 @@ impl PublicError {
                     "Retry once the transport or connection issue clears.",
                 )),
             ),
+            _ => Self::new(
+                "service.internal",
+                error.to_string(),
+                ErrorSeverity::Fatal,
+                false,
+                Value::Null,
+                Some(ErrorRemediation::new(
+                    "contact_operator",
+                    "Internal server failures require operator investigation.",
+                )),
+            ),
         }
     }
 
@@ -618,51 +662,62 @@ impl StructuredHttpError {
                 Self::new(StatusCode::NOT_FOUND, PublicError::route_not_found(message))
             }
             crate::state::AppError::Core(error) => {
-                let status = match &error {
-                    Error::Cancelled => StatusCode::REQUEST_TIMEOUT,
-                    Error::TenantNotFound(_)
-                    | Error::DocumentNotFound(_)
-                    | Error::ScheduledJobNotFound(_)
-                    | Error::SchemaNotFound(_)
-                    | Error::NotFound(_) => StatusCode::NOT_FOUND,
-                    Error::Conflict { .. } | Error::OutOfRetention { .. } => StatusCode::CONFLICT,
-                    Error::PreconditionFailed(_) | Error::MissingIndex { .. } => {
-                        StatusCode::PRECONDITION_FAILED
+                let status = if let Some(class) = error.commit_class() {
+                    match class {
+                        CommitErrorClass::Conflict | CommitErrorClass::OutOfRetention => {
+                            StatusCode::CONFLICT
+                        }
+                        CommitErrorClass::Overloaded
+                        | CommitErrorClass::CommitterFull
+                        | CommitErrorClass::RejectedBeforeExecution
+                        | CommitErrorClass::RateLimited => StatusCode::TOO_MANY_REQUESTS,
+                        CommitErrorClass::CapExceeded => StatusCode::BAD_REQUEST,
                     }
-                    Error::ResourceExhausted(_)
-                    | Error::Overloaded { .. }
-                    | Error::CommitterFull { .. }
-                    | Error::RejectedBeforeExecution { .. }
-                    | Error::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
-                    Error::PermissionDenied(_) => StatusCode::FORBIDDEN,
-                    Error::InvalidInput(_) | Error::CapExceeded { .. } => StatusCode::BAD_REQUEST,
-                    Error::SchemaValidation(_) => StatusCode::UNPROCESSABLE_ENTITY,
-                    Error::AlreadyExists(_) => StatusCode::CONFLICT,
-                    Error::HistoricalRead { kind, .. } => match kind {
-                        HistoricalReadErrorKind::UnsupportedBackend
-                        | HistoricalReadErrorKind::UnsupportedAdapter => {
-                            StatusCode::NOT_IMPLEMENTED
+                } else {
+                    match &error {
+                        Error::Cancelled => StatusCode::REQUEST_TIMEOUT,
+                        Error::TenantNotFound(_)
+                        | Error::DocumentNotFound(_)
+                        | Error::ScheduledJobNotFound(_)
+                        | Error::SchemaNotFound(_)
+                        | Error::NotFound(_) => StatusCode::NOT_FOUND,
+                        Error::PreconditionFailed(_) | Error::MissingIndex { .. } => {
+                            StatusCode::PRECONDITION_FAILED
                         }
-                        HistoricalReadErrorKind::PolicySnapshotMissing => StatusCode::FORBIDDEN,
-                        HistoricalReadErrorKind::SnapshotUnavailable => {
-                            StatusCode::SERVICE_UNAVAILABLE
+                        Error::ResourceExhausted(_) => StatusCode::TOO_MANY_REQUESTS,
+                        Error::PermissionDenied(_) => StatusCode::FORBIDDEN,
+                        Error::InvalidInput(_) => StatusCode::BAD_REQUEST,
+                        Error::SchemaValidation(_) => StatusCode::UNPROCESSABLE_ENTITY,
+                        Error::AlreadyExists(_) => StatusCode::CONFLICT,
+                        Error::HistoricalRead { kind, .. } => match kind {
+                            HistoricalReadErrorKind::UnsupportedBackend
+                            | HistoricalReadErrorKind::UnsupportedAdapter => {
+                                StatusCode::NOT_IMPLEMENTED
+                            }
+                            HistoricalReadErrorKind::PolicySnapshotMissing => StatusCode::FORBIDDEN,
+                            HistoricalReadErrorKind::SnapshotUnavailable => {
+                                StatusCode::SERVICE_UNAVAILABLE
+                            }
+                            HistoricalReadErrorKind::CursorMismatch
+                            | HistoricalReadErrorKind::FormatMismatch
+                            | HistoricalReadErrorKind::RetentionExpired
+                            | HistoricalReadErrorKind::TimestampOutOfRange => {
+                                StatusCode::BAD_REQUEST
+                            }
+                        },
+                        Error::Transport(_) => StatusCode::SERVICE_UNAVAILABLE,
+                        Error::Storage { kind, .. } => match kind {
+                            StorageErrorKind::Busy
+                            | StorageErrorKind::Transient
+                            | StorageErrorKind::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+                            StorageErrorKind::Corruption
+                            | StorageErrorKind::Io
+                            | StorageErrorKind::Other => StatusCode::INTERNAL_SERVER_ERROR,
+                        },
+                        Error::Serialization(_) | Error::Internal(_) => {
+                            StatusCode::INTERNAL_SERVER_ERROR
                         }
-                        HistoricalReadErrorKind::CursorMismatch
-                        | HistoricalReadErrorKind::FormatMismatch
-                        | HistoricalReadErrorKind::RetentionExpired
-                        | HistoricalReadErrorKind::TimestampOutOfRange => StatusCode::BAD_REQUEST,
-                    },
-                    Error::Transport(_) => StatusCode::SERVICE_UNAVAILABLE,
-                    Error::Storage { kind, .. } => match kind {
-                        StorageErrorKind::Busy
-                        | StorageErrorKind::Transient
-                        | StorageErrorKind::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
-                        StorageErrorKind::Corruption
-                        | StorageErrorKind::Io
-                        | StorageErrorKind::Other => StatusCode::INTERNAL_SERVER_ERROR,
-                    },
-                    Error::Serialization(_) | Error::Internal(_) => {
-                        StatusCode::INTERNAL_SERVER_ERROR
+                        _ => StatusCode::INTERNAL_SERVER_ERROR,
                     }
                 };
                 Self::new(status, PublicError::from_core_error(&error))

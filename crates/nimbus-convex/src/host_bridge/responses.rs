@@ -117,6 +117,87 @@ impl ConvexRuntimeResponseEnvelope {
 
 impl ConvexRuntimeEncodedError {
     pub fn from_core_error(error: Error) -> Self {
+        if let Some(class) = error.commit_class() {
+            return match class {
+                nimbus_core::CommitErrorClass::Conflict => {
+                    let Error::Conflict {
+                        message,
+                        conflicting_sequence,
+                        retryable,
+                        attempts,
+                    } = error
+                    else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::Conflict {
+                        message,
+                        conflicting_sequence,
+                        retryable,
+                        attempts,
+                    }
+                }
+                nimbus_core::CommitErrorClass::Overloaded => {
+                    let Error::Overloaded { message } = error else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::Overloaded { message }
+                }
+                nimbus_core::CommitErrorClass::CommitterFull => {
+                    let Error::CommitterFull { message, capacity } = error else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::CommitterFull { message, capacity }
+                }
+                nimbus_core::CommitErrorClass::RejectedBeforeExecution => {
+                    let Error::RejectedBeforeExecution { message } = error else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::RejectedBeforeExecution { message }
+                }
+                nimbus_core::CommitErrorClass::RateLimited => {
+                    let Error::RateLimited {
+                        message,
+                        retry_after,
+                    } = error
+                    else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::RateLimited {
+                        message,
+                        retry_after,
+                    }
+                }
+                nimbus_core::CommitErrorClass::OutOfRetention => {
+                    let Error::OutOfRetention {
+                        message,
+                        minimum_sequence,
+                    } = error
+                    else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::OutOfRetention {
+                        message,
+                        minimum_sequence,
+                    }
+                }
+                nimbus_core::CommitErrorClass::CapExceeded => {
+                    let Error::CapExceeded {
+                        cap,
+                        observed,
+                        limit,
+                    } = error
+                    else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::CapExceeded {
+                        cap,
+                        observed,
+                        limit,
+                    }
+                }
+            };
+        }
+
         match error {
             Error::Cancelled => Self::Cancelled,
             Error::TenantNotFound(tenant_id) => Self::TenantNotFound {
@@ -129,43 +210,6 @@ impl ConvexRuntimeEncodedError {
                 job_id: job_id.to_string(),
             },
             Error::AlreadyExists(message) => Self::AlreadyExists { message },
-            Error::Conflict {
-                message,
-                conflicting_sequence,
-                retryable,
-                attempts,
-            } => Self::Conflict {
-                message,
-                conflicting_sequence,
-                retryable,
-                attempts,
-            },
-            Error::Overloaded { message } => Self::Overloaded { message },
-            Error::CommitterFull { message, capacity } => Self::CommitterFull { message, capacity },
-            Error::RejectedBeforeExecution { message } => Self::RejectedBeforeExecution { message },
-            Error::RateLimited {
-                message,
-                retry_after,
-            } => Self::RateLimited {
-                message,
-                retry_after,
-            },
-            Error::OutOfRetention {
-                message,
-                minimum_sequence,
-            } => Self::OutOfRetention {
-                message,
-                minimum_sequence,
-            },
-            Error::CapExceeded {
-                cap,
-                observed,
-                limit,
-            } => Self::CapExceeded {
-                cap,
-                observed,
-                limit,
-            },
             Error::PreconditionFailed(message) => Self::PreconditionFailed { message },
             Error::ResourceExhausted(message) => Self::ResourceExhausted { message },
             Error::PermissionDenied(message) => Self::PermissionDenied { message },
@@ -187,6 +231,9 @@ impl ConvexRuntimeEncodedError {
             Error::NotFound(message) => Self::NotFound { message },
             Error::Transport(message) => Self::Transport { message },
             Error::Internal(message) => Self::Internal { message },
+            other => Self::Internal {
+                message: other.to_string(),
+            },
         }
     }
 

@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use nimbus_core::{Error, HistoricalReadErrorKind, Result, StorageErrorKind};
+use nimbus_core::{CommitErrorClass, Error, HistoricalReadErrorKind, Result, StorageErrorKind};
 use nimbus_runtime::NimbusRuntimeError;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -68,6 +68,102 @@ struct RuntimeHostPublicError {
 
 impl RuntimeHostPublicError {
     fn from_core_error(error: &Error) -> Self {
+        if let Some(class) = error.commit_class() {
+            return match class {
+                CommitErrorClass::Conflict => {
+                    let Error::Conflict {
+                        conflicting_sequence,
+                        retryable,
+                        attempts,
+                        ..
+                    } = error
+                    else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::new(
+                        "op.conflict",
+                        error.to_string(),
+                        RuntimeHostErrorSeverity::Error,
+                        *retryable,
+                        conflict_detail(*conflicting_sequence, *attempts),
+                        Some(RuntimeHostErrorRemediation::new(
+                            "fix_request",
+                            "Resolve the conflicting state and retry.",
+                        )),
+                    )
+                }
+                CommitErrorClass::Overloaded
+                | CommitErrorClass::CommitterFull
+                | CommitErrorClass::RejectedBeforeExecution => Self::new(
+                    "rate.overloaded",
+                    error.to_string(),
+                    RuntimeHostErrorSeverity::Error,
+                    true,
+                    Value::Null,
+                    Some(RuntimeHostErrorRemediation::new(
+                        "wait_and_retry",
+                        "Wait for mutation capacity to recover before retrying.",
+                    )),
+                ),
+                CommitErrorClass::RateLimited => {
+                    let Error::RateLimited { retry_after, .. } = error else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::new(
+                        "rate.limited",
+                        error.to_string(),
+                        RuntimeHostErrorSeverity::Error,
+                        true,
+                        json!({ "retryAfterMs": retry_after.as_millis() }),
+                        Some(RuntimeHostErrorRemediation::new(
+                            "wait_and_retry",
+                            "Retry after the indicated delay.",
+                        )),
+                    )
+                }
+                CommitErrorClass::OutOfRetention => {
+                    let Error::OutOfRetention {
+                        minimum_sequence, ..
+                    } = error
+                    else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::new(
+                        "op.out_of_retention",
+                        error.to_string(),
+                        RuntimeHostErrorSeverity::Error,
+                        true,
+                        json!({ "minimumSequence": minimum_sequence.map(|sequence| sequence.0) }),
+                        Some(RuntimeHostErrorRemediation::new(
+                            "restart_transaction",
+                            "Restart the transaction from a fresh snapshot.",
+                        )),
+                    )
+                }
+                CommitErrorClass::CapExceeded => {
+                    let Error::CapExceeded {
+                        cap,
+                        observed,
+                        limit,
+                    } = error
+                    else {
+                        unreachable!("commit class and error variant must agree")
+                    };
+                    Self::new(
+                        "op.cap_exceeded",
+                        error.to_string(),
+                        RuntimeHostErrorSeverity::Error,
+                        false,
+                        json!({ "cap": cap.as_str(), "observed": observed, "limit": limit }),
+                        Some(RuntimeHostErrorRemediation::new(
+                            "reduce_request",
+                            "Reduce the mutation's resource usage before retrying.",
+                        )),
+                    )
+                }
+            };
+        }
+
         match error {
             Error::Cancelled => Self::new(
                 "op.cancelled",
@@ -130,74 +226,6 @@ impl RuntimeHostPublicError {
                 false,
                 Value::Null,
                 None,
-            ),
-            Error::Conflict {
-                conflicting_sequence,
-                retryable,
-                attempts,
-                ..
-            } => Self::new(
-                "op.conflict",
-                error.to_string(),
-                RuntimeHostErrorSeverity::Error,
-                *retryable,
-                conflict_detail(*conflicting_sequence, *attempts),
-                Some(RuntimeHostErrorRemediation::new(
-                    "fix_request",
-                    "Resolve the conflicting state and retry.",
-                )),
-            ),
-            Error::Overloaded { .. }
-            | Error::CommitterFull { .. }
-            | Error::RejectedBeforeExecution { .. } => Self::new(
-                "rate.overloaded",
-                error.to_string(),
-                RuntimeHostErrorSeverity::Error,
-                true,
-                Value::Null,
-                Some(RuntimeHostErrorRemediation::new(
-                    "wait_and_retry",
-                    "Wait for mutation capacity to recover before retrying.",
-                )),
-            ),
-            Error::RateLimited { retry_after, .. } => Self::new(
-                "rate.limited",
-                error.to_string(),
-                RuntimeHostErrorSeverity::Error,
-                true,
-                json!({ "retryAfterMs": retry_after.as_millis() }),
-                Some(RuntimeHostErrorRemediation::new(
-                    "wait_and_retry",
-                    "Retry after the indicated delay.",
-                )),
-            ),
-            Error::OutOfRetention {
-                minimum_sequence, ..
-            } => Self::new(
-                "op.out_of_retention",
-                error.to_string(),
-                RuntimeHostErrorSeverity::Error,
-                true,
-                json!({ "minimumSequence": minimum_sequence.map(|sequence| sequence.0) }),
-                Some(RuntimeHostErrorRemediation::new(
-                    "restart_transaction",
-                    "Restart the transaction from a fresh snapshot.",
-                )),
-            ),
-            Error::CapExceeded {
-                cap,
-                observed,
-                limit,
-            } => Self::new(
-                "op.cap_exceeded",
-                error.to_string(),
-                RuntimeHostErrorSeverity::Error,
-                false,
-                json!({ "cap": cap.as_str(), "observed": observed, "limit": limit }),
-                Some(RuntimeHostErrorRemediation::new(
-                    "reduce_request",
-                    "Reduce the mutation's resource usage before retrying.",
-                )),
             ),
             Error::PreconditionFailed(_) => Self::new(
                 "op.precondition_failed",
@@ -303,6 +331,17 @@ impl RuntimeHostPublicError {
                 Some(RuntimeHostErrorRemediation::new(
                     "retry",
                     "Retry once the transport or connection issue clears.",
+                )),
+            ),
+            _ => Self::new(
+                "service.internal",
+                error.to_string(),
+                RuntimeHostErrorSeverity::Fatal,
+                false,
+                Value::Null,
+                Some(RuntimeHostErrorRemediation::new(
+                    "contact_operator",
+                    "Internal server failures require operator investigation.",
                 )),
             ),
         }

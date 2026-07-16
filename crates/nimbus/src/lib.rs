@@ -5,9 +5,9 @@
 
 // Core data model and query surface.
 pub use nimbus_core::{
-    CommitEntry, CreateCronRequest, CronJob, CronSchedule, Cursor, Document, DocumentId, Error,
-    FieldSchema, FieldType, Filter, FilterOp, IndexDefinition, JobId, Mutation, OrderBy,
-    OrderDirection, Page, PaginatedQuery, Query, Result, ScheduleRequest, ScheduledJob,
+    CommitEntry, CommitErrorClass, CreateCronRequest, CronJob, CronSchedule, Cursor, Document,
+    DocumentId, Error, FieldSchema, FieldType, Filter, FilterOp, IndexDefinition, JobId, Mutation,
+    OrderBy, OrderDirection, Page, PaginatedQuery, Query, Result, ScheduleRequest, ScheduledJob,
     ScheduledJobOutcome, ScheduledJobResult, Schema, SequenceNumber, TableName, TableSchema,
     TenantId, Timestamp, VerifiedUserIdentity, VerifiedUserIdentityKind, WriteOp, WriteOpType,
 };

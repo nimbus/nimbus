@@ -110,50 +110,51 @@ impl MongoError {
 
 impl From<nimbus_core::Error> for MongoError {
     fn from(err: nimbus_core::Error) -> Self {
-        let (ec, msg) = match &err {
-            nimbus_core::Error::TenantNotFound(_)
-            | nimbus_core::Error::DocumentNotFound(_)
-            | nimbus_core::Error::ScheduledJobNotFound(_)
-            | nimbus_core::Error::NotFound(_)
-            | nimbus_core::Error::SchemaNotFound(_) => (NAMESPACE_NOT_FOUND, err.to_string()),
-            nimbus_core::Error::AlreadyExists(msg) if msg.contains("document") => {
-                (DUPLICATE_KEY, err.to_string())
+        let ec = if let Some(class) = err.commit_class() {
+            match class {
+                nimbus_core::CommitErrorClass::Conflict => WRITE_CONFLICT,
+                nimbus_core::CommitErrorClass::Overloaded
+                | nimbus_core::CommitErrorClass::CommitterFull
+                | nimbus_core::CommitErrorClass::RejectedBeforeExecution => TEMPORARILY_UNAVAILABLE,
+                nimbus_core::CommitErrorClass::RateLimited => RATE_LIMIT_EXCEEDED,
+                nimbus_core::CommitErrorClass::OutOfRetention => SNAPSHOT_TOO_OLD,
+                nimbus_core::CommitErrorClass::CapExceeded => TRANSACTION_TOO_LARGE_FOR_CACHE,
             }
-            nimbus_core::Error::AlreadyExists(_) => (NAMESPACE_EXISTS, err.to_string()),
-            nimbus_core::Error::InvalidInput(_)
-            | nimbus_core::Error::MissingIndex { .. }
-            | nimbus_core::Error::SchemaValidation(_)
-            | nimbus_core::Error::HistoricalRead { .. }
-            | nimbus_core::Error::Serialization(_) => (BAD_VALUE, err.to_string()),
-            nimbus_core::Error::PermissionDenied(_) => (UNAUTHORIZED, err.to_string()),
-            nimbus_core::Error::Conflict { .. } | nimbus_core::Error::PreconditionFailed(_) => {
-                (WRITE_CONFLICT, err.to_string())
+        } else {
+            match &err {
+                nimbus_core::Error::TenantNotFound(_)
+                | nimbus_core::Error::DocumentNotFound(_)
+                | nimbus_core::Error::ScheduledJobNotFound(_)
+                | nimbus_core::Error::NotFound(_)
+                | nimbus_core::Error::SchemaNotFound(_) => NAMESPACE_NOT_FOUND,
+                nimbus_core::Error::AlreadyExists(msg) if msg.contains("document") => DUPLICATE_KEY,
+                nimbus_core::Error::AlreadyExists(_) => NAMESPACE_EXISTS,
+                nimbus_core::Error::InvalidInput(_)
+                | nimbus_core::Error::MissingIndex { .. }
+                | nimbus_core::Error::SchemaValidation(_)
+                | nimbus_core::Error::HistoricalRead { .. }
+                | nimbus_core::Error::Serialization(_) => BAD_VALUE,
+                nimbus_core::Error::PermissionDenied(_) => UNAUTHORIZED,
+                nimbus_core::Error::PreconditionFailed(_) => WRITE_CONFLICT,
+                nimbus_core::Error::Transport(_) => TEMPORARILY_UNAVAILABLE,
+                nimbus_core::Error::ResourceExhausted(_) => RESOURCE_EXHAUSTED,
+                nimbus_core::Error::Storage {
+                    kind:
+                        nimbus_core::StorageErrorKind::Busy
+                        | nimbus_core::StorageErrorKind::Transient
+                        | nimbus_core::StorageErrorKind::Unavailable,
+                    ..
+                } => TEMPORARILY_UNAVAILABLE,
+                nimbus_core::Error::Cancelled
+                | nimbus_core::Error::Storage { .. }
+                | nimbus_core::Error::Internal(_) => INTERNAL_ERROR,
+                _ => INTERNAL_ERROR,
             }
-            nimbus_core::Error::Overloaded { .. }
-            | nimbus_core::Error::CommitterFull { .. }
-            | nimbus_core::Error::RejectedBeforeExecution { .. }
-            | nimbus_core::Error::Transport(_) => (TEMPORARILY_UNAVAILABLE, err.to_string()),
-            nimbus_core::Error::RateLimited { .. } => (RATE_LIMIT_EXCEEDED, err.to_string()),
-            nimbus_core::Error::OutOfRetention { .. } => (SNAPSHOT_TOO_OLD, err.to_string()),
-            nimbus_core::Error::CapExceeded { .. } => {
-                (TRANSACTION_TOO_LARGE_FOR_CACHE, err.to_string())
-            }
-            nimbus_core::Error::ResourceExhausted(_) => (RESOURCE_EXHAUSTED, err.to_string()),
-            nimbus_core::Error::Storage {
-                kind:
-                    nimbus_core::StorageErrorKind::Busy
-                    | nimbus_core::StorageErrorKind::Transient
-                    | nimbus_core::StorageErrorKind::Unavailable,
-                ..
-            } => (TEMPORARILY_UNAVAILABLE, err.to_string()),
-            nimbus_core::Error::Cancelled
-            | nimbus_core::Error::Storage { .. }
-            | nimbus_core::Error::Internal(_) => (INTERNAL_ERROR, err.to_string()),
         };
         Self::Command {
             code: ec.code,
             code_name: ec.code_name.into(),
-            message: msg,
+            message: err.to_string(),
         }
     }
 }
