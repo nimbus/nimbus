@@ -207,7 +207,7 @@ impl Engine {
             if !commits.is_empty() {
                 runtime.invalidate_document_cache_for_commits(commits.iter());
             }
-            runtime.sync_mutation_journal_progress(progress);
+            runtime.sync_mutation_journal_progress_async(progress).await;
             if !commits.is_empty() {
                 // Unlike the live mutation-queue apply path, a raw journal
                 // tail re-read here can span more than one originating

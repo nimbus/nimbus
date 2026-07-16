@@ -133,7 +133,7 @@ impl Engine {
                         .execute(|store| store.recover_durable_journal())
                         .await
                     {
-                        runtime.sync_mutation_journal_progress(progress);
+                        runtime.sync_mutation_journal_progress_async(progress).await;
                     }
                 }
                 Err(error) => {
@@ -144,7 +144,7 @@ impl Engine {
                         .execute(|store| store.recover_durable_journal())
                         .await
                     {
-                        runtime.sync_mutation_journal_progress(progress);
+                        runtime.sync_mutation_journal_progress_async(progress).await;
                     }
                 }
             }

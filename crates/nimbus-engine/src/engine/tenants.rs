@@ -289,7 +289,7 @@ impl Engine {
             }
         };
         let recover_elapsed = recover_started.elapsed();
-        runtime.sync_mutation_journal_progress(progress);
+        runtime.sync_mutation_journal_progress_async(progress).await;
         let catch_up_started = Instant::now();
         if !self.provider_background_ready() {
             self.catch_up_loaded_provider_tenant_async(

@@ -192,6 +192,26 @@ impl TenantRuntime {
         self.sync_mutation_journal_progress_locked(progress);
     }
 
+    /// Async-context form of [`Self::sync_mutation_journal_progress`].
+    ///
+    /// The gated sync blocks on the sequence gate (a std mutex). Blocking a
+    /// tokio worker on it can starve the reactor while a gate holder drives
+    /// provider storage I/O through a runtime bridge — a real deadlock
+    /// observed on postgres-backed tenants (provider notification listener
+    /// vs a direct mutation holding the gate). Async callers must use this
+    /// form, which parks the wait on the blocking pool instead.
+    pub(crate) async fn sync_mutation_journal_progress_async(
+        self: &Arc<Self>,
+        progress: JournalProgress,
+    ) {
+        let runtime = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            runtime.sync_mutation_journal_progress(progress);
+        })
+        .await
+        .expect("sync_mutation_journal_progress task panicked");
+    }
+
     /// Synchronizes recovered heads while the caller holds the mutation
     /// sequence gate. Callers already inside a serial mutation section use
     /// this non-reentrant form; all other callers use the gated wrapper above.
