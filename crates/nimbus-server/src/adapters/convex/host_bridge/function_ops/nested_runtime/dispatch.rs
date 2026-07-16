@@ -164,7 +164,7 @@ impl ConvexHostBridge {
         let response = invoke_runtime_bundle_on_worker_with_egress_gateway(
             &runtime_executor,
             runtime_policy,
-            Arc::new(self.retargeted_for_nested_invocation(name)),
+            Arc::new(self.retargeted_for_nested_invocation(request.kind.clone(), name)),
             bundle,
             request,
             RuntimeBundleInvocationOptions::budgeted_nested_invocation_bypass(
@@ -206,7 +206,7 @@ impl ConvexHostBridge {
         let response = invoke_runtime_bundle_blocking_with_egress_gateway(
             &runtime_executor,
             runtime_policy,
-            Arc::new(self.retargeted_for_nested_invocation(name)),
+            Arc::new(self.retargeted_for_nested_invocation(request.kind.clone(), name)),
             bundle,
             request,
             RuntimeBundleInvocationOptions::budgeted_nested_invocation_bypass(
