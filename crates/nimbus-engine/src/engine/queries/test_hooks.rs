@@ -341,12 +341,17 @@ impl Engine {
         tenant_id: &TenantId,
         cursor: TriggerDeliveryCursor,
     ) -> Result<()> {
-        self.with_runtime_for_testing(tenant_id, |runtime| {
-            let _sequence_guard = runtime.lock_mutation_sequence();
-            runtime.store.set_trigger_delivery_cursor(cursor)?;
-            runtime.sync_mutation_journal_progress_locked(runtime.store.journal_progress()?);
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let runtime_for_commit = runtime.clone();
+        runtime.submit_internal_committer(move || {
+            runtime_for_commit
+                .store
+                .set_trigger_delivery_cursor(cursor)?;
+            runtime_for_commit.sync_mutation_journal_progress_in_actor(
+                runtime_for_commit.store.journal_progress()?,
+            );
             Ok(())
-        })??;
+        })?;
         Ok(())
     }
 

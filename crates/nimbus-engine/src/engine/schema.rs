@@ -15,7 +15,17 @@ impl Engine {
     pub fn set_table_schema(&self, tenant_id: &TenantId, table_schema: TableSchema) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let table = table_schema.table.clone();
-        apply_set_table_schema(&runtime, tenant_id, table_schema, &self.commit_faults)?;
+        let runtime_for_commit = runtime.clone();
+        let tenant_id_for_commit = tenant_id.clone();
+        let commit_faults = self.commit_faults.clone();
+        runtime.submit_internal_committer(move || {
+            apply_set_table_schema(
+                &runtime_for_commit,
+                &tenant_id_for_commit,
+                table_schema,
+                &commit_faults,
+            )
+        })?;
         self.notify_table_schema_change_observers(tenant_id, &table);
         Ok(())
     }
@@ -31,16 +41,16 @@ impl Engine {
         let tenant_id_for_task = tenant_id.clone();
         let runtime_for_task = runtime.clone();
         let commit_faults = self.commit_faults.clone();
-        tokio::task::spawn_blocking(move || {
-            apply_set_table_schema(
-                &runtime_for_task,
-                &tenant_id_for_task,
-                table_schema,
-                &commit_faults,
-            )
-        })
-        .await
-        .map_err(map_schema_task_join_error)??;
+        runtime
+            .submit_internal_committer_async(move || {
+                apply_set_table_schema(
+                    &runtime_for_task,
+                    &tenant_id_for_task,
+                    table_schema,
+                    &commit_faults,
+                )
+            })
+            .await?;
         self.notify_table_schema_change_observers(&tenant_id, &table);
         Ok(())
     }
@@ -88,7 +98,18 @@ impl Engine {
     /// Deletes a single table schema for a tenant.
     pub fn delete_table_schema(&self, tenant_id: &TenantId, table: &TableName) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
-        apply_delete_table_schema(&runtime, tenant_id, table, &self.commit_faults)?;
+        let runtime_for_commit = runtime.clone();
+        let tenant_id_for_commit = tenant_id.clone();
+        let table_for_commit = table.clone();
+        let commit_faults = self.commit_faults.clone();
+        runtime.submit_internal_committer(move || {
+            apply_delete_table_schema(
+                &runtime_for_commit,
+                &tenant_id_for_commit,
+                &table_for_commit,
+                &commit_faults,
+            )
+        })?;
         self.notify_table_schema_change_observers(tenant_id, table);
         Ok(())
     }
@@ -104,16 +125,16 @@ impl Engine {
         let runtime_for_task = runtime.clone();
         let table_for_task = table.clone();
         let commit_faults = self.commit_faults.clone();
-        tokio::task::spawn_blocking(move || {
-            apply_delete_table_schema(
-                &runtime_for_task,
-                &tenant_id_for_task,
-                &table_for_task,
-                &commit_faults,
-            )
-        })
-        .await
-        .map_err(map_schema_task_join_error)??;
+        runtime
+            .submit_internal_committer_async(move || {
+                apply_delete_table_schema(
+                    &runtime_for_task,
+                    &tenant_id_for_task,
+                    &table_for_task,
+                    &commit_faults,
+                )
+            })
+            .await?;
         self.notify_table_schema_change_observers(&tenant_id, &table);
         Ok(())
     }
@@ -184,7 +205,6 @@ fn apply_set_table_schema(
     table_schema: TableSchema,
     commit_faults: &CommitFaultClient,
 ) -> Result<()> {
-    let mut sequence_guard = Some(runtime.lock_mutation_sequence());
     let _operation = runtime.enter_operation(tenant_id)?;
     let previous_durable_head = runtime.durable_head();
     let table = table_schema.table.clone();
@@ -226,7 +246,7 @@ fn apply_set_table_schema(
         }
     };
     stage_assigned_schema_record(runtime, previous_durable_head, journal_progress)?;
-    pause_assigned_schema_before_visibility(runtime, commit_faults, &mut sequence_guard)?;
+    pause_assigned_schema_before_visibility(commit_faults)?;
 
     let mut schema = previous_schema;
     Arc::make_mut(&mut schema)
@@ -240,7 +260,7 @@ fn apply_set_table_schema(
             .subscription_registry()
             .finish_policy_revision_mismatches(pending, POLICY_REVISION_CHANGED_MESSAGE);
     }
-    runtime.sync_mutation_journal_progress_locked(journal_progress);
+    runtime.sync_mutation_journal_progress_in_actor(journal_progress);
     Ok(())
 }
 
@@ -250,7 +270,6 @@ fn apply_delete_table_schema(
     table: &TableName,
     commit_faults: &CommitFaultClient,
 ) -> Result<()> {
-    let mut sequence_guard = Some(runtime.lock_mutation_sequence());
     let _operation = runtime.enter_operation(tenant_id)?;
     let previous_durable_head = runtime.durable_head();
     let previous_schema = runtime.schema();
@@ -288,7 +307,7 @@ fn apply_delete_table_schema(
         }
     };
     stage_assigned_schema_record(runtime, previous_durable_head, journal_progress)?;
-    pause_assigned_schema_before_visibility(runtime, commit_faults, &mut sequence_guard)?;
+    pause_assigned_schema_before_visibility(commit_faults)?;
 
     let mut schema = previous_schema;
     Arc::make_mut(&mut schema).tables.remove(table);
@@ -300,7 +319,7 @@ fn apply_delete_table_schema(
             .subscription_registry()
             .finish_policy_revision_mismatches(pending, POLICY_REVISION_CHANGED_MESSAGE);
     }
-    runtime.sync_mutation_journal_progress_locked(journal_progress);
+    runtime.sync_mutation_journal_progress_in_actor(journal_progress);
     Ok(())
 }
 
@@ -332,27 +351,13 @@ fn stage_assigned_schema_record(
     Ok(())
 }
 
-fn pause_assigned_schema_before_visibility<'a>(
-    runtime: &'a TenantRuntime,
-    commit_faults: &CommitFaultClient,
-    sequence_guard: &mut Option<std::sync::MutexGuard<'a, ()>>,
-) -> Result<()> {
+fn pause_assigned_schema_before_visibility(commit_faults: &CommitFaultClient) -> Result<()> {
     if !commit_faults.is_armed(labels::SCHEMA_ASSIGNED_BEFORE_VISIBLE) {
         return Ok(());
     }
-    // The production path still publishes under the same gate. The test seam
-    // temporarily models the later split so assigned schema epochs can be
-    // validated independently from runtime-schema publication.
-    drop(sequence_guard.take());
-    let result = commit_faults
+    commit_faults
         .wait(labels::SCHEMA_ASSIGNED_BEFORE_VISIBLE)
-        .into_result();
-    *sequence_guard = Some(runtime.lock_mutation_sequence());
-    result
-}
-
-fn map_schema_task_join_error(error: tokio::task::JoinError) -> Error {
-    Error::Internal(format!("schema storage task failed: {error}"))
+        .into_result()
 }
 
 fn effective_policy_revision(table_schema: Option<&TableSchema>) -> Result<String> {

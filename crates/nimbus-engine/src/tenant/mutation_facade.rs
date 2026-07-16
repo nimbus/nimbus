@@ -47,6 +47,101 @@ fn append_exit_requires_storage_fallback(
 }
 
 impl TenantRuntime {
+    pub(crate) fn take_committer_receiver(&self) -> tokio::sync::mpsc::Receiver<CommitterMessage> {
+        self.committer.take_receiver()
+    }
+
+    pub(crate) async fn send_committer_message_async(
+        &self,
+        message: CommitterMessage,
+    ) -> Result<()> {
+        let result = self.committer.send_async(message).await;
+        if let Err(error) = &result {
+            self.maybe_report_overload_error(error);
+        }
+        result
+    }
+
+    pub(crate) fn submit_direct_committer<T, F>(&self, task: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T> + Send + 'static,
+    {
+        let result = self
+            .committer
+            .submit_blocking(CommitterMessage::DirectCommit, task);
+        if let Err(error) = &result {
+            self.maybe_report_overload_error(error);
+        }
+        result
+    }
+
+    pub(crate) fn submit_execution_unit_committer<T, F>(&self, task: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T> + Send + 'static,
+    {
+        let result = self
+            .committer
+            .submit_blocking(CommitterMessage::ExecutionUnitCommit, task);
+        if let Err(error) = &result {
+            self.maybe_report_overload_error(error);
+        }
+        result
+    }
+
+    pub(crate) fn submit_internal_committer<T, F>(&self, task: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T> + Send + 'static,
+    {
+        let result = self
+            .committer
+            .submit_blocking(CommitterMessage::InternalSerial, task);
+        if let Err(error) = &result {
+            self.maybe_report_overload_error(error);
+        }
+        result
+    }
+
+    pub(crate) async fn submit_internal_committer_async<T, F>(&self, task: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T> + Send + 'static,
+    {
+        let result = self
+            .committer
+            .submit_async(CommitterMessage::InternalSerial, task)
+            .await;
+        if let Err(error) = &result {
+            self.maybe_report_overload_error(error);
+        }
+        result
+    }
+
+    pub(crate) async fn submit_journal_progress_committer(
+        self: &Arc<Self>,
+        progress: JournalProgress,
+    ) -> Result<()> {
+        let runtime = Arc::clone(self);
+        let result = self
+            .committer
+            .submit_async(CommitterMessage::JournalProgressSync, move || {
+                runtime.sync_mutation_journal_progress_in_actor(progress);
+                Ok(())
+            })
+            .await;
+        if let Err(error) = &result {
+            self.maybe_report_overload_error(error);
+        }
+        result
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn wait_before_mutation_drain(&self) {
+        self.mutation_journal.wait_before_drain().await;
+    }
+
     /// Samples and advances the tenant commit clock while the sequence gate is held.
     pub(crate) fn assign_commit_timestamp(&self) -> Timestamp {
         let previous = self.last_assigned_commit_timestamp.load(Ordering::Relaxed);
@@ -63,12 +158,12 @@ impl TenantRuntime {
     pub(crate) fn enqueue_mutation_admission_request(
         &self,
         request: QueuedMutationRequest,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         if let Err(error) = self.mutation_admission.enqueue(request) {
             self.maybe_report_overload_error(&error);
             return Err(error);
         }
-        Ok(self.mutation_journal.try_start_worker())
+        Ok(())
     }
 
     fn maybe_report_overload_error(&self, error: &nimbus_core::Error) {
@@ -152,15 +247,6 @@ impl TenantRuntime {
         batch
     }
 
-    pub(crate) fn release_mutation_worker(&self) -> bool {
-        // Pass the admission check as a CLOSURE so `release_worker` evaluates it
-        // after clearing `worker_running`. Passing `has_pending()` by value would
-        // read the admission queue before the store and reopen a lost-wakeup
-        // deadlock (see MutationJournalState::release_worker for the ordering).
-        self.mutation_journal
-            .release_worker(|| self.mutation_admission.has_pending())
-    }
-
     pub(crate) fn record_mutation_worker_start(&self) {
         self.mutation_journal.record_worker_start();
     }
@@ -183,10 +269,6 @@ impl TenantRuntime {
 
     pub(crate) fn applied_head(&self) -> SequenceNumber {
         self.mutation_journal.applied_head()
-    }
-
-    pub(crate) fn lock_mutation_sequence(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.mutation_journal.lock_sequence_gate()
     }
 
     pub(crate) fn mark_durable_head(&self, sequence: SequenceNumber) {
@@ -261,9 +343,13 @@ impl TenantRuntime {
             .wait_for_applied_sequence_blocking(sequence);
     }
 
-    pub(crate) fn sync_mutation_journal_progress(&self, progress: JournalProgress) {
-        let _sequence_guard = self.lock_mutation_sequence();
-        self.sync_mutation_journal_progress_locked(progress);
+    pub(crate) fn sync_mutation_journal_progress(self: &Arc<Self>, progress: JournalProgress) {
+        let runtime = Arc::clone(self);
+        self.submit_internal_committer(move || {
+            runtime.sync_mutation_journal_progress_in_actor(progress);
+            Ok(())
+        })
+        .expect("tenant committer should synchronize journal progress");
     }
 
     /// Async-context form of [`Self::sync_mutation_journal_progress`].
@@ -278,18 +364,15 @@ impl TenantRuntime {
         self: &Arc<Self>,
         progress: JournalProgress,
     ) {
-        let runtime = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
-            runtime.sync_mutation_journal_progress(progress);
-        })
-        .await
-        .expect("sync_mutation_journal_progress task panicked");
+        self.submit_journal_progress_committer(progress)
+            .await
+            .expect("tenant committer should synchronize journal progress");
     }
 
     /// Synchronizes recovered heads while the caller holds the mutation
     /// sequence gate. Callers already inside a serial mutation section use
     /// this non-reentrant form; all other callers use the gated wrapper above.
-    pub(crate) fn sync_mutation_journal_progress_locked(&self, progress: JournalProgress) {
+    pub(crate) fn sync_mutation_journal_progress_in_actor(&self, progress: JournalProgress) {
         self.write_log
             .observe_assigned_through_without_coverage(progress.durable_head);
         self.write_log
@@ -304,7 +387,11 @@ impl TenantRuntime {
     }
 
     pub(crate) fn mutation_journal_stats(&self) -> MutationJournalStats {
-        self.mutation_journal.stats()
+        let mut stats = self.mutation_journal.stats();
+        stats.committer_inbox_depth = self.committer.depth();
+        stats.committer_inbox_capacity = self.committer.capacity();
+        stats.committer_send_timeout_count = self.committer.send_timeout_count();
+        stats
     }
 
     #[cfg(test)]

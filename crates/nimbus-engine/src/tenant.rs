@@ -61,6 +61,9 @@ pub(crate) use self::mutation::DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY;
 pub(crate) use self::mutation::MutationJournalPauseHandle;
 #[cfg(any(test, feature = "test-hooks"))]
 use self::mutation::MutationJournalPauseState;
+pub(crate) use self::mutation::{
+    CommitterActor, CommitterMessage, assign_and_validate, run_committer_actor,
+};
 use self::mutation::{MutationAdmissionDecision, MutationAdmissionGate, MutationJournalState};
 pub use self::mutation::{MutationAdmissionPhase, MutationAdmissionStats, MutationJournalStats};
 pub(crate) use self::mutation::{QueuedMutationRequest, QueuedMutationResult};
@@ -109,6 +112,7 @@ pub struct TenantRuntime {
     lifecycle: Arc<TenantLifecycle>,
     mutation_admission: Arc<MutationAdmissionGate>,
     mutation_journal: Arc<MutationJournalState>,
+    committer: Arc<CommitterActor>,
     write_rate: TenantWriteRateLimiter,
     last_assigned_commit_timestamp: AtomicU64,
     #[cfg(any(test, feature = "test-hooks"))]
@@ -183,6 +187,7 @@ impl TenantRuntime {
             lifecycle: Arc::new(TenantLifecycle::new()),
             mutation_admission: Arc::new(MutationAdmissionGate::new()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
+            committer: Arc::new(CommitterActor::new()),
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             #[cfg(any(test, feature = "test-hooks"))]

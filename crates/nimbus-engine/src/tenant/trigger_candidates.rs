@@ -381,11 +381,26 @@ fn run_trigger_candidate_worker(
 }
 
 fn materialize_trigger_invocations_and_sync(
+    runtime: &Arc<TenantRuntime>,
+    records: &[nimbus_core::TriggerInvocationRecord],
+    cursor: nimbus_core::TriggerDeliveryCursor,
+) -> nimbus_core::Result<()> {
+    let runtime_for_commit = runtime.clone();
+    let records = records.to_vec();
+    runtime.submit_internal_committer(move || {
+        materialize_trigger_invocations_and_sync_in_actor(
+            &runtime_for_commit,
+            records.as_slice(),
+            cursor,
+        )
+    })
+}
+
+fn materialize_trigger_invocations_and_sync_in_actor(
     runtime: &TenantRuntime,
     records: &[nimbus_core::TriggerInvocationRecord],
     cursor: nimbus_core::TriggerDeliveryCursor,
 ) -> nimbus_core::Result<()> {
-    let _sequence_guard = runtime.lock_mutation_sequence();
     runtime
         .store
         .check_fault(nimbus_storage::FaultPoint::TriggerInvocationMaterializeBeforeCommit)?;
@@ -404,8 +419,8 @@ fn materialize_trigger_invocations_and_sync(
     //
     // That widening is only sound across the span `(floor, head]` we can
     // *prove* is inert. `floor` is the sequence of the commit we just
-    // materialized invocations for. `lock_mutation_sequence` above is a
-    // process-local mutex, so on a provider-backed tenant a foreign engine
+    // materialized invocations for. The committer actor is process-local, so
+    // on a provider-backed tenant a foreign engine
     // process can append -- and apply -- its own commit between our
     // cursor-record write and the `journal_progress()` read above. If that
     // happened, `head` has moved past a real write this process has not
@@ -443,7 +458,7 @@ fn materialize_trigger_invocations_and_sync(
             );
         }
     }
-    runtime.sync_mutation_journal_progress_locked(progress);
+    runtime.sync_mutation_journal_progress_in_actor(progress);
     Ok(())
 }
 

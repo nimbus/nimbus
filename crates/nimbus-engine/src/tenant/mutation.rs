@@ -1,3 +1,4 @@
+mod actor;
 mod admission;
 mod codel;
 mod journal;
@@ -6,6 +7,9 @@ mod pause;
 mod requests;
 mod stats;
 
+pub(crate) use self::actor::{
+    CommitterActor, CommitterMessage, assign_and_validate, run_committer_actor,
+};
 pub(super) use self::admission::{MutationAdmissionDecision, MutationAdmissionGate};
 pub(super) use self::journal::MutationJournalState;
 #[cfg(any(test, feature = "test-hooks"))]

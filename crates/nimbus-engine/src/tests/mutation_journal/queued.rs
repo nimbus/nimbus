@@ -65,13 +65,9 @@ async fn async_schema_write_advances_runtime_journal_before_next_queued_document
 /// catches gross liveness regressions.
 ///
 /// It is deliberately NOT presented as a reliable reproducer of the specific
-/// lost-wakeup race it was born from — that window is nanosecond-scale (the
-/// benchmark that found it needed concurrency up to 256 to hit it ~1 run in 4),
-/// so at this scale it will not, on its own, catch a call-site regression that
-/// hoists `has_pending()` out of the closure. The precise, deterministic guard
-/// for the race is
-/// `tenant::mutation::journal::tests::release_worker_clears_running_before_evaluating_the_gate`;
-/// a full revert of the closure signature is caught by compilation. Counts are
+/// old lost-wakeup race it was born from. The committer actor never retires or
+/// re-arms, so that interleaving is structurally absent; the loom handoff model
+/// permanently contrasts the old protocol with the actor topology. Counts are
 /// modest because `cargo test` builds unoptimized (durable commits are ~10-50x
 /// slower than the release build the benchmark uses).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -425,8 +421,8 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
     let final_stats = wait_for_mutation_journal_stats(
         &engine,
         &tenant_id,
-        "mutation journal worker to go idle after the buffered queue drains",
-        |stats| !stats.worker_running,
+        "mutation committer to drain the buffered queue",
+        |stats| stats.queue_depth == 0 && stats.pending_response_count == 0,
     )
     .await;
     assert!(final_stats.durable_head.0 >= 2);
@@ -436,7 +432,7 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
     assert_eq!(final_stats.queue_capacity, 1);
     assert_eq!(final_stats.oldest_queue_age_nanos, 0);
     assert_eq!(final_stats.pending_response_count, 0);
-    assert!(!final_stats.worker_running);
+    assert!(final_stats.worker_running);
     assert_eq!(final_stats.worker_start_count, 1);
     assert_eq!(final_stats.worker_restart_count, 0);
     assert_eq!(final_stats.queue_rejection_count, 0);

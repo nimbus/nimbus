@@ -52,14 +52,26 @@ async fn shadow_conflict_total_increments_for_conflicting_queued_and_direct_muta
 
     let (pause, queued_update) =
         queue_update_behind_pause(&engine, &tenant_id, &document_id, "queued-wins").await;
-    engine
-        .update_document(
-            &tenant_id,
-            tasks_table(),
-            document_id.clone(),
-            title("direct-racer"),
-        )
-        .expect("the direct racing mutation should succeed");
+    let direct_update = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        move || {
+            engine.update_document(
+                &tenant_id,
+                tasks_table(),
+                document_id,
+                title("direct-racer"),
+            )
+        }
+    });
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "direct update should queue behind the paused actor",
+        |stats| stats.committer_inbox_depth >= 1,
+    )
+    .await;
     pause.release();
 
     let queued_id = expect_future_within(
@@ -70,12 +82,16 @@ async fn shadow_conflict_total_increments_for_conflicting_queued_and_direct_muta
     .expect("queued mutation task should join")
     .expect("shadow conflict observation must not reject the queued mutation");
     assert_eq!(queued_id, document_id);
+    direct_update
+        .await
+        .expect("direct update task should join")
+        .expect("the direct racing mutation should succeed");
 
     let visible = engine
         .query_documents(&tenant_id, &query_for("tasks"))
         .expect("final document query should succeed");
     assert_eq!(visible.len(), 1);
-    assert_eq!(visible[0].fields.get("title"), Some(&json!("queued-wins")));
+    assert_eq!(visible[0].fields.get("title"), Some(&json!("direct-racer")));
 
     let metrics = engine
         .tenant_engine_diagnostics(&tenant_id)
@@ -83,7 +99,7 @@ async fn shadow_conflict_total_increments_for_conflicting_queued_and_direct_muta
         .commit_phases;
     assert!(
         metrics.shadow_conflict_total > 0,
-        "the stale queued dependency should intersect the direct racing commit: {metrics:?}"
+        "the stale direct dependency should intersect the queued commit ahead of it: {metrics:?}"
     );
     assert!(
         metrics.shadow_window_size > 0,
@@ -107,14 +123,25 @@ async fn shadow_conflict_total_stays_zero_for_disjoint_queued_and_direct_mutatio
 
     let (pause, queued_update) =
         queue_update_behind_pause(&engine, &tenant_id, &queued_document_id, "queued-updated").await;
-    engine
-        .update_document(
-            &tenant_id,
-            tasks_table(),
-            direct_document_id,
-            title("direct-updated"),
-        )
-        .expect("disjoint direct racing mutation should succeed");
+    let direct_update = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move || {
+            engine.update_document(
+                &tenant_id,
+                tasks_table(),
+                direct_document_id,
+                title("direct-updated"),
+            )
+        }
+    });
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "disjoint direct update should queue behind the paused actor",
+        |stats| stats.committer_inbox_depth >= 1,
+    )
+    .await;
     pause.release();
     expect_future_within(
         queued_update,
@@ -123,6 +150,10 @@ async fn shadow_conflict_total_stays_zero_for_disjoint_queued_and_direct_mutatio
     .await
     .expect("queued mutation task should join")
     .expect("disjoint queued mutation should succeed");
+    direct_update
+        .await
+        .expect("direct update task should join")
+        .expect("disjoint direct racing mutation should succeed");
 
     let metrics = engine
         .tenant_engine_diagnostics(&tenant_id)

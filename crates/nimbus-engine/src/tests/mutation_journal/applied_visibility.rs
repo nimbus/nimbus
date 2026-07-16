@@ -257,13 +257,13 @@ async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
     let stats = wait_for_mutation_journal_stats(
         &engine,
         &tenant_id,
-        "journal worker should go idle after the awaited query observes applied visibility",
+        "committer should drain after the awaited query observes applied visibility",
         |stats| {
             stats.applied_head == stats.durable_head
                 && stats.apply_lag == 0
                 && stats.queue_depth == 0
                 && stats.pending_response_count == 0
-                && !stats.worker_running
+                && stats.worker_running
         },
     )
     .await;
@@ -273,7 +273,7 @@ async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
     assert_eq!(stats.queue_depth, 0);
     assert_eq!(stats.oldest_queue_age_nanos, 0);
     assert_eq!(stats.pending_response_count, 0);
-    assert!(!stats.worker_running);
+    assert!(stats.worker_running);
     assert_eq!(stats.worker_start_count, 1);
     assert_eq!(stats.worker_restart_count, 0);
     assert_eq!(stats.queue_rejection_count, 0);
