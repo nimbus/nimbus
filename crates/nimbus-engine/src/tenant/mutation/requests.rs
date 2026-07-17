@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use nimbus_core::{DependencySet, DocumentId, Result, SequenceNumber};
@@ -15,6 +15,34 @@ pub(crate) const DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY: usize = 256;
 pub(crate) enum QueuedMutationResult {
     Immediate(Option<DocumentId>),
     Scheduled(bool),
+}
+
+#[derive(Clone)]
+pub(crate) struct MutationResponseSender {
+    inner: Arc<Mutex<Option<oneshot::Sender<Result<QueuedMutationResult>>>>>,
+}
+
+impl MutationResponseSender {
+    pub(crate) fn new(sender: oneshot::Sender<Result<QueuedMutationResult>>) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(Some(sender))),
+        }
+    }
+
+    pub(crate) fn send(
+        &self,
+        result: Result<QueuedMutationResult>,
+    ) -> std::result::Result<(), Result<QueuedMutationResult>> {
+        let Some(sender) = self
+            .inner
+            .lock()
+            .expect("mutation response lock should not be poisoned")
+            .take()
+        else {
+            return Err(result);
+        };
+        sender.send(result)
+    }
 }
 
 pub(crate) struct PreparedPayloadAccounting {
@@ -46,7 +74,7 @@ pub(crate) struct QueuedMutationRequest {
     pub prepared_payload_accounting: Option<PreparedPayloadAccounting>,
     pub cancelled: Arc<AtomicBool>,
     pub _operation: TenantOperationGuard,
-    pub response: oneshot::Sender<Result<QueuedMutationResult>>,
+    pub response: MutationResponseSender,
     #[cfg_attr(not(test), allow(dead_code))]
     pub enqueued_at: Instant,
     /// Durable head observed at admission, used only by path A's shadow OCC

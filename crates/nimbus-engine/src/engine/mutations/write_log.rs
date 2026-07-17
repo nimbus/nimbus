@@ -27,11 +27,11 @@ pub(crate) struct WriteLogConfig {
 
 impl WriteLogConfig {
     pub(crate) fn from_env() -> Self {
-        let min_retention_secs = env_positive_usize(
+        let min_retention_secs = crate::config::env_positive_usize(
             "NIMBUS_WRITE_LOG_MIN_RETENTION_SECS",
             DEFAULT_MIN_RETENTION_SECS,
         );
-        let max_retention_secs = env_positive_usize(
+        let max_retention_secs = crate::config::env_positive_usize(
             "NIMBUS_WRITE_LOG_MAX_RETENTION_SECS",
             DEFAULT_MAX_RETENTION_SECS,
         )
@@ -39,7 +39,10 @@ impl WriteLogConfig {
         Self::for_tests(
             min_retention_secs,
             max_retention_secs,
-            env_positive_usize("NIMBUS_WRITE_LOG_SOFT_MAX_BYTES", DEFAULT_SOFT_MAX_BYTES),
+            crate::config::env_positive_usize(
+                "NIMBUS_WRITE_LOG_SOFT_MAX_BYTES",
+                DEFAULT_SOFT_MAX_BYTES,
+            ),
         )
     }
 
@@ -61,14 +64,6 @@ fn seconds_to_millis(seconds: usize) -> u64 {
     u64::try_from(seconds)
         .unwrap_or(u64::MAX)
         .saturating_mul(1_000)
-}
-
-fn env_positive_usize(key: &str, default: usize) -> usize {
-    std::env::var_os(key)
-        .and_then(|value| value.into_string().ok())
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
 }
 
 #[derive(Debug, Clone)]

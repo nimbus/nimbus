@@ -58,6 +58,15 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn tenant_runtime_identity_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<usize> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        Ok(Arc::as_ptr(&runtime) as usize)
+    }
+
+    #[cfg(test)]
     pub(crate) fn set_committer_pipeline_requested_for_testing(
         &self,
         tenant_id: &TenantId,

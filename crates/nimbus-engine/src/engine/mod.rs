@@ -1,6 +1,6 @@
 mod background_executor;
 mod bootstrap;
-mod committed_mutations;
+pub(crate) mod committed_mutations;
 mod diagnostics;
 mod encryption;
 mod execution_units;
@@ -304,26 +304,45 @@ impl Engine {
 
     pub(crate) fn start_committer_actor(&self, runtime: Arc<TenantRuntime>) {
         let receiver = runtime.take_committer_receiver();
-        let publisher_receiver = runtime.take_publisher_receiver();
-        let engine_shutdown = self.engine_executor.shutdown_token();
-        let tenant_shutdown = runtime.committer_shutdown_token();
-        let publisher_runtime = Arc::downgrade(&runtime);
-        self.spawn_background("mutation_publisher", async move {
-            crate::engine::mutations::run_ordered_publisher(
-                publisher_runtime,
-                publisher_receiver,
-                engine_shutdown,
-                tenant_shutdown,
+        if runtime.publisher_pipeline_capable() {
+            let publisher_receiver = runtime.take_publisher_receiver();
+            let engine_shutdown = self.engine_executor.shutdown_token();
+            let tenant_shutdown = runtime.committer_shutdown_token();
+            let publisher_runtime = Arc::downgrade(&runtime);
+            self.spawn_background("mutation_publisher", async move {
+                crate::engine::mutations::run_ordered_publisher(
+                    publisher_runtime,
+                    publisher_receiver,
+                    engine_shutdown,
+                    tenant_shutdown,
+                )
+                .await;
+            });
+        }
+
+        let observer_receiver = runtime.take_observer_dispatch_receiver();
+        let observer_runtime = Arc::downgrade(&runtime);
+        self.spawn_background("committed_mutation_observers", async move {
+            committed_mutations::run_committed_mutation_observer_dispatcher(
+                observer_receiver,
+                observer_runtime,
             )
             .await;
         });
 
         let engine_shutdown = self.engine_executor.shutdown_token();
         let tenant_shutdown = runtime.committer_shutdown_token();
+        let closes_observer_dispatch = !runtime.publisher_pipeline_capable();
         let runtime = Arc::downgrade(&runtime);
         self.spawn_background("mutation_committer", async move {
-            crate::tenant::run_committer_actor(runtime, receiver, engine_shutdown, tenant_shutdown)
-                .await;
+            crate::tenant::run_committer_actor(
+                runtime,
+                receiver,
+                engine_shutdown,
+                tenant_shutdown,
+                closes_observer_dispatch,
+            )
+            .await;
         });
     }
 
@@ -391,15 +410,7 @@ impl Engine {
             store.clone(),
             read_storage,
         )?);
-        if let Some(counts) = self
-            .publisher_failure_diagnostics
-            .read()
-            .expect("publisher failure diagnostics lock should not be poisoned")
-            .get(tenant_id)
-            .copied()
-        {
-            runtime.restore_publisher_error_counts(counts);
-        }
+        self.restore_publisher_error_counts(&runtime);
         self.start_committer_actor(runtime.clone());
         runtime.replace_trigger_registrations(
             self.trigger_registrations
@@ -412,6 +423,18 @@ impl Engine {
         self.bootstrap_trigger_candidate_feed(runtime.clone())?;
         self.bootstrap_trigger_execution(runtime.clone())?;
         Ok(runtime)
+    }
+
+    pub(crate) fn restore_publisher_error_counts(&self, runtime: &TenantRuntime) {
+        if let Some(counts) = self
+            .publisher_failure_diagnostics
+            .read()
+            .expect("publisher failure diagnostics lock should not be poisoned")
+            .get(runtime.tenant_id())
+            .copied()
+        {
+            runtime.restore_publisher_error_counts(counts);
+        }
     }
 
     pub(crate) fn trigger_invocation_executor(&self) -> Option<SharedTriggerInvocationExecutor> {

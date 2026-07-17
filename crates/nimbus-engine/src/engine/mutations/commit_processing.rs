@@ -184,7 +184,7 @@ impl Engine {
             commit_identity,
             emit_trigger_candidates,
         );
-        self.notify_applied_commit_batch_observers(runtime, applied);
+        self.enqueue_applied_commit_batch_observers(runtime, applied);
     }
 
     pub(in crate::engine) fn process_applied_commit_batch_fanout(
@@ -244,16 +244,6 @@ impl Engine {
 
         if emit_trigger_candidates {
             self.dispatch_or_enqueue_trigger_candidates(runtime.clone(), applied.to_vec());
-        }
-    }
-
-    pub(in crate::engine) fn notify_applied_commit_batch_observers(
-        &self,
-        runtime: Arc<TenantRuntime>,
-        applied: &[CommitEntry],
-    ) {
-        for commit in applied {
-            self.notify_committed_mutation_observers(runtime.as_ref(), commit);
         }
     }
 }

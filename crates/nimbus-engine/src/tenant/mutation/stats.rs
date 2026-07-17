@@ -65,4 +65,5 @@ pub struct MutationJournalStats {
     pub publisher_ambiguous_error_count: u64,
     pub publisher_mode: CommitterPipelineMode,
     pub publisher_mode_transition_count: u64,
+    pub publisher_mode_transition_failure_count: u64,
 }

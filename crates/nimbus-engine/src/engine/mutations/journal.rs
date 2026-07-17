@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     future,
     sync::Arc,
     time::{Duration, Instant},
@@ -14,8 +14,9 @@ use tracing::warn;
 use crate::Engine;
 use crate::engine::execution_units::{CommitFaultClient, labels};
 use crate::tenant::{
-    AssignedPublisherBatch, DeferredPublisherResponse, PendingPublisherResponse,
-    PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult, TenantRuntime,
+    AssignedPublisherBatch, DeferredPublisherResponse, MutationResponseSender,
+    PendingPublisherResponse, PreparedPayloadAccounting, QueuedMutationRequest,
+    QueuedMutationResult, TenantRuntime,
 };
 
 use super::caps::{MutationUsage, check_mutation_caps};
@@ -31,45 +32,14 @@ const MUTATION_JOURNAL_BATCH_SIZE: usize = 32;
 const DEFAULT_MUTATION_JOURNAL_BATCH_MAX: usize = 256;
 const DEFAULT_MUTATION_JOURNAL_COALESCE_MICROS: u64 = 0;
 
-#[derive(Debug, Clone, Copy)]
-struct MutationJournalBatchPolicy {
-    base: usize,
-    max: usize,
-    coalesce: Duration,
-}
-
-impl MutationJournalBatchPolicy {
-    fn from_env() -> Self {
-        let max = env_positive_usize(
-            "NIMBUS_MUTATION_JOURNAL_BATCH_MAX",
-            DEFAULT_MUTATION_JOURNAL_BATCH_MAX,
-        )
-        .max(MUTATION_JOURNAL_BATCH_SIZE);
-        let coalesce_micros = env_nonnegative_u64(
-            "NIMBUS_MUTATION_JOURNAL_COALESCE_MICROS",
-            DEFAULT_MUTATION_JOURNAL_COALESCE_MICROS,
-        );
-        Self {
-            base: MUTATION_JOURNAL_BATCH_SIZE,
-            max,
-            coalesce: Duration::from_micros(coalesce_micros),
-        }
-    }
-}
-
-fn env_positive_usize(key: &str, default: usize) -> usize {
-    std::env::var_os(key)
-        .and_then(|value| value.into_string().ok())
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
-}
-
-fn env_nonnegative_u64(key: &str, default: u64) -> u64 {
-    std::env::var_os(key)
-        .and_then(|value| value.into_string().ok())
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .unwrap_or(default)
+fn mutation_journal_batch_policy() -> crate::config::BatchPolicy {
+    crate::config::BatchPolicy::from_env(
+        MUTATION_JOURNAL_BATCH_SIZE,
+        "NIMBUS_MUTATION_JOURNAL_BATCH_MAX",
+        DEFAULT_MUTATION_JOURNAL_BATCH_MAX,
+        "NIMBUS_MUTATION_JOURNAL_COALESCE_MICROS",
+        DEFAULT_MUTATION_JOURNAL_COALESCE_MICROS,
+    )
 }
 
 struct PendingMutationResponseGuard {
@@ -107,7 +77,7 @@ impl Engine {
         #[cfg(any(test, debug_assertions))]
         Engine::assert_running_on_background_task("mutation_committer");
 
-        let batch_policy = MutationJournalBatchPolicy::from_env();
+        let batch_policy = mutation_journal_batch_policy();
         runtime.drain_mutation_admission_queue();
         #[cfg(any(test, feature = "test-hooks"))]
         runtime.wait_before_mutation_drain().await;
@@ -126,12 +96,14 @@ impl Engine {
             match runtime.reconcile_committer_pipeline_mode().await {
                 Ok(enabled) => enabled,
                 Err(error) => {
-                    for request in batch {
-                        let _ = request.response.send(Err(error.clone()));
-                    }
-                    runtime.record_mutation_worker_failure();
-                    warn!(error = %error, "committer pipeline mode transition failed");
-                    return;
+                    let current = runtime.committer_pipeline_mode();
+                    warn!(
+                        tenant = %runtime.tenant_id(),
+                        error = %error,
+                        ?current,
+                        "committer pipeline mode transition failed; processing client batch in the current mode"
+                    );
+                    matches!(current, crate::tenant::CommitterPipelineMode::Pipeline)
                 }
             }
         } else {
@@ -139,11 +111,23 @@ impl Engine {
         };
 
         if use_pipeline {
+            let _assignment_guard = runtime.lock_publisher_assignment_recovery().await;
+            let assignment_baseline = runtime.assigned_head();
+            let assignment_responses = batch
+                .iter()
+                .map(|request| request.response.clone())
+                .collect::<Vec<_>>();
             let runtime_for_task = runtime.clone();
             let engine = self.clone();
+            let commit_faults = self.commit_faults.clone();
             let assigned = tokio::task::spawn_blocking(move || {
-                let previous = runtime_for_task.assigned_head();
-                assign_queued_mutation_batch(runtime_for_task, batch, engine, previous)
+                assign_queued_mutation_batch(
+                    runtime_for_task,
+                    batch,
+                    engine,
+                    assignment_baseline,
+                    &commit_faults,
+                )
             })
             .await;
             match assigned {
@@ -180,10 +164,27 @@ impl Engine {
                 Ok(Err(error)) => {
                     runtime.record_mutation_worker_failure();
                     warn!(error = %error, "mutation assignment batch failed");
+                    recover_failed_assignment(
+                        runtime.clone(),
+                        assignment_baseline,
+                        "mutation assignment batch failed",
+                    )
+                    .await;
+                    fail_mutation_responses(&assignment_responses, &error);
                 }
-                Err(error) => {
+                Err(join_error) => {
+                    let error = Error::Internal(format!(
+                        "committer assignment batch panicked: {join_error}"
+                    ));
                     runtime.record_mutation_worker_failure();
                     warn!(error = %error, "committer assignment batch panicked");
+                    recover_failed_assignment(
+                        runtime.clone(),
+                        assignment_baseline,
+                        "committer assignment batch panicked",
+                    )
+                    .await;
+                    fail_mutation_responses(&assignment_responses, &error);
                 }
             }
             return;
@@ -221,7 +222,7 @@ impl Engine {
                 for pending_response in batch_result.responses {
                     let _ = pending_response.response.send(Ok(pending_response.result));
                 }
-                self.notify_applied_commit_batch_observers(runtime, &batch_result.applied);
+                self.enqueue_applied_commit_batch_observers(runtime, &batch_result.applied);
             }
             Ok(Err(error)) => {
                 runtime.record_mutation_worker_failure();
@@ -337,7 +338,7 @@ impl Engine {
                 )),
                 cancelled: cancelled.clone(),
                 _operation: operation,
-                response: response_tx,
+                response: MutationResponseSender::new(response_tx),
                 enqueued_at,
                 shadow_snapshot_sequence,
             })?;
@@ -395,12 +396,13 @@ impl Engine {
 }
 
 pub(super) fn mutation_occ_max_attempts() -> usize {
-    env_positive_usize("NIMBUS_MUTATION_OCC_MAX_RETRIES", 4)
+    crate::config::env_positive_usize("NIMBUS_MUTATION_OCC_MAX_RETRIES", 4)
 }
 
 pub(super) fn mutation_occ_backoff(attempt: usize) -> Duration {
-    let initial = env_nonnegative_u64("NIMBUS_MUTATION_OCC_INITIAL_BACKOFF_MS", 100);
-    let maximum = env_nonnegative_u64("NIMBUS_MUTATION_OCC_MAX_BACKOFF_MS", 2_000).max(initial);
+    let initial = crate::config::env_nonnegative_u64("NIMBUS_MUTATION_OCC_INITIAL_BACKOFF_MS", 100);
+    let maximum = crate::config::env_nonnegative_u64("NIMBUS_MUTATION_OCC_MAX_BACKOFF_MS", 2_000)
+        .max(initial);
     let shift = u32::try_from(attempt.saturating_sub(1))
         .unwrap_or(u32::MAX)
         .min(63);
@@ -412,6 +414,7 @@ fn assign_queued_mutation_batch(
     batch: Vec<QueuedMutationRequest>,
     engine: Arc<Engine>,
     mut previous_sequence: SequenceNumber,
+    commit_faults: &CommitFaultClient,
 ) -> Result<AssignedPublisherWork> {
     let mut phases = CommitPhaseDurations::default();
     let mut scheduled_execution_overlay = HashSet::new();
@@ -421,7 +424,8 @@ fn assign_queued_mutation_batch(
     let mut sample_started_at = None::<Instant>;
     let mut batch_shadow_dependencies = Vec::new();
     let mut batch_shadow_snapshot = None::<nimbus_core::SequenceNumber>;
-    for request in batch {
+    let mut requests = VecDeque::from(batch);
+    while let Some(request) = requests.pop_front() {
         let QueuedMutationRequest {
             prepared_commit,
             conflict_dependencies,
@@ -493,7 +497,12 @@ fn assign_queued_mutation_batch(
             None => shadow_snapshot_sequence,
         });
         let serialize_started = Instant::now();
-        let sequence = crate::tenant::assign_and_validate(previous_sequence, 1)?[0];
+        let sequence = match crate::tenant::assign_and_validate(previous_sequence, 1) {
+            Ok(sequences) => sequences[0],
+            Err(error) => {
+                return Err(error);
+            }
+        };
         let record = match prepared_commit.into_record(sequence, runtime.assign_commit_timestamp())
         {
             Ok(record) => record,
@@ -507,6 +516,9 @@ fn assign_queued_mutation_batch(
             }
         };
         runtime.stage_pending_write_log_commits([record.as_commit_entry()], runtime.store.now());
+        commit_faults
+            .wait(labels::JOURNAL_ASSIGN_AFTER_STAGE)
+            .into_result()?;
         previous_sequence = sequence;
         phases.add_prepare(serialize_started.elapsed());
         active.push(PendingPublisherResponse {
@@ -545,6 +557,34 @@ fn assign_queued_mutation_batch(
     })
 }
 
+fn fail_mutation_responses(responses: &[MutationResponseSender], error: &Error) {
+    for response in responses {
+        let _ = response.send(Err(error.clone()));
+    }
+}
+
+async fn recover_failed_assignment(
+    runtime: Arc<TenantRuntime>,
+    assignment_baseline: SequenceNumber,
+    context: &'static str,
+) {
+    if let Some(first) = assignment_baseline.0.checked_add(1).map(SequenceNumber) {
+        runtime.discard_unpersisted_write_log_suffix(first);
+    }
+    match runtime
+        .read_storage
+        .execute(|store| store.recover_durable_journal())
+        .await
+    {
+        Ok(progress) => runtime.publish_mutation_journal_progress_in_actor(progress),
+        Err(error) => warn!(
+            tenant = %runtime.tenant_id(),
+            error = %error,
+            "{context}; durable journal recovery failed"
+        ),
+    }
+}
+
 fn process_serial_queued_mutation_batch(
     runtime: Arc<TenantRuntime>,
     batch: Vec<QueuedMutationRequest>,
@@ -552,7 +592,23 @@ fn process_serial_queued_mutation_batch(
     commit_faults: &CommitFaultClient,
 ) -> Result<QueuedMutationBatchResult> {
     let previous_sequence = runtime.durable_head();
-    let mut work = assign_queued_mutation_batch(runtime.clone(), batch, engine, previous_sequence)?;
+    let assignment_responses = batch
+        .iter()
+        .map(|request| request.response.clone())
+        .collect::<Vec<_>>();
+    let mut work = match assign_queued_mutation_batch(
+        runtime.clone(),
+        batch,
+        engine,
+        previous_sequence,
+        commit_faults,
+    ) {
+        Ok(work) => work,
+        Err(error) => {
+            fail_mutation_responses(&assignment_responses, &error);
+            return Err(error);
+        }
+    };
     for response in std::mem::take(&mut work.deferred) {
         response.complete();
     }

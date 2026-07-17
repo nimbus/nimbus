@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use nimbus_core::{CommitEntry, TableName, TenantId};
+use tokio::sync::mpsc;
 
 use crate::{Engine, tenant::TenantRuntime};
 
@@ -34,6 +35,49 @@ pub(super) type CommittedMutationObserverRegistry =
 pub(super) type TableSchemaChangeObserverRegistry =
     HashMap<&'static str, Arc<dyn TableSchemaChangeObserver>>;
 
+pub(crate) struct CommittedMutationObserverDispatch {
+    observers: Vec<Arc<dyn CommittedMutationObserver>>,
+    events: Vec<CommittedMutationEvent>,
+}
+
+pub(crate) enum CommittedMutationObserverMessage {
+    Dispatch(CommittedMutationObserverDispatch),
+    Close,
+}
+
+impl CommittedMutationObserverDispatch {
+    fn run(self) {
+        for event in self.events {
+            for observer in &self.observers {
+                observer.committed_mutation_applied(event.clone());
+            }
+        }
+    }
+}
+
+pub(crate) async fn run_committed_mutation_observer_dispatcher(
+    mut receiver: mpsc::UnboundedReceiver<CommittedMutationObserverMessage>,
+    runtime: std::sync::Weak<TenantRuntime>,
+) {
+    while let Some(message) = receiver.recv().await {
+        match message {
+            CommittedMutationObserverMessage::Dispatch(dispatch) => dispatch.run(),
+            CommittedMutationObserverMessage::Close => {
+                receiver.close();
+                while let Some(message) = receiver.recv().await {
+                    if let CommittedMutationObserverMessage::Dispatch(dispatch) = message {
+                        dispatch.run();
+                    }
+                }
+                break;
+            }
+        }
+    }
+    if let Some(runtime) = runtime.upgrade() {
+        runtime.mark_committed_mutation_observers_drained();
+    }
+}
+
 impl Engine {
     /// Installs a named committed-mutation observer.
     ///
@@ -52,14 +96,11 @@ impl Engine {
             .or_insert(observer);
     }
 
-    pub(crate) fn notify_committed_mutation_observers(
+    pub(crate) fn enqueue_applied_commit_batch_observers(
         &self,
-        runtime: &TenantRuntime,
-        commit: &CommitEntry,
+        runtime: Arc<TenantRuntime>,
+        applied: &[CommitEntry],
     ) {
-        if commit.writes.is_empty() {
-            return;
-        }
         let observers = self
             .committed_mutation_observers
             .read()
@@ -70,14 +111,22 @@ impl Engine {
         if observers.is_empty() {
             return;
         }
-
-        let event = CommittedMutationEvent {
-            tenant_id: runtime.tenant_id().clone(),
-            commit: commit.clone(),
-        };
-        for observer in observers {
-            observer.committed_mutation_applied(event.clone());
+        let events = applied
+            .iter()
+            .filter(|commit| !commit.writes.is_empty())
+            .cloned()
+            .map(|commit| CommittedMutationEvent {
+                tenant_id: runtime.tenant_id().clone(),
+                commit,
+            })
+            .collect::<Vec<_>>();
+        if events.is_empty() {
+            return;
         }
+        runtime.enqueue_committed_mutation_observer_dispatch(CommittedMutationObserverDispatch {
+            observers,
+            events,
+        });
     }
 
     /// Installs a named table-schema observer.

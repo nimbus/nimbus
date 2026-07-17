@@ -255,7 +255,7 @@ impl CommitPhaseMetrics {
     /// Records every overload-class error and deterministically selects only
     /// the first and each configured Nth successor for reporting.
     pub(crate) fn record_overload_error(&self) -> bool {
-        let every = env_positive_usize(
+        let every = crate::config::env_positive_usize(
             "NIMBUS_OVERLOAD_ERROR_REPORT_EVERY",
             DEFAULT_OVERLOAD_ERROR_REPORT_EVERY,
         );
@@ -277,7 +277,7 @@ impl CommitPhaseMetrics {
 
     pub(crate) fn record_shadow_cap_violation(&self, cap: MutationCap) -> bool {
         self.shadow_cap_violations[cap_index(cap)].fetch_add(1, Ordering::Relaxed);
-        let every = env_positive_usize(
+        let every = crate::config::env_positive_usize(
             "NIMBUS_SHADOW_CAP_REPORT_EVERY",
             DEFAULT_SHADOW_CAP_REPORT_EVERY,
         );
@@ -404,7 +404,7 @@ pub(in crate::engine) fn maybe_warn_wide_read_set(
     dependencies: &DependencySet,
 ) {
     let cardinality = dependency_cardinality(dependencies);
-    let threshold = env_positive_usize(
+    let threshold = crate::config::env_positive_usize(
         "NIMBUS_WIDE_READ_SET_WARN_THRESHOLD",
         DEFAULT_WIDE_READ_SET_WARN_THRESHOLD,
     );
@@ -464,14 +464,6 @@ fn cap_index(cap: MutationCap) -> usize {
         MutationCap::DocumentsWritten => 3,
         MutationCap::IndexRangeCalls => 4,
     }
-}
-
-pub(super) fn env_positive_usize(key: &str, default: usize) -> usize {
-    std::env::var_os(key)
-        .and_then(|value| value.into_string().ok())
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
 }
 
 fn duration_nanos(duration: Duration) -> u64 {

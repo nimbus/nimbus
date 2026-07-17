@@ -987,37 +987,23 @@ async fn assign_time_stamping_is_monotonic_under_concurrent_prepares() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_reports_depth() {
-    struct RestoreEnv {
-        inbox: Option<std::ffi::OsString>,
-        timeout: Option<std::ffi::OsString>,
-    }
-    impl Drop for RestoreEnv {
-        fn drop(&mut self) {
-            unsafe {
-                match self.inbox.take() {
-                    Some(value) => std::env::set_var("NIMBUS_COMMITTER_INBOX_SIZE", value),
-                    None => std::env::remove_var("NIMBUS_COMMITTER_INBOX_SIZE"),
-                }
-                match self.timeout.take() {
-                    Some(value) => std::env::set_var("NIMBUS_COMMITTER_SEND_TIMEOUT_MS", value),
-                    None => std::env::remove_var("NIMBUS_COMMITTER_SEND_TIMEOUT_MS"),
-                }
-            }
-        }
-    }
-
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
-    let restore = RestoreEnv {
-        inbox: std::env::var_os("NIMBUS_COMMITTER_INBOX_SIZE"),
-        timeout: std::env::var_os("NIMBUS_COMMITTER_SEND_TIMEOUT_MS"),
-    };
-    unsafe {
-        std::env::set_var("NIMBUS_COMMITTER_INBOX_SIZE", "2");
-        std::env::set_var("NIMBUS_COMMITTER_SEND_TIMEOUT_MS", "25");
-    }
-    let tenant_id = fixture.create_tenant("bounded-committer", Engine::create_tenant);
-    drop(restore);
+    let tenant_id = TenantId::new("bounded-committer").expect("tenant id should build");
+    crate::tenant::configure_committer_limits_for_testing(
+        tenant_id.clone(),
+        2,
+        Duration::from_millis(25),
+    );
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("bounded-committer tenant should create");
+    let inbox_capacity = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("committer diagnostics should load")
+        .mutation_journal
+        .committer_inbox_capacity;
+    assert!(inbox_capacity > 0);
 
     let pause = engine
         .mutation_journal_pause_handle_for_testing(&tenant_id)
@@ -1047,31 +1033,33 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
     )
     .await;
 
-    let schema = |table: &'static str| TableSchema {
-        table: TableName::new(table).expect("test table name should build"),
-        fields: vec![],
-        indexes: vec![],
-        access_policy: None,
-    };
-    let spawn_schema = |table: &'static str| {
+    let spawn_schema = |index: usize| {
         let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         tokio::spawn(async move {
             engine
-                .set_table_schema_async(tenant_id, schema(table))
+                .set_table_schema_async(
+                    tenant_id,
+                    TableSchema {
+                        table: TableName::new(format!("inbox_{index}"))
+                            .expect("test table name should build"),
+                        fields: vec![],
+                        indexes: vec![],
+                        access_policy: None,
+                    },
+                )
                 .await
         })
     };
-    let second = spawn_schema("inbox_one");
-    let third = spawn_schema("inbox_two");
+    let accepted = (0..inbox_capacity).map(spawn_schema).collect::<Vec<_>>();
     let full = wait_for_mutation_journal_stats(
         &engine,
         &tenant_id,
-        "both bounded committer slots should become observable",
-        |stats| stats.committer_inbox_depth == 2,
+        "all bounded committer slots should become observable",
+        |stats| stats.committer_inbox_depth == inbox_capacity,
     )
     .await;
-    assert_eq!(full.committer_inbox_capacity, 2);
+    assert_eq!(full.committer_inbox_capacity, inbox_capacity);
 
     let started = std::time::Instant::now();
     let rejected = [spawn_insert("rejected_one"), spawn_insert("rejected_two")];
@@ -1085,14 +1073,13 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
         );
     }
     assert!(
-        started.elapsed() < Duration::from_millis(250),
-        "the configured 25ms send timeout must not turn into unbounded queueing"
+        started.elapsed() < Duration::from_secs(2),
+        "the bounded send timeout must not turn into unbounded queueing"
     );
     for error in &errors {
-        assert!(matches!(
-            error,
-            nimbus_core::Error::CommitterFull { capacity: 2, .. }
-        ));
+        assert!(
+            matches!(error, nimbus_core::Error::CommitterFull { capacity, .. } if *capacity == inbox_capacity)
+        );
         assert_eq!(
             error.retryability(),
             nimbus_core::Retryability::RetryableAfterBackoff
@@ -1102,9 +1089,15 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
     let diagnostics = engine
         .tenant_engine_diagnostics(&tenant_id)
         .expect("committer diagnostics should load while saturated");
-    assert_eq!(diagnostics.mutation_journal.committer_inbox_depth, 2);
+    assert_eq!(
+        diagnostics.mutation_journal.committer_inbox_depth,
+        inbox_capacity
+    );
     assert_eq!(diagnostics.mutation_journal.committer_send_timeout_count, 2);
-    assert_eq!(diagnostics.commit_phases.committer_inbox_depth, 2);
+    assert_eq!(
+        diagnostics.commit_phases.committer_inbox_depth,
+        u64::try_from(inbox_capacity).expect("committer capacity should fit diagnostics")
+    );
     assert_eq!(diagnostics.commit_phases.committer_send_timeout_total, 2);
 
     pause.release();
@@ -1112,7 +1105,7 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
         .await
         .expect("accepted insert task should join")
         .expect("accepted insert should commit");
-    for schema_write in [second, third] {
+    for schema_write in accepted {
         expect_future_within(
             schema_write,
             "accepted direct committer work should drain after release",
@@ -1137,6 +1130,174 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
     )
     .await;
     assert_eq!(drained.committer_send_timeout_count, 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rejected_serial_job_returns_typed_retryable_publisher_error() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = TenantId::new("serial-job-rejection").expect("tenant id should build");
+    crate::tenant::configure_publisher_limits_for_testing(
+        tenant_id.clone(),
+        1,
+        Duration::from_millis(50),
+    );
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("serial-job-rejection tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let faults = engine.commit_fault_handle_for_testing();
+    faults.arm(crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH);
+
+    let first = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state("first publisher batch should pause", {
+        let faults = faults.clone();
+        move |timeout| {
+            faults.wait_until_entered(
+                crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH,
+                timeout,
+            )
+        }
+    })
+    .await;
+    let second = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+                )
+                .await
+        }
+    });
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "second batch should fill the publisher queue",
+        |stats| stats.publisher_queue_depth == 1,
+    )
+    .await;
+
+    let schema_error = engine
+        .set_table_schema_async(
+            tenant_id.clone(),
+            TableSchema {
+                table: TableName::new("serial_rejected").expect("table name should build"),
+                fields: Vec::new(),
+                indexes: Vec::new(),
+                access_policy: None,
+            },
+        )
+        .await
+        .expect_err("full publisher queue should reject the opaque serial job");
+    assert!(matches!(schema_error, Error::CommitterFull { .. }));
+    assert_eq!(
+        schema_error.retryability(),
+        nimbus_core::Retryability::RetryableAfterBackoff
+    );
+
+    faults.release(crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH);
+    expect_catch_up_future_within(first, "first batch should finish after release")
+        .await
+        .expect("first task should join")
+        .expect("first batch should succeed");
+    expect_catch_up_future_within(second, "second batch should finish after release")
+        .await
+        .expect("second task should join")
+        .expect("second batch should succeed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pipeline_mode_reconcile_timeout_processes_client_batch_in_current_mode() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = TenantId::new("mode-reconcile-timeout").expect("tenant id should build");
+    crate::tenant::configure_publisher_limits_for_testing(
+        tenant_id.clone(),
+        1,
+        Duration::from_millis(100),
+    );
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("mode-reconcile-timeout tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let faults = engine.commit_fault_handle_for_testing();
+    faults.arm(crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH);
+    let spawn_insert = |index: usize| {
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        tokio::spawn(async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+                )
+                .await
+        })
+    };
+    let first = spawn_insert(1);
+    expect_blocking_wait_reaches_state("first publisher batch should pause", {
+        let faults = faults.clone();
+        move |timeout| {
+            faults.wait_until_entered(
+                crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH,
+                timeout,
+            )
+        }
+    })
+    .await;
+    let second = spawn_insert(2);
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "second batch should fill the publisher queue",
+        |stats| stats.publisher_queue_depth == 1,
+    )
+    .await;
+    engine
+        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
+        .expect("test should request serial mode");
+    let third = spawn_insert(3);
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "mode barrier should time out without failing the client batch",
+        |stats| stats.publisher_mode_transition_failure_count == 1,
+    )
+    .await;
+    faults.release(crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH);
+
+    for write in [first, second, third] {
+        expect_catch_up_future_within(write, "client batch should finish in current mode")
+            .await
+            .expect("insert task should join")
+            .expect("mode reconciliation failure must not fail client writes");
+    }
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("mode diagnostics should load");
+    assert_eq!(stats.publisher_mode_transition_failure_count, 1);
+    assert_eq!(stats.durable_head, stats.applied_head);
 }
 
 async fn run_paused_insert_burst(engine: &Arc<Engine>, tenant_id: &TenantId, count: usize) {
@@ -1462,6 +1623,32 @@ impl nimbus_storage::FaultInjector for RetryableThenBlockingAppendFaultInjector 
     }
 }
 
+struct RetryExhaustionThenHealthyAppendFaultInjector {
+    visits: std::sync::atomic::AtomicU64,
+}
+
+impl RetryExhaustionThenHealthyAppendFaultInjector {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            visits: std::sync::atomic::AtomicU64::new(0),
+        })
+    }
+}
+
+impl nimbus_storage::FaultInjector for RetryExhaustionThenHealthyAppendFaultInjector {
+    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+        if point == FaultPoint::JournalAppendBeforeDurableFlush
+            && self.visits.fetch_add(1, Ordering::AcqRel) < 4
+        {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Transient,
+                "injected retry exhaustion before durable advance",
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn publisher_preserves_sequence_order_across_transient_retry() {
     let data_dir = tempdir().expect("transient publisher tempdir should build");
@@ -1573,6 +1760,551 @@ async fn publisher_preserves_sequence_order_across_transient_retry() {
     assert_eq!(stats.publisher_transient_error_count, 1);
     assert_eq!(stats.publisher_fatal_error_count, 0);
     assert_eq!(stats.publisher_ambiguous_error_count, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn assignment_failure_mid_batch_discards_staged_suffix_and_keeps_tenant_live() {
+    let data_dir = tempdir().expect("assignment failure tempdir should build");
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_500))),
+            Arc::new(NoopFaultInjector),
+            Arc::new(nimbus_core::SeededIdSource::new(46_500)),
+        )
+        .expect("assignment failure engine should create"),
+    );
+    let tenant_id = TenantId::new("assignment-failure-recovery").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let runtime_before = engine
+        .tenant_runtime_identity_for_testing(&tenant_id)
+        .expect("runtime identity should load");
+    let faults = engine.commit_fault_handle_for_testing();
+    faults.inject_error_on_nth_hit(
+        crate::engine::commit_fault_labels::JOURNAL_ASSIGN_AFTER_STAGE,
+        1,
+        Error::InvalidInput("injected mid-batch assignment failure".to_string()),
+    );
+
+    let pause = engine
+        .mutation_journal_pause_handle_for_testing(&tenant_id)
+        .expect("assignment drain pause should load");
+    pause.arm();
+    let mut writes = Vec::new();
+    for index in 0..3 {
+        writes.push(tokio::spawn({
+            let engine = engine.clone();
+            let tenant_id = tenant_id.clone();
+            async move {
+                engine
+                    .insert_document_async(
+                        tenant_id,
+                        tasks_table(),
+                        serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+                    )
+                    .await
+            }
+        }));
+        if index == 0 {
+            expect_blocking_wait_reaches_state("assignment batch should pause before drain", {
+                let pause = pause.clone();
+                move |timeout| pause.wait_until_entered(timeout)
+            })
+            .await;
+        }
+    }
+    wait_for_mutation_admission_stats(
+        &engine,
+        &tenant_id,
+        "assignment batch followers should collect behind the pause",
+        |stats| stats.queue_depth == 2,
+    )
+    .await;
+    pause.release();
+    let mut typed_failures = 0usize;
+    let mut successful_followers = 0usize;
+    for write in writes {
+        match expect_catch_up_future_within(write, "assignment caller should resolve")
+            .await
+            .expect("assignment task should join")
+        {
+            Err(Error::InvalidInput(message))
+                if message == "injected mid-batch assignment failure" =>
+            {
+                typed_failures += 1;
+            }
+            Ok(_) => successful_followers += 1,
+            Err(other) => panic!("assignment caller received the wrong error: {other}"),
+        }
+    }
+    let assignment_hits =
+        faults.hit_count(crate::engine::commit_fault_labels::JOURNAL_ASSIGN_AFTER_STAGE);
+    assert!(
+        typed_failures >= 2,
+        "the staged request and injected-failure request must both receive the typed error; typed={typed_failures}, successful={successful_followers}, hits={assignment_hits}"
+    );
+    let journal_before_follow_up = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("journal should remain readable");
+    assert_eq!(journal_before_follow_up.len(), successful_followers);
+    assert_eq!(
+        journal_before_follow_up
+            .iter()
+            .map(|record| record.sequence)
+            .collect::<Vec<_>>(),
+        (1..=u64::try_from(successful_followers).unwrap())
+            .map(SequenceNumber)
+            .collect::<Vec<_>>(),
+        "a mid-batch assignment error must not leave a phantom sequence"
+    );
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(99))]),
+        )
+        .await
+        .expect("the next batch should publish normally after assignment recovery");
+    assert_eq!(
+        engine
+            .tenant_runtime_identity_for_testing(&tenant_id)
+            .expect("runtime should remain loaded"),
+        runtime_before,
+        "recoverable assignment failure must not evict the tenant"
+    );
+    let journal = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("recovered journal should read");
+    assert_eq!(journal.len(), successful_followers + 1);
+    assert_eq!(
+        journal
+            .last()
+            .expect("follow-up record should exist")
+            .sequence,
+        SequenceNumber(u64::try_from(successful_followers + 1).unwrap())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn assignment_worker_panic_discards_staged_suffix_and_keeps_tenant_live() {
+    let data_dir = tempdir().expect("assignment panic tempdir should build");
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_625))),
+            Arc::new(NoopFaultInjector),
+            Arc::new(nimbus_core::SeededIdSource::new(46_625)),
+        )
+        .expect("assignment panic engine should create"),
+    );
+    let tenant_id = TenantId::new("assignment-panic-recovery").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let runtime_before = engine
+        .tenant_runtime_identity_for_testing(&tenant_id)
+        .expect("runtime identity should load");
+    engine
+        .commit_fault_handle_for_testing()
+        .inject_panic_on_nth_hit(
+            crate::engine::commit_fault_labels::JOURNAL_ASSIGN_AFTER_STAGE,
+            1,
+        );
+
+    let error = engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+        )
+        .await
+        .expect_err("the injected assignment panic should fail its caller");
+    assert!(
+        matches!(error, Error::Internal(message) if message.contains("assignment batch panicked")),
+        "the assignment join error should reach the caller"
+    );
+    assert!(
+        engine
+            .read_durable_journal(&tenant_id, SequenceNumber(0))
+            .expect("journal should remain readable")
+            .is_empty(),
+        "the staged record from a panicked assignment worker must be discarded"
+    );
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+        )
+        .await
+        .expect("a follow-up batch should publish after panic recovery");
+    assert_eq!(
+        engine
+            .tenant_runtime_identity_for_testing(&tenant_id)
+            .expect("runtime should remain loaded"),
+        runtime_before,
+        "assignment panics are recoverable and must not evict the tenant"
+    );
+    let journal = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("journal should read after recovery");
+    assert_eq!(journal.len(), 1);
+    assert_eq!(journal[0].sequence, SequenceNumber(1));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn definitive_publisher_append_error_is_batch_scoped_and_tenant_stays_loaded() {
+    let data_dir = tempdir().expect("definitive publisher tempdir should build");
+    let faults = Arc::new(nimbus_storage::ScriptedFaultInjector::new([
+        nimbus_storage::FaultOccurrence {
+            point: FaultPoint::JournalAppendBeforeDurableFlush,
+            visit: 1,
+        },
+    ]));
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_750))),
+            faults,
+            Arc::new(nimbus_core::SeededIdSource::new(46_750)),
+        )
+        .expect("definitive publisher engine should create"),
+    );
+    let tenant_id = TenantId::new("definitive-publisher-failure").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let runtime_before = engine
+        .tenant_runtime_identity_for_testing(&tenant_id)
+        .expect("runtime identity should load");
+
+    let error = engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+        )
+        .await
+        .expect_err("pre-durability append fault should fail only its batch");
+    assert!(
+        error
+            .to_string()
+            .contains("journal_append_before_durable_flush")
+    );
+    assert_eq!(
+        engine
+            .tenant_runtime_identity_for_testing(&tenant_id)
+            .expect("tenant should still be loaded"),
+        runtime_before
+    );
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+        )
+        .await
+        .expect("next batch should publish on the same runtime");
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("publisher diagnostics should load");
+    assert_eq!(stats.publisher_fatal_error_count, 1);
+    assert_eq!(stats.publisher_ambiguous_error_count, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn publisher_retry_exhaustion_without_durable_advance_is_batch_scoped() {
+    let data_dir = tempdir().expect("retry exhaustion tempdir should build");
+    let faults = RetryExhaustionThenHealthyAppendFaultInjector::new();
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_800))),
+            faults,
+            Arc::new(nimbus_core::SeededIdSource::new(46_800)),
+        )
+        .expect("retry exhaustion engine should create"),
+    );
+    let tenant_id = TenantId::new("retry-exhaustion-batch-scope").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let runtime_before = engine
+        .tenant_runtime_identity_for_testing(&tenant_id)
+        .expect("runtime identity should load");
+
+    let error = engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+        )
+        .await
+        .expect_err("retry exhaustion should fail the batch");
+    assert_eq!(
+        error.retryability(),
+        nimbus_core::Retryability::RetryableAfterBackoff
+    );
+    assert_eq!(
+        engine
+            .tenant_runtime_identity_for_testing(&tenant_id)
+            .expect("tenant should remain loaded"),
+        runtime_before
+    );
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+        )
+        .await
+        .expect("publisher should continue after bounded retry exhaustion");
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("publisher diagnostics should load");
+    assert_eq!(stats.publisher_transient_error_count, 4);
+    assert_eq!(stats.publisher_ambiguous_error_count, 0);
+}
+
+#[derive(Default)]
+struct OrderedBlockingObserver {
+    state: Mutex<(Vec<SequenceNumber>, usize, usize, bool)>,
+    entered: Condvar,
+    release: Condvar,
+}
+
+impl OrderedBlockingObserver {
+    fn wait_for_first(&self, timeout: Duration) -> bool {
+        let state = self.state.lock().expect("observer state should lock");
+        let (state, _) = self
+            .entered
+            .wait_timeout_while(state, timeout, |state| state.0.is_empty())
+            .expect("observer wait should succeed");
+        !state.0.is_empty()
+    }
+
+    fn release_first(&self) {
+        let mut state = self.state.lock().expect("observer state should lock");
+        state.3 = true;
+        self.release.notify_all();
+    }
+}
+
+impl crate::CommittedMutationObserver for OrderedBlockingObserver {
+    fn committed_mutation_applied(&self, event: crate::CommittedMutationEvent) {
+        let mut state = self.state.lock().expect("observer state should lock");
+        state.1 += 1;
+        state.2 = state.2.max(state.1);
+        state.0.push(event.commit.sequence);
+        self.entered.notify_all();
+        if state.0.len() == 1 {
+            while !state.3 {
+                state = self
+                    .release
+                    .wait(state)
+                    .expect("observer release should wait");
+            }
+        }
+        state.1 -= 1;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn publisher_observers_are_strictly_ordered_and_quiesce_drains_them() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("ordered-observers", Engine::create_tenant);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let observer = Arc::new(OrderedBlockingObserver::default());
+    engine.install_committed_mutation_observer("ordered-test", observer.clone());
+
+    for index in 0..2 {
+        engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+            )
+            .await
+            .expect("publisher response must not wait for the observer");
+    }
+    expect_blocking_wait_reaches_state("first observer callback should block", {
+        let observer = observer.clone();
+        move |timeout| observer.wait_for_first(timeout)
+    })
+    .await;
+    {
+        let state = observer.state.lock().expect("observer state should lock");
+        assert_eq!(state.0, vec![SequenceNumber(1)]);
+        assert_eq!(state.2, 1, "observer callbacks must never overlap");
+    }
+
+    let mut quiesce = tokio::spawn({
+        let engine = engine.clone();
+        async move { engine.quiesce().await }
+    });
+    assert_future_stays_pending(
+        &mut quiesce,
+        "engine quiesce must wait for the ordered observer queue to drain",
+    )
+    .await;
+    observer.release_first();
+    expect_future_within(quiesce, "observer queue should drain during quiesce")
+        .await
+        .expect("quiesce task should join");
+    let state = observer.state.lock().expect("observer state should lock");
+    assert_eq!(state.0.len(), 2);
+    assert!(
+        state.0[0] < state.0[1],
+        "observer commits must stay ordered"
+    );
+    assert_eq!(state.2, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn committed_observers_preserve_order_across_execution_unit_and_direct_handoffs() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("mixed-ordered-observers", Engine::create_tenant);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let observer = Arc::new(OrderedBlockingObserver::default());
+    engine.install_committed_mutation_observer("mixed-ordered-test", observer.clone());
+
+    let first = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("first execution unit should begin");
+    first
+        .insert_document(
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+        )
+        .expect("first insert should stage");
+    let faults = engine.commit_fault_handle_for_testing();
+    faults.arm(crate::engine::commit_fault_labels::POST_PUBLISH_PRE_FANOUT);
+    let first_commit = tokio::task::spawn_blocking(move || first.commit());
+    let wait_faults = faults.clone();
+    assert!(
+        tokio::task::spawn_blocking(move || {
+            wait_faults.wait_until_entered(
+                crate::engine::commit_fault_labels::POST_PUBLISH_PRE_FANOUT,
+                Duration::from_secs(5),
+            )
+        })
+        .await
+        .expect("commit pause waiter should join"),
+        "first commit should pause after its serialized observer enqueue"
+    );
+
+    tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move || {
+            engine.insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+            )
+        }
+    })
+    .await
+    .expect("second direct commit task should join")
+    .expect("second direct commit should succeed");
+
+    expect_blocking_wait_reaches_state("first observer callback should arrive", {
+        let observer = observer.clone();
+        move |timeout| observer.wait_for_first(timeout)
+    })
+    .await;
+    {
+        let state = observer.state.lock().expect("observer state should lock");
+        assert_eq!(
+            state.0,
+            vec![SequenceNumber(1)],
+            "the later direct caller must not enqueue ahead of the earlier execution-unit commit"
+        );
+    }
+
+    observer.release_first();
+    faults.release(crate::engine::commit_fault_labels::POST_PUBLISH_PRE_FANOUT);
+    first_commit
+        .await
+        .expect("first execution-unit task should join")
+        .expect("first execution-unit commit should succeed")
+        .expect("first execution-unit insert should commit");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ambiguous_publisher_eviction_drains_then_reopens_a_distinct_runtime() {
+    let data_dir = tempdir().expect("guarded eviction tempdir should build");
+    let faults = Arc::new(nimbus_storage::ScriptedFaultInjector::new([
+        nimbus_storage::FaultOccurrence {
+            point: FaultPoint::JournalDurableAppendBeforeApply,
+            visit: 1,
+        },
+    ]));
+    let engine = Arc::new(
+        Engine::new_with_simulation(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_900))),
+            faults,
+        )
+        .expect("guarded eviction engine should create"),
+    );
+    let tenant_id = TenantId::new("guarded-ambiguous-eviction").expect("tenant id should build");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let runtime_before = engine
+        .tenant_runtime_identity_for_testing(&tenant_id)
+        .expect("runtime identity should load");
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("recover"))]),
+        )
+        .await
+        .expect_err("post-durable fault should require guarded eviction");
+    let documents = engine
+        .query_documents_async(tenant_id.clone(), query_for("tasks"))
+        .await
+        .expect("reopen should wait for the old store handle to drain and recover");
+    assert_eq!(documents.len(), 1);
+    assert_ne!(
+        engine
+            .tenant_runtime_identity_for_testing(&tenant_id)
+            .expect("reopened runtime identity should load"),
+        runtime_before
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

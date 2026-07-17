@@ -38,7 +38,7 @@ impl Drop for WaitingRegistration<'_> {
 impl MutationIsolateAdmission {
     pub(in crate::tenant) fn from_env() -> Self {
         Self::new(
-            env_positive_usize(
+            crate::config::env_positive_usize(
                 "NIMBUS_TENANT_MUTATION_ISOLATE_CEILING",
                 DEFAULT_TENANT_MUTATION_ISOLATE_CEILING,
             ),
@@ -115,14 +115,6 @@ impl Drop for MutationIsolateAdmissionPermit {
             .fetch_sub(1, Ordering::AcqRel);
         debug_assert!(previous > 0, "mutation isolate permit count underflow");
     }
-}
-
-fn env_positive_usize(name: &str, default: usize) -> usize {
-    std::env::var_os(name)
-        .and_then(|value| value.into_string().ok())
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
 }
 
 #[cfg(test)]

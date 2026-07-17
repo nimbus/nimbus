@@ -64,10 +64,14 @@ pub(crate) use self::mutation::MutationIsolateAdmissionPermit;
 pub use self::mutation::MutationJournalPauseHandle;
 #[cfg(any(test, feature = "test-hooks"))]
 use self::mutation::MutationJournalPauseState;
+#[cfg(test)]
+pub(crate) use self::mutation::configure_committer_limits_for_testing;
+#[cfg(test)]
+pub(crate) use self::mutation::configure_publisher_limits_for_testing;
 pub(crate) use self::mutation::{
-    AssignedPublisherBatch, DeferredPublisherResponse, PendingPublisherResponse,
-    PreparedPayloadAccounting, PublisherErrorCounts, PublisherMessage, PublisherQueueError,
-    QueuedMutationRequest, QueuedMutationResult,
+    AssignedPublisherBatch, DeferredPublisherResponse, MutationResponseSender,
+    PendingPublisherResponse, PreparedPayloadAccounting, PublisherErrorCounts, PublisherMessage,
+    PublisherQueueError, QueuedMutationRequest, QueuedMutationResult,
 };
 pub(crate) use self::mutation::{
     CommitterActor, CommitterJob, CommitterMessage, assign_and_validate, run_committer_actor,
@@ -79,7 +83,7 @@ pub use self::mutation::{
 };
 use self::mutation::{
     MutationAdmissionDecision, MutationAdmissionGate, MutationIsolateAdmission,
-    MutationJournalState, PublisherHandoff,
+    MutationJournalState, ObserverHandoff, PublisherHandoff,
 };
 use self::query_planning::QueryPlanningMetrics;
 pub use self::query_planning::QueryPlanningStats;
@@ -129,6 +133,7 @@ pub struct TenantRuntime {
     mutation_journal: Arc<MutationJournalState>,
     committer: Arc<CommitterActor>,
     publisher: Arc<PublisherHandoff>,
+    observer_dispatch: Arc<ObserverHandoff>,
     write_rate: TenantWriteRateLimiter,
     last_assigned_commit_timestamp: AtomicU64,
     prepared_table_ids: Mutex<HashMap<TableName, TableId>>,
@@ -201,6 +206,11 @@ impl TenantRuntime {
         last_commit_timestamp: Timestamp,
     ) -> Self {
         let publisher_pipeline_capable = store.has_process_local_sequence_authority();
+        let committer = Arc::new(CommitterActor::new(tenant_id.clone()));
+        let publisher = Arc::new(PublisherHandoff::new(
+            publisher_pipeline_capable,
+            &tenant_id,
+        ));
         Self {
             tenant_id,
             store,
@@ -224,8 +234,9 @@ impl TenantRuntime {
             mutation_admission: Arc::new(MutationAdmissionGate::new()),
             mutation_isolate_admission: Arc::new(MutationIsolateAdmission::from_env()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
-            committer: Arc::new(CommitterActor::new()),
-            publisher: Arc::new(PublisherHandoff::new(publisher_pipeline_capable)),
+            committer,
+            publisher,
+            observer_dispatch: Arc::new(ObserverHandoff::new()),
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             prepared_table_ids: Mutex::new(HashMap::new()),
@@ -453,6 +464,14 @@ impl TenantRuntime {
     pub async fn begin_delete_async(&self) -> TenantDeletionGuard {
         self.lifecycle.begin_delete_async().await;
         TenantDeletionGuard
+    }
+
+    pub(crate) fn mark_deleting_for_eviction(&self) {
+        self.lifecycle.mark_deleted();
+    }
+
+    pub(crate) async fn wait_for_operation_drain_for_eviction(&self) {
+        self.lifecycle.wait_for_operations_async().await;
     }
 
     pub(crate) fn trigger_registry(&self) -> &TriggerRegistry {

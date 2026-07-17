@@ -57,6 +57,43 @@ impl TenantRuntime {
         self.publisher.take_receiver()
     }
 
+    pub(crate) fn take_observer_dispatch_receiver(
+        &self,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<
+        crate::engine::committed_mutations::CommittedMutationObserverMessage,
+    > {
+        self.observer_dispatch.take_receiver()
+    }
+
+    pub(crate) fn enqueue_committed_mutation_observer_dispatch(
+        &self,
+        dispatch: crate::engine::committed_mutations::CommittedMutationObserverDispatch,
+    ) {
+        self.observer_dispatch.send(dispatch);
+    }
+
+    pub(crate) fn close_committed_mutation_observers(&self) {
+        self.observer_dispatch.close();
+    }
+
+    pub(crate) fn mark_committed_mutation_observers_drained(&self) {
+        self.observer_dispatch.mark_drained();
+    }
+
+    pub(crate) async fn wait_for_committed_mutation_observers_drained(&self) {
+        self.observer_dispatch.wait_drained().await;
+    }
+
+    pub(crate) fn publisher_pipeline_capable(&self) -> bool {
+        self.publisher.pipeline_capable()
+    }
+
+    pub(crate) async fn lock_publisher_assignment_recovery(
+        &self,
+    ) -> tokio::sync::MutexGuard<'_, ()> {
+        self.publisher.lock_assignment_recovery().await
+    }
+
     pub(crate) fn committer_shutdown_token(&self) -> tokio_util::sync::CancellationToken {
         self.committer.shutdown_token()
     }
@@ -505,6 +542,8 @@ impl TenantRuntime {
         stats.publisher_ambiguous_error_count = errors.ambiguous;
         stats.publisher_mode = self.publisher.mode();
         stats.publisher_mode_transition_count = self.publisher.mode_transition_count();
+        stats.publisher_mode_transition_failure_count =
+            self.publisher.mode_transition_failure_count();
         stats
     }
 
@@ -518,6 +557,10 @@ impl TenantRuntime {
 
     pub(crate) async fn reconcile_committer_pipeline_mode(&self) -> Result<bool> {
         self.publisher.reconcile_mode().await
+    }
+
+    pub(crate) fn committer_pipeline_mode(&self) -> super::CommitterPipelineMode {
+        self.publisher.mode()
     }
 
     #[cfg(test)]

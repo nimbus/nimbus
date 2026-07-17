@@ -1,5 +1,6 @@
 //! Nimbus engine crate.
 
+mod config;
 mod engine;
 mod evaluator;
 mod persistence;

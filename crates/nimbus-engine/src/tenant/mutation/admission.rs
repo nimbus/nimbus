@@ -11,6 +11,7 @@ use super::stats::MutationAdmissionStats;
 
 pub(in crate::tenant) struct MutationAdmissionGate {
     state: Mutex<MutationAdmissionGateState>,
+    queue_depth: AtomicUsize,
     capacity: AtomicUsize,
     admitted_count: AtomicU64,
     shed_count: AtomicU64,
@@ -38,6 +39,7 @@ impl MutationAdmissionGate {
                 queue: VecDeque::new(),
                 codel: CoDelState::new(Duration::from_millis(5), Duration::from_millis(100)),
             }),
+            queue_depth: AtomicUsize::new(0),
             capacity: AtomicUsize::new(DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY),
             admitted_count: AtomicU64::new(0),
             shed_count: AtomicU64::new(0),
@@ -58,6 +60,7 @@ impl MutationAdmissionGate {
             )));
         }
         state.queue.push_back(request);
+        self.queue_depth.fetch_add(1, Ordering::Release);
         self.admitted_count.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
@@ -71,6 +74,7 @@ impl MutationAdmissionGate {
             state.codel.reset();
             return MutationAdmissionDecision::Empty;
         };
+        self.queue_depth.fetch_sub(1, Ordering::Release);
 
         let should_drop = state.codel.should_drop(now, request.enqueued_at);
         if state.queue.is_empty() {
@@ -89,11 +93,7 @@ impl MutationAdmissionGate {
     }
 
     pub(in crate::tenant) fn queue_depth(&self) -> usize {
-        self.state
-            .lock()
-            .expect("mutation admission gate lock should not be poisoned")
-            .queue
-            .len()
+        self.queue_depth.load(Ordering::Acquire)
     }
 
     pub(in crate::tenant) fn stats(&self) -> MutationAdmissionStats {

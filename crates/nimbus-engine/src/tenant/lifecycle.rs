@@ -52,7 +52,15 @@ impl TenantLifecycle {
     }
 
     pub(super) fn begin_delete_blocking(&self) {
+        self.mark_deleted();
+        self.wait_for_operations_blocking();
+    }
+
+    pub(super) fn mark_deleted(&self) {
         self.deleted.store(true, Ordering::Release);
+    }
+
+    fn wait_for_operations_blocking(&self) {
         let mut guard = self
             .zero_active_lock
             .lock()
@@ -66,7 +74,11 @@ impl TenantLifecycle {
     }
 
     pub(super) async fn begin_delete_async(&self) {
-        self.deleted.store(true, Ordering::Release);
+        self.mark_deleted();
+        self.wait_for_operations_async().await;
+    }
+
+    pub(super) async fn wait_for_operations_async(&self) {
         loop {
             if self.active_operations.load(Ordering::Acquire) == 0 {
                 return;

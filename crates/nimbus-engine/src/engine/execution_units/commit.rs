@@ -208,7 +208,11 @@ impl MutationExecutionUnit {
                 },
                 |(commit, _)| {
                     if let Some(commit) = commit {
-                        engine_for_fanout.process_commit_fanout(runtime_for_fanout, commit);
+                        engine_for_fanout.process_commit_fanout(runtime_for_fanout.clone(), commit);
+                        engine_for_fanout.enqueue_applied_commit_batch_observers(
+                            runtime_for_fanout,
+                            std::slice::from_ref(commit),
+                        );
                     }
                 },
             )?;
@@ -227,10 +231,6 @@ impl MutationExecutionUnit {
         drop(finalization_guard);
         let commit = result?;
 
-        if let Some(commit) = &commit {
-            self.engine
-                .notify_committed_mutation_observers(self.runtime.as_ref(), commit);
-        }
         if has_scheduled_insert {
             self.engine.wake_scheduler();
         }

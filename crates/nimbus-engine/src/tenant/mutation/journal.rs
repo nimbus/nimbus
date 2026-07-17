@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 pub(in crate::tenant) struct MutationJournalState {
     queue: Mutex<VecDeque<QueuedMutationRequest>>,
+    queue_depth: AtomicUsize,
     capacity: AtomicUsize,
     worker_running: AtomicUsize,
     worker_start_count: AtomicU64,
@@ -40,6 +41,7 @@ impl MutationJournalState {
     pub(in crate::tenant) fn new(progress: JournalProgress) -> Self {
         Self {
             queue: Mutex::new(VecDeque::new()),
+            queue_depth: AtomicUsize::new(0),
             capacity: AtomicUsize::new(DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY),
             worker_running: AtomicUsize::new(0),
             worker_start_count: AtomicU64::new(0),
@@ -78,6 +80,7 @@ impl MutationJournalState {
             )));
         }
         queue.push_back(request);
+        self.queue_depth.fetch_add(1, Ordering::Release);
         Ok(())
     }
 
@@ -90,14 +93,13 @@ impl MutationJournalState {
             .lock()
             .expect("mutation journal queue lock should not be poisoned");
         let batch_size = queue.len().min(max_batch_size.max(1));
-        queue.drain(..batch_size).collect()
+        let batch = queue.drain(..batch_size).collect::<Vec<_>>();
+        self.queue_depth.fetch_sub(batch.len(), Ordering::Release);
+        batch
     }
 
     pub(in crate::tenant) fn queue_depth(&self) -> usize {
-        self.queue
-            .lock()
-            .expect("mutation journal queue lock should not be poisoned")
-            .len()
+        self.queue_depth.load(Ordering::Acquire)
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
@@ -258,6 +260,7 @@ impl MutationJournalState {
             publisher_ambiguous_error_count: 0,
             publisher_mode: super::CommitterPipelineMode::Serial,
             publisher_mode_transition_count: 0,
+            publisher_mode_transition_failure_count: 0,
         }
     }
 

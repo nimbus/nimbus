@@ -2,27 +2,159 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use nimbus_core::{Error, Result, SequenceNumber, TenantEventRecord};
+use nimbus_core::{Error, Result, SequenceNumber, TenantEventRecord, TenantId};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::Engine;
 use crate::engine::CommitPhaseDurations;
+use crate::engine::committed_mutations::{
+    CommittedMutationObserverDispatch, CommittedMutationObserverMessage,
+};
 
-use super::super::{CommitterJob, QueuedMutationResult, TenantOperationGuard};
+use super::super::{
+    CommitterJob, MutationResponseSender, QueuedMutationResult, TenantOperationGuard,
+};
 use super::CommitterPipelineMode;
 
 const DEFAULT_PUBLISHER_QUEUE_CAPACITY: usize = 32;
 const DEFAULT_PUBLISHER_SEND_TIMEOUT_MS: u64 = 500;
 
+fn publisher_limits_from_env() -> (usize, Duration) {
+    (
+        crate::config::env_positive_usize(
+            "NIMBUS_COMMITTER_PUBLISHER_QUEUE_SIZE",
+            DEFAULT_PUBLISHER_QUEUE_CAPACITY,
+        ),
+        Duration::from_millis(crate::config::env_nonnegative_u64(
+            "NIMBUS_COMMITTER_PUBLISHER_SEND_TIMEOUT_MS",
+            DEFAULT_PUBLISHER_SEND_TIMEOUT_MS,
+        )),
+    )
+}
+
+#[cfg(test)]
+static PUBLISHER_LIMITS_FOR_TESTING: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<TenantId, (usize, Duration)>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+pub(crate) fn configure_publisher_limits_for_testing(
+    tenant_id: TenantId,
+    capacity: usize,
+    send_timeout: Duration,
+) {
+    PUBLISHER_LIMITS_FOR_TESTING
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("publisher test-limit lock should not be poisoned")
+        .insert(tenant_id, (capacity.max(1), send_timeout));
+}
+
+#[cfg(test)]
+fn take_publisher_limits_for_testing(tenant_id: &TenantId) -> Option<(usize, Duration)> {
+    PUBLISHER_LIMITS_FOR_TESTING
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("publisher test-limit lock should not be poisoned")
+        .remove(tenant_id)
+}
+
+pub(crate) struct ObserverHandoff {
+    sender: Mutex<ObserverSender>,
+    receiver: Mutex<Option<mpsc::UnboundedReceiver<CommittedMutationObserverMessage>>>,
+    started: AtomicBool,
+    drained: AtomicBool,
+    drained_notify: tokio::sync::Notify,
+}
+
+struct ObserverSender {
+    sender: mpsc::UnboundedSender<CommittedMutationObserverMessage>,
+    closed: bool,
+}
+
+impl ObserverHandoff {
+    pub(crate) fn new() -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        Self {
+            sender: Mutex::new(ObserverSender {
+                sender,
+                closed: false,
+            }),
+            receiver: Mutex::new(Some(receiver)),
+            started: AtomicBool::new(false),
+            drained: AtomicBool::new(false),
+            drained_notify: tokio::sync::Notify::new(),
+        }
+    }
+
+    pub(crate) fn send(&self, dispatch: CommittedMutationObserverDispatch) {
+        let sender = self
+            .sender
+            .lock()
+            .expect("observer sender lock should not be poisoned");
+        debug_assert!(
+            !sender.closed,
+            "observer dispatch cannot follow ordered close"
+        );
+        if !sender.closed {
+            let _ = sender
+                .sender
+                .send(CommittedMutationObserverMessage::Dispatch(dispatch));
+        }
+    }
+
+    pub(crate) fn close(&self) {
+        let mut sender = self
+            .sender
+            .lock()
+            .expect("observer sender lock should not be poisoned");
+        if !std::mem::replace(&mut sender.closed, true) {
+            let _ = sender.sender.send(CommittedMutationObserverMessage::Close);
+        }
+    }
+
+    pub(crate) fn mark_drained(&self) {
+        self.drained.store(true, Ordering::Release);
+        self.drained_notify.notify_waiters();
+    }
+
+    pub(crate) async fn wait_drained(&self) {
+        loop {
+            if self.drained.load(Ordering::Acquire) {
+                return;
+            }
+            let notified = self.drained_notify.notified();
+            if self.drained.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    pub(crate) fn take_receiver(
+        &self,
+    ) -> mpsc::UnboundedReceiver<CommittedMutationObserverMessage> {
+        assert!(
+            !self.started.swap(true, Ordering::AcqRel),
+            "tenant observer dispatcher must be started exactly once"
+        );
+        self.receiver
+            .lock()
+            .expect("observer receiver lock should not be poisoned")
+            .take()
+            .expect("observer receiver should exist before task start")
+    }
+}
+
 pub(crate) struct PendingPublisherResponse {
     pub(crate) _operation: TenantOperationGuard,
-    pub(crate) response: oneshot::Sender<Result<QueuedMutationResult>>,
+    pub(crate) response: MutationResponseSender,
     pub(crate) result: QueuedMutationResult,
 }
 
 pub(crate) struct DeferredPublisherResponse {
     pub(crate) _operation: TenantOperationGuard,
-    pub(crate) response: oneshot::Sender<Result<QueuedMutationResult>>,
+    pub(crate) response: MutationResponseSender,
     pub(crate) result: Result<QueuedMutationResult>,
 }
 
@@ -65,6 +197,24 @@ impl AssignedPublisherBatch {
         }
     }
 
+    pub(crate) fn defer_failure(self, error: &Error) -> Vec<Box<dyn FnOnce() + Send + 'static>> {
+        self.responses
+            .into_iter()
+            .map(|pending| {
+                let PendingPublisherResponse {
+                    _operation,
+                    response,
+                    ..
+                } = pending;
+                drop(_operation);
+                let error = error.clone();
+                Box::new(move || {
+                    let _ = response.send(Err(error));
+                }) as Box<dyn FnOnce() + Send + 'static>
+            })
+            .collect()
+    }
+
     pub(crate) fn merge(&mut self, mut next: Self) {
         debug_assert!(Arc::ptr_eq(&self.engine, &next.engine));
         debug_assert_eq!(
@@ -76,6 +226,21 @@ impl AssignedPublisherBatch {
         self.responses.append(&mut next.responses);
         self.phases.merge_assignment(next.phases);
         self.sample_started_at = self.sample_started_at.min(next.sample_started_at);
+    }
+}
+
+impl DeferredPublisherResponse {
+    pub(crate) fn defer_failure(self, error: &Error) -> Box<dyn FnOnce() + Send + 'static> {
+        let Self {
+            _operation,
+            response,
+            ..
+        } = self;
+        drop(_operation);
+        let error = error.clone();
+        Box::new(move || {
+            let _ = response.send(Err(error));
+        })
     }
 }
 
@@ -111,19 +276,18 @@ pub(crate) struct PublisherHandoff {
     pipeline_capable: bool,
     mode: AtomicU8,
     mode_transition_count: AtomicU64,
+    mode_transition_failure_count: AtomicU64,
     requested_mode_override: AtomicU8,
+    assignment_recovery_gate: tokio::sync::Mutex<()>,
 }
 
 impl PublisherHandoff {
-    pub(crate) fn new(pipeline_capable: bool) -> Self {
-        let capacity = env_positive_usize(
-            "NIMBUS_COMMITTER_PUBLISHER_QUEUE_SIZE",
-            DEFAULT_PUBLISHER_QUEUE_CAPACITY,
-        );
-        let send_timeout = Duration::from_millis(env_nonnegative_u64(
-            "NIMBUS_COMMITTER_PUBLISHER_SEND_TIMEOUT_MS",
-            DEFAULT_PUBLISHER_SEND_TIMEOUT_MS,
-        ));
+    pub(crate) fn new(pipeline_capable: bool, _tenant_id: &TenantId) -> Self {
+        #[cfg(test)]
+        let (capacity, send_timeout) =
+            take_publisher_limits_for_testing(_tenant_id).unwrap_or_else(publisher_limits_from_env);
+        #[cfg(not(test))]
+        let (capacity, send_timeout) = publisher_limits_from_env();
         let (sender, receiver) = mpsc::channel(capacity);
         let initial_mode = if pipeline_capable && pipeline_requested_from_env() {
             CommitterPipelineMode::Pipeline
@@ -143,7 +307,9 @@ impl PublisherHandoff {
             pipeline_capable,
             mode: AtomicU8::new(mode_to_u8(initial_mode)),
             mode_transition_count: AtomicU64::new(0),
+            mode_transition_failure_count: AtomicU64::new(0),
             requested_mode_override: AtomicU8::new(0),
+            assignment_recovery_gate: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -164,6 +330,8 @@ impl PublisherHandoff {
                     Ordering::Release,
                 );
                 if let Err(error) = self.barrier().await {
+                    self.mode_transition_failure_count
+                        .fetch_add(1, Ordering::Relaxed);
                     self.mode.store(
                         mode_to_u8(CommitterPipelineMode::Pipeline),
                         Ordering::Release,
@@ -181,6 +349,8 @@ impl PublisherHandoff {
                     Ordering::Release,
                 );
                 if let Err(error) = self.barrier().await {
+                    self.mode_transition_failure_count
+                        .fetch_add(1, Ordering::Relaxed);
                     self.mode
                         .store(mode_to_u8(CommitterPipelineMode::Serial), Ordering::Release);
                     return Err(error);
@@ -205,8 +375,20 @@ impl PublisherHandoff {
         mode_from_u8(self.mode.load(Ordering::Acquire))
     }
 
+    pub(crate) fn pipeline_capable(&self) -> bool {
+        self.pipeline_capable
+    }
+
+    pub(crate) async fn lock_assignment_recovery(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.assignment_recovery_gate.lock().await
+    }
+
     pub(crate) fn mode_transition_count(&self) -> u64 {
         self.mode_transition_count.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn mode_transition_failure_count(&self) -> u64 {
+        self.mode_transition_failure_count.load(Ordering::Relaxed)
     }
 
     fn pipeline_requested(&self) -> bool {
@@ -239,54 +421,18 @@ impl PublisherHandoff {
         &self,
         batch: AssignedPublisherBatch,
     ) -> std::result::Result<(), PublisherQueueError> {
-        match tokio::time::timeout(self.send_timeout, self.sender.reserve()).await {
-            Ok(Ok(permit)) => {
+        match self.reserve("assigned batch").await {
+            Ok(permit) => {
                 permit.send(PublisherMessage::Batch(batch));
                 Ok(())
             }
-            Ok(Err(_)) => Err(Box::new((
-                batch,
-                Error::Internal(
-                    "tenant publisher stopped before accepting assigned batch".to_string(),
-                ),
-            ))),
-            Err(_) => {
-                self.send_timeout_count.fetch_add(1, Ordering::Relaxed);
-                Err(Box::new((
-                    batch,
-                    Error::committer_full(
-                        format!(
-                            "tenant publisher queue remained full for {} ms (capacity {})",
-                            self.send_timeout.as_millis(),
-                            self.capacity
-                        ),
-                        self.capacity,
-                    ),
-                )))
-            }
+            Err(error) => Err(Box::new((batch, error))),
         }
     }
 
     pub(crate) async fn barrier(&self) -> Result<()> {
         let (sender, receiver) = oneshot::channel();
-        let permit = tokio::time::timeout(self.send_timeout, self.sender.reserve())
-            .await
-            .map_err(|_| {
-                self.send_timeout_count.fetch_add(1, Ordering::Relaxed);
-                Error::committer_full(
-                    format!(
-                        "tenant publisher barrier queue remained full for {} ms (capacity {})",
-                        self.send_timeout.as_millis(),
-                        self.capacity
-                    ),
-                    self.capacity,
-                )
-            })?
-            .map_err(|_| {
-                Error::Internal(
-                    "tenant publisher stopped before accepting serial barrier".to_string(),
-                )
-            })?;
+        let permit = self.reserve("serial barrier").await?;
         permit.send(PublisherMessage::Barrier(sender));
         receiver.await.map_err(|_| {
             Error::Internal("tenant publisher stopped before completing serial barrier".to_string())
@@ -300,31 +446,12 @@ impl PublisherHandoff {
         if responses.is_empty() {
             return Ok(());
         }
-        match tokio::time::timeout(self.send_timeout, self.sender.reserve()).await {
-            Ok(Ok(permit)) => {
+        match self.reserve("response fence").await {
+            Ok(permit) => {
                 permit.send(PublisherMessage::ResponseFence(responses));
                 Ok(())
             }
-            Ok(Err(_)) => Err(Box::new((
-                responses,
-                Error::Internal(
-                    "tenant publisher stopped before accepting response fence".to_string(),
-                ),
-            ))),
-            Err(_) => {
-                self.send_timeout_count.fetch_add(1, Ordering::Relaxed);
-                Err(Box::new((
-                    responses,
-                    Error::committer_full(
-                        format!(
-                            "tenant publisher queue remained full for {} ms (capacity {})",
-                            self.send_timeout.as_millis(),
-                            self.capacity
-                        ),
-                        self.capacity,
-                    ),
-                )))
-            }
+            Err(error) => Err(Box::new((responses, error))),
         }
     }
 
@@ -332,28 +459,31 @@ impl PublisherHandoff {
         &self,
         job: CommitterJob,
     ) -> std::result::Result<oneshot::Receiver<()>, (CommitterJob, Error)> {
-        match tokio::time::timeout(self.send_timeout, self.sender.reserve()).await {
-            Ok(Ok(permit)) => {
+        match self.reserve("serial job").await {
+            Ok(permit) => {
                 let (drained, wait_for_drain) = oneshot::channel();
                 permit.send(PublisherMessage::SerialJob { job, drained });
                 Ok(wait_for_drain)
             }
-            Ok(Err(_)) => Err((
-                job,
-                Error::Internal("tenant publisher stopped before accepting serial job".to_string()),
-            )),
+            Err(error) => Err((job, error)),
+        }
+    }
+
+    async fn reserve(&self, operation: &'static str) -> Result<mpsc::Permit<'_, PublisherMessage>> {
+        match tokio::time::timeout(self.send_timeout, self.sender.reserve()).await {
+            Ok(Ok(permit)) => Ok(permit),
+            Ok(Err(_)) => Err(Error::Internal(format!(
+                "tenant publisher stopped before accepting {operation}"
+            ))),
             Err(_) => {
                 self.send_timeout_count.fetch_add(1, Ordering::Relaxed);
-                Err((
-                    job,
-                    Error::committer_full(
-                        format!(
-                            "tenant publisher queue remained full for {} ms (capacity {})",
-                            self.send_timeout.as_millis(),
-                            self.capacity
-                        ),
-                        self.capacity,
+                Err(Error::committer_full(
+                    format!(
+                        "tenant publisher {operation} queue remained full for {} ms (capacity {})",
+                        self.send_timeout.as_millis(),
+                        self.capacity
                     ),
+                    self.capacity,
                 ))
             }
         }
@@ -426,19 +556,4 @@ fn mode_from_u8(mode: u8) -> CommitterPipelineMode {
         3 => CommitterPipelineMode::DrainingToPipeline,
         _ => unreachable!("publisher mode atomic contains an invalid state"),
     }
-}
-
-fn env_positive_usize(key: &str, default: usize) -> usize {
-    std::env::var_os(key)
-        .and_then(|value| value.into_string().ok())
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
-}
-
-fn env_nonnegative_u64(key: &str, default: u64) -> u64 {
-    std::env::var_os(key)
-        .and_then(|value| value.into_string().ok())
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .unwrap_or(default)
 }

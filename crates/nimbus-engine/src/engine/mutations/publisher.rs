@@ -1,12 +1,11 @@
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
-use nimbus_core::{CommitEntry, Error, Result, Retryability, SequenceNumber, TenantEventRecord};
+use nimbus_core::{CommitEntry, Error, Retryability, SequenceNumber, TenantEventRecord};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 
-use crate::Engine;
 use crate::engine::execution_units::{CommitFaultClient, labels};
 use crate::tenant::{AssignedPublisherBatch, PublisherMessage, TenantRuntime};
 
@@ -15,34 +14,30 @@ const DEFAULT_PUBLISHER_RETRY_INITIAL_MS: u64 = 1;
 const DEFAULT_PUBLISHER_RETRY_MAX_MS: u64 = 100;
 const PUBLISHER_BATCH_BASE: usize = 32;
 const DEFAULT_PUBLISHER_BATCH_MAX: usize = 256;
+const PUBLISHER_BATCH_MAX_ENV: &str = "NIMBUS_COMMITTER_PUBLISHER_BATCH_MAX";
+const PUBLISHER_COALESCE_ENV: &str = "NIMBUS_COMMITTER_PUBLISHER_COALESCE_MICROS";
 // Once assignment has produced a base-sized burst, leave a short scheduling
 // window for the next assigned suffix to arrive. Low-volume batches publish
 // immediately, so this preserves singleton latency while recovering the
 // adaptive actor's burst fsync amortization at the publisher boundary.
 const DEFAULT_PUBLISHER_COALESCE_MICROS: u64 = 750;
 
-#[derive(Clone, Copy)]
-struct PublisherBatchPolicy {
-    base: usize,
-    max: usize,
-    coalesce: Duration,
+fn publisher_batch_policy() -> crate::config::BatchPolicy {
+    crate::config::BatchPolicy::from_env(
+        PUBLISHER_BATCH_BASE,
+        PUBLISHER_BATCH_MAX_ENV,
+        DEFAULT_PUBLISHER_BATCH_MAX,
+        PUBLISHER_COALESCE_ENV,
+        DEFAULT_PUBLISHER_COALESCE_MICROS,
+    )
 }
 
-impl PublisherBatchPolicy {
-    fn from_env() -> Self {
-        Self {
-            base: PUBLISHER_BATCH_BASE,
-            max: env_positive_usize(
-                "NIMBUS_MUTATION_JOURNAL_BATCH_MAX",
-                DEFAULT_PUBLISHER_BATCH_MAX,
-            )
-            .max(PUBLISHER_BATCH_BASE),
-            coalesce: Duration::from_micros(env_nonnegative_u64(
-                "NIMBUS_MUTATION_JOURNAL_COALESCE_MICROS",
-                DEFAULT_PUBLISHER_COALESCE_MICROS,
-            )),
-        }
-    }
+fn has_assignment_pressure(
+    receiver_has_backlog: bool,
+    assignment_backlog: usize,
+    burst_threshold: usize,
+) -> bool {
+    receiver_has_backlog || assignment_backlog > burst_threshold
 }
 
 #[derive(Debug)]
@@ -64,6 +59,10 @@ pub(crate) async fn run_ordered_publisher(
     engine_shutdown: CancellationToken,
     tenant_shutdown: CancellationToken,
 ) {
+    // Publisher accumulation is independently tunable from actor admission:
+    // NIMBUS_COMMITTER_PUBLISHER_BATCH_MAX defaults to 256 records and
+    // NIMBUS_COMMITTER_PUBLISHER_COALESCE_MICROS defaults to 750 microseconds.
+    let policy = publisher_batch_policy();
     let mut pending_message = None;
     loop {
         let message = if let Some(pending) = pending_message.take() {
@@ -98,9 +97,9 @@ pub(crate) async fn run_ordered_publisher(
             }
             PublisherMessage::SerialJob { job, drained } => {
                 let Some(runtime) = runtime.upgrade() else {
-                    let (task, completed) = job.into_parts();
-                    drop(task);
-                    let _ = completed.send(());
+                    job.fail(Error::Internal(
+                        "tenant runtime stopped before serial publisher job".to_string(),
+                    ));
                     let _ = drained.send(());
                     break;
                 };
@@ -122,6 +121,7 @@ pub(crate) async fn run_ordered_publisher(
             &mut pending_message,
             &engine_shutdown,
             &tenant_shutdown,
+            policy,
         )
         .await;
 
@@ -136,8 +136,15 @@ pub(crate) async fn run_ordered_publisher(
             batch.records.iter().map(|record| record.sequence),
         ) {
             runtime.publisher_record_fatal_error();
-            fail_and_restart(runtime, batch, invariant, &mut receiver);
-            break;
+            fail_definitive_batch_and_recover(
+                runtime,
+                batch,
+                invariant,
+                &mut receiver,
+                &mut pending_message,
+            )
+            .await;
+            continue;
         }
 
         runtime.set_mutation_worker_running(true);
@@ -147,18 +154,35 @@ pub(crate) async fn run_ordered_publisher(
             Ok(published) => {
                 complete_published_batch(runtime, batch, published);
             }
-            Err(error) => {
-                fail_and_restart(runtime, batch, error, &mut receiver);
+            Err(PublishAttemptError::Definitive(error)) => {
+                fail_definitive_batch_and_recover(
+                    runtime,
+                    batch,
+                    error,
+                    &mut receiver,
+                    &mut pending_message,
+                )
+                .await;
+            }
+            Err(PublishAttemptError::Ambiguous(error)) => {
+                fail_and_restart(runtime, batch, error, &mut receiver, &mut pending_message).await;
                 break;
             }
         }
+    }
+    if let Some(runtime) = runtime.upgrade() {
+        runtime.close_committed_mutation_observers();
+        runtime
+            .wait_for_committed_mutation_observers_drained()
+            .await;
     }
 }
 
 async fn run_serial_publisher_job(runtime: Arc<TenantRuntime>, job: crate::tenant::CommitterJob) {
     runtime.set_mutation_worker_running(true);
+    let tenant_id = runtime.tenant_id().clone();
     let (task, completed) = job.into_parts();
-    let failed = tokio::task::spawn_blocking(move || crate::tenant::run_job(task))
+    let failed = tokio::task::spawn_blocking(move || crate::tenant::run_job(&tenant_id, task))
         .await
         .is_err();
     runtime.set_mutation_worker_running(false);
@@ -175,9 +199,8 @@ async fn accumulate_assigned_batches(
     pending_message: &mut Option<PublisherMessage>,
     engine_shutdown: &CancellationToken,
     tenant_shutdown: &CancellationToken,
+    policy: crate::config::BatchPolicy,
 ) -> AssignedPublisherBatch {
-    let policy = PublisherBatchPolicy::from_env();
-
     while batch.records.len() < policy.max {
         match receiver.try_recv() {
             Ok(PublisherMessage::Batch(next))
@@ -199,11 +222,11 @@ async fn accumulate_assigned_batches(
     // concurrency and should not pay an extra scheduling delay. Under actor or
     // publisher pressure, leave assignment one short Tokio-time window to
     // produce a larger contiguous suffix before fsync.
-    let burst_threshold = policy.base.saturating_mul(2);
-    let assignment_pressure = !receiver.is_empty()
-        || runtime.mutation_assignment_backlog_depth() > burst_threshold
-        || runtime.mutation_journal_stats().pending_response_count
-            > u64::try_from(burst_threshold).unwrap_or(u64::MAX);
+    let assignment_pressure = has_assignment_pressure(
+        !receiver.is_empty(),
+        runtime.mutation_assignment_backlog_depth(),
+        policy.base.saturating_mul(2),
+    );
     if !assignment_pressure || batch.records.len() >= policy.max || policy.coalesce.is_zero() {
         return batch;
     }
@@ -244,16 +267,16 @@ async fn publish_with_retry(
     runtime: Arc<TenantRuntime>,
     batch: &AssignedPublisherBatch,
     expected_previous: SequenceNumber,
-) -> Result<PublishedBatch> {
-    let retry_limit = env_positive_usize(
+) -> std::result::Result<PublishedBatch, PublishAttemptError> {
+    let retry_limit = crate::config::env_positive_usize(
         "NIMBUS_COMMITTER_PUBLISHER_RETRY_LIMIT",
         DEFAULT_PUBLISHER_RETRY_LIMIT,
     );
-    let initial_ms = env_nonnegative_u64(
+    let initial_ms = crate::config::env_nonnegative_u64(
         "NIMBUS_COMMITTER_PUBLISHER_RETRY_INITIAL_MS",
         DEFAULT_PUBLISHER_RETRY_INITIAL_MS,
     );
-    let max_ms = env_nonnegative_u64(
+    let max_ms = crate::config::env_nonnegative_u64(
         "NIMBUS_COMMITTER_PUBLISHER_RETRY_MAX_MS",
         DEFAULT_PUBLISHER_RETRY_MAX_MS,
     )
@@ -271,8 +294,16 @@ async fn publish_with_retry(
                 &faults,
             )
         })
-        .await
-        .map_err(|error| Error::Internal(format!("publisher task panicked: {error}")))?;
+        .await;
+        let attempt_result = match attempt_result {
+            Ok(result) => result,
+            Err(error) => {
+                runtime.publisher_record_ambiguous_error();
+                return Err(PublishAttemptError::Ambiguous(Error::Internal(format!(
+                    "publisher task panicked after persistence may have started; crash-and-replay required: {error}"
+                ))));
+            }
+        };
 
         match attempt_result {
             Ok(published) => return Ok(published),
@@ -285,19 +316,16 @@ async fn publish_with_retry(
                     error = %error,
                     "publisher append outcome is ambiguous; restarting tenant runtime for replay"
                 );
-                return Err(Error::Internal(format!(
+                return Err(PublishAttemptError::Ambiguous(Error::Internal(format!(
                     "ambiguous publisher append requires crash-and-replay: {error}"
-                )));
+                ))));
             }
             Err(PublishAttemptError::Definitive(error))
                 if error.retryability() == Retryability::RetryableAfterBackoff =>
             {
                 runtime.publisher_record_transient_error();
                 if attempt == retry_limit {
-                    runtime.publisher_record_ambiguous_error();
-                    return Err(Error::Internal(format!(
-                        "publisher transient append failure exhausted {retry_limit} attempts; crash-and-replay required: {error}"
-                    )));
+                    return Err(PublishAttemptError::Definitive(error));
                 }
                 let shift = u32::try_from(attempt.saturating_sub(1))
                     .unwrap_or(u32::MAX)
@@ -318,7 +346,7 @@ async fn publish_with_retry(
             }
             Err(PublishAttemptError::Definitive(error)) => {
                 runtime.publisher_record_fatal_error();
-                return Err(error);
+                return Err(PublishAttemptError::Definitive(error));
             }
         }
     }
@@ -451,104 +479,271 @@ fn complete_published_batch(
     for pending in batch.responses {
         let _ = pending.response.send(Ok(pending.result));
     }
-    // Observers are synchronous hooks and may enqueue another mutation. Do
-    // not run them on the publisher task: a nested actor job must be able to
-    // enqueue and complete its publisher barrier without waiting on the task
-    // that invoked the observer. Responses already precede observers on the
-    // serial path, so this continuation preserves that contract.
-    let observer_engine = batch.engine.clone();
-    let observer_runtime = runtime;
-    let observer_applied = published.applied;
+    // The per-tenant observer dispatcher is the sole callback owner. Enqueue
+    // after responses so synchronous nested writes remain supported without
+    // ever running an observer on this publisher task.
     batch
         .engine
-        .spawn_background("committed_mutation_observers", async move {
-            observer_engine
-                .notify_applied_commit_batch_observers(observer_runtime, &observer_applied);
-        });
+        .enqueue_applied_commit_batch_observers(runtime, &published.applied);
 }
 
-fn fail_and_restart(
+async fn fail_definitive_batch_and_recover(
     runtime: Arc<TenantRuntime>,
     batch: AssignedPublisherBatch,
     error: Error,
     receiver: &mut mpsc::Receiver<PublisherMessage>,
+    pending_message: &mut Option<PublisherMessage>,
+) {
+    // Assignment and rollback share one gate. Once held, every batch already
+    // assigned from the failed suffix is either in the local stash or the
+    // channel, and the actor cannot assign a replacement suffix until durable
+    // recovery has re-anchored the write log.
+    let _recovery_guard = runtime.lock_publisher_assignment_recovery().await;
+    let mut failed_batches = vec![batch];
+    loop {
+        let message = pending_message.take().or_else(|| receiver.try_recv().ok());
+        let Some(message) = message else {
+            break;
+        };
+        match message {
+            PublisherMessage::Batch(batch) => failed_batches.push(batch),
+            message @ (PublisherMessage::Barrier(_)
+            | PublisherMessage::ResponseFence(_)
+            | PublisherMessage::SerialJob { .. }) => {
+                // These messages are ordering fences. Leave the first one in
+                // the local stash until rollback and durable recovery finish;
+                // completing a mode barrier here would let the actor enter
+                // its serial arm while recovery still owns the failed suffix.
+                *pending_message = Some(message);
+                break;
+            }
+        }
+    }
+
+    let first_sequence = failed_batches
+        .first()
+        .expect("definitive recovery always owns the failed batch")
+        .first_sequence();
+    runtime.discard_unpersisted_write_log_suffix(first_sequence);
+    runtime.record_mutation_worker_failure();
+    match runtime
+        .read_storage
+        .execute(|store| store.recover_durable_journal())
+        .await
+    {
+        Ok(progress) => runtime.publish_mutation_journal_progress_in_actor(progress),
+        Err(recovery_error) => warn!(
+            tenant = %runtime.tenant_id(),
+            error = %error,
+            recovery_error = %recovery_error,
+            "definitive publisher batch failed before durable advance; journal recovery failed"
+        ),
+    }
+    for batch in failed_batches {
+        batch.fail(&error);
+    }
+}
+
+fn defer_publisher_message_failure(
+    message: PublisherMessage,
+    error: &Error,
+) -> Vec<Box<dyn FnOnce() + Send + 'static>> {
+    match message {
+        PublisherMessage::Batch(batch) => batch.defer_failure(error),
+        PublisherMessage::Barrier(completed) => {
+            drop(completed);
+            Vec::new()
+        }
+        PublisherMessage::ResponseFence(responses) => responses
+            .into_iter()
+            .map(|response| response.defer_failure(error))
+            .collect(),
+        PublisherMessage::SerialJob { job, drained } => {
+            let complete_job = job.defer_failure(error.clone());
+            vec![Box::new(move || {
+                complete_job();
+                let _ = drained.send(());
+            })]
+        }
+    }
+}
+
+async fn fail_and_restart(
+    runtime: Arc<TenantRuntime>,
+    batch: AssignedPublisherBatch,
+    error: Error,
+    receiver: &mut mpsc::Receiver<PublisherMessage>,
+    pending_message: &mut Option<PublisherMessage>,
 ) {
     let engine = batch.engine.clone();
     receiver.close();
     let mut queued_messages = Vec::new();
+    if let Some(pending) = pending_message.take() {
+        queued_messages.push(pending);
+    }
     while let Ok(queued) = receiver.try_recv() {
         queued_messages.push(queued);
     }
     runtime.record_mutation_worker_failure();
     runtime.shutdown_committer();
-    engine.evict_failed_tenant_runtime(&runtime, &error);
 
-    // Complete callers only after eviction, so a caller's next access cannot
-    // race back onto the failed runtime instead of reopening and replaying its
-    // durable tail.
-    batch.fail(&error);
-    for queued in queued_messages {
-        match queued {
-            PublisherMessage::Batch(queued) => queued.fail(&error),
-            PublisherMessage::Barrier(completed) => drop(completed),
-            PublisherMessage::ResponseFence(responses) => {
-                for response in responses {
-                    response.fail(&error);
-                }
-            }
-            PublisherMessage::SerialJob { job, drained } => {
-                let (task, completed) = job.into_parts();
-                drop(task);
-                let _ = completed.send(());
-                let _ = drained.send(());
-            }
-        }
-    }
-}
+    // Hold the same per-engine load gate as explicit deletion. Mark the
+    // runtime closed before completing callers, then wait for their operation
+    // guards to drain before removing and dropping the store handle.
+    let _tenant_load_guard = engine.tenant_load_gate.lock().await;
+    runtime.mark_deleting_for_eviction();
 
-impl Engine {
-    fn evict_failed_tenant_runtime(&self, runtime: &Arc<TenantRuntime>, error: &Error) {
-        let tenant_id = runtime.tenant_id().clone();
-        self.publisher_failure_diagnostics
+    let tenant_id = runtime.tenant_id().clone();
+    engine
+        .publisher_failure_diagnostics
+        .write()
+        .expect("publisher failure diagnostics lock should not be poisoned")
+        .insert(tenant_id.clone(), runtime.publisher_error_counts());
+    let removed = {
+        let mut tenants = engine
+            .tenants
             .write()
-            .expect("publisher failure diagnostics lock should not be poisoned")
-            .insert(tenant_id.clone(), runtime.publisher_error_counts());
-        let removed = {
-            let mut tenants = self
-                .tenants
-                .write()
-                .expect("tenant registry lock should not be poisoned");
-            if tenants
-                .get(&tenant_id)
-                .is_some_and(|loaded| Arc::ptr_eq(loaded, runtime))
-            {
-                tenants.remove(&tenant_id)
-            } else {
-                None
-            }
-        };
-        if let Some(runtime) = removed {
-            runtime.shutdown_trigger_candidates();
-            runtime.shutdown_trigger_execution();
-            runtime.shutdown_subscription_delivery();
-            runtime.subscriptions.shutdown_all(format!(
-                "tenant committer stopped for durable recovery: {error}"
-            ));
+            .expect("tenant registry lock should not be poisoned");
+        if tenants
+            .get(&tenant_id)
+            .is_some_and(|loaded| Arc::ptr_eq(loaded, &runtime))
+        {
+            tenants.remove(&tenant_id)
+        } else {
+            None
         }
+    };
+    if let Some(removed) = removed.as_ref() {
+        removed.shutdown_trigger_candidates();
+        removed.shutdown_trigger_execution();
+        removed.shutdown_subscription_delivery();
+        removed.subscriptions.shutdown_all(format!(
+            "tenant committer stopped for durable recovery: {error}"
+        ));
     }
+
+    let mut failure_completions = batch.defer_failure(&error);
+    for queued in queued_messages {
+        failure_completions.extend(defer_publisher_message_failure(queued, &error));
+    }
+    for complete in failure_completions {
+        complete();
+    }
+    runtime.wait_for_operation_drain_for_eviction().await;
+    runtime.close_committed_mutation_observers();
+    runtime
+        .wait_for_committed_mutation_observers_drained()
+        .await;
+    drop(removed);
+    drop(runtime);
+    drop(_tenant_load_guard);
 }
 
-fn env_positive_usize(key: &str, default: usize) -> usize {
-    std::env::var_os(key)
-        .and_then(|value| value.into_string().ok())
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn env_nonnegative_u64(key: &str, default: u64) -> u64 {
-    std::env::var_os(key)
-        .and_then(|value| value.into_string().ok())
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .unwrap_or(default)
+    #[test]
+    fn publisher_current_batch_responses_do_not_create_assignment_pressure() {
+        let threshold = PUBLISHER_BATCH_BASE * 2;
+        assert!(!has_assignment_pressure(false, 0, threshold));
+        assert!(!has_assignment_pressure(false, threshold, threshold));
+        assert!(has_assignment_pressure(true, 0, threshold));
+        assert!(has_assignment_pressure(false, threshold + 1, threshold));
+    }
+
+    #[test]
+    fn publisher_batch_policy_uses_independent_env_keys_and_documented_defaults() {
+        assert_ne!(PUBLISHER_BATCH_MAX_ENV, "NIMBUS_MUTATION_JOURNAL_BATCH_MAX");
+        assert_ne!(
+            PUBLISHER_COALESCE_ENV,
+            "NIMBUS_MUTATION_JOURNAL_COALESCE_MICROS"
+        );
+        let policy = crate::config::BatchPolicy::new(
+            PUBLISHER_BATCH_BASE,
+            DEFAULT_PUBLISHER_BATCH_MAX,
+            DEFAULT_PUBLISHER_COALESCE_MICROS,
+        );
+        assert_eq!(policy.base, PUBLISHER_BATCH_BASE);
+        assert_eq!(policy.max, DEFAULT_PUBLISHER_BATCH_MAX);
+        assert_eq!(
+            policy.coalesce,
+            Duration::from_micros(DEFAULT_PUBLISHER_COALESCE_MICROS)
+        );
+    }
+
+    #[tokio::test]
+    async fn fail_and_restart_completes_stashed_messages_with_the_typed_error() {
+        let data_dir = tempfile::tempdir().expect("stashed-message tempdir should build");
+        let engine = Arc::new(crate::Engine::new(data_dir.path()).expect("engine should create"));
+        let tenant_id = nimbus_core::TenantId::new("stashed-message").expect("tenant id");
+        engine
+            .create_tenant(tenant_id.clone())
+            .expect("tenant should create");
+        let runtime = engine
+            .get_existing_tenant(&tenant_id)
+            .expect("runtime should load");
+        let (batch_response, mut batch_result) = tokio::sync::oneshot::channel();
+        let batch = AssignedPublisherBatch {
+            engine: engine.clone(),
+            records: Arc::new(Vec::new()),
+            responses: vec![crate::tenant::PendingPublisherResponse {
+                _operation: runtime
+                    .enter_operation(&tenant_id)
+                    .expect("operation should enter"),
+                response: crate::tenant::MutationResponseSender::new(batch_response),
+                result: crate::tenant::QueuedMutationResult::Scheduled(false),
+            }],
+            phases: crate::engine::CommitPhaseDurations::default(),
+            sample_started_at: Instant::now(),
+        };
+        let typed = Error::rejected_before_execution("typed stashed-message failure");
+        let mut completions =
+            defer_publisher_message_failure(PublisherMessage::Batch(batch), &typed);
+        assert!(matches!(
+            batch_result.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+
+        let response_slot = Arc::new(std::sync::Mutex::new(None));
+        let response_slot_for_rejection = response_slot.clone();
+        let (job, mut completed) = crate::tenant::CommitterJob::new(
+            || panic!("a failed stashed serial job must not execute"),
+            move |error| {
+                *response_slot_for_rejection
+                    .lock()
+                    .expect("rejection slot should lock") = Some(error);
+            },
+        );
+        let (drained, mut drain_completed) = tokio::sync::oneshot::channel();
+        completions.extend(defer_publisher_message_failure(
+            PublisherMessage::SerialJob { job, drained },
+            &typed,
+        ));
+        assert!(matches!(
+            completed.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        assert!(matches!(
+            drain_completed.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        for complete in completions {
+            complete();
+        }
+
+        assert!(matches!(
+            batch_result.await.expect("batch response should send"),
+            Err(Error::RejectedBeforeExecution { .. })
+        ));
+        completed.await.expect("job completion should send");
+        drain_completed.await.expect("drain completion should send");
+        assert!(matches!(
+            response_slot
+                .lock()
+                .expect("rejection slot should lock")
+                .as_ref(),
+            Some(Error::RejectedBeforeExecution { .. })
+        ));
+    }
 }

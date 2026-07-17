@@ -2,7 +2,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-use nimbus_core::{Error, Result, SequenceNumber};
+#[cfg(test)]
+use std::collections::HashMap;
+#[cfg(test)]
+use std::sync::OnceLock;
+
+use nimbus_core::{Error, Result, SequenceNumber, TenantId};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -13,25 +18,69 @@ use super::super::TenantRuntime;
 const DEFAULT_COMMITTER_INBOX_SIZE: usize = 128;
 const DEFAULT_COMMITTER_SEND_TIMEOUT_MS: u64 = 500;
 
+fn committer_limits_from_env() -> (usize, Duration) {
+    (
+        crate::config::env_positive_usize(
+            "NIMBUS_COMMITTER_INBOX_SIZE",
+            DEFAULT_COMMITTER_INBOX_SIZE,
+        ),
+        Duration::from_millis(crate::config::env_nonnegative_u64(
+            "NIMBUS_COMMITTER_SEND_TIMEOUT_MS",
+            DEFAULT_COMMITTER_SEND_TIMEOUT_MS,
+        )),
+    )
+}
+
+#[cfg(test)]
+static COMMITTER_LIMITS_FOR_TESTING: OnceLock<Mutex<HashMap<TenantId, (usize, Duration)>>> =
+    OnceLock::new();
+
+#[cfg(test)]
+pub(crate) fn configure_committer_limits_for_testing(
+    tenant_id: TenantId,
+    capacity: usize,
+    send_timeout: Duration,
+) {
+    COMMITTER_LIMITS_FOR_TESTING
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .expect("committer test-limit lock should not be poisoned")
+        .insert(tenant_id, (capacity.max(1), send_timeout));
+}
+
+#[cfg(test)]
+fn take_committer_limits_for_testing(tenant_id: &TenantId) -> Option<(usize, Duration)> {
+    COMMITTER_LIMITS_FOR_TESTING
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .expect("committer test-limit lock should not be poisoned")
+        .remove(tenant_id)
+}
+
 tokio::task_local! {
-    static COMMITTER_ACTOR_ACTIVE: ();
+    static COMMITTER_ACTOR_ACTIVE: TenantId;
 }
 
 thread_local! {
-    static COMMITTER_HANDLER_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static COMMITTER_HANDLER_ACTIVE: std::cell::RefCell<Option<TenantId>> = const { std::cell::RefCell::new(None) };
 }
 
 pub(crate) struct CommitterJob {
     task: Box<dyn FnOnce() + Send + 'static>,
+    rejected: Box<dyn FnOnce(Error) + Send + 'static>,
     completed: oneshot::Sender<()>,
 }
 
 impl CommitterJob {
-    fn new(task: impl FnOnce() + Send + 'static) -> (Self, oneshot::Receiver<()>) {
+    pub(crate) fn new(
+        task: impl FnOnce() + Send + 'static,
+        rejected: impl FnOnce(Error) + Send + 'static,
+    ) -> (Self, oneshot::Receiver<()>) {
         let (completed, completion) = oneshot::channel();
         (
             Self {
                 task: Box::new(task),
+                rejected: Box::new(rejected),
                 completed,
             },
             completion,
@@ -40,6 +89,24 @@ impl CommitterJob {
 
     pub(crate) fn into_parts(self) -> (Box<dyn FnOnce() + Send + 'static>, oneshot::Sender<()>) {
         (self.task, self.completed)
+    }
+
+    pub(crate) fn fail(self, error: Error) {
+        (self.rejected)(error);
+        let _ = self.completed.send(());
+    }
+
+    pub(crate) fn defer_failure(self, error: Error) -> Box<dyn FnOnce() + Send + 'static> {
+        let Self {
+            task,
+            rejected,
+            completed,
+        } = self;
+        drop(task);
+        Box::new(move || {
+            rejected(error);
+            let _ = completed.send(());
+        })
     }
 }
 
@@ -110,6 +177,7 @@ impl CommitterMessage {
 }
 
 pub(crate) struct CommitterActor {
+    tenant_id: TenantId,
     sender: mpsc::Sender<CommitterMessage>,
     receiver: Mutex<Option<mpsc::Receiver<CommitterMessage>>>,
     started: AtomicBool,
@@ -121,15 +189,15 @@ pub(crate) struct CommitterActor {
 }
 
 impl CommitterActor {
-    pub(crate) fn new() -> Self {
-        let inbox_capacity =
-            env_positive_usize("NIMBUS_COMMITTER_INBOX_SIZE", DEFAULT_COMMITTER_INBOX_SIZE);
-        let send_timeout = Duration::from_millis(env_nonnegative_u64(
-            "NIMBUS_COMMITTER_SEND_TIMEOUT_MS",
-            DEFAULT_COMMITTER_SEND_TIMEOUT_MS,
-        ));
+    pub(crate) fn new(tenant_id: TenantId) -> Self {
+        #[cfg(test)]
+        let (inbox_capacity, send_timeout) =
+            take_committer_limits_for_testing(&tenant_id).unwrap_or_else(committer_limits_from_env);
+        #[cfg(not(test))]
+        let (inbox_capacity, send_timeout) = committer_limits_from_env();
         let (sender, receiver) = mpsc::channel(inbox_capacity);
         Self {
+            tenant_id,
             sender,
             receiver: Mutex::new(Some(receiver)),
             started: AtomicBool::new(false),
@@ -154,7 +222,7 @@ impl CommitterActor {
     }
 
     pub(crate) async fn send_async(&self, message: CommitterMessage) -> Result<()> {
-        assert_not_reentrant();
+        assert_not_reentrant(&self.tenant_id);
         let timeout = self.send_timeout;
         match tokio::time::timeout(timeout, self.sender.send(message)).await {
             Ok(Ok(())) => Ok(()),
@@ -177,7 +245,7 @@ impl CommitterActor {
     }
 
     pub(crate) async fn send_queued_batch_async(&self, engine: Arc<Engine>) -> Result<()> {
-        assert_not_reentrant();
+        assert_not_reentrant(&self.tenant_id);
         if self.queued_batch_pending.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -220,7 +288,7 @@ impl CommitterActor {
     }
 
     pub(crate) fn send_blocking(&self, mut message: CommitterMessage) -> Result<()> {
-        assert_not_reentrant();
+        assert_not_reentrant(&self.tenant_id);
         let timeout = self.send_timeout;
         let deadline = Instant::now() + timeout;
         loop {
@@ -265,13 +333,33 @@ impl CommitterActor {
         T: Send + 'static,
         F: FnOnce() -> Result<T> + Send + 'static,
     {
-        if on_actor_task() {
+        if on_actor_task(&self.tenant_id) {
             return task();
         }
         let (response_tx, response_rx) = oneshot::channel();
-        let (job, completion) = CommitterJob::new(move || {
-            let _ = response_tx.send(task());
-        });
+        let response = Arc::new(Mutex::new(Some(response_tx)));
+        let task_response = response.clone();
+        let rejected_response = response;
+        let (job, completion) = CommitterJob::new(
+            move || {
+                if let Some(response) = task_response
+                    .lock()
+                    .expect("committer response lock should not be poisoned")
+                    .take()
+                {
+                    let _ = response.send(task());
+                }
+            },
+            move |error| {
+                if let Some(response) = rejected_response
+                    .lock()
+                    .expect("committer response lock should not be poisoned")
+                    .take()
+                {
+                    let _ = response.send(Err(error));
+                }
+            },
+        );
         self.send_blocking(wrap(job))?;
         let result = blocking_receive(
             response_rx,
@@ -299,7 +387,7 @@ impl CommitterActor {
         F: FnOnce() -> Result<T> + Send + 'static,
         A: FnOnce(&T),
     {
-        if on_actor_task() {
+        if on_actor_task(&self.tenant_id) {
             let result = task();
             if let Ok(value) = &result {
                 after_commit(value);
@@ -308,11 +396,30 @@ impl CommitterActor {
         }
         let (response_tx, response_rx) = std::sync::mpsc::sync_channel(0);
         let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(0);
-        let (job, completion) = CommitterJob::new(move || {
-            if response_tx.send(task()).is_ok() {
-                let _ = ack_rx.recv();
-            }
-        });
+        let response = Arc::new(Mutex::new(Some(response_tx)));
+        let task_response = response.clone();
+        let rejected_response = response;
+        let (job, completion) = CommitterJob::new(
+            move || {
+                let sent = task_response
+                    .lock()
+                    .expect("committer response lock should not be poisoned")
+                    .take()
+                    .is_some_and(|response| response.send(task()).is_ok());
+                if sent {
+                    let _ = ack_rx.recv();
+                }
+            },
+            move |error| {
+                if let Some(response) = rejected_response
+                    .lock()
+                    .expect("committer response lock should not be poisoned")
+                    .take()
+                {
+                    let _ = response.send(Err(error));
+                }
+            },
+        );
         self.send_blocking(wrap(job))?;
         let result = response_rx.recv().map_err(|_| {
             Error::Internal("tenant committer actor dropped a blocking response".to_string())
@@ -347,13 +454,33 @@ impl CommitterActor {
         T: Send + 'static,
         F: FnOnce() -> Result<T> + Send + 'static,
     {
-        if on_actor_task() {
+        if on_actor_task(&self.tenant_id) {
             return task();
         }
         let (response_tx, response_rx) = oneshot::channel();
-        let (job, completion) = CommitterJob::new(move || {
-            let _ = response_tx.send(task());
-        });
+        let response = Arc::new(Mutex::new(Some(response_tx)));
+        let task_response = response.clone();
+        let rejected_response = response;
+        let (job, completion) = CommitterJob::new(
+            move || {
+                if let Some(response) = task_response
+                    .lock()
+                    .expect("committer response lock should not be poisoned")
+                    .take()
+                {
+                    let _ = response.send(task());
+                }
+            },
+            move |error| {
+                if let Some(response) = rejected_response
+                    .lock()
+                    .expect("committer response lock should not be poisoned")
+                    .take()
+                {
+                    let _ = response.send(Err(error));
+                }
+            },
+        );
         self.send_async(wrap(job)).await?;
         let result = response_rx.await.map_err(|_| {
             Error::Internal("tenant committer actor dropped an async response".to_string())
@@ -415,13 +542,25 @@ pub(crate) async fn run_committer_actor(
     receiver: mpsc::Receiver<CommitterMessage>,
     engine_shutdown: CancellationToken,
     tenant_shutdown: CancellationToken,
+    closes_observer_dispatch: bool,
 ) {
+    let tenant_id = runtime
+        .upgrade()
+        .expect("committer actor runtime must exist at startup")
+        .tenant_id()
+        .clone();
     COMMITTER_ACTOR_ACTIVE
         .scope(
-            (),
-            run_committer_actor_loop(runtime, receiver, engine_shutdown, tenant_shutdown),
+            tenant_id,
+            run_committer_actor_loop(runtime.clone(), receiver, engine_shutdown, tenant_shutdown),
         )
         .await;
+    if closes_observer_dispatch && let Some(runtime) = runtime.upgrade() {
+        runtime.close_committed_mutation_observers();
+        runtime
+            .wait_for_committed_mutation_observers_drained()
+            .await;
+    }
 }
 
 async fn run_committer_actor_loop(
@@ -490,9 +629,7 @@ async fn run_committer_actor_loop(
                     }
                 }
                 Err((job, error)) => {
-                    let (task, completed) = job.into_parts();
-                    drop(task);
-                    let _ = completed.send(());
+                    job.fail(error.clone());
                     runtime.record_mutation_worker_failure();
                     tracing::warn!(
                         tenant = %runtime.tenant_id(),
@@ -503,8 +640,9 @@ async fn run_committer_actor_loop(
             }
             continue;
         }
-        let CommitterJob { task, completed } = job;
-        let failed = tokio::task::spawn_blocking(move || run_job(task))
+        let tenant_id = runtime.tenant_id().clone();
+        let (task, completed) = job.into_parts();
+        let failed = tokio::task::spawn_blocking(move || run_job(&tenant_id, task))
             .await
             .is_err();
         let _ = completed.send(());
@@ -514,13 +652,14 @@ async fn run_committer_actor_loop(
     }
 }
 
-pub(crate) fn run_job(job: Box<dyn FnOnce() + Send + 'static>) {
+pub(crate) fn run_job(tenant_id: &TenantId, job: Box<dyn FnOnce() + Send + 'static>) {
     COMMITTER_HANDLER_ACTIVE.with(|active| {
-        debug_assert!(!active.replace(true), "committer handler must not nest");
-        struct Reset<'a>(&'a std::cell::Cell<bool>);
+        let previous = active.replace(Some(tenant_id.clone()));
+        debug_assert!(previous.is_none(), "committer handler must not nest");
+        struct Reset<'a>(&'a std::cell::RefCell<Option<TenantId>>);
         impl Drop for Reset<'_> {
             fn drop(&mut self) {
-                self.0.set(false);
+                self.0.replace(None);
             }
         }
         let _reset = Reset(active);
@@ -528,7 +667,7 @@ pub(crate) fn run_job(job: Box<dyn FnOnce() + Send + 'static>) {
     });
 }
 
-fn assert_not_reentrant() {
+fn assert_not_reentrant(tenant_id: &TenantId) {
     // Audited re-entry points: scheduler jobs, trigger execution, and nested
     // runMutation dispatch all execute on independent tasks; ordered commit
     // fanout only enqueues subscription/trigger work; the installed system
@@ -537,16 +676,34 @@ fn assert_not_reentrant() {
     // Keep both guards so any future inline path fails loudly in debug builds
     // instead of becoming a send-and-wait self-deadlock.
     debug_assert!(
-        COMMITTER_ACTOR_ACTIVE.try_with(|()| ()).is_err()
-            && !COMMITTER_HANDLER_ACTIVE.with(std::cell::Cell::get),
+        COMMITTER_ACTOR_ACTIVE
+            .try_with(|active| active != tenant_id)
+            .unwrap_or(true)
+            && COMMITTER_HANDLER_ACTIVE.with(|active| {
+                active
+                    .borrow()
+                    .as_ref()
+                    .is_none_or(|active| active != tenant_id)
+            }),
         "committer work must never send-and-wait on its own inbox"
     );
 }
 
-fn on_actor_task() -> bool {
-    if COMMITTER_ACTOR_ACTIVE.try_with(|()| ()).is_ok()
-        || COMMITTER_HANDLER_ACTIVE.with(std::cell::Cell::get)
+fn on_actor_task(tenant_id: &TenantId) -> bool {
+    let actor_tenant = COMMITTER_ACTOR_ACTIVE.try_with(Clone::clone).ok();
+    let handler_tenant = COMMITTER_HANDLER_ACTIVE.with(|active| active.borrow().clone());
+    let inline =
+        actor_tenant.as_ref() == Some(tenant_id) || handler_tenant.as_ref() == Some(tenant_id);
+    if handler_tenant
+        .as_ref()
+        .is_some_and(|active| active != tenant_id)
     {
+        debug_assert!(
+            !inline,
+            "cross-tenant committer re-entry must enqueue on the target tenant"
+        );
+    }
+    if inline {
         // Observer callbacks for queued commits intentionally execute after
         // publication on the actor task. Preserve their historical ability
         // to perform a synchronous nested write by handling it directly in
@@ -555,21 +712,6 @@ fn on_actor_task() -> bool {
     } else {
         false
     }
-}
-
-fn env_positive_usize(key: &str, default: usize) -> usize {
-    std::env::var_os(key)
-        .and_then(|value| value.into_string().ok())
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
-}
-
-fn env_nonnegative_u64(key: &str, default: u64) -> u64 {
-    std::env::var_os(key)
-        .and_then(|value| value.into_string().ok())
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .unwrap_or(default)
 }
 
 #[cfg(test)]
@@ -582,5 +724,23 @@ mod serial_invariant_tests {
             validate_append_sequences(SequenceNumber(3), [SequenceNumber(4), SequenceNumber(6)])
                 .expect_err("an out-of-order append must fail before persistence");
         assert!(matches!(error, Error::Internal(message) if message.contains("expected 5")));
+    }
+
+    #[test]
+    fn cross_tenant_handler_reentry_never_inlines_the_other_tenant() {
+        let tenant_a = TenantId::new("handler-a").expect("tenant A should build");
+        let tenant_b = TenantId::new("handler-b").expect("tenant B should build");
+        let tenant_a_for_job = tenant_a.clone();
+        let tenant_b_for_job = tenant_b.clone();
+        run_job(
+            &tenant_a,
+            Box::new(move || {
+                assert!(on_actor_task(&tenant_a_for_job));
+                assert!(
+                    !on_actor_task(&tenant_b_for_job),
+                    "a handler for tenant A must enqueue on tenant B instead of bypassing B's actor"
+                );
+            }),
+        );
     }
 }

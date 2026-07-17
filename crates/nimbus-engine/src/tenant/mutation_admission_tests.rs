@@ -20,7 +20,7 @@ fn queued_request(enqueued_at: Instant) -> QueuedMutationRequest {
         _operation: TenantOperationGuard {
             lifecycle: Arc::new(TenantLifecycle::new()),
         },
-        response,
+        response: MutationResponseSender::new(response),
         enqueued_at,
         shadow_snapshot_sequence: nimbus_core::SequenceNumber(0),
     }

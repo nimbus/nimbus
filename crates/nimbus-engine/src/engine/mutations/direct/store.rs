@@ -110,7 +110,11 @@ impl Engine {
             },
             |(commit, _)| {
                 if let Some(commit) = commit {
-                    self.process_commit_fanout(runtime_for_fanout, commit);
+                    self.process_commit_fanout(runtime_for_fanout.clone(), commit);
+                    self.enqueue_applied_commit_batch_observers(
+                        runtime_for_fanout,
+                        std::slice::from_ref(commit),
+                    );
                 }
             },
         )?;
@@ -123,7 +127,6 @@ impl Engine {
             profile.phases,
             profile.started_at.elapsed(),
         );
-        self.notify_committed_mutation_observers(runtime.as_ref(), &commit);
         Ok(Some(commit))
     }
 }
