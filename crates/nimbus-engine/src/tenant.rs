@@ -73,13 +73,13 @@ pub(crate) use self::mutation::{
     CommitterActor, CommitterMessage, assign_and_validate, run_committer_actor,
     validate_append_sequences,
 };
+pub use self::mutation::{
+    CommitterPipelineMode, MutationAdmissionPhase, MutationAdmissionStats,
+    MutationIsolateAdmissionStats, MutationJournalStats,
+};
 use self::mutation::{
     MutationAdmissionDecision, MutationAdmissionGate, MutationIsolateAdmission,
     MutationJournalState, PublisherHandoff,
-};
-pub use self::mutation::{
-    MutationAdmissionPhase, MutationAdmissionStats, MutationIsolateAdmissionStats,
-    MutationJournalStats,
 };
 use self::query_planning::QueryPlanningMetrics;
 pub use self::query_planning::QueryPlanningStats;
@@ -200,6 +200,7 @@ impl TenantRuntime {
         progress: nimbus_storage::JournalProgress,
         last_commit_timestamp: Timestamp,
     ) -> Self {
+        let publisher_pipeline_capable = store.has_process_local_sequence_authority();
         Self {
             tenant_id,
             store,
@@ -224,7 +225,7 @@ impl TenantRuntime {
             mutation_isolate_admission: Arc::new(MutationIsolateAdmission::from_env()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
             committer: Arc::new(CommitterActor::new()),
-            publisher: Arc::new(PublisherHandoff::new()),
+            publisher: Arc::new(PublisherHandoff::new(publisher_pipeline_capable)),
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             prepared_table_ids: Mutex::new(HashMap::new()),

@@ -33,6 +33,6 @@ pub(crate) use self::requests::{
     PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult,
 };
 pub use self::stats::{
-    MutationAdmissionPhase, MutationAdmissionStats, MutationIsolateAdmissionStats,
-    MutationJournalStats,
+    CommitterPipelineMode, MutationAdmissionPhase, MutationAdmissionStats,
+    MutationIsolateAdmissionStats, MutationJournalStats,
 };

@@ -256,6 +256,8 @@ impl MutationJournalState {
             publisher_transient_error_count: 0,
             publisher_fatal_error_count: 0,
             publisher_ambiguous_error_count: 0,
+            publisher_mode: super::CommitterPipelineMode::Serial,
+            publisher_mode_transition_count: 0,
         }
     }
 

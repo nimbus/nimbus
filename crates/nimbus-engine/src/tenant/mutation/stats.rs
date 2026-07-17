@@ -30,6 +30,15 @@ pub struct MutationIsolateAdmissionStats {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CommitterPipelineMode {
+    Pipeline,
+    DrainingToSerial,
+    Serial,
+    DrainingToPipeline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct MutationJournalStats {
     pub durable_head: SequenceNumber,
     pub applied_head: SequenceNumber,
@@ -54,4 +63,6 @@ pub struct MutationJournalStats {
     pub publisher_transient_error_count: u64,
     pub publisher_fatal_error_count: u64,
     pub publisher_ambiguous_error_count: u64,
+    pub publisher_mode: CommitterPipelineMode,
+    pub publisher_mode_transition_count: u64,
 }

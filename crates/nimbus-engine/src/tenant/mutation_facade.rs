@@ -492,7 +492,18 @@ impl TenantRuntime {
         stats.publisher_transient_error_count = transient;
         stats.publisher_fatal_error_count = fatal;
         stats.publisher_ambiguous_error_count = ambiguous;
+        stats.publisher_mode = self.publisher.mode();
+        stats.publisher_mode_transition_count = self.publisher.mode_transition_count();
         stats
+    }
+
+    pub(crate) async fn reconcile_committer_pipeline_mode(&self) -> Result<bool> {
+        self.publisher.reconcile_mode().await
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_committer_pipeline_requested_for_testing(&self, enabled: bool) {
+        self.publisher.set_pipeline_requested_for_testing(enabled);
     }
 
     #[cfg(test)]

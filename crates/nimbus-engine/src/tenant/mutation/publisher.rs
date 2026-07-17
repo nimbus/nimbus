@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -9,6 +9,7 @@ use crate::Engine;
 use crate::engine::CommitPhaseDurations;
 
 use super::super::{QueuedMutationResult, TenantOperationGuard};
+use super::CommitterPipelineMode;
 
 const DEFAULT_PUBLISHER_QUEUE_CAPACITY: usize = 32;
 const DEFAULT_PUBLISHER_SEND_TIMEOUT_MS: u64 = 500;
@@ -96,10 +97,14 @@ pub(crate) struct PublisherHandoff {
     transient_error_count: AtomicU64,
     fatal_error_count: AtomicU64,
     ambiguous_error_count: AtomicU64,
+    pipeline_capable: bool,
+    mode: AtomicU8,
+    mode_transition_count: AtomicU64,
+    requested_mode_override: AtomicU8,
 }
 
 impl PublisherHandoff {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(pipeline_capable: bool) -> Self {
         let capacity = env_positive_usize(
             "NIMBUS_COMMITTER_PUBLISHER_QUEUE_SIZE",
             DEFAULT_PUBLISHER_QUEUE_CAPACITY,
@@ -109,6 +114,11 @@ impl PublisherHandoff {
             DEFAULT_PUBLISHER_SEND_TIMEOUT_MS,
         ));
         let (sender, receiver) = mpsc::channel(capacity);
+        let initial_mode = if pipeline_capable && pipeline_requested_from_env() {
+            CommitterPipelineMode::Pipeline
+        } else {
+            CommitterPipelineMode::Serial
+        };
         Self {
             sender,
             receiver: Mutex::new(Some(receiver)),
@@ -119,7 +129,87 @@ impl PublisherHandoff {
             transient_error_count: AtomicU64::new(0),
             fatal_error_count: AtomicU64::new(0),
             ambiguous_error_count: AtomicU64::new(0),
+            pipeline_capable,
+            mode: AtomicU8::new(mode_to_u8(initial_mode)),
+            mode_transition_count: AtomicU64::new(0),
+            requested_mode_override: AtomicU8::new(0),
         }
+    }
+
+    /// Reconciles the requested per-tenant mode at the actor boundary.
+    ///
+    /// Pipeline -> serial first publishes everything already handed off, then
+    /// exposes `Serial`; serial -> pipeline installs an empty-queue barrier
+    /// before exposing `Pipeline`. The actor awaits this state machine before
+    /// assigning the next batch, so no batch can straddle the two persistence
+    /// owners.
+    pub(crate) async fn reconcile_mode(&self) -> Result<bool> {
+        let desired_pipeline = self.pipeline_capable && self.pipeline_requested();
+        let current = self.mode();
+        match (current, desired_pipeline) {
+            (CommitterPipelineMode::Pipeline, false) => {
+                self.mode.store(
+                    mode_to_u8(CommitterPipelineMode::DrainingToSerial),
+                    Ordering::Release,
+                );
+                if let Err(error) = self.barrier().await {
+                    self.mode.store(
+                        mode_to_u8(CommitterPipelineMode::Pipeline),
+                        Ordering::Release,
+                    );
+                    return Err(error);
+                }
+                self.mode
+                    .store(mode_to_u8(CommitterPipelineMode::Serial), Ordering::Release);
+                self.mode_transition_count.fetch_add(1, Ordering::Relaxed);
+                Ok(false)
+            }
+            (CommitterPipelineMode::Serial, true) => {
+                self.mode.store(
+                    mode_to_u8(CommitterPipelineMode::DrainingToPipeline),
+                    Ordering::Release,
+                );
+                if let Err(error) = self.barrier().await {
+                    self.mode
+                        .store(mode_to_u8(CommitterPipelineMode::Serial), Ordering::Release);
+                    return Err(error);
+                }
+                self.mode.store(
+                    mode_to_u8(CommitterPipelineMode::Pipeline),
+                    Ordering::Release,
+                );
+                self.mode_transition_count.fetch_add(1, Ordering::Relaxed);
+                Ok(true)
+            }
+            (CommitterPipelineMode::Pipeline, true) => Ok(true),
+            (CommitterPipelineMode::Serial, false) => Ok(false),
+            (CommitterPipelineMode::DrainingToSerial, _)
+            | (CommitterPipelineMode::DrainingToPipeline, _) => Err(Error::Internal(
+                "committer pipeline transition re-entered before its drain completed".to_string(),
+            )),
+        }
+    }
+
+    pub(crate) fn mode(&self) -> CommitterPipelineMode {
+        mode_from_u8(self.mode.load(Ordering::Acquire))
+    }
+
+    pub(crate) fn mode_transition_count(&self) -> u64 {
+        self.mode_transition_count.load(Ordering::Relaxed)
+    }
+
+    fn pipeline_requested(&self) -> bool {
+        match self.requested_mode_override.load(Ordering::Acquire) {
+            1 => true,
+            2 => false,
+            _ => pipeline_requested_from_env(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_pipeline_requested_for_testing(&self, enabled: bool) {
+        self.requested_mode_override
+            .store(if enabled { 1 } else { 2 }, Ordering::Release);
     }
 
     pub(crate) fn take_receiver(&self) -> mpsc::Receiver<PublisherMessage> {
@@ -259,6 +349,31 @@ impl PublisherHandoff {
             self.fatal_error_count.load(Ordering::Relaxed),
             self.ambiguous_error_count.load(Ordering::Relaxed),
         )
+    }
+}
+
+fn pipeline_requested_from_env() -> bool {
+    !std::env::var("NIMBUS_COMMITTER_PIPELINE")
+        .ok()
+        .is_some_and(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "off" | "serial"))
+}
+
+const fn mode_to_u8(mode: CommitterPipelineMode) -> u8 {
+    match mode {
+        CommitterPipelineMode::Pipeline => 0,
+        CommitterPipelineMode::DrainingToSerial => 1,
+        CommitterPipelineMode::Serial => 2,
+        CommitterPipelineMode::DrainingToPipeline => 3,
+    }
+}
+
+fn mode_from_u8(mode: u8) -> CommitterPipelineMode {
+    match mode {
+        0 => CommitterPipelineMode::Pipeline,
+        1 => CommitterPipelineMode::DrainingToSerial,
+        2 => CommitterPipelineMode::Serial,
+        3 => CommitterPipelineMode::DrainingToPipeline,
+        _ => unreachable!("publisher mode atomic contains an invalid state"),
     }
 }
 

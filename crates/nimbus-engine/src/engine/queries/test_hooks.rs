@@ -58,6 +58,29 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn set_committer_pipeline_requested_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        enabled: bool,
+    ) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.set_committer_pipeline_requested_for_testing(enabled);
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_prepared_table_id_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        table: &TableName,
+        table_id: nimbus_core::TableId,
+    ) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.prepared_table_id(table, Some(table_id));
+        })
+    }
+
+    #[cfg(test)]
     pub(crate) fn mutation_admission_stats_for_testing(
         &self,
         tenant_id: &TenantId,

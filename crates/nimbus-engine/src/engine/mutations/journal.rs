@@ -122,7 +122,23 @@ impl Engine {
             return;
         }
 
-        if runtime.store.has_process_local_sequence_authority() {
+        let use_pipeline = if runtime.store.has_process_local_sequence_authority() {
+            match runtime.reconcile_committer_pipeline_mode().await {
+                Ok(enabled) => enabled,
+                Err(error) => {
+                    for request in batch {
+                        let _ = request.response.send(Err(error.clone()));
+                    }
+                    runtime.record_mutation_worker_failure();
+                    warn!(error = %error, "committer pipeline mode transition failed");
+                    return;
+                }
+            }
+        } else {
+            false
+        };
+
+        if use_pipeline {
             let runtime_for_task = runtime.clone();
             let engine = self.clone();
             let assigned = tokio::task::spawn_blocking(move || {
@@ -173,8 +189,9 @@ impl Engine {
             return;
         }
 
-        // Provider persistence stays on the pre-PPSC5 serial arm until slice C
-        // adds ordered network pipelining and lease fencing.
+        // This is both the kill-switch fallback and the provider arm. Provider
+        // persistence stays here until slice C adds ordered network pipelining
+        // and lease fencing.
         let runtime_for_task = runtime.clone();
         let engine = self.clone();
         let commit_faults = self.commit_faults.clone();

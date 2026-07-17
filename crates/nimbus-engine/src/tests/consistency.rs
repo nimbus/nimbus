@@ -92,6 +92,8 @@ async fn assert_engine_reload_recovers_durable_journal_before_serving_async_read
             publisher_transient_error_count: 0,
             publisher_fatal_error_count: 0,
             publisher_ambiguous_error_count: 0,
+            publisher_mode: crate::tenant::CommitterPipelineMode::Pipeline,
+            publisher_mode_transition_count: 0,
         }
     );
 
