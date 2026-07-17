@@ -168,7 +168,26 @@ pub struct TenantWriteTransaction {
     fault_injector: Arc<dyn FaultInjector>,
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
+    prepared_record: Option<nimbus_core::TenantEventRecord>,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
+}
+
+pub(crate) fn validate_prepared_record_shape(
+    record: &nimbus_core::TenantEventRecord,
+    writes: &[WriteOp],
+    events: &[TenantEventKind],
+) -> Result<()> {
+    let expected = nimbus_core::TenantEventRecord::from_events(
+        record.sequence,
+        record.timestamp,
+        events.to_vec(),
+    )?;
+    if expected.writes != writes || expected != *record {
+        return Err(Error::Internal(
+            "prepared tenant event record diverged from applied storage effects".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn map_redb_error(error: impl std::fmt::Display) -> Error {

@@ -1,8 +1,8 @@
 use std::{future, sync::Arc, time::Instant};
 
 use nimbus_core::{
-    AccessAction, Document, DocumentId, Mutation, PrincipalContext, Result, Schema, TableName,
-    TenantId, Timestamp,
+    AccessAction, DependencySet, Document, DocumentId, DocumentLocator, Error, Mutation,
+    PrincipalContext, Result, Schema, TenantId, Timestamp, WriteOp, WriteOpType,
 };
 
 use crate::engine::tenants::with_tenant_runtime_operation;
@@ -10,9 +10,22 @@ use crate::{Engine, tenant::TenantRuntime};
 
 use super::super::caps::check_mutation_caps;
 use super::super::enforce_mutation_authorization;
+use super::super::journal::{
+    mutation_occ_backoff, mutation_occ_max_attempts, validate_prepared_for_provider,
+};
 use super::super::prepared::PreparedCommit;
+use super::super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
+use super::super::window_prepare::prepare_single_document_write_from_window;
 use super::store::DirectMutationProfile;
-use super::types::{MutationExecutionMode, MutationExecutionResult, UpdateMutationRequest};
+use super::types::{MutationExecutionMode, MutationExecutionResult};
+
+enum PreparedDirectMutation {
+    DuplicateScheduledExecution,
+    Commit {
+        prepared_commit: Box<PreparedCommit>,
+        result_document_id: Option<DocumentId>,
+    },
+}
 
 impl Engine {
     pub(super) fn apply_mutation_with_mode(
@@ -23,30 +36,98 @@ impl Engine {
         principal: &PrincipalContext,
     ) -> Result<MutationExecutionResult> {
         with_tenant_runtime_operation(self.get_existing_tenant(tenant_id)?, tenant_id, |runtime| {
-            let schema = runtime.schema();
-            match mutation {
-                Mutation::Insert { table, id, fields } => self.apply_insert_like(
-                    runtime.clone(),
-                    &schema,
-                    mode,
-                    table,
-                    id,
-                    fields,
-                    principal,
-                ),
-                Mutation::Update { table, id, patch } => self.apply_update_like(
-                    runtime.clone(),
-                    &schema,
-                    mode,
-                    UpdateMutationRequest {
-                        table,
-                        id,
-                        patch,
+            // A generated insert id is part of the logical mutation and must
+            // survive transparent stale-prepare retries unchanged.
+            let mutation = normalize_direct_insert_id(self, mutation);
+            let max_attempts = mutation_occ_max_attempts();
+            let mut attempt = 1;
+            let mut rate_accounted = false;
+            loop {
+                let prepare_started = Instant::now();
+                let (prepared, prepare_permit) = if let Some(prepared) =
+                    prepare_direct_mutation_from_window(
+                        runtime.as_ref(),
+                        &mode,
+                        &mutation,
                         principal,
-                    },
-                ),
-                Mutation::Delete { table, id } => {
-                    self.apply_delete_like(runtime.clone(), &schema, mode, table, id, principal)
+                    )? {
+                    runtime.commit_phase_metrics().record_window_prepare();
+                    (prepared, None)
+                } else {
+                    runtime.commit_phase_metrics().record_storage_prepare();
+                    let permit = runtime.acquire_prepare_permit_blocking()?;
+                    let prepared = prepare_direct_mutation(
+                        runtime.as_ref(),
+                        runtime.schema(),
+                        &mode,
+                        mutation.clone(),
+                        principal,
+                    )?;
+                    (prepared, Some(permit))
+                };
+                runtime
+                    .commit_phase_metrics()
+                    .record_prepare_pool(prepare_started.elapsed());
+                let PreparedDirectMutation::Commit {
+                    prepared_commit,
+                    result_document_id,
+                } = prepared
+                else {
+                    return Ok(MutationExecutionResult::Scheduled(false));
+                };
+                self.wait_for_commit_fault(
+                    crate::engine::execution_units::labels::PREPARE_COMPLETE,
+                )?;
+                let shadow_dependencies =
+                    prepared_document_dependencies(&prepared_commit, |_| None);
+                observe_shadow_conflicts(
+                    runtime.as_ref(),
+                    prepared_commit.snapshot_sequence,
+                    std::slice::from_ref(&shadow_dependencies),
+                );
+                drop(prepare_permit);
+                check_mutation_caps(&runtime, prepared_commit.usage())?;
+                if !rate_accounted {
+                    runtime.check_tenant_write_rate(
+                        self.now(),
+                        prepared_commit.usage().total_write_bytes(),
+                    )?;
+                    rate_accounted = true;
+                }
+                let prepared_bytes = prepared_commit.accounted_bytes();
+                let _prepared_payload =
+                    crate::tenant::PreparedPayloadAccounting::new(runtime.clone(), prepared_bytes);
+                let profile = DirectMutationProfile::after_prepare(prepare_started);
+                match self.run_prepared_direct_mutation(runtime.clone(), *prepared_commit, profile)
+                {
+                    Ok(Some(_)) => {
+                        return Ok(match &mode {
+                            MutationExecutionMode::Immediate => {
+                                MutationExecutionResult::Immediate(result_document_id)
+                            }
+                            MutationExecutionMode::Scheduled { .. } => {
+                                MutationExecutionResult::Scheduled(true)
+                            }
+                        });
+                    }
+                    Ok(None) => return Ok(MutationExecutionResult::Scheduled(false)),
+                    Err(error) if error.retryability() == nimbus_core::Retryability::Retryable => {
+                        if attempt >= max_attempts {
+                            runtime
+                                .commit_phase_metrics()
+                                .record_mutation_conflict_exhausted();
+                            return Err(error.with_conflict_attempts(attempt));
+                        }
+                        if let Some(sequence) = error.conflicting_sequence() {
+                            runtime.wait_for_applied_sequence_blocking(sequence);
+                        }
+                        runtime
+                            .commit_phase_metrics()
+                            .record_mutation_conflict_retry();
+                        std::thread::sleep(mutation_occ_backoff(attempt));
+                        attempt += 1;
+                    }
+                    Err(error) => return Err(error),
                 }
             }
         })
@@ -94,512 +175,210 @@ impl Engine {
         )
         .await
     }
+}
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "insert execution now threads the optional caller-provided document key through the shared mutation path"
-    )]
-    fn apply_insert_like(
-        &self,
-        runtime: Arc<TenantRuntime>,
-        schema: &Schema,
-        mode: MutationExecutionMode,
-        table: TableName,
-        document_id: Option<DocumentId>,
-        fields: serde_json::Map<String, serde_json::Value>,
-        principal: &PrincipalContext,
-    ) -> Result<MutationExecutionResult> {
-        let commit_started_at = Instant::now();
-        let table_schema = schema.get_table(&table).cloned();
-        let indexes = table_schema
-            .as_ref()
-            .map(|table_schema| {
-                table_schema.validate(&fields)?;
-                Ok(table_schema.indexes.clone())
-            })
-            .transpose()?
-            .unwrap_or_default();
-        let document = match document_id {
-            Some(document_id) => Document::with_id_at(document_id, table, fields, Timestamp(0)),
-            None => Document::with_id_at(self.next_document_id(), table, fields, Timestamp(0)),
-        };
-        enforce_mutation_authorization(
-            table_schema.as_ref(),
-            AccessAction::Create,
-            principal,
-            Some(&document),
-            None,
-        )?;
-        let document_id = document.id.clone();
-        let scheduled_execution_id = match &mode {
-            MutationExecutionMode::Immediate => None,
-            MutationExecutionMode::Scheduled { execution_id } => Some(execution_id.as_str()),
-        };
-        let prepared_commit = PreparedCommit::for_direct_insert(
-            runtime.durable_head(),
-            document,
-            scheduled_execution_id,
-        );
-        check_mutation_caps(&runtime, prepared_commit.usage())?;
-        runtime.check_tenant_write_rate(self.now(), prepared_commit.usage().total_write_bytes())?;
-        let profile = DirectMutationProfile::after_prepare(commit_started_at);
-
-        match mode {
-            MutationExecutionMode::Immediate => {
-                self.run_store_mutation(
-                    runtime,
-                    prepared_commit,
-                    profile,
-                    move |store, prepared, timestamp| {
-                        store
-                            .insert_with_indexes_once_at(
-                                prepared.direct_insert_document()?,
-                                direct_write_assignment(&indexes, None, timestamp),
-                            )?
-                            .ok_or_else(|| {
-                                nimbus_core::Error::Internal(
-                                    "direct insert should produce a commit".to_string(),
-                                )
-                            })
-                    },
-                )?;
-                Ok(MutationExecutionResult::Immediate(Some(document_id)))
-            }
-            MutationExecutionMode::Scheduled { execution_id } => {
-                let applied = self.run_store_mutation_once(
-                    runtime,
-                    prepared_commit,
-                    profile,
-                    move |store, prepared, timestamp| {
-                        store.insert_with_indexes_once_at(
-                            prepared.direct_insert_document()?,
-                            direct_write_assignment(
-                                &indexes,
-                                Some(execution_id.as_str()),
-                                timestamp,
-                            ),
-                        )
-                    },
-                )?;
-                Ok(MutationExecutionResult::Scheduled(applied))
-            }
-        }
+fn prepare_direct_mutation_from_window(
+    runtime: &TenantRuntime,
+    mode: &MutationExecutionMode,
+    mutation: &Mutation,
+    principal: &PrincipalContext,
+) -> Result<Option<PreparedDirectMutation>> {
+    if !matches!(mode, MutationExecutionMode::Immediate) {
+        return Ok(None);
     }
+    let Some(prepared) = prepare_single_document_write_from_window(runtime, mutation, principal)?
+    else {
+        return Ok(None);
+    };
+    let result_document_id = prepared.result_document_id;
+    let prepared_commit = PreparedCommit::for_direct(
+        prepared.snapshot_sequence,
+        prepared.dependencies,
+        prepared.write,
+        prepared.indexes,
+        None,
+    )?
+    .with_inline_reprepare(
+        prepared.normalized_mutation,
+        principal.clone(),
+        prepared.schema,
+    );
+    Ok(Some(PreparedDirectMutation::Commit {
+        prepared_commit: Box::new(prepared_commit),
+        result_document_id,
+    }))
+}
 
-    fn apply_update_like(
-        &self,
-        runtime: Arc<TenantRuntime>,
-        schema: &Schema,
-        mode: MutationExecutionMode,
-        request: UpdateMutationRequest<'_>,
-    ) -> Result<MutationExecutionResult> {
-        let commit_started_at = Instant::now();
-        let UpdateMutationRequest {
+fn normalize_direct_insert_id(engine: &Engine, mutation: Mutation) -> Mutation {
+    match mutation {
+        Mutation::Insert {
             table,
-            id,
-            patch,
-            principal,
-        } = request;
-        let result_document_id = id.clone();
-        let table_schema = schema.get_table(&table).cloned();
-        let scheduled_execution_id = match &mode {
-            MutationExecutionMode::Immediate => None,
-            MutationExecutionMode::Scheduled { execution_id } => Some(execution_id.as_str()),
-        };
-        let prepared_commit = PreparedCommit::for_direct_update(
-            runtime.durable_head(),
+            id: None,
+            fields,
+        } => Mutation::Insert {
             table,
-            id,
-            patch,
-            scheduled_execution_id,
-        );
-        check_mutation_caps(&runtime, prepared_commit.usage())?;
-        runtime.check_tenant_write_rate(self.now(), prepared_commit.usage().total_write_bytes())?;
-        let profile = DirectMutationProfile::after_prepare(commit_started_at);
-        match table_schema {
-            Some(table_schema) if table_schema.indexes.is_empty() => match mode {
-                MutationExecutionMode::Immediate => {
-                    let authorization_schema = table_schema.clone();
-                    let principal = principal.clone();
-                    self.run_store_mutation(
-                        runtime,
-                        prepared_commit,
-                        profile,
-                        move |store, prepared, timestamp| {
-                            let (table, document_id, patch) = prepared.direct_update_parts()?;
-                            store
-                                .update_with_indexes_validated_once_at(
-                                    table,
-                                    document_id,
-                                    patch,
-                                    direct_write_assignment(&[], None, timestamp),
-                                    move |existing, document| {
-                                        table_schema.validate(&document.fields)?;
-                                        enforce_mutation_authorization(
-                                            Some(&authorization_schema),
-                                            AccessAction::Update,
-                                            &principal,
-                                            Some(document),
-                                            Some(existing),
-                                        )
-                                    },
-                                )?
-                                .ok_or_else(|| {
-                                    nimbus_core::Error::Internal(
-                                        "direct update should produce a commit".to_string(),
-                                    )
-                                })
-                        },
-                    )?;
-                    Ok(MutationExecutionResult::Immediate(Some(result_document_id)))
-                }
-                MutationExecutionMode::Scheduled { execution_id } => {
-                    let authorization_schema = table_schema.clone();
-                    let principal = principal.clone();
-                    let applied = self.run_store_mutation_once(
-                        runtime,
-                        prepared_commit,
-                        profile,
-                        move |store, prepared, timestamp| {
-                            let (table, document_id, patch) = prepared.direct_update_parts()?;
-                            store.update_with_indexes_validated_once_at(
-                                table,
-                                document_id,
-                                patch,
-                                direct_write_assignment(
-                                    &[],
-                                    Some(execution_id.as_str()),
-                                    timestamp,
-                                ),
-                                move |existing, document| {
-                                    table_schema.validate(&document.fields)?;
-                                    enforce_mutation_authorization(
-                                        Some(&authorization_schema),
-                                        AccessAction::Update,
-                                        &principal,
-                                        Some(document),
-                                        Some(existing),
-                                    )
-                                },
-                            )
-                        },
-                    )?;
-                    Ok(MutationExecutionResult::Scheduled(applied))
-                }
-            },
-            Some(table_schema) => {
-                let indexes = table_schema.indexes.clone();
-                match mode {
-                    MutationExecutionMode::Immediate => {
-                        let authorization_schema = table_schema.clone();
-                        let principal = principal.clone();
-                        self.run_store_mutation(
-                            runtime,
-                            prepared_commit,
-                            profile,
-                            move |store, prepared, timestamp| {
-                                let (table, document_id, patch) = prepared.direct_update_parts()?;
-                                store
-                                    .update_with_indexes_validated_once_at(
-                                        table,
-                                        document_id,
-                                        patch,
-                                        direct_write_assignment(&indexes, None, timestamp),
-                                        move |existing, document| {
-                                            table_schema.validate(&document.fields)?;
-                                            enforce_mutation_authorization(
-                                                Some(&authorization_schema),
-                                                AccessAction::Update,
-                                                &principal,
-                                                Some(document),
-                                                Some(existing),
-                                            )
-                                        },
-                                    )?
-                                    .ok_or_else(|| {
-                                        nimbus_core::Error::Internal(
-                                            "direct indexed update should produce a commit"
-                                                .to_string(),
-                                        )
-                                    })
-                            },
-                        )?;
-                        Ok(MutationExecutionResult::Immediate(Some(result_document_id)))
-                    }
-                    MutationExecutionMode::Scheduled { execution_id } => {
-                        let authorization_schema = table_schema.clone();
-                        let principal = principal.clone();
-                        let applied = self.run_store_mutation_once(
-                            runtime,
-                            prepared_commit,
-                            profile,
-                            move |store, prepared, timestamp| {
-                                let (table, document_id, patch) = prepared.direct_update_parts()?;
-                                store.update_with_indexes_validated_once_at(
-                                    table,
-                                    document_id,
-                                    patch,
-                                    direct_write_assignment(
-                                        &indexes,
-                                        Some(execution_id.as_str()),
-                                        timestamp,
-                                    ),
-                                    move |existing, document| {
-                                        table_schema.validate(&document.fields)?;
-                                        enforce_mutation_authorization(
-                                            Some(&authorization_schema),
-                                            AccessAction::Update,
-                                            &principal,
-                                            Some(document),
-                                            Some(existing),
-                                        )
-                                    },
-                                )
-                            },
-                        )?;
-                        Ok(MutationExecutionResult::Scheduled(applied))
-                    }
-                }
-            }
-            None => match mode {
-                MutationExecutionMode::Immediate => {
-                    let principal = principal.clone();
-                    self.run_store_mutation(
-                        runtime,
-                        prepared_commit,
-                        profile,
-                        move |store, prepared, timestamp| {
-                            let (table, document_id, patch) = prepared.direct_update_parts()?;
-                            store
-                                .update_with_indexes_validated_once_at(
-                                    table,
-                                    document_id,
-                                    patch,
-                                    direct_write_assignment(&[], None, timestamp),
-                                    move |existing, document| {
-                                        enforce_mutation_authorization(
-                                            None,
-                                            AccessAction::Update,
-                                            &principal,
-                                            Some(document),
-                                            Some(existing),
-                                        )
-                                    },
-                                )?
-                                .ok_or_else(|| {
-                                    nimbus_core::Error::Internal(
-                                        "direct update should produce a commit".to_string(),
-                                    )
-                                })
-                        },
-                    )?;
-                    Ok(MutationExecutionResult::Immediate(Some(result_document_id)))
-                }
-                MutationExecutionMode::Scheduled { execution_id } => {
-                    let principal = principal.clone();
-                    let applied = self.run_store_mutation_once(
-                        runtime,
-                        prepared_commit,
-                        profile,
-                        move |store, prepared, timestamp| {
-                            let (table, document_id, patch) = prepared.direct_update_parts()?;
-                            store.update_with_indexes_validated_once_at(
-                                table,
-                                document_id,
-                                patch,
-                                direct_write_assignment(
-                                    &[],
-                                    Some(execution_id.as_str()),
-                                    timestamp,
-                                ),
-                                move |existing, document| {
-                                    enforce_mutation_authorization(
-                                        None,
-                                        AccessAction::Update,
-                                        &principal,
-                                        Some(document),
-                                        Some(existing),
-                                    )
-                                },
-                            )
-                        },
-                    )?;
-                    Ok(MutationExecutionResult::Scheduled(applied))
-                }
-            },
-        }
-    }
-
-    fn apply_delete_like(
-        &self,
-        runtime: Arc<TenantRuntime>,
-        schema: &Schema,
-        mode: MutationExecutionMode,
-        table: TableName,
-        id: DocumentId,
-        principal: &PrincipalContext,
-    ) -> Result<MutationExecutionResult> {
-        let commit_started_at = Instant::now();
-        let table_schema = schema.get_table(&table).cloned();
-        let indexes = table_schema
-            .as_ref()
-            .map(|table_schema| table_schema.indexes.clone())
-            .unwrap_or_default();
-        let scheduled_execution_id = match &mode {
-            MutationExecutionMode::Immediate => None,
-            MutationExecutionMode::Scheduled { execution_id } => Some(execution_id.as_str()),
-        };
-        let prepared_commit = PreparedCommit::for_direct_delete(
-            runtime.durable_head(),
-            table,
-            id,
-            scheduled_execution_id,
-        );
-        check_mutation_caps(&runtime, prepared_commit.usage())?;
-        runtime.check_tenant_write_rate(self.now(), prepared_commit.usage().total_write_bytes())?;
-        let profile = DirectMutationProfile::after_prepare(commit_started_at);
-
-        match mode {
-            MutationExecutionMode::Immediate => {
-                if indexes.is_empty() {
-                    let table_schema = table_schema.clone();
-                    let principal = principal.clone();
-                    self.run_store_delete_mutation(
-                        runtime,
-                        prepared_commit,
-                        profile,
-                        move |store, prepared, timestamp| {
-                            let (table, document_id) = prepared.direct_delete_parts()?;
-                            store
-                                .delete_with_indexes_validated_once_at(
-                                    table,
-                                    document_id,
-                                    direct_write_assignment(&[], None, timestamp),
-                                    move |existing| {
-                                        enforce_mutation_authorization(
-                                            table_schema.as_ref(),
-                                            AccessAction::Delete,
-                                            &principal,
-                                            None,
-                                            Some(existing),
-                                        )
-                                    },
-                                )?
-                                .ok_or_else(|| {
-                                    nimbus_core::Error::Internal(
-                                        "direct delete should produce a commit".to_string(),
-                                    )
-                                })
-                        },
-                    )?;
-                } else {
-                    let table_schema = table_schema.clone();
-                    let principal = principal.clone();
-                    self.run_store_delete_mutation(
-                        runtime,
-                        prepared_commit,
-                        profile,
-                        move |store, prepared, timestamp| {
-                            let (table, document_id) = prepared.direct_delete_parts()?;
-                            store
-                                .delete_with_indexes_validated_once_at(
-                                    table,
-                                    document_id,
-                                    direct_write_assignment(&indexes, None, timestamp),
-                                    move |existing| {
-                                        enforce_mutation_authorization(
-                                            table_schema.as_ref(),
-                                            AccessAction::Delete,
-                                            &principal,
-                                            None,
-                                            Some(existing),
-                                        )
-                                    },
-                                )?
-                                .ok_or_else(|| {
-                                    nimbus_core::Error::Internal(
-                                        "direct indexed delete should produce a commit".to_string(),
-                                    )
-                                })
-                        },
-                    )?;
-                }
-                Ok(MutationExecutionResult::Immediate(None))
-            }
-            MutationExecutionMode::Scheduled { execution_id } => {
-                let applied = if indexes.is_empty() {
-                    let table_schema = table_schema.clone();
-                    let principal = principal.clone();
-                    self.run_store_delete_mutation_once(
-                        runtime,
-                        prepared_commit,
-                        profile,
-                        move |store, prepared, timestamp| {
-                            let (table, document_id) = prepared.direct_delete_parts()?;
-                            store.delete_with_indexes_validated_once_at(
-                                table,
-                                document_id,
-                                direct_write_assignment(
-                                    &[],
-                                    Some(execution_id.as_str()),
-                                    timestamp,
-                                ),
-                                move |existing| {
-                                    enforce_mutation_authorization(
-                                        table_schema.as_ref(),
-                                        AccessAction::Delete,
-                                        &principal,
-                                        None,
-                                        Some(existing),
-                                    )
-                                },
-                            )
-                        },
-                    )?
-                } else {
-                    let table_schema = table_schema.clone();
-                    let principal = principal.clone();
-                    self.run_store_delete_mutation_once(
-                        runtime,
-                        prepared_commit,
-                        profile,
-                        move |store, prepared, timestamp| {
-                            let (table, document_id) = prepared.direct_delete_parts()?;
-                            store.delete_with_indexes_validated_once_at(
-                                table,
-                                document_id,
-                                direct_write_assignment(
-                                    &indexes,
-                                    Some(execution_id.as_str()),
-                                    timestamp,
-                                ),
-                                move |existing| {
-                                    enforce_mutation_authorization(
-                                        table_schema.as_ref(),
-                                        AccessAction::Delete,
-                                        &principal,
-                                        None,
-                                        Some(existing),
-                                    )
-                                },
-                            )
-                        },
-                    )?
-                };
-                Ok(MutationExecutionResult::Scheduled(applied))
-            }
-        }
+            id: Some(engine.next_document_id()),
+            fields,
+        },
+        mutation => mutation,
     }
 }
 
-fn direct_write_assignment<'a>(
-    indexes: &'a [nimbus_core::IndexDefinition],
-    execution_id: Option<&'a str>,
-    commit_timestamp: Timestamp,
-) -> nimbus_storage::DirectWriteAssignment<'a> {
-    nimbus_storage::DirectWriteAssignment {
-        indexes,
-        execution_id,
-        commit_timestamp,
+fn prepare_direct_mutation(
+    runtime: &TenantRuntime,
+    schema: Arc<Schema>,
+    mode: &MutationExecutionMode,
+    mutation: Mutation,
+    principal: &PrincipalContext,
+) -> Result<PreparedDirectMutation> {
+    let inline_mutation = mutation.clone();
+    let scheduled_execution_id = match mode {
+        MutationExecutionMode::Immediate => None,
+        MutationExecutionMode::Scheduled { execution_id } => Some(execution_id.as_str()),
+    };
+    if let Some(execution_id) = scheduled_execution_id
+        && runtime.store.scheduled_execution_exists(execution_id)?
+    {
+        return Ok(PreparedDirectMutation::DuplicateScheduledExecution);
     }
+
+    // The opened snapshot supplies both full images and the OCC pin. Direct
+    // authorization, schema validation, record serialization, and index
+    // selection all finish here on the caller before DirectCommit admission.
+    let snapshot = runtime.store.read_snapshot()?;
+    let snapshot_sequence = snapshot.applied_sequence()?;
+    let (write, indexes, result_document_id) = match mutation {
+        Mutation::Insert { table, id, fields } => {
+            let table_schema = schema.get_table(&table).cloned();
+            let indexes = table_schema
+                .as_ref()
+                .map(|table_schema| {
+                    table_schema.validate(&fields)?;
+                    Ok(table_schema.indexes.clone())
+                })
+                .transpose()?
+                .unwrap_or_default();
+            let document_id = id.ok_or_else(|| {
+                Error::Internal("direct insert id must be normalized before prepare".to_string())
+            })?;
+            let document =
+                Document::with_id_at(document_id.clone(), table.clone(), fields, Timestamp(0));
+            enforce_mutation_authorization(
+                table_schema.as_ref(),
+                AccessAction::Create,
+                principal,
+                Some(&document),
+                None,
+            )?;
+            let table_id = runtime.prepared_table_id(&table, snapshot.table_id(&table)?);
+            (
+                WriteOp {
+                    table,
+                    table_id,
+                    op_type: WriteOpType::Insert,
+                    doc_id: document_id.clone(),
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
+                    previous: None,
+                    current: Some(document),
+                },
+                indexes,
+                Some(document_id),
+            )
+        }
+        Mutation::Update { table, id, patch } => {
+            let table_id = snapshot
+                .table_id(&table)?
+                .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
+            let previous = snapshot
+                .get(&table, &id)?
+                .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
+            let mut current = previous.clone();
+            for (field, value) in patch {
+                current.fields.insert(field, value);
+            }
+            let table_schema = schema.get_table(&table).cloned();
+            let indexes = table_schema
+                .as_ref()
+                .map(|table_schema| {
+                    table_schema.validate(&current.fields)?;
+                    Ok(table_schema.indexes.clone())
+                })
+                .transpose()?
+                .unwrap_or_default();
+            enforce_mutation_authorization(
+                table_schema.as_ref(),
+                AccessAction::Update,
+                principal,
+                Some(&current),
+                Some(&previous),
+            )?;
+            (
+                WriteOp {
+                    table,
+                    table_id,
+                    op_type: WriteOpType::Update,
+                    doc_id: id.clone(),
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
+                    previous: Some(previous),
+                    current: Some(current),
+                },
+                indexes,
+                Some(id),
+            )
+        }
+        Mutation::Delete { table, id } => {
+            let table_id = snapshot
+                .table_id(&table)?
+                .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
+            let previous = snapshot
+                .get(&table, &id)?
+                .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
+            let table_schema = schema.get_table(&table).cloned();
+            enforce_mutation_authorization(
+                table_schema.as_ref(),
+                AccessAction::Delete,
+                principal,
+                None,
+                Some(&previous),
+            )?;
+            let indexes = table_schema
+                .as_ref()
+                .map(|table_schema| table_schema.indexes.clone())
+                .unwrap_or_default();
+            let resource_path_binding =
+                snapshot.resource_path_binding(&DocumentLocator::new(table.clone(), id.clone()))?;
+            (
+                WriteOp {
+                    table,
+                    table_id,
+                    op_type: WriteOpType::Delete,
+                    doc_id: id,
+                    resource_path_binding,
+                    trigger_write_origin: None,
+                    previous: Some(previous),
+                    current: None,
+                },
+                indexes,
+                None,
+            )
+        }
+    };
+    let mut dependencies = DependencySet::default();
+    dependencies.record_document(&write.table, &write.table_id, write.doc_id.clone());
+    validate_prepared_for_provider(runtime, snapshot_sequence, &dependencies)?;
+    Ok(PreparedDirectMutation::Commit {
+        prepared_commit: Box::new(
+            PreparedCommit::for_direct(
+                snapshot_sequence,
+                dependencies,
+                write,
+                indexes,
+                scheduled_execution_id,
+            )?
+            .with_inline_reprepare(inline_mutation, principal.clone(), schema),
+        ),
+        result_document_id,
+    })
 }

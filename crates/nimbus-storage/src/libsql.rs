@@ -254,6 +254,7 @@ pub struct LibsqlReplicaWriteTransaction {
     tx: Option<Transaction>,
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
+    prepared_record: Option<TenantEventRecord>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
     commit_timestamp: Option<Timestamp>,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
@@ -385,6 +386,28 @@ impl LibsqlReplicaTenantStore {
         }
         self.freshness_metrics.note_refresh_request(cause);
         self.schedule_background_refresh();
+    }
+
+    fn note_recovered_remote_progress(&self, observed_remote_head: SequenceNumber) {
+        // Recovery is also the authoritative observation point for foreign
+        // commits. A schema-mismatch snapshot refresh can win the race and
+        // make the local cache current before recovery inspects the heads, but
+        // diagnostics and later barriers must still retain the remote durable
+        // head that recovery observed.
+        self.note_required_cache_sequence_with_cause(
+            observed_remote_head,
+            LibsqlReplicaRefreshCause::DurableJournalReplay,
+        );
+    }
+
+    fn retain_recovered_progress(&self, progress: JournalProgress) -> JournalProgress {
+        // `ensure_local_cache_current` may observe a newer remote snapshot than
+        // the head read at recovery entry. Any progress returned to the engine
+        // must first become a retained cache requirement, or the engine can
+        // adopt the newer head while diagnostics and later barriers remain
+        // pinned to the older observation.
+        self.note_recovered_remote_progress(progress.durable_head);
+        progress
     }
 
     fn refresh_local_cache(&self) -> Result<ReplicaRefreshOutcome> {

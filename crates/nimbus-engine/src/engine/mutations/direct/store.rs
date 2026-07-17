@@ -1,14 +1,15 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use nimbus_core::{CommitEntry, Document, Result};
+use nimbus_core::{CommitEntry, Result};
 
-use crate::persistence::TenantPersistence;
 use crate::{Engine, tenant::TenantRuntime};
 
+use super::super::inline_reprepare::{
+    InlineReprepareOutcome, reprepare_single_document_from_window,
+};
 use super::super::phase_metrics::CommitPhaseDurations;
 use super::super::prepared::PreparedCommit;
-use super::super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
 
 #[derive(Clone, Copy)]
 pub(super) struct DirectMutationProfile {
@@ -29,85 +30,12 @@ impl DirectMutationProfile {
 }
 
 impl Engine {
-    pub(super) fn run_store_mutation<F>(
+    pub(super) fn run_prepared_direct_mutation(
         &self,
         runtime: Arc<TenantRuntime>,
         mut prepared_commit: PreparedCommit,
         mut profile: DirectMutationProfile,
-        mutate: F,
-    ) -> Result<CommitEntry>
-    where
-        F: FnOnce(
-                &TenantPersistence,
-                &PreparedCommit,
-                nimbus_core::Timestamp,
-            ) -> Result<CommitEntry>
-            + Send
-            + 'static,
-    {
-        let runtime_for_commit = runtime.clone();
-        let runtime_for_fanout = runtime.clone();
-        let queued_at = Instant::now();
-        let commit = runtime.submit_direct_committer_then(
-            move || {
-                let runtime = runtime_for_commit;
-                profile.phases.queue_wait = queued_at.elapsed();
-                observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
-                let previous_sequence = runtime.durable_head();
-                let expected_sequence =
-                    crate::tenant::assign_and_validate(previous_sequence, 1)?[0];
-                let assignment_timestamp = runtime.assign_commit_timestamp();
-                prepared_commit.stamp_for_assignment(assignment_timestamp)?;
-                let durable_append_started = Instant::now();
-                let write_log_guard = runtime.arm_write_log_append();
-                let commit = mutate(runtime.store(), &prepared_commit, assignment_timestamp)?;
-                crate::tenant::validate_append_sequences(previous_sequence, [commit.sequence])?;
-                debug_assert_eq!(commit.sequence, expected_sequence);
-                profile.phases.durable_append = durable_append_started.elapsed();
-                let publish_started = Instant::now();
-                publish_direct_commit_to_write_log(&runtime, &commit);
-                runtime.mark_durable_head(commit.sequence);
-                profile.phases.add_publish(publish_started.elapsed());
-                let apply_started = Instant::now();
-                runtime.invalidate_document_cache_for_commit(&commit);
-                profile.phases.apply = apply_started.elapsed();
-                let publish_started = Instant::now();
-                runtime.mark_applied_head(commit.sequence);
-                profile.phases.add_publish(publish_started.elapsed());
-                write_log_guard.disarm();
-                Ok((commit, prepared_commit, profile))
-            },
-            |(commit, _, _)| {
-                self.process_commit_fanout(runtime_for_fanout, commit);
-            },
-        )?;
-        let (commit, _prepared_commit, profile) = commit;
-        runtime.record_commit_phase_sample(
-            "direct",
-            1,
-            profile.phases,
-            profile.started_at.elapsed(),
-        );
-        self.notify_committed_mutation_observers(runtime.as_ref(), &commit);
-        Ok(commit)
-    }
-
-    pub(super) fn run_store_mutation_once<F>(
-        &self,
-        runtime: Arc<TenantRuntime>,
-        mut prepared_commit: PreparedCommit,
-        mut profile: DirectMutationProfile,
-        mutate: F,
-    ) -> Result<bool>
-    where
-        F: FnOnce(
-                &TenantPersistence,
-                &PreparedCommit,
-                nimbus_core::Timestamp,
-            ) -> Result<Option<CommitEntry>>
-            + Send
-            + 'static,
-    {
+    ) -> Result<Option<CommitEntry>> {
         let runtime_for_commit = runtime.clone();
         let runtime_for_fanout = runtime.clone();
         let queued_at = Instant::now();
@@ -115,34 +43,70 @@ impl Engine {
             move || {
                 let runtime = runtime_for_commit;
                 profile.phases.queue_wait = queued_at.elapsed();
-                observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
+
+                // DirectCommit's serial boundary is intentionally limited to
+                // full-image window validation, assignment, assignment-only
+                // stamping, and the unchanged atomic storage append/apply.
+                let conflict_started = Instant::now();
+                let dependencies = prepared_commit.read_set.clone();
+                match reprepare_single_document_from_window(
+                    runtime.as_ref(),
+                    &mut prepared_commit,
+                    &dependencies,
+                )? {
+                    InlineReprepareOutcome::Fresh | InlineReprepareOutcome::Reprepared => {}
+                    InlineReprepareOutcome::CallerWait(error) => return Err(error),
+                }
+                profile.phases.conflict_check = conflict_started.elapsed();
                 let previous_sequence = runtime.durable_head();
-                let expected_sequence =
-                    crate::tenant::assign_and_validate(previous_sequence, 1)?[0];
-                let assignment_timestamp = runtime.assign_commit_timestamp();
-                prepared_commit.stamp_for_assignment(assignment_timestamp)?;
+                let sequence = crate::tenant::assign_and_validate(previous_sequence, 1)?[0];
+                let timestamp = runtime.assign_commit_timestamp();
+                prepared_commit.stamp_for_assignment(sequence, timestamp)?;
+                let (record, schedule_ops, scheduled_execution_id) = {
+                    let (record, _, scheduled_execution_id) = prepared_commit.direct_effects()?;
+                    (record, &[][..], scheduled_execution_id)
+                };
+
+                runtime.stage_pending_write_log_commits(
+                    [record.as_commit_entry()],
+                    runtime.store.now(),
+                );
                 let durable_append_started = Instant::now();
                 let write_log_guard = runtime.arm_write_log_append();
-                let commit = mutate(runtime.store(), &prepared_commit, assignment_timestamp)?;
-                if let Some(commit) = &commit {
-                    crate::tenant::validate_append_sequences(previous_sequence, [commit.sequence])?;
-                    debug_assert_eq!(commit.sequence, expected_sequence);
-                }
+                let commit = match runtime.store.apply_prepared_write_batch(
+                    record,
+                    schedule_ops,
+                    scheduled_execution_id,
+                ) {
+                    Ok(commit) => commit,
+                    Err(error) => {
+                        if runtime
+                            .store
+                            .journal_progress()
+                            .is_ok_and(|progress| progress.durable_head == previous_sequence)
+                        {
+                            runtime.discard_unpersisted_write_log_suffix(sequence);
+                        }
+                        return Err(error);
+                    }
+                };
+                let Some(commit) = commit else {
+                    runtime.discard_unpersisted_write_log_suffix(sequence);
+                    write_log_guard.disarm();
+                    return Ok((None, profile));
+                };
+                crate::tenant::validate_append_sequences(previous_sequence, [commit.sequence])?;
+                debug_assert_eq!(commit.sequence, sequence);
+                runtime.mark_durable_head(commit.sequence);
                 profile.phases.durable_append = durable_append_started.elapsed();
-                if let Some(commit) = &commit {
-                    let publish_started = Instant::now();
-                    publish_direct_commit_to_write_log(&runtime, commit);
-                    runtime.mark_durable_head(commit.sequence);
-                    profile.phases.add_publish(publish_started.elapsed());
-                    let apply_started = Instant::now();
-                    runtime.invalidate_document_cache_for_commit(commit);
-                    profile.phases.apply = apply_started.elapsed();
-                    let publish_started = Instant::now();
-                    runtime.mark_applied_head(commit.sequence);
-                    profile.phases.add_publish(publish_started.elapsed());
-                }
+
+                let publish_started = Instant::now();
+                let published_frontier = runtime.publish_write_log_through(commit.sequence);
+                runtime.invalidate_document_cache_for_commit(&commit);
+                runtime.mark_applied_head(published_frontier);
+                profile.phases.publish = publish_started.elapsed();
                 write_log_guard.disarm();
-                Ok((commit, profile))
+                Ok((Some(commit), profile))
             },
             |(commit, _)| {
                 if let Some(commit) = commit {
@@ -151,7 +115,7 @@ impl Engine {
             },
         )?;
         let Some(commit) = commit else {
-            return Ok(false);
+            return Ok(None);
         };
         runtime.record_commit_phase_sample(
             "direct",
@@ -160,162 +124,6 @@ impl Engine {
             profile.started_at.elapsed(),
         );
         self.notify_committed_mutation_observers(runtime.as_ref(), &commit);
-        Ok(true)
+        Ok(Some(commit))
     }
-
-    pub(super) fn run_store_delete_mutation<F>(
-        &self,
-        runtime: Arc<TenantRuntime>,
-        mut prepared_commit: PreparedCommit,
-        mut profile: DirectMutationProfile,
-        mutate: F,
-    ) -> Result<CommitEntry>
-    where
-        F: FnOnce(
-                &TenantPersistence,
-                &PreparedCommit,
-                nimbus_core::Timestamp,
-            ) -> Result<(CommitEntry, Document)>
-            + Send
-            + 'static,
-    {
-        let runtime_for_commit = runtime.clone();
-        let runtime_for_fanout = runtime.clone();
-        let queued_at = Instant::now();
-        let ((commit, _deleted_document), profile) = runtime.submit_direct_committer_then(
-            move || {
-                let runtime = runtime_for_commit;
-                profile.phases.queue_wait = queued_at.elapsed();
-                observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
-                let previous_sequence = runtime.durable_head();
-                let expected_sequence =
-                    crate::tenant::assign_and_validate(previous_sequence, 1)?[0];
-                let assignment_timestamp = runtime.assign_commit_timestamp();
-                prepared_commit.stamp_for_assignment(assignment_timestamp)?;
-                let durable_append_started = Instant::now();
-                let write_log_guard = runtime.arm_write_log_append();
-                let (commit, deleted_document) =
-                    mutate(runtime.store(), &prepared_commit, assignment_timestamp)?;
-                crate::tenant::validate_append_sequences(previous_sequence, [commit.sequence])?;
-                debug_assert_eq!(commit.sequence, expected_sequence);
-                profile.phases.durable_append = durable_append_started.elapsed();
-                let publish_started = Instant::now();
-                publish_direct_commit_to_write_log(&runtime, &commit);
-                runtime.mark_durable_head(commit.sequence);
-                profile.phases.add_publish(publish_started.elapsed());
-                let apply_started = Instant::now();
-                runtime.invalidate_document_cache_for_commit(&commit);
-                profile.phases.apply = apply_started.elapsed();
-                let publish_started = Instant::now();
-                runtime.mark_applied_head(commit.sequence);
-                profile.phases.add_publish(publish_started.elapsed());
-                write_log_guard.disarm();
-                Ok(((commit, deleted_document), profile))
-            },
-            |((commit, _), _)| {
-                self.process_commit_fanout(runtime_for_fanout, commit);
-            },
-        )?;
-        runtime.record_commit_phase_sample(
-            "direct",
-            1,
-            profile.phases,
-            profile.started_at.elapsed(),
-        );
-        self.notify_committed_mutation_observers(runtime.as_ref(), &commit);
-        Ok(commit)
-    }
-
-    pub(super) fn run_store_delete_mutation_once<F>(
-        &self,
-        runtime: Arc<TenantRuntime>,
-        mut prepared_commit: PreparedCommit,
-        mut profile: DirectMutationProfile,
-        mutate: F,
-    ) -> Result<bool>
-    where
-        F: FnOnce(
-                &TenantPersistence,
-                &PreparedCommit,
-                nimbus_core::Timestamp,
-            ) -> Result<Option<(CommitEntry, Document)>>
-            + Send
-            + 'static,
-    {
-        let runtime_for_commit = runtime.clone();
-        let runtime_for_fanout = runtime.clone();
-        let queued_at = Instant::now();
-        let (commit, profile) = runtime.submit_direct_committer_then(
-            move || {
-                let runtime = runtime_for_commit;
-                profile.phases.queue_wait = queued_at.elapsed();
-                observe_direct_shadow(&runtime, &prepared_commit, &mut profile.phases);
-                let previous_sequence = runtime.durable_head();
-                let expected_sequence =
-                    crate::tenant::assign_and_validate(previous_sequence, 1)?[0];
-                let assignment_timestamp = runtime.assign_commit_timestamp();
-                prepared_commit.stamp_for_assignment(assignment_timestamp)?;
-                let durable_append_started = Instant::now();
-                let write_log_guard = runtime.arm_write_log_append();
-                let commit = mutate(runtime.store(), &prepared_commit, assignment_timestamp)?;
-                if let Some((commit, _)) = &commit {
-                    crate::tenant::validate_append_sequences(previous_sequence, [commit.sequence])?;
-                    debug_assert_eq!(commit.sequence, expected_sequence);
-                }
-                profile.phases.durable_append = durable_append_started.elapsed();
-                if let Some((commit, _deleted_document)) = &commit {
-                    let publish_started = Instant::now();
-                    publish_direct_commit_to_write_log(&runtime, commit);
-                    runtime.mark_durable_head(commit.sequence);
-                    profile.phases.add_publish(publish_started.elapsed());
-                    let apply_started = Instant::now();
-                    runtime.invalidate_document_cache_for_commit(commit);
-                    profile.phases.apply = apply_started.elapsed();
-                    let publish_started = Instant::now();
-                    runtime.mark_applied_head(commit.sequence);
-                    profile.phases.add_publish(publish_started.elapsed());
-                }
-                write_log_guard.disarm();
-                Ok((commit, profile))
-            },
-            |(commit, _)| {
-                if let Some((commit, _)) = commit {
-                    self.process_commit_fanout(runtime_for_fanout, commit);
-                }
-            },
-        )?;
-        let Some((commit, _deleted_document)) = commit else {
-            return Ok(false);
-        };
-        runtime.record_commit_phase_sample(
-            "direct",
-            1,
-            profile.phases,
-            profile.started_at.elapsed(),
-        );
-        self.notify_committed_mutation_observers(runtime.as_ref(), &commit);
-        Ok(true)
-    }
-}
-
-fn publish_direct_commit_to_write_log(runtime: &TenantRuntime, commit: &CommitEntry) {
-    runtime.stage_pending_write_log_commits([commit.clone()], runtime.store.now());
-    runtime.publish_write_log_through(commit.sequence);
-}
-
-fn observe_direct_shadow(
-    runtime: &TenantRuntime,
-    prepared_commit: &PreparedCommit,
-    phases: &mut CommitPhaseDurations,
-) {
-    let conflict_check_started = Instant::now();
-    let dependencies = prepared_document_dependencies(prepared_commit, |table| {
-        runtime.store.table_id(table).ok().flatten()
-    });
-    observe_shadow_conflicts(
-        runtime,
-        prepared_commit.snapshot_sequence,
-        std::slice::from_ref(&dependencies),
-    );
-    phases.add_conflict_check(conflict_check_started.elapsed());
 }

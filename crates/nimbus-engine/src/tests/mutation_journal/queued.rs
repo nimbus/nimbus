@@ -3,6 +3,8 @@ use super::support::{
     expect_future_within, new_faulted_engine,
 };
 use super::*;
+use nimbus_core::TriggerDeliveryCursor;
+use nimbus_storage::NoopFaultInjector;
 
 #[tokio::test]
 async fn async_schema_write_advances_runtime_journal_before_next_queued_document_write() {
@@ -121,6 +123,866 @@ async fn concurrent_mutations_do_not_strand_the_journal_worker() {
         .expect("journal stats should load");
     assert_eq!(stats.queue_depth, 0, "all mutations drained");
     assert_eq!(stats.worker_failure_count, 0, "no worker failures");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_disjoint_queued_commits_all_succeed_without_retry() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("prepared-disjoint", Engine::create_tenant);
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+
+    run_paused_insert_burst(&engine, &tenant_id, 32).await;
+
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+    assert_eq!(
+        after.reprepare_total.saturating_sub(before.reprepare_total),
+        0,
+        "disjoint prepared writes must not amplify into retries"
+    );
+    assert_eq!(after.prepared_payload_bytes_current, 0);
+    assert!(after.prepared_payload_bytes_peak > 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_disjoint_direct_commits_all_succeed_without_retry() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("prepared-direct-disjoint", Engine::create_tenant);
+    engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("table-seed"))]),
+        )
+        .expect("seed insert should establish the table identity");
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+
+    let mut inserts = Vec::new();
+    for index in 0..32 {
+        inserts.push(tokio::task::spawn_blocking({
+            let engine = engine.clone();
+            let tenant_id = tenant_id.clone();
+            move || {
+                engine.insert_document(
+                    &tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([(
+                        "title".to_string(),
+                        json!(format!("direct-{index}")),
+                    )]),
+                )
+            }
+        }));
+    }
+    for insert in inserts {
+        insert
+            .await
+            .expect("direct insert task should join")
+            .expect("disjoint direct insert should succeed");
+    }
+
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+    assert_eq!(after.reprepare_total - before.reprepare_total, 0);
+    assert_eq!(after.prepared_payload_bytes_current, 0);
+    assert_eq!(
+        engine
+            .query_documents(&tenant_id, &query_for("tasks"))
+            .expect("direct documents should query")
+            .len(),
+        33
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_disjoint_execution_unit_commits_all_succeed_without_retry() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(56_000))),
+            Arc::new(NoopFaultInjector),
+            Arc::new(nimbus_core::SeededIdSource::new(56_000)),
+        )
+        .expect("memory engine should create"),
+    );
+    let tenant_id = TenantId::new("prepared-execution-disjoint").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    let seed = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("seed execution unit should begin");
+    seed.insert_document(
+        tasks_table(),
+        serde_json::Map::from_iter([("title".to_string(), json!("table-seed"))]),
+    )
+    .expect("seed insert should stage");
+    tokio::task::spawn_blocking(move || seed.commit())
+        .await
+        .expect("seed task should join")
+        .expect("seed commit should succeed")
+        .expect("seed insert should establish the table identity");
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+
+    let mut units = Vec::new();
+    for index in 0..32 {
+        let unit = engine
+            .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+            .expect("execution unit should begin");
+        unit.insert_document(
+            tasks_table(),
+            serde_json::Map::from_iter([(
+                "title".to_string(),
+                json!(format!("execution-{index}")),
+            )]),
+        )
+        .expect("disjoint execution-unit insert should stage");
+        units.push(unit);
+    }
+    let commits = units
+        .into_iter()
+        .map(|unit| tokio::task::spawn_blocking(move || unit.commit()))
+        .collect::<Vec<_>>();
+    for commit in commits {
+        commit
+            .await
+            .expect("execution-unit task should join")
+            .expect("disjoint execution-unit commit should succeed")
+            .expect("document insert should produce a commit");
+    }
+
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+    assert_eq!(after.reprepare_total - before.reprepare_total, 0);
+    assert_eq!(after.prepared_payload_bytes_current, 0);
+    assert_eq!(
+        engine
+            .query_documents_async(tenant_id.clone(), query_for("tasks"))
+            .await
+            .expect("execution-unit documents should query")
+            .len(),
+        33
+    );
+}
+
+struct AssignedPendingUpdate {
+    engine: Arc<Engine>,
+    tenant_id: TenantId,
+    record: nimbus_core::TenantEventRecord,
+}
+
+impl AssignedPendingUpdate {
+    fn stage(
+        engine: &Arc<Engine>,
+        tenant_id: &TenantId,
+        document_id: &DocumentId,
+        field: &str,
+        value: serde_json::Value,
+    ) -> Self {
+        // This is the exact state between assignment/durable append and apply:
+        // registered in the pending window, durable, and not yet published.
+        let record = engine
+            .stage_assigned_pending_update_for_testing(
+                tenant_id,
+                &tasks_table(),
+                document_id,
+                field,
+                value,
+            )
+            .expect("pending fixture should stage and append durably");
+        Self {
+            engine: engine.clone(),
+            tenant_id: tenant_id.clone(),
+            record,
+        }
+    }
+
+    fn apply_and_publish(self) {
+        self.engine
+            .apply_assigned_pending_record_for_testing(&self.tenant_id, &self.record)
+            .expect("pending fixture record should apply and publish");
+    }
+
+    fn apply_without_publish(&self) {
+        self.engine
+            .apply_assigned_pending_record_without_publish_for_testing(
+                &self.tenant_id,
+                &self.record,
+            )
+            .expect("pending fixture record should apply without publishing");
+    }
+
+    fn publish(self) {
+        self.engine
+            .publish_assigned_pending_record_for_testing(&self.tenant_id, &self.record)
+            .expect("applied pending fixture record should publish");
+    }
+}
+
+async fn wait_for_prepared_payload(engine: &Arc<Engine>, tenant_id: &TenantId, description: &str) {
+    wait_for_value(
+        description,
+        Duration::from_secs(1),
+        Duration::ZERO,
+        || async {
+            engine
+                .tenant_engine_diagnostics(tenant_id)
+                .expect("diagnostics should load")
+                .commit_phases
+                .prepared_payload_bytes_current
+        },
+        |bytes| *bytes > 0,
+    )
+    .await;
+}
+
+async fn wait_for_reprepare_count(
+    engine: &Arc<Engine>,
+    tenant_id: &TenantId,
+    expected: u64,
+    description: &str,
+) {
+    wait_for_value(
+        description,
+        Duration::from_secs(1),
+        Duration::ZERO,
+        || async {
+            engine
+                .tenant_engine_diagnostics(tenant_id)
+                .expect("diagnostics should load")
+                .commit_phases
+                .reprepare_total
+        },
+        |count| *count >= expected,
+    )
+    .await;
+}
+
+async fn run_direct_pending_reprepare_race() -> (
+    EngineFixture<Engine>,
+    Arc<Engine>,
+    TenantId,
+    DocumentId,
+    u64,
+    u64,
+) {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("direct-pending-reprepare", Engine::create_tenant);
+    let document_id = engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("original"))]),
+        )
+        .expect("seed insert should succeed");
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load");
+    let pending = AssignedPendingUpdate::stage(
+        &engine,
+        &tenant_id,
+        &document_id,
+        "assigned_pending",
+        json!(1),
+    );
+
+    let mut direct = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        move || {
+            engine.update_document(
+                &tenant_id,
+                tasks_table(),
+                document_id,
+                serde_json::Map::from_iter([("direct".to_string(), json!(2))]),
+            )
+        }
+    });
+    wait_for_prepared_payload(
+        &engine,
+        &tenant_id,
+        "direct prepare should remain accounted while it waits for the pending sequence",
+    )
+    .await;
+    assert_future_stays_pending(
+        &mut direct,
+        "direct retry must remain blocked until the pending sequence applies",
+    )
+    .await;
+    pending.apply_and_publish();
+    expect_future_within(direct, "direct retry should finish after pending apply")
+        .await
+        .expect("direct task should join")
+        .expect("direct update should transparently re-prepare");
+
+    (
+        fixture,
+        engine,
+        tenant_id,
+        document_id,
+        before.mutation_journal.read_wait_count,
+        before.commit_phases.reprepare_total,
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn direct_prepared_write_detects_pending_then_waits_and_reprepares() {
+    let (_fixture, engine, tenant_id, _, waits_before, retries_before) =
+        run_direct_pending_reprepare_race().await;
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load");
+    assert!(after.mutation_journal.read_wait_count > waits_before);
+    assert_eq!(after.commit_phases.reprepare_total - retries_before, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn direct_sequential_same_doc_writes_match_overlay_semantics() {
+    let (_fixture, engine, tenant_id, document_id, _, _) =
+        run_direct_pending_reprepare_race().await;
+    let document = engine
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("directly updated document should remain visible");
+    assert_eq!(document.fields.get("assigned_pending"), Some(&json!(1)));
+    assert_eq!(document.fields.get("direct"), Some(&json!(2)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn progress_sync_cannot_leapfrog_pending_write_or_stale_window_reprepare() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("progress-pending-reprepare", Engine::create_tenant);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("background trigger candidate worker should shut down");
+    let document_id = engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("original"))]),
+        )
+        .expect("seed insert should succeed");
+    let pending = AssignedPendingUpdate::stage(
+        &engine,
+        &tenant_id,
+        &document_id,
+        "assigned_pending",
+        json!(1),
+    );
+    let pending_sequence = pending.record.sequence;
+    pending.apply_without_publish();
+
+    let mut direct = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        move || {
+            engine.update_document(
+                &tenant_id,
+                tasks_table(),
+                document_id,
+                serde_json::Map::from_iter([("direct".to_string(), json!(2))]),
+            )
+        }
+    });
+    wait_for_prepared_payload(
+        &engine,
+        &tenant_id,
+        "direct prepare should wait on the held pending sequence",
+    )
+    .await;
+
+    engine
+        .set_trigger_delivery_cursor_for_testing(
+            &tenant_id,
+            TriggerDeliveryCursor::new(pending_sequence),
+        )
+        .expect("later zero-write cursor record should synchronize progress");
+    let observed_applied = SequenceNumber(pending_sequence.0 + 1);
+    let held = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("held journal stats should load");
+    assert_eq!(held.durable_head, observed_applied);
+    assert!(
+        held.applied_head < pending_sequence,
+        "progress sync must stop the engine applied watermark before the held pending sequence"
+    );
+    assert_future_stays_pending(
+        &mut direct,
+        "direct retry must not wake from progress beyond a held pending sequence",
+    )
+    .await;
+
+    pending.publish();
+    expect_future_within(direct, "direct retry should finish after pending apply")
+        .await
+        .expect("direct task should join")
+        .expect("direct update should re-prepare from the published window image");
+    let released = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("released journal stats should load");
+    assert!(
+        released.applied_head >= observed_applied,
+        "releasing the pending barrier must expose the observed zero-write suffix"
+    );
+
+    let document = engine
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("re-prepared document should remain visible");
+    assert_eq!(document.fields.get("assigned_pending"), Some(&json!(1)));
+    assert_eq!(document.fields.get("direct"), Some(&json!(2)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn uncovered_progress_advances_applied_watermark_without_local_window_image() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("uncovered-progress", Engine::create_tenant);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("background trigger candidate worker should shut down");
+    engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("covered"))]),
+        )
+        .expect("covered seed insert should succeed");
+    let before = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("initial journal stats should load");
+    let uncovered = SequenceNumber(before.applied_head.0 + 1);
+
+    engine
+        .sync_mutation_journal_progress_for_testing(
+            &tenant_id,
+            nimbus_storage::JournalProgress {
+                durable_head: uncovered,
+                applied_head: uncovered,
+            },
+        )
+        .expect("uncovered provider-style progress should synchronize");
+
+    let after = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("updated journal stats should load");
+    assert_eq!(after.durable_head, uncovered);
+    assert_eq!(
+        after.applied_head, uncovered,
+        "an uncovered sequence with no lower pending owner must not stall the engine watermark"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn execution_unit_prepared_write_detects_pending_then_waits_and_reprepares() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("execution-pending-reprepare", Engine::create_tenant);
+    let document_id = engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("original"))]),
+        )
+        .expect("seed insert should succeed");
+    let stale_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("stale execution unit should begin");
+    stale_unit
+        .update_document(
+            tasks_table(),
+            document_id.clone(),
+            serde_json::Map::from_iter([("execution".to_string(), json!(2))]),
+        )
+        .expect("stale execution-unit update should stage");
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load");
+    let pending = AssignedPendingUpdate::stage(
+        &engine,
+        &tenant_id,
+        &document_id,
+        "assigned_pending",
+        json!(1),
+    );
+
+    let error = tokio::task::spawn_blocking(move || stale_unit.commit())
+        .await
+        .expect("stale execution-unit task should join")
+        .expect_err("assigned pending write must conflict with the stale unit");
+    let conflicting_sequence = error
+        .conflicting_sequence()
+        .expect("pending conflict should name its assigned sequence");
+    assert_eq!(conflicting_sequence, pending.record.sequence);
+
+    let mut retry = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        move || {
+            engine.record_mutation_conflict_retry(&tenant_id)?;
+            engine.wait_for_applied_sequence_blocking(&tenant_id, conflicting_sequence)?;
+            let unit =
+                engine.begin_mutation_execution_unit(tenant_id, PrincipalContext::anonymous())?;
+            unit.update_document(
+                tasks_table(),
+                document_id,
+                serde_json::Map::from_iter([("execution".to_string(), json!(2))]),
+            )?;
+            unit.commit()
+        }
+    });
+    wait_for_reprepare_count(
+        &engine,
+        &tenant_id,
+        before.commit_phases.reprepare_total + 1,
+        "execution-unit caller should record its retry before waiting for apply",
+    )
+    .await;
+    assert_future_stays_pending(
+        &mut retry,
+        "execution-unit retry must remain blocked until the pending sequence applies",
+    )
+    .await;
+    pending.apply_and_publish();
+    expect_future_within(
+        retry,
+        "execution-unit retry should finish after pending apply",
+    )
+    .await
+    .expect("execution-unit retry task should join")
+    .expect("execution-unit retry should succeed")
+    .expect("execution-unit retry should produce a commit");
+
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load");
+    assert!(after.mutation_journal.read_wait_count > before.mutation_journal.read_wait_count);
+    assert_eq!(
+        after.commit_phases.reprepare_total - before.commit_phases.reprepare_total,
+        1
+    );
+    let document = engine
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("execution-unit document should remain visible");
+    assert_eq!(document.fields.get("assigned_pending"), Some(&json!(1)));
+    assert_eq!(document.fields.get("execution"), Some(&json!(2)));
+}
+
+async fn run_same_document_prepare_race() -> (
+    EngineFixture<Engine>,
+    Arc<Engine>,
+    TenantId,
+    nimbus_core::DocumentId,
+    u64,
+    u64,
+) {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("prepared-hot-key", Engine::create_tenant);
+    let document_id = engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("original"))]),
+        )
+        .await
+        .expect("seed insert should succeed");
+    let before_diagnostics = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load");
+    let pause = engine
+        .mutation_journal_pause_handle_for_testing(&tenant_id)
+        .expect("pause handle should load");
+    pause.arm();
+
+    let first = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        async move {
+            engine
+                .update_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    document_id,
+                    serde_json::Map::from_iter([("first".to_string(), json!(1))]),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state(
+        "first same-document prepare should reach the paused drainer",
+        {
+            let pause = pause.clone();
+            move |timeout| pause.wait_until_entered(timeout)
+        },
+    )
+    .await;
+    let second = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        async move {
+            engine
+                .update_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    document_id,
+                    serde_json::Map::from_iter([("second".to_string(), json!(2))]),
+                )
+                .await
+        }
+    });
+    wait_for_mutation_admission_stats(
+        &engine,
+        &tenant_id,
+        "second same-document prepare should queue behind the paused drainer",
+        |stats| stats.queue_depth == 1,
+    )
+    .await;
+    pause.release();
+    first
+        .await
+        .expect("first task should join")
+        .expect("first update should succeed");
+    second
+        .await
+        .expect("second task should join")
+        .expect("second update should re-prepare");
+
+    (
+        fixture,
+        engine,
+        tenant_id,
+        document_id,
+        before_diagnostics.mutation_journal.read_wait_count,
+        before_diagnostics.commit_phases.reprepare_total,
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn queued_prepared_write_detects_pending_and_reprepares_inline() {
+    let (_fixture, engine, tenant_id, document_id, waits_before, retries_before) =
+        run_same_document_prepare_race().await;
+    let document = engine
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("final same-document read should succeed");
+    assert_eq!(document.fields.get("first"), Some(&json!(1)));
+    assert_eq!(document.fields.get("second"), Some(&json!(2)));
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load");
+    assert_eq!(after.mutation_journal.read_wait_count, waits_before);
+    assert_eq!(after.commit_phases.reprepare_total - retries_before, 0);
+    assert!(after.commit_phases.inline_reprepare_total > 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hot_key_direct_writes_reprepare_inline_without_caller_retry() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("direct-inline-hot-key", Engine::create_tenant);
+    let document_id = engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("seed"))]),
+        )
+        .expect("seed insert should succeed");
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+
+    let writes = (0..32)
+        .map(|index| {
+            let engine = engine.clone();
+            let tenant_id = tenant_id.clone();
+            let document_id = document_id.clone();
+            tokio::task::spawn_blocking(move || {
+                engine.update_document(
+                    &tenant_id,
+                    tasks_table(),
+                    document_id,
+                    serde_json::Map::from_iter([(format!("field_{index}"), json!(index))]),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    for write in writes {
+        write
+            .await
+            .expect("hot-key task should join")
+            .expect("hot-key write should succeed");
+    }
+    let document = engine
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("final hot-key read should succeed");
+    for index in 0..32 {
+        assert_eq!(
+            document.fields.get(&format!("field_{index}")),
+            Some(&json!(index)),
+            "inline re-prepare must retain every serialized patch"
+        );
+    }
+
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+    assert!(
+        after.inline_reprepare_total > before.inline_reprepare_total,
+        "same-document burst must exercise actor-local re-prepare"
+    );
+    assert_eq!(
+        after.reprepare_total - before.reprepare_total,
+        0,
+        "same-document blind writes must never reach caller retry"
+    );
+    assert_eq!(
+        after.window_prepare_total - before.window_prepare_total,
+        32,
+        "every hot-key caller should prepare from the published in-memory image"
+    );
+    assert_eq!(
+        after.storage_prepare_total - before.storage_prepare_total,
+        0,
+        "the direct hot path must not acquire the storage-backed prepare permit"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn out_of_window_stale_prepare_falls_back_to_caller_wait() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("direct-window-fallback", Engine::create_tenant);
+    let document_id = engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("seed"))]),
+        )
+        .expect("seed insert should succeed");
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+    let faults = engine.commit_fault_handle_for_testing();
+    faults.arm(crate::engine::commit_fault_labels::PREPARE_COMPLETE);
+    let update = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        move || {
+            engine.update_document(
+                &tenant_id,
+                tasks_table(),
+                document_id,
+                serde_json::Map::from_iter([("fallback".to_string(), json!(true))]),
+            )
+        }
+    });
+    expect_blocking_wait_reaches_state("direct prepare should pause before actor admission", {
+        let faults = faults.clone();
+        move |timeout| {
+            faults.wait_until_entered(
+                crate::engine::commit_fault_labels::PREPARE_COMPLETE,
+                timeout,
+            )
+        }
+    })
+    .await;
+    engine
+        .update_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            document_id.clone(),
+            serde_json::Map::from_iter([("racer".to_string(), json!(true))]),
+        )
+        .await
+        .expect("a racing write should make the paused prepare stale");
+    engine
+        .force_write_log_storage_fallback_for_testing(&tenant_id)
+        .expect("test should force an out-of-window validation source");
+    faults.release(crate::engine::commit_fault_labels::PREPARE_COMPLETE);
+    expect_catch_up_future_within(update, "caller fallback should re-prepare and commit")
+        .await
+        .expect("fallback task should join")
+        .expect("fallback update should succeed");
+
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+    assert_eq!(after.inline_reprepare_total, before.inline_reprepare_total);
+    assert_eq!(after.reprepare_total - before.reprepare_total, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn queued_sequential_same_doc_writes_match_overlay_semantics() {
+    let (_fixture, engine, tenant_id, document_id, _, _) = run_same_document_prepare_race().await;
+    let visible = engine
+        .query_documents_async(tenant_id, query_for("tasks"))
+        .await
+        .expect("final query should succeed");
+    let document = visible
+        .iter()
+        .find(|document| document.id == document_id)
+        .expect("updated document should remain visible");
+    assert_eq!(document.fields.get("first"), Some(&json!(1)));
+    assert_eq!(document.fields.get("second"), Some(&json!(2)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn assign_time_stamping_is_monotonic_under_concurrent_prepares() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(55_000))),
+            Arc::new(NoopFaultInjector),
+            Arc::new(nimbus_core::SeededIdSource::new(55_000)),
+        )
+        .expect("memory engine should create"),
+    );
+    let tenant_id = TenantId::new("prepared-stamps").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    run_paused_insert_burst(&engine, &tenant_id, 16).await;
+    let commits = durable_journal_commits(engine.as_ref(), &tenant_id, SequenceNumber(0));
+    assert_eq!(commits.len(), 16);
+    assert!(commits.windows(2).all(|pair| {
+        pair[0].sequence < pair[1].sequence && pair[0].timestamp.0 <= pair[1].timestamp.0
+    }));
+    assert!(
+        commits
+            .iter()
+            .all(|commit| commit.timestamp == Timestamp(55_000))
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

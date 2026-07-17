@@ -1,39 +1,38 @@
-use super::support::{expect_blocking_wait_reaches_state, expect_future_within};
+use super::support::expect_blocking_wait_reaches_state;
 use super::*;
 
 fn title(value: &str) -> serde_json::Map<String, serde_json::Value> {
     serde_json::Map::from_iter([("title".to_string(), json!(value))])
 }
 
-async fn queue_update_behind_pause(
+async fn pause_direct_update_after_prepare(
     engine: &Arc<Engine>,
     tenant_id: &TenantId,
     document_id: &DocumentId,
-    queued_value: &'static str,
+    direct_value: &'static str,
 ) -> (
-    crate::tenant::MutationJournalPauseHandle,
+    crate::engine::CommitFaultHandle,
     tokio::task::JoinHandle<nimbus_core::Result<DocumentId>>,
 ) {
-    let pause = engine
-        .mutation_journal_pause_handle_for_testing(tenant_id)
-        .expect("journal pause handle should load");
-    pause.arm();
-    let queued = tokio::spawn({
+    let faults = engine.commit_fault_handle_for_testing();
+    faults.arm(crate::engine::commit_fault_labels::PREPARE_COMPLETE);
+    let direct = tokio::task::spawn_blocking({
         let engine = Arc::clone(engine);
         let tenant_id = tenant_id.clone();
         let document_id = document_id.clone();
-        async move {
-            engine
-                .update_document_async(tenant_id, tasks_table(), document_id, title(queued_value))
-                .await
-        }
+        move || engine.update_document(&tenant_id, tasks_table(), document_id, title(direct_value))
     });
-    expect_blocking_wait_reaches_state("queued update should reach the armed pre-drain pause", {
-        let pause = pause.clone();
-        move |timeout| pause.wait_until_entered(timeout)
+    expect_blocking_wait_reaches_state("direct update should finish caller-side prepare", {
+        let faults = faults.clone();
+        move |timeout| {
+            faults.wait_until_entered(
+                crate::engine::commit_fault_labels::PREPARE_COMPLETE,
+                timeout,
+            )
+        }
     })
     .await;
-    (pause, queued)
+    (faults, direct)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -50,38 +49,19 @@ async fn shadow_conflict_total_increments_for_conflicting_queued_and_direct_muta
         .insert_document(&tenant_id, tasks_table(), title("initial"))
         .expect("initial direct insert should succeed");
 
-    let (pause, queued_update) =
-        queue_update_behind_pause(&engine, &tenant_id, &document_id, "queued-wins").await;
-    let direct_update = tokio::task::spawn_blocking({
-        let engine = engine.clone();
-        let tenant_id = tenant_id.clone();
-        let document_id = document_id.clone();
-        move || {
-            engine.update_document(
-                &tenant_id,
-                tasks_table(),
-                document_id,
-                title("direct-racer"),
-            )
-        }
-    });
-    wait_for_mutation_journal_stats(
-        &engine,
-        &tenant_id,
-        "direct update should queue behind the paused actor",
-        |stats| stats.committer_inbox_depth >= 1,
-    )
-    .await;
-    pause.release();
-
-    let queued_id = expect_future_within(
-        queued_update,
-        "shadow-conflicting queued mutation should still complete",
-    )
-    .await
-    .expect("queued mutation task should join")
-    .expect("shadow conflict observation must not reject the queued mutation");
+    let (faults, direct_update) =
+        pause_direct_update_after_prepare(&engine, &tenant_id, &document_id, "direct-racer").await;
+    let queued_id = engine
+        .update_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            document_id.clone(),
+            title("queued-wins"),
+        )
+        .await
+        .expect("shadow-conflicting queued mutation should still complete");
     assert_eq!(queued_id, document_id);
+    faults.release(crate::engine::commit_fault_labels::PREPARE_COMPLETE);
     direct_update
         .await
         .expect("direct update task should join")
@@ -121,35 +101,23 @@ async fn shadow_conflict_total_stays_zero_for_disjoint_queued_and_direct_mutatio
         .insert_document(&tenant_id, tasks_table(), title("direct-target"))
         .expect("direct target insert should succeed");
 
-    let (pause, queued_update) =
-        queue_update_behind_pause(&engine, &tenant_id, &queued_document_id, "queued-updated").await;
-    let direct_update = tokio::task::spawn_blocking({
-        let engine = engine.clone();
-        let tenant_id = tenant_id.clone();
-        move || {
-            engine.update_document(
-                &tenant_id,
-                tasks_table(),
-                direct_document_id,
-                title("direct-updated"),
-            )
-        }
-    });
-    wait_for_mutation_journal_stats(
+    let (faults, direct_update) = pause_direct_update_after_prepare(
         &engine,
         &tenant_id,
-        "disjoint direct update should queue behind the paused actor",
-        |stats| stats.committer_inbox_depth >= 1,
+        &direct_document_id,
+        "direct-updated",
     )
     .await;
-    pause.release();
-    expect_future_within(
-        queued_update,
-        "disjoint queued mutation should complete after the pause",
-    )
-    .await
-    .expect("queued mutation task should join")
-    .expect("disjoint queued mutation should succeed");
+    engine
+        .update_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            queued_document_id,
+            title("queued-updated"),
+        )
+        .await
+        .expect("disjoint queued mutation should succeed");
+    faults.release(crate::engine::commit_fault_labels::PREPARE_COMPLETE);
     direct_update
         .await
         .expect("direct update task should join")

@@ -1,6 +1,29 @@
 use super::*;
 
 impl SqliteTenantStore {
+    pub fn apply_prepared_write_batch(
+        &self,
+        record: &TenantEventRecord,
+        schedule_ops: &[ResolvedScheduleOp],
+        scheduled_execution_id: Option<&str>,
+    ) -> Result<Option<CommitEntry>> {
+        if record.writes.is_empty() {
+            return Err(Error::Internal(
+                "prepared write batch must contain at least one document write".to_string(),
+            ));
+        }
+        let committed = self.execute_write(|transaction| {
+            if !transaction.begin_scheduled_execution(scheduled_execution_id)? {
+                return Ok(false);
+            }
+            super::journal::apply_durable_record_in_conn(transaction.connection_mut()?, record)?;
+            apply_schedule_ops_in_transaction(transaction, schedule_ops)?;
+            transaction.set_prepared_record(record.clone());
+            Ok(true)
+        })?;
+        Ok(committed.value.then_some(committed.commit).flatten())
+    }
+
     pub fn insert_document_for_testing(&self, document: &Document) -> Result<()> {
         let conn = self.open_connection()?;
         let table_id = resolve_or_create_table_id_in_conn(&conn, &document.table)?;
@@ -864,6 +887,17 @@ impl SqliteWriteTransaction {
         }
     }
 
+    pub(crate) fn set_prepared_record(&mut self, record: TenantEventRecord) {
+        self.commit_writes = record.writes.clone();
+        self.tenant_events = record
+            .events
+            .iter()
+            .filter(|event| !matches!(event, TenantEventKind::DocumentWrite { .. }))
+            .cloned()
+            .collect();
+        self.prepared_record = Some(record);
+    }
+
     pub(crate) fn check_cancel(&self) -> Result<()> {
         (self.check_cancel.as_ref())()
     }
@@ -884,7 +918,16 @@ impl SqliteWriteTransaction {
                 },
             );
         }
-        let commit = if self.tenant_events.is_empty() {
+        let commit = if let Some(record) = self.prepared_record.take() {
+            crate::store::validate_prepared_record_shape(
+                &record,
+                &commit_writes,
+                &self.tenant_events,
+            )?;
+            Some(super::journal::append_prepared_commit_entry(
+                &conn, &record,
+            )?)
+        } else if self.tenant_events.is_empty() {
             None
         } else {
             Some(append_commit_entry(

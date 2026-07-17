@@ -151,6 +151,27 @@ pub(super) fn append_commit(
     })
 }
 
+pub(super) fn append_prepared_commit(
+    write_txn: &redb::WriteTransaction,
+    record: &TenantEventRecord,
+) -> Result<CommitEntry> {
+    record.validate_integrity()?;
+    let expected = next_sequence(write_txn)?;
+    if record.sequence.0 != expected {
+        return Err(Error::conflict(format!(
+            "prepared commit expected storage sequence {expected}, got {}",
+            record.sequence.0
+        )));
+    }
+    let mut log = write_txn.open_table(COMMIT_LOG).map_err(map_redb_error)?;
+    let payload = crate::commit_log::serialize_tenant_event_record(record)?;
+    log.insert(record.sequence.0, payload.as_slice())
+        .map_err(map_redb_error)?;
+    write_next_sequence(write_txn, record.sequence.0.saturating_add(1))?;
+    write_applied_sequence(write_txn, record.sequence)?;
+    Ok(record.as_commit_entry())
+}
+
 pub(super) fn append_tenant_event(
     write_txn: &redb::WriteTransaction,
     sequence: SequenceNumber,
@@ -174,7 +195,7 @@ pub(super) fn append_tenant_event(
     Ok(record)
 }
 
-fn apply_durable_record_in_write_txn(
+pub(super) fn apply_durable_record_in_write_txn(
     write_txn: &redb::WriteTransaction,
     record: &TenantEventRecord,
 ) -> Result<()> {

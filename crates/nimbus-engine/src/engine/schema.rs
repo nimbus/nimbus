@@ -260,7 +260,7 @@ fn apply_set_table_schema(
             .subscription_registry()
             .finish_policy_revision_mismatches(pending, POLICY_REVISION_CHANGED_MESSAGE);
     }
-    runtime.sync_mutation_journal_progress_in_actor(journal_progress);
+    runtime.publish_mutation_journal_progress_in_actor(journal_progress);
     Ok(())
 }
 
@@ -319,7 +319,7 @@ fn apply_delete_table_schema(
             .subscription_registry()
             .finish_policy_revision_mismatches(pending, POLICY_REVISION_CHANGED_MESSAGE);
     }
-    runtime.sync_mutation_journal_progress_in_actor(journal_progress);
+    runtime.publish_mutation_journal_progress_in_actor(journal_progress);
     Ok(())
 }
 

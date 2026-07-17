@@ -3,9 +3,10 @@ use std::ops::Bound::{Excluded, Included};
 use std::sync::{Arc, Mutex};
 
 use imbl::OrdMap;
+use nimbus_core::ResourcePathBinding;
 use nimbus_core::{
-    CommitEntry, DependencySet, Document, DocumentId, Error, Result, SequenceNumber, TableName,
-    TenantEventRecord, Timestamp, commit_intersects_dependency_set,
+    CommitEntry, DependencySet, Document, DocumentId, Error, Result, SequenceNumber, TableId,
+    TableName, TenantEventRecord, Timestamp, commit_intersects_dependency_set,
 };
 
 const DEFAULT_MIN_RETENTION_SECS: usize = 30;
@@ -125,6 +126,11 @@ impl WindowEntry {
 struct WriteLogState {
     published: OrdMap<SequenceNumber, Arc<WindowEntry>>,
     pending: OrdMap<SequenceNumber, Arc<WindowEntry>>,
+    /// O(1) lookup of the latest retained published full image for caller-side
+    /// single-document prepare. The Arc points back into `published`, so this
+    /// index does not duplicate document payloads.
+    published_documents: HashMap<(TableName, DocumentId), PublishedDocumentPointer>,
+    pending_documents: HashMap<(TableName, DocumentId), PublishedDocumentPointer>,
     accounted_bytes: usize,
     /// All sequences at or below this point are known to the runtime. Some
     /// may be zero-write records and therefore have no map entry.
@@ -139,6 +145,13 @@ struct WriteLogState {
     /// zero-write/recovered positions too, while entry publication below is
     /// still asserted strictly monotonic.
     published_through: SequenceNumber,
+    /// Highest storage-side applied watermark observed by this runtime.
+    ///
+    /// Storage transactions for later zero-write records can report a value
+    /// beyond an earlier document entry that is still pending in the engine.
+    /// This is therefore only a candidate frontier: `published_through` may
+    /// catch up to it once every lower pending image is explicitly published.
+    observed_applied_through: SequenceNumber,
     /// Highest sequence removed from the front of the retained window.
     purged_sequence: SequenceNumber,
     /// False after a persistence attempt may have committed without staging
@@ -165,6 +178,13 @@ pub(crate) struct WriteLog {
     state: Mutex<WriteLogState>,
 }
 
+#[derive(Debug, Clone)]
+struct PublishedDocumentPointer {
+    sequence: SequenceNumber,
+    entry: Arc<WindowEntry>,
+    write_index: usize,
+}
+
 impl WriteLog {
     pub(crate) fn new(
         config: WriteLogConfig,
@@ -181,11 +201,14 @@ impl WriteLog {
             state: Mutex::new(WriteLogState {
                 published: OrdMap::new(),
                 pending: OrdMap::new(),
+                published_documents: HashMap::new(),
+                pending_documents: HashMap::new(),
                 accounted_bytes: 0,
                 covered_through,
                 bootstrap_sequence: covered_through,
                 assigned_through,
                 published_through: covered_through,
+                observed_applied_through: covered_through,
                 purged_sequence: SequenceNumber(0),
                 coverage_known: true,
                 schema_epoch_history: HashMap::new(),
@@ -208,6 +231,53 @@ impl WriteLog {
             .map(|commit| Arc::new(WindowEntry::document_commit(commit, observed_at)))
             .collect::<Vec<_>>();
         self.stage_entries(entries);
+    }
+
+    /// Removes an assigned suffix after storage proves that append never
+    /// advanced. Ambiguous exits keep the suffix and mark coverage unknown.
+    pub(crate) fn discard_unpersisted_suffix(&self, first: SequenceNumber) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("write-log lock should not be poisoned");
+        let removed = state
+            .pending
+            .range(first..)
+            .map(|(sequence, entry)| (*sequence, entry.clone()))
+            .collect::<Vec<_>>();
+        for (sequence, entry) in removed {
+            state.pending.remove(&sequence);
+            state.accounted_bytes = state.accounted_bytes.saturating_sub(entry.accounted_bytes);
+            if let WindowChange::WholeTables(tables) = &entry.change {
+                for table in tables.iter() {
+                    if let Some(history) = state.schema_epoch_history.get_mut(table) {
+                        history.remove(&sequence);
+                    }
+                }
+            }
+        }
+        state.pending_documents.clear();
+        let retained_pending = state.pending.values().cloned().collect::<Vec<_>>();
+        for entry in retained_pending {
+            let WindowChange::DocumentCommit(commit) = &entry.change else {
+                continue;
+            };
+            for (write_index, write) in commit.writes.iter().enumerate() {
+                state.pending_documents.insert(
+                    (write.table.clone(), write.doc_id.clone()),
+                    PublishedDocumentPointer {
+                        sequence: entry.sequence,
+                        entry: entry.clone(),
+                        write_index,
+                    },
+                );
+            }
+        }
+        state.assigned_through = state
+            .pending
+            .get_max()
+            .map_or(state.published_through, |(sequence, _)| *sequence);
+        state.covered_through = state.covered_through.min(state.assigned_through);
     }
 
     /// Stages a zero-write schema/table-lifecycle record as a dedicated
@@ -261,6 +331,18 @@ impl WriteLog {
                         .entry(table.clone())
                         .or_default()
                         .insert(sequence, sequence);
+                }
+            }
+            if let WindowChange::DocumentCommit(commit) = &entry.change {
+                for (write_index, write) in commit.writes.iter().enumerate() {
+                    state.pending_documents.insert(
+                        (write.table.clone(), write.doc_id.clone()),
+                        PublishedDocumentPointer {
+                            sequence,
+                            entry: entry.clone(),
+                            write_index,
+                        },
+                    );
                 }
             }
             state.accounted_bytes = state.accounted_bytes.saturating_add(entry.accounted_bytes);
@@ -325,6 +407,7 @@ impl WriteLog {
         state.covered_through = applied_through;
         state.assigned_through = state.assigned_through.max(assigned_through);
         state.published_through = state.published_through.max(applied_through);
+        state.observed_applied_through = state.observed_applied_through.max(applied_through);
     }
 
     /// Observes sequence assignment without claiming conflict-image coverage.
@@ -352,7 +435,13 @@ impl WriteLog {
             .coverage_known = false;
     }
 
-    /// Records a proven zero-write sequence span without allocating entries.
+    /// Records a proven zero-write assignment span without allocating entries.
+    ///
+    /// This must not advance `published_through`: an earlier document record
+    /// can still be staged in `pending` while a later zero-write record becomes
+    /// durable and applied in the same storage catch-up. Publication remains
+    /// owned by `publish_pending_through`, which publishes those pending images
+    /// before crossing the applied zero-write suffix.
     pub(crate) fn advance_known_zero_write_through(&self, sequence: SequenceNumber) {
         let mut state = self
             .state
@@ -369,32 +458,42 @@ impl WriteLog {
             state.covered_through = sequence;
         }
         state.assigned_through = sequence;
-        state.published_through = state.published_through.max(sequence);
     }
 
-    /// Publishes pending entries through `applied_head`, then applies retention.
+    /// Publishes entries that this caller has applied through `applied_head`.
+    ///
+    /// The returned sequence is the contiguous published frontier. It can be
+    /// higher than `applied_head` when an earlier progress sync observed a
+    /// later zero-write record: once this call removes the lower pending
+    /// barrier, that already-observed suffix becomes publishable too.
     pub(crate) fn publish_pending_through(
         &self,
         applied_head: SequenceNumber,
         now: Timestamp,
         reader_frontier: SequenceNumber,
-    ) {
+    ) -> SequenceNumber {
         let mut state = self
             .state
             .lock()
             .expect("write-log lock should not be poisoned");
+        state.observed_applied_through = state.observed_applied_through.max(applied_head);
         let publish_sequences = state
             .pending
             .range((Included(SequenceNumber(0)), Included(applied_head)))
             .map(|(sequence, _)| *sequence)
             .collect::<Vec<_>>();
+        let mut previous_published_entry = state
+            .published
+            .get_max()
+            .map_or(state.published_through, |(sequence, _)| *sequence);
         for sequence in publish_sequences {
             assert!(
-                sequence > state.published_through,
+                sequence > previous_published_entry,
                 "write-log publish order must follow assignment order: {} after {}",
                 sequence,
-                state.published_through
+                previous_published_entry
             );
+            previous_published_entry = sequence;
             let entry = state
                 .pending
                 .remove(&sequence)
@@ -405,12 +504,89 @@ impl WriteLog {
                         .published_schema_epochs
                         .insert(table.clone(), sequence);
                 }
+                state
+                    .published_documents
+                    .retain(|(table, _), _| !tables.contains(table));
+            } else if let WindowChange::DocumentCommit(commit) = &entry.change {
+                let indexed = commit
+                    .writes
+                    .iter()
+                    .enumerate()
+                    .map(|(write_index, write)| {
+                        (
+                            (write.table.clone(), write.doc_id.clone()),
+                            PublishedDocumentPointer {
+                                sequence,
+                                entry: entry.clone(),
+                                write_index,
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                state.published_documents.extend(indexed);
+                for write in &commit.writes {
+                    let key = (write.table.clone(), write.doc_id.clone());
+                    if state
+                        .pending_documents
+                        .get(&key)
+                        .is_some_and(|pointer| pointer.sequence == sequence)
+                    {
+                        state.pending_documents.remove(&key);
+                    }
+                }
             }
             state.published.insert(sequence, entry);
-            state.published_through = sequence;
         }
-        state.published_through = state.published_through.max(applied_head);
-        self.trim_locked(&mut state, now, reader_frontier.min(applied_head));
+        Self::advance_published_frontier_locked(&mut state);
+        let published_through = state.published_through;
+        self.trim_locked(&mut state, now, reader_frontier.min(published_through));
+        published_through
+    }
+
+    /// Records a storage-side applied observation without publishing entries
+    /// that remain owned by another apply path.
+    ///
+    /// A later zero-write transaction can advance the storage watermark past
+    /// a lower pending document entry. The pending entry is a hard barrier:
+    /// callers waiting to re-prepare must not observe the later sequence until
+    /// its owning apply path explicitly publishes the lower image.
+    pub(crate) fn observe_applied_through(
+        &self,
+        applied_head: SequenceNumber,
+        now: Timestamp,
+        reader_frontier: SequenceNumber,
+    ) -> SequenceNumber {
+        let mut state = self
+            .state
+            .lock()
+            .expect("write-log lock should not be poisoned");
+        state.observed_applied_through = state.observed_applied_through.max(applied_head);
+        Self::advance_published_frontier_locked(&mut state);
+        let published_through = state.published_through;
+        self.trim_locked(&mut state, now, reader_frontier.min(published_through));
+        published_through
+    }
+
+    fn advance_published_frontier_locked(state: &mut WriteLogState) {
+        // Full-image coverage and journal progress are independent. Shared
+        // providers can apply records this runtime never staged; those spans
+        // force window validation to storage but must not stall applied-head
+        // waiters. Only an entry still owned by a local apply path is a hard
+        // publication barrier.
+        let mut frontier = state.observed_applied_through;
+        if let Some((first_pending, _)) = state.pending.get_min()
+            && *first_pending <= frontier
+        {
+            frontier = SequenceNumber(first_pending.0.saturating_sub(1));
+        }
+        state.published_through = state.published_through.max(frontier);
+    }
+
+    pub(crate) fn published_through(&self) -> SequenceNumber {
+        self.state
+            .lock()
+            .expect("write-log lock should not be poisoned")
+            .published_through
     }
 
     pub(crate) fn validation_source(
@@ -448,6 +624,159 @@ impl WriteLog {
         }))
     }
 
+    pub(crate) fn assigned_through(&self) -> SequenceNumber {
+        self.state
+            .lock()
+            .expect("write-log lock should not be poisoned")
+            .assigned_through
+    }
+
+    /// True when `head` names a fully published in-memory prefix. Newer
+    /// published or assigned-pending suffixes are intentionally allowed:
+    /// caller prepare pins the applied prefix and actor validation folds them
+    /// in.
+    pub(crate) fn current_prepare_view_available(&self, head: SequenceNumber) -> bool {
+        let state = self
+            .state
+            .lock()
+            .expect("write-log lock should not be poisoned");
+        state.coverage_known && head >= state.bootstrap_sequence && head <= state.published_through
+    }
+
+    /// Returns the latest retained published image for a document at the
+    /// current applied head. `None` is deliberately ambiguous (not retained or
+    /// not present), so update/delete callers fall back to storage.
+    pub(crate) fn current_document_state(
+        &self,
+        head: SequenceNumber,
+        table: &TableName,
+        document_id: &DocumentId,
+    ) -> Option<WindowDocumentState> {
+        let state = self
+            .state
+            .lock()
+            .expect("write-log lock should not be poisoned");
+        if !state.coverage_known
+            || head < state.bootstrap_sequence
+            || head > state.published_through
+        {
+            return None;
+        }
+        let current_pointer = state
+            .published_documents
+            .get(&(table.clone(), document_id.clone()));
+        let historical_pointer;
+        let pointer = if let Some(pointer) =
+            current_pointer.filter(|pointer| pointer.sequence <= head)
+        {
+            pointer
+        } else {
+            historical_pointer = state
+                .published
+                .range((Included(SequenceNumber(0)), Included(head)))
+                .rev()
+                .find_map(|(sequence, entry)| {
+                    let WindowChange::DocumentCommit(commit) = &entry.change else {
+                        return None;
+                    };
+                    commit
+                        .writes
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .find(|(_, write)| write.table == *table && write.doc_id == *document_id)
+                        .map(|(write_index, _)| PublishedDocumentPointer {
+                            sequence: *sequence,
+                            entry: entry.clone(),
+                            write_index,
+                        })
+                })?;
+            &historical_pointer
+        };
+        let WindowChange::DocumentCommit(commit) = &pointer.entry.change else {
+            return None;
+        };
+        let write = commit.writes.get(pointer.write_index)?;
+        Some(WindowDocumentState {
+            sequence: pointer.sequence,
+            table_id: write.table_id.clone(),
+            document: write.current.clone(),
+            resource_path_binding: write.resource_path_binding.clone(),
+        })
+    }
+
+    /// Actor-local O(1) validation and latest-image lookup for one document.
+    /// The result covers both published and assigned-pending full images.
+    pub(crate) fn single_document_change_since(
+        &self,
+        snapshot_sequence: SequenceNumber,
+        table: &TableName,
+        document_id: &DocumentId,
+    ) -> Result<Option<SingleDocumentWindowChange>> {
+        let state = self
+            .state
+            .lock()
+            .expect("write-log lock should not be poisoned");
+        if snapshot_sequence < state.purged_sequence {
+            return Err(Error::out_of_retention(
+                format!(
+                    "transaction snapshot {} is older than the in-memory write-log retention horizon {}; retry from a fresh snapshot",
+                    snapshot_sequence, state.purged_sequence
+                ),
+                Some(state.purged_sequence),
+            ));
+        }
+        if !state.coverage_known
+            || snapshot_sequence < state.bootstrap_sequence
+            || snapshot_sequence > state.covered_through
+        {
+            return Ok(None);
+        }
+        if let Some(sequence) = state
+            .schema_epoch_history
+            .get(table)
+            .and_then(|history| {
+                history
+                    .range((
+                        Excluded(snapshot_sequence),
+                        Included(state.assigned_through),
+                    ))
+                    .next()
+            })
+            .map(|(sequence, _)| *sequence)
+        {
+            return Ok(Some(SingleDocumentWindowChange::WholeTable { sequence }));
+        }
+        let key = (table.clone(), document_id.clone());
+        let pointer = state
+            .pending_documents
+            .get(&key)
+            .filter(|pointer| pointer.sequence > snapshot_sequence)
+            .or_else(|| {
+                state
+                    .published_documents
+                    .get(&key)
+                    .filter(|pointer| pointer.sequence > snapshot_sequence)
+            });
+        let Some(pointer) = pointer else {
+            return Ok(Some(SingleDocumentWindowChange::Unchanged));
+        };
+        let WindowChange::DocumentCommit(commit) = &pointer.entry.change else {
+            return Ok(None);
+        };
+        let Some(write) = commit.writes.get(pointer.write_index) else {
+            return Ok(None);
+        };
+        Ok(Some(SingleDocumentWindowChange::Changed {
+            latest: Box::new(WindowDocumentState {
+                sequence: pointer.sequence,
+                table_id: write.table_id.clone(),
+                document: write.current.clone(),
+                resource_path_binding: write.resource_path_binding.clone(),
+            }),
+        }))
+    }
+
     fn trim_locked(
         &self,
         state: &mut WriteLogState,
@@ -459,6 +788,9 @@ impl WriteLog {
             else {
                 break;
             };
+            if sequence > state.published_through {
+                break;
+            }
             let age_ms = now.0.saturating_sub(entry.observed_at.0);
             if age_ms < self.config.min_retention_ms {
                 break;
@@ -477,6 +809,18 @@ impl WriteLog {
             state.accounted_bytes = state
                 .accounted_bytes
                 .saturating_sub(removed.accounted_bytes);
+            if let WindowChange::DocumentCommit(commit) = &removed.change {
+                for write in &commit.writes {
+                    let key = (write.table.clone(), write.doc_id.clone());
+                    if state
+                        .published_documents
+                        .get(&key)
+                        .is_some_and(|pointer| pointer.sequence == sequence)
+                    {
+                        state.published_documents.remove(&key);
+                    }
+                }
+            }
             state.purged_sequence = state.purged_sequence.max(sequence);
         }
     }
@@ -506,6 +850,20 @@ pub(crate) struct WriteLogView {
     pending: OrdMap<SequenceNumber, Arc<WindowEntry>>,
     snapshot_sequence: SequenceNumber,
     head: SequenceNumber,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct WindowDocumentState {
+    pub(crate) sequence: SequenceNumber,
+    pub(crate) table_id: TableId,
+    pub(crate) document: Option<Document>,
+    pub(crate) resource_path_binding: Option<ResourcePathBinding>,
+}
+
+pub(crate) enum SingleDocumentWindowChange {
+    Unchanged,
+    Changed { latest: Box<WindowDocumentState> },
+    WholeTable { sequence: SequenceNumber },
 }
 
 impl WriteLogView {
@@ -577,9 +935,12 @@ mod tests {
     use super::*;
 
     fn commit(sequence: u64, body_bytes: usize) -> CommitEntry {
+        commit_for_id(sequence, &format!("doc-{sequence}"), body_bytes)
+    }
+
+    fn commit_for_id(sequence: u64, id_key: &str, body_bytes: usize) -> CommitEntry {
         let table = TableName::new("messages").expect("table name should be valid");
-        let id =
-            DocumentId::from_key(format!("doc-{sequence}")).expect("document id should be valid");
+        let id = DocumentId::from_key(id_key).expect("document id should be valid");
         let document = Document {
             id: id.clone(),
             table: table.clone(),
@@ -626,6 +987,33 @@ mod tests {
     }
 
     #[test]
+    fn indexed_document_images_distinguish_published_and_pending_heads() {
+        let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
+        let table = TableName::new("messages").expect("table name should be valid");
+        let id = DocumentId::from_key("shared").expect("document id should be valid");
+        log.stage_pending([commit_for_id(1, "shared", 8)], Timestamp(1_000));
+        log.publish_pending_through(SequenceNumber(1), Timestamp(1_000), SequenceNumber(0));
+        log.stage_pending([commit_for_id(2, "shared", 16)], Timestamp(1_001));
+
+        assert!(log.current_prepare_view_available(SequenceNumber(1)));
+        let published = log
+            .current_document_state(SequenceNumber(1), &table, &id)
+            .expect("published image should remain available behind a pending suffix");
+        assert_eq!(published.sequence, SequenceNumber(1));
+        assert!(matches!(
+            log.single_document_change_since(SequenceNumber(1), &table, &id),
+            Ok(Some(SingleDocumentWindowChange::Changed { latest }))
+                if latest.sequence == SequenceNumber(2)
+        ));
+
+        log.discard_unpersisted_suffix(SequenceNumber(2));
+        assert!(matches!(
+            log.single_document_change_since(SequenceNumber(1), &table, &id),
+            Ok(Some(SingleDocumentWindowChange::Unchanged))
+        ));
+    }
+
+    #[test]
     fn zero_write_sequence_advances_coverage_without_allocating_an_entry() {
         let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
         log.advance_known_zero_write_through(SequenceNumber(1));
@@ -636,6 +1024,52 @@ mod tests {
         assert!(matches!(
             log.validation_source(SequenceNumber(0), SequenceNumber(1)),
             Ok(ValidationSource::InMemory(_))
+        ));
+    }
+
+    #[test]
+    fn later_zero_write_assignment_cannot_cross_an_earlier_pending_publish() {
+        let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
+        log.stage_pending([commit(1, 8)], Timestamp(1_000));
+
+        // A later trigger-delivery cursor can become durable/applied while
+        // storage catch-up also applies this already-staged document record.
+        // Recording that zero-write assignment must leave publication to the
+        // common applied-prefix path so sequence 1 is published before 2.
+        log.advance_known_zero_write_through(SequenceNumber(2));
+        log.publish_pending_through(SequenceNumber(2), Timestamp(1_001), SequenceNumber(0));
+
+        let inspection = log.inspection();
+        assert_eq!(inspection.published, vec![SequenceNumber(1)]);
+        assert!(inspection.pending.is_empty());
+        assert_eq!(log.assigned_through(), SequenceNumber(2));
+        assert!(log.current_prepare_view_available(SequenceNumber(2)));
+    }
+
+    #[test]
+    fn observed_applied_head_stops_at_pending_barrier_until_owner_publishes() {
+        let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
+        log.stage_pending([commit(1, 8)], Timestamp(1_000));
+        log.observe_assigned_through_without_coverage(SequenceNumber(2));
+
+        let held_frontier =
+            log.observe_applied_through(SequenceNumber(2), Timestamp(1_001), SequenceNumber(0));
+        assert_eq!(held_frontier, SequenceNumber(0));
+        assert_eq!(log.published_through(), SequenceNumber(0));
+        let held = log.inspection();
+        assert!(held.published.is_empty());
+        assert_eq!(held.pending, vec![SequenceNumber(1)]);
+
+        let released_frontier =
+            log.publish_pending_through(SequenceNumber(1), Timestamp(1_002), SequenceNumber(0));
+        assert_eq!(released_frontier, SequenceNumber(2));
+        assert_eq!(log.published_through(), SequenceNumber(2));
+        let released = log.inspection();
+        assert_eq!(released.published, vec![SequenceNumber(1)]);
+        assert!(released.pending.is_empty());
+        assert!(matches!(
+            log.validation_source(SequenceNumber(1), SequenceNumber(2)),
+            Ok(ValidationSource::StorageFallback)
         ));
     }
 

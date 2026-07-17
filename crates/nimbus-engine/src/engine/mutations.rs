@@ -2,10 +2,12 @@ mod authorization;
 pub(in crate::engine) mod caps;
 mod commit_processing;
 mod direct;
+mod inline_reprepare;
 mod journal;
 pub(in crate::engine) mod phase_metrics;
-pub(in crate::engine) mod prepared;
+pub(crate) mod prepared;
 mod shadow_conflicts;
+mod window_prepare;
 pub(crate) mod write_log;
 
 pub(crate) use authorization::enforce_mutation_authorization;

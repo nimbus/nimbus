@@ -10,6 +10,32 @@ use super::write_schema_events::{
 use super::*;
 
 impl MySqlTenantStore {
+    pub fn apply_prepared_write_batch(
+        &self,
+        record: &TenantEventRecord,
+        schedule_ops: &[ResolvedScheduleOp],
+        scheduled_execution_id: Option<&str>,
+    ) -> Result<Option<CommitEntry>> {
+        if record.writes.is_empty() {
+            return Err(Error::Internal(
+                "prepared write batch must contain at least one document write".to_string(),
+            ));
+        }
+        let record = record.clone();
+        let schedule_ops = schedule_ops.to_vec();
+        let scheduled_execution_id = scheduled_execution_id.map(str::to_string);
+        let committed = self.execute_write(move |transaction| {
+            if !transaction.begin_scheduled_execution(scheduled_execution_id.as_deref())? {
+                return Ok(false);
+            }
+            transaction.apply_durable_record(&record)?;
+            apply_schedule_ops_in_transaction(transaction, &schedule_ops)?;
+            transaction.set_prepared_record(record);
+            Ok(true)
+        })?;
+        Ok(committed.value.then_some(committed.commit).flatten())
+    }
+
     pub fn retention_gc_watermarks(
         &self,
         config: crate::RetentionGcConfig,
@@ -594,6 +620,7 @@ impl MySqlWriteTransaction {
             conn: Some(conn),
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
+            prepared_record: None,
             trigger_write_origin: None,
             commit_timestamp: None,
             schema_cache_changed: false,
@@ -1077,6 +1104,32 @@ impl MySqlWriteTransaction {
         crate::sql::write_core::sql_apply_resolved_write(self, write)
     }
 
+    pub(crate) fn set_prepared_record(&mut self, record: TenantEventRecord) {
+        self.commit_writes = record.writes.clone();
+        self.tenant_events = record
+            .events
+            .iter()
+            .filter(|event| !matches!(event, TenantEventKind::DocumentWrite { .. }))
+            .cloned()
+            .collect();
+        self.prepared_record = Some(record);
+    }
+
+    fn append_prepared_record(&mut self, record: &TenantEventRecord) -> Result<CommitEntry> {
+        record.validate_integrity()?;
+        let expected = self.latest_sequence()?.0.saturating_add(1);
+        if record.sequence.0 != expected {
+            return Err(Error::conflict(format!(
+                "prepared commit expected storage sequence {expected}, got {}",
+                record.sequence.0
+            )));
+        }
+        self.append_durable_records_batch(std::slice::from_ref(record))?;
+        let sequence = record.sequence;
+        self.write_applied_sequence(sequence)?;
+        Ok(record.as_commit_entry())
+    }
+
     pub fn commit(self) -> Result<Option<CommitEntry>> {
         crate::sql::write_core::sql_commit(self)
     }
@@ -1420,6 +1473,10 @@ impl crate::sql::write_core::SqlWriteBackend for MySqlWriteTransaction {
         std::mem::take(&mut self.tenant_events)
     }
 
+    fn take_prepared_record(&mut self) -> Option<TenantEventRecord> {
+        self.prepared_record.take()
+    }
+
     fn applied_sequence(&mut self) -> Result<SequenceNumber> {
         MySqlWriteTransaction::applied_sequence(self)
     }
@@ -1438,6 +1495,10 @@ impl crate::sql::write_core::SqlWriteBackend for MySqlWriteTransaction {
         events: Vec<TenantEventKind>,
     ) -> Result<CommitEntry> {
         MySqlWriteTransaction::append_commit_entry(self, writes, events)
+    }
+
+    fn append_prepared_record(&mut self, record: &TenantEventRecord) -> Result<CommitEntry> {
+        MySqlWriteTransaction::append_prepared_record(self, record)
     }
 
     fn enqueue_notification(&mut self) -> Result<()> {

@@ -7,6 +7,8 @@ pub(crate) struct PhaseTotals {
     pub(crate) apply_nanos: u64,
     pub(crate) publish_nanos: u64,
     pub(crate) durable_append_nanos: u64,
+    pub(crate) window_prepare_total: u64,
+    pub(crate) storage_prepare_total: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -17,6 +19,8 @@ pub(crate) struct PhaseSplit {
     conflict_check_nanos: u64,
     apply_nanos: u64,
     fsync_append_nanos: u64,
+    window_prepare_total: u64,
+    storage_prepare_total: u64,
 }
 
 impl PhaseSplit {
@@ -39,6 +43,12 @@ impl PhaseSplit {
             fsync_append_nanos: after
                 .durable_append_nanos
                 .saturating_sub(before.durable_append_nanos),
+            window_prepare_total: after
+                .window_prepare_total
+                .saturating_sub(before.window_prepare_total),
+            storage_prepare_total: after
+                .storage_prepare_total
+                .saturating_sub(before.storage_prepare_total),
         }
     }
 
@@ -74,16 +84,18 @@ pub(crate) fn render_phase_split_section(rows: &[(usize, PhaseSplit)]) -> String
 
     let mut out = String::from("\n## Under-gate phase split\n\n");
     out.push_str(
-        "Shares use measured-round committer wall time: `plan-CPU = prepare` (validation, authorization, serialization); `conflict-check` (path C real OCC scan; paths A/B bounded shadow observation) is reported separately so the true plan-CPU baseline is not conflated with observation cost; `apply = apply + publish` (storage apply plus engine visibility bookkeeping); `fsync/append = durable-append`. Average effective batch is `journal_batch_size_sum / journal_batch_count`; each journal batch performs one durable append.\n\n",
+        "Shares use measured-round committer wall time: `plan-CPU = prepare` (validation, authorization, serialization); `conflict-check` includes assign-time in-memory window validation and path C's sampled pre-append shadow observation, while path A's sampled shadow observation runs outside its serial closure; `apply = apply + publish` (storage apply plus engine visibility bookkeeping); `fsync/append = durable-append`. Average effective batch is `journal_batch_size_sum / journal_batch_count`; each journal batch performs one durable append.\n\n",
     );
     out.push_str(
-        "| N | avg effective batch | plan-CPU | conflict-check | apply | fsync/append | measured under-gate |\n",
+        "| N | avg effective batch | window/storage prepare | plan-CPU | conflict-check | apply | fsync/append | measured under-gate |\n",
     );
-    out.push_str("|---|---|---|---|---|---|---|\n");
+    out.push_str("|---|---|---|---|---|---|---|---|\n");
     for (n, split) in rows {
         out.push_str(&format!(
-            "| {n} | {:.2} | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.3} ms |\n",
+            "| {n} | {:.2} | {}/{} | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.3} ms |\n",
             split.average_batch_size(),
+            split.window_prepare_total,
+            split.storage_prepare_total,
             split.share(split.plan_cpu_nanos),
             split.share(split.conflict_check_nanos),
             split.share(split.apply_nanos),

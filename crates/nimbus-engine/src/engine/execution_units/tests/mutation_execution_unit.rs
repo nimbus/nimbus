@@ -589,7 +589,7 @@ fn missing_table_phantom_conflicts_when_table_created_concurrently() {
                 .find(|record| record.sequence == progress.durable_head)
                 .expect("assigned lifecycle record should exist");
             runtime_for_commit.stage_zero_write_record_in_write_log(&record);
-            runtime_for_commit.sync_mutation_journal_progress_in_actor(progress);
+            runtime_for_commit.publish_mutation_journal_progress_in_actor(progress);
             Ok(())
         })
         .expect("lifecycle record should commit through actor");

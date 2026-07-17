@@ -183,6 +183,7 @@ impl SqliteTenantStore {
             fault_injector: self.fault_injector.clone(),
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
+            prepared_record: None,
             trigger_write_origin: None,
             commit_timestamp: None,
             check_cancel: Box::new(check_cancel),

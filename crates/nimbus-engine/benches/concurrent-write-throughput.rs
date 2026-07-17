@@ -44,7 +44,7 @@
 //! implied fsync-amortization factor in the meantime.
 //!
 //! Env overrides (all optional):
-//!   NIMBUS_CWB_WORKLOAD=crud|insert           unit = insert+update+delete (default) or insert
+//!   NIMBUS_CWB_WORKLOAD=crud|insert|hotkey    unit = CRUD (default), insert, or one shared-doc update
 //!   NIMBUS_CWB_LADDER=1,2,4,8,...              concurrency ladder (N=1 always forced in)
 //!   NIMBUS_CWB_OPS_PER_WORKER=300              base work units/worker per round (300 = baseline docs)
 //!   NIMBUS_CWB_MAX_MUTATIONS_PER_ROUND=24000   per-round mutation cap (bounds high-N runtime)
@@ -59,7 +59,7 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use nimbus_core::{TableName, TenantId};
+use nimbus_core::{DocumentId, Retryability, TableName, TenantId};
 use nimbus_engine::{CommitPhaseMetricsSnapshot, EmbeddedProviderKind, Engine};
 use serde_json::json;
 use tokio::task::JoinSet;
@@ -135,6 +135,9 @@ enum Workload {
     /// worker — the same shape and fields as the sequential CRUD baseline, so N=1
     /// cross-checks against the published ~2,661 mutations/s figure.
     Crud,
+    /// One durable update per unit, with every worker contending on the same
+    /// document. This isolates the stale-prepare wait/retry path.
+    HotKey,
 }
 
 impl Workload {
@@ -142,12 +145,14 @@ impl Workload {
         match self {
             Workload::Insert => 1,
             Workload::Crud => 3,
+            Workload::HotKey => 1,
         }
     }
     fn label(self) -> &'static str {
         match self {
             Workload::Insert => "insert",
             Workload::Crud => "crud (insert+update+delete)",
+            Workload::HotKey => "hotkey (one shared-document update)",
         }
     }
 }
@@ -159,6 +164,7 @@ fn workload() -> Workload {
         .as_str()
     {
         "insert" => Workload::Insert,
+        "hotkey" => Workload::HotKey,
         _ => Workload::Crud,
     }
 }
@@ -176,6 +182,37 @@ fn insert_fields(unit: usize) -> serde_json::Map<String, serde_json::Value> {
 fn patch_fields(unit: usize) -> serde_json::Map<String, serde_json::Value> {
     // Baseline's update patch: {rank: rank + CRUD_DOCUMENTS} (CRUD_DOCUMENTS = 300).
     serde_json::Map::from_iter([("rank".to_string(), json!(unit + 300))])
+}
+
+async fn update_hot_key_until_committed(
+    engine: &Arc<Engine>,
+    tenant: &TenantId,
+    table: &TableName,
+    document_id: &DocumentId,
+    unit: usize,
+) {
+    loop {
+        let result = tokio::task::spawn_blocking({
+            let engine = engine.clone();
+            let tenant = tenant.clone();
+            let table = table.clone();
+            let document_id = document_id.clone();
+            move || engine.update_document(&tenant, table, document_id, patch_fields(unit))
+        })
+        .await
+        .expect("hot-key blocking update task should join");
+        match result {
+            Ok(_) => return,
+            Err(error) if error.retryability() == Retryability::Retryable => {
+                // The regular API deliberately caps one call's OCC attempts.
+                // Hot-key saturation can exceed that cap while still making
+                // progress, so the workload's client retries and charges the
+                // entire wait/reprepare interval to this mutation's latency.
+                tokio::task::yield_now().await;
+            }
+            Err(error) => panic!("hot-key update_document_async should succeed: {error}"),
+        }
+    }
 }
 
 /// One measured concurrency rung.
@@ -204,7 +241,8 @@ struct RungStats {
 /// work units against a single tenant/table, recording EVERY durable mutation's
 /// latency. For `Crud` the unit expands PHASED per worker — bulk-insert all
 /// units, then bulk-update all, then bulk-delete all (3 mutations/unit) —
-/// matching the sequential CRUD baseline; for `Insert` a unit is one insert.
+/// matching the sequential CRUD baseline; for `Insert` a unit is one insert;
+/// for `HotKey` every unit updates the same seeded document.
 /// Returns (total_mutations, wall_elapsed, per-mutation latencies in ns).
 async fn run_round(
     engine: &Arc<Engine>,
@@ -213,6 +251,7 @@ async fn run_round(
     n: usize,
     units_per_worker: usize,
     workload: Workload,
+    hot_key_document_id: Option<&DocumentId>,
 ) -> (usize, Duration, Vec<u64>) {
     let started = Instant::now();
     let mut set: JoinSet<Vec<u64>> = JoinSet::new();
@@ -220,8 +259,20 @@ async fn run_round(
         let engine = engine.clone();
         let tenant = tenant.clone();
         let table = table.clone();
+        let hot_key_document_id = hot_key_document_id.cloned();
         set.spawn(async move {
             let mut lat = Vec::with_capacity(units_per_worker * workload.mutations_per_unit());
+            if workload == Workload::HotKey {
+                let document_id = hot_key_document_id
+                    .expect("hot-key workload should receive its shared document id");
+                for unit in 0..units_per_worker {
+                    let t = Instant::now();
+                    update_hot_key_until_committed(&engine, &tenant, &table, &document_id, unit)
+                        .await;
+                    lat.push(t.elapsed().as_nanos() as u64);
+                }
+                return lat;
+            }
             // Phase 1 — bulk insert, collecting ids. This PHASED shape (all
             // inserts, then all updates, then all deletes) mirrors the sequential
             // CRUD baseline exactly, so the update/delete phases operate over a
@@ -287,10 +338,19 @@ async fn measure_rung(
     measure_rounds: usize,
     workload: Workload,
     split_phases: bool,
+    hot_key_document_id: Option<&DocumentId>,
 ) -> Rung {
     for _ in 0..warmup_rounds {
-        let (ops, elapsed, lat) =
-            run_round(engine, tenant, table, n, units_per_worker, workload).await;
+        let (ops, elapsed, lat) = run_round(
+            engine,
+            tenant,
+            table,
+            n,
+            units_per_worker,
+            workload,
+            hot_key_document_id,
+        )
+        .await;
         black_box((ops, elapsed, lat.len()));
     }
     let phase_before = split_phases.then(|| {
@@ -302,8 +362,16 @@ async fn measure_rung(
     let mut throughputs = Vec::with_capacity(measure_rounds);
     let mut latencies_ns = Vec::new();
     for _ in 0..measure_rounds {
-        let (ops, elapsed, mut lat) =
-            run_round(engine, tenant, table, n, units_per_worker, workload).await;
+        let (ops, elapsed, mut lat) = run_round(
+            engine,
+            tenant,
+            table,
+            n,
+            units_per_worker,
+            workload,
+            hot_key_document_id,
+        )
+        .await;
         let secs = elapsed.as_secs_f64();
         throughputs.push(if secs > 0.0 { ops as f64 / secs } else { 0.0 });
         latencies_ns.append(&mut lat);
@@ -513,6 +581,8 @@ fn phase_totals(snapshot: CommitPhaseMetricsSnapshot) -> PhaseTotals {
         apply_nanos: snapshot.apply_nanos,
         publish_nanos: snapshot.publish_nanos,
         durable_append_nanos: snapshot.durable_append_nanos,
+        window_prepare_total: snapshot.window_prepare_total,
+        storage_prepare_total: snapshot.storage_prepare_total,
     }
 }
 
@@ -556,8 +626,28 @@ async fn run() -> String {
     // Pre-age the store so we are not measuring the empty-file fast path.
     if seed_docs > 0 {
         eprintln!("[cwb] seeding {seed_docs} documents…");
-        run_round(&engine, &tenant, &table, 1, seed_docs, Workload::Insert).await;
+        run_round(
+            &engine,
+            &tenant,
+            &table,
+            1,
+            seed_docs,
+            Workload::Insert,
+            None,
+        )
+        .await;
     }
+
+    let hot_key_document_id = if workload == Workload::HotKey {
+        Some(
+            engine
+                .insert_document_async(tenant.clone(), table.clone(), insert_fields(0))
+                .await
+                .expect("hot-key seed insert should succeed"),
+        )
+    } else {
+        None
+    };
 
     let mut_per_unit = workload.mutations_per_unit();
     let mut stats = Vec::with_capacity(ladder.len());
@@ -577,6 +667,7 @@ async fn run() -> String {
             measure_rounds,
             workload,
             split_phases,
+            hot_key_document_id.as_ref(),
         )
         .await;
         stats.push(summarize(&rung));

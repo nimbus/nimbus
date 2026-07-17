@@ -91,6 +91,60 @@ fn sqlite_document_versions_track_insert_update_delete_history() {
 }
 
 #[test]
+fn sqlite_prepared_record_materializes_document_version_once() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let document = sample_document("prepared_versioned_tasks", "prepared");
+    let table_id = TableId::new();
+    let record = TenantEventRecord::new(
+        SequenceNumber(1),
+        Timestamp(100),
+        vec![WriteOp {
+            table: document.table.clone(),
+            table_id,
+            op_type: WriteOpType::Insert,
+            doc_id: document.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
+            previous: None,
+            current: Some(document),
+        }],
+        None,
+    )
+    .expect("prepared record should build");
+
+    store
+        .apply_prepared_write_batch(&record, &[], None)
+        .expect("prepared record should apply")
+        .expect("prepared record should commit");
+
+    assert_eq!(
+        store
+            .journal_progress()
+            .expect("prepared record progress should load"),
+        crate::JournalProgress {
+            durable_head: record.sequence,
+            applied_head: record.sequence,
+        },
+        "prepared apply must advance both journal progress heads"
+    );
+
+    let diagnostic = store
+        .storage_health_diagnostic()
+        .expect("document-version diagnostic should load");
+    assert_eq!(diagnostic.document_versions.version_count, 1);
+    assert_eq!(
+        diagnostic.document_versions.min_sequence,
+        Some(record.sequence)
+    );
+    assert_eq!(
+        diagnostic.document_versions.max_sequence,
+        Some(record.sequence)
+    );
+}
+
+#[test]
 fn sqlite_document_versions_are_materialized_during_durable_recovery() {
     let dir = tempdir().expect("temporary directory should create");
     let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))

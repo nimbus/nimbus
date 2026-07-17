@@ -8,11 +8,11 @@ use nimbus_core::{Error, Result, SequenceNumber};
 use nimbus_storage::JournalProgress;
 use tokio::sync::Notify;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::pause::{MutationJournalPauseHandle, MutationJournalPauseState};
 use super::requests::{DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY, QueuedMutationRequest};
 use super::stats::MutationJournalStats;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::sync::Arc;
 
 pub(in crate::tenant) struct MutationJournalState {
@@ -30,7 +30,7 @@ pub(in crate::tenant) struct MutationJournalState {
     read_wait_count: AtomicU64,
     total_read_wait_nanos: AtomicU64,
     applied_notify: Notify,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pause_before_drain: Arc<MutationJournalPauseState>,
 }
 
@@ -53,7 +53,7 @@ impl MutationJournalState {
             read_wait_count: AtomicU64::new(0),
             total_read_wait_nanos: AtomicU64::new(0),
             applied_notify: Notify::new(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             pause_before_drain: Arc::new(MutationJournalPauseState::default()),
         }
     }
@@ -100,7 +100,7 @@ impl MutationJournalState {
             .len()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::tenant) async fn wait_before_drain(&self) {
         self.pause_before_drain.wait_if_armed().await;
     }
@@ -253,7 +253,7 @@ impl MutationJournalState {
         self.capacity.store(capacity.max(1), Ordering::Release);
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::tenant) fn pause_handle(&self) -> MutationJournalPauseHandle {
         MutationJournalPauseHandle::from_state(self.pause_before_drain.clone())
     }

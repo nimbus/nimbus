@@ -6,6 +6,93 @@ use crate::keys::{document_path_key, resource_locator_key};
 
 use super::*;
 
+pub(super) async fn upsert_resource_path_binding_in_session<C>(
+    session: &C,
+    schema_name: &str,
+    binding: &ResourcePathBinding,
+) -> Result<()>
+where
+    C: GenericClient + Sync,
+{
+    let locator_key = resource_locator_key(&binding.locator);
+    let path_key = document_path_key(&binding.document_path);
+    let existing_locator =
+        load_locator_for_document_path_key_from_session(session, schema_name, path_key.as_slice())
+            .await?;
+    if existing_locator
+        .as_ref()
+        .is_some_and(|locator| locator != &binding.locator)
+    {
+        return Err(Error::AlreadyExists(format!(
+            "document path already bound: {}",
+            binding.document_path
+        )));
+    }
+    if load_resource_path_binding_by_locator_key_from_session(
+        session,
+        schema_name,
+        locator_key.as_slice(),
+    )
+    .await?
+    .as_ref()
+        == Some(binding)
+    {
+        return Ok(());
+    }
+
+    let query = format!(
+        "INSERT INTO {} (
+            locator_key,
+            document_path_key,
+            collection_group,
+            binding_blob,
+            locator_blob
+         ) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT(locator_key) DO UPDATE SET
+            document_path_key = EXCLUDED.document_path_key,
+            collection_group = EXCLUDED.collection_group,
+            binding_blob = EXCLUDED.binding_blob,
+            locator_blob = EXCLUDED.locator_blob",
+        qualified_table(schema_name, "resource_path_bindings")
+    );
+    let collection_group = binding.collection_group().as_str().to_string();
+    let binding_blob = encode_binding(binding)?;
+    let locator_blob = encode_locator(&binding.locator)?;
+    session
+        .execute(
+            query.as_str(),
+            &[
+                &locator_key,
+                &path_key,
+                &collection_group,
+                &binding_blob,
+                &locator_blob,
+            ],
+        )
+        .await
+        .map_err(map_postgres_error)?;
+    Ok(())
+}
+
+pub(super) async fn remove_resource_path_binding_in_session<C>(
+    session: &C,
+    schema_name: &str,
+    locator: &DocumentLocator,
+) -> Result<()>
+where
+    C: GenericClient + Sync,
+{
+    let query = format!(
+        "DELETE FROM {} WHERE locator_key = $1",
+        qualified_table(schema_name, "resource_path_bindings")
+    );
+    session
+        .execute(query.as_str(), &[&resource_locator_key(locator)])
+        .await
+        .map_err(map_postgres_error)?;
+    Ok(())
+}
+
 impl PostgresTenantStore {
     pub fn upsert_resource_path_binding(&self, binding: &ResourcePathBinding) -> Result<()> {
         let binding = binding.clone();

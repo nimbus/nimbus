@@ -213,6 +213,11 @@ async fn libsql_durable_journal_recovery_refreshes_local_cache_from_remote_recor
                 applied_head: SequenceNumber(2),
             }
         );
+        let freshness = opened
+            .store
+            .replica_freshness_stats()
+            .expect("freshness stats should retain recovered progress");
+        assert_eq!(freshness.required_sequence, progress.durable_head);
         assert_eq!(
             opened
                 .store

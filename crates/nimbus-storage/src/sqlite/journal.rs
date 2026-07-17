@@ -343,6 +343,33 @@ pub(super) fn append_commit_entry(
     })
 }
 
+pub(super) fn append_prepared_commit_entry(
+    conn: &Connection,
+    record: &TenantEventRecord,
+) -> Result<CommitEntry> {
+    record.validate_integrity()?;
+    let expected = next_sequence_in_conn(conn)?;
+    if record.sequence.0 != expected {
+        return Err(Error::conflict(format!(
+            "prepared commit expected storage sequence {expected}, got {}",
+            record.sequence.0
+        )));
+    }
+    let payload = serialize_tenant_event_record(record)?;
+    conn.execute(
+        "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
+        params![record.sequence.0, payload],
+    )
+    .map_err(map_sqlite_error)?;
+    put_metadata_in_conn(
+        conn,
+        NEXT_SEQUENCE_KEY,
+        &encode_u64(record.sequence.0.saturating_add(1)),
+    )?;
+    put_metadata_in_conn(conn, APPLIED_SEQUENCE_KEY, &encode_u64(record.sequence.0))?;
+    Ok(record.as_commit_entry())
+}
+
 pub(super) fn append_tenant_event_record(
     conn: &Connection,
     sequence: SequenceNumber,

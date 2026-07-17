@@ -1,14 +1,13 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     future,
     sync::Arc,
-    sync::atomic::AtomicBool,
     time::{Duration, Instant},
 };
 
 use nimbus_core::{
-    AccessAction, CommitEntry, DependencySet, Document, DocumentId, Error, IdSource, Mutation,
-    Result, SequenceNumber, TableId, TableName, TenantId, Timestamp,
+    AccessAction, CommitEntry, DependencySet, Document, Error, IdSource, Mutation, Result,
+    SequenceNumber, TenantId, Timestamp,
 };
 use tokio::sync::oneshot;
 use tracing::warn;
@@ -16,15 +15,18 @@ use tracing::warn;
 use crate::Engine;
 use crate::engine::execution_units::{CommitFaultClient, labels};
 use crate::tenant::{
-    QueuedMutationRequest, QueuedMutationResult, TenantOperationGuard, TenantRuntime,
+    PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult, TenantOperationGuard,
+    TenantRuntime,
 };
 
 use super::caps::{MutationUsage, check_mutation_caps};
 use super::direct::{MutationExecutionMode, MutationExecutionResult};
 use super::enforce_mutation_authorization;
+use super::inline_reprepare::{InlineReprepareOutcome, reprepare_single_document_from_window};
 use super::phase_metrics::CommitPhaseDurations;
 use super::prepared::PreparedCommit;
 use super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
+use super::window_prepare::{WindowPreparedWrite, prepare_single_document_write_from_window};
 
 const MUTATION_JOURNAL_BATCH_SIZE: usize = 32;
 const DEFAULT_MUTATION_JOURNAL_BATCH_MAX: usize = 256;
@@ -81,16 +83,11 @@ impl Drop for PendingMutationResponseGuard {
     }
 }
 
-struct PlannedQueuedMutation {
-    cancelled: Arc<AtomicBool>,
-    _operation: TenantOperationGuard,
-    response: oneshot::Sender<Result<QueuedMutationResult>>,
-    result: QueuedMutationResult,
+struct PreparedQueuedParts {
     prepared_commit: PreparedCommit,
-    shadow_dependencies: DependencySet,
-    shadow_snapshot_sequence: SequenceNumber,
-    enqueued_at: Instant,
-    queue_wait: std::time::Duration,
+    conflict_dependencies: DependencySet,
+    result: QueuedMutationResult,
+    prepare_nanos: u64,
 }
 
 struct ActiveQueuedMutation {
@@ -119,7 +116,7 @@ impl Engine {
 
         let batch_policy = MutationJournalBatchPolicy::from_env();
         runtime.drain_mutation_admission_queue();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         runtime.wait_before_mutation_drain().await;
         let batch = runtime
             .drain_mutation_batch_adaptive(
@@ -133,15 +130,9 @@ impl Engine {
         }
 
         let runtime_for_task = runtime.clone();
-        let id_source = Arc::clone(&self.id_source);
         let commit_faults = self.commit_faults.clone();
         let batch_result = tokio::task::spawn_blocking(move || {
-            process_queued_mutation_batch(
-                runtime_for_task,
-                batch,
-                id_source.as_ref(),
-                &commit_faults,
-            )
+            process_queued_mutation_batch(runtime_for_task, batch, &commit_faults)
         })
         .await;
 
@@ -179,7 +170,7 @@ impl Engine {
                     // Already on the tenant's committer task: sending a
                     // JournalProgressSync message here would wait on our own
                     // inbox forever.
-                    runtime.sync_mutation_journal_progress_in_actor(progress);
+                    runtime.publish_mutation_journal_progress_in_actor(progress);
                 }
             }
             Err(error) => {
@@ -190,7 +181,7 @@ impl Engine {
                     .execute(|store| store.recover_durable_journal())
                     .await
                 {
-                    runtime.sync_mutation_journal_progress_in_actor(progress);
+                    runtime.publish_mutation_journal_progress_in_actor(progress);
                 }
             }
         }
@@ -208,7 +199,7 @@ impl Engine {
     where
         Fut: future::Future<Output = ()> + Send + 'static,
     {
-        let operation = runtime.enter_operation(tenant_id)?;
+        let mutation = normalize_queued_insert_id(self.id_source.as_ref(), mutation);
         let usage = MutationUsage::for_journal_admission(
             &mutation,
             matches!(&mode, MutationExecutionMode::Scheduled { .. }),
@@ -216,121 +207,213 @@ impl Engine {
         check_mutation_caps(&runtime, usage)?;
         runtime.check_tenant_write_rate(self.now(), usage.total_write_bytes())?;
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let request_cancelled = cancelled.clone();
-        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         runtime.begin_pending_mutation_response();
         let _pending_response = PendingMutationResponseGuard {
             runtime: runtime.clone(),
         };
-        let enqueued_at = Instant::now();
-        let shadow_snapshot_sequence = runtime.durable_head();
-        runtime.enqueue_mutation_admission_request(QueuedMutationRequest {
-            mutation,
-            principal,
-            scheduled_execution_id: match mode {
-                MutationExecutionMode::Immediate => None,
-                MutationExecutionMode::Scheduled { execution_id } => Some(execution_id),
-            },
-            cancelled: request_cancelled,
-            _operation: operation,
-            response: response_tx,
-            enqueued_at,
-            shadow_snapshot_sequence,
-        })?;
-        if let Err(error) = runtime.send_queued_committer_batch(self.clone()).await {
-            cancelled.store(true, std::sync::atomic::Ordering::Release);
-            return Err(error);
-        }
-
         tokio::pin!(cancel_wait);
-        let mut response_rx = response_rx;
-        let result = tokio::select! {
-            result = &mut response_rx => {
-                result
-            }
-            _ = &mut cancel_wait => {
+        let scheduled_execution_id = match &mode {
+            MutationExecutionMode::Immediate => None,
+            MutationExecutionMode::Scheduled { execution_id } => Some(execution_id.clone()),
+        };
+        let max_attempts = mutation_occ_max_attempts();
+        let mut attempt = 1;
+        loop {
+            let operation = runtime.enter_operation(tenant_id)?;
+            let fast_prepare_started = Instant::now();
+            let prepared = if scheduled_execution_id.is_none()
+                && let Some(prepared) = prepare_single_document_write_from_window(
+                    runtime.as_ref(),
+                    &mutation,
+                    &principal,
+                )? {
+                runtime.commit_phase_metrics().record_window_prepare();
+                prepared_queued_from_window(
+                    prepared,
+                    principal.clone(),
+                    fast_prepare_started.elapsed(),
+                )?
+            } else {
+                runtime.commit_phase_metrics().record_storage_prepare();
+                let runtime_for_prepare = runtime.clone();
+                let mutation_for_prepare = mutation.clone();
+                let principal_for_prepare = principal.clone();
+                let scheduled_for_prepare = scheduled_execution_id.clone();
+                let id_source = Arc::clone(&self.id_source);
+                let prepare_permit = runtime.acquire_prepare_permit().await?;
+                tokio::task::spawn_blocking(move || {
+                    let _prepare_permit = prepare_permit;
+                    prepare_queued_mutation(
+                        runtime_for_prepare.as_ref(),
+                        mutation_for_prepare,
+                        principal_for_prepare,
+                        scheduled_for_prepare,
+                        id_source.as_ref(),
+                    )
+                })
+                .await
+                .map_err(|error| {
+                    Error::Internal(format!("mutation prepare task failed: {error}"))
+                })??
+            };
+            runtime
+                .commit_phase_metrics()
+                .record_prepare_pool(Duration::from_nanos(prepared.prepare_nanos));
+            let shadow_snapshot_sequence = prepared.prepared_commit.snapshot_sequence;
+            let prepared_bytes = prepared.prepared_commit.accounted_bytes();
+            let (response_tx, mut response_rx) = tokio::sync::oneshot::channel();
+            let enqueued_at = Instant::now();
+            runtime.enqueue_mutation_admission_request(QueuedMutationRequest {
+                prepared_commit: Box::new(prepared.prepared_commit),
+                conflict_dependencies: prepared.conflict_dependencies,
+                result: prepared.result,
+                prepared_payload_accounting: Some(PreparedPayloadAccounting::new(
+                    runtime.clone(),
+                    prepared_bytes,
+                )),
+                cancelled: cancelled.clone(),
+                _operation: operation,
+                response: response_tx,
+                enqueued_at,
+                shadow_snapshot_sequence,
+            })?;
+            if let Err(error) = runtime.send_queued_committer_batch(self.clone()).await {
                 cancelled.store(true, std::sync::atomic::Ordering::Release);
-                (&mut response_rx).await
+                return Err(error);
+            }
+
+            let response = tokio::select! {
+                result = &mut response_rx => result,
+                _ = &mut cancel_wait => {
+                    cancelled.store(true, std::sync::atomic::Ordering::Release);
+                    (&mut response_rx).await
+                }
+            }
+            .map_err(|_| {
+                Error::Internal("committer actor dropped mutation response".to_string())
+            })?;
+            match response {
+                Ok(result) => {
+                    return Ok(match result {
+                        QueuedMutationResult::Immediate(document_id) => {
+                            MutationExecutionResult::Immediate(document_id)
+                        }
+                        QueuedMutationResult::Scheduled(applied) => {
+                            MutationExecutionResult::Scheduled(applied)
+                        }
+                    });
+                }
+                Err(error) if error.retryability() == nimbus_core::Retryability::Retryable => {
+                    if attempt >= max_attempts {
+                        runtime
+                            .commit_phase_metrics()
+                            .record_mutation_conflict_exhausted();
+                        return Err(error.with_conflict_attempts(attempt));
+                    }
+                    if let Some(sequence) = error.conflicting_sequence() {
+                        runtime
+                            .wait_for_applied_sequence_cancellable(sequence, &mut cancel_wait)
+                            .await?;
+                    }
+                    runtime
+                        .commit_phase_metrics()
+                        .record_mutation_conflict_retry();
+                    tokio::select! {
+                        _ = &mut cancel_wait => return Err(Error::Cancelled),
+                        _ = tokio::time::sleep(mutation_occ_backoff(attempt)) => {}
+                    }
+                    attempt += 1;
+                }
+                Err(error) => return Err(error),
             }
         }
-        .map_err(|_| Error::Internal("committer actor dropped mutation response".to_string()))??;
-        Ok(match result {
-            QueuedMutationResult::Immediate(document_id) => {
-                MutationExecutionResult::Immediate(document_id)
-            }
-            QueuedMutationResult::Scheduled(applied) => MutationExecutionResult::Scheduled(applied),
-        })
     }
+}
+
+pub(super) fn mutation_occ_max_attempts() -> usize {
+    env_positive_usize("NIMBUS_MUTATION_OCC_MAX_RETRIES", 4)
+}
+
+pub(super) fn mutation_occ_backoff(attempt: usize) -> Duration {
+    let initial = env_nonnegative_u64("NIMBUS_MUTATION_OCC_INITIAL_BACKOFF_MS", 100);
+    let maximum = env_nonnegative_u64("NIMBUS_MUTATION_OCC_MAX_BACKOFF_MS", 2_000).max(initial);
+    let shift = u32::try_from(attempt.saturating_sub(1))
+        .unwrap_or(u32::MAX)
+        .min(63);
+    Duration::from_millis(initial.saturating_mul(1u64 << shift).min(maximum))
 }
 
 fn process_queued_mutation_batch(
     runtime: Arc<TenantRuntime>,
     batch: Vec<QueuedMutationRequest>,
-    id_source: &dyn IdSource,
     commit_faults: &CommitFaultClient,
 ) -> Result<QueuedMutationBatchResult> {
     let mut phases = CommitPhaseDurations::default();
-    let mut overlay = HashMap::<(TableName, DocumentId), Option<Document>>::new();
-    let mut table_id_overlay = HashMap::<TableName, TableId>::new();
     let mut scheduled_execution_overlay = HashSet::new();
-    let mut planned = Vec::new();
-    let snapshot_sequence = runtime.durable_head();
-
-    let prepare_started = Instant::now();
-    for request in batch {
-        if let Some(planned_request) = plan_queued_mutation_request(
-            runtime.as_ref(),
-            request,
-            &mut overlay,
-            &mut table_id_overlay,
-            &mut scheduled_execution_overlay,
-            id_source,
-            snapshot_sequence,
-        ) {
-            planned.push(planned_request);
-        }
-    }
-    phases.add_prepare(prepare_started.elapsed());
-
     let mut active = Vec::new();
     let mut records = Vec::new();
     let mut sample_started_at = None::<Instant>;
     let mut batch_shadow_dependencies = Vec::new();
     let mut batch_shadow_snapshot = None::<nimbus_core::SequenceNumber>;
-    let assignment_candidates =
-        crate::tenant::assign_and_validate(runtime.durable_head(), planned.len())?;
-    let mut assignment_candidates = assignment_candidates.into_iter();
-    for planned_request in planned {
-        let PlannedQueuedMutation {
+    let mut previous_sequence = runtime.durable_head();
+    let mut first_staged_sequence = None;
+    for request in batch {
+        let QueuedMutationRequest {
+            prepared_commit,
+            conflict_dependencies,
+            result,
+            prepared_payload_accounting,
             cancelled,
             _operation,
             response,
-            result,
-            prepared_commit,
-            shadow_dependencies,
             shadow_snapshot_sequence,
             enqueued_at,
-            queue_wait,
-        } = planned_request;
+        } = request;
+        let mut prepared_commit = *prepared_commit;
+        drop(prepared_payload_accounting);
         if cancelled.load(std::sync::atomic::Ordering::Acquire) {
             let _ = response.send(Err(Error::Cancelled));
             continue;
         }
+        if prepared_commit.is_empty_journal() {
+            let _ = response.send(Ok(result));
+            continue;
+        }
+        if let Some(execution_id) = prepared_commit.scheduled_execution_id()
+            && !scheduled_execution_overlay.insert(execution_id.to_string())
+        {
+            let _ = response.send(Ok(QueuedMutationResult::Scheduled(false)));
+            continue;
+        }
+        let conflict_started = Instant::now();
+        let validation = reprepare_single_document_from_window(
+            runtime.as_ref(),
+            &mut prepared_commit,
+            &conflict_dependencies,
+        );
+        match validation {
+            Ok(InlineReprepareOutcome::Fresh | InlineReprepareOutcome::Reprepared) => {}
+            Ok(InlineReprepareOutcome::CallerWait(error)) | Err(error) => {
+                phases.add_conflict_check(conflict_started.elapsed());
+                let _ = response.send(Err(error));
+                continue;
+            }
+        }
+        phases.add_conflict_check(conflict_started.elapsed());
+        let queue_wait = enqueued_at.elapsed();
         phases.add_queue_wait(queue_wait);
         sample_started_at = Some(
             sample_started_at
                 .map(|started_at| started_at.min(enqueued_at))
                 .unwrap_or(enqueued_at),
         );
-        batch_shadow_dependencies.push(shadow_dependencies);
+        batch_shadow_dependencies.push(conflict_dependencies);
         batch_shadow_snapshot = Some(match batch_shadow_snapshot {
             Some(existing) => existing.min(shadow_snapshot_sequence),
             None => shadow_snapshot_sequence,
         });
         let serialize_started = Instant::now();
-        let sequence = assignment_candidates
-            .next()
-            .expect("pure assignment produces one candidate per planned commit");
+        let sequence = crate::tenant::assign_and_validate(previous_sequence, 1)?[0];
         let record = match prepared_commit.into_record(sequence, runtime.assign_commit_timestamp())
         {
             Ok(record) => record,
@@ -339,6 +422,9 @@ fn process_queued_mutation_batch(
                 continue;
             }
         };
+        runtime.stage_pending_write_log_commits([record.as_commit_entry()], runtime.store.now());
+        first_staged_sequence.get_or_insert(sequence);
+        previous_sequence = sequence;
         phases.add_prepare(serialize_started.elapsed());
         active.push(ActiveQueuedMutation {
             _operation,
@@ -364,8 +450,9 @@ fn process_queued_mutation_batch(
     }
 
     let durable_append_started = Instant::now();
+    let append_baseline = runtime.durable_head();
     crate::tenant::validate_append_sequences(
-        runtime.durable_head(),
+        append_baseline,
         records.iter().map(|record| record.sequence),
     )?;
     let write_log_guard = runtime.arm_write_log_append();
@@ -376,18 +463,20 @@ fn process_queued_mutation_batch(
                 .response
                 .send(Err(map_durable_journal_append_error(&error)));
         }
+        if runtime
+            .store
+            .journal_progress()
+            .is_ok_and(|progress| progress.durable_head == append_baseline)
+            && let Some(first) = first_staged_sequence
+        {
+            runtime.discard_unpersisted_write_log_suffix(first);
+        }
         return Err(mapped_error);
     }
 
     if let Some(last_record) = records.last() {
         runtime.mark_durable_head(last_record.sequence);
     }
-    runtime.stage_pending_write_log_commits(
-        records
-            .iter()
-            .map(nimbus_core::TenantEventRecord::as_commit_entry),
-        runtime.store.now(),
-    );
     write_log_guard.disarm();
     phases.durable_append = durable_append_started.elapsed();
 
@@ -417,11 +506,11 @@ fn process_queued_mutation_batch(
         }
     };
     retain_commits_through_applied_head(&mut applied, applied_head);
-    runtime.publish_write_log_through(applied_head);
+    let published_frontier = runtime.publish_write_log_through(applied_head);
     runtime.invalidate_document_cache_for_commits(applied.iter());
     phases.apply = apply_started.elapsed();
     let publish_started = Instant::now();
-    runtime.mark_applied_head(applied_head);
+    runtime.mark_applied_head(published_frontier);
     phases.publish = publish_started.elapsed();
     let sample_started_at = sample_started_at
         .expect("a non-empty active batch must retain an admitted request timestamp");
@@ -439,6 +528,41 @@ fn process_queued_mutation_batch(
     Ok(QueuedMutationBatchResult { applied, responses })
 }
 
+fn normalize_queued_insert_id(id_source: &dyn IdSource, mutation: Mutation) -> Mutation {
+    match mutation {
+        Mutation::Insert {
+            table,
+            id: None,
+            fields,
+        } => Mutation::Insert {
+            table,
+            id: Some(id_source.next_document_id()),
+            fields,
+        },
+        mutation => mutation,
+    }
+}
+
+fn prepared_queued_from_window(
+    prepared: WindowPreparedWrite,
+    principal: nimbus_core::PrincipalContext,
+    elapsed: Duration,
+) -> Result<PreparedQueuedParts> {
+    let result = match prepared.result_document_id {
+        Some(id) => QueuedMutationResult::Immediate(Some(id)),
+        None => QueuedMutationResult::Immediate(None),
+    };
+    let prepared_commit =
+        PreparedCommit::for_journal(prepared.snapshot_sequence, vec![prepared.write], None)
+            .with_inline_reprepare(prepared.normalized_mutation, principal, prepared.schema);
+    Ok(PreparedQueuedParts {
+        conflict_dependencies: prepared.dependencies,
+        prepared_commit,
+        result,
+        prepare_nanos: duration_nanos(elapsed),
+    })
+}
+
 fn retain_commits_through_applied_head(
     applied: &mut Vec<CommitEntry>,
     applied_head: SequenceNumber,
@@ -446,72 +570,43 @@ fn retain_commits_through_applied_head(
     applied.retain(|commit| commit.sequence.0 <= applied_head.0);
 }
 
-fn plan_queued_mutation_request(
+fn prepare_queued_mutation(
     runtime: &TenantRuntime,
-    request: QueuedMutationRequest,
-    overlay: &mut HashMap<(TableName, DocumentId), Option<Document>>,
-    table_id_overlay: &mut HashMap<TableName, TableId>,
-    scheduled_execution_overlay: &mut HashSet<String>,
+    mutation: Mutation,
+    principal: nimbus_core::PrincipalContext,
+    scheduled_execution_id: Option<String>,
     id_source: &dyn IdSource,
-    snapshot_sequence: SequenceNumber,
-) -> Option<PlannedQueuedMutation> {
-    let planning_started = Instant::now();
-    let QueuedMutationRequest {
-        mutation,
-        principal,
-        scheduled_execution_id,
-        cancelled,
-        _operation,
-        response,
-        enqueued_at,
-        shadow_snapshot_sequence,
-    } = request;
-    let queue_wait = planning_started.saturating_duration_since(enqueued_at);
-
-    if cancelled.load(std::sync::atomic::Ordering::Acquire) {
-        let _ = response.send(Err(Error::Cancelled));
-        return None;
+) -> Result<PreparedQueuedParts> {
+    let started = Instant::now();
+    if let Some(execution_id) = scheduled_execution_id.as_deref()
+        && runtime.store.scheduled_execution_exists(execution_id)?
+    {
+        return Ok(PreparedQueuedParts {
+            prepared_commit: PreparedCommit::for_journal(
+                runtime.applied_head(),
+                Vec::new(),
+                scheduled_execution_id,
+            ),
+            conflict_dependencies: DependencySet::default(),
+            result: QueuedMutationResult::Scheduled(false),
+            prepare_nanos: duration_nanos(started.elapsed()),
+        });
     }
 
-    if let Some(execution_id) = scheduled_execution_id.as_deref() {
-        if scheduled_execution_overlay.contains(execution_id) {
-            let _ = response.send(Ok(QueuedMutationResult::Scheduled(false)));
-            return None;
-        }
-        match runtime.store.scheduled_execution_exists(execution_id) {
-            Ok(true) => {
-                let _ = response.send(Ok(QueuedMutationResult::Scheduled(false)));
-                return None;
-            }
-            Ok(false) => {}
-            Err(error) => {
-                let _ = response.send(Err(error));
-                return None;
-            }
-        }
-    }
-
+    // The snapshot itself supplies the OCC pin. Sampling applied_head separately
+    // could pair document images with the wrong sequence.
+    let snapshot = runtime.store.read_snapshot()?;
+    let snapshot_sequence = snapshot.applied_sequence()?;
     let schema = runtime.schema();
-    match mutation {
+    let (write, result, inline_mutation) = match mutation {
         Mutation::Insert { table, id, fields } => {
-            let table_id = match resolve_queued_table_id(runtime, table_id_overlay, &table, true) {
-                Ok(table_id) => table_id,
-                Err(error) => {
-                    let _ = response.send(Err(error));
-                    return None;
-                }
-            };
+            let table_id = runtime.prepared_table_id(&table, snapshot.table_id(&table)?);
             let table_schema = schema.get_table(&table).cloned();
-            if let Some(table_schema) = table_schema.as_ref()
-                && let Err(error) = table_schema.validate(&fields)
-            {
-                let _ = response.send(Err(error));
-                return None;
+            if let Some(table_schema) = table_schema.as_ref() {
+                table_schema.validate(&fields)?;
             }
             let document = match id {
-                Some(document_id) => {
-                    Document::with_id_at(document_id, table.clone(), fields, Timestamp(0))
-                }
+                Some(id) => Document::with_id_at(id, table.clone(), fields, Timestamp(0)),
                 None => Document::with_id_at(
                     id_source.next_document_id(),
                     table.clone(),
@@ -519,169 +614,106 @@ fn plan_queued_mutation_request(
                     Timestamp(0),
                 ),
             };
-            if let Err(error) = enforce_mutation_authorization(
+            enforce_mutation_authorization(
                 table_schema.as_ref(),
                 AccessAction::Create,
                 &principal,
                 Some(&document),
                 None,
-            ) {
-                let _ = response.send(Err(error));
-                return None;
-            }
-            let document_id = document.id.clone();
-            overlay.insert((table, document_id.clone()), Some(document.clone()));
-            if let Some(execution_id) = scheduled_execution_id.as_ref() {
-                scheduled_execution_overlay.insert(execution_id.clone());
-            }
-            let result = match scheduled_execution_id.as_ref() {
-                Some(_) => QueuedMutationResult::Scheduled(true),
-                None => QueuedMutationResult::Immediate(Some(document_id.clone())),
+            )?;
+            let id = document.id.clone();
+            let inline_mutation = Mutation::Insert {
+                table: table.clone(),
+                id: Some(id.clone()),
+                fields: document.fields.clone(),
             };
-            let prepared_commit = PreparedCommit::for_journal(
-                snapshot_sequence,
-                vec![nimbus_core::WriteOp {
-                    table: document.table.clone(),
+            (
+                nimbus_core::WriteOp {
+                    table,
                     table_id,
                     op_type: nimbus_core::WriteOpType::Insert,
-                    doc_id: document_id.clone(),
+                    doc_id: id.clone(),
                     resource_path_binding: None,
                     trigger_write_origin: None,
                     previous: None,
                     current: Some(document),
-                }],
-                scheduled_execution_id,
-            );
-            let shadow_dependencies = prepared_document_dependencies(&prepared_commit, |_| None);
-            Some(PlannedQueuedMutation {
-                cancelled,
-                _operation,
-                response,
-                result,
-                prepared_commit,
-                shadow_dependencies,
-                shadow_snapshot_sequence,
-                enqueued_at,
-                queue_wait,
-            })
+                },
+                if scheduled_execution_id.is_some() {
+                    QueuedMutationResult::Scheduled(true)
+                } else {
+                    QueuedMutationResult::Immediate(Some(id))
+                },
+                inline_mutation,
+            )
         }
         Mutation::Update { table, id, patch } => {
-            let table_id = match resolve_queued_table_id(runtime, table_id_overlay, &table, true) {
-                Ok(table_id) => table_id,
-                Err(error) => {
-                    let _ = response.send(Err(error));
-                    return None;
-                }
+            let inline_mutation = Mutation::Update {
+                table: table.clone(),
+                id: id.clone(),
+                patch: patch.clone(),
             };
-            let table_schema = schema.get_table(&table).cloned();
-            let existing = match load_batched_document(runtime, overlay, &table, &id) {
-                Ok(Some(existing)) => existing,
-                Ok(None) => {
-                    let _ = response.send(Err(Error::DocumentNotFound(id)));
-                    return None;
-                }
-                Err(error) => {
-                    let _ = response.send(Err(error));
-                    return None;
-                }
-            };
+            let table_id = snapshot.table_id(&table)?.ok_or_else(|| {
+                Error::Internal(format!("missing table identity for logical table {table}"))
+            })?;
+            let existing = snapshot
+                .get(&table, &id)?
+                .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
             let mut document = existing.clone();
             for (field, value) in patch {
                 document.fields.insert(field, value);
             }
-            if let Some(table_schema) = table_schema.as_ref()
-                && let Err(error) = table_schema.validate(&document.fields)
-            {
-                let _ = response.send(Err(error));
-                return None;
+            let table_schema = schema.get_table(&table).cloned();
+            if let Some(table_schema) = table_schema.as_ref() {
+                table_schema.validate(&document.fields)?;
             }
-            if let Err(error) = enforce_mutation_authorization(
+            enforce_mutation_authorization(
                 table_schema.as_ref(),
                 AccessAction::Update,
                 &principal,
                 Some(&document),
                 Some(&existing),
-            ) {
-                let _ = response.send(Err(error));
-                return None;
-            }
-            overlay.insert((table.clone(), id.clone()), Some(document.clone()));
-            if let Some(execution_id) = scheduled_execution_id.as_ref() {
-                scheduled_execution_overlay.insert(execution_id.clone());
-            }
-            let result = match scheduled_execution_id.as_ref() {
-                Some(_) => QueuedMutationResult::Scheduled(true),
-                None => QueuedMutationResult::Immediate(Some(id.clone())),
-            };
-            let prepared_commit = PreparedCommit::for_journal(
-                snapshot_sequence,
-                vec![nimbus_core::WriteOp {
-                    table: table.clone(),
+            )?;
+            (
+                nimbus_core::WriteOp {
+                    table,
                     table_id,
                     op_type: nimbus_core::WriteOpType::Update,
-                    doc_id: id,
+                    doc_id: id.clone(),
                     resource_path_binding: None,
                     trigger_write_origin: None,
                     previous: Some(existing),
                     current: Some(document),
-                }],
-                scheduled_execution_id,
-            );
-            let shadow_dependencies = prepared_document_dependencies(&prepared_commit, |_| None);
-            Some(PlannedQueuedMutation {
-                cancelled,
-                _operation,
-                response,
-                result,
-                prepared_commit,
-                shadow_dependencies,
-                shadow_snapshot_sequence,
-                enqueued_at,
-                queue_wait,
-            })
+                },
+                if scheduled_execution_id.is_some() {
+                    QueuedMutationResult::Scheduled(true)
+                } else {
+                    QueuedMutationResult::Immediate(Some(id))
+                },
+                inline_mutation,
+            )
         }
         Mutation::Delete { table, id } => {
-            let table_id = match resolve_queued_table_id(runtime, table_id_overlay, &table, true) {
-                Ok(table_id) => table_id,
-                Err(error) => {
-                    let _ = response.send(Err(error));
-                    return None;
-                }
-            };
+            let table_id = snapshot.table_id(&table)?.ok_or_else(|| {
+                Error::Internal(format!("missing table identity for logical table {table}"))
+            })?;
+            let existing = snapshot
+                .get(&table, &id)?
+                .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
             let table_schema = schema.get_table(&table).cloned();
-            let existing = match load_batched_document(runtime, overlay, &table, &id) {
-                Ok(Some(existing)) => existing,
-                Ok(None) => {
-                    let _ = response.send(Err(Error::DocumentNotFound(id)));
-                    return None;
-                }
-                Err(error) => {
-                    let _ = response.send(Err(error));
-                    return None;
-                }
-            };
-            if let Err(error) = enforce_mutation_authorization(
+            enforce_mutation_authorization(
                 table_schema.as_ref(),
                 AccessAction::Delete,
                 &principal,
                 None,
                 Some(&existing),
-            ) {
-                let _ = response.send(Err(error));
-                return None;
-            }
-            overlay.insert((table.clone(), id.clone()), None);
-            if let Some(execution_id) = scheduled_execution_id.as_ref() {
-                scheduled_execution_overlay.insert(execution_id.clone());
-            }
-            let result = match scheduled_execution_id.as_ref() {
-                Some(_) => QueuedMutationResult::Scheduled(true),
-                None => QueuedMutationResult::Immediate(None),
+            )?;
+            let inline_mutation = Mutation::Delete {
+                table: table.clone(),
+                id: id.clone(),
             };
-            let prepared_commit = PreparedCommit::for_journal(
-                snapshot_sequence,
-                vec![nimbus_core::WriteOp {
-                    table: table.clone(),
+            (
+                nimbus_core::WriteOp {
+                    table,
                     table_id,
                     op_type: nimbus_core::WriteOpType::Delete,
                     doc_id: id,
@@ -689,23 +721,97 @@ fn plan_queued_mutation_request(
                     trigger_write_origin: None,
                     previous: Some(existing),
                     current: None,
-                }],
-                scheduled_execution_id,
-            );
-            let shadow_dependencies = prepared_document_dependencies(&prepared_commit, |_| None);
-            Some(PlannedQueuedMutation {
-                cancelled,
-                _operation,
-                response,
-                result,
-                prepared_commit,
-                shadow_dependencies,
-                shadow_snapshot_sequence,
-                enqueued_at,
-                queue_wait,
-            })
+                },
+                if scheduled_execution_id.is_some() {
+                    QueuedMutationResult::Scheduled(true)
+                } else {
+                    QueuedMutationResult::Immediate(None)
+                },
+                inline_mutation,
+            )
         }
+    };
+    let prepared_commit =
+        PreparedCommit::for_journal(snapshot_sequence, vec![write], scheduled_execution_id)
+            .with_inline_reprepare(inline_mutation, principal, schema);
+    let conflict_dependencies = prepared_document_dependencies(&prepared_commit, |_| None);
+    validate_prepared_for_provider(runtime, snapshot_sequence, &conflict_dependencies)?;
+    Ok(PreparedQueuedParts {
+        prepared_commit,
+        conflict_dependencies,
+        result,
+        prepare_nanos: duration_nanos(started.elapsed()),
+    })
+}
+
+pub(super) fn validate_prepared_for_provider(
+    runtime: &TenantRuntime,
+    snapshot_sequence: SequenceNumber,
+    dependencies: &DependencySet,
+) -> Result<()> {
+    if dependencies.is_empty() || runtime.store.has_process_local_sequence_authority() {
+        return Ok(());
     }
+    runtime
+        .store
+        .stream_durable_journal(snapshot_sequence, 1)
+        .map_err(|error| map_prepare_floor_error(error, snapshot_sequence))?;
+    let commits = runtime
+        .store
+        .read_commit_log_from(SequenceNumber(snapshot_sequence.0.saturating_add(1)))?;
+    if let Some(sequence) = commits.into_iter().find_map(|commit| {
+        nimbus_core::commit_intersects_dependency_set(
+            &commit,
+            dependencies,
+            &[],
+            |table, document_id| runtime.store.get(table, &document_id),
+        )
+        .then_some(commit.sequence)
+    }) {
+        return Err(Error::retryable_conflict(
+            "prepared mutation became stale before actor admission",
+            Some(sequence),
+        ));
+    }
+    Ok(())
+}
+
+/// Pure prepared-op validation: the view contains complete old/new images, so
+/// evaluating document dependencies needs no storage access and cannot await.
+#[cfg(test)]
+fn validate_prepared_window_view(
+    view: &super::write_log::WriteLogView,
+    dependencies: &DependencySet,
+) -> Result<()> {
+    if let Some(sequence) = view.first_conflicting_sequence(dependencies, |_, _| {
+        Err(Error::Internal(
+            "full-image write-log validation unexpectedly requested storage".to_string(),
+        ))
+    }) {
+        return Err(Error::retryable_conflict(
+            "prepared mutation became stale before sequence assignment",
+            Some(sequence),
+        ));
+    }
+    Ok(())
+}
+
+fn map_prepare_floor_error(error: Error, snapshot_sequence: SequenceNumber) -> Error {
+    match error {
+        Error::InvalidInput(message) if message.contains("retention floor") => {
+            Error::out_of_retention(
+                format!(
+                    "mutation snapshot {snapshot_sequence} is older than the durable commit-log retention horizon"
+                ),
+                None,
+            )
+        }
+        other => other,
+    }
+}
+
+fn duration_nanos(duration: Duration) -> u64 {
+    duration.as_nanos().try_into().unwrap_or(u64::MAX)
 }
 
 fn map_durable_journal_append_error(error: &Error) -> Error {
@@ -713,41 +819,6 @@ fn map_durable_journal_append_error(error: &Error) -> Error {
         Error::InvalidInput(message) => Error::InvalidInput(message.clone()),
         _ => Error::Internal(format!("durable journal append failed: {error}")),
     }
-}
-
-fn load_batched_document(
-    runtime: &TenantRuntime,
-    overlay: &HashMap<(TableName, DocumentId), Option<Document>>,
-    table: &TableName,
-    id: &DocumentId,
-) -> Result<Option<Document>> {
-    if let Some(document) = overlay.get(&(table.clone(), id.clone())) {
-        return Ok(document.clone());
-    }
-    runtime.store.get(table, id)
-}
-
-fn resolve_queued_table_id(
-    runtime: &TenantRuntime,
-    overlay: &mut HashMap<TableName, TableId>,
-    table: &TableName,
-    create_if_missing: bool,
-) -> Result<TableId> {
-    if let Some(table_id) = overlay.get(table) {
-        return Ok(table_id.clone());
-    }
-    let table_id = match runtime.store.table_id(table)? {
-        Some(table_id) => table_id,
-        None if create_if_missing => TableId::new(),
-        None => {
-            return Err(Error::Internal(format!(
-                "missing table identity for logical table {}",
-                table
-            )));
-        }
-    };
-    overlay.insert(table.clone(), table_id.clone());
-    Ok(table_id)
 }
 
 #[cfg(test)]
@@ -789,5 +860,51 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![SequenceNumber(20), SequenceNumber(21)]
         );
+    }
+
+    #[test]
+    fn prepared_window_validation_includes_assigned_unpublished_writes() {
+        let table = nimbus_core::TableName::new("tasks").expect("table should build");
+        let table_id = nimbus_core::TableId::new();
+        let document_id = nimbus_core::DocumentId::from_key("same").expect("id should build");
+        let document = Document::with_id_at(
+            document_id.clone(),
+            table.clone(),
+            serde_json::Map::new(),
+            Timestamp(1),
+        );
+        let log = super::super::write_log::WriteLog::new(
+            super::super::write_log::WriteLogConfig::from_env(),
+            SequenceNumber(0),
+            SequenceNumber(0),
+        );
+        log.stage_pending(
+            [CommitEntry {
+                sequence: SequenceNumber(1),
+                timestamp: Timestamp(1),
+                writes: vec![nimbus_core::WriteOp {
+                    table: table.clone(),
+                    table_id: table_id.clone(),
+                    op_type: nimbus_core::WriteOpType::Insert,
+                    doc_id: document_id.clone(),
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
+                    previous: None,
+                    current: Some(document),
+                }],
+            }],
+            Timestamp(1),
+        );
+        let mut dependencies = DependencySet::default();
+        dependencies.record_document(&table, &table_id, document_id);
+        let super::super::write_log::ValidationSource::InMemory(view) = log
+            .validation_source(SequenceNumber(0), SequenceNumber(0))
+            .expect("pending window should cover the snapshot")
+        else {
+            panic!("pending window should validate in memory")
+        };
+        let error = validate_prepared_window_view(&view, &dependencies)
+            .expect_err("the later prepare must see the pending write");
+        assert_eq!(error.conflicting_sequence(), Some(SequenceNumber(1)));
     }
 }

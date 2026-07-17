@@ -8,7 +8,7 @@ use tokio::sync::Notify;
 
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Debug, Clone)]
-pub(crate) struct MutationJournalPauseHandle {
+pub struct MutationJournalPauseHandle {
     state: Arc<MutationJournalPauseState>,
 }
 
@@ -70,7 +70,7 @@ impl MutationJournalPauseHandle {
         Self { state }
     }
 
-    pub(crate) fn arm(&self) {
+    pub fn arm(&self) {
         let mut control = self
             .state
             .control
@@ -83,7 +83,7 @@ impl MutationJournalPauseHandle {
         };
     }
 
-    pub(crate) fn wait_until_entered(&self, timeout: std::time::Duration) -> bool {
+    pub fn wait_until_entered(&self, timeout: std::time::Duration) -> bool {
         let deadline = Instant::now() + timeout;
         let mut control = self
             .state
@@ -108,7 +108,7 @@ impl MutationJournalPauseHandle {
         true
     }
 
-    pub(crate) fn release(&self) {
+    pub fn release(&self) {
         let mut control = self
             .state
             .control

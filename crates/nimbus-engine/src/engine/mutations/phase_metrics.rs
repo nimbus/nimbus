@@ -38,6 +38,11 @@ pub struct CommitPhaseMetricsSnapshot {
     pub journal_batch_count: u64,
     pub queue_wait_nanos: u64,
     pub prepare_nanos: u64,
+    /// Caller-side prepare work completed before committer admission. Unlike
+    /// `prepare_nanos`, this is outside the actor's serial critical section.
+    pub prepare_pool_nanos: u64,
+    pub window_prepare_total: u64,
+    pub storage_prepare_total: u64,
     pub conflict_check_nanos: u64,
     pub durable_append_nanos: u64,
     pub apply_nanos: u64,
@@ -49,6 +54,13 @@ pub struct CommitPhaseMetricsSnapshot {
     pub shadow_checks_sampled: u64,
     pub mutation_conflict_retries_total: u64,
     pub mutation_conflict_exhausted_total: u64,
+    pub prepared_payload_bytes_current: u64,
+    pub prepared_payload_bytes_peak: u64,
+    pub prepared_payload_bytes_total: u64,
+    /// Single-document stale prepares rebuilt from the in-memory full-image
+    /// window while the actor owns serial assignment.
+    pub inline_reprepare_total: u64,
+    pub reprepare_total: u64,
     pub overload_errors_total: u64,
     pub overload_errors_reported_total: u64,
     /// Point-in-time number of accepted messages waiting in the bounded
@@ -71,6 +83,9 @@ pub(crate) struct CommitPhaseMetrics {
     journal_batch_count: AtomicU64,
     queue_wait_nanos: AtomicU64,
     prepare_nanos: AtomicU64,
+    prepare_pool_nanos: AtomicU64,
+    window_prepare_total: AtomicU64,
+    storage_prepare_total: AtomicU64,
     conflict_check_nanos: AtomicU64,
     durable_append_nanos: AtomicU64,
     apply_nanos: AtomicU64,
@@ -83,6 +98,11 @@ pub(crate) struct CommitPhaseMetrics {
     shadow_sample_ticks: AtomicU64,
     mutation_conflict_retries_total: AtomicU64,
     mutation_conflict_exhausted_total: AtomicU64,
+    prepared_payload_bytes_current: AtomicU64,
+    prepared_payload_bytes_peak: AtomicU64,
+    prepared_payload_bytes_total: AtomicU64,
+    inline_reprepare_total: AtomicU64,
+    reprepare_total: AtomicU64,
     overload_errors_total: AtomicU64,
     overload_errors_reported_total: AtomicU64,
     overload_error_report_ticks: AtomicU64,
@@ -100,6 +120,9 @@ impl CommitPhaseMetrics {
             journal_batch_count: AtomicU64::new(0),
             queue_wait_nanos: AtomicU64::new(0),
             prepare_nanos: AtomicU64::new(0),
+            prepare_pool_nanos: AtomicU64::new(0),
+            window_prepare_total: AtomicU64::new(0),
+            storage_prepare_total: AtomicU64::new(0),
             conflict_check_nanos: AtomicU64::new(0),
             durable_append_nanos: AtomicU64::new(0),
             apply_nanos: AtomicU64::new(0),
@@ -112,6 +135,11 @@ impl CommitPhaseMetrics {
             shadow_sample_ticks: AtomicU64::new(0),
             mutation_conflict_retries_total: AtomicU64::new(0),
             mutation_conflict_exhausted_total: AtomicU64::new(0),
+            prepared_payload_bytes_current: AtomicU64::new(0),
+            prepared_payload_bytes_peak: AtomicU64::new(0),
+            prepared_payload_bytes_total: AtomicU64::new(0),
+            inline_reprepare_total: AtomicU64::new(0),
+            reprepare_total: AtomicU64::new(0),
             overload_errors_total: AtomicU64::new(0),
             overload_errors_reported_total: AtomicU64::new(0),
             overload_error_report_ticks: AtomicU64::new(0),
@@ -183,6 +211,40 @@ impl CommitPhaseMetrics {
     pub(crate) fn record_mutation_conflict_retry(&self) {
         self.mutation_conflict_retries_total
             .fetch_add(1, Ordering::Relaxed);
+        self.reprepare_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_inline_reprepare(&self) {
+        self.inline_reprepare_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_prepare_pool(&self, elapsed: Duration) {
+        self.prepare_pool_nanos
+            .fetch_add(duration_nanos(elapsed), Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_window_prepare(&self) {
+        self.window_prepare_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_storage_prepare(&self) {
+        self.storage_prepare_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn accept_prepared_payload(&self, bytes: u64) {
+        let current = self
+            .prepared_payload_bytes_current
+            .fetch_add(bytes, Ordering::AcqRel)
+            .saturating_add(bytes);
+        self.prepared_payload_bytes_peak
+            .fetch_max(current, Ordering::Relaxed);
+        self.prepared_payload_bytes_total
+            .fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    pub(crate) fn release_prepared_payload(&self, bytes: u64) {
+        self.prepared_payload_bytes_current
+            .fetch_sub(bytes, Ordering::AcqRel);
     }
 
     pub(crate) fn record_mutation_conflict_exhausted(&self) {
@@ -240,6 +302,9 @@ impl CommitPhaseMetrics {
             journal_batch_count: self.journal_batch_count.load(Ordering::Relaxed),
             queue_wait_nanos: self.queue_wait_nanos.load(Ordering::Relaxed),
             prepare_nanos: self.prepare_nanos.load(Ordering::Relaxed),
+            prepare_pool_nanos: self.prepare_pool_nanos.load(Ordering::Relaxed),
+            window_prepare_total: self.window_prepare_total.load(Ordering::Relaxed),
+            storage_prepare_total: self.storage_prepare_total.load(Ordering::Relaxed),
             conflict_check_nanos: self.conflict_check_nanos.load(Ordering::Relaxed),
             durable_append_nanos: self.durable_append_nanos.load(Ordering::Relaxed),
             apply_nanos: self.apply_nanos.load(Ordering::Relaxed),
@@ -257,6 +322,13 @@ impl CommitPhaseMetrics {
             mutation_conflict_exhausted_total: self
                 .mutation_conflict_exhausted_total
                 .load(Ordering::Relaxed),
+            prepared_payload_bytes_current: self
+                .prepared_payload_bytes_current
+                .load(Ordering::Relaxed),
+            prepared_payload_bytes_peak: self.prepared_payload_bytes_peak.load(Ordering::Relaxed),
+            prepared_payload_bytes_total: self.prepared_payload_bytes_total.load(Ordering::Relaxed),
+            inline_reprepare_total: self.inline_reprepare_total.load(Ordering::Relaxed),
+            reprepare_total: self.reprepare_total.load(Ordering::Relaxed),
             overload_errors_total: self.overload_errors_total.load(Ordering::Relaxed),
             overload_errors_reported_total: self
                 .overload_errors_reported_total
@@ -434,6 +506,9 @@ mod tests {
                 journal_batch_count: 1,
                 queue_wait_nanos: 11,
                 prepare_nanos: 12,
+                prepare_pool_nanos: 0,
+                window_prepare_total: 0,
+                storage_prepare_total: 0,
                 conflict_check_nanos: 13,
                 durable_append_nanos: 14,
                 apply_nanos: 15,
@@ -445,6 +520,11 @@ mod tests {
                 shadow_checks_sampled: 2,
                 mutation_conflict_retries_total: 1,
                 mutation_conflict_exhausted_total: 1,
+                prepared_payload_bytes_current: 0,
+                prepared_payload_bytes_peak: 0,
+                prepared_payload_bytes_total: 0,
+                inline_reprepare_total: 0,
+                reprepare_total: 1,
                 overload_errors_total: 0,
                 overload_errors_reported_total: 0,
                 committer_inbox_depth: 0,

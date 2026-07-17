@@ -89,25 +89,20 @@ impl LibsqlReplicaTenantStore {
 
     pub fn recover_durable_journal(&self) -> Result<JournalProgress> {
         let progress = self.journal_progress()?;
+        let mut observed_remote_head = progress.durable_head;
         if progress.applied_head.0 < progress.durable_head.0 {
             let next_sequence = SequenceNumber(progress.applied_head.0.saturating_add(1));
             let records = self.read_durable_journal_from(next_sequence)?;
             if !records.is_empty() {
                 let applied_head =
                     self.block_on(self.apply_remote_durable_records_batch(records.as_slice()))?;
-                self.note_required_cache_sequence_with_cause(
-                    applied_head,
-                    LibsqlReplicaRefreshCause::DurableJournalReplay,
-                );
-            } else {
-                self.note_required_cache_sequence_with_cause(
-                    progress.durable_head,
-                    LibsqlReplicaRefreshCause::DurableJournalReplay,
-                );
+                observed_remote_head = observed_remote_head.max(applied_head);
             }
         }
+        self.note_recovered_remote_progress(observed_remote_head);
         self.ensure_local_cache_current()?;
-        self.journal_progress()
+        let recovered = self.journal_progress()?;
+        Ok(self.retain_recovered_progress(recovered))
     }
 
     pub fn read_commit_log_from(&self, sequence: SequenceNumber) -> Result<Vec<CommitEntry>> {

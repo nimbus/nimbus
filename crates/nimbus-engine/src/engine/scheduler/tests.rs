@@ -4,7 +4,9 @@ use nimbus_core::{
     CreateCronRequest, FieldSchema, FieldType, Mutation, Query, ScheduleRequest,
     ScheduledJobOutcome, ScheduledJobResult, TableName, TableSchema, TenantId, Timestamp,
 };
-use nimbus_storage::{FaultOccurrence, FaultPoint, ManualClock, ScriptedFaultInjector};
+use nimbus_storage::{
+    FaultOccurrence, FaultPoint, ManualClock, NoopFaultInjector, ScriptedFaultInjector,
+};
 use nimbus_testing::{
     DeterministicHarness, EngineFixture, RestartBoundary, RestartPoint, ScenarioMetadata,
     ScriptedRestartSchedule, wait_for_value,
@@ -649,9 +651,12 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
     );
     let data_dir = tempdir().expect("tempdir should create");
     let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
+    let clock = Arc::new(ManualClock::new(Timestamp(1_000)));
+    let open_engine =
+        || Engine::new_with_simulation(data_dir.path(), clock.clone(), Arc::new(NoopFaultInjector));
 
     let (first_job_id, second_job_id) = {
-        let engine = Engine::new(data_dir.path()).expect("engine should create");
+        let engine = open_engine().expect("engine should create");
         engine
             .create_tenant(tenant_id.clone())
             .expect("tenant should create");
@@ -674,7 +679,7 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
             )
             .expect("second schedule should succeed");
         let claimed = engine
-            .claim_due_jobs(&tenant_id, Timestamp::now())
+            .claim_due_jobs(&tenant_id, Timestamp(1_000))
             .expect("initial claim should succeed");
         assert_eq!(
             claimed.len(),
@@ -685,11 +690,16 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
                 Some(0),
             )
         );
+        engine
+            .shutdown_trigger_candidates_for_testing(&tenant_id)
+            .expect("initial engine trigger worker should stop before restart");
+        engine.quiesce().await;
         (first_job_id, second_job_id)
     };
 
     let completed_job_id = {
-        let reloaded = Engine::new(data_dir.path()).expect("engine should reopen after claim");
+        clock.set(Timestamp(2_000));
+        let reloaded = open_engine().expect("engine should reopen after claim");
         reloaded
             .load_tenants_with_scheduled_work()
             .expect("scheduled tenants should load after claim restart");
@@ -718,8 +728,12 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
         );
 
         let mut claimed = reloaded
-            .claim_due_jobs(&tenant_id, Timestamp::now())
+            .claim_due_jobs(&tenant_id, Timestamp(2_000))
             .expect("claim after restart should succeed");
+        assert!(
+            claimed.iter().all(|job| job.run_at == Timestamp(1_000)),
+            "recovery must preserve the already-due schedule timestamp"
+        );
         claimed.sort_by_key(|job| job.id.to_string());
         let completed_job = claimed.remove(0);
         let execution_id = format!("scheduled:{}", completed_job.id);
@@ -743,7 +757,7 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
                 &ScheduledJobResult {
                     id: completed_job.id.clone(),
                     run_at: completed_job.run_at,
-                    finished_at: Timestamp::now(),
+                    finished_at: Timestamp(2_000),
                     mutation: completed_job.mutation,
                     outcome: ScheduledJobOutcome::Completed,
                     error: None,
@@ -753,11 +767,16 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
         reloaded
             .complete_scheduled_job(&tenant_id, &completed_job.id)
             .expect("completed job should leave the running set");
+        reloaded
+            .shutdown_trigger_candidates_for_testing(&tenant_id)
+            .expect("claim-recovery trigger worker should stop before restart");
+        reloaded.quiesce().await;
         completed_job.id
     };
 
     {
-        let reloaded = Engine::new(data_dir.path()).expect("engine should reopen after completion");
+        clock.set(Timestamp(3_000));
+        let reloaded = open_engine().expect("engine should reopen after completion");
         reloaded
             .load_tenants_with_scheduled_work()
             .expect("scheduled tenants should load after completion restart");
@@ -793,7 +812,7 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
             ScheduledJobOutcome::Completed
         );
         let claimed = reloaded
-            .claim_due_jobs(&tenant_id, Timestamp::now())
+            .claim_due_jobs(&tenant_id, Timestamp(3_000))
             .expect("remaining job should claim after completion restart");
         assert_eq!(
             claimed.len(),
@@ -804,10 +823,14 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
                 Some(2),
             )
         );
+        reloaded
+            .shutdown_trigger_candidates_for_testing(&tenant_id)
+            .expect("completion-recovery trigger worker should stop before restart");
+        reloaded.quiesce().await;
     }
 
-    let reloaded =
-        Arc::new(Engine::new(data_dir.path()).expect("engine should reopen after second claim"));
+    clock.set(Timestamp(4_000));
+    let reloaded = Arc::new(open_engine().expect("engine should reopen after second claim"));
     reloaded
         .load_tenants_with_scheduled_work()
         .expect("scheduled tenants should load after second claim restart");
@@ -823,7 +846,11 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
             Some(2),
         )
     );
-    crate::scheduler::tick_at_async(&reloaded, Timestamp::now())
+    let recovered = reloaded
+        .list_scheduled_jobs(&tenant_id)
+        .expect("recovered pending job should list");
+    assert_eq!(recovered[0].run_at, Timestamp(1_000));
+    crate::scheduler::tick_at_async(&reloaded, Timestamp(4_000))
         .await
         .expect("scheduler tick should complete the recovered job");
     let mut titles = reloaded
@@ -840,7 +867,17 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
         })
         .collect::<Vec<_>>();
     titles.sort();
-    assert_eq!(titles, vec!["scheduler-alpha", "scheduler-beta"]);
+    let first_result = reloaded
+        .get_scheduled_job_result(&tenant_id, &first_job_id)
+        .expect("first job result should exist after final recovery");
+    let second_result = reloaded
+        .get_scheduled_job_result(&tenant_id, &second_job_id)
+        .expect("second job result should exist after final recovery");
+    assert_eq!(
+        titles,
+        vec!["scheduler-alpha", "scheduler-beta"],
+        "recorded results: first={first_result:?}, second={second_result:?}"
+    );
     assert!(
         reloaded
             .list_scheduled_jobs(&tenant_id)
@@ -852,20 +889,12 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
             None,
         )
     );
-    assert_eq!(
-        reloaded
-            .get_scheduled_job_result(&tenant_id, &first_job_id)
-            .expect("first job result should exist after final recovery")
-            .outcome,
-        ScheduledJobOutcome::Completed
-    );
-    assert_eq!(
-        reloaded
-            .get_scheduled_job_result(&tenant_id, &second_job_id)
-            .expect("second job result should exist after final recovery")
-            .outcome,
-        ScheduledJobOutcome::Completed
-    );
+    assert_eq!(first_result.outcome, ScheduledJobOutcome::Completed);
+    assert_eq!(second_result.outcome, ScheduledJobOutcome::Completed);
+    reloaded
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("final trigger worker should stop before test shutdown");
+    reloaded.quiesce().await;
 }
 
 #[tokio::test]

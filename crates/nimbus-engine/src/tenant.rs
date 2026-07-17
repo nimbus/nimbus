@@ -1,11 +1,13 @@
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
-use nimbus_core::{Result, Schema, TenantId, Timestamp};
+use nimbus_core::{Result, Schema, TableId, TableName, TenantId, Timestamp};
 use nimbus_storage::LibsqlReplicaFreshnessStats;
 use serde::Serialize;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::engine::{
     CommitPhaseDurations, CommitPhaseMetrics, CommitPhaseMetricsSnapshot, CommitTraceSample,
@@ -58,7 +60,7 @@ pub(crate) use self::mutation::DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY;
 #[cfg(test)]
 pub(crate) use self::mutation::DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY;
 #[cfg(any(test, feature = "test-hooks"))]
-pub(crate) use self::mutation::MutationJournalPauseHandle;
+pub use self::mutation::MutationJournalPauseHandle;
 #[cfg(any(test, feature = "test-hooks"))]
 use self::mutation::MutationJournalPauseState;
 pub(crate) use self::mutation::{
@@ -67,7 +69,9 @@ pub(crate) use self::mutation::{
 };
 use self::mutation::{MutationAdmissionDecision, MutationAdmissionGate, MutationJournalState};
 pub use self::mutation::{MutationAdmissionPhase, MutationAdmissionStats, MutationJournalStats};
-pub(crate) use self::mutation::{QueuedMutationRequest, QueuedMutationResult};
+pub(crate) use self::mutation::{
+    PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult,
+};
 use self::query_planning::QueryPlanningMetrics;
 pub use self::query_planning::QueryPlanningStats;
 pub(crate) use self::query_planning::{QueryPlanMetricKind, QueryPlanMetricOperation};
@@ -116,6 +120,8 @@ pub struct TenantRuntime {
     committer: Arc<CommitterActor>,
     write_rate: TenantWriteRateLimiter,
     last_assigned_commit_timestamp: AtomicU64,
+    prepared_table_ids: Mutex<HashMap<TableName, TableId>>,
+    prepare_permits: Arc<Semaphore>,
     #[cfg(any(test, feature = "test-hooks"))]
     subscription_bootstrap_pause: Arc<MutationJournalPauseState>,
 }
@@ -136,6 +142,22 @@ pub(crate) struct TenantRuntimeInitialStateProfile {
     pub schema_load: Duration,
     pub journal_progress: Duration,
     pub total: Duration,
+}
+
+fn prepare_concurrency() -> usize {
+    std::env::var_os("NIMBUS_PREPARE_CONCURRENCY")
+        .and_then(|value| value.into_string().ok())
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(std::num::NonZeroUsize::get)
+                .unwrap_or(4)
+                // SQLite's read-snapshot pool is deliberately small. Four
+                // callers overlap CPU and serialization without turning pool
+                // polling into the dominant prepare cost.
+                .min(4)
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -191,6 +213,8 @@ impl TenantRuntime {
             committer: Arc::new(CommitterActor::new()),
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
+            prepared_table_ids: Mutex::new(HashMap::new()),
+            prepare_permits: Arc::new(Semaphore::new(prepare_concurrency())),
             #[cfg(any(test, feature = "test-hooks"))]
             subscription_bootstrap_pause: Arc::new(MutationJournalPauseState::default()),
         }
@@ -298,6 +322,56 @@ impl TenantRuntime {
         &self.store
     }
 
+    /// Reserves one stable identity while concurrent prepares race to create a
+    /// schemaless table. The durable table identity wins after the first apply.
+    pub(crate) fn prepared_table_id(&self, table: &TableName, durable: Option<TableId>) -> TableId {
+        if let Some(table_id) = durable {
+            self.prepared_table_ids
+                .lock()
+                .expect("prepared table-id lock should not be poisoned")
+                .insert(table.clone(), table_id.clone());
+            return table_id;
+        }
+        self.prepared_table_ids
+            .lock()
+            .expect("prepared table-id lock should not be poisoned")
+            .entry(table.clone())
+            .or_default()
+            .clone()
+    }
+
+    pub(crate) fn prepared_table_id_if_known(&self, table: &TableName) -> Option<TableId> {
+        self.prepared_table_ids
+            .lock()
+            .expect("prepared table-id lock should not be poisoned")
+            .get(table)
+            .cloned()
+    }
+
+    pub(crate) async fn acquire_prepare_permit(&self) -> Result<OwnedSemaphorePermit> {
+        self.prepare_permits
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| nimbus_core::Error::Internal("tenant prepare pool closed".to_string()))
+    }
+
+    pub(crate) fn acquire_prepare_permit_blocking(&self) -> Result<OwnedSemaphorePermit> {
+        loop {
+            match Arc::clone(&self.prepare_permits).try_acquire_owned() {
+                Ok(permit) => return Ok(permit),
+                Err(tokio::sync::TryAcquireError::Closed) => {
+                    return Err(nimbus_core::Error::Internal(
+                        "tenant prepare pool closed before accepting work".to_string(),
+                    ));
+                }
+                Err(tokio::sync::TryAcquireError::NoPermits) => {
+                    std::thread::park_timeout(Duration::from_millis(1));
+                }
+            }
+        }
+    }
+
     pub(crate) fn read_storage(&self) -> &TenantPersistenceExecutor {
         &self.read_storage
     }
@@ -307,6 +381,10 @@ impl TenantRuntime {
     }
 
     pub(crate) fn replace_schema_snapshot(&self, schema: Arc<Schema>) {
+        self.prepared_table_ids
+            .lock()
+            .expect("prepared table-id lock should not be poisoned")
+            .clear();
         self.schema.store(schema);
     }
 

@@ -335,6 +335,38 @@ impl TenantEventRecord {
         Ok(record)
     }
 
+    /// Assigns the sequence-derived identity of a document record prepared
+    /// with placeholder sequence/timestamp values.
+    ///
+    /// The document/event shape is serialized during prepare. Assignment only
+    /// stamps lifecycle timestamps, rebuilds the compatibility projections,
+    /// and refreshes the integrity digest because the digest necessarily
+    /// covers the assigned sequence and timestamp.
+    pub fn assign_prepared_document_record(
+        &mut self,
+        sequence: SequenceNumber,
+        timestamp: Timestamp,
+    ) -> Result<()> {
+        if self.events.iter().any(|event| {
+            !matches!(
+                event,
+                TenantEventKind::DocumentWrite { .. } | TenantEventKind::ScheduledExecution { .. }
+            )
+        }) {
+            return Err(Error::Internal(
+                "only document/scheduled-execution records support prepared assignment".to_string(),
+            ));
+        }
+        for write in &mut self.writes {
+            stamp_assigned_document_write(write, timestamp);
+        }
+        self.sequence = sequence;
+        self.timestamp = timestamp;
+        self.events = compatibility_events(&self.writes, &self.scheduled_execution_id);
+        self.integrity_sha256 = self.compute_integrity()?;
+        Ok(())
+    }
+
     pub fn validate_integrity(&self) -> Result<()> {
         let expected = self.compute_integrity()?;
         if self.integrity_sha256 == expected {
@@ -375,6 +407,25 @@ impl TenantEventRecord {
         let encoded = rmp_serde::to_vec_named(&payload)
             .map_err(|error| Error::Serialization(error.to_string()))?;
         Ok(Sha256::digest(encoded).into())
+    }
+}
+
+fn stamp_assigned_document_write(write: &mut WriteOp, timestamp: Timestamp) {
+    let Some(current) = write.current.as_mut() else {
+        return;
+    };
+    match write.op_type {
+        WriteOpType::Insert => {
+            current.creation_time = timestamp;
+            current.update_time = timestamp;
+        }
+        WriteOpType::Update => {
+            if let Some(previous) = write.previous.as_ref() {
+                current.creation_time = previous.creation_time;
+            }
+            current.update_time = timestamp;
+        }
+        WriteOpType::Delete => {}
     }
 }
 

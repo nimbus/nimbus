@@ -88,8 +88,13 @@ async fn journal_batch_delete_updates_preserve_deleted_documents_from_durable_jo
         })
     };
 
-    tokio::task::yield_now().await;
-    tokio::task::yield_now().await;
+    wait_for_mutation_admission_stats(
+        &engine,
+        &tenant_id,
+        "second delete should be admitted before releasing the journal batch",
+        |stats| stats.queue_depth == 1,
+    )
+    .await;
     pause.release();
 
     timeout(Duration::from_secs(1), async {

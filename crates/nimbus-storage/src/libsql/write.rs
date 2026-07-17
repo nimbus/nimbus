@@ -7,6 +7,37 @@ use super::index_versions::{
 use super::*;
 
 impl LibsqlReplicaTenantStore {
+    pub fn apply_prepared_write_batch(
+        &self,
+        record: &TenantEventRecord,
+        schedule_ops: &[ResolvedScheduleOp],
+        scheduled_execution_id: Option<&str>,
+    ) -> Result<Option<CommitEntry>> {
+        if record.writes.is_empty() {
+            return Err(Error::Internal(
+                "prepared write batch must contain at least one document write".to_string(),
+            ));
+        }
+        let record = record.clone();
+        let schedule_ops = schedule_ops.to_vec();
+        let scheduled_execution_id = scheduled_execution_id.map(str::to_string);
+        let committed = self.execute_write(move |transaction| {
+            if !transaction.begin_scheduled_execution(scheduled_execution_id.as_deref())? {
+                return Ok(false);
+            }
+            transaction
+                .store
+                .block_on(super::backend::apply_durable_record_in_remote_conn(
+                    transaction.session()?,
+                    &record,
+                ))?;
+            apply_schedule_ops_in_libsql_transaction(transaction, &schedule_ops)?;
+            transaction.set_prepared_record(record);
+            Ok(true)
+        })?;
+        Ok(committed.value.then_some(committed.commit).flatten())
+    }
+
     pub fn retention_gc_watermarks(
         &self,
         config: crate::RetentionGcConfig,
@@ -554,6 +585,7 @@ impl LibsqlReplicaWriteTransaction {
             tx: Some(tx),
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
+            prepared_record: None,
             trigger_write_origin: None,
             commit_timestamp: None,
             check_cancel: Box::new(check_cancel),
@@ -1134,6 +1166,17 @@ impl LibsqlReplicaWriteTransaction {
         }
     }
 
+    pub(crate) fn set_prepared_record(&mut self, record: TenantEventRecord) {
+        self.commit_writes = record.writes.clone();
+        self.tenant_events = record
+            .events
+            .iter()
+            .filter(|event| !matches!(event, TenantEventKind::DocumentWrite { .. }))
+            .cloned()
+            .collect();
+        self.prepared_record = Some(record);
+    }
+
     pub fn commit(mut self) -> Result<Option<CommitEntry>> {
         self.check_cancel()?;
         let writes = std::mem::take(&mut self.commit_writes);
@@ -1145,7 +1188,10 @@ impl LibsqlReplicaWriteTransaction {
                 },
             );
         }
-        let commit = if self.tenant_events.is_empty() {
+        let commit = if let Some(record) = self.prepared_record.take() {
+            crate::store::validate_prepared_record_shape(&record, &writes, &self.tenant_events)?;
+            Some(self.append_prepared_record(&record)?)
+        } else if self.tenant_events.is_empty() {
             None
         } else {
             let events = std::mem::take(&mut self.tenant_events);
@@ -1280,6 +1326,40 @@ impl LibsqlReplicaWriteTransaction {
             Ok(())
         })?;
         Ok(entry)
+    }
+
+    fn append_prepared_record(&self, record: &TenantEventRecord) -> Result<CommitEntry> {
+        record.validate_integrity()?;
+        let expected = self
+            .store
+            .block_on(load_next_sequence_from_session(self.session()?))?;
+        if record.sequence.0 != expected {
+            return Err(Error::conflict(format!(
+                "prepared commit expected storage sequence {expected}, got {}",
+                record.sequence.0
+            )));
+        }
+        let payload = serialize_tenant_event_record(record)?;
+        let record_sequence = record.sequence;
+        self.store.block_on(async {
+            self.session()?
+                .execute(
+                    "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
+                    libsql::params![i64_from_u64(record_sequence.0)?, payload],
+                )
+                .await
+                .map_err(map_libsql_error)?;
+            put_remote_metadata_u64(
+                self.session()?,
+                NEXT_SEQUENCE_KEY,
+                record_sequence.0.saturating_add(1),
+            )
+            .await?;
+            put_remote_metadata_u64(self.session()?, APPLIED_SEQUENCE_KEY, record_sequence.0)
+                .await?;
+            Ok(())
+        })?;
+        Ok(record.as_commit_entry())
     }
 }
 

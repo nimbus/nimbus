@@ -143,6 +143,7 @@ pub struct PostgresWriteTransaction {
     client: Option<Client>,
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
+    prepared_record: Option<TenantEventRecord>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
     commit_timestamp: Option<Timestamp>,
     notification: PendingPostgresNotification,
