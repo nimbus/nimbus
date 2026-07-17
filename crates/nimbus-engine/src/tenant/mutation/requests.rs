@@ -40,7 +40,7 @@ impl Drop for PreparedPayloadAccounting {
 }
 
 pub(crate) struct QueuedMutationRequest {
-    pub prepared_commit: PreparedCommit,
+    pub prepared_commit: Box<PreparedCommit>,
     pub conflict_dependencies: DependencySet,
     pub result: QueuedMutationResult,
     pub prepared_payload_accounting: Option<PreparedPayloadAccounting>,

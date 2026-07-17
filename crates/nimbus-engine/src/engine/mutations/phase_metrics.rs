@@ -41,6 +41,8 @@ pub struct CommitPhaseMetricsSnapshot {
     /// Caller-side prepare work completed before committer admission. Unlike
     /// `prepare_nanos`, this is outside the actor's serial critical section.
     pub prepare_pool_nanos: u64,
+    pub window_prepare_total: u64,
+    pub storage_prepare_total: u64,
     pub conflict_check_nanos: u64,
     pub durable_append_nanos: u64,
     pub apply_nanos: u64,
@@ -82,6 +84,8 @@ pub(crate) struct CommitPhaseMetrics {
     queue_wait_nanos: AtomicU64,
     prepare_nanos: AtomicU64,
     prepare_pool_nanos: AtomicU64,
+    window_prepare_total: AtomicU64,
+    storage_prepare_total: AtomicU64,
     conflict_check_nanos: AtomicU64,
     durable_append_nanos: AtomicU64,
     apply_nanos: AtomicU64,
@@ -117,6 +121,8 @@ impl CommitPhaseMetrics {
             queue_wait_nanos: AtomicU64::new(0),
             prepare_nanos: AtomicU64::new(0),
             prepare_pool_nanos: AtomicU64::new(0),
+            window_prepare_total: AtomicU64::new(0),
+            storage_prepare_total: AtomicU64::new(0),
             conflict_check_nanos: AtomicU64::new(0),
             durable_append_nanos: AtomicU64::new(0),
             apply_nanos: AtomicU64::new(0),
@@ -217,6 +223,14 @@ impl CommitPhaseMetrics {
             .fetch_add(duration_nanos(elapsed), Ordering::Relaxed);
     }
 
+    pub(crate) fn record_window_prepare(&self) {
+        self.window_prepare_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_storage_prepare(&self) {
+        self.storage_prepare_total.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub(crate) fn accept_prepared_payload(&self, bytes: u64) {
         let current = self
             .prepared_payload_bytes_current
@@ -289,6 +303,8 @@ impl CommitPhaseMetrics {
             queue_wait_nanos: self.queue_wait_nanos.load(Ordering::Relaxed),
             prepare_nanos: self.prepare_nanos.load(Ordering::Relaxed),
             prepare_pool_nanos: self.prepare_pool_nanos.load(Ordering::Relaxed),
+            window_prepare_total: self.window_prepare_total.load(Ordering::Relaxed),
+            storage_prepare_total: self.storage_prepare_total.load(Ordering::Relaxed),
             conflict_check_nanos: self.conflict_check_nanos.load(Ordering::Relaxed),
             durable_append_nanos: self.durable_append_nanos.load(Ordering::Relaxed),
             apply_nanos: self.apply_nanos.load(Ordering::Relaxed),
@@ -491,6 +507,8 @@ mod tests {
                 queue_wait_nanos: 11,
                 prepare_nanos: 12,
                 prepare_pool_nanos: 0,
+                window_prepare_total: 0,
+                storage_prepare_total: 0,
                 conflict_check_nanos: 13,
                 durable_append_nanos: 14,
                 apply_nanos: 15,

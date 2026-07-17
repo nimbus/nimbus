@@ -719,6 +719,16 @@ async fn hot_key_direct_writes_reprepare_inline_without_caller_retry() {
         0,
         "same-document blind writes must never reach caller retry"
     );
+    assert_eq!(
+        after.window_prepare_total - before.window_prepare_total,
+        32,
+        "every hot-key caller should prepare from the published in-memory image"
+    );
+    assert_eq!(
+        after.storage_prepare_total - before.storage_prepare_total,
+        0,
+        "the direct hot path must not acquire the storage-backed prepare permit"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

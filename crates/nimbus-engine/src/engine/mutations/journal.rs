@@ -26,6 +26,7 @@ use super::inline_reprepare::{InlineReprepareOutcome, reprepare_single_document_
 use super::phase_metrics::CommitPhaseDurations;
 use super::prepared::PreparedCommit;
 use super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
+use super::window_prepare::{WindowPreparedWrite, prepare_single_document_write_from_window};
 
 const MUTATION_JOURNAL_BATCH_SIZE: usize = 32;
 const DEFAULT_MUTATION_JOURNAL_BATCH_MAX: usize = 256;
@@ -198,6 +199,7 @@ impl Engine {
     where
         Fut: future::Future<Output = ()> + Send + 'static,
     {
+        let mutation = normalize_queued_insert_id(self.id_source.as_ref(), mutation);
         let usage = MutationUsage::for_journal_admission(
             &mutation,
             matches!(&mode, MutationExecutionMode::Scheduled { .. }),
@@ -218,24 +220,42 @@ impl Engine {
         let mut attempt = 1;
         loop {
             let operation = runtime.enter_operation(tenant_id)?;
-            let runtime_for_prepare = runtime.clone();
-            let mutation_for_prepare = mutation.clone();
-            let principal_for_prepare = principal.clone();
-            let scheduled_for_prepare = scheduled_execution_id.clone();
-            let id_source = Arc::clone(&self.id_source);
-            let prepare_permit = runtime.acquire_prepare_permit().await?;
-            let prepared = tokio::task::spawn_blocking(move || {
-                let _prepare_permit = prepare_permit;
-                prepare_queued_mutation(
-                    runtime_for_prepare.as_ref(),
-                    mutation_for_prepare,
-                    principal_for_prepare,
-                    scheduled_for_prepare,
-                    id_source.as_ref(),
-                )
-            })
-            .await
-            .map_err(|error| Error::Internal(format!("mutation prepare task failed: {error}")))??;
+            let fast_prepare_started = Instant::now();
+            let prepared = if scheduled_execution_id.is_none()
+                && let Some(prepared) = prepare_single_document_write_from_window(
+                    runtime.as_ref(),
+                    &mutation,
+                    &principal,
+                )? {
+                runtime.commit_phase_metrics().record_window_prepare();
+                prepared_queued_from_window(
+                    prepared,
+                    principal.clone(),
+                    fast_prepare_started.elapsed(),
+                )?
+            } else {
+                runtime.commit_phase_metrics().record_storage_prepare();
+                let runtime_for_prepare = runtime.clone();
+                let mutation_for_prepare = mutation.clone();
+                let principal_for_prepare = principal.clone();
+                let scheduled_for_prepare = scheduled_execution_id.clone();
+                let id_source = Arc::clone(&self.id_source);
+                let prepare_permit = runtime.acquire_prepare_permit().await?;
+                tokio::task::spawn_blocking(move || {
+                    let _prepare_permit = prepare_permit;
+                    prepare_queued_mutation(
+                        runtime_for_prepare.as_ref(),
+                        mutation_for_prepare,
+                        principal_for_prepare,
+                        scheduled_for_prepare,
+                        id_source.as_ref(),
+                    )
+                })
+                .await
+                .map_err(|error| {
+                    Error::Internal(format!("mutation prepare task failed: {error}"))
+                })??
+            };
             runtime
                 .commit_phase_metrics()
                 .record_prepare_pool(Duration::from_nanos(prepared.prepare_nanos));
@@ -244,7 +264,7 @@ impl Engine {
             let (response_tx, mut response_rx) = tokio::sync::oneshot::channel();
             let enqueued_at = Instant::now();
             runtime.enqueue_mutation_admission_request(QueuedMutationRequest {
-                prepared_commit: prepared.prepared_commit,
+                prepared_commit: Box::new(prepared.prepared_commit),
                 conflict_dependencies: prepared.conflict_dependencies,
                 result: prepared.result,
                 prepared_payload_accounting: Some(PreparedPayloadAccounting::new(
@@ -339,7 +359,7 @@ fn process_queued_mutation_batch(
     let mut first_staged_sequence = None;
     for request in batch {
         let QueuedMutationRequest {
-            mut prepared_commit,
+            prepared_commit,
             conflict_dependencies,
             result,
             prepared_payload_accounting,
@@ -349,6 +369,7 @@ fn process_queued_mutation_batch(
             shadow_snapshot_sequence,
             enqueued_at,
         } = request;
+        let mut prepared_commit = *prepared_commit;
         drop(prepared_payload_accounting);
         if cancelled.load(std::sync::atomic::Ordering::Acquire) {
             let _ = response.send(Err(Error::Cancelled));
@@ -505,6 +526,41 @@ fn process_queued_mutation_batch(
     );
 
     Ok(QueuedMutationBatchResult { applied, responses })
+}
+
+fn normalize_queued_insert_id(id_source: &dyn IdSource, mutation: Mutation) -> Mutation {
+    match mutation {
+        Mutation::Insert {
+            table,
+            id: None,
+            fields,
+        } => Mutation::Insert {
+            table,
+            id: Some(id_source.next_document_id()),
+            fields,
+        },
+        mutation => mutation,
+    }
+}
+
+fn prepared_queued_from_window(
+    prepared: WindowPreparedWrite,
+    principal: nimbus_core::PrincipalContext,
+    elapsed: Duration,
+) -> Result<PreparedQueuedParts> {
+    let result = match prepared.result_document_id {
+        Some(id) => QueuedMutationResult::Immediate(Some(id)),
+        None => QueuedMutationResult::Immediate(None),
+    };
+    let prepared_commit =
+        PreparedCommit::for_journal(prepared.snapshot_sequence, vec![prepared.write], None)
+            .with_inline_reprepare(prepared.normalized_mutation, principal, prepared.schema);
+    Ok(PreparedQueuedParts {
+        conflict_dependencies: prepared.dependencies,
+        prepared_commit,
+        result,
+        prepare_nanos: duration_nanos(elapsed),
+    })
 }
 
 fn retain_commits_through_applied_head(

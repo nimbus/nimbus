@@ -6,7 +6,7 @@ use crate::tenant::TenantRuntime;
 
 use super::enforce_mutation_authorization;
 use super::prepared::{PreparedCommit, PreparedSerializedEffects};
-use super::write_log::{ValidationSource, WindowDocumentState};
+use super::write_log::{SingleDocumentWindowChange, ValidationSource, WindowDocumentState};
 
 pub(super) enum InlineReprepareOutcome {
     Fresh,
@@ -32,32 +32,32 @@ pub(super) fn reprepare_single_document_from_window(
     {
         return Ok(InlineReprepareOutcome::Fresh);
     }
-    let source = match runtime
-        .write_log
-        .validation_source(prepared.snapshot_sequence, durable_head)
-    {
-        Ok(source) => source,
-        Err(_) => {
+    let Some(plan) = prepared.inline_reprepare.as_ref() else {
+        let source = match runtime
+            .write_log
+            .validation_source(prepared.snapshot_sequence, durable_head)
+        {
+            Ok(source) => source,
+            Err(_) => {
+                return Ok(InlineReprepareOutcome::CallerWait(caller_wait_conflict(
+                    runtime,
+                    "prepared mutation predates the retained full-image window",
+                )));
+            }
+        };
+        let ValidationSource::InMemory(view) = source else {
             return Ok(InlineReprepareOutcome::CallerWait(caller_wait_conflict(
                 runtime,
-                "prepared mutation predates the retained full-image window",
+                "prepared mutation is outside the process-local conflict window",
             )));
-        }
-    };
-    let ValidationSource::InMemory(view) = source else {
-        return Ok(InlineReprepareOutcome::CallerWait(caller_wait_conflict(
-            runtime,
-            "prepared mutation is outside the process-local conflict window",
-        )));
-    };
-    let Some(conflicting_sequence) = view.first_conflicting_sequence(dependencies, |_, _| {
-        Err(Error::Internal(
-            "full-image write-log validation unexpectedly requested storage".to_string(),
-        ))
-    }) else {
-        return Ok(InlineReprepareOutcome::Fresh);
-    };
-    let Some(plan) = prepared.inline_reprepare.clone() else {
+        };
+        let Some(conflicting_sequence) = view.first_conflicting_sequence(dependencies, |_, _| {
+            Err(Error::Internal(
+                "full-image write-log validation unexpectedly requested storage".to_string(),
+            ))
+        }) else {
+            return Ok(InlineReprepareOutcome::Fresh);
+        };
         return Ok(InlineReprepareOutcome::CallerWait(
             Error::retryable_conflict(
                 "prepared mutation became stale before sequence assignment",
@@ -66,13 +66,30 @@ pub(super) fn reprepare_single_document_from_window(
         ));
     };
     let (table, document_id) = mutation_key(&plan.mutation)?;
-    let Some(base) = view.latest_document_state(table, document_id) else {
-        return Ok(InlineReprepareOutcome::CallerWait(
-            Error::retryable_conflict(
+    let change = match runtime.write_log.single_document_change_since(
+        prepared.snapshot_sequence,
+        table,
+        document_id,
+    ) {
+        Ok(Some(change)) => change,
+        Ok(None) | Err(_) => {
+            return Ok(InlineReprepareOutcome::CallerWait(caller_wait_conflict(
+                runtime,
                 "stale prepare has no safe retained document image",
-                Some(conflicting_sequence),
-            ),
-        ));
+            )));
+        }
+    };
+    let base = match change {
+        SingleDocumentWindowChange::Unchanged => return Ok(InlineReprepareOutcome::Fresh),
+        SingleDocumentWindowChange::Changed { latest } => *latest,
+        SingleDocumentWindowChange::WholeTable { sequence } => {
+            return Ok(InlineReprepareOutcome::CallerWait(
+                Error::retryable_conflict(
+                    "stale prepare crossed a table-wide schema or lifecycle change",
+                    Some(sequence),
+                ),
+            ));
+        }
     };
     if matches!(
         prepared.serialized_effects,
@@ -89,6 +106,10 @@ pub(super) fn reprepare_single_document_from_window(
             ),
         ));
     }
+    let plan = prepared
+        .inline_reprepare
+        .take()
+        .expect("single-document inline plan must remain attached through validation");
     rebuild_prepared_commit(prepared, plan, base)?;
     runtime.commit_phase_metrics().record_inline_reprepare();
     Ok(InlineReprepareOutcome::Reprepared)

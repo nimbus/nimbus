@@ -15,6 +15,7 @@ use super::super::journal::{
 };
 use super::super::prepared::PreparedCommit;
 use super::super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
+use super::super::window_prepare::prepare_single_document_write_from_window;
 use super::store::DirectMutationProfile;
 use super::types::{MutationExecutionMode, MutationExecutionResult};
 
@@ -43,14 +44,27 @@ impl Engine {
             let mut rate_accounted = false;
             loop {
                 let prepare_started = Instant::now();
-                let prepare_permit = runtime.acquire_prepare_permit_blocking()?;
-                let prepared = prepare_direct_mutation(
-                    runtime.as_ref(),
-                    runtime.schema(),
-                    &mode,
-                    mutation.clone(),
-                    principal,
-                )?;
+                let (prepared, prepare_permit) = if let Some(prepared) =
+                    prepare_direct_mutation_from_window(
+                        runtime.as_ref(),
+                        &mode,
+                        &mutation,
+                        principal,
+                    )? {
+                    runtime.commit_phase_metrics().record_window_prepare();
+                    (prepared, None)
+                } else {
+                    runtime.commit_phase_metrics().record_storage_prepare();
+                    let permit = runtime.acquire_prepare_permit_blocking()?;
+                    let prepared = prepare_direct_mutation(
+                        runtime.as_ref(),
+                        runtime.schema(),
+                        &mode,
+                        mutation.clone(),
+                        principal,
+                    )?;
+                    (prepared, Some(permit))
+                };
                 runtime
                     .commit_phase_metrics()
                     .record_prepare_pool(prepare_started.elapsed());
@@ -161,6 +175,38 @@ impl Engine {
         )
         .await
     }
+}
+
+fn prepare_direct_mutation_from_window(
+    runtime: &TenantRuntime,
+    mode: &MutationExecutionMode,
+    mutation: &Mutation,
+    principal: &PrincipalContext,
+) -> Result<Option<PreparedDirectMutation>> {
+    if !matches!(mode, MutationExecutionMode::Immediate) {
+        return Ok(None);
+    }
+    let Some(prepared) = prepare_single_document_write_from_window(runtime, mutation, principal)?
+    else {
+        return Ok(None);
+    };
+    let result_document_id = prepared.result_document_id;
+    let prepared_commit = PreparedCommit::for_direct(
+        prepared.snapshot_sequence,
+        prepared.dependencies,
+        prepared.write,
+        prepared.indexes,
+        None,
+    )?
+    .with_inline_reprepare(
+        prepared.normalized_mutation,
+        principal.clone(),
+        prepared.schema,
+    );
+    Ok(Some(PreparedDirectMutation::Commit {
+        prepared_commit: Box::new(prepared_commit),
+        result_document_id,
+    }))
 }
 
 fn normalize_direct_insert_id(engine: &Engine, mutation: Mutation) -> Mutation {

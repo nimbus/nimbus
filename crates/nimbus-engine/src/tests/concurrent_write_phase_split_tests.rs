@@ -17,13 +17,14 @@ fn phase_split_section_reports_plan_conflict_apply_and_fsync_shares() {
             apply_nanos: 2_000_000,
             publish_nanos: 1_000_000,
             durable_append_nanos: 5_000_000,
+            ..PhaseTotals::default()
         },
     );
     let report = render_phase_split_section(&[(8, split)]);
 
     assert!(report.contains("## Under-gate phase split"));
-    assert!(report.contains("| N | avg effective batch | plan-CPU | conflict-check | apply |"));
-    assert!(report.contains("| 8 | 8.00 | 10.0% | 10.0% | 30.0% | 50.0% | 10.000 ms |"));
+    assert!(report.contains("| N | avg effective batch | window/storage prepare | plan-CPU |"));
+    assert!(report.contains("| 8 | 8.00 | 0/0 | 10.0% | 10.0% | 30.0% | 50.0% | 10.000 ms |"));
 }
 
 #[test]
@@ -36,6 +37,7 @@ fn phase_split_delta_separates_prepare_from_conflict_check() {
         apply_nanos: 30,
         publish_nanos: 5,
         durable_append_nanos: 40,
+        ..PhaseTotals::default()
     };
     let after = PhaseTotals {
         journal_batch_size_sum: 7,
@@ -45,9 +47,10 @@ fn phase_split_delta_separates_prepare_from_conflict_check() {
         apply_nanos: 65,
         publish_nanos: 5,
         durable_append_nanos: 85,
+        ..PhaseTotals::default()
     };
 
     // Deltas: prepare 15, conflict-check 25, apply(+publish) 35, fsync 45 → total 120.
     let report = render_phase_split_section(&[(1, PhaseSplit::between(before, after))]);
-    assert!(report.contains("| 1 | 1.00 | 12.5% | 20.8% | 29.2% | 37.5% | 0.000 ms |"));
+    assert!(report.contains("| 1 | 1.00 | 0/0 | 12.5% | 20.8% | 29.2% | 37.5% | 0.000 ms |"));
 }

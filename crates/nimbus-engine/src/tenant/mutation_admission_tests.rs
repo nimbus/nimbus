@@ -8,11 +8,11 @@ use tokio::sync::oneshot;
 fn queued_request(enqueued_at: Instant) -> QueuedMutationRequest {
     let (response, _response_rx) = oneshot::channel();
     QueuedMutationRequest {
-        prepared_commit: crate::engine::PreparedCommit::for_journal(
+        prepared_commit: Box::new(crate::engine::PreparedCommit::for_journal(
             SequenceNumber(0),
             Vec::new(),
             None,
-        ),
+        )),
         conflict_dependencies: DependencySet::default(),
         result: QueuedMutationResult::Immediate(None),
         prepared_payload_accounting: None,

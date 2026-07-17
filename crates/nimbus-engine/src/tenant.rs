@@ -340,6 +340,14 @@ impl TenantRuntime {
             .clone()
     }
 
+    pub(crate) fn prepared_table_id_if_known(&self, table: &TableName) -> Option<TableId> {
+        self.prepared_table_ids
+            .lock()
+            .expect("prepared table-id lock should not be poisoned")
+            .get(table)
+            .cloned()
+    }
+
     pub(crate) async fn acquire_prepare_permit(&self) -> Result<OwnedSemaphorePermit> {
         self.prepare_permits
             .clone()
@@ -373,6 +381,10 @@ impl TenantRuntime {
     }
 
     pub(crate) fn replace_schema_snapshot(&self, schema: Arc<Schema>) {
+        self.prepared_table_ids
+            .lock()
+            .expect("prepared table-id lock should not be poisoned")
+            .clear();
         self.schema.store(schema);
     }
 

@@ -581,6 +581,8 @@ fn phase_totals(snapshot: CommitPhaseMetricsSnapshot) -> PhaseTotals {
         apply_nanos: snapshot.apply_nanos,
         publish_nanos: snapshot.publish_nanos,
         durable_append_nanos: snapshot.durable_append_nanos,
+        window_prepare_total: snapshot.window_prepare_total,
+        storage_prepare_total: snapshot.storage_prepare_total,
     }
 }
 

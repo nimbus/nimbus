@@ -7,6 +7,7 @@ mod journal;
 pub(in crate::engine) mod phase_metrics;
 pub(crate) mod prepared;
 mod shadow_conflicts;
+mod window_prepare;
 pub(crate) mod write_log;
 
 pub(crate) use authorization::enforce_mutation_authorization;
