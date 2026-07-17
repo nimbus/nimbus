@@ -1313,6 +1313,89 @@ async fn adaptive_batch_never_splits_the_durable_round_trip() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn publisher_accumulator_preserves_fsync_amortization_when_assignment_gets_ahead() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("publisher-accumulator", Engine::create_tenant);
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("phase metrics before publisher backlog should load")
+        .commit_phases;
+    let faults = engine.commit_fault_handle_for_testing();
+    let pause_label = crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH;
+    faults.arm(pause_label);
+
+    let mut inserts = vec![tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(0))]),
+                )
+                .await
+        }
+    })];
+    expect_blocking_wait_reaches_state("first publisher batch should pause after append", {
+        let faults = faults.clone();
+        move |timeout| faults.wait_until_entered(pause_label, timeout)
+    })
+    .await;
+
+    const QUEUED_BATCHES: usize = 16;
+    for index in 1..=QUEUED_BATCHES {
+        inserts.push(tokio::spawn({
+            let engine = engine.clone();
+            let tenant_id = tenant_id.clone();
+            async move {
+                engine
+                    .insert_document_async(
+                        tenant_id,
+                        tasks_table(),
+                        serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+                    )
+                    .await
+            }
+        }));
+        wait_for_mutation_journal_stats(
+            &engine,
+            &tenant_id,
+            "each assigned singleton should reach the bounded publisher queue",
+            |stats| stats.publisher_queue_depth == index,
+        )
+        .await;
+    }
+
+    faults.release(pause_label);
+    for insert in inserts {
+        expect_catch_up_future_within(insert, "accumulated mutation should publish")
+            .await
+            .expect("accumulated insert task should join")
+            .expect("accumulated insert should succeed");
+    }
+
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("phase metrics after publisher backlog should load")
+        .commit_phases;
+    assert_eq!(
+        after
+            .journal_batch_count
+            .saturating_sub(before.journal_batch_count),
+        2,
+        "the paused singleton plus all queued assignments should require two fsyncs"
+    );
+    assert_eq!(
+        after
+            .journal_batch_size_sum
+            .saturating_sub(before.journal_batch_size_sum),
+        (QUEUED_BATCHES + 1) as u64
+    );
+}
+
 #[tokio::test]
 async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_in_flight_response()
 {

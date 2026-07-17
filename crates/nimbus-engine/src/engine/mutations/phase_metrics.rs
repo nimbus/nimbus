@@ -359,6 +359,12 @@ pub(crate) struct CommitPhaseDurations {
 }
 
 impl CommitPhaseDurations {
+    pub(crate) fn merge_assignment(&mut self, other: Self) {
+        self.queue_wait = self.queue_wait.saturating_add(other.queue_wait);
+        self.prepare = self.prepare.saturating_add(other.prepare);
+        self.conflict_check = self.conflict_check.saturating_add(other.conflict_check);
+    }
+
     pub(crate) fn add_queue_wait(&mut self, elapsed: Duration) {
         self.queue_wait = self.queue_wait.saturating_add(elapsed);
     }

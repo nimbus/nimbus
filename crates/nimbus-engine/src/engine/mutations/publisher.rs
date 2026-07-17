@@ -13,6 +13,33 @@ use crate::tenant::{AssignedPublisherBatch, PublisherMessage, TenantRuntime};
 const DEFAULT_PUBLISHER_RETRY_LIMIT: usize = 4;
 const DEFAULT_PUBLISHER_RETRY_INITIAL_MS: u64 = 1;
 const DEFAULT_PUBLISHER_RETRY_MAX_MS: u64 = 100;
+const PUBLISHER_BATCH_BASE: usize = 32;
+const DEFAULT_PUBLISHER_BATCH_MAX: usize = 256;
+const DEFAULT_PUBLISHER_COALESCE_MICROS: u64 = 0;
+
+#[derive(Clone, Copy)]
+struct PublisherBatchPolicy {
+    base: usize,
+    max: usize,
+    coalesce: Duration,
+}
+
+impl PublisherBatchPolicy {
+    fn from_env() -> Self {
+        Self {
+            base: PUBLISHER_BATCH_BASE,
+            max: env_positive_usize(
+                "NIMBUS_MUTATION_JOURNAL_BATCH_MAX",
+                DEFAULT_PUBLISHER_BATCH_MAX,
+            )
+            .max(PUBLISHER_BATCH_BASE),
+            coalesce: Duration::from_micros(env_nonnegative_u64(
+                "NIMBUS_MUTATION_JOURNAL_COALESCE_MICROS",
+                DEFAULT_PUBLISHER_COALESCE_MICROS,
+            )),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub(crate) enum PublishAttemptError {
@@ -33,16 +60,21 @@ pub(crate) async fn run_ordered_publisher(
     engine_shutdown: CancellationToken,
     tenant_shutdown: CancellationToken,
 ) {
+    let mut pending_message = None;
     loop {
-        let message = tokio::select! {
-            message = receiver.recv() => message,
-            _ = engine_shutdown.cancelled() => {
-                receiver.close();
-                receiver.recv().await
-            }
-            _ = tenant_shutdown.cancelled() => {
-                receiver.close();
-                receiver.recv().await
+        let message = if let Some(pending) = pending_message.take() {
+            Some(pending)
+        } else {
+            tokio::select! {
+                message = receiver.recv() => message,
+                _ = engine_shutdown.cancelled() => {
+                    receiver.close();
+                    receiver.recv().await
+                }
+                _ = tenant_shutdown.cancelled() => {
+                    receiver.close();
+                    receiver.recv().await
+                }
             }
         };
         let Some(message) = message else {
@@ -61,6 +93,14 @@ pub(crate) async fn run_ordered_publisher(
                 continue;
             }
         };
+        let batch = accumulate_assigned_batches(
+            batch,
+            &mut receiver,
+            &mut pending_message,
+            &engine_shutdown,
+            &tenant_shutdown,
+        )
+        .await;
         let Some(runtime) = runtime.upgrade() else {
             batch.fail(&Error::Internal(
                 "tenant runtime stopped before assigned batch publication".to_string(),
@@ -97,6 +137,68 @@ pub(crate) async fn run_ordered_publisher(
             }
         }
     }
+}
+
+async fn accumulate_assigned_batches(
+    mut batch: AssignedPublisherBatch,
+    receiver: &mut mpsc::Receiver<PublisherMessage>,
+    pending_message: &mut Option<PublisherMessage>,
+    engine_shutdown: &CancellationToken,
+    tenant_shutdown: &CancellationToken,
+) -> AssignedPublisherBatch {
+    let policy = PublisherBatchPolicy::from_env();
+
+    while batch.records.len() < policy.max {
+        match receiver.try_recv() {
+            Ok(PublisherMessage::Batch(next))
+                if batch.records.len().saturating_add(next.records.len()) <= policy.max =>
+            {
+                batch.merge(next);
+            }
+            Ok(message) => {
+                *pending_message = Some(message);
+                return batch;
+            }
+            Err(mpsc::error::TryRecvError::Empty | mpsc::error::TryRecvError::Disconnected) => {
+                break;
+            }
+        }
+    }
+
+    if batch.records.len() >= policy.base || policy.coalesce.is_zero() {
+        return batch;
+    }
+
+    let deadline = tokio::time::Instant::now() + policy.coalesce;
+    while batch.records.len() < policy.base {
+        let message = tokio::select! {
+            message = receiver.recv() => message,
+            _ = tokio::time::sleep_until(deadline) => None,
+            _ = engine_shutdown.cancelled() => {
+                receiver.close();
+                None
+            }
+            _ = tenant_shutdown.cancelled() => {
+                receiver.close();
+                None
+            }
+        };
+        let Some(message) = message else {
+            break;
+        };
+        match message {
+            PublisherMessage::Batch(next)
+                if batch.records.len().saturating_add(next.records.len()) <= policy.max =>
+            {
+                batch.merge(next);
+            }
+            message => {
+                *pending_message = Some(message);
+                break;
+            }
+        }
+    }
+    batch
 }
 
 async fn publish_with_retry(
