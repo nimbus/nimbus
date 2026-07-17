@@ -563,14 +563,18 @@ fn fail_mutation_responses(responses: &[MutationResponseSender], error: &Error) 
     }
 }
 
+fn discard_failed_assignment_suffix(runtime: &TenantRuntime, assignment_baseline: SequenceNumber) {
+    if let Some(first) = assignment_baseline.0.checked_add(1).map(SequenceNumber) {
+        runtime.discard_unpersisted_write_log_suffix(first);
+    }
+}
+
 async fn recover_failed_assignment(
     runtime: Arc<TenantRuntime>,
     assignment_baseline: SequenceNumber,
     context: &'static str,
 ) {
-    if let Some(first) = assignment_baseline.0.checked_add(1).map(SequenceNumber) {
-        runtime.discard_unpersisted_write_log_suffix(first);
-    }
+    discard_failed_assignment_suffix(runtime.as_ref(), assignment_baseline);
     match runtime
         .read_storage
         .execute(|store| store.recover_durable_journal())
@@ -605,6 +609,10 @@ fn process_serial_queued_mutation_batch(
     ) {
         Ok(work) => work,
         Err(error) => {
+            // The serial arm stages the same process-local write-log suffix as
+            // the pipeline arm. Discard it before waking callers; the actor's
+            // outer error path then refreshes durable progress from storage.
+            discard_failed_assignment_suffix(runtime.as_ref(), previous_sequence);
             fail_mutation_responses(&assignment_responses, &error);
             return Err(error);
         }

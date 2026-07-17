@@ -2015,6 +2015,98 @@ async fn assignment_failure_mid_batch_discards_staged_suffix_and_keeps_tenant_li
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn serial_assignment_failure_discards_staged_suffix_and_keeps_tenant_live() {
+    let data_dir = tempdir().expect("serial assignment failure tempdir should build");
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_575))),
+            Arc::new(NoopFaultInjector),
+            Arc::new(nimbus_core::SeededIdSource::new(46_575)),
+        )
+        .expect("serial assignment failure engine should create"),
+    );
+    let tenant_id = TenantId::new("serial-assignment-failure").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let runtime_before = engine
+        .tenant_runtime_identity_for_testing(&tenant_id)
+        .expect("runtime identity should load");
+    engine
+        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
+        .expect("test should request the serial kill-switch arm");
+    engine
+        .commit_fault_handle_for_testing()
+        .inject_error_on_nth_hit(
+            crate::engine::commit_fault_labels::JOURNAL_ASSIGN_AFTER_STAGE,
+            1,
+            Error::InvalidInput("injected serial assignment failure".to_string()),
+        );
+
+    let error = engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+        )
+        .await
+        .expect_err("the serial assignment fault should fail its caller");
+    assert!(
+        matches!(error, Error::InvalidInput(ref message) if message == "injected serial assignment failure")
+    );
+    assert!(
+        engine
+            .read_durable_journal(&tenant_id, SequenceNumber(0))
+            .expect("journal should remain readable")
+            .is_empty(),
+        "assignment failure must not create a durable record"
+    );
+    let (assigned_through, pending) = engine
+        .write_log_assignment_for_testing(&tenant_id)
+        .expect("serial write-log assignment state should load");
+    assert_eq!(assigned_through, SequenceNumber(0));
+    assert!(
+        pending.is_empty(),
+        "serial assignment recovery must remove the phantom staged suffix"
+    );
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+        )
+        .await
+        .expect("the next serial batch should assign and commit without panicking");
+    assert_eq!(
+        engine
+            .tenant_runtime_identity_for_testing(&tenant_id)
+            .expect("runtime should remain loaded"),
+        runtime_before,
+        "recoverable serial assignment failure must not evict the tenant"
+    );
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("serial journal diagnostics should load");
+    assert_eq!(
+        stats.publisher_mode,
+        crate::tenant::CommitterPipelineMode::Serial
+    );
+    assert_eq!(stats.durable_head, SequenceNumber(1));
+    assert_eq!(stats.applied_head, SequenceNumber(1));
+    let journal = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("serial journal should read after recovery");
+    assert_eq!(journal.len(), 1);
+    assert_eq!(journal[0].sequence, SequenceNumber(1));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn assignment_worker_panic_discards_staged_suffix_and_keeps_tenant_live() {
     let data_dir = tempdir().expect("assignment panic tempdir should build");
     let engine = Arc::new(
