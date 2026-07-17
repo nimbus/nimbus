@@ -211,8 +211,7 @@ The machine's singleton anchor was 35% below the recorded run, so the N=1 and
 N=32 absolute latency/throughput rows are not accepted as a clean historical
 comparison. Normalized scaling improved from 7.68× to 9.47× at N=32 and from
 11.47× to 17.87× at N=256. The saturated throughput gate did not regress:
-N=256 is +0.8%, with p50 improving 4.1%. Raw report:
-`/private/tmp/ppsc5-review-crud-final-10.md`.
+N=256 is +0.8%, with p50 improving 4.1%.
 
 Correctness evidence for this slice:
 
