@@ -61,6 +61,9 @@ impl Engine {
                 else {
                     return Ok(MutationExecutionResult::Scheduled(false));
                 };
+                self.wait_for_commit_fault(
+                    crate::engine::execution_units::labels::PREPARE_COMPLETE,
+                )?;
                 let shadow_dependencies =
                     prepared_document_dependencies(&prepared_commit, |_| None);
                 observe_shadow_conflicts(
