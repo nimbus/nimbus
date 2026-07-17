@@ -140,6 +140,17 @@ fn redb_prepared_record_materializes_document_version_once() {
         .expect("prepared record should apply")
         .expect("prepared record should commit");
 
+    assert_eq!(
+        store
+            .journal_progress()
+            .expect("prepared record progress should load"),
+        crate::JournalProgress {
+            durable_head: record.sequence,
+            applied_head: record.sequence,
+        },
+        "prepared apply must advance both journal progress heads"
+    );
+
     let diagnostic = store
         .storage_health_diagnostic()
         .expect("document-version diagnostic should load");

@@ -291,3 +291,46 @@ async fn freshness_background_refresh_reschedules_for_mid_refresh_sequence_bump(
     assert_eq!(stats.incremental_refresh_count, 2);
     assert_eq!(stats.refresh_error_count, 0);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn recovered_remote_progress_remains_required_after_cache_wins_refresh_race() {
+    let refresh_override: TestRefreshOverride =
+        Arc::new(|store| apply_empty_records_through(store, SequenceNumber(2)));
+    let replica = test_replica(refresh_override).await;
+    let store = replica.store.clone();
+
+    // Model the schema-mismatch refresh winning before journal recovery: the
+    // derivative cache is already current, but no remote head has yet been
+    // retained as a freshness requirement.
+    let progress = apply_empty_records_through(&store, SequenceNumber(2))
+        .expect("cache should refresh through the remote writes")
+        .progress;
+    let before = store
+        .replica_freshness_stats()
+        .expect("freshness stats should load before recovery observation");
+    assert_eq!(before.local_applied_sequence, SequenceNumber(2));
+    assert_eq!(before.required_sequence, SequenceNumber(0));
+
+    store.note_recovered_remote_progress(progress);
+
+    let observed = store
+        .replica_freshness_stats()
+        .expect("freshness stats should load after recovery observation");
+    assert_eq!(observed.required_sequence, SequenceNumber(2));
+    assert_eq!(observed.local_applied_sequence, SequenceNumber(2));
+
+    timeout(Duration::from_secs(1), async {
+        while store.refresh_inflight.load(Ordering::Acquire) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("recovery observation refresh should settle");
+    let settled = store
+        .replica_freshness_stats()
+        .expect("freshness stats should load after refresh settles");
+    assert_eq!(
+        settled.last_refresh_cause,
+        LibsqlReplicaRefreshCause::DurableJournalReplay
+    );
+}

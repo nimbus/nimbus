@@ -93,19 +93,10 @@ impl LibsqlReplicaTenantStore {
             let next_sequence = SequenceNumber(progress.applied_head.0.saturating_add(1));
             let records = self.read_durable_journal_from(next_sequence)?;
             if !records.is_empty() {
-                let applied_head =
-                    self.block_on(self.apply_remote_durable_records_batch(records.as_slice()))?;
-                self.note_required_cache_sequence_with_cause(
-                    applied_head,
-                    LibsqlReplicaRefreshCause::DurableJournalReplay,
-                );
-            } else {
-                self.note_required_cache_sequence_with_cause(
-                    progress.durable_head,
-                    LibsqlReplicaRefreshCause::DurableJournalReplay,
-                );
+                self.block_on(self.apply_remote_durable_records_batch(records.as_slice()))?;
             }
         }
+        self.note_recovered_remote_progress(progress);
         self.ensure_local_cache_current()?;
         self.journal_progress()
     }

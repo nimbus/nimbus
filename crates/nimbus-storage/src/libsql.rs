@@ -388,6 +388,18 @@ impl LibsqlReplicaTenantStore {
         self.schedule_background_refresh();
     }
 
+    fn note_recovered_remote_progress(&self, progress: JournalProgress) {
+        // Recovery is also the authoritative observation point for foreign
+        // commits. A schema-mismatch snapshot refresh can win the race and
+        // make the local cache current before recovery inspects the heads, but
+        // diagnostics and later barriers must still retain the remote durable
+        // head that recovery observed.
+        self.note_required_cache_sequence_with_cause(
+            progress.durable_head,
+            LibsqlReplicaRefreshCause::DurableJournalReplay,
+        );
+    }
+
     fn refresh_local_cache(&self) -> Result<ReplicaRefreshOutcome> {
         let cause = self.freshness_metrics.requested_refresh_cause();
         let required_sequence =
