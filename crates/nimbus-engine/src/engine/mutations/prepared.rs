@@ -48,10 +48,9 @@ impl PreparedWrite {
                 "journal prepared write must contain a stable table identity".to_string(),
             )
         })?;
-        let current = match self.current {
-            Some(PreparedDocument::Full(document)) => Some(document),
-            None => None,
-        };
+        let current = self
+            .current
+            .map(|PreparedDocument::Full(document)| document);
         Ok(WriteOp {
             table: self.table,
             table_id,

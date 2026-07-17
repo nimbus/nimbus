@@ -20,7 +20,7 @@ use super::types::{MutationExecutionMode, MutationExecutionResult};
 enum PreparedDirectMutation {
     DuplicateScheduledExecution,
     Commit {
-        prepared_commit: PreparedCommit,
+        prepared_commit: Box<PreparedCommit>,
         result_document_id: Option<DocumentId>,
     },
 }
@@ -72,7 +72,8 @@ impl Engine {
                 let _prepared_payload =
                     crate::tenant::PreparedPayloadAccounting::new(runtime.clone(), prepared_bytes);
                 let profile = DirectMutationProfile::after_prepare(prepare_started);
-                match self.run_prepared_direct_mutation(runtime.clone(), prepared_commit, profile) {
+                match self.run_prepared_direct_mutation(runtime.clone(), *prepared_commit, profile)
+                {
                     Ok(Some(_)) => {
                         return Ok(match &mode {
                             MutationExecutionMode::Immediate => {
@@ -309,13 +310,13 @@ fn prepare_direct_mutation(
     dependencies.record_document(&write.table, &write.table_id, write.doc_id.clone());
     validate_prepared_for_provider(runtime, snapshot_sequence, &dependencies)?;
     Ok(PreparedDirectMutation::Commit {
-        prepared_commit: PreparedCommit::for_direct(
+        prepared_commit: Box::new(PreparedCommit::for_direct(
             snapshot_sequence,
             dependencies,
             write,
             indexes,
             scheduled_execution_id,
-        )?,
+        )?),
         result_document_id,
     })
 }
