@@ -388,14 +388,14 @@ impl LibsqlReplicaTenantStore {
         self.schedule_background_refresh();
     }
 
-    fn note_recovered_remote_progress(&self, progress: JournalProgress) {
+    fn note_recovered_remote_progress(&self, observed_remote_head: SequenceNumber) {
         // Recovery is also the authoritative observation point for foreign
         // commits. A schema-mismatch snapshot refresh can win the race and
         // make the local cache current before recovery inspects the heads, but
         // diagnostics and later barriers must still retain the remote durable
         // head that recovery observed.
         self.note_required_cache_sequence_with_cause(
-            progress.durable_head,
+            observed_remote_head,
             LibsqlReplicaRefreshCause::DurableJournalReplay,
         );
     }

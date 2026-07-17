@@ -311,7 +311,7 @@ async fn recovered_remote_progress_remains_required_after_cache_wins_refresh_rac
     assert_eq!(before.local_applied_sequence, SequenceNumber(2));
     assert_eq!(before.required_sequence, SequenceNumber(0));
 
-    store.note_recovered_remote_progress(progress);
+    store.note_recovered_remote_progress(progress.durable_head);
 
     let observed = store
         .replica_freshness_stats()
