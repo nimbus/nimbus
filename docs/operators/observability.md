@@ -186,7 +186,9 @@ curl -s http://localhost:8080/debug/tenants/demo/engine/metrics \
 
 Returns `{ "tenant_id": "demo", "diagnostics": { ... } }` where
 `diagnostics` groups per-tenant engine state: `mutation_admission`
-(write admission gate), `mutation_journal` (durable journal progress),
+(write admission gate), `mutation_isolate_admission` (the current and peak
+concurrent mutation-isolate counts, configured ceiling, bounded-wait depth,
+and shed count), `mutation_journal` (durable journal progress),
 `subscription_delivery` (reactive delivery queue),
 `materialized_read_surface` and `serving_snapshot_manager` (read-path
 caches), `query_planning`, and `libsql_replica_freshness` (null unless the

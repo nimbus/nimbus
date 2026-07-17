@@ -14,8 +14,9 @@ mod verification;
 pub use engine::{
     AsyncMutationContext, CommitPhaseMetricsSnapshot, CommittedMutationEvent,
     CommittedMutationObserver, EncryptionStatus, Engine, InitializedKeyProvider, MutationActor,
-    MutationExecutionUnit, SubscribeOptions, SubscriptionBootstrapCancellation,
-    TableSchemaChangeEvent, TableSchemaChangeObserver, TenantObjectMeta,
+    MutationExecutionUnit, MutationIsolatePermit, SubscribeOptions,
+    SubscriptionBootstrapCancellation, TableSchemaChangeEvent, TableSchemaChangeObserver,
+    TenantObjectMeta,
 };
 #[cfg(any(test, feature = "test-hooks"))]
 pub use engine::{CommitFaultHandle, Fault, commit_fault_labels};
@@ -53,9 +54,9 @@ pub use subscriptions::{
 pub use tenant::MutationJournalPauseHandle;
 pub use tenant::{
     MaterializedReadSurfaceStats, MutationAdmissionPhase, MutationAdmissionStats,
-    MutationJournalStats, PinnedServingReadSnapshot, QueryPlanningStats,
-    ServingSnapshotManagerStats, SubscriptionDeliveryStats, TenantEngineDiagnosticsSnapshot,
-    TenantOperationGuard,
+    MutationIsolateAdmissionStats, MutationJournalStats, PinnedServingReadSnapshot,
+    QueryPlanningStats, ServingSnapshotManagerStats, SubscriptionDeliveryStats,
+    TenantEngineDiagnosticsSnapshot, TenantOperationGuard,
 };
 pub use triggers::{
     TriggerInvocationExecution, TriggerInvocationExecutor, TriggerLookupMatch, TriggerRegistration,

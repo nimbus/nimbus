@@ -59,6 +59,7 @@ pub use self::materialized_reads::{
 pub(crate) use self::mutation::DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY;
 #[cfg(test)]
 pub(crate) use self::mutation::DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY;
+pub(crate) use self::mutation::MutationIsolateAdmissionPermit;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use self::mutation::MutationJournalPauseHandle;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -67,8 +68,14 @@ pub(crate) use self::mutation::{
     CommitterActor, CommitterMessage, assign_and_validate, run_committer_actor,
     validate_append_sequences,
 };
-use self::mutation::{MutationAdmissionDecision, MutationAdmissionGate, MutationJournalState};
-pub use self::mutation::{MutationAdmissionPhase, MutationAdmissionStats, MutationJournalStats};
+use self::mutation::{
+    MutationAdmissionDecision, MutationAdmissionGate, MutationIsolateAdmission,
+    MutationJournalState,
+};
+pub use self::mutation::{
+    MutationAdmissionPhase, MutationAdmissionStats, MutationIsolateAdmissionStats,
+    MutationJournalStats,
+};
 pub(crate) use self::mutation::{
     PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult,
 };
@@ -116,6 +123,7 @@ pub struct TenantRuntime {
     trigger_registry: TriggerRegistry,
     lifecycle: Arc<TenantLifecycle>,
     mutation_admission: Arc<MutationAdmissionGate>,
+    mutation_isolate_admission: Arc<MutationIsolateAdmission>,
     mutation_journal: Arc<MutationJournalState>,
     committer: Arc<CommitterActor>,
     write_rate: TenantWriteRateLimiter,
@@ -163,6 +171,7 @@ fn prepare_concurrency() -> usize {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TenantEngineDiagnosticsSnapshot {
     pub mutation_admission: MutationAdmissionStats,
+    pub mutation_isolate_admission: MutationIsolateAdmissionStats,
     pub mutation_journal: MutationJournalStats,
     pub subscription_delivery: SubscriptionDeliveryStats,
     pub materialized_read_surface: MaterializedReadSurfaceStats,
@@ -209,6 +218,7 @@ impl TenantRuntime {
             trigger_registry: TriggerRegistry::new(),
             lifecycle: Arc::new(TenantLifecycle::new()),
             mutation_admission: Arc::new(MutationAdmissionGate::new()),
+            mutation_isolate_admission: Arc::new(MutationIsolateAdmission::from_env()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
             committer: Arc::new(CommitterActor::new()),
             write_rate: TenantWriteRateLimiter::new(),
@@ -356,6 +366,12 @@ impl TenantRuntime {
             .map_err(|_| nimbus_core::Error::Internal("tenant prepare pool closed".to_string()))
     }
 
+    pub(crate) async fn acquire_mutation_isolate_permit(
+        &self,
+    ) -> Result<MutationIsolateAdmissionPermit> {
+        self.mutation_isolate_admission.acquire().await
+    }
+
     pub(crate) fn acquire_prepare_permit_blocking(&self) -> Result<OwnedSemaphorePermit> {
         loop {
             match Arc::clone(&self.prepare_permits).try_acquire_owned() {
@@ -479,6 +495,7 @@ impl TenantRuntime {
         commit_phases.committer_send_timeout_total = mutation_journal.committer_send_timeout_count;
         TenantEngineDiagnosticsSnapshot {
             mutation_admission: self.mutation_admission_stats(),
+            mutation_isolate_admission: self.mutation_isolate_admission.stats(),
             mutation_journal,
             subscription_delivery: self.subscription_delivery_stats(),
             materialized_read_surface: self.materialized_read_surface_stats(),

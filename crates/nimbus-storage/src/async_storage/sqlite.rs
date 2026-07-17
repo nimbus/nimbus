@@ -189,7 +189,14 @@ impl EmbeddedSqliteProvider {
     ) -> Result<OpenedEmbeddedSqliteTenant> {
         let clock = self.clock.clone();
         let fault_injector = self.fault_injector.clone();
-        let read_parallelism = self.tenant_read_parallelism;
+        // The executor's read parallelism tracks core count, but the sqlite
+        // CONNECTION pool must never drop below the engine's documented
+        // floor: one mutation legitimately holds up to 5 read snapshots, so
+        // a core-count pool (4 on CI runners) starves under concurrent
+        // mutations while the executor still admits readers.
+        let read_parallelism = self
+            .tenant_read_parallelism
+            .max(crate::sqlite::MIN_SQLITE_READ_CONNECTIONS);
         let provider = self.encryption_provider.clone();
         let store = self
             .storage_handle

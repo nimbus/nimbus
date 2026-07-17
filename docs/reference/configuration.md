@@ -253,6 +253,7 @@ runs with the built-in community license.
 | Environment variable | Meaning |
 | --- | --- |
 | `NIMBUS_DEPLOY_TOKEN` | Enables the [deploy admin API](/reference/deploy-admin-api/) and sets the expected deploy bearer token. Unset, every deploy request returns `401`. |
+| `NIMBUS_TENANT_MUTATION_ISOLATE_CEILING` | Maximum concurrently executing top-level mutation isolates per tenant. Additional mutations wait in bounded admission; the default is `16`. |
 | `LISTEN_FDS`, `LISTEN_PID` | Set by systemd for `--systemd-socket-activation`; not set manually. |
 
 ## Related pages
