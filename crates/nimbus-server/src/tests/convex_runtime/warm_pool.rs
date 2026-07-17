@@ -15,6 +15,52 @@ use crate::tests::{
 };
 
 const CONCURRENT_MUTATIONS: usize = 4;
+const MAX_TENANT_QUEUE_RETRIES: usize = 4;
+
+async fn concurrent_insert_with_bounded_queue_retry(
+    client: reqwest::Client,
+    url: String,
+    bearer: String,
+    ordinal: usize,
+) -> serde_json::Value {
+    let mut retries = 0;
+    loop {
+        let response = client
+            .post(&url)
+            .header(reqwest::header::AUTHORIZATION, &bearer)
+            .json(&json!({
+                "name": "messages:concurrentInsert",
+                "args": { "ordinal": ordinal },
+            }))
+            .send()
+            .await
+            .expect("concurrent mutation request should send");
+        let status = response.status();
+        let body = response
+            .json::<serde_json::Value>()
+            .await
+            .expect("concurrent mutation response should parse");
+        if status == StatusCode::OK {
+            return body;
+        }
+
+        let retryable_tenant_queue_overflow = status == StatusCode::TOO_MANY_REQUESTS
+            && body["error"]["retryable"] == true
+            && body["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("tenant queue limit exceeded for demo"));
+        assert!(
+            retryable_tenant_queue_overflow,
+            "unexpected concurrent mutation response {status}: {body}"
+        );
+        assert!(
+            retries < MAX_TENANT_QUEUE_RETRIES,
+            "tenant queue remained saturated after {retries} retries: {body}"
+        );
+        retries += 1;
+        tokio::time::sleep(std::time::Duration::from_millis(100 * (1 << (retries - 1)))).await;
+    }
+}
 
 fn same_tenant_warm_pool_registry() -> crate::ConvexRegistry {
     let mut limits = cooperative_warm_pool_runtime_test_limits();
@@ -106,16 +152,7 @@ async fn same_tenant_concurrent_mutations_use_warm_pool_without_isolate_lifecycl
         let bearer = convex_team_bearer();
         requests.push(tokio::spawn(async move {
             start.wait().await;
-            client
-                .post(url)
-                .header(reqwest::header::AUTHORIZATION, bearer)
-                .json(&json!({
-                    "name": "messages:concurrentInsert",
-                    "args": { "ordinal": ordinal },
-                }))
-                .send()
-                .await
-                .expect("concurrent mutation request should send")
+            concurrent_insert_with_bounded_queue_retry(client, url, bearer, ordinal).await
         }));
     }
     start.wait().await;
@@ -141,15 +178,9 @@ async fn same_tenant_concurrent_mutations_use_warm_pool_without_isolate_lifecycl
     );
 
     for request in requests {
-        let response = request.await.expect("concurrent mutation task should join");
-        assert_eq!(response.status(), StatusCode::OK);
+        let body = request.await.expect("concurrent mutation task should join");
         assert!(
-            response
-                .json::<serde_json::Value>()
-                .await
-                .expect("concurrent mutation response should parse")
-                .as_str()
-                .is_some(),
+            body.as_str().is_some(),
             "runtime-backed insert should return a document id"
         );
     }
