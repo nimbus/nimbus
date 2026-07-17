@@ -426,7 +426,13 @@ impl WriteLog {
             .coverage_known = false;
     }
 
-    /// Records a proven zero-write sequence span without allocating entries.
+    /// Records a proven zero-write assignment span without allocating entries.
+    ///
+    /// This must not advance `published_through`: an earlier document record
+    /// can still be staged in `pending` while a later zero-write record becomes
+    /// durable and applied in the same storage catch-up. Publication remains
+    /// owned by `publish_pending_through`, which publishes those pending images
+    /// before crossing the applied zero-write suffix.
     pub(crate) fn advance_known_zero_write_through(&self, sequence: SequenceNumber) {
         let mut state = self
             .state
@@ -443,7 +449,6 @@ impl WriteLog {
             state.covered_through = sequence;
         }
         state.assigned_through = sequence;
-        state.published_through = state.published_through.max(sequence);
     }
 
     /// Publishes pending entries through `applied_head`, then applies retention.
@@ -950,6 +955,25 @@ mod tests {
             log.validation_source(SequenceNumber(0), SequenceNumber(1)),
             Ok(ValidationSource::InMemory(_))
         ));
+    }
+
+    #[test]
+    fn later_zero_write_assignment_cannot_cross_an_earlier_pending_publish() {
+        let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
+        log.stage_pending([commit(1, 8)], Timestamp(1_000));
+
+        // A later trigger-delivery cursor can become durable/applied while
+        // storage catch-up also applies this already-staged document record.
+        // Recording that zero-write assignment must leave publication to the
+        // common applied-prefix path so sequence 1 is published before 2.
+        log.advance_known_zero_write_through(SequenceNumber(2));
+        log.publish_pending_through(SequenceNumber(2), Timestamp(1_001), SequenceNumber(0));
+
+        let inspection = log.inspection();
+        assert_eq!(inspection.published, vec![SequenceNumber(1)]);
+        assert!(inspection.pending.is_empty());
+        assert_eq!(log.assigned_through(), SequenceNumber(2));
+        assert!(log.current_prepare_view_available(SequenceNumber(2)));
     }
 
     #[test]

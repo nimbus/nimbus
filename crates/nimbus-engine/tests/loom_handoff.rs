@@ -4,6 +4,119 @@ use loom::sync::atomic::{AtomicBool, Ordering};
 use loom::sync::{Arc, Condvar, Mutex};
 use loom::thread;
 
+#[derive(Debug)]
+struct PublishState {
+    pending_low: bool,
+    published: Vec<u64>,
+    published_through: u64,
+}
+
+impl PublishState {
+    fn with_pending_low() -> Self {
+        Self {
+            pending_low: true,
+            published: Vec::new(),
+            published_through: 1,
+        }
+    }
+
+    fn record_zero_write_assignment(&mut self, _sequence: u64) {
+        // Assignment/coverage is deliberately distinct from publication. A
+        // higher zero-write record may complete storage apply while a lower
+        // document image is still pending publication.
+    }
+
+    fn publish_pending_through(&mut self, applied_head: u64) {
+        if self.pending_low && applied_head >= 2 {
+            assert!(
+                2 > self.published_through,
+                "write-log publish order must follow assignment order"
+            );
+            self.pending_low = false;
+            self.published.push(2);
+            self.published_through = 2;
+        }
+        self.published_through = self.published_through.max(applied_head);
+    }
+}
+
+#[test]
+#[should_panic(expected = "write-log publish order must follow assignment order")]
+fn eager_zero_write_publish_reproduces_two_batch_order_violation() {
+    loom::model(|| {
+        let state = Arc::new(Mutex::new(PublishState::with_pending_low()));
+        let higher_finished = Arc::new(AtomicBool::new(false));
+
+        let higher_zero_write_batch = {
+            let state = state.clone();
+            let higher_finished = higher_finished.clone();
+            thread::spawn(move || {
+                // Pre-fix shape: the later zero-write batch crossed the
+                // publish frontier as soon as its storage operation returned.
+                state.lock().expect("publish model lock").published_through = 3;
+                higher_finished.store(true, Ordering::Release);
+            })
+        };
+        let lower_document_batch = {
+            let state = state.clone();
+            let higher_finished = higher_finished.clone();
+            thread::spawn(move || {
+                while !higher_finished.load(Ordering::Acquire) {
+                    thread::yield_now();
+                }
+                state
+                    .lock()
+                    .expect("publish model lock")
+                    .publish_pending_through(3);
+            })
+        };
+
+        higher_zero_write_batch
+            .join()
+            .expect("higher zero-write model thread");
+        lower_document_batch
+            .join()
+            .expect("lower document model thread");
+    });
+}
+
+#[test]
+fn applied_prefix_publish_orders_two_batches_across_out_of_order_completion() {
+    loom::model(|| {
+        let state = Arc::new(Mutex::new(PublishState::with_pending_low()));
+
+        let higher_zero_write_batch = {
+            let state = state.clone();
+            thread::spawn(move || {
+                let mut state = state.lock().expect("publish model lock");
+                state.record_zero_write_assignment(3);
+                state.publish_pending_through(3);
+            })
+        };
+        let lower_document_batch = {
+            let state = state.clone();
+            thread::spawn(move || {
+                state
+                    .lock()
+                    .expect("publish model lock")
+                    .publish_pending_through(2);
+            })
+        };
+
+        higher_zero_write_batch
+            .join()
+            .expect("higher zero-write model thread");
+        lower_document_batch
+            .join()
+            .expect("lower document model thread");
+
+        let state = state.lock().expect("final publish model lock");
+        assert_eq!(state.published, vec![2]);
+        assert!(!state.pending_low);
+        assert_eq!(state.published_through, 3);
+    });
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SendOutcome {
     Accepted,
