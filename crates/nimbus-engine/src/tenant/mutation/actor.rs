@@ -113,6 +113,7 @@ pub(crate) struct CommitterActor {
     inbox_capacity: usize,
     send_timeout: Duration,
     send_timeout_count: AtomicU64,
+    shutdown: CancellationToken,
 }
 
 impl CommitterActor {
@@ -132,6 +133,7 @@ impl CommitterActor {
             inbox_capacity,
             send_timeout,
             send_timeout_count: AtomicU64::new(0),
+            shutdown: CancellationToken::new(),
         }
     }
 
@@ -372,6 +374,14 @@ impl CommitterActor {
     pub(crate) fn send_timeout_count(&self) -> u64 {
         self.send_timeout_count.load(Ordering::Relaxed)
     }
+
+    pub(crate) fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown.clone()
+    }
+
+    pub(crate) fn shutdown(&self) {
+        self.shutdown.cancel();
+    }
 }
 
 fn blocking_receive<T>(
@@ -399,17 +409,22 @@ fn blocking_receive<T>(
 pub(crate) async fn run_committer_actor(
     runtime: Weak<TenantRuntime>,
     receiver: mpsc::Receiver<CommitterMessage>,
-    shutdown: CancellationToken,
+    engine_shutdown: CancellationToken,
+    tenant_shutdown: CancellationToken,
 ) {
     COMMITTER_ACTOR_ACTIVE
-        .scope((), run_committer_actor_loop(runtime, receiver, shutdown))
+        .scope(
+            (),
+            run_committer_actor_loop(runtime, receiver, engine_shutdown, tenant_shutdown),
+        )
         .await;
 }
 
 async fn run_committer_actor_loop(
     runtime: Weak<TenantRuntime>,
     mut receiver: mpsc::Receiver<CommitterMessage>,
-    shutdown: CancellationToken,
+    engine_shutdown: CancellationToken,
+    tenant_shutdown: CancellationToken,
 ) {
     // This task is the tenant's single serial-commit owner. It never retires
     // while the runtime is live, so the old #184 clear/re-check/re-arm wakeup
@@ -417,7 +432,11 @@ async fn run_committer_actor_loop(
     loop {
         let message = tokio::select! {
             message = receiver.recv() => message,
-            _ = shutdown.cancelled() => {
+            _ = engine_shutdown.cancelled() => {
+                receiver.close();
+                receiver.recv().await
+            }
+            _ = tenant_shutdown.cancelled() => {
                 receiver.close();
                 receiver.recv().await
             }
@@ -459,6 +478,20 @@ async fn run_committer_actor_loop(
             | CommitterMessage::InternalSerial(job) => job,
             CommitterMessage::QueuedBatch { .. } => unreachable!(),
         };
+        if runtime.store.has_process_local_sequence_authority()
+            && let Err(error) = runtime.wait_for_publisher_barrier().await
+        {
+            let CommitterJob { task, completed } = job;
+            drop(task);
+            let _ = completed.send(());
+            runtime.record_mutation_worker_failure();
+            tracing::warn!(
+                tenant = %runtime.tenant_id(),
+                error = %error,
+                "committer serial job rejected because the ordered publisher did not drain"
+            );
+            continue;
+        }
         let CommitterJob { task, completed } = job;
         let failed = tokio::task::spawn_blocking(move || run_job(task))
             .await

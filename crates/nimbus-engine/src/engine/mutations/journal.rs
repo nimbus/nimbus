@@ -9,14 +9,13 @@ use nimbus_core::{
     AccessAction, CommitEntry, DependencySet, Document, Error, IdSource, Mutation, Result,
     SequenceNumber, TenantId, Timestamp,
 };
-use tokio::sync::oneshot;
 use tracing::warn;
 
 use crate::Engine;
 use crate::engine::execution_units::{CommitFaultClient, labels};
 use crate::tenant::{
-    PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult, TenantOperationGuard,
-    TenantRuntime,
+    AssignedPublisherBatch, DeferredPublisherResponse, PendingPublisherResponse,
+    PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult, TenantRuntime,
 };
 
 use super::caps::{MutationUsage, check_mutation_caps};
@@ -90,20 +89,14 @@ struct PreparedQueuedParts {
     prepare_nanos: u64,
 }
 
-struct ActiveQueuedMutation {
-    _operation: TenantOperationGuard,
-    response: oneshot::Sender<Result<QueuedMutationResult>>,
-    result: QueuedMutationResult,
-}
-
-struct PendingQueuedMutationResponse {
-    response: oneshot::Sender<Result<QueuedMutationResult>>,
-    result: QueuedMutationResult,
-}
-
 struct QueuedMutationBatchResult {
     applied: Vec<CommitEntry>,
-    responses: Vec<PendingQueuedMutationResponse>,
+    responses: Vec<PendingPublisherResponse>,
+}
+
+struct AssignedPublisherWork {
+    batch: Option<AssignedPublisherBatch>,
+    deferred: Vec<DeferredPublisherResponse>,
 }
 
 impl Engine {
@@ -129,10 +122,64 @@ impl Engine {
             return;
         }
 
+        if runtime.store.has_process_local_sequence_authority() {
+            let runtime_for_task = runtime.clone();
+            let engine = self.clone();
+            let assigned = tokio::task::spawn_blocking(move || {
+                let previous = runtime_for_task.assigned_head();
+                assign_queued_mutation_batch(runtime_for_task, batch, engine, previous)
+            })
+            .await;
+            match assigned {
+                Ok(Ok(mut work)) => {
+                    if let Err(error) = runtime
+                        .send_publisher_response_fence(std::mem::take(&mut work.deferred))
+                        .await
+                    {
+                        let (responses, error) = *error;
+                        for response in responses {
+                            response.fail(&error);
+                        }
+                        if let Some(assigned) = work.batch {
+                            let first = assigned.first_sequence();
+                            assigned.fail(&error);
+                            runtime.discard_unpersisted_write_log_suffix(first);
+                        }
+                        runtime.record_mutation_worker_failure();
+                        warn!(error = %error, "publisher queue rejected ordered response fence");
+                        return;
+                    }
+                    let Some(assigned) = work.batch else {
+                        return;
+                    };
+                    if let Err(error) = runtime.send_assigned_publisher_batch(assigned).await {
+                        let (assigned, error) = *error;
+                        let first = assigned.first_sequence();
+                        assigned.fail(&error);
+                        runtime.discard_unpersisted_write_log_suffix(first);
+                        runtime.record_mutation_worker_failure();
+                        warn!(error = %error, "publisher queue rejected assigned mutation batch");
+                    }
+                }
+                Ok(Err(error)) => {
+                    runtime.record_mutation_worker_failure();
+                    warn!(error = %error, "mutation assignment batch failed");
+                }
+                Err(error) => {
+                    runtime.record_mutation_worker_failure();
+                    warn!(error = %error, "committer assignment batch panicked");
+                }
+            }
+            return;
+        }
+
+        // Provider persistence stays on the pre-PPSC5 serial arm until slice C
+        // adds ordered network pipelining and lease fencing.
         let runtime_for_task = runtime.clone();
+        let engine = self.clone();
         let commit_faults = self.commit_faults.clone();
         let batch_result = tokio::task::spawn_blocking(move || {
-            process_queued_mutation_batch(runtime_for_task, batch, &commit_faults)
+            process_serial_queued_mutation_batch(runtime_for_task, batch, engine, &commit_faults)
         })
         .await;
 
@@ -343,20 +390,20 @@ pub(super) fn mutation_occ_backoff(attempt: usize) -> Duration {
     Duration::from_millis(initial.saturating_mul(1u64 << shift).min(maximum))
 }
 
-fn process_queued_mutation_batch(
+fn assign_queued_mutation_batch(
     runtime: Arc<TenantRuntime>,
     batch: Vec<QueuedMutationRequest>,
-    commit_faults: &CommitFaultClient,
-) -> Result<QueuedMutationBatchResult> {
+    engine: Arc<Engine>,
+    mut previous_sequence: SequenceNumber,
+) -> Result<AssignedPublisherWork> {
     let mut phases = CommitPhaseDurations::default();
     let mut scheduled_execution_overlay = HashSet::new();
     let mut active = Vec::new();
+    let mut deferred = Vec::new();
     let mut records = Vec::new();
     let mut sample_started_at = None::<Instant>;
     let mut batch_shadow_dependencies = Vec::new();
     let mut batch_shadow_snapshot = None::<nimbus_core::SequenceNumber>;
-    let mut previous_sequence = runtime.durable_head();
-    let mut first_staged_sequence = None;
     for request in batch {
         let QueuedMutationRequest {
             prepared_commit,
@@ -372,17 +419,29 @@ fn process_queued_mutation_batch(
         let mut prepared_commit = *prepared_commit;
         drop(prepared_payload_accounting);
         if cancelled.load(std::sync::atomic::Ordering::Acquire) {
-            let _ = response.send(Err(Error::Cancelled));
+            deferred.push(DeferredPublisherResponse {
+                _operation,
+                response,
+                result: Err(Error::Cancelled),
+            });
             continue;
         }
         if prepared_commit.is_empty_journal() {
-            let _ = response.send(Ok(result));
+            deferred.push(DeferredPublisherResponse {
+                _operation,
+                response,
+                result: Ok(result),
+            });
             continue;
         }
         if let Some(execution_id) = prepared_commit.scheduled_execution_id()
             && !scheduled_execution_overlay.insert(execution_id.to_string())
         {
-            let _ = response.send(Ok(QueuedMutationResult::Scheduled(false)));
+            deferred.push(DeferredPublisherResponse {
+                _operation,
+                response,
+                result: Ok(QueuedMutationResult::Scheduled(false)),
+            });
             continue;
         }
         let conflict_started = Instant::now();
@@ -395,7 +454,11 @@ fn process_queued_mutation_batch(
             Ok(InlineReprepareOutcome::Fresh | InlineReprepareOutcome::Reprepared) => {}
             Ok(InlineReprepareOutcome::CallerWait(error)) | Err(error) => {
                 phases.add_conflict_check(conflict_started.elapsed());
-                let _ = response.send(Err(error));
+                deferred.push(DeferredPublisherResponse {
+                    _operation,
+                    response,
+                    result: Err(error),
+                });
                 continue;
             }
         }
@@ -418,15 +481,18 @@ fn process_queued_mutation_batch(
         {
             Ok(record) => record,
             Err(error) => {
-                let _ = response.send(Err(error));
+                deferred.push(DeferredPublisherResponse {
+                    _operation,
+                    response,
+                    result: Err(error),
+                });
                 continue;
             }
         };
         runtime.stage_pending_write_log_commits([record.as_commit_entry()], runtime.store.now());
-        first_staged_sequence.get_or_insert(sequence);
         previous_sequence = sequence;
         phases.add_prepare(serialize_started.elapsed());
-        active.push(ActiveQueuedMutation {
+        active.push(PendingPublisherResponse {
             _operation,
             response,
             result,
@@ -435,9 +501,9 @@ fn process_queued_mutation_batch(
     }
 
     if active.is_empty() {
-        return Ok(QueuedMutationBatchResult {
-            applied: Vec::new(),
-            responses: Vec::new(),
+        return Ok(AssignedPublisherWork {
+            batch: None,
+            deferred,
         });
     }
 
@@ -449,6 +515,42 @@ fn process_queued_mutation_batch(
         phases.add_conflict_check(conflict_started.elapsed());
     }
 
+    Ok(AssignedPublisherWork {
+        batch: Some(AssignedPublisherBatch {
+            engine,
+            records: Arc::new(records),
+            responses: active,
+            phases,
+            sample_started_at: sample_started_at
+                .expect("a non-empty active batch must retain an admitted request timestamp"),
+        }),
+        deferred,
+    })
+}
+
+fn process_serial_queued_mutation_batch(
+    runtime: Arc<TenantRuntime>,
+    batch: Vec<QueuedMutationRequest>,
+    engine: Arc<Engine>,
+    commit_faults: &CommitFaultClient,
+) -> Result<QueuedMutationBatchResult> {
+    let previous_sequence = runtime.durable_head();
+    let mut work = assign_queued_mutation_batch(runtime.clone(), batch, engine, previous_sequence)?;
+    for response in std::mem::take(&mut work.deferred) {
+        response.complete();
+    }
+    let Some(mut assigned) = work.batch else {
+        return Ok(QueuedMutationBatchResult {
+            applied: Vec::new(),
+            responses: Vec::new(),
+        });
+    };
+    let records = assigned.records.clone();
+    let mut active = std::mem::take(&mut assigned.responses);
+    let mut phases = assigned.phases;
+    let sample_started_at = assigned.sample_started_at;
+    let first_staged_sequence = Some(assigned.first_sequence());
+
     let durable_append_started = Instant::now();
     let append_baseline = runtime.durable_head();
     crate::tenant::validate_append_sequences(
@@ -458,7 +560,7 @@ fn process_queued_mutation_batch(
     let write_log_guard = runtime.arm_write_log_append();
     if let Err(error) = runtime.store.append_durable_records_batch(&records) {
         let mapped_error = map_durable_journal_append_error(&error);
-        for active_request in active {
+        for active_request in active.drain(..) {
             let _ = active_request
                 .response
                 .send(Err(map_durable_journal_append_error(&error)));
@@ -483,7 +585,8 @@ fn process_queued_mutation_batch(
     let mut applied = Vec::with_capacity(records.len());
     let mut responses = Vec::with_capacity(records.len());
     for (active_request, record) in active.into_iter().zip(records.iter()) {
-        responses.push(PendingQueuedMutationResponse {
+        responses.push(PendingPublisherResponse {
+            _operation: active_request._operation,
             response: active_request.response,
             result: active_request.result,
         });
@@ -512,8 +615,6 @@ fn process_queued_mutation_batch(
     let publish_started = Instant::now();
     runtime.mark_applied_head(published_frontier);
     phases.publish = publish_started.elapsed();
-    let sample_started_at = sample_started_at
-        .expect("a non-empty active batch must retain an admitted request timestamp");
     let committed_batch_size = u64::try_from(records.len()).unwrap_or(u64::MAX);
     runtime
         .commit_phase_metrics()

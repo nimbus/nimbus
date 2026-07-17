@@ -48,4 +48,10 @@ pub struct MutationJournalStats {
     pub committer_inbox_depth: usize,
     pub committer_inbox_capacity: usize,
     pub committer_send_timeout_count: u64,
+    pub publisher_queue_depth: usize,
+    pub publisher_queue_capacity: usize,
+    pub publisher_send_timeout_count: u64,
+    pub publisher_transient_error_count: u64,
+    pub publisher_fatal_error_count: u64,
+    pub publisher_ambiguous_error_count: u64,
 }

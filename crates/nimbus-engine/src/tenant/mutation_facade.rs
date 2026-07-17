@@ -51,6 +51,48 @@ impl TenantRuntime {
         self.committer.take_receiver()
     }
 
+    pub(crate) fn take_publisher_receiver(&self) -> tokio::sync::mpsc::Receiver<PublisherMessage> {
+        self.publisher.take_receiver()
+    }
+
+    pub(crate) async fn wait_for_publisher_barrier(&self) -> Result<()> {
+        self.publisher.barrier().await
+    }
+
+    pub(crate) fn committer_shutdown_token(&self) -> tokio_util::sync::CancellationToken {
+        self.committer.shutdown_token()
+    }
+
+    pub(crate) fn shutdown_committer(&self) {
+        self.committer.shutdown();
+    }
+
+    pub(crate) fn publisher_record_transient_error(&self) {
+        self.publisher.record_transient_error();
+    }
+
+    pub(crate) fn publisher_record_fatal_error(&self) {
+        self.publisher.record_fatal_error();
+    }
+
+    pub(crate) fn publisher_record_ambiguous_error(&self) {
+        self.publisher.record_ambiguous_error();
+    }
+
+    pub(crate) async fn send_assigned_publisher_batch(
+        &self,
+        batch: AssignedPublisherBatch,
+    ) -> std::result::Result<(), PublisherQueueError> {
+        self.publisher.send(batch).await
+    }
+
+    pub(crate) async fn send_publisher_response_fence(
+        &self,
+        responses: Vec<DeferredPublisherResponse>,
+    ) -> std::result::Result<(), Box<(Vec<DeferredPublisherResponse>, nimbus_core::Error)>> {
+        self.publisher.send_response_fence(responses).await
+    }
+
     pub(crate) async fn send_queued_committer_batch(
         &self,
         engine: Arc<crate::Engine>,
@@ -313,6 +355,10 @@ impl TenantRuntime {
         self.write_log.stage_pending(commits, observed_at);
     }
 
+    pub(crate) fn assigned_head(&self) -> SequenceNumber {
+        self.write_log.assigned_through()
+    }
+
     pub(crate) fn discard_unpersisted_write_log_suffix(&self, first: SequenceNumber) {
         self.write_log.discard_unpersisted_suffix(first);
     }
@@ -439,6 +485,13 @@ impl TenantRuntime {
         stats.committer_inbox_depth = self.committer.depth();
         stats.committer_inbox_capacity = self.committer.capacity();
         stats.committer_send_timeout_count = self.committer.send_timeout_count();
+        stats.publisher_queue_depth = self.publisher.depth();
+        stats.publisher_queue_capacity = self.publisher.capacity();
+        stats.publisher_send_timeout_count = self.publisher.send_timeout_count();
+        let (transient, fatal, ambiguous) = self.publisher.error_counts();
+        stats.publisher_transient_error_count = transient;
+        stats.publisher_fatal_error_count = fatal;
+        stats.publisher_ambiguous_error_count = ambiguous;
         stats
     }
 

@@ -302,10 +302,26 @@ impl Engine {
 
     pub(crate) fn start_committer_actor(&self, runtime: Arc<TenantRuntime>) {
         let receiver = runtime.take_committer_receiver();
-        let shutdown = self.engine_executor.shutdown_token();
+        let publisher_receiver = runtime.take_publisher_receiver();
+        let engine_shutdown = self.engine_executor.shutdown_token();
+        let tenant_shutdown = runtime.committer_shutdown_token();
+        let publisher_runtime = Arc::downgrade(&runtime);
+        self.spawn_background("mutation_publisher", async move {
+            crate::engine::mutations::run_ordered_publisher(
+                publisher_runtime,
+                publisher_receiver,
+                engine_shutdown,
+                tenant_shutdown,
+            )
+            .await;
+        });
+
+        let engine_shutdown = self.engine_executor.shutdown_token();
+        let tenant_shutdown = runtime.committer_shutdown_token();
         let runtime = Arc::downgrade(&runtime);
         self.spawn_background("mutation_committer", async move {
-            crate::tenant::run_committer_actor(runtime, receiver, shutdown).await;
+            crate::tenant::run_committer_actor(runtime, receiver, engine_shutdown, tenant_shutdown)
+                .await;
         });
     }
 

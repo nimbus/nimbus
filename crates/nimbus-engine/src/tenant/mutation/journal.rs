@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::time::Instant;
 
@@ -18,7 +18,7 @@ use std::sync::Arc;
 pub(in crate::tenant) struct MutationJournalState {
     queue: Mutex<VecDeque<QueuedMutationRequest>>,
     capacity: AtomicUsize,
-    worker_running: AtomicBool,
+    worker_running: AtomicUsize,
     worker_start_count: AtomicU64,
     queue_rejection_count: AtomicU64,
     worker_failure_count: AtomicU64,
@@ -41,7 +41,7 @@ impl MutationJournalState {
         Self {
             queue: Mutex::new(VecDeque::new()),
             capacity: AtomicUsize::new(DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY),
-            worker_running: AtomicBool::new(false),
+            worker_running: AtomicUsize::new(0),
             worker_start_count: AtomicU64::new(0),
             queue_rejection_count: AtomicU64::new(0),
             worker_failure_count: AtomicU64::new(0),
@@ -112,7 +112,12 @@ impl MutationJournalState {
     }
 
     pub(in crate::tenant) fn set_worker_running(&self, running: bool) {
-        self.worker_running.store(running, Ordering::Release);
+        if running {
+            self.worker_running.fetch_add(1, Ordering::AcqRel);
+        } else {
+            let previous = self.worker_running.fetch_sub(1, Ordering::AcqRel);
+            debug_assert!(previous > 0, "mutation worker activity cannot underflow");
+        }
     }
 
     pub(in crate::tenant) fn record_worker_failure(&self) {
@@ -235,7 +240,7 @@ impl MutationJournalState {
             queue_capacity: self.capacity.load(Ordering::Relaxed),
             oldest_queue_age_nanos,
             pending_response_count: self.pending_response_count.load(Ordering::Relaxed),
-            worker_running: self.worker_running.load(Ordering::Relaxed),
+            worker_running: self.worker_running.load(Ordering::Relaxed) > 0,
             worker_start_count,
             worker_restart_count: worker_start_count.saturating_sub(1),
             queue_rejection_count: self.queue_rejection_count.load(Ordering::Relaxed),
@@ -245,6 +250,12 @@ impl MutationJournalState {
             committer_inbox_depth: 0,
             committer_inbox_capacity: 0,
             committer_send_timeout_count: 0,
+            publisher_queue_depth: 0,
+            publisher_queue_capacity: 0,
+            publisher_send_timeout_count: 0,
+            publisher_transient_error_count: 0,
+            publisher_fatal_error_count: 0,
+            publisher_ambiguous_error_count: 0,
         }
     }
 

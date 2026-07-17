@@ -65,19 +65,21 @@ pub use self::mutation::MutationJournalPauseHandle;
 #[cfg(any(test, feature = "test-hooks"))]
 use self::mutation::MutationJournalPauseState;
 pub(crate) use self::mutation::{
+    AssignedPublisherBatch, DeferredPublisherResponse, PendingPublisherResponse,
+    PreparedPayloadAccounting, PublisherMessage, PublisherQueueError, QueuedMutationRequest,
+    QueuedMutationResult,
+};
+pub(crate) use self::mutation::{
     CommitterActor, CommitterMessage, assign_and_validate, run_committer_actor,
     validate_append_sequences,
 };
 use self::mutation::{
     MutationAdmissionDecision, MutationAdmissionGate, MutationIsolateAdmission,
-    MutationJournalState,
+    MutationJournalState, PublisherHandoff,
 };
 pub use self::mutation::{
     MutationAdmissionPhase, MutationAdmissionStats, MutationIsolateAdmissionStats,
     MutationJournalStats,
-};
-pub(crate) use self::mutation::{
-    PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult,
 };
 use self::query_planning::QueryPlanningMetrics;
 pub use self::query_planning::QueryPlanningStats;
@@ -126,6 +128,7 @@ pub struct TenantRuntime {
     mutation_isolate_admission: Arc<MutationIsolateAdmission>,
     mutation_journal: Arc<MutationJournalState>,
     committer: Arc<CommitterActor>,
+    publisher: Arc<PublisherHandoff>,
     write_rate: TenantWriteRateLimiter,
     last_assigned_commit_timestamp: AtomicU64,
     prepared_table_ids: Mutex<HashMap<TableName, TableId>>,
@@ -221,6 +224,7 @@ impl TenantRuntime {
             mutation_isolate_admission: Arc::new(MutationIsolateAdmission::from_env()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
             committer: Arc::new(CommitterActor::new()),
+            publisher: Arc::new(PublisherHandoff::new()),
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             prepared_table_ids: Mutex::new(HashMap::new()),
