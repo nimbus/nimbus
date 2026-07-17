@@ -8,7 +8,6 @@ use crate::{Engine, tenant::TenantRuntime};
 use super::super::journal::validate_prepared_against_window;
 use super::super::phase_metrics::CommitPhaseDurations;
 use super::super::prepared::PreparedCommit;
-use super::super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
 
 #[derive(Clone, Copy)]
 pub(super) struct DirectMutationProfile {
@@ -47,15 +46,6 @@ impl Engine {
                 // full-image window validation, assignment, assignment-only
                 // stamping, and the unchanged atomic storage append/apply.
                 let conflict_started = Instant::now();
-                let shadow_dependencies =
-                    prepared_document_dependencies(&prepared_commit, |table| {
-                        runtime.store.table_id(table).ok().flatten()
-                    });
-                observe_shadow_conflicts(
-                    runtime.as_ref(),
-                    prepared_commit.snapshot_sequence,
-                    std::slice::from_ref(&shadow_dependencies),
-                );
                 validate_prepared_against_window(
                     runtime.as_ref(),
                     prepared_commit.snapshot_sequence,

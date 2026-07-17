@@ -14,6 +14,7 @@ use super::super::journal::{
     mutation_occ_backoff, mutation_occ_max_attempts, validate_prepared_for_provider,
 };
 use super::super::prepared::PreparedCommit;
+use super::super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
 use super::store::DirectMutationProfile;
 use super::types::{MutationExecutionMode, MutationExecutionResult};
 
@@ -42,7 +43,7 @@ impl Engine {
             let mut rate_accounted = false;
             loop {
                 let prepare_started = Instant::now();
-                let _prepare_permit = runtime.acquire_prepare_permit_blocking()?;
+                let prepare_permit = runtime.acquire_prepare_permit_blocking()?;
                 let prepared = prepare_direct_mutation(
                     runtime.as_ref(),
                     &runtime.schema(),
@@ -60,6 +61,14 @@ impl Engine {
                 else {
                     return Ok(MutationExecutionResult::Scheduled(false));
                 };
+                let shadow_dependencies =
+                    prepared_document_dependencies(&prepared_commit, |_| None);
+                observe_shadow_conflicts(
+                    runtime.as_ref(),
+                    prepared_commit.snapshot_sequence,
+                    std::slice::from_ref(&shadow_dependencies),
+                );
+                drop(prepare_permit);
                 check_mutation_caps(&runtime, prepared_commit.usage())?;
                 if !rate_accounted {
                     runtime.check_tenant_write_rate(
