@@ -3,6 +3,7 @@ use super::support::{
     expect_future_within, new_faulted_engine,
 };
 use super::*;
+use nimbus_core::TriggerDeliveryCursor;
 use nimbus_storage::NoopFaultInjector;
 
 #[tokio::test]
@@ -320,6 +321,21 @@ impl AssignedPendingUpdate {
             .apply_assigned_pending_record_for_testing(&self.tenant_id, &self.record)
             .expect("pending fixture record should apply and publish");
     }
+
+    fn apply_without_publish(&self) {
+        self.engine
+            .apply_assigned_pending_record_without_publish_for_testing(
+                &self.tenant_id,
+                &self.record,
+            )
+            .expect("pending fixture record should apply without publishing");
+    }
+
+    fn publish(self) {
+        self.engine
+            .publish_assigned_pending_record_for_testing(&self.tenant_id, &self.record)
+            .expect("applied pending fixture record should publish");
+    }
 }
 
 async fn wait_for_prepared_payload(engine: &Arc<Engine>, tenant_id: &TenantId, description: &str) {
@@ -450,6 +466,132 @@ async fn direct_sequential_same_doc_writes_match_overlay_semantics() {
         .expect("directly updated document should remain visible");
     assert_eq!(document.fields.get("assigned_pending"), Some(&json!(1)));
     assert_eq!(document.fields.get("direct"), Some(&json!(2)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn progress_sync_cannot_leapfrog_pending_write_or_stale_window_reprepare() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("progress-pending-reprepare", Engine::create_tenant);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("background trigger candidate worker should shut down");
+    let document_id = engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("original"))]),
+        )
+        .expect("seed insert should succeed");
+    let pending = AssignedPendingUpdate::stage(
+        &engine,
+        &tenant_id,
+        &document_id,
+        "assigned_pending",
+        json!(1),
+    );
+    let pending_sequence = pending.record.sequence;
+    pending.apply_without_publish();
+
+    let mut direct = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        move || {
+            engine.update_document(
+                &tenant_id,
+                tasks_table(),
+                document_id,
+                serde_json::Map::from_iter([("direct".to_string(), json!(2))]),
+            )
+        }
+    });
+    wait_for_prepared_payload(
+        &engine,
+        &tenant_id,
+        "direct prepare should wait on the held pending sequence",
+    )
+    .await;
+
+    engine
+        .set_trigger_delivery_cursor_for_testing(
+            &tenant_id,
+            TriggerDeliveryCursor::new(pending_sequence),
+        )
+        .expect("later zero-write cursor record should synchronize progress");
+    let observed_applied = SequenceNumber(pending_sequence.0 + 1);
+    let held = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("held journal stats should load");
+    assert_eq!(held.durable_head, observed_applied);
+    assert!(
+        held.applied_head < pending_sequence,
+        "progress sync must stop the engine applied watermark before the held pending sequence"
+    );
+    assert_future_stays_pending(
+        &mut direct,
+        "direct retry must not wake from progress beyond a held pending sequence",
+    )
+    .await;
+
+    pending.publish();
+    expect_future_within(direct, "direct retry should finish after pending apply")
+        .await
+        .expect("direct task should join")
+        .expect("direct update should re-prepare from the published window image");
+    let released = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("released journal stats should load");
+    assert!(
+        released.applied_head >= observed_applied,
+        "releasing the pending barrier must expose the observed zero-write suffix"
+    );
+
+    let document = engine
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("re-prepared document should remain visible");
+    assert_eq!(document.fields.get("assigned_pending"), Some(&json!(1)));
+    assert_eq!(document.fields.get("direct"), Some(&json!(2)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn uncovered_progress_advances_applied_watermark_without_local_window_image() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("uncovered-progress", Engine::create_tenant);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("background trigger candidate worker should shut down");
+    engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("covered"))]),
+        )
+        .expect("covered seed insert should succeed");
+    let before = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("initial journal stats should load");
+    let uncovered = SequenceNumber(before.applied_head.0 + 1);
+
+    engine
+        .sync_mutation_journal_progress_for_testing(
+            &tenant_id,
+            nimbus_storage::JournalProgress {
+                durable_head: uncovered,
+                applied_head: uncovered,
+            },
+        )
+        .expect("uncovered provider-style progress should synchronize");
+
+    let after = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("updated journal stats should load");
+    assert_eq!(after.durable_head, uncovered);
+    assert_eq!(
+        after.applied_head, uncovered,
+        "an uncovered sequence with no lower pending owner must not stall the engine watermark"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

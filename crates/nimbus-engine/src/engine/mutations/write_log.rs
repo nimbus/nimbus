@@ -145,6 +145,13 @@ struct WriteLogState {
     /// zero-write/recovered positions too, while entry publication below is
     /// still asserted strictly monotonic.
     published_through: SequenceNumber,
+    /// Highest storage-side applied watermark observed by this runtime.
+    ///
+    /// Storage transactions for later zero-write records can report a value
+    /// beyond an earlier document entry that is still pending in the engine.
+    /// This is therefore only a candidate frontier: `published_through` may
+    /// catch up to it once every lower pending image is explicitly published.
+    observed_applied_through: SequenceNumber,
     /// Highest sequence removed from the front of the retained window.
     purged_sequence: SequenceNumber,
     /// False after a persistence attempt may have committed without staging
@@ -201,6 +208,7 @@ impl WriteLog {
                 bootstrap_sequence: covered_through,
                 assigned_through,
                 published_through: covered_through,
+                observed_applied_through: covered_through,
                 purged_sequence: SequenceNumber(0),
                 coverage_known: true,
                 schema_epoch_history: HashMap::new(),
@@ -399,6 +407,7 @@ impl WriteLog {
         state.covered_through = applied_through;
         state.assigned_through = state.assigned_through.max(assigned_through);
         state.published_through = state.published_through.max(applied_through);
+        state.observed_applied_through = state.observed_applied_through.max(applied_through);
     }
 
     /// Observes sequence assignment without claiming conflict-image coverage.
@@ -451,29 +460,40 @@ impl WriteLog {
         state.assigned_through = sequence;
     }
 
-    /// Publishes pending entries through `applied_head`, then applies retention.
+    /// Publishes entries that this caller has applied through `applied_head`.
+    ///
+    /// The returned sequence is the contiguous published frontier. It can be
+    /// higher than `applied_head` when an earlier progress sync observed a
+    /// later zero-write record: once this call removes the lower pending
+    /// barrier, that already-observed suffix becomes publishable too.
     pub(crate) fn publish_pending_through(
         &self,
         applied_head: SequenceNumber,
         now: Timestamp,
         reader_frontier: SequenceNumber,
-    ) {
+    ) -> SequenceNumber {
         let mut state = self
             .state
             .lock()
             .expect("write-log lock should not be poisoned");
+        state.observed_applied_through = state.observed_applied_through.max(applied_head);
         let publish_sequences = state
             .pending
             .range((Included(SequenceNumber(0)), Included(applied_head)))
             .map(|(sequence, _)| *sequence)
             .collect::<Vec<_>>();
+        let mut previous_published_entry = state
+            .published
+            .get_max()
+            .map_or(state.published_through, |(sequence, _)| *sequence);
         for sequence in publish_sequences {
             assert!(
-                sequence > state.published_through,
+                sequence > previous_published_entry,
                 "write-log publish order must follow assignment order: {} after {}",
                 sequence,
-                state.published_through
+                previous_published_entry
             );
+            previous_published_entry = sequence;
             let entry = state
                 .pending
                 .remove(&sequence)
@@ -516,10 +536,57 @@ impl WriteLog {
                 }
             }
             state.published.insert(sequence, entry);
-            state.published_through = sequence;
         }
-        state.published_through = state.published_through.max(applied_head);
-        self.trim_locked(&mut state, now, reader_frontier.min(applied_head));
+        Self::advance_published_frontier_locked(&mut state);
+        let published_through = state.published_through;
+        self.trim_locked(&mut state, now, reader_frontier.min(published_through));
+        published_through
+    }
+
+    /// Records a storage-side applied observation without publishing entries
+    /// that remain owned by another apply path.
+    ///
+    /// A later zero-write transaction can advance the storage watermark past
+    /// a lower pending document entry. The pending entry is a hard barrier:
+    /// callers waiting to re-prepare must not observe the later sequence until
+    /// its owning apply path explicitly publishes the lower image.
+    pub(crate) fn observe_applied_through(
+        &self,
+        applied_head: SequenceNumber,
+        now: Timestamp,
+        reader_frontier: SequenceNumber,
+    ) -> SequenceNumber {
+        let mut state = self
+            .state
+            .lock()
+            .expect("write-log lock should not be poisoned");
+        state.observed_applied_through = state.observed_applied_through.max(applied_head);
+        Self::advance_published_frontier_locked(&mut state);
+        let published_through = state.published_through;
+        self.trim_locked(&mut state, now, reader_frontier.min(published_through));
+        published_through
+    }
+
+    fn advance_published_frontier_locked(state: &mut WriteLogState) {
+        // Full-image coverage and journal progress are independent. Shared
+        // providers can apply records this runtime never staged; those spans
+        // force window validation to storage but must not stall applied-head
+        // waiters. Only an entry still owned by a local apply path is a hard
+        // publication barrier.
+        let mut frontier = state.observed_applied_through;
+        if let Some((first_pending, _)) = state.pending.get_min()
+            && *first_pending <= frontier
+        {
+            frontier = SequenceNumber(first_pending.0.saturating_sub(1));
+        }
+        state.published_through = state.published_through.max(frontier);
+    }
+
+    pub(crate) fn published_through(&self) -> SequenceNumber {
+        self.state
+            .lock()
+            .expect("write-log lock should not be poisoned")
+            .published_through
     }
 
     pub(crate) fn validation_source(
@@ -721,6 +788,9 @@ impl WriteLog {
             else {
                 break;
             };
+            if sequence > state.published_through {
+                break;
+            }
             let age_ms = now.0.saturating_sub(entry.observed_at.0);
             if age_ms < self.config.min_retention_ms {
                 break;
@@ -974,6 +1044,33 @@ mod tests {
         assert!(inspection.pending.is_empty());
         assert_eq!(log.assigned_through(), SequenceNumber(2));
         assert!(log.current_prepare_view_available(SequenceNumber(2)));
+    }
+
+    #[test]
+    fn observed_applied_head_stops_at_pending_barrier_until_owner_publishes() {
+        let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
+        log.stage_pending([commit(1, 8)], Timestamp(1_000));
+        log.observe_assigned_through_without_coverage(SequenceNumber(2));
+
+        let held_frontier =
+            log.observe_applied_through(SequenceNumber(2), Timestamp(1_001), SequenceNumber(0));
+        assert_eq!(held_frontier, SequenceNumber(0));
+        assert_eq!(log.published_through(), SequenceNumber(0));
+        let held = log.inspection();
+        assert!(held.published.is_empty());
+        assert_eq!(held.pending, vec![SequenceNumber(1)]);
+
+        let released_frontier =
+            log.publish_pending_through(SequenceNumber(1), Timestamp(1_002), SequenceNumber(0));
+        assert_eq!(released_frontier, SequenceNumber(2));
+        assert_eq!(log.published_through(), SequenceNumber(2));
+        let released = log.inspection();
+        assert_eq!(released.published, vec![SequenceNumber(1)]);
+        assert!(released.pending.is_empty());
+        assert!(matches!(
+            log.validation_source(SequenceNumber(1), SequenceNumber(2)),
+            Ok(ValidationSource::StorageFallback)
+        ));
     }
 
     #[test]

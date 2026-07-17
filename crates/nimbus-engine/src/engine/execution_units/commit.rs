@@ -157,12 +157,27 @@ impl MutationExecutionUnit {
                     {
                         Ok(commit) => commit,
                         Err(error) => {
-                            if record.is_some()
-                                && runtime.store.journal_progress().is_ok_and(|progress| {
-                                    progress.durable_head == previous_sequence
-                                })
-                            {
-                                runtime.discard_unpersisted_write_log_suffix(expected_sequence);
+                            if record.is_some() {
+                                match runtime.store.journal_progress() {
+                                    Ok(progress) if progress.durable_head == previous_sequence => {
+                                        runtime.discard_unpersisted_write_log_suffix(
+                                            expected_sequence,
+                                        );
+                                    }
+                                    Ok(_) => {
+                                        if let Ok(progress) =
+                                            runtime.store.recover_durable_journal()
+                                        {
+                                            runtime.publish_mutation_journal_progress_in_actor(
+                                                progress,
+                                            );
+                                            if progress.applied_head >= expected_sequence {
+                                                write_log_guard.disarm();
+                                            }
+                                        }
+                                    }
+                                    Err(_) => {}
+                                }
                             }
                             return Err(error);
                         }
@@ -178,14 +193,14 @@ impl MutationExecutionUnit {
                     engine.wait_for_commit_fault(labels::DURABLE_BEFORE_PUBLISH)?;
                     if let Some(commit) = &commit {
                         let publish_started = Instant::now();
-                        runtime.publish_write_log_through(commit.sequence);
+                        let published_frontier = runtime.publish_write_log_through(commit.sequence);
                         runtime.mark_durable_head(commit.sequence);
                         phases.add_publish(publish_started.elapsed());
                         let apply_started = Instant::now();
                         runtime.invalidate_document_cache_for_commit(commit);
                         phases.apply = apply_started.elapsed();
                         let publish_started = Instant::now();
-                        runtime.mark_applied_head(commit.sequence);
+                        runtime.mark_applied_head(published_frontier);
                         phases.add_publish(publish_started.elapsed());
                     }
                     write_log_guard.disarm();

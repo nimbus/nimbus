@@ -117,6 +117,100 @@ fn applied_prefix_publish_orders_two_batches_across_out_of_order_completion() {
     });
 }
 
+#[derive(Debug)]
+struct AppliedFrontierState {
+    pending_low: bool,
+    observed_applied_through: u64,
+    published_through: u64,
+    applied_head: u64,
+}
+
+#[derive(Debug)]
+struct AppliedFrontier {
+    state: Mutex<AppliedFrontierState>,
+    applied: Condvar,
+}
+
+impl AppliedFrontier {
+    fn with_held_pending() -> Self {
+        Self {
+            state: Mutex::new(AppliedFrontierState {
+                pending_low: true,
+                observed_applied_through: 1,
+                published_through: 1,
+                applied_head: 1,
+            }),
+            applied: Condvar::new(),
+        }
+    }
+
+    fn sync_progress_through(&self, sequence: u64) {
+        let mut state = self.state.lock().expect("applied-frontier model lock");
+        state.observed_applied_through = state.observed_applied_through.max(sequence);
+        Self::advance_and_notify(&mut state, &self.applied);
+    }
+
+    fn publish_held_pending(&self) {
+        let mut state = self.state.lock().expect("applied-frontier model lock");
+        state.pending_low = false;
+        state.observed_applied_through = state.observed_applied_through.max(2);
+        Self::advance_and_notify(&mut state, &self.applied);
+    }
+
+    fn advance_and_notify(state: &mut AppliedFrontierState, applied: &Condvar) {
+        let frontier = if state.pending_low {
+            state.observed_applied_through.min(1)
+        } else {
+            state.observed_applied_through
+        };
+        state.published_through = state.published_through.max(frontier);
+        if state.published_through > state.applied_head {
+            state.applied_head = state.published_through;
+            applied.notify_all();
+        }
+    }
+
+    fn wait_for_low(&self) {
+        let mut state = self.state.lock().expect("applied-frontier model lock");
+        while state.applied_head < 2 {
+            state = self.applied.wait(state).expect("applied-frontier wait");
+        }
+        assert!(
+            !state.pending_low,
+            "applied waiter woke before the lower pending entry published"
+        );
+        assert!(state.applied_head <= state.published_through);
+    }
+}
+
+#[test]
+fn progress_sync_cannot_wake_applied_waiter_across_held_pending_entry() {
+    loom::model(|| {
+        let frontier = Arc::new(AppliedFrontier::with_held_pending());
+        let waiter = {
+            let frontier = frontier.clone();
+            thread::spawn(move || frontier.wait_for_low())
+        };
+        let progress_sync = {
+            let frontier = frontier.clone();
+            thread::spawn(move || frontier.sync_progress_through(3))
+        };
+        let pending_owner = {
+            let frontier = frontier.clone();
+            thread::spawn(move || frontier.publish_held_pending())
+        };
+
+        progress_sync.join().expect("progress-sync model thread");
+        pending_owner.join().expect("pending-owner model thread");
+        waiter.join().expect("applied-waiter model thread");
+
+        let state = frontier.state.lock().expect("final applied-frontier lock");
+        assert!(!state.pending_low);
+        assert_eq!(state.published_through, 3);
+        assert_eq!(state.applied_head, 3);
+    });
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SendOutcome {
     Accepted,

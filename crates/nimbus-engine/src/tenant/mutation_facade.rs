@@ -296,6 +296,12 @@ impl TenantRuntime {
     }
 
     pub(crate) fn mark_applied_head(&self, sequence: SequenceNumber) {
+        debug_assert!(
+            sequence <= self.write_log.published_through(),
+            "engine applied watermark {} cannot exceed write-log published frontier {}",
+            sequence,
+            self.write_log.published_through()
+        );
         self.mutation_journal.mark_applied_head(sequence);
     }
 
@@ -311,13 +317,22 @@ impl TenantRuntime {
         self.write_log.discard_unpersisted_suffix(first);
     }
 
-    pub(crate) fn publish_write_log_through(&self, applied_head: SequenceNumber) {
+    pub(crate) fn publish_write_log_through(&self, applied_head: SequenceNumber) -> SequenceNumber {
         let reader_frontier = self
             .subscription_registry()
             .lowest_active_delivery_sequence(applied_head)
             .min(applied_head);
         self.write_log
-            .publish_pending_through(applied_head, self.store.now(), reader_frontier);
+            .publish_pending_through(applied_head, self.store.now(), reader_frontier)
+    }
+
+    fn observe_write_log_applied_through(&self, applied_head: SequenceNumber) -> SequenceNumber {
+        let reader_frontier = self
+            .subscription_registry()
+            .lowest_active_delivery_sequence(applied_head)
+            .min(applied_head);
+        self.write_log
+            .observe_applied_through(applied_head, self.store.now(), reader_frontier)
     }
 
     pub(crate) fn advance_write_log_zero_write_coverage(&self, sequence: SequenceNumber) {
@@ -390,16 +405,29 @@ impl TenantRuntime {
             .expect("tenant committer should synchronize journal progress");
     }
 
-    /// Synchronizes recovered heads from within the committer task. Callers
+    /// Observes storage-side heads from within the committer task. Callers
     /// already inside that serial section must use this non-reentrant form.
+    /// Observation never claims ownership of pending write-log publication.
     pub(crate) fn sync_mutation_journal_progress_in_actor(&self, progress: JournalProgress) {
+        self.sync_mutation_journal_heads(progress);
+        let published_frontier = self.observe_write_log_applied_through(progress.applied_head);
+        self.mark_applied_head(published_frontier);
+    }
+
+    /// Synchronizes progress after this actor path explicitly applied or
+    /// recovered the durable prefix named by `progress`.
+    pub(crate) fn publish_mutation_journal_progress_in_actor(&self, progress: JournalProgress) {
+        self.sync_mutation_journal_heads(progress);
+        let published_frontier = self.publish_write_log_through(progress.applied_head);
+        self.mark_applied_head(published_frontier);
+    }
+
+    fn sync_mutation_journal_heads(&self, progress: JournalProgress) {
         self.write_log
             .observe_assigned_through_without_coverage(progress.durable_head);
         self.write_log
             .rebase_empty_after_recovery(progress.applied_head, progress.durable_head);
         self.mark_durable_head(progress.durable_head);
-        self.publish_write_log_through(progress.applied_head);
-        self.mark_applied_head(progress.applied_head);
     }
 
     pub(crate) fn mutation_admission_stats(&self) -> MutationAdmissionStats {

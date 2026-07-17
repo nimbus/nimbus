@@ -148,9 +148,58 @@ impl Engine {
                 .store
                 .apply_durable_records_batch(std::slice::from_ref(&record))?;
             let commit = record.as_commit_entry();
-            runtime.publish_write_log_through(commit.sequence);
+            let published_frontier = runtime.publish_write_log_through(commit.sequence);
             runtime.invalidate_document_cache_for_commit(&commit);
-            runtime.mark_applied_head(commit.sequence);
+            runtime.mark_applied_head(published_frontier);
+            Ok(())
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apply_assigned_pending_record_without_publish_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        record: &TenantEventRecord,
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let runtime_for_commit = runtime.clone();
+        let record = record.clone();
+        runtime.submit_internal_committer(move || {
+            runtime_for_commit
+                .store
+                .apply_durable_records_batch(std::slice::from_ref(&record))
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn publish_assigned_pending_record_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        record: &TenantEventRecord,
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let runtime_for_commit = runtime.clone();
+        let commit = record.as_commit_entry();
+        runtime.submit_internal_committer(move || {
+            let published_frontier = runtime_for_commit.publish_write_log_through(commit.sequence);
+            runtime_for_commit.invalidate_document_cache_for_commit(&commit);
+            runtime_for_commit.mark_applied_head(published_frontier);
+            Ok(())
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sync_mutation_journal_progress_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        progress: nimbus_storage::JournalProgress,
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let runtime_for_commit = runtime.clone();
+        runtime.submit_internal_committer(move || {
+            runtime_for_commit.sync_mutation_journal_progress_in_actor(progress);
             Ok(())
         })
     }
@@ -437,9 +486,9 @@ impl Engine {
             runtime_for_commit
                 .store
                 .set_trigger_delivery_cursor(cursor)?;
-            runtime_for_commit.sync_mutation_journal_progress_in_actor(
-                runtime_for_commit.store.journal_progress()?,
-            );
+            let progress = runtime_for_commit.store.journal_progress()?;
+            runtime_for_commit.advance_write_log_zero_write_coverage(progress.durable_head);
+            runtime_for_commit.sync_mutation_journal_progress_in_actor(progress);
             Ok(())
         })?;
         Ok(())

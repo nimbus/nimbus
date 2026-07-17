@@ -101,9 +101,9 @@ impl Engine {
                 profile.phases.durable_append = durable_append_started.elapsed();
 
                 let publish_started = Instant::now();
-                runtime.publish_write_log_through(commit.sequence);
+                let published_frontier = runtime.publish_write_log_through(commit.sequence);
                 runtime.invalidate_document_cache_for_commit(&commit);
-                runtime.mark_applied_head(commit.sequence);
+                runtime.mark_applied_head(published_frontier);
                 profile.phases.publish = publish_started.elapsed();
                 write_log_guard.disarm();
                 Ok((Some(commit), profile))

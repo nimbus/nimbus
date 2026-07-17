@@ -170,7 +170,7 @@ impl Engine {
                     // Already on the tenant's committer task: sending a
                     // JournalProgressSync message here would wait on our own
                     // inbox forever.
-                    runtime.sync_mutation_journal_progress_in_actor(progress);
+                    runtime.publish_mutation_journal_progress_in_actor(progress);
                 }
             }
             Err(error) => {
@@ -181,7 +181,7 @@ impl Engine {
                     .execute(|store| store.recover_durable_journal())
                     .await
                 {
-                    runtime.sync_mutation_journal_progress_in_actor(progress);
+                    runtime.publish_mutation_journal_progress_in_actor(progress);
                 }
             }
         }
@@ -506,11 +506,11 @@ fn process_queued_mutation_batch(
         }
     };
     retain_commits_through_applied_head(&mut applied, applied_head);
-    runtime.publish_write_log_through(applied_head);
+    let published_frontier = runtime.publish_write_log_through(applied_head);
     runtime.invalidate_document_cache_for_commits(applied.iter());
     phases.apply = apply_started.elapsed();
     let publish_started = Instant::now();
-    runtime.mark_applied_head(applied_head);
+    runtime.mark_applied_head(published_frontier);
     phases.publish = publish_started.elapsed();
     let sample_started_at = sample_started_at
         .expect("a non-empty active batch must retain an admitted request timestamp");
