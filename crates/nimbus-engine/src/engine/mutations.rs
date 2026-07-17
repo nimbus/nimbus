@@ -2,6 +2,7 @@ mod authorization;
 pub(in crate::engine) mod caps;
 mod commit_processing;
 mod direct;
+mod inline_reprepare;
 mod journal;
 pub(in crate::engine) mod phase_metrics;
 pub(crate) mod prepared;

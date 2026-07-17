@@ -3,9 +3,10 @@ use std::ops::Bound::{Excluded, Included};
 use std::sync::{Arc, Mutex};
 
 use imbl::OrdMap;
+use nimbus_core::ResourcePathBinding;
 use nimbus_core::{
-    CommitEntry, DependencySet, Document, DocumentId, Error, Result, SequenceNumber, TableName,
-    TenantEventRecord, Timestamp, commit_intersects_dependency_set,
+    CommitEntry, DependencySet, Document, DocumentId, Error, Result, SequenceNumber, TableId,
+    TableName, TenantEventRecord, Timestamp, commit_intersects_dependency_set,
 };
 
 const DEFAULT_MIN_RETENTION_SECS: usize = 30;
@@ -478,6 +479,13 @@ impl WriteLog {
         }))
     }
 
+    pub(crate) fn assigned_through(&self) -> SequenceNumber {
+        self.state
+            .lock()
+            .expect("write-log lock should not be poisoned")
+            .assigned_through
+    }
+
     fn trim_locked(
         &self,
         state: &mut WriteLogState,
@@ -538,6 +546,14 @@ pub(crate) struct WriteLogView {
     head: SequenceNumber,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct WindowDocumentState {
+    pub(crate) sequence: SequenceNumber,
+    pub(crate) table_id: TableId,
+    pub(crate) document: Option<Document>,
+    pub(crate) resource_path_binding: Option<ResourcePathBinding>,
+}
+
 impl WriteLogView {
     fn entries(&self) -> Vec<Arc<WindowEntry>> {
         let pending_head = self
@@ -579,6 +595,37 @@ impl WriteLogView {
                 }
             };
             intersects.then_some(entry.sequence)
+        })
+    }
+
+    /// Returns the newest retained full image for one document. A table-wide
+    /// marker makes the old prepared schema/table context unsafe to reuse, so
+    /// the caller must fall back to a fresh storage-backed prepare.
+    pub(crate) fn latest_document_state(
+        &self,
+        table: &TableName,
+        document_id: &DocumentId,
+    ) -> Option<WindowDocumentState> {
+        let entries = self.entries();
+        if entries.iter().any(|entry| {
+            matches!(&entry.change, WindowChange::WholeTables(tables) if tables.contains(table))
+        }) {
+            return None;
+        }
+        entries.into_iter().rev().find_map(|entry| {
+            let WindowChange::DocumentCommit(commit) = &entry.change else {
+                return None;
+            };
+            commit.writes.iter().rev().find_map(|write| {
+                (write.table == *table && write.doc_id == *document_id).then(|| {
+                    WindowDocumentState {
+                        sequence: entry.sequence,
+                        table_id: write.table_id.clone(),
+                        document: write.current.clone(),
+                        resource_path_binding: write.resource_path_binding.clone(),
+                    }
+                })
+            })
         })
     }
 }

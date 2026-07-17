@@ -55,6 +55,9 @@ pub struct CommitPhaseMetricsSnapshot {
     pub prepared_payload_bytes_current: u64,
     pub prepared_payload_bytes_peak: u64,
     pub prepared_payload_bytes_total: u64,
+    /// Single-document stale prepares rebuilt from the in-memory full-image
+    /// window while the actor owns serial assignment.
+    pub inline_reprepare_total: u64,
     pub reprepare_total: u64,
     pub overload_errors_total: u64,
     pub overload_errors_reported_total: u64,
@@ -94,6 +97,7 @@ pub(crate) struct CommitPhaseMetrics {
     prepared_payload_bytes_current: AtomicU64,
     prepared_payload_bytes_peak: AtomicU64,
     prepared_payload_bytes_total: AtomicU64,
+    inline_reprepare_total: AtomicU64,
     reprepare_total: AtomicU64,
     overload_errors_total: AtomicU64,
     overload_errors_reported_total: AtomicU64,
@@ -128,6 +132,7 @@ impl CommitPhaseMetrics {
             prepared_payload_bytes_current: AtomicU64::new(0),
             prepared_payload_bytes_peak: AtomicU64::new(0),
             prepared_payload_bytes_total: AtomicU64::new(0),
+            inline_reprepare_total: AtomicU64::new(0),
             reprepare_total: AtomicU64::new(0),
             overload_errors_total: AtomicU64::new(0),
             overload_errors_reported_total: AtomicU64::new(0),
@@ -201,6 +206,10 @@ impl CommitPhaseMetrics {
         self.mutation_conflict_retries_total
             .fetch_add(1, Ordering::Relaxed);
         self.reprepare_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_inline_reprepare(&self) {
+        self.inline_reprepare_total.fetch_add(1, Ordering::Relaxed);
     }
 
     pub(crate) fn record_prepare_pool(&self, elapsed: Duration) {
@@ -302,6 +311,7 @@ impl CommitPhaseMetrics {
                 .load(Ordering::Relaxed),
             prepared_payload_bytes_peak: self.prepared_payload_bytes_peak.load(Ordering::Relaxed),
             prepared_payload_bytes_total: self.prepared_payload_bytes_total.load(Ordering::Relaxed),
+            inline_reprepare_total: self.inline_reprepare_total.load(Ordering::Relaxed),
             reprepare_total: self.reprepare_total.load(Ordering::Relaxed),
             overload_errors_total: self.overload_errors_total.load(Ordering::Relaxed),
             overload_errors_reported_total: self
@@ -495,6 +505,7 @@ mod tests {
                 prepared_payload_bytes_current: 0,
                 prepared_payload_bytes_peak: 0,
                 prepared_payload_bytes_total: 0,
+                inline_reprepare_total: 0,
                 reprepare_total: 1,
                 overload_errors_total: 0,
                 overload_errors_reported_total: 0,

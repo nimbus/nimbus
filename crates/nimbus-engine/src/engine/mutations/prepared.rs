@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use nimbus_core::{
-    DependencySet, Document, DocumentId, Error, IndexDefinition, ResourcePathBinding, Result,
-    SequenceNumber, TableId, TableName, TenantEventRecord, Timestamp, TriggerWriteOrigin, WriteOp,
-    WriteOpType,
+    DependencySet, Document, DocumentId, Error, IndexDefinition, Mutation, PrincipalContext,
+    ResourcePathBinding, Result, Schema, SequenceNumber, TableId, TableName, TenantEventRecord,
+    Timestamp, TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use nimbus_storage::{ResolvedScheduleOp, ResolvedWrite};
 
@@ -111,13 +112,31 @@ pub(crate) struct PreparedCommit {
     pub(in crate::engine) serialized_effects: PreparedSerializedEffects,
     /// Resource usage frozen during prepare and checked before sequence assignment.
     pub(in crate::engine) usage: MutationUsage,
+    /// The normalized logical request needed to rebuild a stale path-A/C
+    /// single-document write from a retained full image without storage I/O.
+    pub(in crate::engine) inline_reprepare: Option<InlineRepreparePlan>,
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::engine) struct InlineRepreparePlan {
+    pub(in crate::engine) mutation: Mutation,
+    pub(in crate::engine) principal: PrincipalContext,
+    pub(in crate::engine) schema: Arc<Schema>,
 }
 
 impl PreparedCommit {
     pub(crate) fn accounted_bytes(&self) -> u64 {
+        let inline_reprepare_bytes = self
+            .inline_reprepare
+            .as_ref()
+            .and_then(|plan| serde_json::to_vec(&plan.mutation).ok())
+            .map_or(0, |mutation| {
+                u64::try_from(mutation.len()).unwrap_or(u64::MAX)
+            });
         self.usage
             .total_write_bytes()
             .saturating_add(u64::try_from(std::mem::size_of_val(self)).unwrap_or(u64::MAX))
+            .saturating_add(inline_reprepare_bytes)
     }
 
     pub(crate) fn scheduled_execution_id(&self) -> Option<&str> {
@@ -161,6 +180,7 @@ impl PreparedCommit {
                 scheduled_execution_id,
             },
             usage,
+            inline_reprepare: None,
         }
     }
 
@@ -223,6 +243,7 @@ impl PreparedCommit {
                 scheduled_execution_id: scheduled_execution_id.map(str::to_string),
             },
             usage,
+            inline_reprepare: None,
         })
     }
 
@@ -278,6 +299,7 @@ impl PreparedCommit {
                 deferred_server_timestamp_fields,
             },
             usage,
+            inline_reprepare: None,
         };
         debug_assert!(prepared.index_deltas.iter().all(|delta| {
             prepared
@@ -308,6 +330,20 @@ impl PreparedCommit {
             .map(PreparedWrite::into_complete)
             .collect::<Result<Vec<_>>>()?;
         TenantEventRecord::new(sequence, timestamp, writes, scheduled_execution_id)
+    }
+
+    pub(in crate::engine) fn with_inline_reprepare(
+        mut self,
+        mutation: Mutation,
+        principal: PrincipalContext,
+        schema: Arc<Schema>,
+    ) -> Self {
+        self.inline_reprepare = Some(InlineRepreparePlan {
+            mutation,
+            principal,
+            schema,
+        });
+        self
     }
 
     /// Applies the one authoritative lifecycle timestamp after validation and while the

@@ -22,6 +22,7 @@ use crate::tenant::{
 use super::caps::{MutationUsage, check_mutation_caps};
 use super::direct::{MutationExecutionMode, MutationExecutionResult};
 use super::enforce_mutation_authorization;
+use super::inline_reprepare::{InlineReprepareOutcome, reprepare_single_document_from_window};
 use super::phase_metrics::CommitPhaseDurations;
 use super::prepared::PreparedCommit;
 use super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
@@ -338,7 +339,7 @@ fn process_queued_mutation_batch(
     let mut first_staged_sequence = None;
     for request in batch {
         let QueuedMutationRequest {
-            prepared_commit,
+            mut prepared_commit,
             conflict_dependencies,
             result,
             prepared_payload_accounting,
@@ -364,14 +365,18 @@ fn process_queued_mutation_batch(
             continue;
         }
         let conflict_started = Instant::now();
-        if let Err(error) = validate_prepared_against_window(
+        let validation = reprepare_single_document_from_window(
             runtime.as_ref(),
-            prepared_commit.snapshot_sequence,
+            &mut prepared_commit,
             &conflict_dependencies,
-        ) {
-            phases.add_conflict_check(conflict_started.elapsed());
-            let _ = response.send(Err(error));
-            continue;
+        );
+        match validation {
+            Ok(InlineReprepareOutcome::Fresh | InlineReprepareOutcome::Reprepared) => {}
+            Ok(InlineReprepareOutcome::CallerWait(error)) | Err(error) => {
+                phases.add_conflict_check(conflict_started.elapsed());
+                let _ = response.send(Err(error));
+                continue;
+            }
         }
         phases.add_conflict_check(conflict_started.elapsed());
         let queue_wait = enqueued_at.elapsed();
@@ -537,7 +542,7 @@ fn prepare_queued_mutation(
     let snapshot = runtime.store.read_snapshot()?;
     let snapshot_sequence = snapshot.applied_sequence()?;
     let schema = runtime.schema();
-    let (write, result) = match mutation {
+    let (write, result, inline_mutation) = match mutation {
         Mutation::Insert { table, id, fields } => {
             let table_id = runtime.prepared_table_id(&table, snapshot.table_id(&table)?);
             let table_schema = schema.get_table(&table).cloned();
@@ -561,6 +566,11 @@ fn prepare_queued_mutation(
                 None,
             )?;
             let id = document.id.clone();
+            let inline_mutation = Mutation::Insert {
+                table: table.clone(),
+                id: Some(id.clone()),
+                fields: document.fields.clone(),
+            };
             (
                 nimbus_core::WriteOp {
                     table,
@@ -577,9 +587,15 @@ fn prepare_queued_mutation(
                 } else {
                     QueuedMutationResult::Immediate(Some(id))
                 },
+                inline_mutation,
             )
         }
         Mutation::Update { table, id, patch } => {
+            let inline_mutation = Mutation::Update {
+                table: table.clone(),
+                id: id.clone(),
+                patch: patch.clone(),
+            };
             let table_id = snapshot.table_id(&table)?.ok_or_else(|| {
                 Error::Internal(format!("missing table identity for logical table {table}"))
             })?;
@@ -617,6 +633,7 @@ fn prepare_queued_mutation(
                 } else {
                     QueuedMutationResult::Immediate(Some(id))
                 },
+                inline_mutation,
             )
         }
         Mutation::Delete { table, id } => {
@@ -634,6 +651,10 @@ fn prepare_queued_mutation(
                 None,
                 Some(&existing),
             )?;
+            let inline_mutation = Mutation::Delete {
+                table: table.clone(),
+                id: id.clone(),
+            };
             (
                 nimbus_core::WriteOp {
                     table,
@@ -650,11 +671,13 @@ fn prepare_queued_mutation(
                 } else {
                     QueuedMutationResult::Immediate(None)
                 },
+                inline_mutation,
             )
         }
     };
     let prepared_commit =
-        PreparedCommit::for_journal(snapshot_sequence, vec![write], scheduled_execution_id);
+        PreparedCommit::for_journal(snapshot_sequence, vec![write], scheduled_execution_id)
+            .with_inline_reprepare(inline_mutation, principal, schema);
     let conflict_dependencies = prepared_document_dependencies(&prepared_commit, |_| None);
     validate_prepared_for_provider(runtime, snapshot_sequence, &conflict_dependencies)?;
     Ok(PreparedQueuedParts {
@@ -699,6 +722,7 @@ pub(super) fn validate_prepared_for_provider(
 
 /// Pure prepared-op validation: the view contains complete old/new images, so
 /// evaluating document dependencies needs no storage access and cannot await.
+#[cfg(test)]
 fn validate_prepared_window_view(
     view: &super::write_log::WriteLogView,
     dependencies: &DependencySet,
@@ -714,30 +738,6 @@ fn validate_prepared_window_view(
         ));
     }
     Ok(())
-}
-
-pub(super) fn validate_prepared_against_window(
-    runtime: &TenantRuntime,
-    snapshot_sequence: SequenceNumber,
-    dependencies: &DependencySet,
-) -> Result<()> {
-    if dependencies.is_empty() || !runtime.store.has_process_local_sequence_authority() {
-        return Ok(());
-    }
-    match runtime
-        .write_log
-        .validation_source(snapshot_sequence, runtime.durable_head())?
-    {
-        super::write_log::ValidationSource::InMemory(view) => {
-            validate_prepared_window_view(&view, dependencies)
-        }
-        // A startup/retention miss cannot be repaired inside the serial step
-        // without storage I/O. Fail closed and let the caller re-prepare.
-        super::write_log::ValidationSource::StorageFallback => Err(Error::retryable_conflict(
-            "prepared mutation is outside the process-local conflict window",
-            Some(runtime.applied_head()),
-        )),
-    }
 }
 
 fn map_prepare_floor_error(error: Error, snapshot_sequence: SequenceNumber) -> Error {

@@ -66,6 +66,16 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn force_write_log_storage_fallback_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.write_log.mark_coverage_unknown();
+        })
+    }
+
+    #[cfg(test)]
     pub(crate) fn stage_assigned_pending_update_for_testing(
         &self,
         tenant_id: &TenantId,

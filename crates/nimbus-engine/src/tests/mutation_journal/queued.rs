@@ -641,14 +641,151 @@ async fn run_same_document_prepare_race() -> (
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn queued_prepared_write_detects_pending_then_waits_and_reprepares() {
-    let (_fixture, engine, tenant_id, _, waits_before, retries_before) =
+async fn queued_prepared_write_detects_pending_and_reprepares_inline() {
+    let (_fixture, engine, tenant_id, document_id, waits_before, retries_before) =
         run_same_document_prepare_race().await;
+    let document = engine
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("final same-document read should succeed");
+    assert_eq!(document.fields.get("first"), Some(&json!(1)));
+    assert_eq!(document.fields.get("second"), Some(&json!(2)));
     let after = engine
         .tenant_engine_diagnostics(&tenant_id)
         .expect("diagnostics should load");
-    assert!(after.mutation_journal.read_wait_count > waits_before);
-    assert_eq!(after.commit_phases.reprepare_total - retries_before, 1);
+    assert_eq!(after.mutation_journal.read_wait_count, waits_before);
+    assert_eq!(after.commit_phases.reprepare_total - retries_before, 0);
+    assert!(after.commit_phases.inline_reprepare_total > 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hot_key_direct_writes_reprepare_inline_without_caller_retry() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("direct-inline-hot-key", Engine::create_tenant);
+    let document_id = engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("seed"))]),
+        )
+        .expect("seed insert should succeed");
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+
+    let writes = (0..32)
+        .map(|index| {
+            let engine = engine.clone();
+            let tenant_id = tenant_id.clone();
+            let document_id = document_id.clone();
+            tokio::task::spawn_blocking(move || {
+                engine.update_document(
+                    &tenant_id,
+                    tasks_table(),
+                    document_id,
+                    serde_json::Map::from_iter([(format!("field_{index}"), json!(index))]),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    for write in writes {
+        write
+            .await
+            .expect("hot-key task should join")
+            .expect("hot-key write should succeed");
+    }
+    let document = engine
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("final hot-key read should succeed");
+    for index in 0..32 {
+        assert_eq!(
+            document.fields.get(&format!("field_{index}")),
+            Some(&json!(index)),
+            "inline re-prepare must retain every serialized patch"
+        );
+    }
+
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+    assert!(
+        after.inline_reprepare_total > before.inline_reprepare_total,
+        "same-document burst must exercise actor-local re-prepare"
+    );
+    assert_eq!(
+        after.reprepare_total - before.reprepare_total,
+        0,
+        "same-document blind writes must never reach caller retry"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn out_of_window_stale_prepare_falls_back_to_caller_wait() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("direct-window-fallback", Engine::create_tenant);
+    let document_id = engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("seed"))]),
+        )
+        .expect("seed insert should succeed");
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+    let faults = engine.commit_fault_handle_for_testing();
+    faults.arm(crate::engine::commit_fault_labels::PREPARE_COMPLETE);
+    let update = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        move || {
+            engine.update_document(
+                &tenant_id,
+                tasks_table(),
+                document_id,
+                serde_json::Map::from_iter([("fallback".to_string(), json!(true))]),
+            )
+        }
+    });
+    expect_blocking_wait_reaches_state("direct prepare should pause before actor admission", {
+        let faults = faults.clone();
+        move |timeout| {
+            faults.wait_until_entered(
+                crate::engine::commit_fault_labels::PREPARE_COMPLETE,
+                timeout,
+            )
+        }
+    })
+    .await;
+    engine
+        .update_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            document_id.clone(),
+            serde_json::Map::from_iter([("racer".to_string(), json!(true))]),
+        )
+        .await
+        .expect("a racing write should make the paused prepare stale");
+    engine
+        .force_write_log_storage_fallback_for_testing(&tenant_id)
+        .expect("test should force an out-of-window validation source");
+    faults.release(crate::engine::commit_fault_labels::PREPARE_COMPLETE);
+    expect_catch_up_future_within(update, "caller fallback should re-prepare and commit")
+        .await
+        .expect("fallback task should join")
+        .expect("fallback update should succeed");
+
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+    assert_eq!(after.inline_reprepare_total, before.inline_reprepare_total);
+    assert_eq!(after.reprepare_total - before.reprepare_total, 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

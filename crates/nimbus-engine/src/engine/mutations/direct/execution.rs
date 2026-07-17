@@ -46,7 +46,7 @@ impl Engine {
                 let prepare_permit = runtime.acquire_prepare_permit_blocking()?;
                 let prepared = prepare_direct_mutation(
                     runtime.as_ref(),
-                    &runtime.schema(),
+                    runtime.schema(),
                     &mode,
                     mutation.clone(),
                     principal,
@@ -180,11 +180,12 @@ fn normalize_direct_insert_id(engine: &Engine, mutation: Mutation) -> Mutation {
 
 fn prepare_direct_mutation(
     runtime: &TenantRuntime,
-    schema: &Schema,
+    schema: Arc<Schema>,
     mode: &MutationExecutionMode,
     mutation: Mutation,
     principal: &PrincipalContext,
 ) -> Result<PreparedDirectMutation> {
+    let inline_mutation = mutation.clone();
     let scheduled_execution_id = match mode {
         MutationExecutionMode::Immediate => None,
         MutationExecutionMode::Scheduled { execution_id } => Some(execution_id.as_str()),
@@ -322,13 +323,16 @@ fn prepare_direct_mutation(
     dependencies.record_document(&write.table, &write.table_id, write.doc_id.clone());
     validate_prepared_for_provider(runtime, snapshot_sequence, &dependencies)?;
     Ok(PreparedDirectMutation::Commit {
-        prepared_commit: Box::new(PreparedCommit::for_direct(
-            snapshot_sequence,
-            dependencies,
-            write,
-            indexes,
-            scheduled_execution_id,
-        )?),
+        prepared_commit: Box::new(
+            PreparedCommit::for_direct(
+                snapshot_sequence,
+                dependencies,
+                write,
+                indexes,
+                scheduled_execution_id,
+            )?
+            .with_inline_reprepare(inline_mutation, principal.clone(), schema),
+        ),
         result_document_id,
     })
 }

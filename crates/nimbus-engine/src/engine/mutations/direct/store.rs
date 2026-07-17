@@ -5,7 +5,9 @@ use nimbus_core::{CommitEntry, Result};
 
 use crate::{Engine, tenant::TenantRuntime};
 
-use super::super::journal::validate_prepared_against_window;
+use super::super::inline_reprepare::{
+    InlineReprepareOutcome, reprepare_single_document_from_window,
+};
 use super::super::phase_metrics::CommitPhaseDurations;
 use super::super::prepared::PreparedCommit;
 
@@ -46,11 +48,15 @@ impl Engine {
                 // full-image window validation, assignment, assignment-only
                 // stamping, and the unchanged atomic storage append/apply.
                 let conflict_started = Instant::now();
-                validate_prepared_against_window(
+                let dependencies = prepared_commit.read_set.clone();
+                match reprepare_single_document_from_window(
                     runtime.as_ref(),
-                    prepared_commit.snapshot_sequence,
-                    &prepared_commit.read_set,
-                )?;
+                    &mut prepared_commit,
+                    &dependencies,
+                )? {
+                    InlineReprepareOutcome::Fresh | InlineReprepareOutcome::Reprepared => {}
+                    InlineReprepareOutcome::CallerWait(error) => return Err(error),
+                }
                 profile.phases.conflict_check = conflict_started.elapsed();
                 let previous_sequence = runtime.durable_head();
                 let sequence = crate::tenant::assign_and_validate(previous_sequence, 1)?[0];
