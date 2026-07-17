@@ -113,6 +113,35 @@ impl ObserverHandoff {
         }
     }
 
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) async fn fence(&self) -> Result<()> {
+        let (completed, completion) = oneshot::channel();
+        {
+            let sender = self
+                .sender
+                .lock()
+                .expect("observer sender lock should not be poisoned");
+            if sender.closed {
+                return Err(Error::Internal(
+                    "committed mutation observer dispatcher is closed".to_string(),
+                ));
+            }
+            sender
+                .sender
+                .send(CommittedMutationObserverMessage::Fence(completed))
+                .map_err(|_| {
+                    Error::Internal(
+                        "committed mutation observer dispatcher stopped before a fence".to_string(),
+                    )
+                })?;
+        }
+        completion.await.map_err(|_| {
+            Error::Internal(
+                "committed mutation observer dispatcher dropped a fence response".to_string(),
+            )
+        })
+    }
+
     pub(crate) fn mark_drained(&self) {
         self.drained.store(true, Ordering::Release);
         self.drained_notify.notify_waiters();

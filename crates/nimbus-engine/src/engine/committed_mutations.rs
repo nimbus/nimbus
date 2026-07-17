@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use nimbus_core::{CommitEntry, TableName, TenantId};
 use tokio::sync::mpsc;
+#[cfg(any(test, feature = "test-hooks"))]
+use tokio::sync::oneshot;
 
 use crate::{Engine, tenant::TenantRuntime};
 
@@ -42,6 +44,8 @@ pub(crate) struct CommittedMutationObserverDispatch {
 
 pub(crate) enum CommittedMutationObserverMessage {
     Dispatch(CommittedMutationObserverDispatch),
+    #[cfg(any(test, feature = "test-hooks"))]
+    Fence(oneshot::Sender<()>),
     Close,
 }
 
@@ -62,11 +66,20 @@ pub(crate) async fn run_committed_mutation_observer_dispatcher(
     while let Some(message) = receiver.recv().await {
         match message {
             CommittedMutationObserverMessage::Dispatch(dispatch) => dispatch.run(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            CommittedMutationObserverMessage::Fence(completed) => {
+                let _ = completed.send(());
+            }
             CommittedMutationObserverMessage::Close => {
                 receiver.close();
                 while let Some(message) = receiver.recv().await {
-                    if let CommittedMutationObserverMessage::Dispatch(dispatch) = message {
-                        dispatch.run();
+                    match message {
+                        CommittedMutationObserverMessage::Dispatch(dispatch) => dispatch.run(),
+                        #[cfg(any(test, feature = "test-hooks"))]
+                        CommittedMutationObserverMessage::Fence(completed) => {
+                            let _ = completed.send(());
+                        }
+                        CommittedMutationObserverMessage::Close => {}
                     }
                 }
                 break;
@@ -94,6 +107,21 @@ impl Engine {
             .expect("committed mutation observer registry lock should not be poisoned")
             .entry(name)
             .or_insert(observer);
+    }
+
+    /// Waits until every observer dispatch already accepted for `tenant_id`
+    /// has completed. This is a test seam for isolating process-wide commit
+    /// faults from ordered observer work left by fixture setup.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub async fn flush_committed_mutation_observers_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> nimbus_core::Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        runtime
+            .flush_committed_mutation_observers_for_testing()
+            .await
     }
 
     pub(crate) fn enqueue_applied_commit_batch_observers(

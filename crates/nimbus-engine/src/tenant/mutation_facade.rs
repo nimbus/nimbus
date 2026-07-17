@@ -84,6 +84,11 @@ impl TenantRuntime {
         self.observer_dispatch.wait_drained().await;
     }
 
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) async fn flush_committed_mutation_observers_for_testing(&self) -> Result<()> {
+        self.observer_dispatch.fence().await
+    }
+
     pub(crate) fn publisher_pipeline_capable(&self) -> bool {
         self.publisher.pipeline_capable()
     }

@@ -93,6 +93,15 @@ async fn seed_counter(api: &HttpApiFixture<'_>) -> String {
         .to_string()
 }
 
+async fn flush_seed_observers(engine: &Engine) {
+    engine
+        .flush_committed_mutation_observers_for_testing(
+            &TenantId::new("demo").expect("tenant id should build"),
+        )
+        .await
+        .expect("seed mutation observers should drain before fault injection");
+}
+
 async fn invoke_mutation(
     server: &ServerFixture,
     name: &'static str,
@@ -125,6 +134,7 @@ async fn forced_conflict_integration_test() {
         StatusCode::CREATED
     );
     let document_id = seed_counter(&api).await;
+    flush_seed_observers(&engine).await;
     let faults = engine.commit_fault_handle_for_testing();
     faults.arm(commit_fault_labels::PRE_ASSIGN);
 
@@ -203,6 +213,7 @@ async fn retry_exhaustion_test() {
         StatusCode::CREATED
     );
     let document_id = seed_counter(&api).await;
+    flush_seed_observers(&engine).await;
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
     let applied_head = engine
         .tenant_engine_diagnostics(&tenant_id)
@@ -257,6 +268,7 @@ async fn wait_before_retry_test() {
         StatusCode::CREATED
     );
     let document_id = seed_counter(&api).await;
+    flush_seed_observers(&engine).await;
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
     let before = engine
         .tenant_engine_diagnostics(&tenant_id)
