@@ -6,6 +6,98 @@ use crate::keys::{document_path_key, resource_locator_key};
 
 use super::*;
 
+pub(super) async fn upsert_resource_path_binding_in_session<C>(
+    session: &mut C,
+    database_name: &str,
+    binding: &ResourcePathBinding,
+) -> Result<()>
+where
+    C: Queryable,
+{
+    let locator_key = resource_locator_key(&binding.locator);
+    let path_key = document_path_key(&binding.document_path);
+    let existing_locator = load_locator_for_document_path_key_from_session(
+        session,
+        database_name,
+        path_key.as_slice(),
+    )
+    .await?;
+    if existing_locator
+        .as_ref()
+        .is_some_and(|locator| locator != &binding.locator)
+    {
+        return Err(Error::AlreadyExists(format!(
+            "document path already bound: {}",
+            binding.document_path
+        )));
+    }
+    if load_resource_path_binding_by_locator_key_from_session(
+        session,
+        database_name,
+        locator_key.as_slice(),
+    )
+    .await?
+    .as_ref()
+        == Some(binding)
+    {
+        return Ok(());
+    }
+
+    let query = format!(
+        "INSERT INTO {} (
+            locator_hash,
+            locator_key,
+            document_path_hash,
+            document_path_key,
+            collection_group_hash,
+            binding_blob,
+            locator_blob
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+            locator_key = VALUES(locator_key),
+            document_path_hash = VALUES(document_path_hash),
+            document_path_key = VALUES(document_path_key),
+            collection_group_hash = VALUES(collection_group_hash),
+            binding_blob = VALUES(binding_blob),
+            locator_blob = VALUES(locator_blob)",
+        qualified_table(database_name, "resource_path_bindings")
+    );
+    session
+        .exec_drop(
+            query,
+            (
+                hashed_key(locator_key.as_slice()),
+                locator_key,
+                hashed_key(path_key.as_slice()),
+                path_key,
+                hashed_key(binding.collection_group().as_str().as_bytes()),
+                encode_binding(binding)?,
+                encode_locator(&binding.locator)?,
+            ),
+        )
+        .await
+        .map_err(map_mysql_error)
+}
+
+pub(super) async fn remove_resource_path_binding_in_session<C>(
+    session: &mut C,
+    database_name: &str,
+    locator: &DocumentLocator,
+) -> Result<()>
+where
+    C: Queryable,
+{
+    let locator_key = resource_locator_key(locator);
+    let query = format!(
+        "DELETE FROM {} WHERE locator_hash = ?",
+        qualified_table(database_name, "resource_path_bindings")
+    );
+    session
+        .exec_drop(query, (hashed_key(locator_key.as_slice()),))
+        .await
+        .map_err(map_mysql_error)
+}
+
 impl MySqlTenantStore {
     pub fn upsert_resource_path_binding(&self, binding: &ResourcePathBinding) -> Result<()> {
         let binding = binding.clone();

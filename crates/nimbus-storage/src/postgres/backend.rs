@@ -838,7 +838,7 @@ where
                 )
                 .await?;
                 match existing {
-                    Some(existing) if existing == *current => continue,
+                    Some(existing) if existing == *current => {}
                     Some(_) => {
                         return Err(Error::conflict(format!(
                             "durable journal insert replay found conflicting state for document {}",
@@ -887,38 +887,37 @@ where
                     "durable journal update replay missing document {}",
                     write.doc_id
                 )))?;
-                if existing == *current {
-                    continue;
-                }
-                if existing != *previous {
+                if existing != *current && existing != *previous {
                     return Err(Error::conflict(format!(
                         "durable journal update replay found conflicting state for document {}",
                         write.doc_id
                     )));
                 }
-                let query = format!(
-                    "UPDATE {} SET data_json = $3, typed_fields_json = $4, creation_time = $5, update_time = $6 WHERE table_id = $1 AND id = $2",
-                    qualified_table(schema_name, "documents")
-                );
-                let id = write.doc_id.to_string();
-                let data_json = serialize_document_fields(current)?;
-                let typed_fields_json = serialize_document_typed_fields(current)?;
-                let creation_time = i64_from_timestamp(current.creation_time)?;
-                let update_time = i64_from_timestamp(current.update_time)?;
-                session
-                    .execute(
-                        query.as_str(),
-                        &[
-                            &write.table_id.as_str(),
-                            &id,
-                            &data_json,
-                            &typed_fields_json,
-                            &creation_time,
-                            &update_time,
-                        ],
-                    )
-                    .await
-                    .map_err(map_postgres_error)?;
+                if existing != *current {
+                    let query = format!(
+                        "UPDATE {} SET data_json = $3, typed_fields_json = $4, creation_time = $5, update_time = $6 WHERE table_id = $1 AND id = $2",
+                        qualified_table(schema_name, "documents")
+                    );
+                    let id = write.doc_id.to_string();
+                    let data_json = serialize_document_fields(current)?;
+                    let typed_fields_json = serialize_document_typed_fields(current)?;
+                    let creation_time = i64_from_timestamp(current.creation_time)?;
+                    let update_time = i64_from_timestamp(current.update_time)?;
+                    session
+                        .execute(
+                            query.as_str(),
+                            &[
+                                &write.table_id.as_str(),
+                                &id,
+                                &data_json,
+                                &typed_fields_json,
+                                &creation_time,
+                                &update_time,
+                            ],
+                        )
+                        .await
+                        .map_err(map_postgres_error)?;
+                }
             }
             (Some(previous), None) => {
                 ensure_table_id_in_session(session, schema_name, &write.table, &write.table_id)
@@ -949,7 +948,7 @@ where
                             .await
                             .map_err(map_postgres_error)?;
                     }
-                    None => continue,
+                    None => {}
                 }
             }
             (None, None) => {
@@ -957,6 +956,25 @@ where
                     "durable journal write must include a previous or current document".to_string(),
                 ));
             }
+        }
+        match (&write.current, write.resource_path_binding.as_ref()) {
+            (Some(_), Some(binding)) => {
+                super::resource_paths::upsert_resource_path_binding_in_session(
+                    session,
+                    schema_name,
+                    binding,
+                )
+                .await?;
+            }
+            (None, _) => {
+                super::resource_paths::remove_resource_path_binding_in_session(
+                    session,
+                    schema_name,
+                    &nimbus_core::DocumentLocator::new(write.table.clone(), write.doc_id.clone()),
+                )
+                .await?;
+            }
+            (Some(_), None) => {}
         }
     }
 

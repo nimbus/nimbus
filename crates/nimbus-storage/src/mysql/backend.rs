@@ -1063,7 +1063,7 @@ where
                 )
                 .await?;
                 match existing {
-                    Some(existing) if existing == *current => continue,
+                    Some(existing) if existing == *current => {}
                     Some(_) => {
                         return Err(Error::conflict(format!(
                             "durable journal insert replay found conflicting state for document {}",
@@ -1107,33 +1107,32 @@ where
                     "durable journal update replay missing document {}",
                     write.doc_id
                 )))?;
-                if existing == *current {
-                    continue;
-                }
-                if existing != *previous {
+                if existing != *current && existing != *previous {
                     return Err(Error::conflict(format!(
                         "durable journal update replay found conflicting state for document {}",
                         write.doc_id
                     )));
                 }
-                let query = format!(
-                    "UPDATE {} SET data_json = ?, typed_fields_json = ?, creation_time = ?, update_time = ? WHERE table_id = ? AND id = ?",
-                    qualified_table(database_name, "documents")
-                );
-                session
-                    .exec_drop(
-                        query,
-                        (
-                            serialize_document_fields(current)?,
-                            serialize_document_typed_fields(current)?,
-                            current.creation_time.0,
-                            current.update_time.0,
-                            write.table_id.as_str(),
-                            write.doc_id.to_string(),
-                        ),
-                    )
-                    .await
-                    .map_err(map_mysql_error)?;
+                if existing != *current {
+                    let query = format!(
+                        "UPDATE {} SET data_json = ?, typed_fields_json = ?, creation_time = ?, update_time = ? WHERE table_id = ? AND id = ?",
+                        qualified_table(database_name, "documents")
+                    );
+                    session
+                        .exec_drop(
+                            query,
+                            (
+                                serialize_document_fields(current)?,
+                                serialize_document_typed_fields(current)?,
+                                current.creation_time.0,
+                                current.update_time.0,
+                                write.table_id.as_str(),
+                                write.doc_id.to_string(),
+                            ),
+                        )
+                        .await
+                        .map_err(map_mysql_error)?;
+                }
             }
             (Some(previous), None) => {
                 ensure_table_id_from_session(session, database_name, &write.table, &write.table_id)
@@ -1163,7 +1162,7 @@ where
                             .await
                             .map_err(map_mysql_error)?;
                     }
-                    None => continue,
+                    None => {}
                 }
             }
             (None, None) => {
@@ -1171,6 +1170,25 @@ where
                     "durable journal write must include a previous or current document".to_string(),
                 ));
             }
+        }
+        match (&write.current, write.resource_path_binding.as_ref()) {
+            (Some(_), Some(binding)) => {
+                super::resource_paths::upsert_resource_path_binding_in_session(
+                    session,
+                    database_name,
+                    binding,
+                )
+                .await?;
+            }
+            (None, _) => {
+                super::resource_paths::remove_resource_path_binding_in_session(
+                    session,
+                    database_name,
+                    &nimbus_core::DocumentLocator::new(write.table.clone(), write.doc_id.clone()),
+                )
+                .await?;
+            }
+            (Some(_), None) => {}
         }
     }
 
