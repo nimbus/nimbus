@@ -40,7 +40,7 @@ use tokio::task::JoinHandle;
 
 use crate::persistence::{ControlPlaneProvider, PersistenceProvider, TenantPersistence};
 use crate::persistence_config::EnginePersistenceConfig;
-use crate::tenant::TenantRuntime;
+use crate::tenant::{PublisherErrorCounts, TenantRuntime};
 use crate::triggers::{TriggerRegistration, execution::SharedTriggerInvocationExecutor};
 use background_executor::BackgroundExecutor;
 use tenant_load_gate::{TenantLoadGate, TenantLoadGateGuard};
@@ -73,6 +73,7 @@ pub use subscriptions::{SubscribeOptions, SubscriptionBootstrapCancellation};
 pub struct Engine {
     data_dir: PathBuf,
     tenants: RwLock<HashMap<TenantId, Arc<TenantRuntime>>>,
+    publisher_failure_diagnostics: RwLock<HashMap<TenantId, PublisherErrorCounts>>,
     transaction_sessions: RwLock<TransactionSessionRegistry>,
     tenant_load_gate: TenantLoadGate,
     embedded_provider_kind: Option<EmbeddedProviderKind>,
@@ -247,6 +248,7 @@ impl Engine {
         Self {
             data_dir: parts.data_dir,
             tenants: RwLock::new(HashMap::new()),
+            publisher_failure_diagnostics: RwLock::new(HashMap::new()),
             transaction_sessions: RwLock::new(TransactionSessionRegistry::default()),
             tenant_load_gate: TenantLoadGate::new(),
             embedded_provider_kind: parts.embedded_provider_kind,
@@ -389,6 +391,15 @@ impl Engine {
             store.clone(),
             read_storage,
         )?);
+        if let Some(counts) = self
+            .publisher_failure_diagnostics
+            .read()
+            .expect("publisher failure diagnostics lock should not be poisoned")
+            .get(tenant_id)
+            .copied()
+        {
+            runtime.restore_publisher_error_counts(counts);
+        }
         self.start_committer_actor(runtime.clone());
         runtime.replace_trigger_registrations(
             self.trigger_registrations

@@ -8,7 +8,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::Engine;
 use crate::engine::CommitPhaseDurations;
 
-use super::super::{QueuedMutationResult, TenantOperationGuard};
+use super::super::{CommitterJob, QueuedMutationResult, TenantOperationGuard};
 use super::CommitterPipelineMode;
 
 const DEFAULT_PUBLISHER_QUEUE_CAPACITY: usize = 32;
@@ -81,10 +81,21 @@ impl AssignedPublisherBatch {
 
 pub(crate) type PublisherQueueError = Box<(AssignedPublisherBatch, Error)>;
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct PublisherErrorCounts {
+    pub(crate) transient: u64,
+    pub(crate) fatal: u64,
+    pub(crate) ambiguous: u64,
+}
+
 pub(crate) enum PublisherMessage {
     Batch(AssignedPublisherBatch),
     Barrier(oneshot::Sender<()>),
     ResponseFence(Vec<DeferredPublisherResponse>),
+    SerialJob {
+        job: CommitterJob,
+        drained: oneshot::Sender<()>,
+    },
 }
 
 pub(crate) struct PublisherHandoff {
@@ -317,6 +328,37 @@ impl PublisherHandoff {
         }
     }
 
+    pub(crate) async fn send_serial_job(
+        &self,
+        job: CommitterJob,
+    ) -> std::result::Result<oneshot::Receiver<()>, (CommitterJob, Error)> {
+        match tokio::time::timeout(self.send_timeout, self.sender.reserve()).await {
+            Ok(Ok(permit)) => {
+                let (drained, wait_for_drain) = oneshot::channel();
+                permit.send(PublisherMessage::SerialJob { job, drained });
+                Ok(wait_for_drain)
+            }
+            Ok(Err(_)) => Err((
+                job,
+                Error::Internal("tenant publisher stopped before accepting serial job".to_string()),
+            )),
+            Err(_) => {
+                self.send_timeout_count.fetch_add(1, Ordering::Relaxed);
+                Err((
+                    job,
+                    Error::committer_full(
+                        format!(
+                            "tenant publisher queue remained full for {} ms (capacity {})",
+                            self.send_timeout.as_millis(),
+                            self.capacity
+                        ),
+                        self.capacity,
+                    ),
+                ))
+            }
+        }
+    }
+
     pub(crate) fn depth(&self) -> usize {
         self.sender
             .max_capacity()
@@ -343,12 +385,21 @@ impl PublisherHandoff {
         self.ambiguous_error_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub(crate) fn error_counts(&self) -> (u64, u64, u64) {
-        (
-            self.transient_error_count.load(Ordering::Relaxed),
-            self.fatal_error_count.load(Ordering::Relaxed),
-            self.ambiguous_error_count.load(Ordering::Relaxed),
-        )
+    pub(crate) fn error_counts(&self) -> PublisherErrorCounts {
+        PublisherErrorCounts {
+            transient: self.transient_error_count.load(Ordering::Relaxed),
+            fatal: self.fatal_error_count.load(Ordering::Relaxed),
+            ambiguous: self.ambiguous_error_count.load(Ordering::Relaxed),
+        }
+    }
+
+    pub(crate) fn restore_error_counts(&self, counts: PublisherErrorCounts) {
+        self.transient_error_count
+            .store(counts.transient, Ordering::Relaxed);
+        self.fatal_error_count
+            .store(counts.fatal, Ordering::Relaxed);
+        self.ambiguous_error_count
+            .store(counts.ambiguous, Ordering::Relaxed);
     }
 }
 

@@ -168,3 +168,51 @@ paused 96-insert concurrent burst commits in **one durable network round
 trip** (>32 ops/RTT, past the fixed cap) while an idle arrival keeps the
 1-op/1-round-trip baseline — the ops-per-RTT lever the provider-arm analysis
 identified, live-Postgres-verified (PostgreSQL 17.9).
+
+## PPSC5-A embedded ordered publisher (2026-07-17, `ppsc5-publisher`)
+
+Slice A keeps provider stores on the actor-owned serial arm and moves the
+embedded arm to a bounded ordered publisher. The serial kill-switch is the
+pre-publisher implementation retained in the same binary, so the comparison
+below isolates topology while holding the tree, release build, machine, SQLite
+store, workload, and five measured/two warm-up rounds constant.
+
+| CRUD N | serial mut/s | publisher mut/s | delta | serial avg batch | publisher avg batch | serial/publisher fsync share |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1,923 | 2,042 | +6.2% | 1.00 | 1.00 | 44.2% / 44.4% |
+| 32 | 12,430 | 15,684 | +26.2% | 16.19 | 16.03 | 30.9% / 30.0% |
+| 256 | 20,710 | 23,432 | +13.1% | 146.42 | **152.42** | 17.2% / 16.6% |
+
+The burst fsync-ratio gate therefore holds: the publisher improves rather than
+reduces average effective batch at N=256, while N=1 remains one append per
+mutation. The publisher's 750 µs Tokio-time accumulator window activates only
+above 64 outstanding operations; N≤32 stays on immediate flush.
+
+Hot-key parity re-check (N=32, same release/split protocol): serial **3,046
+mut/s**, publisher **3,124 mut/s** (**+2.6%**). The N=1 hot-key samples are
+fsync-dominated and noisy (351 vs 312 mut/s); the requested contention parity
+rung does not regress.
+
+Correctness evidence for this slice:
+
+| Gate | Result |
+| --- | --- |
+| mutation-journal/per-path group | 66/66 passed |
+| `fanout_never_precedes_applied_head` | passed |
+| `publisher_preserves_sequence_order_across_transient_retry` | passed |
+| `publisher_torn_tail_recovery_replays_exactly_one_contiguous_prefix` | passed |
+| `kill_switch_mid_load_produces_identical_state` | passed; documents and durable journal bytes match pipeline/serial/mid-load flip |
+| Hermitage + unchanged window differential | 11/11 + 1/1 passed |
+| actor→publisher loom handoff lane | 11/11 passed |
+| core + storage + engine | 965 passed, 4 skipped (baseline 960 + five slice tests) |
+| server | 559 passed, 23 skipped |
+| live PostgreSQL storage/engine | 21/21 + 12/12 passed |
+| live libSQL storage/engine | 18/18 + 6/6 passed |
+
+In pipeline mode the embedded actor's serial boundary ends at
+`assign_queued_mutation_batch` → `PublisherHandoff::send`; durable append,
+storage apply, watermark publication, and fan-out execute only in
+`persist_assigned_batch_once` on the publisher. Opaque embedded commit jobs use
+the same ordered publisher behind an assignment fence. Provider stores and the
+explicit `serial`/`off` kill-switch intentionally retain the pre-slice actor
+path until PPSC5 slice C.

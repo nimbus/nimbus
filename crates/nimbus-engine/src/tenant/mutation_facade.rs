@@ -1,7 +1,9 @@
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use nimbus_core::{CommitEntry, Result, SequenceNumber, TableName, TenantEventRecord, Timestamp};
+use nimbus_core::{
+    CommitEntry, Error, Result, SequenceNumber, TableName, TenantEventRecord, Timestamp,
+};
 use nimbus_storage::JournalProgress;
 
 use super::*;
@@ -55,10 +57,6 @@ impl TenantRuntime {
         self.publisher.take_receiver()
     }
 
-    pub(crate) async fn wait_for_publisher_barrier(&self) -> Result<()> {
-        self.publisher.barrier().await
-    }
-
     pub(crate) fn committer_shutdown_token(&self) -> tokio_util::sync::CancellationToken {
         self.committer.shutdown_token()
     }
@@ -91,6 +89,13 @@ impl TenantRuntime {
         responses: Vec<DeferredPublisherResponse>,
     ) -> std::result::Result<(), Box<(Vec<DeferredPublisherResponse>, nimbus_core::Error)>> {
         self.publisher.send_response_fence(responses).await
+    }
+
+    pub(crate) async fn send_publisher_serial_job(
+        &self,
+        job: super::CommitterJob,
+    ) -> std::result::Result<tokio::sync::oneshot::Receiver<()>, (super::CommitterJob, Error)> {
+        self.publisher.send_serial_job(job).await
     }
 
     pub(crate) async fn send_queued_committer_batch(
@@ -252,6 +257,12 @@ impl TenantRuntime {
                 MutationAdmissionDecision::Empty => break,
             }
         }
+    }
+
+    pub(crate) fn mutation_assignment_backlog_depth(&self) -> usize {
+        self.mutation_journal
+            .queue_depth()
+            .saturating_add(self.mutation_admission.queue_depth())
     }
 
     pub(crate) async fn drain_mutation_batch_adaptive(
@@ -488,13 +499,21 @@ impl TenantRuntime {
         stats.publisher_queue_depth = self.publisher.depth();
         stats.publisher_queue_capacity = self.publisher.capacity();
         stats.publisher_send_timeout_count = self.publisher.send_timeout_count();
-        let (transient, fatal, ambiguous) = self.publisher.error_counts();
-        stats.publisher_transient_error_count = transient;
-        stats.publisher_fatal_error_count = fatal;
-        stats.publisher_ambiguous_error_count = ambiguous;
+        let errors = self.publisher.error_counts();
+        stats.publisher_transient_error_count = errors.transient;
+        stats.publisher_fatal_error_count = errors.fatal;
+        stats.publisher_ambiguous_error_count = errors.ambiguous;
         stats.publisher_mode = self.publisher.mode();
         stats.publisher_mode_transition_count = self.publisher.mode_transition_count();
         stats
+    }
+
+    pub(crate) fn publisher_error_counts(&self) -> super::PublisherErrorCounts {
+        self.publisher.error_counts()
+    }
+
+    pub(crate) fn restore_publisher_error_counts(&self, counts: super::PublisherErrorCounts) {
+        self.publisher.restore_error_counts(counts);
     }
 
     pub(crate) async fn reconcile_committer_pipeline_mode(&self) -> Result<bool> {

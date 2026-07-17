@@ -66,12 +66,12 @@ pub use self::mutation::MutationJournalPauseHandle;
 use self::mutation::MutationJournalPauseState;
 pub(crate) use self::mutation::{
     AssignedPublisherBatch, DeferredPublisherResponse, PendingPublisherResponse,
-    PreparedPayloadAccounting, PublisherMessage, PublisherQueueError, QueuedMutationRequest,
-    QueuedMutationResult,
+    PreparedPayloadAccounting, PublisherErrorCounts, PublisherMessage, PublisherQueueError,
+    QueuedMutationRequest, QueuedMutationResult,
 };
 pub(crate) use self::mutation::{
-    CommitterActor, CommitterMessage, assign_and_validate, run_committer_actor,
-    validate_append_sequences,
+    CommitterActor, CommitterJob, CommitterMessage, assign_and_validate, run_committer_actor,
+    run_job, validate_append_sequences,
 };
 pub use self::mutation::{
     CommitterPipelineMode, MutationAdmissionPhase, MutationAdmissionStats,

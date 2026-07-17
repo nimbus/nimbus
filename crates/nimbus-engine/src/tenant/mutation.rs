@@ -10,8 +10,8 @@ mod requests;
 mod stats;
 
 pub(crate) use self::actor::{
-    CommitterActor, CommitterMessage, assign_and_validate, run_committer_actor,
-    validate_append_sequences,
+    CommitterActor, CommitterJob, CommitterMessage, assign_and_validate, run_committer_actor,
+    run_job, validate_append_sequences,
 };
 pub(super) use self::admission::{MutationAdmissionDecision, MutationAdmissionGate};
 pub(super) use self::isolate_admission::MutationIsolateAdmission;
@@ -22,8 +22,8 @@ pub use self::pause::MutationJournalPauseHandle;
 #[cfg(any(test, feature = "test-hooks"))]
 pub(in crate::tenant) use self::pause::MutationJournalPauseState;
 pub(crate) use self::publisher::{
-    AssignedPublisherBatch, DeferredPublisherResponse, PendingPublisherResponse, PublisherHandoff,
-    PublisherMessage, PublisherQueueError,
+    AssignedPublisherBatch, DeferredPublisherResponse, PendingPublisherResponse,
+    PublisherErrorCounts, PublisherHandoff, PublisherMessage, PublisherQueueError,
 };
 #[cfg(test)]
 pub(crate) use self::requests::{

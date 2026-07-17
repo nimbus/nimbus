@@ -15,7 +15,11 @@ const DEFAULT_PUBLISHER_RETRY_INITIAL_MS: u64 = 1;
 const DEFAULT_PUBLISHER_RETRY_MAX_MS: u64 = 100;
 const PUBLISHER_BATCH_BASE: usize = 32;
 const DEFAULT_PUBLISHER_BATCH_MAX: usize = 256;
-const DEFAULT_PUBLISHER_COALESCE_MICROS: u64 = 0;
+// Once assignment has produced a base-sized burst, leave a short scheduling
+// window for the next assigned suffix to arrive. Low-volume batches publish
+// immediately, so this preserves singleton latency while recovering the
+// adaptive actor's burst fsync amortization at the publisher boundary.
+const DEFAULT_PUBLISHER_COALESCE_MICROS: u64 = 750;
 
 #[derive(Clone, Copy)]
 struct PublisherBatchPolicy {
@@ -92,27 +96,39 @@ pub(crate) async fn run_ordered_publisher(
                 }
                 continue;
             }
+            PublisherMessage::SerialJob { job, drained } => {
+                let Some(runtime) = runtime.upgrade() else {
+                    let (task, completed) = job.into_parts();
+                    drop(task);
+                    let _ = completed.send(());
+                    let _ = drained.send(());
+                    break;
+                };
+                run_serial_publisher_job(runtime, job).await;
+                let _ = drained.send(());
+                continue;
+            }
         };
-        let batch = accumulate_assigned_batches(
-            batch,
-            &mut receiver,
-            &mut pending_message,
-            &engine_shutdown,
-            &tenant_shutdown,
-        )
-        .await;
         let Some(runtime) = runtime.upgrade() else {
             batch.fail(&Error::Internal(
                 "tenant runtime stopped before assigned batch publication".to_string(),
             ));
             break;
         };
+        let batch = accumulate_assigned_batches(
+            batch,
+            runtime.as_ref(),
+            &mut receiver,
+            &mut pending_message,
+            &engine_shutdown,
+            &tenant_shutdown,
+        )
+        .await;
 
-        // Non-journal actor messages (schema, execution-unit, and direct
-        // commits) retain their serial storage path in slice A. Because the
-        // actor cannot run one of those jobs concurrently with assignment, an
-        // observed advance here is a completed serial commit between two
-        // publisher batches. Re-anchor before validating the next suffix.
+        // Opaque embedded commit jobs share this publisher and fence later
+        // assignment until they drain. Re-anchor in case the preceding queue
+        // item was such a job; provider jobs remain on the actor-owned serial
+        // arm and never share this publisher.
         let expected_previous = runtime.durable_head();
 
         if let Err(invariant) = crate::tenant::validate_append_sequences(
@@ -139,8 +155,22 @@ pub(crate) async fn run_ordered_publisher(
     }
 }
 
+async fn run_serial_publisher_job(runtime: Arc<TenantRuntime>, job: crate::tenant::CommitterJob) {
+    runtime.set_mutation_worker_running(true);
+    let (task, completed) = job.into_parts();
+    let failed = tokio::task::spawn_blocking(move || crate::tenant::run_job(task))
+        .await
+        .is_err();
+    runtime.set_mutation_worker_running(false);
+    let _ = completed.send(());
+    if failed {
+        runtime.record_mutation_worker_failure();
+    }
+}
+
 async fn accumulate_assigned_batches(
     mut batch: AssignedPublisherBatch,
+    runtime: &TenantRuntime,
     receiver: &mut mpsc::Receiver<PublisherMessage>,
     pending_message: &mut Option<PublisherMessage>,
     engine_shutdown: &CancellationToken,
@@ -165,12 +195,21 @@ async fn accumulate_assigned_batches(
         }
     }
 
-    if batch.records.len() >= policy.base || policy.coalesce.is_zero() {
+    // A sub-base batch with no queued mutation work represents low offered
+    // concurrency and should not pay an extra scheduling delay. Under actor or
+    // publisher pressure, leave assignment one short Tokio-time window to
+    // produce a larger contiguous suffix before fsync.
+    let burst_threshold = policy.base.saturating_mul(2);
+    let assignment_pressure = !receiver.is_empty()
+        || runtime.mutation_assignment_backlog_depth() > burst_threshold
+        || runtime.mutation_journal_stats().pending_response_count
+            > u64::try_from(burst_threshold).unwrap_or(u64::MAX);
+    if !assignment_pressure || batch.records.len() >= policy.max || policy.coalesce.is_zero() {
         return batch;
     }
 
     let deadline = tokio::time::Instant::now() + policy.coalesce;
-    while batch.records.len() < policy.base {
+    while batch.records.len() < policy.max {
         let message = tokio::select! {
             message = receiver.recv() => message,
             _ = tokio::time::sleep_until(deadline) => None,
@@ -367,6 +406,10 @@ pub(crate) fn persist_assigned_batch_once(
     // Obligation #9c: the applied watermark is visible before this function
     // returns control to the task that performs subscription fan-out.
     runtime.mark_applied_head(published_frontier);
+    commit_faults
+        .wait(labels::POST_PUBLISH_PRE_FANOUT)
+        .into_result()
+        .map_err(PublishAttemptError::Ambiguous)?;
     let publish = publish_started.elapsed();
 
     Ok(PublishedBatch {
@@ -431,9 +474,20 @@ fn fail_and_restart(
     receiver: &mut mpsc::Receiver<PublisherMessage>,
 ) {
     let engine = batch.engine.clone();
-    batch.fail(&error);
     receiver.close();
+    let mut queued_messages = Vec::new();
     while let Ok(queued) = receiver.try_recv() {
+        queued_messages.push(queued);
+    }
+    runtime.record_mutation_worker_failure();
+    runtime.shutdown_committer();
+    engine.evict_failed_tenant_runtime(&runtime, &error);
+
+    // Complete callers only after eviction, so a caller's next access cannot
+    // race back onto the failed runtime instead of reopening and replaying its
+    // durable tail.
+    batch.fail(&error);
+    for queued in queued_messages {
         match queued {
             PublisherMessage::Batch(queued) => queued.fail(&error),
             PublisherMessage::Barrier(completed) => drop(completed),
@@ -442,16 +496,23 @@ fn fail_and_restart(
                     response.fail(&error);
                 }
             }
+            PublisherMessage::SerialJob { job, drained } => {
+                let (task, completed) = job.into_parts();
+                drop(task);
+                let _ = completed.send(());
+                let _ = drained.send(());
+            }
         }
     }
-    runtime.record_mutation_worker_failure();
-    runtime.shutdown_committer();
-    engine.evict_failed_tenant_runtime(&runtime, &error);
 }
 
 impl Engine {
     fn evict_failed_tenant_runtime(&self, runtime: &Arc<TenantRuntime>, error: &Error) {
         let tenant_id = runtime.tenant_id().clone();
+        self.publisher_failure_diagnostics
+            .write()
+            .expect("publisher failure diagnostics lock should not be poisoned")
+            .insert(tenant_id.clone(), runtime.publisher_error_counts());
         let removed = {
             let mut tenants = self
                 .tenants

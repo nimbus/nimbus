@@ -37,6 +37,10 @@ impl CommitterJob {
             completion,
         )
     }
+
+    pub(crate) fn into_parts(self) -> (Box<dyn FnOnce() + Send + 'static>, oneshot::Sender<()>) {
+        (self.task, self.completed)
+    }
 }
 
 /// Pure serial assignment boundary. It accepts only plain sequence data,
@@ -478,18 +482,25 @@ async fn run_committer_actor_loop(
             | CommitterMessage::InternalSerial(job) => job,
             CommitterMessage::QueuedBatch { .. } => unreachable!(),
         };
-        if runtime.store.has_process_local_sequence_authority()
-            && let Err(error) = runtime.wait_for_publisher_barrier().await
-        {
-            let CommitterJob { task, completed } = job;
-            drop(task);
-            let _ = completed.send(());
-            runtime.record_mutation_worker_failure();
-            tracing::warn!(
-                tenant = %runtime.tenant_id(),
-                error = %error,
-                "committer serial job rejected because the ordered publisher did not drain"
-            );
+        if runtime.store.has_process_local_sequence_authority() {
+            match runtime.send_publisher_serial_job(job).await {
+                Ok(drained) => {
+                    if drained.await.is_err() {
+                        runtime.record_mutation_worker_failure();
+                    }
+                }
+                Err((job, error)) => {
+                    let (task, completed) = job.into_parts();
+                    drop(task);
+                    let _ = completed.send(());
+                    runtime.record_mutation_worker_failure();
+                    tracing::warn!(
+                        tenant = %runtime.tenant_id(),
+                        error = %error,
+                        "committer serial job rejected by the ordered publisher"
+                    );
+                }
+            }
             continue;
         }
         let CommitterJob { task, completed } = job;
@@ -533,15 +544,13 @@ fn assert_not_reentrant() {
 }
 
 fn on_actor_task() -> bool {
-    if COMMITTER_ACTOR_ACTIVE.try_with(|()| ()).is_ok() {
+    if COMMITTER_ACTOR_ACTIVE.try_with(|()| ()).is_ok()
+        || COMMITTER_HANDLER_ACTIVE.with(std::cell::Cell::get)
+    {
         // Observer callbacks for queued commits intentionally execute after
         // publication on the actor task. Preserve their historical ability
         // to perform a synchronous nested write by handling it directly in
         // the serial loop instead of sending-and-waiting on this same inbox.
-        debug_assert!(
-            !COMMITTER_HANDLER_ACTIVE.with(std::cell::Cell::get),
-            "blocking committer handlers must not re-enter serial commit"
-        );
         true
     } else {
         false

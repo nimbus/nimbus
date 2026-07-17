@@ -1396,6 +1396,248 @@ async fn publisher_accumulator_preserves_fsync_amortization_when_assignment_gets
     );
 }
 
+struct RetryableThenBlockingAppendFaultInjector {
+    append_visits: std::sync::atomic::AtomicU64,
+    retry_entered: (Mutex<bool>, Condvar),
+    retry_released: (Mutex<bool>, Condvar),
+}
+
+impl RetryableThenBlockingAppendFaultInjector {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            append_visits: std::sync::atomic::AtomicU64::new(0),
+            retry_entered: (Mutex::new(false), Condvar::new()),
+            retry_released: (Mutex::new(false), Condvar::new()),
+        })
+    }
+
+    fn wait_until_retry_blocked(&self, timeout: Duration) -> bool {
+        let (lock, condvar) = &self.retry_entered;
+        let entered = lock.lock().expect("retry-entered lock should acquire");
+        if *entered {
+            return true;
+        }
+        let (entered, _) = condvar
+            .wait_timeout_while(entered, timeout, |entered| !*entered)
+            .expect("retry-entered wait should succeed");
+        *entered
+    }
+
+    fn release_retry(&self) {
+        let (lock, condvar) = &self.retry_released;
+        *lock.lock().expect("retry-release lock should acquire") = true;
+        condvar.notify_all();
+    }
+}
+
+impl nimbus_storage::FaultInjector for RetryableThenBlockingAppendFaultInjector {
+    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+        if point != FaultPoint::JournalAppendBeforeDurableFlush {
+            return Ok(());
+        }
+        let visit = self.append_visits.fetch_add(1, Ordering::AcqRel) + 1;
+        if visit == 2 {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Transient,
+                "injected transient publisher append failure",
+            ));
+        }
+        if visit == 3 {
+            let (entered_lock, entered_condvar) = &self.retry_entered;
+            *entered_lock
+                .lock()
+                .expect("retry-entered lock should acquire") = true;
+            entered_condvar.notify_all();
+            let (release_lock, release_condvar) = &self.retry_released;
+            let mut released = release_lock
+                .lock()
+                .expect("retry-release lock should acquire");
+            while !*released {
+                released = release_condvar
+                    .wait(released)
+                    .expect("retry-release wait should succeed");
+            }
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn publisher_preserves_sequence_order_across_transient_retry() {
+    let data_dir = tempdir().expect("transient publisher tempdir should build");
+    let faults = RetryableThenBlockingAppendFaultInjector::new();
+    let engine = Arc::new(
+        Engine::new_with_simulation(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_000))),
+            faults.clone(),
+        )
+        .expect("transient publisher engine should create"),
+    );
+    let tenant_id = TenantId::new("publisher-retry-order").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("transient publisher tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+        )
+        .await
+        .expect("first publisher batch should commit");
+
+    let second = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state("retry of batch N should block before persistence", {
+        let faults = faults.clone();
+        move |timeout| faults.wait_until_retry_blocked(timeout)
+    })
+    .await;
+
+    let third = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(3))]),
+                )
+                .await
+        }
+    });
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "batch N+1 should wait in the publisher queue behind retrying batch N",
+        |stats| stats.publisher_queue_depth == 1,
+    )
+    .await;
+    let persisted_while_retrying = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("durable prefix should read while retry is blocked");
+    assert_eq!(
+        persisted_while_retrying
+            .iter()
+            .map(|record| record.sequence)
+            .collect::<Vec<_>>(),
+        vec![SequenceNumber(1)],
+        "batch N+1 must not persist around the retrying batch N"
+    );
+    assert_eq!(
+        engine
+            .mutation_journal_stats_for_testing(&tenant_id)
+            .expect("retry diagnostics should load")
+            .publisher_transient_error_count,
+        1
+    );
+
+    faults.release_retry();
+    expect_catch_up_future_within(second, "retrying publisher batch should complete")
+        .await
+        .expect("second insert task should join")
+        .expect("second insert should succeed after retry");
+    expect_catch_up_future_within(third, "following publisher batch should complete")
+        .await
+        .expect("third insert task should join")
+        .expect("third insert should succeed");
+    assert_eq!(
+        engine
+            .read_durable_journal(&tenant_id, SequenceNumber(0))
+            .expect("final durable prefix should read")
+            .iter()
+            .map(|record| record.sequence)
+            .collect::<Vec<_>>(),
+        vec![SequenceNumber(1), SequenceNumber(2), SequenceNumber(3)]
+    );
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("final retry diagnostics should load");
+    assert_eq!(stats.publisher_transient_error_count, 1);
+    assert_eq!(stats.publisher_fatal_error_count, 0);
+    assert_eq!(stats.publisher_ambiguous_error_count, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn publisher_torn_tail_recovery_replays_exactly_one_contiguous_prefix() {
+    let data_dir = tempdir().expect("torn-tail publisher tempdir should build");
+    let faults = Arc::new(nimbus_storage::ScriptedFaultInjector::new([
+        nimbus_storage::FaultOccurrence {
+            point: FaultPoint::JournalDurableAppendBeforeApply,
+            visit: 1,
+        },
+    ]));
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(45_000))),
+            faults,
+            Arc::new(nimbus_core::SeededIdSource::new(45_000)),
+        )
+        .expect("torn-tail publisher engine should create"),
+    );
+    let tenant_id = TenantId::new("publisher-torn-tail").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("torn-tail publisher tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+
+    let error = engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("replay-me"))]),
+        )
+        .await
+        .expect_err("post-append fault must force crash-and-replay");
+    assert!(
+        error.to_string().contains("crash-and-replay"),
+        "ambiguous publisher failure should identify replay recovery: {error}"
+    );
+
+    // The failed runtime is evicted before the response is completed. This
+    // access therefore opens a fresh runtime and applies the durable tail.
+    let documents = engine
+        .query_documents_async(tenant_id.clone(), query_for("tasks"))
+        .await
+        .expect("next access should recover the durable torn tail");
+    assert_eq!(documents.len(), 1);
+    assert_eq!(documents[0].fields.get("title"), Some(&json!("replay-me")));
+    let journal = engine
+        .read_durable_journal_async(tenant_id.clone(), SequenceNumber(0))
+        .await
+        .expect("recovered durable prefix should read");
+    assert_eq!(journal.len(), 1);
+    assert_eq!(journal[0].sequence, SequenceNumber(1));
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("recovered journal stats should load");
+    assert_eq!(stats.durable_head, SequenceNumber(1));
+    assert_eq!(stats.applied_head, SequenceNumber(1));
+    assert_eq!(stats.apply_lag, 0);
+    assert_eq!(stats.publisher_ambiguous_error_count, 1);
+}
+
 #[derive(Clone, Copy)]
 enum KillSwitchWorkloadMode {
     Pipeline,

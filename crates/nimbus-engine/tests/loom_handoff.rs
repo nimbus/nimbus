@@ -859,3 +859,100 @@ fn legacy_clear_then_check_closes_the_184_window() {
         );
     });
 }
+
+#[derive(Debug, Default)]
+struct PublisherQueueState {
+    queue: Vec<u8>,
+    published: Vec<u8>,
+    closed: bool,
+}
+
+#[derive(Debug, Default)]
+struct PublisherQueueHandoff {
+    state: Mutex<PublisherQueueState>,
+    ready: Condvar,
+}
+
+impl PublisherQueueHandoff {
+    fn enqueue(&self, batch: u8) -> bool {
+        let mut state = self.state.lock().expect("publisher handoff lock");
+        if state.closed {
+            return false;
+        }
+        state.queue.push(batch);
+        self.ready.notify_all();
+        true
+    }
+
+    fn drain_until_shutdown(&self) {
+        loop {
+            let mut state = self.state.lock().expect("publisher drain lock");
+            while state.queue.is_empty() && !state.closed {
+                state = self.ready.wait(state).expect("publisher drain wait");
+            }
+            if let Some(batch) = state.queue.first().copied() {
+                state.queue.remove(0);
+                if let Some(previous) = state.published.last() {
+                    assert!(*previous < batch, "publisher batches must drain in order");
+                }
+                state.published.push(batch);
+            } else if state.closed {
+                return;
+            }
+        }
+    }
+
+    fn shutdown(&self) {
+        let mut state = self.state.lock().expect("publisher shutdown lock");
+        state.closed = true;
+        self.ready.notify_all();
+    }
+}
+
+#[test]
+fn actor_to_publisher_enqueue_drain_shutdown_loses_no_accepted_batch() {
+    loom::model(|| {
+        let handoff = Arc::new(PublisherQueueHandoff::default());
+        let first_accepted = Arc::new(AtomicBool::new(false));
+        let second_accepted = Arc::new(AtomicBool::new(false));
+
+        let actor = {
+            let handoff = handoff.clone();
+            let first_accepted = first_accepted.clone();
+            let second_accepted = second_accepted.clone();
+            thread::spawn(move || {
+                first_accepted.store(handoff.enqueue(1), Ordering::Release);
+                second_accepted.store(handoff.enqueue(2), Ordering::Release);
+            })
+        };
+        let publisher = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.drain_until_shutdown())
+        };
+        let shutdown = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.shutdown())
+        };
+
+        actor.join().expect("publisher model actor thread");
+        shutdown.join().expect("publisher model shutdown thread");
+        publisher.join().expect("publisher model drain thread");
+
+        let state = handoff.state.lock().expect("final publisher model lock");
+        assert!(state.queue.is_empty());
+        assert_eq!(
+            state.published.contains(&1),
+            first_accepted.load(Ordering::Acquire),
+            "the first accepted batch must publish exactly once"
+        );
+        assert_eq!(
+            state.published.contains(&2),
+            second_accepted.load(Ordering::Acquire),
+            "the second accepted batch must publish exactly once"
+        );
+        assert!(
+            !second_accepted.load(Ordering::Acquire) || first_accepted.load(Ordering::Acquire),
+            "one actor cannot accept its second batch after rejecting its first"
+        );
+    });
+}

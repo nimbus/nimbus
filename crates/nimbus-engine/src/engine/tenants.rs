@@ -131,6 +131,10 @@ impl Engine {
                 .subscriptions
                 .shutdown_all(format!("tenant deleted: {tenant_id}"));
         }
+        self.publisher_failure_diagnostics
+            .write()
+            .expect("publisher failure diagnostics lock should not be poisoned")
+            .remove(tenant_id);
         std::fs::remove_file(path).map_err(|error| Error::Internal(error.to_string()))?;
         Ok(())
     }
@@ -157,6 +161,10 @@ impl Engine {
                 .subscriptions
                 .shutdown_all(format!("tenant deleted: {tenant_id}"));
         }
+        self.publisher_failure_diagnostics
+            .write()
+            .expect("publisher failure diagnostics lock should not be poisoned")
+            .remove(&tenant_id);
         self.persistence_provider.delete_tenant(&tenant_id).await?;
         Ok(())
     }
@@ -276,6 +284,15 @@ impl Engine {
             opened_executor,
             initial_state,
         ));
+        if let Some(counts) = self
+            .publisher_failure_diagnostics
+            .read()
+            .expect("publisher failure diagnostics lock should not be poisoned")
+            .get(tenant_id)
+            .copied()
+        {
+            runtime.restore_publisher_error_counts(counts);
+        }
         self.start_committer_actor(runtime.clone());
         let runtime_init_elapsed = runtime_init_started.elapsed();
         let recover_started = Instant::now();
