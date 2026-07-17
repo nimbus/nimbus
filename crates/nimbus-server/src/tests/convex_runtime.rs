@@ -8,3 +8,5 @@ pub(super) mod fairness;
 mod http_routes;
 #[path = "convex_runtime/nesting/mod.rs"]
 mod nesting;
+#[path = "convex_runtime/warm_pool.rs"]
+mod warm_pool;
