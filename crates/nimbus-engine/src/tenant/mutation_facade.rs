@@ -68,8 +68,8 @@ impl TenantRuntime {
     pub(crate) fn enqueue_committed_mutation_observer_dispatch(
         &self,
         dispatch: crate::engine::committed_mutations::CommittedMutationObserverDispatch,
-    ) {
-        self.observer_dispatch.send(dispatch);
+    ) -> Result<()> {
+        self.observer_dispatch.send(dispatch)
     }
 
     pub(crate) fn close_committed_mutation_observers(&self) {
@@ -78,6 +78,10 @@ impl TenantRuntime {
 
     pub(crate) fn mark_committed_mutation_observers_drained(&self) {
         self.observer_dispatch.mark_drained();
+    }
+
+    pub(crate) fn complete_committed_mutation_observer_dispatch(&self, event_count: usize) {
+        self.observer_dispatch.complete_dispatch(event_count);
     }
 
     pub(crate) async fn wait_for_committed_mutation_observers_drained(&self) {
@@ -565,6 +569,13 @@ impl TenantRuntime {
         stats.publisher_mode_transition_count = self.publisher.mode_transition_count();
         stats.publisher_mode_transition_failure_count =
             self.publisher.mode_transition_failure_count();
+        let observer = self.observer_dispatch.stats();
+        stats.observer_queue_depth = observer.depth;
+        stats.observer_queue_capacity = observer.capacity;
+        stats.observer_queue_high_watermark = observer.high_watermark;
+        stats.observer_queue_high_water_warning_count = observer.high_water_warning_count;
+        stats.observer_queue_cap_breach_count = observer.cap_breach_count;
+        stats.observer_dispatch_poisoned = observer.poisoned;
         stats
     }
 

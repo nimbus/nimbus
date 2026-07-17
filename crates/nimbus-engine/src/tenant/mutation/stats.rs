@@ -66,4 +66,10 @@ pub struct MutationJournalStats {
     pub publisher_mode: CommitterPipelineMode,
     pub publisher_mode_transition_count: u64,
     pub publisher_mode_transition_failure_count: u64,
+    pub observer_queue_depth: usize,
+    pub observer_queue_capacity: usize,
+    pub observer_queue_high_watermark: usize,
+    pub observer_queue_high_water_warning_count: u64,
+    pub observer_queue_cap_breach_count: u64,
+    pub observer_dispatch_poisoned: bool,
 }

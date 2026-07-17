@@ -50,6 +50,10 @@ pub(crate) enum CommittedMutationObserverMessage {
 }
 
 impl CommittedMutationObserverDispatch {
+    pub(crate) fn event_count(&self) -> usize {
+        self.events.len()
+    }
+
     fn run(self) {
         for event in self.events {
             for observer in &self.observers {
@@ -59,13 +63,39 @@ impl CommittedMutationObserverDispatch {
     }
 }
 
+struct DispatchCompletion {
+    runtime: std::sync::Weak<TenantRuntime>,
+    event_count: usize,
+}
+
+impl Drop for DispatchCompletion {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.upgrade() {
+            runtime.complete_committed_mutation_observer_dispatch(self.event_count);
+        }
+    }
+}
+
+fn run_dispatch(
+    dispatch: CommittedMutationObserverDispatch,
+    runtime: &std::sync::Weak<TenantRuntime>,
+) {
+    let _completion = DispatchCompletion {
+        runtime: runtime.clone(),
+        event_count: dispatch.event_count(),
+    };
+    dispatch.run();
+}
+
 pub(crate) async fn run_committed_mutation_observer_dispatcher(
     mut receiver: mpsc::UnboundedReceiver<CommittedMutationObserverMessage>,
     runtime: std::sync::Weak<TenantRuntime>,
 ) {
     while let Some(message) = receiver.recv().await {
         match message {
-            CommittedMutationObserverMessage::Dispatch(dispatch) => dispatch.run(),
+            CommittedMutationObserverMessage::Dispatch(dispatch) => {
+                run_dispatch(dispatch, &runtime)
+            }
             #[cfg(any(test, feature = "test-hooks"))]
             CommittedMutationObserverMessage::Fence(completed) => {
                 let _ = completed.send(());
@@ -74,7 +104,9 @@ pub(crate) async fn run_committed_mutation_observer_dispatcher(
                 receiver.close();
                 while let Some(message) = receiver.recv().await {
                     match message {
-                        CommittedMutationObserverMessage::Dispatch(dispatch) => dispatch.run(),
+                        CommittedMutationObserverMessage::Dispatch(dispatch) => {
+                            run_dispatch(dispatch, &runtime)
+                        }
                         #[cfg(any(test, feature = "test-hooks"))]
                         CommittedMutationObserverMessage::Fence(completed) => {
                             let _ = completed.send(());
@@ -97,6 +129,19 @@ impl Engine {
     /// Calling this more than once with the same name is idempotent. The first
     /// observer wins so repeated router construction does not duplicate
     /// projection work for the same engine instance.
+    ///
+    /// Callbacks run serially on a per-tenant dispatcher and may synchronously
+    /// perform nested writes. Publishing therefore never blocks on observer
+    /// backlog. Installations must budget callback throughput so the queue
+    /// stays below `NIMBUS_COMMITTED_OBSERVER_QUEUE_HIGH_WATERMARK` (3,072
+    /// events by default) and its hard
+    /// `NIMBUS_COMMITTED_OBSERVER_QUEUE_CAPACITY` (4,096 by default). A
+    /// high-water crossing emits one warning until the queue recovers. A hard
+    /// cap breach cannot safely block the publisher, so it loudly refuses the
+    /// breaching dispatch, poisons and closes that tenant's dispatcher after
+    /// accepted work drains, and exposes the failure in `MutationJournalStats`.
+    /// Treat a poisoned dispatcher as a fatal health condition requiring
+    /// operator intervention; already-durable observer events are not retried.
     pub fn install_committed_mutation_observer(
         &self,
         name: &'static str,
@@ -151,10 +196,15 @@ impl Engine {
         if events.is_empty() {
             return;
         }
-        runtime.enqueue_committed_mutation_observer_dispatch(CommittedMutationObserverDispatch {
-            observers,
-            events,
-        });
+        if let Err(error) = runtime.enqueue_committed_mutation_observer_dispatch(
+            CommittedMutationObserverDispatch { observers, events },
+        ) {
+            tracing::error!(
+                tenant = %runtime.tenant_id(),
+                %error,
+                "committed mutation observer dispatch was refused"
+            );
+        }
     }
 
     /// Installs a named table-schema observer.

@@ -66,8 +66,6 @@ pub use self::mutation::MutationJournalPauseHandle;
 use self::mutation::MutationJournalPauseState;
 #[cfg(test)]
 pub(crate) use self::mutation::configure_committer_limits_for_testing;
-#[cfg(test)]
-pub(crate) use self::mutation::configure_publisher_limits_for_testing;
 pub(crate) use self::mutation::{
     AssignedPublisherBatch, DeferredPublisherResponse, MutationResponseSender,
     PendingPublisherResponse, PreparedPayloadAccounting, PublisherErrorCounts, PublisherMessage,
@@ -84,6 +82,10 @@ pub use self::mutation::{
 use self::mutation::{
     MutationAdmissionDecision, MutationAdmissionGate, MutationIsolateAdmission,
     MutationJournalState, ObserverHandoff, PublisherHandoff,
+};
+#[cfg(test)]
+pub(crate) use self::mutation::{
+    configure_observer_limits_for_testing, configure_publisher_limits_for_testing,
 };
 use self::query_planning::QueryPlanningMetrics;
 pub use self::query_planning::QueryPlanningStats;
@@ -211,6 +213,7 @@ impl TenantRuntime {
             publisher_pipeline_capable,
             &tenant_id,
         ));
+        let observer_dispatch = Arc::new(ObserverHandoff::new(&tenant_id));
         Self {
             tenant_id,
             store,
@@ -236,7 +239,7 @@ impl TenantRuntime {
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
             committer,
             publisher,
-            observer_dispatch: Arc::new(ObserverHandoff::new()),
+            observer_dispatch,
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             prepared_table_ids: Mutex::new(HashMap::new()),

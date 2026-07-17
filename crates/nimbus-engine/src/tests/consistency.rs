@@ -95,6 +95,12 @@ async fn assert_engine_reload_recovers_durable_journal_before_serving_async_read
             publisher_mode: crate::tenant::CommitterPipelineMode::Pipeline,
             publisher_mode_transition_count: 0,
             publisher_mode_transition_failure_count: 0,
+            observer_queue_depth: 0,
+            observer_queue_capacity: 4_096,
+            observer_queue_high_watermark: 3_072,
+            observer_queue_high_water_warning_count: 0,
+            observer_queue_cap_breach_count: 0,
+            observer_dispatch_poisoned: false,
         }
     );
 

@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -18,6 +18,8 @@ use super::CommitterPipelineMode;
 
 const DEFAULT_PUBLISHER_QUEUE_CAPACITY: usize = 32;
 const DEFAULT_PUBLISHER_SEND_TIMEOUT_MS: u64 = 500;
+const DEFAULT_OBSERVER_QUEUE_CAPACITY: usize = 4_096;
+const DEFAULT_OBSERVER_QUEUE_HIGH_WATERMARK: usize = 3_072;
 
 fn publisher_limits_from_env() -> (usize, Duration) {
     (
@@ -30,6 +32,19 @@ fn publisher_limits_from_env() -> (usize, Duration) {
             DEFAULT_PUBLISHER_SEND_TIMEOUT_MS,
         )),
     )
+}
+
+fn observer_limits_from_env() -> (usize, usize) {
+    let capacity = crate::config::env_positive_usize(
+        "NIMBUS_COMMITTED_OBSERVER_QUEUE_CAPACITY",
+        DEFAULT_OBSERVER_QUEUE_CAPACITY,
+    );
+    let high_watermark = crate::config::env_positive_usize(
+        "NIMBUS_COMMITTED_OBSERVER_QUEUE_HIGH_WATERMARK",
+        DEFAULT_OBSERVER_QUEUE_HIGH_WATERMARK,
+    )
+    .min(capacity);
+    (capacity, high_watermark)
 }
 
 #[cfg(test)]
@@ -59,9 +74,45 @@ fn take_publisher_limits_for_testing(tenant_id: &TenantId) -> Option<(usize, Dur
         .remove(tenant_id)
 }
 
+#[cfg(test)]
+static OBSERVER_LIMITS_FOR_TESTING: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<TenantId, (usize, usize)>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+pub(crate) fn configure_observer_limits_for_testing(
+    tenant_id: TenantId,
+    capacity: usize,
+    high_watermark: usize,
+) {
+    let capacity = capacity.max(1);
+    OBSERVER_LIMITS_FOR_TESTING
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("observer test-limit lock should not be poisoned")
+        .insert(tenant_id, (capacity, high_watermark.max(1).min(capacity)));
+}
+
+#[cfg(test)]
+fn take_observer_limits_for_testing(tenant_id: &TenantId) -> Option<(usize, usize)> {
+    OBSERVER_LIMITS_FOR_TESTING
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("observer test-limit lock should not be poisoned")
+        .remove(tenant_id)
+}
+
 pub(crate) struct ObserverHandoff {
+    tenant_id: TenantId,
     sender: Mutex<ObserverSender>,
     receiver: Mutex<Option<mpsc::UnboundedReceiver<CommittedMutationObserverMessage>>>,
+    queue_depth: AtomicUsize,
+    queue_capacity: usize,
+    queue_high_watermark: usize,
+    high_water_warning_active: AtomicBool,
+    high_water_warning_count: AtomicU64,
+    cap_breach_count: AtomicU64,
+    poisoned: AtomicBool,
     started: AtomicBool,
     drained: AtomicBool,
     drained_notify: tokio::sync::Notify,
@@ -73,34 +124,117 @@ struct ObserverSender {
 }
 
 impl ObserverHandoff {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(tenant_id: &TenantId) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
+        #[cfg(test)]
+        let limits = take_observer_limits_for_testing(tenant_id);
+        #[cfg(not(test))]
+        let limits: Option<(usize, usize)> = None;
+        let (queue_capacity, queue_high_watermark) =
+            limits.unwrap_or_else(observer_limits_from_env);
         Self {
+            tenant_id: tenant_id.clone(),
             sender: Mutex::new(ObserverSender {
                 sender,
                 closed: false,
             }),
             receiver: Mutex::new(Some(receiver)),
+            queue_depth: AtomicUsize::new(0),
+            queue_capacity,
+            queue_high_watermark,
+            high_water_warning_active: AtomicBool::new(false),
+            high_water_warning_count: AtomicU64::new(0),
+            cap_breach_count: AtomicU64::new(0),
+            poisoned: AtomicBool::new(false),
             started: AtomicBool::new(false),
             drained: AtomicBool::new(false),
             drained_notify: tokio::sync::Notify::new(),
         }
     }
 
-    pub(crate) fn send(&self, dispatch: CommittedMutationObserverDispatch) {
-        let sender = self
+    pub(crate) fn send(&self, dispatch: CommittedMutationObserverDispatch) -> Result<()> {
+        let event_count = dispatch.event_count();
+        let mut sender = self
             .sender
             .lock()
             .expect("observer sender lock should not be poisoned");
-        debug_assert!(
-            !sender.closed,
-            "observer dispatch cannot follow ordered close"
-        );
-        if !sender.closed {
-            let _ = sender
-                .sender
-                .send(CommittedMutationObserverMessage::Dispatch(dispatch));
+        if self.poisoned.load(Ordering::Acquire) {
+            return Err(self.poisoned_error());
         }
+        if sender.closed {
+            self.poison_locked(
+                &mut sender,
+                "observer dispatch arrived after the ordered dispatcher close",
+            );
+            return Err(self.poisoned_error());
+        }
+
+        let depth = self.queue_depth.load(Ordering::Acquire);
+        if event_count > self.queue_capacity.saturating_sub(depth) {
+            self.cap_breach_count.fetch_add(1, Ordering::Relaxed);
+            let reason = format!(
+                "committed mutation observer queue hard cap breached: depth={depth}, incoming_events={event_count}, capacity={}",
+                self.queue_capacity
+            );
+            self.poison_locked(&mut sender, &reason);
+            return Err(self.poisoned_error());
+        }
+
+        let next_depth = depth + event_count;
+        self.queue_depth.store(next_depth, Ordering::Release);
+        if next_depth >= self.queue_high_watermark
+            && !self.high_water_warning_active.swap(true, Ordering::AcqRel)
+        {
+            self.high_water_warning_count
+                .fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(
+                tenant = %self.tenant_id,
+                observer_queue_depth = next_depth,
+                observer_queue_high_watermark = self.queue_high_watermark,
+                observer_queue_capacity = self.queue_capacity,
+                "committed mutation observer queue crossed its high-water mark"
+            );
+        }
+        if sender
+            .sender
+            .send(CommittedMutationObserverMessage::Dispatch(dispatch))
+            .is_err()
+        {
+            self.complete_dispatch_locked(event_count);
+            self.poison_locked(
+                &mut sender,
+                "committed mutation observer dispatcher stopped while accepting a dispatch",
+            );
+            return Err(self.poisoned_error());
+        }
+        Ok(())
+    }
+
+    fn poison_locked(&self, sender: &mut ObserverSender, reason: &str) {
+        if !self.poisoned.swap(true, Ordering::AcqRel) {
+            tracing::error!(
+                tenant = %self.tenant_id,
+                observer_queue_depth = self.queue_depth.load(Ordering::Acquire),
+                observer_queue_capacity = self.queue_capacity,
+                reason,
+                "committed mutation observer dispatcher poisoned; accepted work will drain and no new observer events will be accepted"
+            );
+        }
+        if !std::mem::replace(&mut sender.closed, true)
+            && sender
+                .sender
+                .send(CommittedMutationObserverMessage::Close)
+                .is_err()
+        {
+            self.mark_drained();
+        }
+    }
+
+    fn poisoned_error(&self) -> Error {
+        Error::Internal(format!(
+            "committed mutation observer dispatcher is poisoned for tenant {}",
+            self.tenant_id
+        ))
     }
 
     pub(crate) fn close(&self) {
@@ -108,8 +242,18 @@ impl ObserverHandoff {
             .sender
             .lock()
             .expect("observer sender lock should not be poisoned");
-        if !std::mem::replace(&mut sender.closed, true) {
-            let _ = sender.sender.send(CommittedMutationObserverMessage::Close);
+        if !std::mem::replace(&mut sender.closed, true)
+            && sender
+                .sender
+                .send(CommittedMutationObserverMessage::Close)
+                .is_err()
+        {
+            self.poisoned.store(true, Ordering::Release);
+            tracing::error!(
+                tenant = %self.tenant_id,
+                "committed mutation observer dispatcher stopped before ordered close"
+            );
+            self.mark_drained();
         }
     }
 
@@ -121,10 +265,14 @@ impl ObserverHandoff {
                 .sender
                 .lock()
                 .expect("observer sender lock should not be poisoned");
+            if self.poisoned.load(Ordering::Acquire) {
+                return Err(self.poisoned_error());
+            }
             if sender.closed {
-                return Err(Error::Internal(
-                    "committed mutation observer dispatcher is closed".to_string(),
-                ));
+                return Err(Error::Internal(format!(
+                    "committed mutation observer dispatcher is closed for tenant {}",
+                    self.tenant_id
+                )));
             }
             sender
                 .sender
@@ -145,6 +293,39 @@ impl ObserverHandoff {
     pub(crate) fn mark_drained(&self) {
         self.drained.store(true, Ordering::Release);
         self.drained_notify.notify_waiters();
+    }
+
+    pub(crate) fn complete_dispatch(&self, event_count: usize) {
+        let _sender = self
+            .sender
+            .lock()
+            .expect("observer sender lock should not be poisoned");
+        self.complete_dispatch_locked(event_count);
+    }
+
+    fn complete_dispatch_locked(&self, event_count: usize) {
+        let depth = self.queue_depth.load(Ordering::Acquire);
+        debug_assert!(
+            depth >= event_count,
+            "observer queue depth cannot underflow on dispatch completion"
+        );
+        let next_depth = depth.saturating_sub(event_count);
+        self.queue_depth.store(next_depth, Ordering::Release);
+        if next_depth < self.queue_high_watermark {
+            self.high_water_warning_active
+                .store(false, Ordering::Release);
+        }
+    }
+
+    pub(crate) fn stats(&self) -> ObserverQueueStats {
+        ObserverQueueStats {
+            depth: self.queue_depth.load(Ordering::Acquire),
+            capacity: self.queue_capacity,
+            high_watermark: self.queue_high_watermark,
+            high_water_warning_count: self.high_water_warning_count.load(Ordering::Relaxed),
+            cap_breach_count: self.cap_breach_count.load(Ordering::Relaxed),
+            poisoned: self.poisoned.load(Ordering::Acquire),
+        }
     }
 
     pub(crate) async fn wait_drained(&self) {
@@ -173,6 +354,16 @@ impl ObserverHandoff {
             .take()
             .expect("observer receiver should exist before task start")
     }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ObserverQueueStats {
+    pub(crate) depth: usize,
+    pub(crate) capacity: usize,
+    pub(crate) high_watermark: usize,
+    pub(crate) high_water_warning_count: u64,
+    pub(crate) cap_breach_count: u64,
+    pub(crate) poisoned: bool,
 }
 
 pub(crate) struct PendingPublisherResponse {

@@ -2399,6 +2399,13 @@ async fn publisher_observers_are_strictly_ordered_and_quiesce_drains_them() {
         assert_eq!(state.0, vec![SequenceNumber(1)]);
         assert_eq!(state.2, 1, "observer callbacks must never overlap");
     }
+    let observer_stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("observer queue diagnostics should load");
+    assert_eq!(observer_stats.observer_queue_depth, 2);
+    assert_eq!(observer_stats.observer_queue_capacity, 4_096);
+    assert_eq!(observer_stats.observer_queue_high_watermark, 3_072);
+    assert!(!observer_stats.observer_dispatch_poisoned);
 
     let mut quiesce = tokio::spawn({
         let engine = engine.clone();
@@ -2420,6 +2427,71 @@ async fn publisher_observers_are_strictly_ordered_and_quiesce_drains_them() {
         "observer commits must stay ordered"
     );
     assert_eq!(state.2, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn observer_queue_cap_breach_poison_is_nonblocking_and_visible() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = TenantId::new("observer-cap-poison").expect("tenant id should build");
+    crate::tenant::configure_observer_limits_for_testing(tenant_id.clone(), 1, 1);
+    let created = fixture.create_tenant("observer-cap-poison", Engine::create_tenant);
+    assert_eq!(created, tenant_id);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let observer = Arc::new(OrderedBlockingObserver::default());
+    engine.install_committed_mutation_observer("cap-poison-test", observer.clone());
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+        )
+        .await
+        .expect("the first commit should enqueue its observer event");
+    expect_blocking_wait_reaches_state("first observer callback should hold the queue budget", {
+        let observer = observer.clone();
+        move |timeout| observer.wait_for_first(timeout)
+    })
+    .await;
+    let at_capacity = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("observer queue diagnostics should load at capacity");
+    assert_eq!(at_capacity.observer_queue_depth, 1);
+    assert_eq!(at_capacity.observer_queue_high_water_warning_count, 1);
+    assert_eq!(at_capacity.observer_queue_cap_breach_count, 0);
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+        )
+        .await
+        .expect("observer saturation must never block or fail a durable mutation response");
+    let poisoned = wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "observer hard-cap breach should poison the dispatcher",
+        |stats| stats.observer_dispatch_poisoned,
+    )
+    .await;
+    assert_eq!(poisoned.observer_queue_depth, 1);
+    assert_eq!(poisoned.observer_queue_capacity, 1);
+    assert_eq!(poisoned.observer_queue_high_watermark, 1);
+    assert_eq!(poisoned.observer_queue_high_water_warning_count, 1);
+    assert_eq!(poisoned.observer_queue_cap_breach_count, 1);
+
+    observer.release_first();
+    engine.quiesce().await;
+    let state = observer.state.lock().expect("observer state should lock");
+    assert_eq!(
+        state.0,
+        vec![SequenceNumber(1)],
+        "the poison policy must drain accepted work without accepting events beyond the cap"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

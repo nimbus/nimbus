@@ -23,11 +23,13 @@ pub(super) use self::journal::MutationJournalState;
 pub use self::pause::MutationJournalPauseHandle;
 #[cfg(any(test, feature = "test-hooks"))]
 pub(in crate::tenant) use self::pause::MutationJournalPauseState;
-#[cfg(test)]
-pub(crate) use self::publisher::configure_publisher_limits_for_testing;
 pub(crate) use self::publisher::{
     AssignedPublisherBatch, DeferredPublisherResponse, ObserverHandoff, PendingPublisherResponse,
     PublisherErrorCounts, PublisherHandoff, PublisherMessage, PublisherQueueError,
+};
+#[cfg(test)]
+pub(crate) use self::publisher::{
+    configure_observer_limits_for_testing, configure_publisher_limits_for_testing,
 };
 #[cfg(test)]
 pub(crate) use self::requests::{
