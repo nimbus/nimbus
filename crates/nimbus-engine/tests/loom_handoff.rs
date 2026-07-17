@@ -956,3 +956,150 @@ fn actor_to_publisher_enqueue_drain_shutdown_loses_no_accepted_batch() {
         );
     });
 }
+
+#[derive(Debug, Default)]
+struct ObserverDispatchState {
+    queue: Vec<u64>,
+    observed: Vec<u64>,
+    closed: bool,
+    drained: bool,
+}
+
+#[derive(Debug, Default)]
+struct ObserverDispatchHandoff {
+    state: Mutex<ObserverDispatchState>,
+    ready: Condvar,
+}
+
+impl ObserverDispatchHandoff {
+    fn enqueue(&self, sequence: u64) {
+        let mut state = self.state.lock().expect("observer handoff lock");
+        assert!(
+            !state.closed,
+            "observer work cannot follow the close marker"
+        );
+        state.queue.push(sequence);
+        self.ready.notify_all();
+    }
+
+    fn close(&self) {
+        let mut state = self.state.lock().expect("observer close lock");
+        state.closed = true;
+        self.ready.notify_all();
+    }
+
+    fn dispatch_until_drained(&self) {
+        loop {
+            let mut state = self.state.lock().expect("observer dispatch lock");
+            while state.queue.is_empty() && !state.closed {
+                state = self.ready.wait(state).expect("observer dispatch wait");
+            }
+            if let Some(sequence) = state.queue.first().copied() {
+                state.queue.remove(0);
+                if let Some(previous) = state.observed.last() {
+                    assert!(*previous < sequence, "observers must see commit order");
+                }
+                state.observed.push(sequence);
+                drop(state);
+                thread::yield_now();
+                continue;
+            }
+            state.drained = true;
+            self.ready.notify_all();
+            return;
+        }
+    }
+}
+
+#[test]
+fn ordered_observer_dispatch_drains_every_commit_before_shutdown_returns() {
+    loom::model(|| {
+        let handoff = Arc::new(ObserverDispatchHandoff::default());
+        let publisher = {
+            let handoff = handoff.clone();
+            thread::spawn(move || {
+                handoff.enqueue(1);
+                handoff.enqueue(2);
+                handoff.close();
+            })
+        };
+        let dispatcher = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.dispatch_until_drained())
+        };
+        publisher.join().expect("observer publisher model thread");
+        dispatcher.join().expect("observer dispatcher model thread");
+
+        let state = handoff.state.lock().expect("final observer model lock");
+        assert_eq!(state.observed, vec![1, 2]);
+        assert!(state.drained);
+        assert!(state.closed);
+        assert!(state.queue.is_empty());
+    });
+}
+
+#[derive(Debug, Default)]
+struct TenantAwareReentryState {
+    tenant_b_queued: bool,
+    tenant_b_committing: bool,
+    tenant_b_commits: usize,
+}
+
+#[derive(Debug, Default)]
+struct TenantAwareReentry {
+    state: Mutex<TenantAwareReentryState>,
+    ready: Condvar,
+}
+
+impl TenantAwareReentry {
+    fn write_from_handler(&self, active_tenant: u8, target_tenant: u8) {
+        let mut state = self.state.lock().expect("tenant-aware reentry lock");
+        if active_tenant == target_tenant {
+            assert!(!state.tenant_b_committing);
+            state.tenant_b_commits += 1;
+        } else {
+            assert_eq!(target_tenant, 2, "the model targets tenant B");
+            state.tenant_b_queued = true;
+            self.ready.notify_all();
+        }
+    }
+
+    fn commit_tenant_b_from_its_actor(&self) {
+        let mut state = self.state.lock().expect("tenant B actor lock");
+        while !state.tenant_b_queued {
+            state = self.ready.wait(state).expect("tenant B actor wait");
+        }
+        assert!(!state.tenant_b_committing);
+        state.tenant_b_committing = true;
+        state.tenant_b_queued = false;
+        drop(state);
+        thread::yield_now();
+        let mut state = self.state.lock().expect("tenant B completion lock");
+        assert!(state.tenant_b_committing);
+        state.tenant_b_commits += 1;
+        state.tenant_b_committing = false;
+    }
+}
+
+#[test]
+fn cross_tenant_handler_write_never_bypasses_the_target_tenant_actor() {
+    loom::model(|| {
+        let handoff = Arc::new(TenantAwareReentry::default());
+        let handler = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.write_from_handler(1, 2))
+        };
+        let tenant_b_actor = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.commit_tenant_b_from_its_actor())
+        };
+
+        handler.join().expect("tenant A handler model thread");
+        tenant_b_actor.join().expect("tenant B actor model thread");
+
+        let state = handoff.state.lock().expect("final tenant reentry lock");
+        assert!(!state.tenant_b_queued);
+        assert!(!state.tenant_b_committing);
+        assert_eq!(state.tenant_b_commits, 1);
+    });
+}
