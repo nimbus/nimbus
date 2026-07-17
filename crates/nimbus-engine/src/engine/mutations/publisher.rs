@@ -602,15 +602,42 @@ async fn fail_and_restart(
         queued_messages.push(queued);
     }
     runtime.record_mutation_worker_failure();
+    // Close admission before stopping the actor so any producer that already
+    // entered the tenant is either rejected at the queue lock or included in
+    // the explicit queue drain below.
+    runtime.mark_deleting_for_eviction();
     runtime.shutdown_committer();
 
-    // Hold the same per-engine load gate as explicit deletion. Mark the
-    // runtime closed before completing callers, then wait for their operation
-    // guards to drain before removing and dropping the store handle.
-    let _tenant_load_guard = engine.tenant_load_gate.lock().await;
-    runtime.mark_deleting_for_eviction();
-
     let tenant_id = runtime.tenant_id().clone();
+    runtime.shutdown_trigger_candidates();
+    runtime.shutdown_trigger_execution();
+    runtime.shutdown_subscription_delivery();
+    runtime.subscriptions.shutdown_all(format!(
+        "tenant committer stopped for durable recovery: {error}"
+    ));
+
+    // Converting queued work to deferred completions drops every publisher
+    // operation guard immediately. Run the sender-only completions before any
+    // engine-wide gate acquisition, then explicitly drain queues whose actor
+    // wake may have been consumed at shutdown.
+    let mut failure_completions = batch.defer_failure(&error);
+    for queued in queued_messages {
+        failure_completions.extend(defer_publisher_message_failure(queued, &error));
+    }
+    for complete in failure_completions {
+        complete();
+    }
+    runtime.fail_and_drain_mutation_queues(&error);
+    runtime.close_committed_mutation_observers();
+    runtime
+        .wait_for_committed_mutation_observers_drained()
+        .await;
+    runtime.wait_for_operation_drain_for_eviction().await;
+
+    // No tenant operation guard crosses this engine-wide gate. Explicit
+    // deletion takes the gate before waiting for operations, so this order is
+    // what prevents the former AB-BA cycle.
+    let _tenant_load_guard = engine.tenant_load_gate.lock().await;
     engine
         .publisher_failure_diagnostics
         .write()
@@ -630,27 +657,6 @@ async fn fail_and_restart(
             None
         }
     };
-    if let Some(removed) = removed.as_ref() {
-        removed.shutdown_trigger_candidates();
-        removed.shutdown_trigger_execution();
-        removed.shutdown_subscription_delivery();
-        removed.subscriptions.shutdown_all(format!(
-            "tenant committer stopped for durable recovery: {error}"
-        ));
-    }
-
-    let mut failure_completions = batch.defer_failure(&error);
-    for queued in queued_messages {
-        failure_completions.extend(defer_publisher_message_failure(queued, &error));
-    }
-    for complete in failure_completions {
-        complete();
-    }
-    runtime.wait_for_operation_drain_for_eviction().await;
-    runtime.close_committed_mutation_observers();
-    runtime
-        .wait_for_committed_mutation_observers_drained()
-        .await;
     drop(removed);
     drop(runtime);
     drop(_tenant_load_guard);

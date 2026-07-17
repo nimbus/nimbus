@@ -47,11 +47,21 @@ impl MutationAdmissionGate {
         }
     }
 
-    pub(in crate::tenant) fn enqueue(&self, request: QueuedMutationRequest) -> Result<()> {
+    pub(in crate::tenant) fn enqueue(
+        &self,
+        request: QueuedMutationRequest,
+        deletion_error: impl FnOnce() -> Option<Error>,
+    ) -> Result<()> {
         let mut state = self
             .state
             .lock()
             .expect("mutation admission gate lock should not be poisoned");
+        // Eviction marks the lifecycle before draining this queue. Checking
+        // while holding the queue lock makes enqueue race safely with that
+        // drain: the request is either rejected here or observed by drain_all.
+        if let Some(error) = deletion_error() {
+            return Err(error);
+        }
         let capacity = self.capacity.load(Ordering::Acquire).max(1);
         if state.queue.len() >= capacity {
             self.queue_rejection_count.fetch_add(1, Ordering::Relaxed);
@@ -63,6 +73,17 @@ impl MutationAdmissionGate {
         self.queue_depth.fetch_add(1, Ordering::Release);
         self.admitted_count.fetch_add(1, Ordering::Relaxed);
         Ok(())
+    }
+
+    pub(in crate::tenant) fn drain_all(&self) -> VecDeque<QueuedMutationRequest> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("mutation admission gate lock should not be poisoned");
+        let drained = std::mem::take(&mut state.queue);
+        self.queue_depth.store(0, Ordering::Release);
+        state.codel.reset();
+        drained
     }
 
     pub(in crate::tenant) fn pop_next_at(&self, now: Instant) -> MutationAdmissionDecision {

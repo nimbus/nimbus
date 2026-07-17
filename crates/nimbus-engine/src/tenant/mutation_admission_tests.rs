@@ -32,9 +32,9 @@ fn mutation_admission_gate_codel_sheds_stale_request_after_interval() {
     gate.set_codel_for_testing(Duration::from_millis(5), Duration::from_millis(10));
 
     let now = Instant::now();
-    gate.enqueue(queued_request(now - Duration::from_millis(40)))
+    gate.enqueue(queued_request(now - Duration::from_millis(40)), || None)
         .expect("first request should enqueue");
-    gate.enqueue(queued_request(now - Duration::from_millis(40)))
+    gate.enqueue(queued_request(now - Duration::from_millis(40)), || None)
         .expect("second request should enqueue");
 
     assert!(matches!(
@@ -76,11 +76,11 @@ fn mutation_admission_gate_full_is_typed_overload() {
     let gate = MutationAdmissionGate::new();
     gate.set_capacity_for_testing(1);
     let now = Instant::now();
-    gate.enqueue(queued_request(now))
+    gate.enqueue(queued_request(now), || None)
         .expect("first request should enqueue");
 
     let error = gate
-        .enqueue(queued_request(now))
+        .enqueue(queued_request(now), || None)
         .expect_err("request beyond the bounded admission queue should fail");
 
     assert!(matches!(
@@ -91,4 +91,17 @@ fn mutation_admission_gate_full_is_typed_overload() {
     let stats = gate.stats();
     assert_eq!(stats.queue_depth, 1);
     assert_eq!(stats.queue_rejection_count, 1);
+}
+
+#[test]
+fn mutation_admission_gate_rejects_after_eviction_mark_before_enqueue() {
+    let gate = MutationAdmissionGate::new();
+    let tenant_id = nimbus_core::TenantId::new("evicted").expect("tenant id should build");
+    let error = gate
+        .enqueue(queued_request(Instant::now()), || {
+            Some(Error::TenantNotFound(tenant_id.clone()))
+        })
+        .expect_err("a request racing eviction must not enter the admission queue");
+    assert!(matches!(error, Error::TenantNotFound(found) if found == tenant_id));
+    assert_eq!(gate.stats().queue_depth, 0);
 }

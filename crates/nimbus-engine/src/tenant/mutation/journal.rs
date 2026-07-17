@@ -98,6 +98,16 @@ impl MutationJournalState {
         batch
     }
 
+    pub(in crate::tenant) fn drain_all(&self) -> VecDeque<QueuedMutationRequest> {
+        let mut queue = self
+            .queue
+            .lock()
+            .expect("mutation journal queue lock should not be poisoned");
+        let drained = std::mem::take(&mut *queue);
+        self.queue_depth.store(0, Ordering::Release);
+        drained
+    }
+
     pub(in crate::tenant) fn queue_depth(&self) -> usize {
         self.queue_depth.load(Ordering::Acquire)
     }

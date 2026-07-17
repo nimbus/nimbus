@@ -264,11 +264,27 @@ impl TenantRuntime {
         &self,
         request: QueuedMutationRequest,
     ) -> Result<()> {
-        if let Err(error) = self.mutation_admission.enqueue(request) {
+        if let Err(error) = self.mutation_admission.enqueue(request, || {
+            self.lifecycle
+                .is_deleted()
+                .then(|| Error::TenantNotFound(self.tenant_id.clone()))
+        }) {
             self.maybe_report_overload_error(&error);
             return Err(error);
         }
         Ok(())
+    }
+
+    pub(crate) fn fail_and_drain_mutation_queues(&self, error: &Error) {
+        let mut requests = self.mutation_admission.drain_all();
+        requests.extend(self.mutation_journal.drain_all());
+        for request in requests {
+            let response = request.response.clone();
+            // Drop prepared accounting and the tenant operation guard before
+            // waking the caller or waiting on any engine-wide lock.
+            drop(request);
+            let _ = response.send(Err(error.clone()));
+        }
     }
 
     fn maybe_report_overload_error(&self, error: &nimbus_core::Error) {

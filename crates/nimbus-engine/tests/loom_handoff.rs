@@ -1180,3 +1180,41 @@ fn definitive_recovery_racing_actor_reassignment_keeps_one_contiguous_suffix() {
         }));
     });
 }
+
+#[test]
+fn ambiguous_eviction_drops_operation_before_waiting_for_tenant_load_gate() {
+    loom::model(|| {
+        let load_gate = Arc::new(Mutex::new(()));
+        let operations = Arc::new((Mutex::new(1usize), Condvar::new()));
+
+        let deletion = {
+            let load_gate = load_gate.clone();
+            let operations = operations.clone();
+            thread::spawn(move || {
+                let _load_guard = load_gate.lock().expect("delete load gate");
+                let (lock, drained) = &*operations;
+                let mut active = lock.lock().expect("delete operation count");
+                while *active != 0 {
+                    active = drained.wait(active).expect("delete operation drain");
+                }
+            })
+        };
+        let eviction = {
+            let load_gate = load_gate.clone();
+            let operations = operations.clone();
+            thread::spawn(move || {
+                let (lock, drained) = &*operations;
+                {
+                    let mut active = lock.lock().expect("eviction operation count");
+                    *active -= 1;
+                    drained.notify_all();
+                }
+                let _load_guard = load_gate.lock().expect("eviction load gate");
+            })
+        };
+
+        deletion.join().expect("delete model thread");
+        eviction.join().expect("eviction model thread");
+        assert_eq!(*operations.0.lock().expect("final operation count"), 0);
+    });
+}

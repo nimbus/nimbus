@@ -60,6 +60,10 @@ impl TenantLifecycle {
         self.deleted.store(true, Ordering::Release);
     }
 
+    pub(super) fn is_deleted(&self) -> bool {
+        self.deleted.load(Ordering::Acquire)
+    }
+
     fn wait_for_operations_blocking(&self) {
         let mut guard = self
             .zero_active_lock

@@ -1624,6 +1624,67 @@ impl nimbus_storage::FaultInjector for BlockingDefinitiveAppendFaultInjector {
     }
 }
 
+struct BlockingAmbiguousApplyFaultInjector {
+    failed: AtomicBool,
+    entered: (Mutex<bool>, Condvar),
+    released: (Mutex<bool>, Condvar),
+}
+
+impl BlockingAmbiguousApplyFaultInjector {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            failed: AtomicBool::new(false),
+            entered: (Mutex::new(false), Condvar::new()),
+            released: (Mutex::new(false), Condvar::new()),
+        })
+    }
+
+    fn wait_until_blocked(&self, timeout: Duration) -> bool {
+        let (lock, condvar) = &self.entered;
+        let entered = lock.lock().expect("ambiguous entered lock should acquire");
+        if *entered {
+            return true;
+        }
+        let (entered, _) = condvar
+            .wait_timeout_while(entered, timeout, |entered| !*entered)
+            .expect("ambiguous entered wait should succeed");
+        *entered
+    }
+
+    fn release_failure(&self) {
+        let (lock, condvar) = &self.released;
+        *lock.lock().expect("ambiguous release lock should acquire") = true;
+        condvar.notify_all();
+    }
+}
+
+impl nimbus_storage::FaultInjector for BlockingAmbiguousApplyFaultInjector {
+    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+        if point != FaultPoint::JournalDurableAppendBeforeApply
+            || self.failed.swap(true, Ordering::AcqRel)
+        {
+            return Ok(());
+        }
+        let (entered_lock, entered_condvar) = &self.entered;
+        *entered_lock
+            .lock()
+            .expect("ambiguous entered lock should acquire") = true;
+        entered_condvar.notify_all();
+        let (release_lock, release_condvar) = &self.released;
+        let mut released = release_lock
+            .lock()
+            .expect("ambiguous release lock should acquire");
+        while !*released {
+            released = release_condvar
+                .wait(released)
+                .expect("ambiguous release wait should succeed");
+        }
+        Err(Error::Internal(
+            "injected ambiguous publisher apply failure".to_string(),
+        ))
+    }
+}
+
 impl RetryableThenBlockingAppendFaultInjector {
     fn new() -> Arc<Self> {
         Arc::new(Self {
@@ -2482,6 +2543,182 @@ async fn ambiguous_publisher_eviction_drains_then_reopens_a_distinct_runtime() {
             .expect("reopened runtime identity should load"),
         runtime_before
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ambiguous_eviction_and_explicit_delete_complete_without_lock_inversion() {
+    let data_dir = tempdir().expect("delete race tempdir should build");
+    let faults = BlockingAmbiguousApplyFaultInjector::new();
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_925))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(46_925)),
+        )
+        .expect("delete race engine should create"),
+    );
+    let tenant_id = TenantId::new("ambiguous-delete-race").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+
+    let writer = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("delete-race"))]),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state("publisher should block after durable append", {
+        let faults = faults.clone();
+        move |timeout| faults.wait_until_blocked(timeout)
+    })
+    .await;
+
+    let mut delete = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move { engine.delete_tenant_async(tenant_id).await }
+    });
+    assert_future_stays_pending(
+        &mut delete,
+        "explicit deletion should wait for the publisher-owned operation guard",
+    )
+    .await;
+    faults.release_failure();
+
+    let writer_error = expect_catch_up_future_within(
+        writer,
+        "ambiguous writer should resolve while deletion owns the load gate",
+    )
+    .await
+    .expect("writer task should join")
+    .expect_err("ambiguous writer should fail for replay");
+    assert!(
+        matches!(writer_error, Error::Internal(ref message) if message.contains("crash-and-replay"))
+    );
+    expect_catch_up_future_within(
+        delete,
+        "explicit deletion should complete after guard drain",
+    )
+    .await
+    .expect("delete task should join")
+    .expect("explicit deletion should succeed");
+    assert!(matches!(
+        engine
+            .query_documents_async(tenant_id, query_for("tasks"))
+            .await,
+        Err(Error::TenantNotFound(_))
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ambiguous_eviction_fails_and_drains_stranded_mutation_queues_before_reload() {
+    let data_dir = tempdir().expect("stranded eviction tempdir should build");
+    let faults = BlockingAmbiguousApplyFaultInjector::new();
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_950))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(46_950)),
+        )
+        .expect("stranded eviction engine should create"),
+    );
+    let tenant_id = TenantId::new("ambiguous-stranded-queues").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+
+    let spawn_insert = |index: usize| {
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        tokio::spawn(async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+                )
+                .await
+        })
+    };
+    let durable = spawn_insert(1);
+    expect_blocking_wait_reaches_state("first publisher batch should block after append", {
+        let faults = faults.clone();
+        move |timeout| faults.wait_until_blocked(timeout)
+    })
+    .await;
+
+    let pause = engine
+        .mutation_journal_pause_handle_for_testing(&tenant_id)
+        .expect("journal pause should load");
+    pause.arm();
+    let journal_stranded = spawn_insert(2);
+    expect_blocking_wait_reaches_state("second request should strand in the journal queue", {
+        let pause = pause.clone();
+        move |timeout| pause.wait_until_entered(timeout)
+    })
+    .await;
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "second request should remain in the paused journal queue",
+        |stats| stats.queue_depth == 1,
+    )
+    .await;
+
+    let admission_stranded = spawn_insert(3);
+    wait_for_mutation_admission_stats(
+        &engine,
+        &tenant_id,
+        "third request should remain in admission behind the paused actor",
+        |stats| stats.queue_depth == 1,
+    )
+    .await;
+    faults.release_failure();
+
+    for failed in [durable, journal_stranded, admission_stranded] {
+        let error = expect_catch_up_future_within(
+            failed,
+            "eviction should resolve every accepted mutation request",
+        )
+        .await
+        .expect("evicted mutation task should join")
+        .expect_err("evicted mutation should receive the typed replay error");
+        assert!(
+            matches!(error, Error::Internal(ref message) if message.contains("crash-and-replay")),
+            "stranded callers should retain the eviction error: {error}"
+        );
+    }
+    pause.release();
+
+    let documents = engine
+        .query_documents_async(tenant_id.clone(), query_for("tasks"))
+        .await
+        .expect("the tenant should reload and recover its durable prefix");
+    assert_eq!(documents.len(), 1);
+    assert_eq!(documents[0].fields.get("index"), Some(&json!(1)));
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("reloaded journal stats should load");
+    assert_eq!(stats.durable_head, SequenceNumber(1));
+    assert_eq!(stats.applied_head, SequenceNumber(1));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
