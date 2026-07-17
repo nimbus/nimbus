@@ -400,6 +400,16 @@ impl LibsqlReplicaTenantStore {
         );
     }
 
+    fn retain_recovered_progress(&self, progress: JournalProgress) -> JournalProgress {
+        // `ensure_local_cache_current` may observe a newer remote snapshot than
+        // the head read at recovery entry. Any progress returned to the engine
+        // must first become a retained cache requirement, or the engine can
+        // adopt the newer head while diagnostics and later barriers remain
+        // pinned to the older observation.
+        self.note_recovered_remote_progress(progress.durable_head);
+        progress
+    }
+
     fn refresh_local_cache(&self) -> Result<ReplicaRefreshOutcome> {
         let cause = self.freshness_metrics.requested_refresh_cause();
         let required_sequence =

@@ -334,3 +334,34 @@ async fn recovered_remote_progress_remains_required_after_cache_wins_refresh_rac
         LibsqlReplicaRefreshCause::DurableJournalReplay
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn recovery_retains_newer_progress_returned_after_cache_barrier() {
+    let refresh_override: TestRefreshOverride =
+        Arc::new(|store| apply_empty_records_through(store, SequenceNumber(2)));
+    let replica = test_replica(refresh_override).await;
+    let store = replica.store.clone();
+
+    // Recovery initially observes only the schema write. While its cache
+    // barrier runs, a snapshot can include the following document write and
+    // cause recovery to return a newer durable head than it observed at entry.
+    store.note_recovered_remote_progress(SequenceNumber(1));
+    let returned = store.retain_recovered_progress(JournalProgress {
+        durable_head: SequenceNumber(2),
+        applied_head: SequenceNumber(2),
+    });
+
+    let freshness = store
+        .replica_freshness_stats()
+        .expect("freshness stats should retain returned recovery progress");
+    assert_eq!(returned.durable_head, SequenceNumber(2));
+    assert_eq!(freshness.required_sequence, returned.durable_head);
+
+    timeout(Duration::from_secs(1), async {
+        while store.refresh_inflight.load(Ordering::Acquire) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("retained recovery progress refresh should settle");
+}

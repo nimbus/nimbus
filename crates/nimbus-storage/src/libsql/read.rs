@@ -101,7 +101,8 @@ impl LibsqlReplicaTenantStore {
         }
         self.note_recovered_remote_progress(observed_remote_head);
         self.ensure_local_cache_current()?;
-        self.journal_progress()
+        let recovered = self.journal_progress()?;
+        Ok(self.retain_recovered_progress(recovered))
     }
 
     pub fn read_commit_log_from(&self, sequence: SequenceNumber) -> Result<Vec<CommitEntry>> {
