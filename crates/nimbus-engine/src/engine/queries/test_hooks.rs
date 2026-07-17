@@ -67,6 +67,38 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn write_log_assignment_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<(SequenceNumber, Vec<SequenceNumber>)> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            (
+                runtime.assigned_head(),
+                runtime.write_log.pending_sequences_for_testing(),
+            )
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn enqueue_publisher_response_fence_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<crate::tenant::QueuedMutationResult>>> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let operation = runtime.enter_operation(tenant_id)?;
+        let (response, completion) = tokio::sync::oneshot::channel();
+        runtime
+            .send_publisher_response_fence(vec![crate::tenant::DeferredPublisherResponse {
+                _operation: operation,
+                response: crate::tenant::MutationResponseSender::new(response),
+                result: Ok(crate::tenant::QueuedMutationResult::Scheduled(false)),
+            }])
+            .await
+            .map_err(|error| error.1)?;
+        Ok(completion)
+    }
+
+    #[cfg(test)]
     pub(crate) fn set_committer_pipeline_requested_for_testing(
         &self,
         tenant_id: &TenantId,

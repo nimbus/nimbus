@@ -244,17 +244,17 @@ impl AssignedPublisherBatch {
             .collect()
     }
 
-    pub(crate) fn merge(&mut self, mut next: Self) {
-        debug_assert!(Arc::ptr_eq(&self.engine, &next.engine));
-        debug_assert_eq!(
-            self.last_sequence().0.checked_add(1),
-            Some(next.first_sequence().0),
-            "publisher accumulator may merge only contiguous assigned batches"
-        );
+    pub(crate) fn try_merge(&mut self, mut next: Self) -> std::result::Result<(), Self> {
+        if !Arc::ptr_eq(&self.engine, &next.engine)
+            || self.last_sequence().0.checked_add(1) != Some(next.first_sequence().0)
+        {
+            return Err(next);
+        }
         Arc::make_mut(&mut self.records).extend(next.records.iter().cloned());
         self.responses.append(&mut next.responses);
         self.phases.merge_assignment(next.phases);
         self.sample_started_at = self.sample_started_at.min(next.sample_started_at);
+        Ok(())
     }
 }
 

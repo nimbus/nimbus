@@ -206,7 +206,10 @@ async fn accumulate_assigned_batches(
             Ok(PublisherMessage::Batch(next))
                 if batch.records.len().saturating_add(next.records.len()) <= policy.max =>
             {
-                batch.merge(next);
+                if let Err(next) = batch.try_merge(next) {
+                    *pending_message = Some(PublisherMessage::Batch(next));
+                    return batch;
+                }
             }
             Ok(message) => {
                 *pending_message = Some(message);
@@ -252,7 +255,10 @@ async fn accumulate_assigned_batches(
             PublisherMessage::Batch(next)
                 if batch.records.len().saturating_add(next.records.len()) <= policy.max =>
             {
-                batch.merge(next);
+                if let Err(next) = batch.try_merge(next) {
+                    *pending_message = Some(PublisherMessage::Batch(next));
+                    break;
+                }
             }
             message => {
                 *pending_message = Some(message);
@@ -499,31 +505,27 @@ async fn fail_definitive_batch_and_recover(
     // channel, and the actor cannot assign a replacement suffix until durable
     // recovery has re-anchored the write log.
     let _recovery_guard = runtime.lock_publisher_assignment_recovery().await;
-    let mut failed_batches = vec![batch];
+    let mut drained_messages = Vec::new();
     loop {
         let message = pending_message.take().or_else(|| receiver.try_recv().ok());
         let Some(message) = message else {
             break;
         };
-        match message {
-            PublisherMessage::Batch(batch) => failed_batches.push(batch),
-            message @ (PublisherMessage::Barrier(_)
-            | PublisherMessage::ResponseFence(_)
-            | PublisherMessage::SerialJob { .. }) => {
-                // These messages are ordering fences. Leave the first one in
-                // the local stash until rollback and durable recovery finish;
-                // completing a mode barrier here would let the actor enter
-                // its serial arm while recovery still owns the failed suffix.
-                *pending_message = Some(message);
-                break;
-            }
-        }
+        drained_messages.push(message);
     }
 
-    let first_sequence = failed_batches
-        .first()
-        .expect("definitive recovery always owns the failed batch")
-        .first_sequence();
+    // A response fence may sit between assigned batches. Drain through every
+    // fence while assignment is excluded, then roll back from the earliest
+    // assigned suffix observed anywhere in the drained queue.
+    let first_sequence = drained_messages
+        .iter()
+        .filter_map(|message| match message {
+            PublisherMessage::Batch(batch) => Some(batch.first_sequence()),
+            PublisherMessage::Barrier(_)
+            | PublisherMessage::ResponseFence(_)
+            | PublisherMessage::SerialJob { .. } => None,
+        })
+        .fold(batch.first_sequence(), std::cmp::min);
     runtime.discard_unpersisted_write_log_suffix(first_sequence);
     runtime.record_mutation_worker_failure();
     match runtime
@@ -539,8 +541,23 @@ async fn fail_definitive_batch_and_recover(
             "definitive publisher batch failed before durable advance; journal recovery failed"
         ),
     }
-    for batch in failed_batches {
-        batch.fail(&error);
+    batch.fail(&error);
+    for message in drained_messages {
+        match message {
+            PublisherMessage::Batch(batch) => batch.fail(&error),
+            PublisherMessage::Barrier(completed) => {
+                let _ = completed.send(());
+            }
+            PublisherMessage::ResponseFence(responses) => {
+                for response in responses {
+                    response.complete();
+                }
+            }
+            PublisherMessage::SerialJob { job, drained } => {
+                run_serial_publisher_job(runtime.clone(), job).await;
+                let _ = drained.send(());
+            }
+        }
     }
 }
 

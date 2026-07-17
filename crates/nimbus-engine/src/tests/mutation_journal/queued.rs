@@ -1563,6 +1563,67 @@ struct RetryableThenBlockingAppendFaultInjector {
     retry_released: (Mutex<bool>, Condvar),
 }
 
+struct BlockingDefinitiveAppendFaultInjector {
+    failed: AtomicBool,
+    entered: (Mutex<bool>, Condvar),
+    released: (Mutex<bool>, Condvar),
+}
+
+impl BlockingDefinitiveAppendFaultInjector {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            failed: AtomicBool::new(false),
+            entered: (Mutex::new(false), Condvar::new()),
+            released: (Mutex::new(false), Condvar::new()),
+        })
+    }
+
+    fn wait_until_blocked(&self, timeout: Duration) -> bool {
+        let (lock, condvar) = &self.entered;
+        let entered = lock.lock().expect("definitive entered lock should acquire");
+        if *entered {
+            return true;
+        }
+        let (entered, _) = condvar
+            .wait_timeout_while(entered, timeout, |entered| !*entered)
+            .expect("definitive entered wait should succeed");
+        *entered
+    }
+
+    fn release_failure(&self) {
+        let (lock, condvar) = &self.released;
+        *lock.lock().expect("definitive release lock should acquire") = true;
+        condvar.notify_all();
+    }
+}
+
+impl nimbus_storage::FaultInjector for BlockingDefinitiveAppendFaultInjector {
+    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+        if point != FaultPoint::JournalAppendBeforeDurableFlush
+            || self.failed.swap(true, Ordering::AcqRel)
+        {
+            return Ok(());
+        }
+        let (entered_lock, entered_condvar) = &self.entered;
+        *entered_lock
+            .lock()
+            .expect("definitive entered lock should acquire") = true;
+        entered_condvar.notify_all();
+        let (release_lock, release_condvar) = &self.released;
+        let mut released = release_lock
+            .lock()
+            .expect("definitive release lock should acquire");
+        while !*released {
+            released = release_condvar
+                .wait(released)
+                .expect("definitive release wait should succeed");
+        }
+        Err(Error::InvalidInput(
+            "injected definitive publisher failure".to_string(),
+        ))
+    }
+}
+
 impl RetryableThenBlockingAppendFaultInjector {
     fn new() -> Arc<Self> {
         Arc::new(Self {
@@ -2027,6 +2088,122 @@ async fn definitive_publisher_append_error_is_batch_scoped_and_tenant_stays_load
         .expect("publisher diagnostics should load");
     assert_eq!(stats.publisher_fatal_error_count, 1);
     assert_eq!(stats.publisher_ambiguous_error_count, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn definitive_recovery_drains_batches_behind_response_fences() {
+    let data_dir = tempdir().expect("fenced recovery tempdir should build");
+    let faults = BlockingDefinitiveAppendFaultInjector::new();
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_775))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(46_775)),
+        )
+        .expect("fenced recovery engine should create"),
+    );
+    let tenant_id = TenantId::new("definitive-fenced-recovery").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+
+    let first = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state("the first append should block before failing", {
+        let faults = faults.clone();
+        move |timeout| faults.wait_until_blocked(timeout)
+    })
+    .await;
+
+    let fence = engine
+        .enqueue_publisher_response_fence_for_testing(&tenant_id)
+        .await
+        .expect("response fence should enqueue behind the failed batch");
+    let second = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+                )
+                .await
+        }
+    });
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "the response fence and following assigned batch should both queue",
+        |stats| stats.publisher_queue_depth == 2,
+    )
+    .await;
+
+    faults.release_failure();
+    for failed in [first, second] {
+        let error = expect_catch_up_future_within(
+            failed,
+            "every batch in the failed assigned suffix should resolve",
+        )
+        .await
+        .expect("failed insert task should join")
+        .expect_err("the definitive suffix should fail");
+        assert!(
+            matches!(error, Error::InvalidInput(ref message) if message == "injected definitive publisher failure"),
+            "fence-stranded batches must retain the original typed error: {error}"
+        );
+    }
+    assert!(matches!(
+        fence
+            .await
+            .expect("response fence should complete")
+            .expect("independent deferred response should retain its result"),
+        crate::tenant::QueuedMutationResult::Scheduled(false)
+    ));
+
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("recovered publisher stats should load");
+    let (assigned_through, pending) = engine
+        .write_log_assignment_for_testing(&tenant_id)
+        .expect("recovered write-log state should load");
+    assert_eq!(stats.durable_head, SequenceNumber(0));
+    assert_eq!(assigned_through, stats.durable_head);
+    assert!(
+        pending.is_empty(),
+        "recovery must remove every phantom staged record"
+    );
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(3))]),
+        )
+        .await
+        .expect("a follow-up insert should succeed on the recovered runtime");
+    let journal = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("recovered journal should read");
+    assert_eq!(journal.len(), 1);
+    assert_eq!(journal[0].sequence, SequenceNumber(1));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -1103,3 +1103,80 @@ fn cross_tenant_handler_write_never_bypasses_the_target_tenant_actor() {
         assert_eq!(state.tenant_b_commits, 1);
     });
 }
+
+#[derive(Debug, Clone, Copy)]
+enum RecoveryQueueMessage {
+    Batch(u64),
+    Fence,
+}
+
+#[derive(Debug)]
+struct AssignmentRecoveryState {
+    durable_head: u64,
+    assigned_through: u64,
+    pending: Vec<u64>,
+    queue: Vec<RecoveryQueueMessage>,
+}
+
+#[test]
+fn definitive_recovery_racing_actor_reassignment_keeps_one_contiguous_suffix() {
+    loom::model(|| {
+        let gate = Arc::new(Mutex::new(AssignmentRecoveryState {
+            durable_head: 4,
+            assigned_through: 8,
+            pending: vec![5, 6, 7, 8],
+            queue: vec![
+                RecoveryQueueMessage::Batch(5),
+                RecoveryQueueMessage::Fence,
+                RecoveryQueueMessage::Batch(7),
+            ],
+        }));
+
+        let recovery = {
+            let gate = gate.clone();
+            thread::spawn(move || {
+                let mut state = gate.lock().expect("assignment recovery gate");
+                let drained = std::mem::take(&mut state.queue);
+                let first_failed = drained
+                    .iter()
+                    .filter_map(|message| match message {
+                        RecoveryQueueMessage::Batch(first) => Some(*first),
+                        RecoveryQueueMessage::Fence => None,
+                    })
+                    .min()
+                    .expect("the failed suffix contains a batch");
+                state.pending.retain(|sequence| *sequence < first_failed);
+                state.assigned_through =
+                    state.pending.last().copied().unwrap_or(state.durable_head);
+            })
+        };
+        let actor = {
+            let gate = gate.clone();
+            thread::spawn(move || {
+                let mut state = gate.lock().expect("actor assignment gate");
+                let sequence = state.assigned_through + 1;
+                state.pending.push(sequence);
+                state.assigned_through = sequence;
+                state.queue.push(RecoveryQueueMessage::Batch(sequence));
+            })
+        };
+
+        recovery.join().expect("recovery model thread");
+        actor.join().expect("actor model thread");
+        let state = gate.lock().expect("final assignment recovery state");
+        assert!(matches!(state.pending.as_slice(), [] | [5]));
+        assert_eq!(
+            state.assigned_through,
+            state.pending.last().copied().unwrap_or(state.durable_head)
+        );
+        assert!(
+            state
+                .pending
+                .windows(2)
+                .all(|window| window[1] == window[0] + 1)
+        );
+        assert!(state.queue.iter().all(|message| {
+            matches!(message, RecoveryQueueMessage::Batch(sequence) if state.pending.contains(sequence))
+        }));
+    });
+}

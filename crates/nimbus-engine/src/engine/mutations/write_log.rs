@@ -626,6 +626,17 @@ impl WriteLog {
             .assigned_through
     }
 
+    #[cfg(test)]
+    pub(crate) fn pending_sequences_for_testing(&self) -> Vec<SequenceNumber> {
+        self.state
+            .lock()
+            .expect("write-log lock should not be poisoned")
+            .pending
+            .keys()
+            .copied()
+            .collect()
+    }
+
     /// True when `head` names a fully published in-memory prefix. Newer
     /// published or assigned-pending suffixes are intentionally allowed:
     /// caller prepare pins the applied prefix and actor validation folds them
