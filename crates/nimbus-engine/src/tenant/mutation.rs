@@ -1,6 +1,7 @@
 mod actor;
 mod admission;
 mod codel;
+mod isolate_admission;
 mod journal;
 #[cfg(any(test, feature = "test-hooks"))]
 mod pause;
@@ -12,6 +13,8 @@ pub(crate) use self::actor::{
     validate_append_sequences,
 };
 pub(super) use self::admission::{MutationAdmissionDecision, MutationAdmissionGate};
+pub(super) use self::isolate_admission::MutationIsolateAdmission;
+pub(crate) use self::isolate_admission::MutationIsolateAdmissionPermit;
 pub(super) use self::journal::MutationJournalState;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use self::pause::MutationJournalPauseHandle;
@@ -24,4 +27,7 @@ pub(crate) use self::requests::{
 pub(crate) use self::requests::{
     PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult,
 };
-pub use self::stats::{MutationAdmissionPhase, MutationAdmissionStats, MutationJournalStats};
+pub use self::stats::{
+    MutationAdmissionPhase, MutationAdmissionStats, MutationIsolateAdmissionStats,
+    MutationJournalStats,
+};

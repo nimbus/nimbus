@@ -19,6 +19,17 @@ pub struct MutationAdmissionStats {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct MutationIsolateAdmissionStats {
+    pub concurrent_count: usize,
+    pub ceiling: usize,
+    pub waiting_count: usize,
+    pub waiting_capacity: usize,
+    pub max_concurrent_count: usize,
+    pub admitted_count: u64,
+    pub shed_count: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct MutationJournalStats {
     pub durable_head: SequenceNumber,
     pub applied_head: SequenceNumber,

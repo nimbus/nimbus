@@ -224,7 +224,25 @@ impl<'a> RuntimeInvocationContext<'a> {
                 request.function_name.clone(),
             ),
         )?);
-        let (response, read_set) = invoke_runtime_bundle_on_worker_with_host_state(
+        // The engine-owned mutation ceiling is deliberately outside
+        // nimbus-runtime's all-invocation tenant fairness layer. It counts
+        // only client mutation attempts and is acquired before the runtime can
+        // check out or construct a V8 isolate. Nested ctx.runMutation calls use
+        // the runtime's existing re-entrant admission path and must not acquire
+        // a second engine seat while the parent isolate is suspended.
+        let mutation_isolate_permit = if matches!(invocation_kind, InvocationKind::Mutation) {
+            let cancel_wait = cancellation.clone();
+            Some(
+                self.engine
+                    .acquire_mutation_isolate_permit_cancellable(decision.tenant_id(), async move {
+                        cancel_wait.cancelled().await
+                    })
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let invocation = invoke_runtime_bundle_on_worker_with_host_state(
             &runtime_executor,
             runtime_policy,
             bridge.clone(),
@@ -240,8 +258,9 @@ impl<'a> RuntimeInvocationContext<'a> {
             ),
             |bridge| bridge.snapshot_read_set(),
         )
-        .await
-        .map_err(runtime_error_to_core)?;
+        .await;
+        drop(mutation_isolate_permit);
+        let (response, read_set) = invocation.map_err(runtime_error_to_core)?;
         let envelope: ConvexRuntimeResponseEnvelope = serde_json::from_value(response)
             .map_err(|error| Error::Serialization(error.to_string()))?;
         let value = envelope.into_core_result()?;

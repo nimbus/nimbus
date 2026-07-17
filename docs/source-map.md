@@ -213,7 +213,7 @@ sources exist.
 | `operators/observability.md` | Full `/debug/*` route inventory + `/health` + `/api/system/version-info`; no readiness endpoint | `crates/nimbus-server/src/router.rs` |
 | `operators/observability.md` | License status fields + `NIMBUS_LICENSE_FILE`; encryption status shape; runtime metrics counters | `crates/nimbus-license/src/lib.rs`, `crates/nimbus-engine/src/engine/encryption/mod.rs`, `crates/nimbus-runtime/src/metrics.rs` |
 | `operators/observability.md` | Runtime lane diagnostics expose default, Node 20/22/24/26, and Bun/JSC lanes with backend, compatibility target, adapter state, executor laziness, and memory enforcement | `crates/nimbus-server/src/http/metadata.rs`, `crates/nimbus-server/src/protocol.rs`, `crates/nimbus-convex/src/registry/resolution/runtime_access.rs`, `crates/nimbus-runtime/src/backends/bun_jsc/contract.rs`, `crates/nimbus-server/src/tests/registry_and_license/runtime_metrics.rs` |
-| `operators/observability.md` | Tenant engine diagnostics groups; consistency report shape | `crates/nimbus-engine/src/tenant.rs`, `crates/nimbus-engine/src/verification.rs` |
+| `operators/observability.md` | Tenant engine diagnostics groups, including mutation-isolate admission counts and ceiling; consistency report shape | `crates/nimbus-engine/src/tenant.rs`, `crates/nimbus-engine/src/tenant/mutation/isolate_admission.rs`, `crates/nimbus-engine/src/verification.rs` |
 | `operators/observability.md` | Logging via `RUST_LOG` (`target=level` directives, default info, stdout); latency WARN fields | `crates/nimbus-bin/src/main.rs`, `crates/nimbus-server/src/latency.rs`, `crates/nimbus-engine/src/engine/latency.rs` |
 | `operators/observability.md` | Access audit log JSONL paths + record fields | `crates/nimbus-operator/src/audit.rs`, `crates/nimbus-operator/src/paths.rs` |
 | `operators/hardening.md` | Local admin auth always on; token 32 bytes, 0600/0700, constant-time compare | `crates/nimbus-cli/src/start/boot.rs`, `crates/nimbus-operator/src/token.rs` |
@@ -260,6 +260,7 @@ sources exist.
 | `reference/configuration.md` | Compose-file discovery order and `.git` boundary | `crates/nimbus-cli/src/compose/discovery.rs`, `crates/nimbus-cli/src/compose/file.rs` |
 | `reference/configuration.md` | License resolution: flag > env > XDG path > built-in community license | `crates/nimbus-cli/src/start/boot.rs`, `crates/nimbus-license/src/loading.rs`, `crates/nimbus-cli/src/dirs.rs` |
 | `reference/configuration.md` | `NIMBUS_DEPLOY_TOKEN` env-only enablement of the deploy admin API | `crates/nimbus-server/src/router.rs`, `crates/nimbus-operator/src/access_policy.rs` |
+| `reference/configuration.md` | `NIMBUS_TENANT_MUTATION_ISOLATE_CEILING` env-only per-tenant mutation-isolate admission cap; default 16 | `crates/nimbus-engine/src/tenant/mutation/isolate_admission.rs` |
 
 ## Reference — JavaScript SDK
 

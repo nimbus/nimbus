@@ -76,6 +76,23 @@ async fn tenant_engine_metrics_route_surfaces_worker_and_serving_health_after_mi
         diagnostics["mutation_journal"]["worker_failure_count"],
         json!(0)
     );
+    assert_eq!(
+        diagnostics["mutation_isolate_admission"]["concurrent_count"],
+        json!(0)
+    );
+    assert!(
+        diagnostics["mutation_isolate_admission"]["ceiling"]
+            .as_u64()
+            .is_some_and(|ceiling| ceiling > 0)
+    );
+    assert_eq!(
+        diagnostics["mutation_isolate_admission"]["waiting_count"],
+        json!(0)
+    );
+    assert_eq!(
+        diagnostics["mutation_isolate_admission"]["shed_count"],
+        json!(0)
+    );
 
     assert_eq!(
         diagnostics["subscription_delivery"]["queue_depth"],
