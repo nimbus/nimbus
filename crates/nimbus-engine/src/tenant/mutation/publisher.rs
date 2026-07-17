@@ -127,11 +127,10 @@ impl ObserverHandoff {
     pub(crate) fn new(tenant_id: &TenantId) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         #[cfg(test)]
-        let limits = take_observer_limits_for_testing(tenant_id);
-        #[cfg(not(test))]
-        let limits: Option<(usize, usize)> = None;
         let (queue_capacity, queue_high_watermark) =
-            limits.unwrap_or_else(observer_limits_from_env);
+            take_observer_limits_for_testing(tenant_id).unwrap_or_else(observer_limits_from_env);
+        #[cfg(not(test))]
+        let (queue_capacity, queue_high_watermark) = observer_limits_from_env();
         Self {
             tenant_id: tenant_id.clone(),
             sender: Mutex::new(ObserverSender {
@@ -435,11 +434,11 @@ impl AssignedPublisherBatch {
             .collect()
     }
 
-    pub(crate) fn try_merge(&mut self, mut next: Self) -> std::result::Result<(), Self> {
+    pub(crate) fn try_merge(&mut self, mut next: Self) -> std::result::Result<(), Box<Self>> {
         if !Arc::ptr_eq(&self.engine, &next.engine)
             || self.last_sequence().0.checked_add(1) != Some(next.first_sequence().0)
         {
-            return Err(next);
+            return Err(Box::new(next));
         }
         Arc::make_mut(&mut self.records).extend(next.records.iter().cloned());
         self.responses.append(&mut next.responses);

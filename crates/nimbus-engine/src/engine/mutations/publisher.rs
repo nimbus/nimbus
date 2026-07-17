@@ -207,7 +207,7 @@ async fn accumulate_assigned_batches(
                 if batch.records.len().saturating_add(next.records.len()) <= policy.max =>
             {
                 if let Err(next) = batch.try_merge(next) {
-                    *pending_message = Some(PublisherMessage::Batch(next));
+                    *pending_message = Some(PublisherMessage::Batch(*next));
                     return batch;
                 }
             }
@@ -256,7 +256,7 @@ async fn accumulate_assigned_batches(
                 if batch.records.len().saturating_add(next.records.len()) <= policy.max =>
             {
                 if let Err(next) = batch.try_merge(next) {
-                    *pending_message = Some(PublisherMessage::Batch(next));
+                    *pending_message = Some(PublisherMessage::Batch(*next));
                     break;
                 }
             }
