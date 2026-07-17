@@ -186,25 +186,46 @@ store, workload, and five measured/two warm-up rounds constant.
 The burst fsync-ratio gate therefore holds: the publisher improves rather than
 reduces average effective batch at N=256, while N=1 remains one append per
 mutation. The publisher's 750 µs Tokio-time accumulator window activates only
-above 64 outstanding operations; N≤32 stays on immediate flush.
+when receiver or assignment backlog proves more work exists; the current
+batch's own response guards no longer self-classify a large idle burst as
+pressure. Publisher accumulation uses its own
+`NIMBUS_COMMITTER_PUBLISHER_BATCH_MAX` (default 256) and
+`NIMBUS_COMMITTER_PUBLISHER_COALESCE_MICROS` (default 750) keys, independently
+of the actor's `NIMBUS_MUTATION_JOURNAL_*` policy.
 
 Hot-key parity re-check (N=32, same release/split protocol): serial **3,046
 mut/s**, publisher **3,124 mut/s** (**+2.6%**). The N=1 hot-key samples are
 fsync-dominated and noisy (351 vs 312 mut/s); the requested contention parity
 rung does not regress.
 
+Review-fix rerun after removing the current batch's own response guards from
+the pressure signal (10 measured/two warm-up rounds, release/split protocol):
+
+| CRUD N | recorded publisher mut/s | review-fix mut/s | review-fix p50 µs | review-fix avg batch |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 2,042 | 1,321 | 742.8 | 1.00 |
+| 32 | 15,684 | 12,517 | 2,417.1 | 16.11 |
+| 256 | 23,432 | **23,609** | **10,210.8** | 129.32 |
+
+The machine's singleton anchor was 35% below the recorded run, so the N=1 and
+N=32 absolute latency/throughput rows are not accepted as a clean historical
+comparison. Normalized scaling improved from 7.68× to 9.47× at N=32 and from
+11.47× to 17.87× at N=256. The saturated throughput gate did not regress:
+N=256 is +0.8%, with p50 improving 4.1%. Raw report:
+`/private/tmp/ppsc5-review-crud-final-10.md`.
+
 Correctness evidence for this slice:
 
 | Gate | Result |
 | --- | --- |
-| mutation-journal/per-path group | 66/66 passed |
+| mutation-journal/per-path group | 72/72 passed |
 | `fanout_never_precedes_applied_head` | passed |
 | `publisher_preserves_sequence_order_across_transient_retry` | passed |
 | `publisher_torn_tail_recovery_replays_exactly_one_contiguous_prefix` | passed |
 | `kill_switch_mid_load_produces_identical_state` | passed; documents and durable journal bytes match pipeline/serial/mid-load flip |
 | Hermitage + unchanged window differential | 11/11 + 1/1 passed |
-| actor→publisher loom handoff lane | 11/11 passed |
-| core + storage + engine | 965 passed, 4 skipped (baseline 960 + five slice tests) |
+| actor→publisher loom handoff lane | 13/13 passed |
+| core + storage + engine | 978 passed, 4 skipped |
 | server | 559 passed, 23 skipped |
 | live PostgreSQL storage/engine | 21/21 + 12/12 passed |
 | live libSQL storage/engine | 18/18 + 6/6 passed |
