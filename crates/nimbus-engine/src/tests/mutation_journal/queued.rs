@@ -125,7 +125,7 @@ async fn concurrent_mutations_do_not_strand_the_journal_worker() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn concurrent_disjoint_ab_commits_all_succeed_without_retry() {
+async fn concurrent_disjoint_queued_commits_all_succeed_without_retry() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("prepared-disjoint", Engine::create_tenant);
@@ -147,6 +147,405 @@ async fn concurrent_disjoint_ab_commits_all_succeed_without_retry() {
     );
     assert_eq!(after.prepared_payload_bytes_current, 0);
     assert!(after.prepared_payload_bytes_peak > 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_disjoint_direct_commits_all_succeed_without_retry() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("prepared-direct-disjoint", Engine::create_tenant);
+    engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("table-seed"))]),
+        )
+        .expect("seed insert should establish the table identity");
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+
+    let mut inserts = Vec::new();
+    for index in 0..32 {
+        inserts.push(tokio::task::spawn_blocking({
+            let engine = engine.clone();
+            let tenant_id = tenant_id.clone();
+            move || {
+                engine.insert_document(
+                    &tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([(
+                        "title".to_string(),
+                        json!(format!("direct-{index}")),
+                    )]),
+                )
+            }
+        }));
+    }
+    for insert in inserts {
+        insert
+            .await
+            .expect("direct insert task should join")
+            .expect("disjoint direct insert should succeed");
+    }
+
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+    assert_eq!(after.reprepare_total - before.reprepare_total, 0);
+    assert_eq!(after.prepared_payload_bytes_current, 0);
+    assert_eq!(
+        engine
+            .query_documents(&tenant_id, &query_for("tasks"))
+            .expect("direct documents should query")
+            .len(),
+        33
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_disjoint_execution_unit_commits_all_succeed_without_retry() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(56_000))),
+            Arc::new(NoopFaultInjector),
+            Arc::new(nimbus_core::SeededIdSource::new(56_000)),
+        )
+        .expect("memory engine should create"),
+    );
+    let tenant_id = TenantId::new("prepared-execution-disjoint").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    let seed = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("seed execution unit should begin");
+    seed.insert_document(
+        tasks_table(),
+        serde_json::Map::from_iter([("title".to_string(), json!("table-seed"))]),
+    )
+    .expect("seed insert should stage");
+    tokio::task::spawn_blocking(move || seed.commit())
+        .await
+        .expect("seed task should join")
+        .expect("seed commit should succeed")
+        .expect("seed insert should establish the table identity");
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+
+    let mut units = Vec::new();
+    for index in 0..32 {
+        let unit = engine
+            .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+            .expect("execution unit should begin");
+        unit.insert_document(
+            tasks_table(),
+            serde_json::Map::from_iter([(
+                "title".to_string(),
+                json!(format!("execution-{index}")),
+            )]),
+        )
+        .expect("disjoint execution-unit insert should stage");
+        units.push(unit);
+    }
+    let commits = units
+        .into_iter()
+        .map(|unit| tokio::task::spawn_blocking(move || unit.commit()))
+        .collect::<Vec<_>>();
+    for commit in commits {
+        commit
+            .await
+            .expect("execution-unit task should join")
+            .expect("disjoint execution-unit commit should succeed")
+            .expect("document insert should produce a commit");
+    }
+
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load")
+        .commit_phases;
+    assert_eq!(after.reprepare_total - before.reprepare_total, 0);
+    assert_eq!(after.prepared_payload_bytes_current, 0);
+    assert_eq!(
+        engine
+            .query_documents_async(tenant_id.clone(), query_for("tasks"))
+            .await
+            .expect("execution-unit documents should query")
+            .len(),
+        33
+    );
+}
+
+struct AssignedPendingUpdate {
+    engine: Arc<Engine>,
+    tenant_id: TenantId,
+    record: nimbus_core::TenantEventRecord,
+}
+
+impl AssignedPendingUpdate {
+    fn stage(
+        engine: &Arc<Engine>,
+        tenant_id: &TenantId,
+        document_id: &DocumentId,
+        field: &str,
+        value: serde_json::Value,
+    ) -> Self {
+        // This is the exact state between assignment/durable append and apply:
+        // registered in the pending window, durable, and not yet published.
+        let record = engine
+            .stage_assigned_pending_update_for_testing(
+                tenant_id,
+                &tasks_table(),
+                document_id,
+                field,
+                value,
+            )
+            .expect("pending fixture should stage and append durably");
+        Self {
+            engine: engine.clone(),
+            tenant_id: tenant_id.clone(),
+            record,
+        }
+    }
+
+    fn apply_and_publish(self) {
+        self.engine
+            .apply_assigned_pending_record_for_testing(&self.tenant_id, &self.record)
+            .expect("pending fixture record should apply and publish");
+    }
+}
+
+async fn wait_for_prepared_payload(engine: &Arc<Engine>, tenant_id: &TenantId, description: &str) {
+    wait_for_value(
+        description,
+        Duration::from_secs(1),
+        Duration::ZERO,
+        || async {
+            engine
+                .tenant_engine_diagnostics(tenant_id)
+                .expect("diagnostics should load")
+                .commit_phases
+                .prepared_payload_bytes_current
+        },
+        |bytes| *bytes > 0,
+    )
+    .await;
+}
+
+async fn wait_for_reprepare_count(
+    engine: &Arc<Engine>,
+    tenant_id: &TenantId,
+    expected: u64,
+    description: &str,
+) {
+    wait_for_value(
+        description,
+        Duration::from_secs(1),
+        Duration::ZERO,
+        || async {
+            engine
+                .tenant_engine_diagnostics(tenant_id)
+                .expect("diagnostics should load")
+                .commit_phases
+                .reprepare_total
+        },
+        |count| *count >= expected,
+    )
+    .await;
+}
+
+async fn run_direct_pending_reprepare_race() -> (
+    EngineFixture<Engine>,
+    Arc<Engine>,
+    TenantId,
+    DocumentId,
+    u64,
+    u64,
+) {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("direct-pending-reprepare", Engine::create_tenant);
+    let document_id = engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("original"))]),
+        )
+        .expect("seed insert should succeed");
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load");
+    let pending = AssignedPendingUpdate::stage(
+        &engine,
+        &tenant_id,
+        &document_id,
+        "assigned_pending",
+        json!(1),
+    );
+
+    let mut direct = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        move || {
+            engine.update_document(
+                &tenant_id,
+                tasks_table(),
+                document_id,
+                serde_json::Map::from_iter([("direct".to_string(), json!(2))]),
+            )
+        }
+    });
+    wait_for_prepared_payload(
+        &engine,
+        &tenant_id,
+        "direct prepare should remain accounted while it waits for the pending sequence",
+    )
+    .await;
+    assert_future_stays_pending(
+        &mut direct,
+        "direct retry must remain blocked until the pending sequence applies",
+    )
+    .await;
+    pending.apply_and_publish();
+    expect_future_within(direct, "direct retry should finish after pending apply")
+        .await
+        .expect("direct task should join")
+        .expect("direct update should transparently re-prepare");
+
+    (
+        fixture,
+        engine,
+        tenant_id,
+        document_id,
+        before.mutation_journal.read_wait_count,
+        before.commit_phases.reprepare_total,
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn direct_prepared_write_detects_pending_then_waits_and_reprepares() {
+    let (_fixture, engine, tenant_id, _, waits_before, retries_before) =
+        run_direct_pending_reprepare_race().await;
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load");
+    assert!(after.mutation_journal.read_wait_count > waits_before);
+    assert_eq!(after.commit_phases.reprepare_total - retries_before, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn direct_sequential_same_doc_writes_match_overlay_semantics() {
+    let (_fixture, engine, tenant_id, document_id, _, _) =
+        run_direct_pending_reprepare_race().await;
+    let document = engine
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("directly updated document should remain visible");
+    assert_eq!(document.fields.get("assigned_pending"), Some(&json!(1)));
+    assert_eq!(document.fields.get("direct"), Some(&json!(2)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn execution_unit_prepared_write_detects_pending_then_waits_and_reprepares() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("execution-pending-reprepare", Engine::create_tenant);
+    let document_id = engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("original"))]),
+        )
+        .expect("seed insert should succeed");
+    let stale_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("stale execution unit should begin");
+    stale_unit
+        .update_document(
+            tasks_table(),
+            document_id.clone(),
+            serde_json::Map::from_iter([("execution".to_string(), json!(2))]),
+        )
+        .expect("stale execution-unit update should stage");
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load");
+    let pending = AssignedPendingUpdate::stage(
+        &engine,
+        &tenant_id,
+        &document_id,
+        "assigned_pending",
+        json!(1),
+    );
+
+    let error = tokio::task::spawn_blocking(move || stale_unit.commit())
+        .await
+        .expect("stale execution-unit task should join")
+        .expect_err("assigned pending write must conflict with the stale unit");
+    let conflicting_sequence = error
+        .conflicting_sequence()
+        .expect("pending conflict should name its assigned sequence");
+    assert_eq!(conflicting_sequence, pending.record.sequence);
+
+    let mut retry = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        move || {
+            engine.record_mutation_conflict_retry(&tenant_id)?;
+            engine.wait_for_applied_sequence_blocking(&tenant_id, conflicting_sequence)?;
+            let unit =
+                engine.begin_mutation_execution_unit(tenant_id, PrincipalContext::anonymous())?;
+            unit.update_document(
+                tasks_table(),
+                document_id,
+                serde_json::Map::from_iter([("execution".to_string(), json!(2))]),
+            )?;
+            unit.commit()
+        }
+    });
+    wait_for_reprepare_count(
+        &engine,
+        &tenant_id,
+        before.commit_phases.reprepare_total + 1,
+        "execution-unit caller should record its retry before waiting for apply",
+    )
+    .await;
+    assert_future_stays_pending(
+        &mut retry,
+        "execution-unit retry must remain blocked until the pending sequence applies",
+    )
+    .await;
+    pending.apply_and_publish();
+    expect_future_within(
+        retry,
+        "execution-unit retry should finish after pending apply",
+    )
+    .await
+    .expect("execution-unit retry task should join")
+    .expect("execution-unit retry should succeed")
+    .expect("execution-unit retry should produce a commit");
+
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("diagnostics should load");
+    assert!(after.mutation_journal.read_wait_count > before.mutation_journal.read_wait_count);
+    assert_eq!(
+        after.commit_phases.reprepare_total - before.commit_phases.reprepare_total,
+        1
+    );
+    let document = engine
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("execution-unit document should remain visible");
+    assert_eq!(document.fields.get("assigned_pending"), Some(&json!(1)));
+    assert_eq!(document.fields.get("execution"), Some(&json!(2)));
 }
 
 async fn run_same_document_prepare_race() -> (
@@ -242,7 +641,7 @@ async fn run_same_document_prepare_race() -> (
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn stale_prepare_waits_for_applied_then_re_prepares() {
+async fn queued_prepared_write_detects_pending_then_waits_and_reprepares() {
     let (_fixture, engine, tenant_id, _, waits_before, retries_before) =
         run_same_document_prepare_race().await;
     let after = engine
@@ -253,7 +652,7 @@ async fn stale_prepare_waits_for_applied_then_re_prepares() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn sequential_same_doc_writes_match_overlay_semantics() {
+async fn queued_sequential_same_doc_writes_match_overlay_semantics() {
     let (_fixture, engine, tenant_id, document_id, _, _) = run_same_document_prepare_race().await;
     let visible = engine
         .query_documents_async(tenant_id, query_for("tasks"))

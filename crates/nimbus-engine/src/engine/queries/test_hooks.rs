@@ -9,8 +9,8 @@ use nimbus_core::Result;
 use nimbus_core::TenantId;
 #[cfg(test)]
 use nimbus_core::{
-    ResourcePathBinding, SequenceNumber, TableName, TenantEventRecord, TriggerDeliveryCursor,
-    TriggerInvocationRecord,
+    DocumentId, ResourcePathBinding, SequenceNumber, TableName, TenantEventRecord,
+    TriggerDeliveryCursor, TriggerInvocationRecord, WriteOp, WriteOpType,
 };
 
 #[cfg(test)]
@@ -63,6 +63,86 @@ impl Engine {
         tenant_id: &TenantId,
     ) -> Result<crate::tenant::MutationAdmissionStats> {
         self.with_runtime_for_testing(tenant_id, |runtime| runtime.mutation_admission_stats())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stage_assigned_pending_update_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        table: &TableName,
+        document_id: &DocumentId,
+        field: &str,
+        value: serde_json::Value,
+    ) -> Result<TenantEventRecord> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let runtime_for_commit = runtime.clone();
+        let table = table.clone();
+        let document_id = document_id.clone();
+        let field = field.to_string();
+        runtime.submit_internal_committer(move || {
+            let runtime = runtime_for_commit;
+            let previous = runtime
+                .store
+                .get(&table, &document_id)?
+                .ok_or_else(|| nimbus_core::Error::DocumentNotFound(document_id.clone()))?;
+            let table_id = runtime.store.table_id(&table)?.ok_or_else(|| {
+                nimbus_core::Error::Internal(
+                    "assigned-pending test fixture requires an existing table identity".to_string(),
+                )
+            })?;
+            let sequence = crate::tenant::assign_and_validate(runtime.durable_head(), 1)?[0];
+            let timestamp = runtime.assign_commit_timestamp();
+            let mut current = previous.clone();
+            current.fields.insert(field, value);
+            current.creation_time = previous.creation_time;
+            current.update_time = timestamp;
+            let record = TenantEventRecord::new(
+                sequence,
+                timestamp,
+                vec![WriteOp {
+                    table,
+                    table_id,
+                    op_type: WriteOpType::Update,
+                    doc_id: document_id,
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
+                    previous: Some(previous),
+                    current: Some(current),
+                }],
+                None,
+            )?;
+            runtime
+                .stage_pending_write_log_commits([record.as_commit_entry()], runtime.store.now());
+            runtime
+                .store
+                .append_durable_records_batch(std::slice::from_ref(&record))?;
+            runtime.mark_durable_head(sequence);
+            Ok(record)
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apply_assigned_pending_record_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        record: &TenantEventRecord,
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let runtime_for_commit = runtime.clone();
+        let record = record.clone();
+        runtime.submit_internal_committer(move || {
+            let runtime = runtime_for_commit;
+            runtime
+                .store
+                .apply_durable_records_batch(std::slice::from_ref(&record))?;
+            let commit = record.as_commit_entry();
+            runtime.publish_write_log_through(commit.sequence);
+            runtime.invalidate_document_cache_for_commit(&commit);
+            runtime.mark_applied_head(commit.sequence);
+            Ok(())
+        })
     }
 
     #[cfg(test)]

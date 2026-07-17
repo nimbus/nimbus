@@ -807,7 +807,7 @@ mod tests {
     }
 
     #[test]
-    fn prepared_ab_ops_validate_against_pending_writes() {
+    fn prepared_window_validation_includes_assigned_unpublished_writes() {
         let table = nimbus_core::TableName::new("tasks").expect("table should build");
         let table_id = nimbus_core::TableId::new();
         let document_id = nimbus_core::DocumentId::from_key("same").expect("id should build");

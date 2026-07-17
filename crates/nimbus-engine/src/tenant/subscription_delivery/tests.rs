@@ -812,8 +812,13 @@ async fn journal_batch_coalesces_subscription_delivery_into_one_update() {
         })
     };
 
-    tokio::task::yield_now().await;
-    tokio::task::yield_now().await;
+    crate::tests::wait_for_mutation_admission_stats(
+        &engine,
+        &tenant_id,
+        "second and third mutations should be admitted before releasing the journal batch",
+        |stats| stats.queue_depth == 2,
+    )
+    .await;
     pause.release();
 
     let inserted_ids = timeout(Duration::from_secs(1), async {
