@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use nimbus_core::{CommitEntry, TableName, TenantId};
@@ -18,6 +20,16 @@ pub struct CommittedMutationEvent {
 /// Observer for committed mutation events.
 pub trait CommittedMutationObserver: Send + Sync {
     fn committed_mutation_applied(&self, event: CommittedMutationEvent);
+
+    /// Waits for work that the callback spawned after accepting an event.
+    ///
+    /// The default is appropriate for callbacks that finish their work before
+    /// returning. This hidden hook only extends the test flush seam; production
+    /// dispatch never waits on it.
+    #[doc(hidden)]
+    fn flush_spawned_work_for_testing(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async {})
+    }
 }
 
 /// A table schema or collection metadata change applied to a tenant.
@@ -155,8 +167,9 @@ impl Engine {
     }
 
     /// Waits until every observer dispatch already accepted for `tenant_id`
-    /// has completed. This is a test seam for isolating process-wide commit
-    /// faults from ordered observer work left by fixture setup.
+    /// has completed, including work spawned by observers that implement the
+    /// drain hook. This is a test seam for isolating process-wide commit faults
+    /// from ordered observer work left by fixture setup.
     #[cfg(any(test, feature = "test-hooks"))]
     pub async fn flush_committed_mutation_observers_for_testing(
         &self,
@@ -166,7 +179,18 @@ impl Engine {
         let _operation = runtime.enter_operation(tenant_id)?;
         runtime
             .flush_committed_mutation_observers_for_testing()
-            .await
+            .await?;
+        let observers = self
+            .committed_mutation_observers
+            .read()
+            .expect("committed mutation observer registry lock should not be poisoned")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for observer in observers {
+            observer.flush_spawned_work_for_testing().await;
+        }
+        Ok(())
     }
 
     pub(crate) fn enqueue_applied_commit_batch_observers(
