@@ -2687,19 +2687,43 @@ async fn ambiguous_publisher_eviction_drains_then_reopens_a_distinct_runtime() {
     let runtime_before = engine
         .tenant_runtime_identity_for_testing(&tenant_id)
         .expect("runtime identity should load");
+    let eviction_blocker = engine
+        .tenant_operation_guard_for_testing(&tenant_id)
+        .expect("test operation should hold eviction before load-gate acquisition");
 
-    engine
-        .insert_document_async(
+    timeout(
+        Duration::from_secs(5),
+        engine.insert_document_async(
             tenant_id.clone(),
             tasks_table(),
             serde_json::Map::from_iter([("title".to_string(), json!("recover"))]),
-        )
-        .await
-        .expect_err("post-durable fault should require guarded eviction");
-    let documents = engine
-        .query_documents_async(tenant_id.clone(), query_for("tasks"))
-        .await
-        .expect("reopen should wait for the old store handle to drain and recover");
+        ),
+    )
+    .await
+    .expect("ambiguous writer should resolve within the eviction timeout")
+    .expect_err("post-durable fault should require guarded eviction");
+    let mut reload = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .query_documents_async(tenant_id, query_for("tasks"))
+                .await
+        }
+    });
+    assert_future_stays_pending(
+        &mut reload,
+        "reload should wait for the failed runtime to finish eviction",
+    )
+    .await;
+    drop(eviction_blocker);
+    let documents = expect_catch_up_future_within(
+        reload,
+        "tenant reload should finish after the old operation guard drops",
+    )
+    .await
+    .expect("tenant reload task should join")
+    .expect("reopen should wait for the old store handle to drain and recover");
     assert_eq!(documents.len(), 1);
     assert_ne!(
         engine
@@ -2912,25 +2936,32 @@ async fn publisher_torn_tail_recovery_replays_exactly_one_contiguous_prefix() {
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
 
-    let error = engine
-        .insert_document_async(
+    let error = timeout(
+        Duration::from_secs(5),
+        engine.insert_document_async(
             tenant_id.clone(),
             tasks_table(),
             serde_json::Map::from_iter([("title".to_string(), json!("replay-me"))]),
-        )
-        .await
-        .expect_err("post-append fault must force crash-and-replay");
+        ),
+    )
+    .await
+    .expect("torn-tail writer should resolve within the eviction timeout")
+    .expect_err("post-append fault must force crash-and-replay");
     assert!(
         error.to_string().contains("crash-and-replay"),
         "ambiguous publisher failure should identify replay recovery: {error}"
     );
 
-    // The failed runtime is evicted before the response is completed. This
-    // access therefore opens a fresh runtime and applies the durable tail.
-    let documents = engine
-        .query_documents_async(tenant_id.clone(), query_for("tasks"))
-        .await
-        .expect("next access should recover the durable torn tail");
+    // Failure completion deliberately precedes load-gate acquisition. The
+    // access waits for eviction completion, then opens a fresh runtime and
+    // applies the durable tail.
+    let documents = timeout(
+        Duration::from_secs(5),
+        engine.query_documents_async(tenant_id.clone(), query_for("tasks")),
+    )
+    .await
+    .expect("torn-tail reload should resolve within the eviction timeout")
+    .expect("next access should recover the durable torn tail");
     assert_eq!(documents.len(), 1);
     assert_eq!(documents[0].fields.get("title"), Some(&json!("replay-me")));
     let journal = engine

@@ -549,21 +549,32 @@ async fn load_query_runtime_async<Fut>(
 where
     Fut: Future<Output = ()> + Clone + Send,
 {
-    let tenant_load_timer = budgeted_segment(LatencySegment::TenantLoad);
-    let runtime = engine.get_existing_tenant_async(tenant_id).await?;
-    let tenant_load = tenant_load_timer.finish();
-    let required_sequence = runtime.durable_head();
-    let visibility_timer = budgeted_segment(LatencySegment::WaitVisibility);
-    runtime
-        .wait_for_applied_sequence_cancellable(required_sequence, cancel_wait)
-        .await?;
-    let wait_visibility = visibility_timer.finish();
-    Ok(LoadedQueryRuntime {
-        runtime,
-        required_sequence,
-        tenant_load,
-        wait_visibility,
-    })
+    loop {
+        let tenant_load_timer = budgeted_segment(LatencySegment::TenantLoad);
+        let runtime = engine.get_existing_tenant_async(tenant_id).await?;
+        let tenant_load = tenant_load_timer.finish();
+        let required_sequence = runtime.durable_head();
+        let visibility_timer = budgeted_segment(LatencySegment::WaitVisibility);
+        tokio::select! {
+            result = runtime.wait_for_applied_sequence_cancellable(
+                required_sequence,
+                cancel_wait.clone(),
+            ) => {
+                result?;
+                let wait_visibility = visibility_timer.finish();
+                return Ok(LoadedQueryRuntime {
+                    runtime,
+                    required_sequence,
+                    tenant_load,
+                    wait_visibility,
+                });
+            }
+            () = runtime.wait_for_eviction_complete() => {
+                // The durable head may have advanced while the failed runtime's
+                // applied head cannot. Retry against the replayed replacement.
+            }
+        }
+    }
 }
 
 fn empty_page() -> Page {

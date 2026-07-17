@@ -658,6 +658,9 @@ async fn fail_and_restart(
         }
     };
     drop(removed);
+    // Wake accessors only after the failed runtime is absent from the
+    // registry. They will then serialize a fresh open behind the load gate.
+    runtime.finish_eviction();
     drop(runtime);
     drop(_tenant_load_guard);
 }

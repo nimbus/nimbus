@@ -67,6 +67,15 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn tenant_operation_guard_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<crate::tenant::TenantOperationGuard> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        runtime.enter_operation(tenant_id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn write_log_assignment_for_testing(
         &self,
         tenant_id: &TenantId,

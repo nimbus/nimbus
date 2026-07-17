@@ -6,7 +6,7 @@ use nimbus_core::{Error, Result, TenantId};
 
 use crate::tenant::TenantRuntime;
 
-use super::Engine;
+use super::{Engine, TenantLoadGateGuard};
 
 pub(in crate::engine) fn with_tenant_runtime_operation<T, F>(
     runtime: Arc<TenantRuntime>,
@@ -220,51 +220,75 @@ impl Engine {
     ) -> Result<Arc<TenantRuntime>> {
         self.ensure_provider_background_tasks_started();
         let total_started = Instant::now();
-        if let Some(runtime) = self
-            .tenants
-            .read()
-            .expect("tenant registry lock should not be poisoned")
-            .get(tenant_id)
-            .cloned()
-        {
-            maybe_emit_tenant_load_profile(TenantLoadProfileSample {
-                tenant_id,
-                cache_hit: true,
-                open_existing: Duration::ZERO,
-                runtime_init: Duration::ZERO,
-                runtime_schema_load: Duration::ZERO,
-                runtime_journal_progress: Duration::ZERO,
-                runtime_profile_total: Duration::ZERO,
-                recover_durable: Duration::ZERO,
-                catch_up: Duration::ZERO,
-                total: total_started.elapsed(),
-            });
-            return Ok(runtime);
-        }
+        loop {
+            let cached_runtime = {
+                self.tenants
+                    .read()
+                    .expect("tenant registry lock should not be poisoned")
+                    .get(tenant_id)
+                    .cloned()
+            };
+            if let Some(runtime) = cached_runtime {
+                if runtime.eviction_started() {
+                    runtime.wait_for_eviction_complete().await;
+                    continue;
+                }
+                maybe_emit_tenant_load_profile(TenantLoadProfileSample {
+                    tenant_id,
+                    cache_hit: true,
+                    open_existing: Duration::ZERO,
+                    runtime_init: Duration::ZERO,
+                    runtime_schema_load: Duration::ZERO,
+                    runtime_journal_progress: Duration::ZERO,
+                    runtime_profile_total: Duration::ZERO,
+                    recover_durable: Duration::ZERO,
+                    catch_up: Duration::ZERO,
+                    total: total_started.elapsed(),
+                });
+                return Ok(runtime);
+            }
 
-        let _tenant_load_guard = self.tenant_load_gate.lock().await;
-        if let Some(runtime) = self
-            .tenants
-            .read()
-            .expect("tenant registry lock should not be poisoned")
-            .get(tenant_id)
-            .cloned()
-        {
-            maybe_emit_tenant_load_profile(TenantLoadProfileSample {
-                tenant_id,
-                cache_hit: true,
-                open_existing: Duration::ZERO,
-                runtime_init: Duration::ZERO,
-                runtime_schema_load: Duration::ZERO,
-                runtime_journal_progress: Duration::ZERO,
-                runtime_profile_total: Duration::ZERO,
-                recover_durable: Duration::ZERO,
-                catch_up: Duration::ZERO,
-                total: total_started.elapsed(),
-            });
-            return Ok(runtime);
-        }
+            let tenant_load_guard = self.tenant_load_gate.lock().await;
+            let cached_runtime = {
+                self.tenants
+                    .read()
+                    .expect("tenant registry lock should not be poisoned")
+                    .get(tenant_id)
+                    .cloned()
+            };
+            if let Some(runtime) = cached_runtime {
+                if runtime.eviction_started() {
+                    drop(tenant_load_guard);
+                    runtime.wait_for_eviction_complete().await;
+                    continue;
+                }
+                maybe_emit_tenant_load_profile(TenantLoadProfileSample {
+                    tenant_id,
+                    cache_hit: true,
+                    open_existing: Duration::ZERO,
+                    runtime_init: Duration::ZERO,
+                    runtime_schema_load: Duration::ZERO,
+                    runtime_journal_progress: Duration::ZERO,
+                    runtime_profile_total: Duration::ZERO,
+                    recover_durable: Duration::ZERO,
+                    catch_up: Duration::ZERO,
+                    total: total_started.elapsed(),
+                });
+                return Ok(runtime);
+            }
 
+            return self
+                .load_existing_tenant_async_locked(tenant_id, total_started, tenant_load_guard)
+                .await;
+        }
+    }
+
+    async fn load_existing_tenant_async_locked(
+        self: &Arc<Self>,
+        tenant_id: &TenantId,
+        total_started: Instant,
+        _tenant_load_guard: TenantLoadGateGuard<'_>,
+    ) -> Result<Arc<TenantRuntime>> {
         let open_started = Instant::now();
         let Some(opened) = self
             .persistence_provider

@@ -11,20 +11,26 @@ use tokio::sync::Notify;
 // but both are driven by the same atomic state and RAII operation guards.
 pub(super) struct TenantLifecycle {
     deleted: AtomicBool,
+    eviction_started: AtomicBool,
+    eviction_complete: AtomicBool,
     active_operations: AtomicUsize,
     zero_active_lock: Mutex<()>,
     zero_active: Condvar,
     zero_active_notify: Notify,
+    eviction_complete_notify: Notify,
 }
 
 impl TenantLifecycle {
     pub(super) fn new() -> Self {
         Self {
             deleted: AtomicBool::new(false),
+            eviction_started: AtomicBool::new(false),
+            eviction_complete: AtomicBool::new(false),
             active_operations: AtomicUsize::new(0),
             zero_active_lock: Mutex::new(()),
             zero_active: Condvar::new(),
             zero_active_notify: Notify::new(),
+            eviction_complete_notify: Notify::new(),
         }
     }
 
@@ -58,6 +64,33 @@ impl TenantLifecycle {
 
     pub(super) fn mark_deleted(&self) {
         self.deleted.store(true, Ordering::Release);
+    }
+
+    pub(super) fn begin_eviction(&self) {
+        self.eviction_started.store(true, Ordering::Release);
+        self.mark_deleted();
+    }
+
+    pub(super) fn eviction_started(&self) -> bool {
+        self.eviction_started.load(Ordering::Acquire)
+    }
+
+    pub(super) fn finish_eviction(&self) {
+        self.eviction_complete.store(true, Ordering::Release);
+        self.eviction_complete_notify.notify_waiters();
+    }
+
+    pub(super) async fn wait_for_eviction_complete(&self) {
+        loop {
+            if self.eviction_complete.load(Ordering::Acquire) {
+                return;
+            }
+            let notified = self.eviction_complete_notify.notified();
+            if self.eviction_complete.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
     }
 
     pub(super) fn is_deleted(&self) -> bool {

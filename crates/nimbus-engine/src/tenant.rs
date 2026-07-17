@@ -470,11 +470,23 @@ impl TenantRuntime {
     }
 
     pub(crate) fn mark_deleting_for_eviction(&self) {
-        self.lifecycle.mark_deleted();
+        self.lifecycle.begin_eviction();
     }
 
     pub(crate) async fn wait_for_operation_drain_for_eviction(&self) {
         self.lifecycle.wait_for_operations_async().await;
+    }
+
+    pub(crate) fn eviction_started(&self) -> bool {
+        self.lifecycle.eviction_started()
+    }
+
+    pub(crate) async fn wait_for_eviction_complete(&self) {
+        self.lifecycle.wait_for_eviction_complete().await;
+    }
+
+    pub(crate) fn finish_eviction(&self) {
+        self.lifecycle.finish_eviction();
     }
 
     pub(crate) fn trigger_registry(&self) -> &TriggerRegistry {
