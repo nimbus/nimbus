@@ -44,18 +44,20 @@ async fn concurrent_insert_with_bounded_queue_retry(
             return body;
         }
 
-        let retryable_tenant_queue_overflow = status == StatusCode::TOO_MANY_REQUESTS
-            && body["error"]["retryable"] == true
-            && body["error"]["message"]
-                .as_str()
-                .is_some_and(|message| message.contains("tenant queue limit exceeded for demo"));
+        // Drive off the machine-readable PPSC3 contract rather than one
+        // specific message: on loaded runners a burst can legitimately shed
+        // as EITHER runtime tenant-queue overflow or sqlite read-pool
+        // exhaustion — both surface as 429 with `retryable: true`. Anything
+        // non-retryable (or a non-429) is a genuine failure.
+        let retryable_overload =
+            status == StatusCode::TOO_MANY_REQUESTS && body["error"]["retryable"] == true;
         assert!(
-            retryable_tenant_queue_overflow,
+            retryable_overload,
             "unexpected concurrent mutation response {status}: {body}"
         );
         assert!(
             retries < MAX_TENANT_QUEUE_RETRIES,
-            "tenant queue remained saturated after {retries} retries: {body}"
+            "tenant capacity remained saturated after {retries} retries: {body}"
         );
         retries += 1;
         tokio::time::sleep(std::time::Duration::from_millis(100 * (1 << (retries - 1)))).await;
