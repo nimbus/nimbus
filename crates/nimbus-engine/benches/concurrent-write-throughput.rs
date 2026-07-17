@@ -192,15 +192,16 @@ async fn update_hot_key_until_committed(
     unit: usize,
 ) {
     loop {
-        match engine
-            .update_document_async(
-                tenant.clone(),
-                table.clone(),
-                document_id.clone(),
-                patch_fields(unit),
-            )
-            .await
-        {
+        let result = tokio::task::spawn_blocking({
+            let engine = engine.clone();
+            let tenant = tenant.clone();
+            let table = table.clone();
+            let document_id = document_id.clone();
+            move || engine.update_document(&tenant, table, document_id, patch_fields(unit))
+        })
+        .await
+        .expect("hot-key blocking update task should join");
+        match result {
             Ok(_) => return,
             Err(error) if error.retryability() == Retryability::Retryable => {
                 // The regular API deliberately caps one call's OCC attempts.
