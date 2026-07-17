@@ -1292,7 +1292,23 @@ impl LibsqlReplicaWriteTransaction {
             writes,
         };
         let payload = serialize_tenant_event_record(&record)?;
+        let record_sequence = record.sequence;
+        let record_timestamp = record.timestamp;
+        let record_events = record.events.clone();
         self.store.block_on(async {
+            record_document_versions_for_events_remote(
+                self.session()?,
+                record_sequence,
+                record_timestamp,
+                &record_events,
+            )
+            .await?;
+            record_index_versions_for_events_remote(
+                self.session()?,
+                record_sequence,
+                &record_events,
+            )
+            .await?;
             self.session()?
                 .execute(
                     "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
@@ -1325,22 +1341,7 @@ impl LibsqlReplicaWriteTransaction {
         }
         let payload = serialize_tenant_event_record(record)?;
         let record_sequence = record.sequence;
-        let record_timestamp = record.timestamp;
-        let record_events = record.events.clone();
         self.store.block_on(async {
-            record_document_versions_for_events_remote(
-                self.session()?,
-                record_sequence,
-                record_timestamp,
-                &record_events,
-            )
-            .await?;
-            record_index_versions_for_events_remote(
-                self.session()?,
-                record_sequence,
-                &record_events,
-            )
-            .await?;
             self.session()?
                 .execute(
                     "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
