@@ -22,10 +22,27 @@ pub(super) fn reprepare_single_document_from_window(
     prepared: &mut PreparedCommit,
     dependencies: &DependencySet,
 ) -> Result<InlineReprepareOutcome> {
+    let durable_head = runtime.durable_head();
+    if matches!(
+        prepared.serialized_effects,
+        PreparedSerializedEffects::Direct { .. }
+    ) && runtime.applied_head() < durable_head
+    {
+        // PPSC4's direct persistence call consumes the applied storage image
+        // and publishes through its assigned sequence. It must therefore wait
+        // behind every durable-but-unapplied predecessor even when its prepare
+        // already observed that predecessor's storage image and would
+        // otherwise validate as unchanged.
+        return Ok(InlineReprepareOutcome::CallerWait(
+            Error::retryable_conflict(
+                "direct prepare requires the durable prefix to be applied",
+                Some(durable_head),
+            ),
+        ));
+    }
     if dependencies.is_empty() || !runtime.store.has_process_local_sequence_authority() {
         return Ok(InlineReprepareOutcome::Fresh);
     }
-    let durable_head = runtime.durable_head();
     if prepared.snapshot_sequence == durable_head
         && runtime.applied_head() == durable_head
         && runtime.write_log.assigned_through() == durable_head
@@ -91,21 +108,6 @@ pub(super) fn reprepare_single_document_from_window(
             ));
         }
     };
-    if matches!(
-        prepared.serialized_effects,
-        PreparedSerializedEffects::Direct { .. }
-    ) && base.sequence > runtime.applied_head()
-    {
-        // PPSC4's direct persistence call consumes the applied storage image.
-        // A pending image is safe for another record in the same journal
-        // batch, but path C must wait until that durable predecessor applies.
-        return Ok(InlineReprepareOutcome::CallerWait(
-            Error::retryable_conflict(
-                "direct stale prepare depends on an unapplied window image",
-                Some(base.sequence),
-            ),
-        ));
-    }
     let plan = prepared
         .inline_reprepare
         .take()
