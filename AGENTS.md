@@ -134,6 +134,12 @@ closed not-planned):
   before push/PR; progress judged by job-log/tree timestamps, never
   message-arrival cadence; takeover after ~1h of tree quiet measured
   from job start.
+- Review flow (no nesting): a Codex job never runs the structured
+  `autoreview` helper — nested reviewer invocation is prohibited by the
+  skill's contract and blocked by its session guard. The job closes with
+  a manual repo-grounded audit; the orchestrating session owns the
+  structured second-model review before push (which also gives
+  cross-model separation: a Claude reviewer over Codex-written code).
 
 ## Pre-Launch Status
 
