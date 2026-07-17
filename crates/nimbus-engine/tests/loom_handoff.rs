@@ -4,6 +4,94 @@ use loom::sync::atomic::{AtomicBool, Ordering};
 use loom::sync::{Arc, Condvar, Mutex};
 use loom::thread;
 
+#[derive(Debug, Clone, Copy)]
+struct CallerPrepare {
+    operation: u8,
+    observed_version: u64,
+}
+
+#[derive(Debug, Default)]
+struct PrepareHandoffState {
+    ready: Vec<CallerPrepare>,
+    assigned: Vec<u8>,
+    current_version: u64,
+    stale_prepares: usize,
+    inline_reprepares: usize,
+}
+
+#[derive(Debug, Default)]
+struct PrepareHandoff {
+    state: Mutex<PrepareHandoffState>,
+    ready: Condvar,
+}
+
+impl PrepareHandoff {
+    fn caller_prepare(&self, operation: u8) {
+        let mut state = self.state.lock().expect("prepare-handoff model lock");
+        state.ready.push(CallerPrepare {
+            operation,
+            // Both caller workers prepared from the same published image.
+            // Loom varies which prepared result reaches the actor first.
+            observed_version: 0,
+        });
+        self.ready.notify_all();
+    }
+
+    fn assign_two(&self) {
+        for _ in 0..2 {
+            let mut state = self.state.lock().expect("prepare-handoff model lock");
+            while state.ready.is_empty() {
+                state = self.ready.wait(state).expect("prepare-handoff wait");
+            }
+            let prepared = state.ready.remove(0);
+            assert!(
+                !state.assigned.contains(&prepared.operation),
+                "a prepared operation must be assigned at most once"
+            );
+            if prepared.observed_version != state.current_version {
+                state.stale_prepares += 1;
+                // The actor owns this re-prepare. It rebases the same logical
+                // operation on the latest published image without returning it
+                // to a caller-side worker or allocating a second assignment.
+                state.inline_reprepares += 1;
+            }
+            state.current_version += 1;
+            state.assigned.push(prepared.operation);
+        }
+    }
+}
+
+#[test]
+fn concurrent_prepares_racing_inline_reprepare_assign_once_in_either_order() {
+    loom::model(|| {
+        let handoff = Arc::new(PrepareHandoff::default());
+        let first_preparer = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.caller_prepare(1))
+        };
+        let second_preparer = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.caller_prepare(2))
+        };
+        let actor = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.assign_two())
+        };
+
+        first_preparer.join().expect("first prepare model thread");
+        second_preparer.join().expect("second prepare model thread");
+        actor.join().expect("prepare actor model thread");
+
+        let state = handoff.state.lock().expect("final prepare-handoff lock");
+        assert_eq!(state.assigned.len(), 2, "no caller prepare may be lost");
+        assert!(state.assigned.contains(&1));
+        assert!(state.assigned.contains(&2));
+        assert_eq!(state.current_version, 2);
+        assert_eq!(state.stale_prepares, 1);
+        assert_eq!(state.inline_reprepares, 1);
+    });
+}
+
 #[derive(Debug)]
 struct PublishState {
     pending_low: bool,
@@ -312,6 +400,357 @@ fn bounded_actor_handoff_drains_or_rejects_across_shutdown() {
         assert_eq!(state.processed, state.accepted, "accepted work must drain");
         drop(state);
         assert_eq!(inbox.send_or_timeout(3), SendOutcome::Closed);
+    });
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResponseState {
+    Pending,
+    Fulfilled,
+    Shutdown,
+}
+
+#[derive(Debug)]
+struct ModelResponse {
+    state: Mutex<ResponseState>,
+    receiver_live: AtomicBool,
+}
+
+impl ModelResponse {
+    fn pending() -> Self {
+        Self {
+            state: Mutex::new(ResponseState::Pending),
+            receiver_live: AtomicBool::new(true),
+        }
+    }
+
+    fn fulfill(&self, response: ResponseState) -> bool {
+        assert_ne!(response, ResponseState::Pending);
+        let mut state = self.state.lock().expect("model response lock");
+        assert_eq!(*state, ResponseState::Pending, "response resolved twice");
+        *state = response;
+        // A real oneshot send returns the value when its receiver was dropped;
+        // it does not panic. Preserve that contract in the model.
+        self.receiver_live.load(Ordering::Acquire)
+    }
+
+    fn timeout_receiver(&self) -> bool {
+        let state = self.state.lock().expect("model response lock");
+        if *state == ResponseState::Fulfilled {
+            return false;
+        }
+        self.receiver_live.store(false, Ordering::Release);
+        true
+    }
+}
+
+#[derive(Debug)]
+struct TimeoutInboxState {
+    slot: Option<Arc<ModelResponse>>,
+    sender_finished: bool,
+    accepted: usize,
+    processed: usize,
+}
+
+#[derive(Debug)]
+struct TimeoutInbox {
+    state: Mutex<TimeoutInboxState>,
+    changed: Condvar,
+}
+
+impl TimeoutInbox {
+    fn prefilled() -> Self {
+        Self {
+            state: Mutex::new(TimeoutInboxState {
+                slot: Some(Arc::new(ModelResponse::pending())),
+                sender_finished: false,
+                accepted: 1,
+                processed: 0,
+            }),
+            changed: Condvar::new(),
+        }
+    }
+
+    fn submit_at_deadline(&self, response: Arc<ModelResponse>) -> bool {
+        let accepted = {
+            let mut state = self.state.lock().expect("timeout inbox lock");
+            if state.slot.is_some() {
+                false
+            } else {
+                state.slot = Some(response.clone());
+                state.accepted += 1;
+                self.changed.notify_all();
+                true
+            }
+        };
+
+        if accepted {
+            // Model the deadline racing the actor's response. Fulfillment that
+            // won the race is success; otherwise dropping the receiver is safe.
+            let _timed_out = response.timeout_receiver();
+        } else {
+            response.receiver_live.store(false, Ordering::Release);
+        }
+
+        let mut state = self.state.lock().expect("timeout inbox lock");
+        state.sender_finished = true;
+        self.changed.notify_all();
+        accepted
+    }
+
+    fn drain_until_sender_finished(&self) {
+        let mut state = self.state.lock().expect("timeout inbox lock");
+        loop {
+            if let Some(response) = state.slot.take() {
+                state.processed += 1;
+                drop(state);
+                let _receiver_was_live = response.fulfill(ResponseState::Fulfilled);
+                state = self.state.lock().expect("timeout inbox lock");
+                self.changed.notify_all();
+                continue;
+            }
+            if state.sender_finished {
+                return;
+            }
+            state = self.changed.wait(state).expect("timeout inbox wait");
+        }
+    }
+}
+
+#[test]
+fn send_timeout_racing_actor_drain_never_leaks_or_panics_on_dropped_receiver() {
+    loom::model(|| {
+        let inbox = Arc::new(TimeoutInbox::prefilled());
+        let response = Arc::new(ModelResponse::pending());
+        let actor = {
+            let inbox = inbox.clone();
+            thread::spawn(move || inbox.drain_until_sender_finished())
+        };
+        let sender = {
+            let inbox = inbox.clone();
+            let response = response.clone();
+            thread::spawn(move || inbox.submit_at_deadline(response))
+        };
+
+        let accepted = sender.join().expect("timeout sender model thread");
+        actor.join().expect("timeout actor model thread");
+
+        let state = inbox.state.lock().expect("final timeout inbox lock");
+        assert_eq!(state.accepted, state.processed);
+        assert!(state.slot.is_none());
+        drop(state);
+        let response_state = *response.state.lock().expect("final response lock");
+        if accepted {
+            assert_eq!(response_state, ResponseState::Fulfilled);
+        } else {
+            assert_eq!(response_state, ResponseState::Pending);
+            assert!(!response.receiver_live.load(Ordering::Acquire));
+        }
+    });
+}
+
+#[derive(Debug)]
+struct ShutdownSubmission {
+    accepted: bool,
+    response: Arc<ModelResponse>,
+}
+
+#[derive(Debug, Default)]
+struct ShutdownRaceState {
+    closed: bool,
+    queued: Vec<Arc<ModelResponse>>,
+    accepted: usize,
+    resolved_accepted: usize,
+}
+
+#[derive(Debug, Default)]
+struct ShutdownRace {
+    state: Mutex<ShutdownRaceState>,
+}
+
+impl ShutdownRace {
+    fn submit(&self) -> ShutdownSubmission {
+        let response = Arc::new(ModelResponse::pending());
+        let mut state = self.state.lock().expect("shutdown race lock");
+        if state.closed {
+            let _ = response.fulfill(ResponseState::Shutdown);
+            return ShutdownSubmission {
+                accepted: false,
+                response,
+            };
+        }
+        state.accepted += 1;
+        state.queued.push(response.clone());
+        ShutdownSubmission {
+            accepted: true,
+            response,
+        }
+    }
+
+    fn process_one_then_shutdown(&self) {
+        let completed = {
+            let mut state = self.state.lock().expect("shutdown race lock");
+            state.queued.pop()
+        };
+        if let Some(response) = completed {
+            let _ = response.fulfill(ResponseState::Fulfilled);
+            self.state
+                .lock()
+                .expect("shutdown race lock")
+                .resolved_accepted += 1;
+        }
+        thread::yield_now();
+        let pending = {
+            let mut state = self.state.lock().expect("shutdown race lock");
+            state.closed = true;
+            std::mem::take(&mut state.queued)
+        };
+        for response in pending {
+            let _ = response.fulfill(ResponseState::Shutdown);
+            self.state
+                .lock()
+                .expect("shutdown race lock")
+                .resolved_accepted += 1;
+        }
+    }
+}
+
+#[test]
+fn shutdown_racing_prepared_submissions_resolves_every_accepted_message() {
+    loom::model(|| {
+        let race = Arc::new(ShutdownRace::default());
+        let first_sender = {
+            let race = race.clone();
+            thread::spawn(move || race.submit())
+        };
+        let second_sender = {
+            let race = race.clone();
+            thread::spawn(move || race.submit())
+        };
+        let actor = {
+            let race = race.clone();
+            thread::spawn(move || race.process_one_then_shutdown())
+        };
+
+        let submissions = [
+            first_sender.join().expect("first shutdown sender"),
+            second_sender.join().expect("second shutdown sender"),
+        ];
+        actor.join().expect("shutdown actor model thread");
+
+        let state = race.state.lock().expect("final shutdown race lock");
+        assert!(state.closed);
+        assert!(state.queued.is_empty());
+        assert_eq!(state.accepted, state.resolved_accepted);
+        drop(state);
+        for submission in submissions {
+            let response = *submission
+                .response
+                .state
+                .lock()
+                .expect("submission response");
+            assert_ne!(response, ResponseState::Pending);
+            if submission.accepted {
+                assert!(matches!(
+                    response,
+                    ResponseState::Fulfilled | ResponseState::Shutdown
+                ));
+            } else {
+                assert_eq!(response, ResponseState::Shutdown);
+            }
+        }
+    });
+}
+
+#[derive(Debug)]
+struct InlineAppliedState {
+    stale: bool,
+    reprepared: bool,
+    observed_applied_through: u64,
+    published_through: u64,
+    applied_head: u64,
+}
+
+#[derive(Debug)]
+struct InlineAppliedHandoff {
+    state: Mutex<InlineAppliedState>,
+    applied: Condvar,
+}
+
+impl InlineAppliedHandoff {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(InlineAppliedState {
+                stale: true,
+                reprepared: false,
+                observed_applied_through: 1,
+                published_through: 1,
+                applied_head: 1,
+            }),
+            applied: Condvar::new(),
+        }
+    }
+
+    fn inline_reprepare_and_publish(&self) {
+        {
+            let mut state = self.state.lock().expect("inline applied lock");
+            assert!(state.stale);
+            state.reprepared = true;
+            state.stale = false;
+        }
+        thread::yield_now();
+        let mut state = self.state.lock().expect("inline applied lock");
+        state.published_through = 2;
+        Self::advance_and_notify(&mut state, &self.applied);
+    }
+
+    fn observe_storage_apply(&self) {
+        let mut state = self.state.lock().expect("inline applied lock");
+        state.observed_applied_through = 2;
+        Self::advance_and_notify(&mut state, &self.applied);
+    }
+
+    fn advance_and_notify(state: &mut InlineAppliedState, applied: &Condvar) {
+        let visible = state.observed_applied_through.min(state.published_through);
+        if visible > state.applied_head {
+            state.applied_head = visible;
+            applied.notify_all();
+        }
+    }
+
+    fn wait_for_two(&self) {
+        let mut state = self.state.lock().expect("inline applied lock");
+        while state.applied_head < 2 {
+            state = self.applied.wait(state).expect("inline applied wait");
+        }
+        assert!(state.reprepared);
+        assert_eq!(state.published_through, 2);
+    }
+}
+
+#[test]
+fn applied_waiter_wakes_after_inline_reprepare_publishes_target_sequence() {
+    loom::model(|| {
+        let handoff = Arc::new(InlineAppliedHandoff::new());
+        let waiter = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.wait_for_two())
+        };
+        let actor = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.inline_reprepare_and_publish())
+        };
+        let storage = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.observe_storage_apply())
+        };
+
+        actor.join().expect("inline reprepare actor model thread");
+        storage.join().expect("storage progress model thread");
+        waiter.join().expect("inline applied waiter model thread");
+        let state = handoff.state.lock().expect("final inline applied lock");
+        assert_eq!(state.applied_head, 2);
+        assert!(state.applied_head <= state.published_through);
     });
 }
 
