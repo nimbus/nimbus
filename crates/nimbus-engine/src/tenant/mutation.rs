@@ -14,7 +14,7 @@ pub(crate) use self::actor::{
 pub(super) use self::admission::{MutationAdmissionDecision, MutationAdmissionGate};
 pub(super) use self::journal::MutationJournalState;
 #[cfg(any(test, feature = "test-hooks"))]
-pub(crate) use self::pause::MutationJournalPauseHandle;
+pub use self::pause::MutationJournalPauseHandle;
 #[cfg(any(test, feature = "test-hooks"))]
 pub(in crate::tenant) use self::pause::MutationJournalPauseState;
 #[cfg(test)]

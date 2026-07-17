@@ -74,6 +74,11 @@ pub(super) async fn handle_runtime_named_subscription(
         }
     };
     let primary_subscription_id = handle.primary_subscription_id;
+    // Finish the status projection before exposing the initial result. The
+    // socket task processes messages serially, so any awaited work after that
+    // send prevents it from observing a disconnect and retaining the runtime
+    // handle keeps every child engine subscription alive in the meantime.
+    record_active_subscription_status(ctx, primary_subscription_id, query_key).await;
     if publish_runtime_subscription_setup(
         RuntimeSubscriptionPublishContext {
             outbound_tx: ctx.outbound_tx,
@@ -88,8 +93,14 @@ pub(super) async fn handle_runtime_named_subscription(
     )
     .await
     {
-        record_active_subscription_status(ctx, primary_subscription_id, query_key).await;
+        return;
     }
+    delete_subscription_status(
+        &ctx.state.engine,
+        ctx.subscription_statuses,
+        primary_subscription_id,
+    )
+    .await;
 }
 
 async fn publish_runtime_subscription_setup(

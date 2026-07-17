@@ -195,6 +195,99 @@ pub(crate) async fn convex_websocket_disconnect_releases_runtime_subscription_ch
     .await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn runtime_subscription_status_projection_precedes_initial_result() {
+    let _guard = auth_test_guard().await;
+    let registry = convex_registry_with_routes_and_bundle_and_auth(
+        json!([
+            {
+                "name": "auth:watchIdentity",
+                "kind": "query",
+                "visibility": "public",
+                "plan": null,
+                "runtime_handler": "async (ctx) => ({ identity: await ctx.auth.getUserIdentity(), messages: await ctx.db.query(\"messages\").take(1) })"
+            }
+        ]),
+        json!([]),
+        Some(runtime_auth_subscription_bundle_source()),
+        None,
+    );
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
+    let server = ServerFixture::start(router_for_convex_team(service.clone(), registry)).await;
+    let api = HttpApiFixture::new(&server);
+    let tenant_id = nimbus_core::TenantId::new("demo").expect("tenant id should be valid");
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        api.insert_document("demo", "messages", json!({ "body": "Hello" }))
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+
+    nimbus_system::ensure_system_tenant_async(&service)
+        .await
+        .expect("system tenant should be ready before arming its mutation drain");
+    let system_tenant = nimbus_system::system_tenant_id().expect("system tenant id should parse");
+    let pause = service
+        .mutation_journal_pause_handle_for_testing(&system_tenant)
+        .expect("system tenant mutation pause should load");
+    pause.arm();
+    let mut socket = WebSocketFixture::connect_for_browser_with_bearer(
+        &api.ws_url("/convex/demo/ws"),
+        "demo",
+        &convex_team_bearer(),
+    )
+    .await
+    .expect("browser-style websocket connection should succeed");
+    socket
+        .subscribe_named("req-1", "auth:watchIdentity", json!({}))
+        .await;
+
+    let wait_pause = pause.clone();
+    assert!(
+        tokio::task::spawn_blocking(move || {
+            wait_pause.wait_until_entered(Duration::from_secs(10))
+        })
+        .await
+        .expect("status projection pause waiter should join"),
+        "subscription status projection should reach the paused mutation drain"
+    );
+    assert!(
+        timeout(Duration::from_millis(100), socket.next_json())
+            .await
+            .is_err(),
+        "the initial result must not outrun the status projection"
+    );
+
+    pause.release();
+    let initial = socket.next_json().await;
+    assert_eq!(initial["type"], json!("subscription_result"));
+    assert_eq!(
+        service
+            .active_subscription_count(&tenant_id)
+            .expect("subscription count should load"),
+        1
+    );
+
+    drop(socket);
+    wait_for_condition(
+        "disconnect should release the runtime subscription after the status projection",
+        Duration::from_secs(2),
+        Duration::from_millis(10),
+        || async {
+            service
+                .active_subscription_count(&tenant_id)
+                .expect("subscription count should load")
+                == 0
+        },
+    )
+    .await;
+}
+
 #[tokio::test]
 async fn convex_websocket_auth_change_drops_active_subscriptions_until_resubscribed() {
     convex_websocket_auth_change_drops_active_subscriptions_until_resubscribed_inner().await;

@@ -153,7 +153,7 @@ impl TenantRuntime {
         result
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) async fn wait_before_mutation_drain(&self) {
         self.mutation_journal.wait_before_drain().await;
     }
@@ -457,7 +457,7 @@ impl TenantRuntime {
             .set_codel_for_testing(target, interval);
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn mutation_journal_pause_handle_for_testing(&self) -> MutationJournalPauseHandle {
         self.mutation_journal.pause_handle()
     }

@@ -60,7 +60,7 @@ pub(crate) use self::mutation::DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY;
 #[cfg(test)]
 pub(crate) use self::mutation::DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY;
 #[cfg(any(test, feature = "test-hooks"))]
-pub(crate) use self::mutation::MutationJournalPauseHandle;
+pub use self::mutation::MutationJournalPauseHandle;
 #[cfg(any(test, feature = "test-hooks"))]
 use self::mutation::MutationJournalPauseState;
 pub(crate) use self::mutation::{

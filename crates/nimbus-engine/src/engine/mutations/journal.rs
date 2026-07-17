@@ -116,7 +116,7 @@ impl Engine {
 
         let batch_policy = MutationJournalBatchPolicy::from_env();
         runtime.drain_mutation_admission_queue();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         runtime.wait_before_mutation_drain().await;
         let batch = runtime
             .drain_mutation_batch_adaptive(

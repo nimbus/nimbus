@@ -49,6 +49,8 @@ pub use subscriptions::{
     DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, SubscriptionCleanupHandle, SubscriptionRegistration,
     SubscriptionUpdate,
 };
+#[cfg(any(test, feature = "test-hooks"))]
+pub use tenant::MutationJournalPauseHandle;
 pub use tenant::{
     MaterializedReadSurfaceStats, MutationAdmissionPhase, MutationAdmissionStats,
     MutationJournalStats, PinnedServingReadSnapshot, QueryPlanningStats,
