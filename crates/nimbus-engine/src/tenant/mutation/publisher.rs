@@ -34,7 +34,7 @@ fn publisher_limits_from_env() -> (usize, Duration) {
     )
 }
 
-fn observer_limits_from_env() -> (usize, usize, usize) {
+fn observer_limits_from_env() -> (usize, usize, usize, usize) {
     let requested_capacity = crate::config::env_positive_usize(
         "NIMBUS_COMMITTED_OBSERVER_QUEUE_CAPACITY",
         DEFAULT_OBSERVER_QUEUE_CAPACITY,
@@ -47,6 +47,7 @@ fn observer_limits_from_env() -> (usize, usize, usize) {
         requested_capacity,
         requested_high_watermark,
         crate::config::committer_publisher_batch_max(),
+        crate::config::mutation_journal_batch_max(),
     )
 }
 
@@ -54,14 +55,17 @@ fn clamp_observer_limits(
     tenant_id: &TenantId,
     requested_capacity: usize,
     requested_high_watermark: usize,
-    max_dispatch_size: usize,
+    publisher_max_dispatch_size: usize,
+    journal_max_dispatch_size: usize,
 ) -> (usize, usize) {
+    let max_dispatch_size = publisher_max_dispatch_size.max(journal_max_dispatch_size);
     let capacity = requested_capacity.max(1).max(max_dispatch_size.max(1));
     if capacity != requested_capacity {
         tracing::warn!(
             tenant = %tenant_id,
             requested_observer_queue_capacity = requested_capacity,
-            max_committed_observer_dispatch_size = max_dispatch_size,
+            max_publisher_observer_dispatch_size = publisher_max_dispatch_size,
+            max_serial_observer_dispatch_size = journal_max_dispatch_size,
             observer_queue_capacity = capacity,
             "clamped committed mutation observer capacity to the maximum single dispatch"
         );
@@ -98,7 +102,7 @@ fn take_publisher_limits_for_testing(tenant_id: &TenantId) -> Option<(usize, Dur
 }
 
 #[cfg(test)]
-type ObserverLimitsForTesting = (usize, usize, usize);
+type ObserverLimitsForTesting = (usize, usize, usize, usize);
 
 #[cfg(test)]
 type ObserverLimitOverrides = Mutex<std::collections::HashMap<TenantId, ObserverLimitsForTesting>>;
@@ -112,7 +116,8 @@ pub(crate) fn configure_observer_limits_for_testing(
     tenant_id: TenantId,
     capacity: usize,
     high_watermark: usize,
-    max_dispatch_size: usize,
+    publisher_max_dispatch_size: usize,
+    journal_max_dispatch_size: usize,
 ) {
     OBSERVER_LIMITS_FOR_TESTING
         .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
@@ -123,7 +128,8 @@ pub(crate) fn configure_observer_limits_for_testing(
             (
                 capacity.max(1),
                 high_watermark.max(1),
-                max_dispatch_size.max(1),
+                publisher_max_dispatch_size.max(1),
+                journal_max_dispatch_size.max(1),
             ),
         );
 }
@@ -151,6 +157,7 @@ pub(crate) struct ObserverHandoff {
     started: AtomicBool,
     drained: AtomicBool,
     drained_notify: tokio::sync::Notify,
+    capacity_available: tokio::sync::Notify,
 }
 
 struct ObserverSender {
@@ -171,6 +178,7 @@ impl ObserverHandoff {
             requested_limits.0,
             requested_limits.1,
             requested_limits.2,
+            requested_limits.3,
         );
         Self {
             tenant_id: tenant_id.clone(),
@@ -189,12 +197,13 @@ impl ObserverHandoff {
             started: AtomicBool::new(false),
             drained: AtomicBool::new(false),
             drained_notify: tokio::sync::Notify::new(),
+            capacity_available: tokio::sync::Notify::new(),
         }
     }
 
     pub(crate) fn send(
         &self,
-        mut dispatch: CommittedMutationObserverDispatch,
+        dispatch: CommittedMutationObserverDispatch,
         runtime: std::sync::Weak<super::super::TenantRuntime>,
     ) -> Result<()> {
         let event_count = dispatch.event_count();
@@ -224,6 +233,55 @@ impl ObserverHandoff {
             return Err(self.poisoned_error());
         }
 
+        self.send_locked(dispatch, runtime, &mut sender, depth)
+    }
+
+    pub(crate) async fn send_when_capacity_available(
+        &self,
+        dispatch: CommittedMutationObserverDispatch,
+        runtime: std::sync::Weak<super::super::TenantRuntime>,
+    ) -> Result<()> {
+        let event_count = dispatch.event_count();
+        if event_count > self.queue_capacity {
+            return Err(Error::Internal(format!(
+                "committed mutation observer dispatch contains {event_count} events, exceeding tenant {} capacity {}",
+                self.tenant_id, self.queue_capacity
+            )));
+        }
+        loop {
+            let available = self.capacity_available.notified();
+            {
+                let mut sender = self
+                    .sender
+                    .lock()
+                    .expect("observer sender lock should not be poisoned");
+                if self.poisoned.load(Ordering::Acquire) {
+                    return Err(self.poisoned_error());
+                }
+                if sender.closed {
+                    self.poison_locked(
+                        &mut sender,
+                        "observer catch-up dispatch arrived after the ordered dispatcher close",
+                    );
+                    return Err(self.poisoned_error());
+                }
+                let depth = self.queue_depth.load(Ordering::Acquire);
+                if event_count <= self.queue_capacity.saturating_sub(depth) {
+                    return self.send_locked(dispatch, runtime, &mut sender, depth);
+                }
+            }
+            available.await;
+        }
+    }
+
+    fn send_locked(
+        &self,
+        mut dispatch: CommittedMutationObserverDispatch,
+        runtime: std::sync::Weak<super::super::TenantRuntime>,
+        sender: &mut ObserverSender,
+        depth: usize,
+    ) -> Result<()> {
+        let event_count = dispatch.event_count();
         let next_depth = depth + event_count;
         self.queue_depth.store(next_depth, Ordering::Release);
         dispatch.arm_completion(runtime);
@@ -245,13 +303,14 @@ impl ObserverHandoff {
             .send(CommittedMutationObserverMessage::Dispatch(dispatch))
         {
             self.poison_locked(
-                &mut sender,
+                sender,
                 "committed mutation observer dispatcher stopped while accepting a dispatch",
             );
-            drop(sender);
-            // The dispatch owns its depth completion. Drop it only after the
-            // sender lock is released so completion can update the handoff.
-            drop(rejected);
+            let CommittedMutationObserverMessage::Dispatch(mut dispatch) = rejected.0 else {
+                unreachable!("observer send failure must return the dispatched message")
+            };
+            dispatch.disarm_completion();
+            self.complete_dispatch_locked(event_count);
             return Err(self.poisoned_error());
         }
         Ok(())
@@ -370,6 +429,7 @@ impl ObserverHandoff {
             self.high_water_warning_active
                 .store(false, Ordering::Release);
         }
+        self.capacity_available.notify_waiters();
     }
 
     pub(crate) fn stats(&self) -> ObserverQueueStats {

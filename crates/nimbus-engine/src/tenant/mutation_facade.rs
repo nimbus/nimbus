@@ -72,6 +72,19 @@ impl TenantRuntime {
         self.observer_dispatch.send(dispatch, Arc::downgrade(self))
     }
 
+    pub(crate) async fn enqueue_committed_mutation_observer_catch_up_dispatch(
+        self: &Arc<Self>,
+        dispatch: crate::engine::committed_mutations::CommittedMutationObserverDispatch,
+    ) -> Result<()> {
+        self.observer_dispatch
+            .send_when_capacity_available(dispatch, Arc::downgrade(self))
+            .await
+    }
+
+    pub(crate) fn committed_mutation_observer_capacity(&self) -> usize {
+        self.observer_dispatch.stats().capacity
+    }
+
     pub(crate) fn close_committed_mutation_observers(&self) {
         self.observer_dispatch.close();
     }

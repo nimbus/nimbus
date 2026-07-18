@@ -135,6 +135,10 @@ impl CommittedMutationObserverDispatch {
             event_count: self.event_count(),
         });
     }
+
+    pub(crate) fn disarm_completion(&mut self) {
+        self.completion = None;
+    }
 }
 
 struct DispatchCompletion {
@@ -310,6 +314,45 @@ impl Engine {
                 "committed mutation observer dispatch was refused"
             );
         }
+    }
+
+    pub(crate) async fn enqueue_provider_catch_up_commit_observers(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        applied: &[CommitEntry],
+    ) -> nimbus_core::Result<()> {
+        let observers = self
+            .committed_mutation_observers
+            .read()
+            .expect("committed mutation observer registry lock should not be poisoned")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        if observers.is_empty() {
+            return Ok(());
+        }
+        let events = applied
+            .iter()
+            .filter(|commit| !commit.writes.is_empty())
+            .cloned()
+            .map(|commit| CommittedMutationEvent {
+                tenant_id: runtime.tenant_id().clone(),
+                commit,
+            })
+            .collect::<Vec<_>>();
+        let capacity = runtime.committed_mutation_observer_capacity().max(1);
+        for chunk in events.chunks(capacity) {
+            runtime
+                .enqueue_committed_mutation_observer_catch_up_dispatch(
+                    CommittedMutationObserverDispatch {
+                        observers: observers.clone(),
+                        events: chunk.to_vec(),
+                        completion: None,
+                    },
+                )
+                .await?;
+        }
+        Ok(())
     }
 
     pub(crate) fn apply_committed_mutation_observer_work_stats(

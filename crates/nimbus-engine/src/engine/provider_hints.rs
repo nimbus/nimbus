@@ -214,12 +214,14 @@ impl Engine {
                 // operation, so identity must be proven kind-aware over the
                 // still-unflattened records, not assumed from `len() == 1`.
                 let commit_identity = document_bearing_commit_identity(&records);
-                self.process_applied_commit_batch(
-                    runtime,
+                self.process_applied_commit_batch_fanout(
+                    runtime.clone(),
                     &commits,
                     commit_identity,
                     emit_trigger_candidates,
                 );
+                self.enqueue_provider_catch_up_commit_observers(runtime, &commits)
+                    .await?;
             }
         }
 

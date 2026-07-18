@@ -28,20 +28,6 @@ use super::prepared::PreparedCommit;
 use super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
 use super::window_prepare::{WindowPreparedWrite, prepare_single_document_write_from_window};
 
-const MUTATION_JOURNAL_BATCH_SIZE: usize = 32;
-const DEFAULT_MUTATION_JOURNAL_BATCH_MAX: usize = 256;
-const DEFAULT_MUTATION_JOURNAL_COALESCE_MICROS: u64 = 0;
-
-fn mutation_journal_batch_policy() -> crate::config::BatchPolicy {
-    crate::config::BatchPolicy::from_env(
-        MUTATION_JOURNAL_BATCH_SIZE,
-        "NIMBUS_MUTATION_JOURNAL_BATCH_MAX",
-        DEFAULT_MUTATION_JOURNAL_BATCH_MAX,
-        "NIMBUS_MUTATION_JOURNAL_COALESCE_MICROS",
-        DEFAULT_MUTATION_JOURNAL_COALESCE_MICROS,
-    )
-}
-
 struct PendingMutationResponseGuard {
     runtime: Arc<TenantRuntime>,
 }
@@ -77,7 +63,7 @@ impl Engine {
         #[cfg(any(test, debug_assertions))]
         Engine::assert_running_on_background_task("mutation_committer");
 
-        let batch_policy = mutation_journal_batch_policy();
+        let batch_policy = crate::config::mutation_journal_batch_policy();
         runtime.drain_mutation_admission_queue();
         #[cfg(any(test, feature = "test-hooks"))]
         runtime.wait_before_mutation_drain().await;

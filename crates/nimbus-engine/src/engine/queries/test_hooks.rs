@@ -661,4 +661,20 @@ impl Engine {
         self.process_applied_commit_batch(runtime, &applied, commit_identity, false);
         Ok(())
     }
+
+    #[cfg(test)]
+    pub(crate) async fn enqueue_provider_catch_up_observers_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        records: &[TenantEventRecord],
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let applied = records
+            .iter()
+            .map(TenantEventRecord::as_commit_entry)
+            .collect::<Vec<_>>();
+        self.enqueue_provider_catch_up_commit_observers(runtime, &applied)
+            .await
+    }
 }

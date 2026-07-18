@@ -2729,7 +2729,7 @@ async fn observer_queue_cap_breach_poison_is_nonblocking_and_visible() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = TenantId::new("observer-cap-poison").expect("tenant id should build");
-    crate::tenant::configure_observer_limits_for_testing(tenant_id.clone(), 1, 1, 1);
+    crate::tenant::configure_observer_limits_for_testing(tenant_id.clone(), 1, 1, 1, 1);
     let created = fixture.create_tenant("observer-cap-poison", Engine::create_tenant);
     assert_eq!(created, tenant_id);
     engine
@@ -2790,13 +2790,16 @@ async fn observer_queue_cap_breach_poison_is_nonblocking_and_visible() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn observer_queue_capacity_clamps_to_max_single_dispatch() {
+async fn observer_queue_capacity_clamps_to_serial_journal_dispatch_max() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = TenantId::new("observer-cap-clamp").expect("tenant id should build");
-    crate::tenant::configure_observer_limits_for_testing(tenant_id.clone(), 1, 1, 4);
+    crate::tenant::configure_observer_limits_for_testing(tenant_id.clone(), 1, 1, 1, 4);
     let created = fixture.create_tenant("observer-cap-clamp", Engine::create_tenant);
     assert_eq!(created, tenant_id);
+    engine
+        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
+        .expect("test should request the serial journal arm");
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
@@ -2822,6 +2825,88 @@ async fn observer_queue_capacity_clamps_to_max_single_dispatch() {
         .flush_committed_mutation_observers_for_testing(&tenant_id)
         .await
         .expect("full single dispatch should drain without poison");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn provider_catch_up_chunks_observers_to_capacity_in_sequence_order() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = TenantId::new("provider-observer-chunks").expect("tenant id should build");
+    crate::tenant::configure_observer_limits_for_testing(tenant_id.clone(), 2, 1, 1, 1);
+    let created = fixture.create_tenant("provider-observer-chunks", Engine::create_tenant);
+    assert_eq!(created, tenant_id);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+
+    for index in 0..5 {
+        engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+            )
+            .await
+            .expect("provider-tail fixture write should commit");
+    }
+    let records = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("provider-tail fixture journal should read");
+    let expected_sequences = records
+        .iter()
+        .filter(|record| !record.writes.is_empty())
+        .map(|record| record.sequence)
+        .collect::<Vec<_>>();
+    assert_eq!(expected_sequences.len(), 5);
+
+    let observer = Arc::new(OrderedBlockingObserver::default());
+    engine.install_committed_mutation_observer("provider-chunk-order-test", observer.clone());
+    let mut catch_up = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .enqueue_provider_catch_up_observers_for_testing(&tenant_id, &records)
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state("the first provider observer chunk should block", {
+        let observer = observer.clone();
+        move |timeout| observer.wait_for_first(timeout)
+    })
+    .await;
+    assert_future_stays_pending(
+        &mut catch_up,
+        "provider catch-up must wait for capacity before handing off its next chunk",
+    )
+    .await;
+    let at_capacity = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("provider observer diagnostics should load");
+    assert_eq!(at_capacity.observer_queue_depth, 2);
+    assert_eq!(at_capacity.observer_queue_capacity, 2);
+    assert_eq!(at_capacity.observer_queue_cap_breach_count, 0);
+    assert!(!at_capacity.observer_dispatch_poisoned);
+
+    observer.release_first();
+    expect_catch_up_future_within(catch_up, "provider observer chunks should drain")
+        .await
+        .expect("provider catch-up task should join")
+        .expect("provider observer catch-up should succeed");
+    engine
+        .flush_committed_mutation_observers_for_testing(&tenant_id)
+        .await
+        .expect("provider observer tail should flush");
+    let state = observer.state.lock().expect("observer state should lock");
+    assert_eq!(state.0, expected_sequences);
+    assert_eq!(state.2, 1, "provider observer chunks must remain serial");
+    drop(state);
+    let drained = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("drained provider observer diagnostics should load");
+    assert_eq!(drained.observer_queue_depth, 0);
+    assert_eq!(drained.observer_queue_cap_breach_count, 0);
+    assert!(!drained.observer_dispatch_poisoned);
 }
 
 #[derive(Default)]
