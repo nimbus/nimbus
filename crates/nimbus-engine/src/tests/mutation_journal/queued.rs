@@ -2485,7 +2485,7 @@ async fn definitive_recovery_retries_fence_conflict_whose_sequence_was_discarded
                 .await
         }
     });
-    expect_blocking_wait_reaches_state("assigned sequence 2 should block before failing", {
+    expect_blocking_wait_reaches_state("assigned sequence 1 should block before failing", {
         let faults = faults.clone();
         move |timeout| faults.wait_until_blocked(timeout)
     })
@@ -2820,10 +2820,42 @@ async fn observer_queue_capacity_clamps_to_max_single_dispatch() {
         .expect("full single dispatch should drain without poison");
 }
 
-struct PanickingObserver;
+#[derive(Default)]
+struct BlockingPanickingObserver {
+    state: Mutex<(bool, bool)>,
+    entered: Condvar,
+    release: Condvar,
+}
 
-impl crate::CommittedMutationObserver for PanickingObserver {
+impl BlockingPanickingObserver {
+    fn wait_until_entered(&self, timeout: Duration) -> bool {
+        let state = self.state.lock().expect("observer state should lock");
+        let (state, _) = self
+            .entered
+            .wait_timeout_while(state, timeout, |state| !state.0)
+            .expect("observer wait should succeed");
+        state.0
+    }
+
+    fn release_to_panic(&self) {
+        let mut state = self.state.lock().expect("observer state should lock");
+        state.1 = true;
+        self.release.notify_all();
+    }
+}
+
+impl crate::CommittedMutationObserver for BlockingPanickingObserver {
     fn committed_mutation_applied(&self, _event: crate::CommittedMutationEvent) {
+        let mut state = self.state.lock().expect("observer state should lock");
+        state.0 = true;
+        self.entered.notify_all();
+        while !state.1 {
+            state = self
+                .release
+                .wait(state)
+                .expect("observer release should wait");
+        }
+        drop(state);
         panic!("injected committed observer panic");
     }
 }
@@ -2836,9 +2868,39 @@ async fn panicking_observer_poison_drops_queued_depth_without_phantom_backlog() 
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-    engine.install_committed_mutation_observer("panic-test", Arc::new(PanickingObserver));
+    let observer = Arc::new(BlockingPanickingObserver::default());
+    engine.install_committed_mutation_observer("panic-test", observer.clone());
 
-    run_paused_insert_burst(&engine, &tenant_id, 3).await;
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+        )
+        .await
+        .expect("first insert should dispatch to the blocking observer");
+    expect_blocking_wait_reaches_state("first observer dispatch should block before panicking", {
+        let observer = observer.clone();
+        move |timeout| observer.wait_until_entered(timeout)
+    })
+    .await;
+    for index in 2..=3 {
+        engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+            )
+            .await
+            .expect("later inserts should queue behind the blocked observer dispatch");
+    }
+    let queued = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("queued observer diagnostics should load");
+    assert_eq!(queued.observer_queue_depth, 3);
+    assert!(!queued.observer_dispatch_poisoned);
+
+    observer.release_to_panic();
     let stats = wait_for_mutation_journal_stats(
         &engine,
         &tenant_id,
