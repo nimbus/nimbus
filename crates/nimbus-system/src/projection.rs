@@ -690,6 +690,13 @@ impl ProjectionWork {
         };
         loop {
             let notified = tenant_work.idle.notified();
+            tokio::pin!(notified);
+            // Register before reading the state. `notify_waiters` wakes only
+            // waiters that are already registered and stores no permit, and a
+            // `Notified` does not register until it is first polled, so a guard
+            // release landing between the read and the await would otherwise be
+            // a lost wakeup on a tenant that has already gone idle.
+            notified.as_mut().enable();
             // A tenant that still owes a catch-up is not idle: its dropped
             // events have not reached `_nimbus` yet.
             if tenant_work.in_flight.load(Ordering::Acquire) == 0 && !tenant_work.is_dirty() {
@@ -737,6 +744,8 @@ impl ProjectionWork {
     async fn wait_until_registered(&self, tenant_id: &TenantId) {
         loop {
             let notified = self.registered.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             if self
                 .existing_tenant_work(tenant_id)
                 .is_some_and(|work| work.in_flight.load(Ordering::Acquire) != 0)
@@ -754,6 +763,8 @@ impl ProjectionWork {
             .expect("tenant projection work should exist before a flush waits");
         loop {
             let notified = tenant_work.flush_waiting_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             if tenant_work.flush_waiting.load(Ordering::Acquire) {
                 return;
             }
