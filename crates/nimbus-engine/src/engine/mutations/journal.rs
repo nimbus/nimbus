@@ -56,6 +56,16 @@ struct FailedSerialQueuedMutationBatch {
     deferred: Vec<DeferredPublisherResponse>,
 }
 
+/// Assignment failed part-way through a batch. Requests the assignment loop had
+/// already resolved on their own terms -- cancellations, empty journals,
+/// duplicate schedules, OCC waits -- carry their own outcome out with the
+/// failure so the recovery fence can hand each caller its original result
+/// instead of the unrelated assignment error.
+struct FailedQueuedMutationAssignment {
+    error: Error,
+    deferred: Vec<DeferredPublisherResponse>,
+}
+
 enum SerialBatchRecovery {
     Definitive {
         discarded_first_sequence: Option<SequenceNumber>,
@@ -212,16 +222,24 @@ impl Engine {
                         warn!(error = %error, "publisher queue rejected assigned mutation batch");
                     }
                 }
-                Ok(Err(error)) => {
+                Ok(Err(failure)) => {
                     runtime.record_mutation_worker_failure();
-                    warn!(error = %error, "mutation assignment batch failed");
+                    warn!(error = %failure.error, "mutation assignment batch failed");
                     recover_failed_assignment(
                         runtime.clone(),
                         assignment_baseline,
                         "mutation assignment batch failed",
                     )
                     .await;
-                    fail_mutation_responses(&assignment_responses, &error);
+                    // Requests that already resolved themselves keep their own
+                    // outcome. They must be sent before the blanket failure
+                    // below, because the response slot is take-once.
+                    complete_deferred_after_assignment_recovery(
+                        failure.deferred,
+                        assignment_baseline,
+                        &failure.error,
+                    );
+                    fail_mutation_responses(&assignment_responses, &failure.error);
                 }
                 Err(join_error) => {
                     let error = Error::Internal(format!(
@@ -557,7 +575,7 @@ fn assign_queued_mutation_batch(
     engine: Arc<Engine>,
     mut previous_sequence: SequenceNumber,
     commit_faults: &CommitFaultClient,
-) -> Result<AssignedPublisherWork> {
+) -> std::result::Result<AssignedPublisherWork, FailedQueuedMutationAssignment> {
     let mut phases = CommitPhaseDurations::default();
     let mut scheduled_execution_overlay = HashSet::new();
     let mut active = Vec::new();
@@ -642,7 +660,7 @@ fn assign_queued_mutation_batch(
         let sequence = match crate::tenant::assign_and_validate(previous_sequence, 1) {
             Ok(sequences) => sequences[0],
             Err(error) => {
-                return Err(error);
+                return Err(FailedQueuedMutationAssignment { error, deferred });
             }
         };
         let record = match prepared_commit.into_record(sequence, runtime.assign_commit_timestamp())
@@ -658,9 +676,12 @@ fn assign_queued_mutation_batch(
             }
         };
         runtime.stage_pending_write_log_commits([record.as_commit_entry()], runtime.store.now());
-        commit_faults
+        if let Err(error) = commit_faults
             .wait(labels::JOURNAL_ASSIGN_AFTER_STAGE)
-            .into_result()?;
+            .into_result()
+        {
+            return Err(FailedQueuedMutationAssignment { error, deferred });
+        }
         previous_sequence = sequence;
         phases.add_prepare(serialize_started.elapsed());
         active.push(PendingPublisherResponse {
@@ -703,6 +724,25 @@ fn assign_queued_mutation_batch(
 fn fail_mutation_responses(responses: &[MutationResponseSender], error: &Error) {
     for response in responses {
         let _ = response.send(Err(error.clone()));
+    }
+}
+
+/// Hands each self-resolved request its original result once the failed
+/// assignment's staged suffix has been discarded. An OCC wait whose conflict
+/// target lived in that discarded suffix can no longer be waited on, so
+/// `complete_after_recovery` rejects it instead of promising a sequence that
+/// will never commit.
+fn complete_deferred_after_assignment_recovery(
+    deferred: Vec<DeferredPublisherResponse>,
+    assignment_baseline: SequenceNumber,
+    error: &Error,
+) {
+    let discarded_first_sequence = assignment_baseline.0.checked_add(1).map(SequenceNumber);
+    for response in deferred {
+        match discarded_first_sequence {
+            Some(first_sequence) => response.complete_after_recovery(first_sequence, error),
+            None => response.complete(),
+        }
     }
 }
 
@@ -828,10 +868,6 @@ fn process_serial_queued_mutation_batch(
     commit_faults: &CommitFaultClient,
 ) -> std::result::Result<QueuedMutationBatchResult, FailedSerialQueuedMutationBatch> {
     let previous_sequence = runtime.durable_head();
-    let assignment_responses = batch
-        .iter()
-        .map(|request| request.response.clone())
-        .collect::<Vec<_>>();
     let work = match assign_queued_mutation_batch(
         runtime.clone(),
         batch,
@@ -840,13 +876,17 @@ fn process_serial_queued_mutation_batch(
         commit_faults,
     ) {
         Ok(work) => work,
-        Err(error) => {
+        Err(failure) => {
             // The serial arm stages the same process-local write-log suffix as
-            // the pipeline arm. Discard it before waking callers; the actor's
-            // outer error path then refreshes durable progress from storage.
+            // the pipeline arm. Discard it here; the actor's outer error path
+            // then refreshes durable progress from storage and wakes every
+            // caller behind that fence -- self-resolved requests with their own
+            // result, the rest with the assignment error.
             discard_failed_assignment_suffix(runtime.as_ref(), previous_sequence);
-            fail_mutation_responses(&assignment_responses, &error);
-            return Err(FailedSerialQueuedMutationBatch::without_deferred(error));
+            return Err(FailedSerialQueuedMutationBatch {
+                error: failure.error,
+                deferred: failure.deferred,
+            });
         }
     };
     let Some(mut assigned) = work.batch else {
