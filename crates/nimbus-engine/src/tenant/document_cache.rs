@@ -4,11 +4,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(test)]
 use std::sync::{Arc, Condvar};
 #[cfg(test)]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use nimbus_core::{CommitEntry, Document, DocumentId, TableName};
 
 pub(crate) const DOCUMENT_CACHE_CAPACITY: usize = 256;
+
+#[cfg(test)]
+const DOCUMENT_CACHE_PAUSE_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
 
 type DocumentCacheKey = (TableName, DocumentId);
 
@@ -304,12 +307,19 @@ impl DocumentCacheInvalidationPauseState {
         control.armed = false;
         control.entered = true;
         self.condvar.notify_all();
-        while !control.released {
-            control = self
-                .condvar
-                .wait(control)
-                .expect("document cache invalidation pause wait should not be poisoned");
-        }
+        let (next, _) = self
+            .condvar
+            .wait_timeout_while(control, DOCUMENT_CACHE_PAUSE_RELEASE_TIMEOUT, |control| {
+                !control.released
+            })
+            .expect("document cache invalidation pause wait should not be poisoned");
+        control = next;
+        assert!(
+            control.released,
+            "document cache invalidation pause was not released within \
+             {DOCUMENT_CACHE_PAUSE_RELEASE_TIMEOUT:?}; the test likely exited before calling \
+             release()"
+        );
         *control = DocumentCacheInvalidationPauseControl::default();
     }
 }

@@ -7,7 +7,10 @@ use std::collections::{HashMap, hash_map::Entry};
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::{Arc, Condvar, Mutex};
 #[cfg(any(test, feature = "test-hooks"))]
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+#[cfg(any(test, feature = "test-hooks"))]
+const COMMIT_FAULT_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Label(&'static str);
@@ -409,10 +412,31 @@ impl CommitFaultState {
                         Some(ArmedFault::Pause {
                             released: false, ..
                         }) => {
-                            armed = self
+                            let (next, _) = self
                                 .condvar
-                                .wait(armed)
+                                .wait_timeout_while(armed, COMMIT_FAULT_RELEASE_TIMEOUT, |armed| {
+                                    matches!(
+                                        armed.get(&label),
+                                        Some(ArmedFault::Pause {
+                                            released: false,
+                                            ..
+                                        })
+                                    )
+                                })
                                 .expect("execution unit commit fault wait should not be poisoned");
+                            armed = next;
+                            assert!(
+                                !matches!(
+                                    armed.get(&label),
+                                    Some(ArmedFault::Pause {
+                                        released: false,
+                                        ..
+                                    })
+                                ),
+                                "commit fault pause {label:?} was not released within \
+                                 {COMMIT_FAULT_RELEASE_TIMEOUT:?}; the test likely exited before \
+                                 calling release()"
+                            );
                         }
                         Some(ArmedFault::Pause { released: true, .. }) => {
                             armed.remove(&label);

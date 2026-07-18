@@ -1,9 +1,12 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use nimbus_core::Error;
 use nimbus_storage::{FaultInjector, FaultPoint};
 use tokio::sync::Notify;
+
+const BLOCKING_FAULT_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct BlockingFaultInjector {
     point: FaultPoint,
@@ -41,14 +44,19 @@ impl FaultInjector for BlockingFaultInjector {
         }
         self.entered.notify_one();
         let (lock, cvar) = &self.release_gate;
-        let mut released = lock
+        let released = lock
             .lock()
             .expect("blocking fault injector should acquire release lock");
-        while !*released {
-            released = cvar
-                .wait(released)
-                .expect("blocking fault injector should wait for release");
-        }
+        let (released, _) = cvar
+            .wait_timeout_while(released, BLOCKING_FAULT_RELEASE_TIMEOUT, |released| {
+                !*released
+            })
+            .expect("blocking fault injector should wait for release");
+        assert!(
+            *released,
+            "blocking fault injector was not released within \
+             {BLOCKING_FAULT_RELEASE_TIMEOUT:?}; the test likely exited before calling release()"
+        );
         Ok(())
     }
 }

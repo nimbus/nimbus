@@ -8,6 +8,8 @@ use tokio::time::{Duration, timeout};
 
 use super::*;
 
+const REFRESH_GATE_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
+
 struct TestReplica {
     _tempdir: TempDir,
     store: LibsqlReplicaTenantStore,
@@ -33,14 +35,19 @@ impl RefreshGate {
     fn block(&self) {
         self.entered.notify_one();
         let (lock, cvar) = &self.release_gate;
-        let mut released = lock
+        let released = lock
             .lock()
             .expect("refresh gate should acquire release lock");
-        while !*released {
-            released = cvar
-                .wait(released)
-                .expect("refresh gate should wait for release");
-        }
+        let (released, _) = cvar
+            .wait_timeout_while(released, REFRESH_GATE_RELEASE_TIMEOUT, |released| {
+                !*released
+            })
+            .expect("refresh gate should wait for release");
+        assert!(
+            *released,
+            "replica refresh gate was not released within {REFRESH_GATE_RELEASE_TIMEOUT:?}; the \
+             test likely exited before calling release()"
+        );
     }
 
     fn release(&self) {

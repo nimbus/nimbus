@@ -144,6 +144,12 @@ fn take_observer_limits_for_testing(tenant_id: &TenantId) -> Option<ObserverLimi
         .remove(tenant_id)
 }
 
+/// Slice-A overload contract: live observer delivery is bounded and loud.
+/// A cap breach poisons this tenant handoff and records diagnostics before an
+/// error is logged. Blocking the publisher here can deadlock because observers
+/// may perform nested synchronous writes; leaving the queue truly unbounded can
+/// exhaust process memory. Lossless catch-up is the PPSC5-B durable-journal
+/// replay contract, not an implicit property of this live handoff.
 pub(crate) struct ObserverHandoff {
     tenant_id: TenantId,
     sender: Mutex<ObserverSender>,
@@ -650,12 +656,41 @@ impl DeferredPublisherResponse {
     pub(crate) fn fail(self, error: &Error) {
         let _ = self.response.send(Err(error.clone()));
     }
+
+    pub(crate) fn defer_completion_after_recovery(
+        self,
+        discarded_first_sequence: SequenceNumber,
+        recovery_error: &Error,
+    ) -> Box<dyn FnOnce() + Send + 'static> {
+        let Self {
+            _operation,
+            response,
+            result,
+        } = self;
+        let discarded_wait_target = result
+            .as_ref()
+            .err()
+            .and_then(Error::conflicting_sequence)
+            .filter(|sequence| *sequence >= discarded_first_sequence);
+        let result = if let Some(sequence) = discarded_wait_target {
+            Err(Error::rejected_before_execution(format!(
+                "publisher recovery discarded conflict wait target {sequence} at or after {discarded_first_sequence}: {recovery_error}"
+            )))
+        } else {
+            result
+        };
+        drop(_operation);
+        Box::new(move || {
+            let _ = response.send(result);
+        })
+    }
 }
 
 pub(crate) struct AssignedPublisherBatch {
     pub(crate) engine: Arc<Engine>,
     pub(crate) records: Arc<Vec<TenantEventRecord>>,
     pub(crate) responses: Vec<PendingPublisherResponse>,
+    pub(crate) deferred: Vec<DeferredPublisherResponse>,
     pub(crate) phases: CommitPhaseDurations,
     pub(crate) sample_started_at: Instant,
 }
@@ -675,14 +710,26 @@ impl AssignedPublisherBatch {
             .sequence
     }
 
-    pub(crate) fn fail(self, error: &Error) {
+    pub(crate) fn fail_after_recovery(
+        self,
+        discarded_first_sequence: SequenceNumber,
+        recovery_error: &Error,
+    ) {
         for pending in self.responses {
-            let _ = pending.response.send(Err(error.clone()));
+            let _ = pending.response.send(Err(recovery_error.clone()));
+        }
+        for deferred in self.deferred {
+            deferred.complete_after_recovery(discarded_first_sequence, recovery_error);
         }
     }
 
-    pub(crate) fn defer_failure(self, error: &Error) -> Vec<Box<dyn FnOnce() + Send + 'static>> {
-        self.responses
+    pub(crate) fn defer_failure_after_recovery(
+        self,
+        discarded_first_sequence: SequenceNumber,
+        error: &Error,
+    ) -> Vec<Box<dyn FnOnce() + Send + 'static>> {
+        let mut completions = self
+            .responses
             .into_iter()
             .map(|pending| {
                 let PendingPublisherResponse {
@@ -696,7 +743,11 @@ impl AssignedPublisherBatch {
                     let _ = response.send(Err(error));
                 }) as Box<dyn FnOnce() + Send + 'static>
             })
-            .collect()
+            .collect::<Vec<_>>();
+        completions.extend(self.deferred.into_iter().map(|deferred| {
+            deferred.defer_completion_after_recovery(discarded_first_sequence, error)
+        }));
+        completions
     }
 
     pub(crate) fn try_merge(&mut self, mut next: Self) -> std::result::Result<(), Box<Self>> {
@@ -707,6 +758,7 @@ impl AssignedPublisherBatch {
         }
         Arc::make_mut(&mut self.records).extend(next.records.iter().cloned());
         self.responses.append(&mut next.responses);
+        self.deferred.append(&mut next.deferred);
         self.phases.merge_assignment(next.phases);
         self.sample_started_at = self.sample_started_at.min(next.sample_started_at);
         Ok(())

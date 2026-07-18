@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn start_is_a_no_op_while_already_running() {
         let worker = BackgroundWorker::new();
-        let started = Arc::new(std::sync::Barrier::new(2));
+        let started = Arc::new(nimbus_testing::BoundedTestBarrier::new(2));
         let release = Arc::new(AtomicBool::new(false));
 
         let started_clone = started.clone();

@@ -25,6 +25,12 @@ struct TableProjectionObserver {
     projection_work: Arc<ProjectionWork>,
 }
 
+/// Slice-A overload contract: projection spawning is bounded and loud. The
+/// per-tenant cap poisons that runtime generation and exposes breach/drop
+/// diagnostics with an error; the aggregate cap drops with warning diagnostics
+/// until capacity returns. Blocking either path can deadlock nested observer
+/// writes, while unbounded spawning can exhaust process memory. Lossless
+/// projection catch-up belongs to PPSC5-B durable-journal replay.
 struct ProjectionWork {
     epoch: Arc<str>,
     capacity: usize,

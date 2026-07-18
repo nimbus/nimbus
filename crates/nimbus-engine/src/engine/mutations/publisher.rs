@@ -110,9 +110,29 @@ pub(crate) async fn run_ordered_publisher(
             }
         };
         let Some(runtime) = runtime.upgrade() else {
-            batch.fail(&Error::Internal(
+            let first_sequence = batch.first_sequence();
+            let error = Error::Internal(
                 "tenant runtime stopped before assigned batch publication".to_string(),
-            ));
+            );
+            receiver.close();
+            let mut completions = batch.defer_failure_after_recovery(first_sequence, &error);
+            if let Some(pending) = pending_message.take() {
+                completions.extend(defer_publisher_message_failure(
+                    pending,
+                    first_sequence,
+                    &error,
+                ));
+            }
+            while let Some(queued) = receiver.recv().await {
+                completions.extend(defer_publisher_message_failure(
+                    queued,
+                    first_sequence,
+                    &error,
+                ));
+            }
+            for complete in completions {
+                complete();
+            }
             break;
         };
         let batch = accumulate_assigned_batches(
@@ -488,6 +508,9 @@ fn complete_published_batch(
         commit_identity,
         true,
     );
+    for deferred in batch.deferred {
+        deferred.complete();
+    }
     for pending in batch.responses {
         let _ = pending.response.send(Ok(pending.result));
     }
@@ -551,10 +574,10 @@ async fn fail_definitive_batch_and_recover(
             "definitive publisher batch failed before durable advance; journal recovery failed"
         ),
     }
-    batch.fail(&error);
+    batch.fail_after_recovery(first_sequence, &error);
     for message in drained_messages {
         match message {
-            PublisherMessage::Batch(batch) => batch.fail(&error),
+            PublisherMessage::Batch(batch) => batch.fail_after_recovery(first_sequence, &error),
             PublisherMessage::Barrier(completed) => {
                 let _ = completed.send(());
             }
@@ -573,10 +596,13 @@ async fn fail_definitive_batch_and_recover(
 
 fn defer_publisher_message_failure(
     message: PublisherMessage,
+    discarded_first_sequence: SequenceNumber,
     error: &Error,
 ) -> Vec<Box<dyn FnOnce() + Send + 'static>> {
     match message {
-        PublisherMessage::Batch(batch) => batch.defer_failure(error),
+        PublisherMessage::Batch(batch) => {
+            batch.defer_failure_after_recovery(discarded_first_sequence, error)
+        }
         PublisherMessage::Barrier(completed) => {
             drop(completed);
             Vec::new()
@@ -622,9 +648,14 @@ async fn fail_and_restart(
     // operation guard immediately. Run the sender-only completions before any
     // engine-wide gate acquisition, then explicitly drain queues whose actor
     // wake may have been consumed at shutdown.
-    let mut failure_completions = batch.defer_failure(&error);
+    let first_sequence = batch.first_sequence();
+    let mut failure_completions = batch.defer_failure_after_recovery(first_sequence, &error);
     for queued in queued_messages {
-        failure_completions.extend(defer_publisher_message_failure(queued, &error));
+        failure_completions.extend(defer_publisher_message_failure(
+            queued,
+            first_sequence,
+            &error,
+        ));
     }
     for complete in failure_completions {
         complete();
@@ -740,7 +771,14 @@ mod tests {
         (
             AssignedPublisherBatch {
                 engine,
-                records: Arc::new(Vec::new()),
+                records: Arc::new(vec![
+                    nimbus_core::TenantEventRecord::barrier(
+                        SequenceNumber(1),
+                        nimbus_core::Timestamp(1),
+                        "publisher failure-path test".to_string(),
+                    )
+                    .expect("failure-test record should build"),
+                ]),
                 responses: vec![crate::tenant::PendingPublisherResponse {
                     _operation: runtime
                         .enter_operation(runtime.tenant_id())
@@ -748,6 +786,7 @@ mod tests {
                     response: crate::tenant::MutationResponseSender::new(response),
                     result: crate::tenant::QueuedMutationResult::Scheduled(false),
                 }],
+                deferred: Vec::new(),
                 phases: crate::engine::CommitPhaseDurations::default(),
                 sample_started_at: Instant::now(),
             },
@@ -798,7 +837,14 @@ mod tests {
         let (batch_response, mut batch_result) = tokio::sync::oneshot::channel();
         let batch = AssignedPublisherBatch {
             engine: engine.clone(),
-            records: Arc::new(Vec::new()),
+            records: Arc::new(vec![
+                nimbus_core::TenantEventRecord::barrier(
+                    SequenceNumber(1),
+                    nimbus_core::Timestamp(1),
+                    "stashed publisher failure-path test".to_string(),
+                )
+                .expect("stashed failure-test record should build"),
+            ]),
             responses: vec![crate::tenant::PendingPublisherResponse {
                 _operation: runtime
                     .enter_operation(&tenant_id)
@@ -806,12 +852,16 @@ mod tests {
                 response: crate::tenant::MutationResponseSender::new(batch_response),
                 result: crate::tenant::QueuedMutationResult::Scheduled(false),
             }],
+            deferred: Vec::new(),
             phases: crate::engine::CommitPhaseDurations::default(),
             sample_started_at: Instant::now(),
         };
         let typed = Error::rejected_before_execution("typed stashed-message failure");
-        let mut completions =
-            defer_publisher_message_failure(PublisherMessage::Batch(batch), &typed);
+        let mut completions = defer_publisher_message_failure(
+            PublisherMessage::Batch(batch),
+            SequenceNumber(1),
+            &typed,
+        );
         assert!(matches!(
             batch_result.try_recv(),
             Err(tokio::sync::oneshot::error::TryRecvError::Empty)
@@ -830,6 +880,7 @@ mod tests {
         let (drained, mut drain_completed) = tokio::sync::oneshot::channel();
         completions.extend(defer_publisher_message_failure(
             PublisherMessage::SerialJob { job, drained },
+            SequenceNumber(1),
             &typed,
         ));
         assert!(matches!(

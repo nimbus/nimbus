@@ -391,7 +391,24 @@ fn subscription_initial_evaluation_uses_materialized_serving_path_for_full_scan_
         )
         .expect("subscribe should succeed");
 
-    let initial = rx.blocking_recv().expect("initial update should arrive");
+    let initial = {
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            match rx.try_recv() {
+                Ok(update) => break update,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    panic!("initial subscription update channel disconnected")
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "initial subscription update did not arrive within 60s"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+        }
+    };
     match initial {
         SubscriptionUpdate::Result {
             subscription_id,

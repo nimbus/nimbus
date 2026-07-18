@@ -26,6 +26,29 @@ use crate::limits::{
     RuntimeNodeFullRealmReusePolicy, RuntimePoolKind, RuntimeRoutingAffinity,
 };
 
+const BLOCKING_TEST_RECEIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+fn recv_within<T>(receiver: &std::sync::mpsc::Receiver<T>, context: &str) -> T {
+    receiver
+        .recv_timeout(BLOCKING_TEST_RECEIVE_TIMEOUT)
+        .unwrap_or_else(|error| {
+            panic!(
+                "{context} within {BLOCKING_TEST_RECEIVE_TIMEOUT:?}; blocking test channel \
+                 failed: {error}"
+            )
+        })
+}
+
+fn recv_until_disconnected<T>(receiver: &std::sync::mpsc::Receiver<T>, context: &str) -> Option<T> {
+    match receiver.recv_timeout(BLOCKING_TEST_RECEIVE_TIMEOUT) {
+        Ok(value) => Some(value),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => None,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            panic!("{context} within {BLOCKING_TEST_RECEIVE_TIMEOUT:?}")
+        }
+    }
+}
+
 /// Generates parent dispatchers that run each `#[ignore]`'d cage-sensitive pool_reuse test in
 /// a FRESH subprocess (its own V8 cage). This is what makes a `--features
 /// v8-pointer-compression` run BOTH safe and meaningful: no cross-test cage-install-order
@@ -433,7 +456,7 @@ fn concurrent_snapshot_isolate_creation_does_not_abort() {
         .map(|n| n.get())
         .unwrap_or(4)
         .max(4);
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(thread_count));
+    let barrier = std::sync::Arc::new(crate::test_support::BoundedTestBarrier::new(thread_count));
     let bundle_path = std::sync::Arc::new(bundle_path);
 
     let handles: Vec<_> = (0..thread_count)
@@ -520,7 +543,7 @@ fn reuse_main_context_execution_under_concurrent_creation_does_not_abort() {
         .map(|n| n.get())
         .unwrap_or(4)
         .max(4);
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(thread_count));
+    let barrier = std::sync::Arc::new(crate::test_support::BoundedTestBarrier::new(thread_count));
     let bundle_path = std::sync::Arc::new(bundle_path);
 
     let handles: Vec<_> = (0..thread_count)
@@ -612,7 +635,7 @@ fn create_realm_per_invocation_under_concurrent_creation_probe() {
         .map(|n| n.get())
         .unwrap_or(4)
         .max(4);
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(thread_count));
+    let barrier = std::sync::Arc::new(crate::test_support::BoundedTestBarrier::new(thread_count));
     let bundle_path = std::sync::Arc::new(bundle_path);
 
     let handles: Vec<_> = (0..thread_count)
@@ -713,7 +736,7 @@ fn concurrent_both_profile_snapshot_creation_does_not_abort() {
         .map(|n| n.get())
         .unwrap_or(4)
         .max(4);
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(thread_count));
+    let barrier = std::sync::Arc::new(crate::test_support::BoundedTestBarrier::new(thread_count));
     let bundle_path = std::sync::Arc::new(bundle_path);
 
     let handles: Vec<_> = (0..thread_count)
@@ -803,7 +826,7 @@ fn concurrent_asymmetric_nodefull_snapshot_weblean_unsnapshotted_does_not_abort(
         .map(|n| n.get())
         .unwrap_or(4)
         .max(4);
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(thread_count));
+    let barrier = std::sync::Arc::new(crate::test_support::BoundedTestBarrier::new(thread_count));
     let bundle_path = std::sync::Arc::new(bundle_path);
 
     let handles: Vec<_> = (0..thread_count)
@@ -958,10 +981,10 @@ fn cross_thread_coliveness_without_concurrent_creation_does_not_abort() {
                 .expect("parked nodefull isolate must EXECUTE JS, not merely construct");
             a_ready_tx.send(()).expect("signal nodefull alive");
             // Park: keep nodefull alive+idle (NOT creating) until released.
-            a_release_rx.recv().expect("park nodefull until release");
+            recv_within(&a_release_rx, "test should release parked nodefull isolate");
         });
     });
-    a_ready_rx.recv().expect("wait until nodefull is alive");
+    recv_within(&a_ready_rx, "nodefull isolate should report ready");
 
     let main_rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1044,7 +1067,7 @@ fn coliveness_at_scale_without_concurrent_cross_profile_creation_does_not_abort(
                     ready_tx.send(()).expect("signal nodefull alive");
                     // Park alive+idle until released.
                     let _guard = release_rx.lock().expect("release lock");
-                    let _ = _guard.recv();
+                    recv_within(&_guard, "test should release parked nodefull isolate");
                 });
             })
         })
@@ -1052,7 +1075,7 @@ fn coliveness_at_scale_without_concurrent_cross_profile_creation_does_not_abort(
 
     // Wait until all eight NodeFull isolates are alive (done creating).
     for _ in 0..PARKED {
-        ready_rx.recv().expect("wait nodefull alive");
+        recv_within(&ready_rx, "nodefull isolate should report ready");
     }
 
     let main_rt = tokio::runtime::Builder::new_current_thread()
@@ -1132,7 +1155,7 @@ fn concurrent_cross_profile_creation_without_drops_does_not_abort() {
         .map(|n| n.get())
         .unwrap_or(4)
         .max(8);
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(thread_count));
+    let barrier = std::sync::Arc::new(crate::test_support::BoundedTestBarrier::new(thread_count));
     let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
     let release_rx = std::sync::Arc::new(std::sync::Mutex::new(release_rx));
 
@@ -1175,7 +1198,7 @@ fn concurrent_cross_profile_creation_without_drops_does_not_abort() {
                     };
                     // Park alive: keep _runtime resident, never drop while others build.
                     let _guard = release_rx.lock().expect("release lock");
-                    let _ = _guard.recv();
+                    recv_within(&_guard, "test should release concurrently parked isolate");
                 });
             })
         })
@@ -1289,13 +1312,13 @@ fn grouped_concurrent_fill_does_not_abort() {
                         .expect("grouped isolate must EXECUTE JS, not merely construct");
                     ready_tx.send(()).expect("ready signal");
                     let _g = release_rx.lock().expect("release lock");
-                    let _ = _g.recv();
+                    recv_within(&_g, "test should release grouped parked isolate");
                 });
             }));
         }
         // Barrier: this whole group must be built+parked before the next starts.
         for _ in 0..PER_GROUP {
-            ready_rx.recv().expect("group build done");
+            recv_within(&ready_rx, "grouped isolate build should complete");
         }
     }
 
@@ -1368,7 +1391,10 @@ fn cross_profile_refill_into_resident_mixed_pool_does_not_abort() {
                 let bundle = RuntimeBundle::new(&*bp);
                 // Hold ONE isolate (+ its owner) at a time; drop before rebuilding.
                 let mut current: Option<(NimbusRuntime, JsRuntime)> = None;
-                while let Ok(cmd) = cmd_rx.recv() {
+                while let Some(cmd) = recv_until_disconnected(
+                    &cmd_rx,
+                    "cross-profile refill slot should receive a command",
+                ) {
                     match cmd {
                         Some(is_node) => {
                             // DROP the resident isolate BEFORE building the new profile.
@@ -1418,7 +1444,7 @@ fn cross_profile_refill_into_resident_mixed_pool_does_not_abort() {
             .expect("send initial build");
     }
     for rx in &done_rxs {
-        rx.recv().expect("initial build done");
+        recv_within(rx, "initial cross-profile slot build should complete");
     }
 
     // Phase 2: continuous cross-profile REFILL into the resident mixed pool.
@@ -1428,7 +1454,7 @@ fn cross_profile_refill_into_resident_mixed_pool_does_not_abort() {
         cmd_txs[j]
             .send(Some(slot_is_node[j]))
             .expect("send refill build");
-        done_rxs[j].recv().expect("refill build done");
+        recv_within(&done_rxs[j], "cross-profile refill build should complete");
     }
 
     for tx in &cmd_txs {
@@ -1498,10 +1524,10 @@ fn weblean_installed_first_then_nodefull_does_not_abort() {
                 .create_runtime(&bundle, None, false)
                 .expect("weblean should build and install the shared RO heap");
             ready_tx.send(()).expect("signal weblean installed");
-            release_rx.recv().expect("park weblean until release");
+            recv_within(&release_rx, "test should release parked weblean isolate");
         });
     });
-    ready_rx.recv().expect("wait weblean installed");
+    recv_within(&ready_rx, "weblean isolate should report installed");
 
     let main_rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1602,10 +1628,10 @@ fn nodefull_anchor_first_then_cross_profile_refill_does_not_abort() {
                 .create_runtime_from_snapshot(&bundle, snap)
                 .expect("anchor nodefull should install the superset RO heap");
             aready_tx.send(()).expect("signal anchor installed");
-            arelease_rx.recv().expect("park anchor until release");
+            recv_within(&arelease_rx, "test should release parked anchor isolate");
         });
     });
-    aready_rx.recv().expect("wait anchor installed");
+    recv_within(&aready_rx, "anchor isolate should report installed");
 
     // Now the exact #1(b) refill regime, with NodeFull's RO heap already installed.
     const SLOTS: usize = 8;
@@ -1625,7 +1651,10 @@ fn nodefull_anchor_first_then_cross_profile_refill_does_not_abort() {
             rt.block_on(async move {
                 let bundle = RuntimeBundle::new(&*bp);
                 let mut current: Option<(NimbusRuntime, JsRuntime)> = None;
-                while let Ok(cmd) = cmd_rx.recv() {
+                while let Some(cmd) = recv_until_disconnected(
+                    &cmd_rx,
+                    "anchored refill slot should receive a command",
+                ) {
                     match cmd {
                         Some(is_node) => {
                             drop(current.take());
@@ -1673,7 +1702,7 @@ fn nodefull_anchor_first_then_cross_profile_refill_does_not_abort() {
             .expect("send initial build");
     }
     for rx in &done_rxs {
-        rx.recv().expect("initial build done");
+        recv_within(rx, "initial anchored slot build should complete");
     }
     for round in 0..REFILL_ROUNDS {
         let j = round % SLOTS;
@@ -1681,7 +1710,7 @@ fn nodefull_anchor_first_then_cross_profile_refill_does_not_abort() {
         cmd_txs[j]
             .send(Some(slot_is_node[j]))
             .expect("send refill build");
-        done_rxs[j].recv().expect("refill build done");
+        recv_within(&done_rxs[j], "anchored refill build should complete");
     }
     for tx in &cmd_txs {
         let _ = tx.send(None);
@@ -1882,10 +1911,10 @@ fn gate_snapshotted_weblean_against_nodefull_anchor_ro_intrinsics_correct() {
                 .create_runtime_from_snapshot(&bundle, snap)
                 .expect("anchor nodefull should install the superset RO heap");
             aready_tx.send(()).expect("signal anchor installed");
-            arelease_rx.recv().expect("park anchor until release");
+            recv_within(&arelease_rx, "test should release parked anchor isolate");
         });
     });
-    aready_rx.recv().expect("wait anchor installed");
+    recv_within(&aready_rx, "anchor isolate should report installed");
 
     // Snapshotted WebLean against the NodeFull-anchored RO heap + correctness checks.
     let main_rt = tokio::runtime::Builder::new_current_thread()
@@ -2118,7 +2147,7 @@ fn option_c_both_unsnapshotted_concurrent_does_not_abort() {
         .map(|n| n.get())
         .unwrap_or(4)
         .max(8);
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(thread_count));
+    let barrier = std::sync::Arc::new(crate::test_support::BoundedTestBarrier::new(thread_count));
     let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
     let release_rx = std::sync::Arc::new(std::sync::Mutex::new(release_rx));
 
@@ -2151,7 +2180,7 @@ fn option_c_both_unsnapshotted_concurrent_does_not_abort() {
                         .create_runtime(&bundle, None, false)
                         .expect("unsnapshotted isolate should build (no snapshot in cage)");
                     let _guard = release_rx.lock().expect("release lock");
-                    let _ = _guard.recv();
+                    recv_within(&_guard, "test should release unsnapshotted parked isolate");
                 });
             })
         })
@@ -2300,14 +2329,14 @@ fn capture_weblean_primordial_shape() {
                     .create_runtime_from_snapshot(&bundle, snap)
                     .expect("anchor nodefull installs superset RO heap");
                 aready_tx.send(()).expect("signal anchor installed");
-                arelease_rx.recv().expect("park anchor until release");
+                recv_within(&arelease_rx, "test should release parked anchor isolate");
             })
         }))
     } else {
         None
     };
     if anchored {
-        aready_rx.recv().expect("wait anchor installed");
+        recv_within(&aready_rx, "anchor isolate should report installed");
     }
 
     let main_rt = tokio::runtime::Builder::new_current_thread()
@@ -2471,10 +2500,10 @@ where
                 .create_runtime_from_snapshot(&bundle, snap)
                 .expect("anchor nodefull installs superset RO heap");
             aready_tx.send(()).expect("signal anchor installed");
-            arelease_rx.recv().expect("park anchor until release");
+            recv_within(&arelease_rx, "test should release parked anchor isolate");
         })
     });
-    aready_rx.recv().expect("wait anchor installed");
+    recv_within(&aready_rx, "anchor isolate should report installed");
     let main_rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -2565,10 +2594,10 @@ fn audit1_unsnapshotted_weblean_web_api_correct() {
                 .create_runtime_from_snapshot(&bundle, snap)
                 .expect("anchor nodefull installs superset RO heap");
             aready_tx.send(()).expect("signal anchor installed");
-            arelease_rx.recv().expect("park anchor until release");
+            recv_within(&arelease_rx, "test should release parked anchor isolate");
         })
     });
-    aready_rx.recv().expect("wait anchor installed");
+    recv_within(&aready_rx, "anchor isolate should report installed");
 
     let main_rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -2814,7 +2843,10 @@ fn anchor_regression_iii_cross_profile_refill_green() {
             rt.block_on(async move {
                 let bundle = RuntimeBundle::new(&*bp);
                 let mut current: Option<(NimbusRuntime, JsRuntime)> = None;
-                while let Ok(cmd) = cmd_rx.recv() {
+                while let Some(cmd) = recv_until_disconnected(
+                    &cmd_rx,
+                    "anchor regression slot should receive a command",
+                ) {
                     match cmd {
                         Some(is_node) => {
                             drop(current.take());
@@ -2861,7 +2893,7 @@ fn anchor_regression_iii_cross_profile_refill_green() {
             .expect("send initial build");
     }
     for rx in &done_rxs {
-        rx.recv().expect("initial build done");
+        recv_within(rx, "initial anchor regression build should complete");
     }
     for round in 0..REFILL_ROUNDS {
         let j = round % SLOTS;
@@ -2869,7 +2901,7 @@ fn anchor_regression_iii_cross_profile_refill_green() {
         cmd_txs[j]
             .send(Some(slot_is_node[j]))
             .expect("send refill build");
-        done_rxs[j].recv().expect("refill build done");
+        recv_within(&done_rxs[j], "anchor regression refill should complete");
     }
     for tx in &cmd_txs {
         let _ = tx.send(None);
@@ -3057,10 +3089,10 @@ fn audit1b_weblean_fetch_present_and_deny_by_default() {
                 .create_runtime_from_snapshot(&bundle, snap)
                 .expect("anchor installs RO heap");
             aready_tx.send(()).expect("signal anchor");
-            arelease_rx.recv().expect("park anchor");
+            recv_within(&arelease_rx, "test should release parked anchor isolate");
         })
     });
-    aready_rx.recv().expect("wait anchor");
+    recv_within(&aready_rx, "anchor isolate should report ready");
     let main_rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

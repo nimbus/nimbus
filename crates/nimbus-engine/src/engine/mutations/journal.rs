@@ -74,7 +74,7 @@ impl FailedSerialQueuedMutationBatch {
 
 struct AssignedPublisherWork {
     batch: Option<AssignedPublisherBatch>,
-    deferred: Vec<DeferredPublisherResponse>,
+    standalone_deferred: Vec<DeferredPublisherResponse>,
 }
 
 #[cfg(test)]
@@ -187,31 +187,26 @@ impl Engine {
             })
             .await;
             match assigned {
-                Ok(Ok(mut work)) => {
-                    if let Err(error) = runtime
-                        .send_publisher_response_fence(std::mem::take(&mut work.deferred))
-                        .await
-                    {
-                        let (responses, error) = *error;
-                        for response in responses {
-                            response.fail(&error);
-                        }
-                        if let Some(assigned) = work.batch {
-                            let first = assigned.first_sequence();
-                            assigned.fail(&error);
-                            runtime.discard_unpersisted_write_log_suffix(first);
-                        }
-                        runtime.record_mutation_worker_failure();
-                        warn!(error = %error, "publisher queue rejected ordered response fence");
-                        return false;
-                    }
+                Ok(Ok(work)) => {
                     let Some(assigned) = work.batch else {
+                        if let Err(error) = runtime
+                            .send_publisher_response_fence(work.standalone_deferred)
+                            .await
+                        {
+                            let (responses, error) = *error;
+                            for response in responses {
+                                response.fail(&error);
+                            }
+                            runtime.record_mutation_worker_failure();
+                            warn!(error = %error, "publisher queue rejected standalone response fence");
+                        }
                         return false;
                     };
+                    debug_assert!(work.standalone_deferred.is_empty());
                     if let Err(error) = runtime.send_assigned_publisher_batch(assigned).await {
                         let (assigned, error) = *error;
                         let first = assigned.first_sequence();
-                        assigned.fail(&error);
+                        assigned.fail_after_recovery(first, &error);
                         runtime.discard_unpersisted_write_log_suffix(first);
                         runtime.record_mutation_worker_failure();
                         warn!(error = %error, "publisher queue rejected assigned mutation batch");
@@ -679,7 +674,7 @@ fn assign_queued_mutation_batch(
     if active.is_empty() {
         return Ok(AssignedPublisherWork {
             batch: None,
-            deferred,
+            standalone_deferred: deferred,
         });
     }
 
@@ -696,11 +691,12 @@ fn assign_queued_mutation_batch(
             engine,
             records: Arc::new(records),
             responses: active,
+            deferred,
             phases,
             sample_started_at: sample_started_at
                 .expect("a non-empty active batch must retain an admitted request timestamp"),
         }),
-        deferred,
+        standalone_deferred: Vec::new(),
     })
 }
 
@@ -836,7 +832,7 @@ fn process_serial_queued_mutation_batch(
         .iter()
         .map(|request| request.response.clone())
         .collect::<Vec<_>>();
-    let mut work = match assign_queued_mutation_batch(
+    let work = match assign_queued_mutation_batch(
         runtime.clone(),
         batch,
         engine,
@@ -854,7 +850,7 @@ fn process_serial_queued_mutation_batch(
         }
     };
     let Some(mut assigned) = work.batch else {
-        for response in std::mem::take(&mut work.deferred) {
+        for response in work.standalone_deferred {
             response.complete();
         }
         return Ok(QueuedMutationBatchResult {
@@ -864,6 +860,7 @@ fn process_serial_queued_mutation_batch(
     };
     let records = assigned.records.clone();
     let mut active = std::mem::take(&mut assigned.responses);
+    let deferred = std::mem::take(&mut assigned.deferred);
     let mut phases = assigned.phases;
     let sample_started_at = assigned.sample_started_at;
     let first_staged_sequence = Some(assigned.first_sequence());
@@ -880,10 +877,7 @@ fn process_serial_queued_mutation_batch(
         for active_request in active.drain(..) {
             let _ = active_request.response.send(Err(error.clone()));
         }
-        return Err(FailedSerialQueuedMutationBatch {
-            error,
-            deferred: work.deferred,
-        });
+        return Err(FailedSerialQueuedMutationBatch { error, deferred });
     }
     let write_log_guard = runtime.arm_write_log_append();
     if let Err(error) = runtime.store.append_durable_records_batch(&records) {
@@ -891,7 +885,7 @@ fn process_serial_queued_mutation_batch(
         drop(active);
         return Err(FailedSerialQueuedMutationBatch {
             error: mapped_error,
-            deferred: work.deferred,
+            deferred,
         });
     }
 
@@ -899,7 +893,7 @@ fn process_serial_queued_mutation_batch(
         runtime.mark_durable_head(last_record.sequence);
     }
     write_log_guard.disarm();
-    for response in std::mem::take(&mut work.deferred) {
+    for response in deferred {
         response.complete();
     }
     phases.durable_append = durable_append_started.elapsed();

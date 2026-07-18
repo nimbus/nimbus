@@ -20,6 +20,7 @@ const INVALID_PORT: &str = include_str!("../../tests/fixtures/policy/invalid-por
 const INVALID_SECRET: &str = include_str!("../../tests/fixtures/policy/invalid-secret.yaml");
 const INVALID_IMAGE: &str = include_str!("../../tests/fixtures/policy/invalid-image.yaml");
 const UNKNOWN_FIELD: &str = include_str!("../../tests/fixtures/policy/unknown-field.yaml");
+const BLOCKING_POLICY_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
 const NODE_ROUTE: &str = include_str!("../../tests/fixtures/policy/node-route.yaml");
 const DIFF_FROM: &str = include_str!("../../tests/fixtures/policy/diff-from.yaml");
 const DIFF_TO: &str = include_str!("../../tests/fixtures/policy/diff-to.yaml");
@@ -432,8 +433,8 @@ impl OperatorExternalPolicyBackend for BlockingExternalPolicyBackend {
         self.release
             .lock()
             .expect("release lock should not be poisoned")
-            .recv()
-            .expect("test should release blocked backend");
+            .recv_timeout(BLOCKING_POLICY_RELEASE_TIMEOUT)
+            .expect("test should release blocked backend within the blocking-policy timeout");
         self.finished
             .lock()
             .expect("finished lock should not be poisoned")
