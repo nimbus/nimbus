@@ -11,6 +11,102 @@ use tokio::sync::oneshot;
 
 use crate::{Engine, tenant::TenantRuntime};
 
+#[cfg(test)]
+static PANIC_PROVIDER_CATCH_UP_FOR_TESTING: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashSet<TenantId>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+fn panic_provider_catch_up_for_testing(tenant_id: &TenantId) {
+    if PANIC_PROVIDER_CATCH_UP_FOR_TESTING
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+        .lock()
+        .expect("provider catch-up panic test-hook lock should not be poisoned")
+        .remove(tenant_id)
+    {
+        panic!("injected provider catch-up task panic");
+    }
+}
+
+#[cfg(not(test))]
+fn panic_provider_catch_up_for_testing(_tenant_id: &TenantId) {}
+
+struct CatchUpOwnership {
+    runtime: Arc<TenantRuntime>,
+    first_sequence: SequenceNumber,
+    requested_through: SequenceNumber,
+    armed: bool,
+}
+
+impl CatchUpOwnership {
+    fn new(
+        runtime: Arc<TenantRuntime>,
+        first_sequence: SequenceNumber,
+        requested_through: SequenceNumber,
+    ) -> Self {
+        Self {
+            runtime,
+            first_sequence,
+            requested_through,
+            armed: true,
+        }
+    }
+
+    fn take_request(&mut self) -> Option<(SequenceNumber, SequenceNumber)> {
+        let request = self
+            .runtime
+            .take_committed_mutation_observer_catch_up_request()?;
+        self.first_sequence = request.0;
+        self.requested_through = request.1;
+        Some(request)
+    }
+
+    fn complete(&mut self) -> bool {
+        let has_more = self.runtime.complete_committed_mutation_observer_catch_up();
+        if !has_more {
+            self.armed = false;
+        }
+        has_more
+    }
+
+    fn abandon(&mut self, first_sequence: SequenceNumber, requested_through: SequenceNumber) {
+        self.runtime
+            .abandon_committed_mutation_observer_catch_up(first_sequence, requested_through);
+        self.armed = false;
+    }
+}
+
+impl Drop for CatchUpOwnership {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.runtime.abandon_committed_mutation_observer_catch_up(
+            self.first_sequence,
+            self.requested_through,
+        );
+        self.runtime
+            .record_committed_mutation_observer_catch_up_enqueue_failure();
+        tracing::error!(
+            tenant = %self.runtime.tenant_id(),
+            first_sequence = %self.first_sequence,
+            requested_through = %self.requested_through,
+            "provider catch-up observer task unwound before releasing ownership; request was republished"
+        );
+    }
+}
+
+#[cfg(test)]
+struct CatchUpTaskCountGuard(Arc<TenantRuntime>);
+
+#[cfg(test)]
+impl Drop for CatchUpTaskCountGuard {
+    fn drop(&mut self) {
+        self.0
+            .record_committed_mutation_observer_catch_up_task_finished();
+    }
+}
+
 /// A durable mutation that has been applied to the tenant's serving state.
 #[derive(Clone, Debug)]
 pub struct CommittedMutationEvent {
@@ -341,14 +437,16 @@ impl Engine {
         {
             return None;
         }
+        let ownership = CatchUpOwnership::new(runtime.clone(), first_sequence, requested_through);
         let (completed, completion) = tokio::sync::oneshot::channel();
         let runtime_on_spawn_failure = runtime.clone();
         let catch_up = async move {
             #[cfg(test)]
             runtime.record_committed_mutation_observer_catch_up_task_started();
-            let result = run_provider_catch_up_observers(runtime.clone(), observers).await;
             #[cfg(test)]
-            runtime.record_committed_mutation_observer_catch_up_task_finished();
+            let _task_count = CatchUpTaskCountGuard(runtime.clone());
+            let result =
+                run_provider_catch_up_observers(runtime.clone(), observers, ownership).await;
             if let Err(error) = &result {
                 runtime.record_committed_mutation_observer_catch_up_enqueue_failure();
                 tracing::error!(
@@ -363,12 +461,6 @@ impl Engine {
             Ok(_) => Some(completion),
             Err((error, catch_up)) => {
                 drop(catch_up);
-                runtime_on_spawn_failure.abandon_committed_mutation_observer_catch_up(
-                    first_sequence,
-                    requested_through,
-                );
-                runtime_on_spawn_failure
-                    .record_committed_mutation_observer_catch_up_enqueue_failure();
                 tracing::warn!(
                     tenant = %runtime_on_spawn_failure.tenant_id(),
                     error = %error,
@@ -379,6 +471,15 @@ impl Engine {
                 Some(failure)
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_next_provider_catch_up_for_testing(&self, tenant_id: TenantId) {
+        PANIC_PROVIDER_CATCH_UP_FOR_TESTING
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+            .lock()
+            .expect("provider catch-up panic test-hook lock should not be poisoned")
+            .insert(tenant_id);
     }
 
     pub(crate) fn apply_committed_mutation_observer_work_stats(
@@ -479,15 +580,15 @@ impl Engine {
 async fn run_provider_catch_up_observers(
     runtime: Arc<TenantRuntime>,
     observers: Vec<Arc<dyn CommittedMutationObserver>>,
+    mut ownership: CatchUpOwnership,
 ) -> nimbus_core::Result<()> {
+    panic_provider_catch_up_for_testing(runtime.tenant_id());
     let capacity = runtime.committed_mutation_observer_capacity().max(1);
     let chunk_size = (capacity / 2).max(1);
     let mut delivered_through = None::<SequenceNumber>;
     loop {
-        let Some((requested_first, requested_through)) =
-            runtime.take_committed_mutation_observer_catch_up_request()
-        else {
-            if runtime.complete_committed_mutation_observer_catch_up() {
+        let Some((requested_first, requested_through)) = ownership.take_request() else {
+            if ownership.complete() {
                 continue;
             }
             return Ok(());
@@ -505,10 +606,7 @@ async fn run_provider_catch_up_observers(
         {
             Ok(records) => records,
             Err(error) => {
-                runtime.abandon_committed_mutation_observer_catch_up(
-                    first_sequence,
-                    requested_through,
-                );
+                ownership.abandon(first_sequence, requested_through);
                 return Err(error);
             }
         };
@@ -519,7 +617,7 @@ async fn run_provider_catch_up_observers(
             .map(|record| record.sequence)
             != Some(requested_through)
         {
-            runtime.abandon_committed_mutation_observer_catch_up(first_sequence, requested_through);
+            ownership.abandon(first_sequence, requested_through);
             return Err(Error::Internal(format!(
                 "provider catch-up journal re-read did not reach requested sequence {requested_through} from {first_sequence}"
             )));
@@ -545,10 +643,7 @@ async fn run_provider_catch_up_observers(
                 )
                 .await
             {
-                runtime.abandon_committed_mutation_observer_catch_up(
-                    first_sequence,
-                    requested_through,
-                );
+                ownership.abandon(first_sequence, requested_through);
                 return Err(error);
             }
         }

@@ -4315,6 +4315,75 @@ async fn provider_catch_up_spawn_rejection_releases_task_state_after_quiesce() {
     assert_eq!(stats.observer_catch_up_enqueue_failure_count, 2);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn panicking_provider_catch_up_releases_ownership_and_successor_delivers() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("provider-catch-up-panic", Engine::create_tenant);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+        )
+        .await
+        .expect("provider catch-up fixture write should commit");
+    let records = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("provider catch-up fixture journal should read")
+        .into_iter()
+        .filter(|record| !record.writes.is_empty())
+        .collect::<Vec<_>>();
+    let observer = Arc::new(TenantSelectiveBlockingObserver::default());
+    engine.install_committed_mutation_observer("provider-catch-up-panic-test", observer.clone());
+    engine.panic_next_provider_catch_up_for_testing(tenant_id.clone());
+
+    assert!(
+        engine
+            .trigger_provider_catch_up_observers_for_testing(&tenant_id, &records)
+            .expect("initial catch-up trigger should start"),
+        "the panicking task must first win catch-up ownership"
+    );
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "panicking catch-up should increment its failure counter",
+        |stats| stats.observer_catch_up_enqueue_failure_count == 1,
+    )
+    .await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if engine
+                .provider_catch_up_observer_task_count_for_testing(&tenant_id)
+                .expect("catch-up task count should load")
+                == 0
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("panicking catch-up task should release its task state");
+
+    engine
+        .enqueue_provider_catch_up_observers_for_testing(&tenant_id, &records)
+        .await
+        .expect("a successor catch-up task should acquire the republished request");
+    engine
+        .flush_committed_mutation_observers_for_testing(&tenant_id)
+        .await
+        .expect("successor observer work should drain");
+    assert_eq!(observer.sequences(&tenant_id), vec![SequenceNumber(1)]);
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("catch-up panic diagnostics should load");
+    assert_eq!(stats.observer_catch_up_enqueue_failure_count, 1);
+}
+
 #[derive(Default)]
 struct BlockingPanickingObserver {
     state: Mutex<(bool, bool)>,
