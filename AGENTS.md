@@ -263,6 +263,23 @@ improved later."
 
 ## Common Repo Gotchas
 
+### Test hangs: bound blocking waits, bound verification commands
+
+A test helper that parks a production thread — a blocking fault injector, a
+blocking observer — must bound its release wait and fail loudly on timeout.
+With an unbounded wait, any early exit from the test body (a load-induced
+timeout panic before the release runs) leaves the thread parked, and the
+`#[tokio::test]` wrapper then blocks forever in `drop_in_place<Runtime>`
+waiting on `spawn_blocking` tasks that can never finish. The real failure is
+swallowed and the process hangs at ~zero CPU.
+
+`.config/nextest.toml` terminates slow tests (45s, 3 strikes), so nextest runs
+and CI are protected; bare `cargo test` has no timeout and is where this bites.
+Wrap long verification in `timeout <secs> ...`, and require the same of
+delegated jobs. Diagnose a suspected hang with `sample <pid>` before killing
+it: hours of elapsed time with near-zero accumulated CPU is a hard block, not
+slow work, and the stack names the culprit frame.
+
 ### GitHub CLI auth under sandbox
 
 If `gh` reports an invalid token or auth failure inside the sandbox, retry the
