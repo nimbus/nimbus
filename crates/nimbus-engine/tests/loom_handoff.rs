@@ -1,6 +1,6 @@
 #![cfg(loom)]
 
-use loom::sync::atomic::{AtomicBool, Ordering};
+use loom::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use loom::sync::{Arc, Condvar, Mutex};
 use loom::thread;
 
@@ -1216,5 +1216,183 @@ fn ambiguous_eviction_drops_operation_before_waiting_for_tenant_load_gate() {
         deletion.join().expect("delete model thread");
         eviction.join().expect("eviction model thread");
         assert_eq!(*operations.0.lock().expect("final operation count"), 0);
+    });
+}
+
+const NO_CATCH_UP_START: u64 = u64::MAX;
+
+#[derive(Debug)]
+struct CatchUpRequestHandoff {
+    pending: AtomicBool,
+    next_sequence: AtomicU64,
+    requested_through: AtomicU64,
+}
+
+impl CatchUpRequestHandoff {
+    fn new(pending: bool) -> Self {
+        Self {
+            pending: AtomicBool::new(pending),
+            next_sequence: AtomicU64::new(NO_CATCH_UP_START),
+            requested_through: AtomicU64::new(0),
+        }
+    }
+
+    fn request(&self, first_sequence: u64, requested_through: u64) -> bool {
+        self.requested_through
+            .fetch_max(requested_through, Ordering::AcqRel);
+        self.next_sequence
+            .fetch_min(first_sequence, Ordering::AcqRel);
+        self.pending
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    fn take(&self) -> Option<(u64, u64)> {
+        let first_sequence = self.next_sequence.swap(NO_CATCH_UP_START, Ordering::AcqRel);
+        (first_sequence != NO_CATCH_UP_START).then(|| {
+            (
+                first_sequence,
+                self.requested_through.load(Ordering::Acquire),
+            )
+        })
+    }
+
+    fn complete(&self) -> bool {
+        if self.next_sequence.load(Ordering::Acquire) != NO_CATCH_UP_START {
+            return true;
+        }
+        self.pending.store(false, Ordering::Release);
+        if self.next_sequence.load(Ordering::Acquire) == NO_CATCH_UP_START {
+            return false;
+        }
+        self.pending
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    fn abandon(&self, first_sequence: u64, requested_through: u64) {
+        self.requested_through
+            .fetch_max(requested_through, Ordering::AcqRel);
+        self.next_sequence
+            .fetch_min(first_sequence, Ordering::AcqRel);
+        self.pending.store(false, Ordering::Release);
+    }
+}
+
+fn assert_catch_up_request(request: (u64, u64), expected_start: u64, minimum_frontier: u64) {
+    assert_eq!(request.0, expected_start);
+    assert!(
+        request.1 >= minimum_frontier,
+        "a visible catch-up start must not pair with an older frontier"
+    );
+}
+
+#[test]
+fn catch_up_request_publication_never_pairs_stale_frontier() {
+    loom::model(|| {
+        // A take racing the two request publications either sees no start or
+        // sees both the start and its preceding upper frontier.
+        let visible = Arc::new(CatchUpRequestHandoff::new(false));
+        let concurrently_taken = Arc::new(Mutex::new(None));
+        let requester = {
+            let visible = visible.clone();
+            thread::spawn(move || visible.request(2, 4))
+        };
+        let taker = {
+            let visible = visible.clone();
+            let concurrently_taken = concurrently_taken.clone();
+            thread::spawn(move || {
+                if let Some(request) = visible.take() {
+                    assert_catch_up_request(request, 2, 4);
+                    *concurrently_taken.lock().expect("concurrent take lock") = Some(request);
+                }
+            })
+        };
+        requester.join().expect("catch-up requester model thread");
+        taker.join().expect("catch-up taker model thread");
+        let request = concurrently_taken
+            .lock()
+            .expect("final concurrent take lock")
+            .take()
+            .or_else(|| visible.take())
+            .expect("published catch-up request must remain available");
+        assert_catch_up_request(request, 2, 4);
+    });
+
+    loom::model(|| {
+        // Force the owner to take after the frontier write but before the
+        // start write. Completion clears ownership; the requester then sees
+        // that clear, claims ownership, and leaves its range available.
+        let window = Arc::new(CatchUpRequestHandoff::new(true));
+        let stage = Arc::new((Mutex::new(0_u8), Condvar::new()));
+        let requester_owns = Arc::new(AtomicBool::new(false));
+        let owner_continues = Arc::new(AtomicBool::new(false));
+        let requester = {
+            let window = window.clone();
+            let stage = stage.clone();
+            let requester_owns = requester_owns.clone();
+            thread::spawn(move || {
+                window.requested_through.fetch_max(6, Ordering::AcqRel);
+                let (stage_lock, changed) = &*stage;
+                let mut current = stage_lock.lock().expect("window stage lock");
+                *current = 1;
+                changed.notify_all();
+                while *current < 2 {
+                    current = changed.wait(current).expect("window requester wait");
+                }
+                drop(current);
+                window.next_sequence.fetch_min(5, Ordering::AcqRel);
+                requester_owns.store(
+                    window
+                        .pending
+                        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                        .is_ok(),
+                    Ordering::Release,
+                );
+            })
+        };
+        let owner = {
+            let window = window.clone();
+            let stage = stage.clone();
+            let owner_continues = owner_continues.clone();
+            thread::spawn(move || {
+                let (stage_lock, changed) = &*stage;
+                let mut current = stage_lock.lock().expect("window stage lock");
+                while *current < 1 {
+                    current = changed.wait(current).expect("window owner wait");
+                }
+                assert!(window.take().is_none());
+                owner_continues.store(window.complete(), Ordering::Release);
+                *current = 2;
+                changed.notify_all();
+            })
+        };
+        requester.join().expect("window requester model thread");
+        owner.join().expect("window owner model thread");
+
+        assert!(!owner_continues.load(Ordering::Acquire));
+        assert!(requester_owns.load(Ordering::Acquire));
+        assert_catch_up_request(window.take().expect("window request must publish"), 5, 6);
+        assert!(!window.complete());
+    });
+
+    loom::model(|| {
+        // Abandoning an older taken range concurrently with a newer request
+        // re-publishes their minimum start and maximum frontier.
+        let abandoned = Arc::new(CatchUpRequestHandoff::new(true));
+        let newer = {
+            let abandoned = abandoned.clone();
+            thread::spawn(move || abandoned.request(8, 12))
+        };
+        let failed_owner = {
+            let abandoned = abandoned.clone();
+            thread::spawn(move || abandoned.abandon(5, 9))
+        };
+        newer.join().expect("newer request model thread");
+        failed_owner.join().expect("abandon model thread");
+        assert_eq!(
+            abandoned.take().expect("abandoned request must republish"),
+            (5, 12)
+        );
     });
 }
