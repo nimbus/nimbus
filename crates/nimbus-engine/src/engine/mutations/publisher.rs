@@ -690,7 +690,7 @@ fn finish_durable_recovery_eviction_locked(engine: &Engine, runtime: &Arc<Tenant
             .expect("tenant registry lock should not be poisoned");
         if tenants
             .get(&tenant_id)
-            .is_some_and(|loaded| Arc::ptr_eq(loaded, &runtime))
+            .is_some_and(|loaded| Arc::ptr_eq(loaded, runtime))
         {
             tenants.remove(&tenant_id)
         } else {
