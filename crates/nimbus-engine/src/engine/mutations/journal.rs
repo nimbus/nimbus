@@ -129,7 +129,7 @@ impl Engine {
     pub(crate) async fn run_one_committer_journal_batch(
         self: Arc<Self>,
         runtime: Arc<TenantRuntime>,
-    ) {
+    ) -> bool {
         #[cfg(any(test, debug_assertions))]
         Engine::assert_running_on_background_task("mutation_committer");
 
@@ -145,7 +145,7 @@ impl Engine {
             )
             .await;
         if batch.is_empty() {
-            return;
+            return false;
         }
 
         let use_pipeline = if runtime.store.has_process_local_sequence_authority() {
@@ -203,10 +203,10 @@ impl Engine {
                         }
                         runtime.record_mutation_worker_failure();
                         warn!(error = %error, "publisher queue rejected ordered response fence");
-                        return;
+                        return false;
                     }
                     let Some(assigned) = work.batch else {
-                        return;
+                        return false;
                     };
                     if let Err(error) = runtime.send_assigned_publisher_batch(assigned).await {
                         let (assigned, error) = *error;
@@ -243,8 +243,10 @@ impl Engine {
                     fail_mutation_responses(&assignment_responses, &error);
                 }
             }
-            return;
+            return false;
         }
+
+        let mut finish_shutdown_eviction = false;
 
         // This is both the kill-switch fallback and the provider arm. Provider
         // persistence stays here until slice C adds ordered network pipelining
@@ -333,13 +335,9 @@ impl Engine {
                             drop(eviction);
                             warn!(
                                 error = %spawn_error,
-                                "engine quiesce rejected serial recovery task; completing eviction inline without drain waits"
+                                "engine quiesce rejected serial recovery task; deferring shutdown eviction completion until the committer inbox is drained"
                             );
-                            // A residual committer job may itself own an operation
-                            // guard. Quiesce is already draining every background
-                            // task, so remove the failed runtime before the actor
-                            // rejects that residual work instead of self-deadlocking.
-                            finish_durable_recovery_eviction(self.clone(), runtime).await;
+                            finish_shutdown_eviction = true;
                         }
                     }
                 }
@@ -383,16 +381,16 @@ impl Engine {
                             drop(eviction);
                             warn!(
                                 error = %spawn_error,
-                                "engine quiesce rejected serial recovery task; completing eviction inline without drain waits"
+                                "engine quiesce rejected serial recovery task; deferring shutdown eviction completion until the committer inbox is drained"
                             );
-                            // See the queued-error arm above: waiting here can
-                            // deadlock on a residual job's operation guard.
-                            finish_durable_recovery_eviction(self.clone(), runtime).await;
+                            finish_shutdown_eviction = true;
                         }
                     }
                 }
             }
         }
+
+        finish_shutdown_eviction
     }
 
     pub(super) async fn submit_journaled_async_mutation<Fut>(

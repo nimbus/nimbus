@@ -2286,7 +2286,7 @@ async fn quiesce_racing_serial_crash_replay_completes_without_panic() {
     let data_dir = tempdir().expect("serial quiesce race tempdir should build");
     let faults = BlockingAmbiguousApplyFaultInjector::new();
     let engine = Arc::new(
-        Engine::new_with_simulation_and_memory_persistence(
+        Engine::new_with_simulation_and_id_source(
             data_dir.path(),
             Arc::new(ManualClock::new(Timestamp(46_581))),
             faults.clone(),
@@ -2344,6 +2344,18 @@ async fn quiesce_racing_serial_crash_replay_completes_without_panic() {
     )
     .await;
 
+    let delete = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move || engine.delete_tenant(&tenant_id)
+    });
+    tokio::pin!(delete);
+    assert_future_stays_pending(
+        &mut delete,
+        "synchronous deletion should wait for the in-flight writer and residual submitter",
+    )
+    .await;
+
     let quiesce = tokio::spawn({
         let engine = engine.clone();
         async move { engine.quiesce().await }
@@ -2378,6 +2390,13 @@ async fn quiesce_racing_serial_crash_replay_completes_without_panic() {
         residual_error.storage_kind(),
         Some(nimbus_core::StorageErrorKind::Unavailable)
     );
+    expect_catch_up_future_within(
+        &mut delete,
+        "synchronous deletion should complete after the residual submitter is failed",
+    )
+    .await
+    .expect("synchronous delete task should join without panic")
+    .expect("synchronous delete should remove the tenant");
     expect_catch_up_future_within(quiesce, "quiesce should await inline eviction completion")
         .await
         .expect("quiesce task should join without a spawn rejection panic");

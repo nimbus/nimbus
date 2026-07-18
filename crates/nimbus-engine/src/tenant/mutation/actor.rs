@@ -609,9 +609,23 @@ async fn run_committer_actor_loop(
             runtime.record_mutation_worker_start();
             runtime.set_mutation_worker_running(true);
             let _running = WorkerRunning(runtime.as_ref());
-            engine
+            let finish_shutdown_eviction = engine
                 .run_one_committer_journal_batch(runtime.clone())
                 .await;
+            if finish_shutdown_eviction {
+                // The background spawn gate is closed, so no replacement
+                // runtime can be loaded and this registry is dying with the
+                // engine. Fail every residual actor job to wake blocked
+                // submitters, then finish the lifecycle without acquiring the
+                // tenant-load gate: a synchronous deleter may hold that gate
+                // while waiting for one of these jobs' operation guards.
+                receiver.close();
+                while let Some(message) = receiver.recv().await {
+                    fail_committer_message_during_shutdown_eviction(runtime.as_ref(), message);
+                }
+                runtime.finish_eviction();
+                break;
+            }
             continue;
         }
         let job = match message {
@@ -652,6 +666,28 @@ async fn run_committer_actor_loop(
             .is_err();
         let _ = completed.send(());
         if failed {
+            runtime.record_mutation_worker_failure();
+        }
+    }
+}
+
+fn fail_committer_message_during_shutdown_eviction(
+    runtime: &TenantRuntime,
+    message: CommitterMessage,
+) {
+    match message {
+        CommitterMessage::QueuedBatch {
+            owns_pending_wake, ..
+        } => {
+            runtime.accept_queued_committer_batch(owns_pending_wake);
+            let error = runtime.durable_recovery_eviction_error();
+            runtime.fail_and_drain_mutation_queues(&error);
+        }
+        CommitterMessage::DirectCommit(job)
+        | CommitterMessage::ExecutionUnitCommit(job)
+        | CommitterMessage::JournalProgressSync(job)
+        | CommitterMessage::InternalSerial(job) => {
+            job.fail(runtime.durable_recovery_eviction_error());
             runtime.record_mutation_worker_failure();
         }
     }
