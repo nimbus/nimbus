@@ -309,6 +309,18 @@ impl Engine {
             .expect("engine executor should accept background work before quiesce")
     }
 
+    pub(crate) fn try_spawn_background<F>(
+        &self,
+        name: &'static str,
+        future: F,
+    ) -> std::result::Result<JoinHandle<()>, (Error, F)>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        self.engine_executor
+            .spawn_mapped(future, |future| ENGINE_BACKGROUND_TASK.scope(name, future))
+    }
+
     pub(crate) fn start_committer_actor(&self, runtime: Arc<TenantRuntime>) {
         let receiver = runtime.take_committer_receiver();
         if runtime.publisher_pipeline_capable() {

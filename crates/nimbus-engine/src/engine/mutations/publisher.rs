@@ -180,6 +180,11 @@ pub(crate) async fn run_ordered_publisher(
 }
 
 async fn run_serial_publisher_job(runtime: Arc<TenantRuntime>, job: crate::tenant::CommitterJob) {
+    if runtime.eviction_started() {
+        job.fail(runtime.durable_recovery_eviction_error());
+        runtime.record_mutation_worker_failure();
+        return;
+    }
     runtime.set_mutation_worker_running(true);
     let tenant_id = runtime.tenant_id().clone();
     let (task, completed) = job.into_parts();

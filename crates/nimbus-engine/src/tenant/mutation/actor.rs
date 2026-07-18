@@ -621,6 +621,11 @@ async fn run_committer_actor_loop(
             | CommitterMessage::InternalSerial(job) => job,
             CommitterMessage::QueuedBatch { .. } => unreachable!(),
         };
+        if runtime.eviction_started() {
+            job.fail(runtime.durable_recovery_eviction_error());
+            runtime.record_mutation_worker_failure();
+            continue;
+        }
         if runtime.store.has_process_local_sequence_authority() {
             match runtime.send_publisher_serial_job(job).await {
                 Ok(drained) => {

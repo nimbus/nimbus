@@ -62,6 +62,27 @@ impl BackgroundExecutor {
         Ok(self.tracker.spawn_on(future, &self.handle))
     }
 
+    pub(crate) fn spawn_mapped<F, M, Mapped>(
+        &self,
+        future: F,
+        map: M,
+    ) -> std::result::Result<JoinHandle<Mapped::Output>, (Error, F)>
+    where
+        F: Future + Send + 'static,
+        M: FnOnce(F) -> Mapped,
+        Mapped: Future + Send + 'static,
+        Mapped::Output: Send + 'static,
+    {
+        let _guard = self
+            .spawn_gate
+            .read()
+            .expect("background executor spawn gate should not be poisoned");
+        if let Err(error) = self.ensure_open() {
+            return Err((error, future));
+        }
+        Ok(self.tracker.spawn_on(map(future), &self.handle))
+    }
+
     pub(crate) async fn quiesce(&self) {
         let guard = self
             .spawn_gate

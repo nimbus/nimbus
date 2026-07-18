@@ -342,7 +342,8 @@ impl Engine {
             return None;
         }
         let (completed, completion) = tokio::sync::oneshot::channel();
-        self.spawn_background("provider_catch_up_observers", async move {
+        let runtime_on_spawn_failure = runtime.clone();
+        let catch_up = async move {
             #[cfg(test)]
             runtime.record_committed_mutation_observer_catch_up_task_started();
             let result = run_provider_catch_up_observers(runtime.clone(), observers).await;
@@ -357,8 +358,27 @@ impl Engine {
                 );
             }
             let _ = completed.send(result);
-        });
-        Some(completion)
+        };
+        match self.try_spawn_background("provider_catch_up_observers", catch_up) {
+            Ok(_) => Some(completion),
+            Err((error, catch_up)) => {
+                drop(catch_up);
+                runtime_on_spawn_failure.abandon_committed_mutation_observer_catch_up(
+                    first_sequence,
+                    requested_through,
+                );
+                runtime_on_spawn_failure
+                    .record_committed_mutation_observer_catch_up_enqueue_failure();
+                tracing::warn!(
+                    tenant = %runtime_on_spawn_failure.tenant_id(),
+                    error = %error,
+                    "engine quiesce rejected provider catch-up observer task"
+                );
+                let (failed, failure) = tokio::sync::oneshot::channel();
+                let _ = failed.send(Err(error));
+                Some(failure)
+            }
+        }
     }
 
     pub(crate) fn apply_committed_mutation_observer_work_stats(

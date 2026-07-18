@@ -317,13 +317,22 @@ impl Engine {
                         runtime.fail_and_drain_mutation_queues(&error);
                         runtime.close_committed_mutation_observers();
                         let engine = self.clone();
-                        self.spawn_background("serial_durable_recovery_eviction", async move {
+                        let eviction = async move {
                             runtime
                                 .wait_for_committed_mutation_observers_drained()
                                 .await;
                             runtime.wait_for_operation_drain_for_eviction().await;
                             finish_durable_recovery_eviction(engine, runtime).await;
-                        });
+                        };
+                        if let Err((spawn_error, eviction)) =
+                            self.try_spawn_background("serial_durable_recovery_eviction", eviction)
+                        {
+                            warn!(
+                                error = %spawn_error,
+                                "engine quiesce rejected serial recovery task; completing eviction inline"
+                            );
+                            eviction.await;
+                        }
                     }
                 }
             }
@@ -350,13 +359,22 @@ impl Engine {
                         runtime.fail_and_drain_mutation_queues(&recovery_error);
                         runtime.close_committed_mutation_observers();
                         let engine = self.clone();
-                        self.spawn_background("serial_durable_recovery_eviction", async move {
+                        let eviction = async move {
                             runtime
                                 .wait_for_committed_mutation_observers_drained()
                                 .await;
                             runtime.wait_for_operation_drain_for_eviction().await;
                             finish_durable_recovery_eviction(engine, runtime).await;
-                        });
+                        };
+                        if let Err((spawn_error, eviction)) =
+                            self.try_spawn_background("serial_durable_recovery_eviction", eviction)
+                        {
+                            warn!(
+                                error = %spawn_error,
+                                "engine quiesce rejected serial recovery task; completing eviction inline"
+                            );
+                            eviction.await;
+                        }
                     }
                 }
             }

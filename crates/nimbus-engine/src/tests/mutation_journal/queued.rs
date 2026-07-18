@@ -2281,6 +2281,174 @@ async fn serial_lost_ack_evicts_and_replays_without_retryable_error() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn quiesce_racing_serial_crash_replay_completes_without_panic() {
+    let data_dir = tempdir().expect("serial quiesce race tempdir should build");
+    let faults = BlockingAmbiguousApplyFaultInjector::new();
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_581))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(46_581)),
+        )
+        .expect("serial quiesce race engine should create"),
+    );
+    let tenant_id = TenantId::new("serial-quiesce-race").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    engine
+        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
+        .expect("test should request the serial arm");
+
+    let writer = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state("serial append should block before ambiguous apply", {
+        let faults = faults.clone();
+        move |timeout| faults.wait_until_blocked(timeout)
+    })
+    .await;
+
+    let quiesce = tokio::spawn({
+        let engine = engine.clone();
+        async move { engine.quiesce().await }
+    });
+    expect_future_within(
+        async {
+            while !engine.background_shutdown_started() {
+                tokio::task::yield_now().await;
+            }
+        },
+        "quiesce should close the background spawn gate",
+    )
+    .await;
+    faults.release_failure();
+
+    let error = expect_catch_up_future_within(
+        writer,
+        "serial crash-and-replay should resolve during quiesce",
+    )
+    .await
+    .expect("writer task should join without a background-task panic")
+    .expect_err("ambiguous serial write should fail for replay");
+    assert!(matches!(error, Error::Internal(ref message) if message.contains("crash-and-replay")));
+    expect_catch_up_future_within(quiesce, "quiesce should await inline eviction completion")
+        .await
+        .expect("quiesce task should join without a spawn rejection panic");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn serial_crash_replay_rejects_residual_direct_commit_without_running_it() {
+    let data_dir = tempdir().expect("serial residual direct tempdir should build");
+    let faults = BlockingAmbiguousApplyFaultInjector::new();
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_581))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(46_582)),
+        )
+        .expect("serial residual direct engine should create"),
+    );
+    let tenant_id = TenantId::new("serial-residual-direct").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    engine
+        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
+        .expect("test should request the serial arm");
+
+    let crashing = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state("serial batch should block after its durable append", {
+        let faults = faults.clone();
+        move |timeout| faults.wait_until_blocked(timeout)
+    })
+    .await;
+
+    let residual = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move || {
+            engine.insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+            )
+        }
+    });
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "direct commit should queue behind the crashing serial batch",
+        |stats| stats.committer_inbox_depth == 1,
+    )
+    .await;
+    faults.release_failure();
+
+    let crash_error = expect_catch_up_future_within(crashing, "crashing batch should resolve")
+        .await
+        .expect("crashing batch task should join")
+        .expect_err("ambiguous serial write should fail for replay");
+    assert!(
+        matches!(crash_error, Error::Internal(ref message) if message.contains("crash-and-replay"))
+    );
+    let residual_error = expect_catch_up_future_within(
+        residual,
+        "residual direct commit should fail before the old runtime executes it",
+    )
+    .await
+    .expect("direct commit task should join without panicking")
+    .expect_err("residual direct commit should receive the typed eviction error");
+    assert_eq!(
+        residual_error.storage_kind(),
+        Some(nimbus_core::StorageErrorKind::Unavailable)
+    );
+    assert!(
+        residual_error
+            .to_string()
+            .contains("restarting after durable recovery")
+    );
+
+    let documents = engine
+        .query_documents_async(tenant_id, query_for("tasks"))
+        .await
+        .expect("replacement runtime should replay only the durable batch");
+    assert_eq!(documents.len(), 1);
+    assert_eq!(documents[0].fields.get("index"), Some(&json!(1)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn direct_lost_ack_with_unreadable_progress_evicts_and_replays_once() {
     let data_dir = tempdir().expect("direct lost-ack tempdir should build");
     let faults =
@@ -3923,6 +4091,54 @@ async fn busy_provider_catch_up_tenant_does_not_head_of_line_block_other_tenant(
         expected_a,
         "tenant A catch-up chunks must preserve commit order"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn provider_catch_up_spawn_rejection_releases_task_state_after_quiesce() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("provider-catch-up-quiesce", Engine::create_tenant);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+        )
+        .await
+        .expect("provider catch-up fixture write should commit");
+    let records = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("provider catch-up fixture journal should read")
+        .into_iter()
+        .filter(|record| !record.writes.is_empty())
+        .collect::<Vec<_>>();
+    engine.install_committed_mutation_observer(
+        "provider-catch-up-quiesce-test",
+        Arc::new(TenantSelectiveBlockingObserver::default()),
+    );
+    engine.quiesce().await;
+
+    for _ in 0..2 {
+        let error = engine
+            .enqueue_provider_catch_up_observers_for_testing(&tenant_id, &records)
+            .await
+            .expect_err("quiesce must reject new provider catch-up tasks without panicking");
+        assert!(matches!(error, Error::ResourceExhausted(_)));
+        assert_eq!(
+            engine
+                .provider_catch_up_observer_task_count_for_testing(&tenant_id)
+                .expect("catch-up task count should load"),
+            0,
+            "a rejected spawn must release the tenant's sole-task state"
+        );
+    }
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("catch-up spawn rejection diagnostics should load");
+    assert_eq!(stats.observer_catch_up_enqueue_failure_count, 2);
 }
 
 #[derive(Default)]

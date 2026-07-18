@@ -498,6 +498,16 @@ impl TenantRuntime {
         self.lifecycle.eviction_started()
     }
 
+    pub(crate) fn durable_recovery_eviction_error(&self) -> Error {
+        Error::storage(
+            nimbus_core::StorageErrorKind::Unavailable,
+            format!(
+                "tenant {} runtime is restarting after durable recovery",
+                self.tenant_id
+            ),
+        )
+    }
+
     pub(crate) async fn wait_for_eviction_complete(&self) {
         self.lifecycle.wait_for_eviction_complete().await;
     }
