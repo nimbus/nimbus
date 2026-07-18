@@ -2977,9 +2977,27 @@ async fn ambiguous_publisher_eviction_drains_then_reopens_a_distinct_runtime() {
                 .await
         }
     });
+    let mut reload_writer = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("after-recovery"))]),
+                )
+                .await
+        }
+    });
     assert_future_stays_pending(
         &mut reload,
         "reload should wait for the failed runtime to finish eviction",
+    )
+    .await;
+    assert_future_stays_pending(
+        &mut reload_writer,
+        "writer reload should wait for the failed runtime to finish eviction",
     )
     .await;
     drop(eviction_blocker);
@@ -2990,7 +3008,30 @@ async fn ambiguous_publisher_eviction_drains_then_reopens_a_distinct_runtime() {
     .await
     .expect("tenant reload task should join")
     .expect("reopen should wait for the old store handle to drain and recover");
-    assert_eq!(documents.len(), 1);
+    assert!(
+        documents.iter().any(|document| {
+            document
+                .fields
+                .get("title")
+                .is_some_and(|title| title == "recover")
+        }),
+        "the reload must retain the durably committed document"
+    );
+    expect_catch_up_future_within(
+        reload_writer,
+        "writer should transparently reopen after eviction",
+    )
+    .await
+    .expect("writer reload task should join")
+    .expect("writer should succeed after the failed runtime finishes eviction");
+    assert_eq!(
+        engine
+            .query_documents_async(tenant_id.clone(), query_for("tasks"))
+            .await
+            .expect("reopened tenant should remain queryable")
+            .len(),
+        2
+    );
     assert_ne!(
         engine
             .tenant_runtime_identity_for_testing(&tenant_id)

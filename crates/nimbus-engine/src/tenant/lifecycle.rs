@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 
-use nimbus_core::{Error, Result, TenantId};
+use nimbus_core::{Error, Result, StorageErrorKind, TenantId};
 use tokio::sync::Notify;
 
 // Tenant lifecycle is a close-then-drain protocol:
@@ -35,15 +35,31 @@ impl TenantLifecycle {
     }
 
     pub(super) fn enter_operation(&self, tenant_id: &TenantId) -> Result<()> {
-        if self.deleted.load(Ordering::Acquire) {
-            return Err(Error::TenantNotFound(tenant_id.clone()));
+        if let Some(error) = self.operation_rejection_if_deleted(tenant_id) {
+            return Err(error);
         }
         self.active_operations.fetch_add(1, Ordering::AcqRel);
-        if self.deleted.load(Ordering::Acquire) {
+        if let Some(error) = self.operation_rejection_if_deleted(tenant_id) {
             self.release_operation();
-            return Err(Error::TenantNotFound(tenant_id.clone()));
+            return Err(error);
         }
         Ok(())
+    }
+
+    pub(super) fn operation_rejection_if_deleted(&self, tenant_id: &TenantId) -> Option<Error> {
+        if !self.deleted.load(Ordering::Acquire) {
+            return None;
+        }
+        if self.eviction_started.load(Ordering::Acquire) {
+            // Durable-recovery eviction is transient: the tenant still exists,
+            // and async load paths fence on this runtime before reopening it.
+            // Sync/admission races must not turn that window into a false 404.
+            return Some(Error::storage(
+                StorageErrorKind::Unavailable,
+                format!("tenant {tenant_id} runtime is restarting after durable recovery"),
+            ));
+        }
+        Some(Error::TenantNotFound(tenant_id.clone()))
     }
 
     pub(super) fn release_operation(&self) {
@@ -91,10 +107,6 @@ impl TenantLifecycle {
             }
             notified.await;
         }
-    }
-
-    pub(super) fn is_deleted(&self) -> bool {
-        self.deleted.load(Ordering::Acquire)
     }
 
     fn wait_for_operations_blocking(&self) {
@@ -236,5 +248,37 @@ mod tests {
         releaser
             .join()
             .expect("release thread should not panic during lifecycle test");
+    }
+
+    #[test]
+    fn operation_racing_eviction_is_retryable_not_tenant_not_found() {
+        let lifecycle = TenantLifecycle::new();
+        let tenant_id = TenantId::new("evicted").expect("tenant id should be valid");
+        lifecycle.begin_eviction();
+
+        let error = lifecycle
+            .enter_operation(&tenant_id)
+            .expect_err("operation must not enter an evicting runtime");
+        assert_eq!(error.storage_kind(), Some(StorageErrorKind::Unavailable));
+        assert_eq!(
+            error.retryability(),
+            nimbus_core::Retryability::RetryableAfterBackoff
+        );
+        assert!(
+            !matches!(error, Error::TenantNotFound(_)),
+            "durable-recovery eviction must not masquerade as tenant deletion"
+        );
+    }
+
+    #[test]
+    fn operation_after_explicit_delete_remains_tenant_not_found() {
+        let lifecycle = TenantLifecycle::new();
+        let tenant_id = TenantId::new("deleted").expect("tenant id should be valid");
+        lifecycle.mark_deleted();
+
+        assert!(matches!(
+            lifecycle.enter_operation(&tenant_id),
+            Err(Error::TenantNotFound(found)) if found == tenant_id
+        ));
     }
 }

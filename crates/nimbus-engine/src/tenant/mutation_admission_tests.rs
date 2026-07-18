@@ -2,7 +2,7 @@ use super::*;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use nimbus_core::{DependencySet, Error, SequenceNumber};
+use nimbus_core::{DependencySet, Error, Retryability, SequenceNumber, StorageErrorKind};
 use tokio::sync::oneshot;
 
 fn queued_request(enqueued_at: Instant) -> QueuedMutationRequest {
@@ -97,11 +97,15 @@ fn mutation_admission_gate_full_is_typed_overload() {
 fn mutation_admission_gate_rejects_after_eviction_mark_before_enqueue() {
     let gate = MutationAdmissionGate::new();
     let tenant_id = nimbus_core::TenantId::new("evicted").expect("tenant id should build");
+    let lifecycle = TenantLifecycle::new();
+    lifecycle.begin_eviction();
     let error = gate
         .enqueue(queued_request(Instant::now()), || {
-            Some(Error::TenantNotFound(tenant_id.clone()))
+            lifecycle.operation_rejection_if_deleted(&tenant_id)
         })
         .expect_err("a request racing eviction must not enter the admission queue");
-    assert!(matches!(error, Error::TenantNotFound(found) if found == tenant_id));
+    assert_eq!(error.storage_kind(), Some(StorageErrorKind::Unavailable));
+    assert_eq!(error.retryability(), Retryability::RetryableAfterBackoff);
+    assert!(!matches!(error, Error::TenantNotFound(_)));
     assert_eq!(gate.stats().queue_depth, 0);
 }

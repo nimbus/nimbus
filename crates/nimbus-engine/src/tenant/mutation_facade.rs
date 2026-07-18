@@ -274,8 +274,7 @@ impl TenantRuntime {
     ) -> Result<()> {
         if let Err(error) = self.mutation_admission.enqueue(request, || {
             self.lifecycle
-                .is_deleted()
-                .then(|| Error::TenantNotFound(self.tenant_id.clone()))
+                .operation_rejection_if_deleted(&self.tenant_id)
         }) {
             self.maybe_report_overload_error(&error);
             return Err(error);
