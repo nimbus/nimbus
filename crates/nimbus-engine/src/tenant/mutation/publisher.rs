@@ -885,7 +885,7 @@ impl PublisherHandoff {
         #[cfg(not(test))]
         let (capacity, send_timeout) = publisher_limits_from_env();
         let (sender, receiver) = mpsc::channel(capacity);
-        let initial_mode = if pipeline_capable && pipeline_requested_from_env() {
+        let initial_mode = if pipeline_capable {
             CommitterPipelineMode::Pipeline
         } else {
             CommitterPipelineMode::Serial
@@ -987,12 +987,10 @@ impl PublisherHandoff {
         self.mode_transition_failure_count.load(Ordering::Relaxed)
     }
 
+    /// A pipeline-capable store always requests the pipelined publisher; the
+    /// only way to request the serial arm is the `#[cfg(test)]` override.
     fn pipeline_requested(&self) -> bool {
-        match self.requested_mode_override.load(Ordering::Acquire) {
-            1 => true,
-            2 => false,
-            _ => pipeline_requested_from_env(),
-        }
+        !matches!(self.requested_mode_override.load(Ordering::Acquire), 2)
     }
 
     #[cfg(test)]
@@ -1127,12 +1125,6 @@ impl PublisherHandoff {
         self.ambiguous_error_count
             .store(counts.ambiguous, Ordering::Relaxed);
     }
-}
-
-fn pipeline_requested_from_env() -> bool {
-    !std::env::var("NIMBUS_COMMITTER_PIPELINE")
-        .ok()
-        .is_some_and(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "off" | "serial"))
 }
 
 const fn mode_to_u8(mode: CommitterPipelineMode) -> u8 {

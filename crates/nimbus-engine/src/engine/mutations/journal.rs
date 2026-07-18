@@ -261,9 +261,8 @@ impl Engine {
 
         let mut finish_shutdown_eviction = false;
 
-        // This is both the kill-switch fallback and the provider arm. Provider
-        // persistence stays here until slice C adds ordered network pipelining
-        // and lease fencing.
+        // This is the provider arm. Provider persistence stays here until slice
+        // C adds ordered network pipelining and lease fencing.
         let assignment_baseline = runtime.durable_head();
         let assignment_responses = batch
             .iter()
