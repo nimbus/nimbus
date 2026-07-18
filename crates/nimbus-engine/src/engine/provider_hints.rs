@@ -253,6 +253,14 @@ impl Engine {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) async fn catch_up_provider_after_listener_attach_for_testing(
+        self: &Arc<Self>,
+    ) -> Result<()> {
+        self.catch_up_postgres_provider_after_listener_attach()
+            .await
+    }
+
     pub(crate) async fn run_provider_poll_worker(
         self: Arc<Self>,
         worker: ProviderPollWorker,

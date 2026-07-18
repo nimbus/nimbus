@@ -3,7 +3,7 @@ use super::support::{
     expect_future_within, new_faulted_engine,
 };
 use super::*;
-use nimbus_core::TriggerDeliveryCursor;
+use nimbus_core::{ScheduleRequest, TriggerDeliveryCursor};
 use nimbus_storage::NoopFaultInjector;
 
 #[tokio::test]
@@ -3332,6 +3332,8 @@ async fn poisoned_provider_catch_up_tenant_does_not_block_fresh_tenant() {
     let engine = fixture.engine();
     let tenant_a = fixture.create_tenant("provider-poison-a", Engine::create_tenant);
     let tenant_b = fixture.create_tenant("provider-poison-b", Engine::create_tenant);
+    let scheduled_tenant =
+        fixture.create_tenant("provider-poison-scheduled", Engine::create_tenant);
     for tenant_id in [&tenant_a, &tenant_b] {
         engine
             .shutdown_trigger_candidates_for_testing(tenant_id)
@@ -3353,6 +3355,25 @@ async fn poisoned_provider_catch_up_tenant_does_not_block_fresh_tenant() {
         .expect("tenant B journal should read");
     let observer = Arc::new(TenantSelectiveBlockingObserver::default());
     engine.install_committed_mutation_observer("provider-poison-isolation-test", observer.clone());
+    engine
+        .schedule_mutation_async(
+            scheduled_tenant.clone(),
+            ScheduleRequest {
+                run_after_ms: 60_000,
+                mutation: nimbus_core::Mutation::Insert {
+                    table: tasks_table(),
+                    id: None,
+                    fields: serde_json::Map::from_iter([("index".to_string(), json!(99))]),
+                },
+            },
+        )
+        .await
+        .expect("scheduled fixture work should persist");
+    engine
+        .evict_runtime_without_deleting_for_testing(&scheduled_tenant)
+        .await
+        .expect("scheduled tenant should unload without deleting durable work");
+    assert!(!engine.loaded_tenant_ids().contains(&scheduled_tenant));
     engine
         .poison_committed_mutation_observers_for_testing(&tenant_a)
         .expect("tenant A observer dispatcher should poison");
@@ -3384,6 +3405,22 @@ async fn poisoned_provider_catch_up_tenant_does_not_block_fresh_tenant() {
         .expect("tenant B observer diagnostics should load");
     assert_eq!(stats_b.observer_catch_up_enqueue_failure_count, 0);
     assert!(!stats_b.observer_dispatch_poisoned);
+
+    engine
+        .catch_up_provider_after_listener_attach_for_testing()
+        .await
+        .expect("listener-attach catch-up should continue into scheduled-work loading");
+    assert!(
+        engine.loaded_tenant_ids().contains(&scheduled_tenant),
+        "poisoned tenant A must not prevent an unloaded scheduled tenant from loading"
+    );
+    assert_eq!(
+        engine
+            .list_scheduled_jobs(&scheduled_tenant)
+            .expect("reloaded scheduled work should remain queryable")
+            .len(),
+        1
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

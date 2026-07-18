@@ -686,6 +686,28 @@ pub(super) async fn finish_durable_recovery_eviction(
 }
 
 #[cfg(test)]
+impl Engine {
+    pub(crate) async fn evict_runtime_without_deleting_for_testing(
+        self: &Arc<Self>,
+        tenant_id: &nimbus_core::TenantId,
+    ) -> nimbus_core::Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let error = Error::Internal(
+            "test-only runtime eviction preserving durable tenant state".to_string(),
+        );
+        begin_durable_recovery_eviction(&runtime, &error);
+        runtime.fail_and_drain_mutation_queues(&error);
+        runtime.close_committed_mutation_observers();
+        runtime
+            .wait_for_committed_mutation_observers_drained()
+            .await;
+        runtime.wait_for_operation_drain_for_eviction().await;
+        finish_durable_recovery_eviction(self.clone(), runtime).await;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
