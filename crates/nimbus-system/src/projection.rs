@@ -95,6 +95,7 @@ impl ProjectionWork {
         )
     }
 
+    #[cfg(test)]
     fn new(capacity: usize, high_watermark: usize) -> Self {
         let aggregate_capacity = capacity.saturating_mul(8).max(capacity).max(1);
         let aggregate_high_watermark = high_watermark
@@ -136,6 +137,7 @@ impl ProjectionWork {
         }
     }
 
+    #[cfg(test)]
     fn tenant_work(
         &self,
         tenant_id: &TenantId,
