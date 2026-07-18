@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use nimbus_core::{CommitEntry, Error, Result};
@@ -37,6 +38,11 @@ pub(super) struct DirectMutationProfile {
     phases: CommitPhaseDurations,
 }
 
+pub(super) struct DirectMutationRunOutcome {
+    pub(super) result: Result<Option<CommitEntry>>,
+    pub(super) initiated_eviction: bool,
+}
+
 impl DirectMutationProfile {
     pub(super) fn after_prepare(started_at: Instant) -> Self {
         Self {
@@ -55,11 +61,13 @@ impl Engine {
         runtime: Arc<TenantRuntime>,
         mut prepared_commit: PreparedCommit,
         mut profile: DirectMutationProfile,
-    ) -> Result<Option<CommitEntry>> {
+    ) -> DirectMutationRunOutcome {
         let runtime_for_commit = runtime.clone();
         let runtime_for_fanout = runtime.clone();
+        let initiated_eviction = Arc::new(AtomicBool::new(false));
+        let initiated_eviction_for_commit = initiated_eviction.clone();
         let queued_at = Instant::now();
-        let (commit, profile) = runtime.submit_direct_committer_then(
+        let submitted = runtime.submit_direct_committer_then(
             move || {
                 let runtime = runtime_for_commit;
                 profile.phases.queue_wait = queued_at.elapsed();
@@ -123,6 +131,7 @@ impl Engine {
                                 begin_durable_recovery_eviction(&runtime, &recovery_error);
                                 runtime.fail_and_drain_mutation_queues(&recovery_error);
                                 runtime.close_committed_mutation_observers();
+                                initiated_eviction_for_commit.store(true, Ordering::Release);
                                 return Err(recovery_error);
                             }
                             Err(progress_error) => {
@@ -133,6 +142,7 @@ impl Engine {
                                 begin_durable_recovery_eviction(&runtime, &recovery_error);
                                 runtime.fail_and_drain_mutation_queues(&recovery_error);
                                 runtime.close_committed_mutation_observers();
+                                initiated_eviction_for_commit.store(true, Ordering::Release);
                                 return Err(recovery_error);
                             }
                         }
@@ -165,17 +175,28 @@ impl Engine {
                     );
                 }
             },
-        )?;
-        let Some(commit) = commit else {
-            return Ok(None);
-        };
-        runtime.record_commit_phase_sample(
-            "direct",
-            1,
-            profile.phases,
-            profile.started_at.elapsed(),
         );
-        Ok(Some(commit))
+        let (result, profile) = match submitted {
+            Ok(submitted) => submitted,
+            Err(error) => {
+                return DirectMutationRunOutcome {
+                    result: Err(error),
+                    initiated_eviction: initiated_eviction.load(Ordering::Acquire),
+                };
+            }
+        };
+        if result.is_some() {
+            runtime.record_commit_phase_sample(
+                "direct",
+                1,
+                profile.phases,
+                profile.started_at.elapsed(),
+            );
+        }
+        DirectMutationRunOutcome {
+            result: Ok(result),
+            initiated_eviction: initiated_eviction.load(Ordering::Acquire),
+        }
     }
 
     #[cfg(test)]

@@ -37,6 +37,7 @@ impl Engine {
         principal: &PrincipalContext,
     ) -> Result<MutationExecutionResult> {
         let runtime = self.get_existing_tenant(tenant_id)?;
+        let mut initiated_eviction = false;
         let result = with_tenant_runtime_operation(runtime.clone(), tenant_id, |runtime| {
             // A generated insert id is part of the logical mutation and must
             // survive transparent stale-prepare retries unchanged.
@@ -100,8 +101,10 @@ impl Engine {
                 let _prepared_payload =
                     crate::tenant::PreparedPayloadAccounting::new(runtime.clone(), prepared_bytes);
                 let profile = DirectMutationProfile::after_prepare(prepare_started);
-                match self.run_prepared_direct_mutation(runtime.clone(), *prepared_commit, profile)
-                {
+                let outcome =
+                    self.run_prepared_direct_mutation(runtime.clone(), *prepared_commit, profile);
+                initiated_eviction |= outcome.initiated_eviction;
+                match outcome.result {
                     Ok(Some(_)) => {
                         return Ok(match &mode {
                             MutationExecutionMode::Immediate => {
@@ -133,7 +136,7 @@ impl Engine {
                 }
             }
         });
-        if runtime.eviction_started() {
+        if initiated_eviction {
             runtime.wait_for_committed_mutation_observers_drained_blocking();
             runtime.wait_for_operation_drain_for_eviction_blocking();
             finish_durable_recovery_eviction_blocking(self, runtime);

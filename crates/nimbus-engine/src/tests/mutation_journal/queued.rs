@@ -5,6 +5,7 @@ use super::support::{
 use super::*;
 use nimbus_core::{ScheduleRequest, TriggerDeliveryCursor};
 use nimbus_storage::NoopFaultInjector;
+use std::time::Instant;
 
 #[tokio::test]
 async fn async_schema_write_advances_runtime_journal_before_next_queued_document_write() {
@@ -2476,6 +2477,149 @@ async fn serial_crash_replay_rejects_residual_direct_commit_without_running_it()
         .expect("replacement runtime should replay only the durable batch");
     assert_eq!(documents.len(), 1);
     assert_eq!(documents[0].fields.get("index"), Some(&json!(1)));
+}
+
+struct NestedWriteDuringEvictionObserver {
+    engine: std::sync::Weak<Engine>,
+    entered: std::sync::mpsc::SyncSender<()>,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+    result: std::sync::mpsc::SyncSender<nimbus_core::Result<()>>,
+}
+
+impl crate::CommittedMutationObserver for NestedWriteDuringEvictionObserver {
+    fn committed_mutation_applied(&self, event: crate::CommittedMutationEvent) {
+        self.entered
+            .send(())
+            .expect("test should wait for the nested observer");
+        self.release
+            .lock()
+            .expect("nested observer release receiver should lock")
+            .recv()
+            .expect("test should release the nested observer");
+        let result = self
+            .engine
+            .upgrade()
+            .expect("engine should remain live during observer callback")
+            .insert_document(
+                &event.tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(99))]),
+            )
+            .map(|_| ());
+        self.result
+            .send(result)
+            .expect("test should wait for the nested write result");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn observer_nested_sync_write_rejected_during_direct_eviction_does_not_self_deadlock() {
+    let data_dir = tempdir().expect("nested direct eviction tempdir should build");
+    let faults =
+        ArmedOneShotDirectFaultInjector::new(FaultPoint::StorageCommitAfterVisibilityBeforeReturn);
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_582))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(46_583)),
+        )
+        .expect("nested direct eviction engine should create"),
+    );
+    let tenant_id = TenantId::new("direct-eviction-observer-nested")
+        .expect("nested direct eviction tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let (entered, entered_receiver) = std::sync::mpsc::sync_channel(1);
+    let (release, release_receiver) = std::sync::mpsc::sync_channel(1);
+    let (result, result_receiver) = std::sync::mpsc::sync_channel(1);
+    let observer = Arc::new(NestedWriteDuringEvictionObserver {
+        engine: Arc::downgrade(&engine),
+        entered,
+        release: Mutex::new(release_receiver),
+        result,
+    });
+    engine.install_committed_mutation_observer("nested-direct-eviction-test", observer.clone());
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(0))]),
+        )
+        .await
+        .expect("seed write should reach the observer dispatcher");
+    tokio::task::spawn_blocking(move || entered_receiver.recv_timeout(Duration::from_secs(5)))
+        .await
+        .expect("seed observer wait should join")
+        .expect("seed observer callback should block");
+
+    engine.fail_direct_recovery_read_for_testing(tenant_id.clone());
+    faults.arm();
+    let writer = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move || {
+            engine.insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+            )
+        }
+    });
+    expect_blocking_wait_reaches_state("direct writer should begin durable-recovery eviction", {
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move |timeout| {
+            let started = Instant::now();
+            while started.elapsed() < timeout {
+                if engine.ensure_tenant_exists(&tenant_id).is_err_and(|error| {
+                    error.storage_kind() == Some(nimbus_core::StorageErrorKind::Unavailable)
+                }) {
+                    return true;
+                }
+                std::thread::yield_now();
+            }
+            false
+        }
+    })
+    .await;
+
+    release
+        .send(())
+        .expect("nested observer should remain blocked until released");
+    let nested_error =
+        tokio::task::spawn_blocking(move || result_receiver.recv_timeout(Duration::from_secs(5)))
+            .await
+            .expect("nested write result wait should join")
+            .expect("nested observer write should return promptly")
+            .expect_err("nested write must be rejected by eviction admission");
+    assert_eq!(
+        nested_error.storage_kind(),
+        Some(nimbus_core::StorageErrorKind::Unavailable)
+    );
+    assert_eq!(
+        nested_error.retryability(),
+        nimbus_core::Retryability::RetryableAfterBackoff
+    );
+
+    let writer_error = expect_catch_up_future_within(writer, "direct eviction should finish")
+        .await
+        .expect("direct writer task should join")
+        .expect_err("ambiguous direct writer should require crash-and-replay");
+    assert!(
+        matches!(writer_error, Error::Internal(ref message) if message.contains("crash-and-replay"))
+    );
+    let documents = engine
+        .query_documents_async(tenant_id, query_for("tasks"))
+        .await
+        .expect("dispatcher drain should let eviction complete and reload the tenant");
+    assert_eq!(documents.len(), 2);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
