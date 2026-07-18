@@ -20,6 +20,27 @@ use super::super::window_prepare::prepare_single_document_write_from_window;
 use super::store::DirectMutationProfile;
 use super::types::{MutationExecutionMode, MutationExecutionResult};
 
+/// Finishes a direct-path durable-recovery eviction on every exit path.
+///
+/// Eviction begins inside the committer closure but can only be completed by
+/// the caller, after its own tenant operation guard has dropped. Making that
+/// completion a drop obligation keeps "eviction that starts always finishes"
+/// true even when the steps before it fail.
+struct DirectEvictionCompletion<'a> {
+    engine: &'a Engine,
+    runtime: Option<Arc<TenantRuntime>>,
+}
+
+impl Drop for DirectEvictionCompletion<'_> {
+    fn drop(&mut self) {
+        let Some(runtime) = self.runtime.take() else {
+            return;
+        };
+        runtime.wait_for_operation_drain_for_eviction_blocking();
+        finish_durable_recovery_eviction_blocking(self.engine, runtime);
+    }
+}
+
 enum PreparedDirectMutation {
     DuplicateScheduledExecution,
     Commit {
@@ -148,9 +169,30 @@ impl Engine {
             }
         });
         if initiated_eviction {
-            runtime.wait_for_committed_mutation_observers_drained_blocking()?;
-            runtime.wait_for_operation_drain_for_eviction_blocking();
-            finish_durable_recovery_eviction_blocking(self, runtime);
+            // The commit closure already marked this runtime for eviction, and
+            // nothing else owns finishing a direct-path eviction. Arm completion
+            // before the bounded observer drain so a drain timeout, an early
+            // return, or an unwind still deregisters the runtime: one left
+            // registered with an unfinished eviction parks every later accessor
+            // in `wait_for_eviction_complete`, which has no timeout, forever.
+            let _completion = DirectEvictionCompletion {
+                engine: self,
+                runtime: Some(runtime.clone()),
+            };
+            if let Err(drain_error) =
+                runtime.wait_for_committed_mutation_observers_drained_blocking()
+            {
+                // A wedged observer degrades eviction to "loud but complete".
+                // The dispatcher holds no tenant operation guard, so the
+                // operation drain still finishes, and the caller keeps the
+                // write's own crash-and-replay error rather than this
+                // secondary drain diagnostic.
+                tracing::error!(
+                    tenant = %tenant_id,
+                    error = %drain_error,
+                    "completing direct durable-recovery eviction without a drained committed-mutation observer dispatcher"
+                );
+            }
         }
         result
     }

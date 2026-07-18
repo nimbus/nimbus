@@ -1,6 +1,6 @@
 use super::publisher_test_seams::{
     ArmedOneShotDirectFaultInjector, BlockingAmbiguousApplyFaultInjector,
-    NestedWriteDuringEvictionObserver,
+    NestedWriteDuringEvictionObserver, WedgedFirstDispatchObserver,
 };
 use super::support::{
     assert_future_stays_pending, expect_blocking_wait_reaches_state, expect_catch_up_future_within,
@@ -199,6 +199,121 @@ async fn observer_nested_sync_write_rejected_during_direct_eviction_does_not_sel
         .await
         .expect("dispatcher drain should let eviction complete and reload the tenant");
     assert_eq!(documents.len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn direct_eviction_completes_when_the_observer_drain_times_out() {
+    let data_dir = tempdir().expect("wedged observer eviction tempdir should build");
+    let faults =
+        ArmedOneShotDirectFaultInjector::new(FaultPoint::StorageCommitAfterVisibilityBeforeReturn);
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_584))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(46_585)),
+        )
+        .expect("wedged observer eviction engine should create"),
+    );
+    let tenant_id =
+        TenantId::new("direct-eviction-wedged-observer").expect("tenant id should build");
+    crate::tenant::configure_observer_drain_blocking_timeout_for_testing(
+        tenant_id.clone(),
+        Duration::from_millis(250),
+    );
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let evicted_runtime = engine
+        .registered_runtime_for_testing(&tenant_id)
+        .expect("runtime identity should load before the fault");
+
+    let (entered, entered_receiver) = std::sync::mpsc::sync_channel(1);
+    let (release, release_receiver) = std::sync::mpsc::sync_channel(1);
+    engine.install_committed_mutation_observer(
+        "wedged-drain-eviction-test",
+        Arc::new(WedgedFirstDispatchObserver {
+            entered,
+            release: Mutex::new(release_receiver),
+            wedge_next: AtomicBool::new(true),
+        }),
+    );
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(0))]),
+        )
+        .await
+        .expect("seed write should reach the observer dispatcher");
+    tokio::task::spawn_blocking(move || entered_receiver.recv_timeout(Duration::from_secs(5)))
+        .await
+        .expect("seed observer wait should join")
+        .expect("seed observer callback should wedge the dispatcher");
+
+    // The dispatcher can no longer drain, so the direct path's bounded drain
+    // wait must time out. Eviction is still obliged to finish: leaving the
+    // runtime registered with an unfinished eviction parks every later accessor
+    // in the untimed `wait_for_eviction_complete`.
+    engine.fail_direct_recovery_read_for_testing(tenant_id.clone());
+    faults.arm();
+    let writer = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move || {
+            engine.insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+            )
+        }
+    });
+    let writer_error = expect_catch_up_future_within(
+        writer,
+        "direct eviction should finish despite the wedged observer dispatcher",
+    )
+    .await
+    .expect("direct writer task should join")
+    .expect_err("ambiguous direct writer should require crash-and-replay");
+
+    timeout(
+        Duration::from_secs(5),
+        evicted_runtime.wait_for_eviction_complete(),
+    )
+    .await
+    .expect("a timed-out observer drain must still complete the eviction");
+    assert!(
+        !engine.runtime_is_registered_for_testing(&tenant_id, &evicted_runtime),
+        "the completed eviction must deregister the stranded runtime"
+    );
+
+    let documents = timeout(
+        Duration::from_secs(5),
+        engine.query_documents_async(tenant_id.clone(), query_for("tasks")),
+    )
+    .await
+    .expect("a tenant access after the timed-out drain must not park forever")
+    .expect("the tenant should reopen on a fresh runtime");
+    assert_eq!(documents.len(), 2);
+    assert_ne!(
+        engine
+            .registered_runtime_for_testing(&tenant_id)
+            .map(|runtime| Arc::as_ptr(&runtime) as usize),
+        Some(Arc::as_ptr(&evicted_runtime) as usize),
+        "the reopened tenant must run on a distinct runtime"
+    );
+    assert!(
+        matches!(writer_error, Error::Internal(ref message) if message.contains("crash-and-replay")),
+        "a drain timeout must not replace the write's own replay error: {writer_error}"
+    );
+
+    release
+        .send(())
+        .expect("the wedged observer should still be parked at test end");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

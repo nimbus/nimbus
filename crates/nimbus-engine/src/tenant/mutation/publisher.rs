@@ -145,6 +145,34 @@ fn take_observer_limits_for_testing(tenant_id: &TenantId) -> Option<ObserverLimi
         .remove(tenant_id)
 }
 
+#[cfg(test)]
+static OBSERVER_DRAIN_TIMEOUTS_FOR_TESTING: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<TenantId, Duration>>,
+> = std::sync::OnceLock::new();
+
+/// Shortens the blocking observer-drain deadline so a test can reach the
+/// timeout branch without parking for the production 30-second bound.
+#[cfg(test)]
+pub(crate) fn configure_observer_drain_blocking_timeout_for_testing(
+    tenant_id: TenantId,
+    drain_timeout: Duration,
+) {
+    OBSERVER_DRAIN_TIMEOUTS_FOR_TESTING
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("observer test-drain-timeout lock should not be poisoned")
+        .insert(tenant_id, drain_timeout);
+}
+
+#[cfg(test)]
+fn take_observer_drain_blocking_timeout_for_testing(tenant_id: &TenantId) -> Option<Duration> {
+    OBSERVER_DRAIN_TIMEOUTS_FOR_TESTING
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("observer test-drain-timeout lock should not be poisoned")
+        .remove(tenant_id)
+}
+
 /// Slice-A overload contract: live observer delivery is bounded and loud.
 /// A cap breach poisons this tenant handoff and records diagnostics before an
 /// error is logged. Blocking the publisher here can deadlock because observers
@@ -166,6 +194,7 @@ pub(crate) struct ObserverHandoff {
     poisoned: AtomicBool,
     started: AtomicBool,
     drained: AtomicBool,
+    drain_blocking_timeout: Duration,
     drained_notify: tokio::sync::Notify,
     capacity_available: tokio::sync::Notify,
     catch_up_pending: AtomicBool,
@@ -189,6 +218,11 @@ impl ObserverHandoff {
             take_observer_limits_for_testing(tenant_id).unwrap_or_else(observer_limits_from_env);
         #[cfg(not(test))]
         let requested_limits = observer_limits_from_env();
+        #[cfg(test)]
+        let drain_blocking_timeout = take_observer_drain_blocking_timeout_for_testing(tenant_id)
+            .unwrap_or(OBSERVER_DRAIN_BLOCKING_TIMEOUT);
+        #[cfg(not(test))]
+        let drain_blocking_timeout = OBSERVER_DRAIN_BLOCKING_TIMEOUT;
         let (queue_capacity, queue_high_watermark, max_live_dispatch) = clamp_observer_limits(
             tenant_id,
             requested_limits.0,
@@ -214,6 +248,7 @@ impl ObserverHandoff {
             poisoned: AtomicBool::new(false),
             started: AtomicBool::new(false),
             drained: AtomicBool::new(false),
+            drain_blocking_timeout,
             drained_notify: tokio::sync::Notify::new(),
             capacity_available: tokio::sync::Notify::new(),
             catch_up_pending: AtomicBool::new(false),
@@ -586,7 +621,7 @@ impl ObserverHandoff {
     }
 
     pub(crate) fn wait_drained_blocking(&self) -> Result<()> {
-        let deadline = Instant::now() + OBSERVER_DRAIN_BLOCKING_TIMEOUT;
+        let deadline = Instant::now() + self.drain_blocking_timeout;
         loop {
             if self.drained.load(Ordering::Acquire) {
                 return Ok(());
@@ -596,7 +631,7 @@ impl ObserverHandoff {
                 let stats = self.stats();
                 tracing::error!(
                     tenant = %self.tenant_id,
-                    timeout = ?OBSERVER_DRAIN_BLOCKING_TIMEOUT,
+                    timeout = ?self.drain_blocking_timeout,
                     observer_queue_depth = stats.depth,
                     observer_queue_capacity = stats.capacity,
                     observer_dispatcher_poisoned = stats.poisoned,
@@ -604,7 +639,7 @@ impl ObserverHandoff {
                 );
                 return Err(Error::Internal(format!(
                     "committed-mutation observer dispatcher for tenant {} did not drain within {:?}",
-                    self.tenant_id, OBSERVER_DRAIN_BLOCKING_TIMEOUT
+                    self.tenant_id, self.drain_blocking_timeout
                 )));
             }
             std::thread::park_timeout(

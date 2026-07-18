@@ -309,6 +309,32 @@ impl nimbus_storage::FaultInjector for RetryExhaustionThenHealthyAppendFaultInje
     }
 }
 
+/// Wedges a tenant's committed-mutation dispatcher on its first dispatch so a
+/// concurrent durable-recovery eviction has to reach its bounded observer-drain
+/// timeout instead of draining. Later dispatches — including those of the
+/// runtime reopened after eviction — pass straight through.
+pub(super) struct WedgedFirstDispatchObserver {
+    pub(super) entered: std::sync::mpsc::SyncSender<()>,
+    pub(super) release: Mutex<std::sync::mpsc::Receiver<()>>,
+    pub(super) wedge_next: AtomicBool,
+}
+
+impl crate::CommittedMutationObserver for WedgedFirstDispatchObserver {
+    fn committed_mutation_applied(&self, _event: crate::CommittedMutationEvent) {
+        if !self.wedge_next.swap(false, Ordering::AcqRel) {
+            return;
+        }
+        self.entered
+            .send(())
+            .expect("test should wait for the wedged observer");
+        self.release
+            .lock()
+            .expect("wedged observer release receiver should lock")
+            .recv_timeout(BLOCKING_TEST_RELEASE_TIMEOUT)
+            .expect("test should release the wedged observer within the blocking-test timeout");
+    }
+}
+
 pub(super) struct NestedWriteDuringEvictionObserver {
     pub(super) engine: std::sync::Weak<Engine>,
     pub(super) entered: std::sync::mpsc::SyncSender<()>,

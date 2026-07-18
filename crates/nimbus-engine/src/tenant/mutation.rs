@@ -29,7 +29,8 @@ pub(crate) use self::publisher::{
 };
 #[cfg(test)]
 pub(crate) use self::publisher::{
-    configure_observer_limits_for_testing, configure_publisher_limits_for_testing,
+    configure_observer_drain_blocking_timeout_for_testing, configure_observer_limits_for_testing,
+    configure_publisher_limits_for_testing,
 };
 #[cfg(test)]
 pub(crate) use self::requests::{

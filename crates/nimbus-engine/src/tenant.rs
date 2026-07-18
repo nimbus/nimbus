@@ -85,7 +85,8 @@ use self::mutation::{
 };
 #[cfg(test)]
 pub(crate) use self::mutation::{
-    configure_observer_limits_for_testing, configure_publisher_limits_for_testing,
+    configure_observer_drain_blocking_timeout_for_testing, configure_observer_limits_for_testing,
+    configure_publisher_limits_for_testing,
 };
 use self::query_planning::QueryPlanningMetrics;
 pub use self::query_planning::QueryPlanningStats;
