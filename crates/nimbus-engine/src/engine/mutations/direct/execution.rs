@@ -14,6 +14,7 @@ use super::super::journal::{
     mutation_occ_backoff, mutation_occ_max_attempts, validate_prepared_for_provider,
 };
 use super::super::prepared::PreparedCommit;
+use super::super::publisher::finish_durable_recovery_eviction_blocking;
 use super::super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
 use super::super::window_prepare::prepare_single_document_write_from_window;
 use super::store::DirectMutationProfile;
@@ -35,7 +36,8 @@ impl Engine {
         mutation: Mutation,
         principal: &PrincipalContext,
     ) -> Result<MutationExecutionResult> {
-        with_tenant_runtime_operation(self.get_existing_tenant(tenant_id)?, tenant_id, |runtime| {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let result = with_tenant_runtime_operation(runtime.clone(), tenant_id, |runtime| {
             // A generated insert id is part of the logical mutation and must
             // survive transparent stale-prepare retries unchanged.
             let mutation = normalize_direct_insert_id(self, mutation);
@@ -130,7 +132,13 @@ impl Engine {
                     Err(error) => return Err(error),
                 }
             }
-        })
+        });
+        if runtime.eviction_started() {
+            runtime.wait_for_committed_mutation_observers_drained_blocking();
+            runtime.wait_for_operation_drain_for_eviction_blocking();
+            finish_durable_recovery_eviction_blocking(self, runtime);
+        }
+        result
     }
 
     pub(super) fn apply_mutation_with_principal(

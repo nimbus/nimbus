@@ -561,6 +561,12 @@ impl ObserverHandoff {
         }
     }
 
+    pub(crate) fn wait_drained_blocking(&self) {
+        while !self.drained.load(Ordering::Acquire) {
+            std::thread::park_timeout(Duration::from_millis(1));
+        }
+    }
+
     pub(crate) fn take_receiver(
         &self,
     ) -> mpsc::UnboundedReceiver<CommittedMutationObserverMessage> {

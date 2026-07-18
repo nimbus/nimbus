@@ -1801,6 +1801,41 @@ struct RetryExhaustionThenHealthyAppendFaultInjector {
     visits: std::sync::atomic::AtomicU64,
 }
 
+struct ArmedOneShotDirectFaultInjector {
+    point: FaultPoint,
+    armed: AtomicBool,
+    failed: AtomicBool,
+}
+
+impl ArmedOneShotDirectFaultInjector {
+    fn new(point: FaultPoint) -> Arc<Self> {
+        Arc::new(Self {
+            point,
+            armed: AtomicBool::new(false),
+            failed: AtomicBool::new(false),
+        })
+    }
+
+    fn arm(&self) {
+        self.armed.store(true, Ordering::Release);
+    }
+}
+
+impl nimbus_storage::FaultInjector for ArmedOneShotDirectFaultInjector {
+    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+        if point == self.point
+            && self.armed.load(Ordering::Acquire)
+            && !self.failed.swap(true, Ordering::AcqRel)
+        {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Transient,
+                format!("injected one-shot direct fault at {}", point.as_str()),
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl RetryExhaustionThenHealthyAppendFaultInjector {
     fn new() -> Arc<Self> {
         Arc::new(Self {
@@ -2243,6 +2278,177 @@ async fn serial_lost_ack_evicts_and_replays_without_retryable_error() {
             .collect::<Vec<_>>(),
         vec![SequenceNumber(1), SequenceNumber(2)]
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn direct_lost_ack_with_unreadable_progress_evicts_and_replays_once() {
+    let data_dir = tempdir().expect("direct lost-ack tempdir should build");
+    let faults =
+        ArmedOneShotDirectFaultInjector::new(FaultPoint::StorageCommitAfterVisibilityBeforeReturn);
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_582))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(46_582)),
+        )
+        .expect("direct lost-ack engine should create"),
+    );
+    let tenant_id = TenantId::new("direct-lost-ack").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let runtime_before = engine
+        .tenant_runtime_identity_for_testing(&tenant_id)
+        .expect("direct runtime identity should load");
+    engine.fail_direct_recovery_read_for_testing(tenant_id.clone());
+    faults.arm();
+
+    let error = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move || {
+            engine.insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+            )
+        }
+    })
+    .await
+    .expect("direct lost-ack task should join")
+    .expect_err("an unknowable landed direct write must require replay");
+    assert_eq!(error.retryability(), nimbus_core::Retryability::Terminal);
+    assert!(matches!(error, Error::Internal(ref message) if message.contains("crash-and-replay")));
+
+    let replayed = engine
+        .query_documents_async(tenant_id.clone(), query_for("tasks"))
+        .await
+        .expect("replacement runtime should replay the landed direct write");
+    assert_eq!(replayed.len(), 1);
+    assert_eq!(replayed[0].fields.get("index"), Some(&json!(1)));
+    assert_ne!(
+        engine
+            .tenant_runtime_identity_for_testing(&tenant_id)
+            .expect("replacement runtime identity should load"),
+        runtime_before
+    );
+    let replayed_journal = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("replayed direct journal should read");
+    assert_eq!(replayed_journal.len(), 1);
+    assert_eq!(replayed_journal[0].sequence, SequenceNumber(1));
+
+    tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move || {
+            engine.insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+            )
+        }
+    })
+    .await
+    .expect("replacement direct task should join")
+    .expect("the replacement runtime should accept the next direct commit");
+    let healed_journal = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("healed direct journal should read");
+    assert_eq!(
+        healed_journal
+            .iter()
+            .map(|record| record.sequence)
+            .collect::<Vec<_>>(),
+        vec![SequenceNumber(1), SequenceNumber(2)]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn direct_unchanged_head_failure_remains_retryable_and_batch_scoped() {
+    let data_dir = tempdir().expect("direct definitive tempdir should build");
+    let faults = ArmedOneShotDirectFaultInjector::new(FaultPoint::StorageCommitBeforeVisibility);
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_583))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(46_583)),
+        )
+        .expect("direct definitive engine should create"),
+    );
+    let tenant_id = TenantId::new("direct-definitive").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let runtime_before = engine
+        .tenant_runtime_identity_for_testing(&tenant_id)
+        .expect("direct runtime identity should load");
+    faults.arm();
+
+    let error = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move || {
+            engine.insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+            )
+        }
+    })
+    .await
+    .expect("direct definitive task should join")
+    .expect_err("the pre-visibility direct fault should fail only its batch");
+    assert_eq!(
+        error.retryability(),
+        nimbus_core::Retryability::RetryableAfterBackoff
+    );
+    assert_eq!(
+        engine
+            .tenant_runtime_identity_for_testing(&tenant_id)
+            .expect("definitive failure must keep the runtime loaded"),
+        runtime_before
+    );
+    assert!(
+        engine
+            .read_durable_journal(&tenant_id, SequenceNumber(0))
+            .expect("definitive direct journal should read")
+            .is_empty()
+    );
+    let (_, pending) = engine
+        .write_log_assignment_for_testing(&tenant_id)
+        .expect("definitive direct assignment state should load");
+    assert!(pending.is_empty());
+
+    tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move || {
+            engine.insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+            )
+        }
+    })
+    .await
+    .expect("follow-up direct task should join")
+    .expect("the next direct commit should reuse the discarded suffix safely");
+    let journal = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("follow-up direct journal should read");
+    assert_eq!(journal.len(), 1);
+    assert_eq!(journal[0].sequence, SequenceNumber(1));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

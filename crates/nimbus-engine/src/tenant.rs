@@ -490,6 +490,10 @@ impl TenantRuntime {
         self.lifecycle.wait_for_operations_async().await;
     }
 
+    pub(crate) fn wait_for_operation_drain_for_eviction_blocking(&self) {
+        self.lifecycle.wait_for_operations_blocking();
+    }
+
     pub(crate) fn eviction_started(&self) -> bool {
         self.lifecycle.eviction_started()
     }

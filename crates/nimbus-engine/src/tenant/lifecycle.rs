@@ -109,7 +109,7 @@ impl TenantLifecycle {
         }
     }
 
-    fn wait_for_operations_blocking(&self) {
+    pub(super) fn wait_for_operations_blocking(&self) {
         let mut guard = self
             .zero_active_lock
             .lock()

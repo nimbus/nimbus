@@ -652,12 +652,27 @@ pub(super) async fn finish_durable_recovery_eviction(
     engine: Arc<Engine>,
     runtime: Arc<TenantRuntime>,
 ) {
-    let tenant_id = runtime.tenant_id().clone();
-
     // No tenant operation guard crosses this engine-wide gate. Explicit
     // deletion takes the gate before waiting for operations, so this order is
     // what prevents the former AB-BA cycle.
     let _tenant_load_guard = engine.tenant_load_gate.lock().await;
+    finish_durable_recovery_eviction_locked(engine.as_ref(), &runtime);
+    drop(runtime);
+    drop(_tenant_load_guard);
+}
+
+pub(super) fn finish_durable_recovery_eviction_blocking(
+    engine: &Engine,
+    runtime: Arc<TenantRuntime>,
+) {
+    let _tenant_load_guard = engine.lock_tenant_load_gate_blocking();
+    finish_durable_recovery_eviction_locked(engine, &runtime);
+    drop(runtime);
+    drop(_tenant_load_guard);
+}
+
+fn finish_durable_recovery_eviction_locked(engine: &Engine, runtime: &Arc<TenantRuntime>) {
+    let tenant_id = runtime.tenant_id().clone();
     engine
         .publisher_failure_diagnostics
         .write()
@@ -681,8 +696,6 @@ pub(super) async fn finish_durable_recovery_eviction(
     // Wake accessors only after the failed runtime is absent from the
     // registry. They will then serialize a fresh open behind the load gate.
     runtime.finish_eviction();
-    drop(runtime);
-    drop(_tenant_load_guard);
 }
 
 #[cfg(test)]
