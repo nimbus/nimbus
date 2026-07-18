@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use nimbus_core::{DocumentId, TableName, TenantId};
@@ -19,6 +19,13 @@ const DEFAULT_PROJECTION_WORK_HIGH_WATERMARK: usize = 768;
 const DEFAULT_PROJECTION_AGGREGATE_WORK_CAPACITY: usize = 8_192;
 const DEFAULT_PROJECTION_AGGREGATE_WORK_HIGH_WATERMARK: usize = 6_144;
 const PROJECTION_TENANT_SWEEP_INTERVAL: usize = 1_024;
+/// Consecutive failed catch-up attempts a dirty scope may cost before its
+/// markers are abandoned.
+///
+/// A requeued marker is retried by the guard release that restored it, so
+/// without a ceiling a projection that always fails would respawn itself
+/// forever. The bound turns that into a finite, loudly reported fault.
+const MAX_CATCH_UP_ATTEMPTS: u32 = 8;
 
 struct TableProjectionObserver {
     projection_work: Arc<ProjectionWork>,
@@ -71,6 +78,10 @@ struct ProjectionWork {
     registered: tokio::sync::Notify,
     #[cfg(test)]
     sweep_count: AtomicU64,
+    /// Catch-up table projections that must fail before the next one is
+    /// allowed to run for real.
+    #[cfg(test)]
+    catch_up_failures_to_inject: AtomicU32,
 }
 
 #[derive(Default)]
@@ -95,6 +106,11 @@ struct TenantProjectionWork {
     dirty_tables: Mutex<BTreeSet<TableName>>,
     dirty_table_count: AtomicUsize,
     catch_up_projection_count: AtomicU64,
+    /// Consecutive catch-up attempts that failed to project every claimed
+    /// scope. Reset by the first attempt that lands them all.
+    catch_up_attempt_count: AtomicU32,
+    /// Scopes given up on after [`MAX_CATCH_UP_ATTEMPTS`] consecutive failures.
+    catch_up_abandoned_scope_count: AtomicU64,
     idle: tokio::sync::Notify,
     #[cfg(test)]
     flush_waiting: AtomicBool,
@@ -117,6 +133,7 @@ struct ProjectionWorkStats {
     dropped_event_count: u64,
     dirty_projection_scope_count: usize,
     catch_up_projection_count: u64,
+    catch_up_abandoned_scope_count: u64,
     poisoned: bool,
 }
 
@@ -261,7 +278,31 @@ impl ProjectionWork {
             registered: tokio::sync::Notify::new(),
             #[cfg(test)]
             sweep_count: AtomicU64::new(0),
+            #[cfg(test)]
+            catch_up_failures_to_inject: AtomicU32::new(0),
         }
+    }
+
+    /// Makes the next `count` catch-up table projections fail, so a test can
+    /// exercise recovery from a catch-up that does not land on its first try.
+    #[cfg(test)]
+    fn fail_next_catch_up_projections(&self, count: u32) {
+        self.catch_up_failures_to_inject
+            .store(count, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    fn take_injected_catch_up_failure(&self) -> bool {
+        self.catch_up_failures_to_inject
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+    }
+
+    #[cfg(not(test))]
+    fn take_injected_catch_up_failure(&self) -> bool {
+        false
     }
 
     #[cfg(test)]
@@ -323,6 +364,8 @@ impl ProjectionWork {
             dirty_tables: Mutex::new(BTreeSet::new()),
             dirty_table_count: AtomicUsize::new(0),
             catch_up_projection_count: AtomicU64::new(0),
+            catch_up_attempt_count: AtomicU32::new(0),
+            catch_up_abandoned_scope_count: AtomicU64::new(0),
             idle: tokio::sync::Notify::new(),
             #[cfg(test)]
             flush_waiting: AtomicBool::new(false),
@@ -557,35 +600,125 @@ impl ProjectionWork {
         projection_work: ProjectionWorkGuard,
         tables: Vec<TableName>,
     ) {
+        self.spawn_projection_task(engine, handle, tenant_id, projection_work, tables, false);
+    }
+
+    /// Spawns a catch-up projection for scopes whose markers this task owns.
+    ///
+    /// The markers were cleared to claim them, so this task is the only record
+    /// that the work is still owed: whatever it fails to project has to go back
+    /// on the dirty set before its guard releases, or the tenant reports idle
+    /// while `_nimbus` stays stale.
+    fn spawn_catch_up_projection(
+        self: &Arc<Self>,
+        engine: &Arc<Engine>,
+        handle: &tokio::runtime::Handle,
+        tenant_id: TenantId,
+        projection_work: ProjectionWorkGuard,
+        tables: Vec<TableName>,
+    ) {
+        self.spawn_projection_task(engine, handle, tenant_id, projection_work, tables, true);
+    }
+
+    fn spawn_projection_task(
+        self: &Arc<Self>,
+        engine: &Arc<Engine>,
+        handle: &tokio::runtime::Handle,
+        tenant_id: TenantId,
+        projection_work: ProjectionWorkGuard,
+        tables: Vec<TableName>,
+        is_catch_up: bool,
+    ) {
         let tenant_work = projection_work.tenant_work.clone();
+        let work = projection_work.work.clone();
         let projection_epoch = self.epoch.clone();
         let projection_generation = projection_work.generation;
         let engine = engine.clone();
         handle.spawn(async move {
             let _projection_work = projection_work;
             let _projection_guard = tenant_work.projection_lock.lock().await;
-            if projection_generation < tenant_work.generation.load(Ordering::Acquire) {
-                return;
-            }
-            for table in tables {
-                if let Err(error) = record_table_state_for_generation_async(
-                    &engine,
-                    &tenant_id,
-                    &table,
-                    &projection_epoch,
-                    projection_generation,
-                )
-                .await
-                {
+            let mut unprojected = Vec::new();
+            let mut remaining = tables.into_iter();
+            for table in remaining.by_ref() {
+                // A generation that goes stale parks the rest of this task's
+                // work; the runtime that replaced it owes those scopes.
+                if projection_generation < tenant_work.generation.load(Ordering::Acquire) {
+                    unprojected.push(table);
+                    break;
+                }
+                let projected = if is_catch_up && work.take_injected_catch_up_failure() {
+                    Err(nimbus_core::Error::Internal(
+                        "injected catch-up projection failure".to_string(),
+                    ))
+                } else {
+                    record_table_state_for_generation_async(
+                        &engine,
+                        &tenant_id,
+                        &table,
+                        &projection_epoch,
+                        projection_generation,
+                    )
+                    .await
+                };
+                if let Err(error) = projected {
                     warn!(
                         tenant_id = %tenant_id,
                         table = %table,
                         error = %error,
                         "failed to project committed table state into _nimbus"
                     );
+                    unprojected.push(table);
                 }
             }
+            unprojected.extend(remaining);
+            if is_catch_up {
+                // Runs before `_projection_work` releases, so a requeued scope
+                // is dirty again before the tenant can look drained.
+                work.requeue_failed_catch_up(&tenant_id, &tenant_work, unprojected);
+            }
         });
+    }
+
+    /// Restores the markers a catch-up task could not project, so the guard
+    /// release that follows retries them.
+    ///
+    /// Bounded on purpose: that release re-enters the drain immediately, so a
+    /// projection that always fails would otherwise respawn itself forever.
+    /// After [`MAX_CATCH_UP_ATTEMPTS`] consecutive failures the scopes are
+    /// abandoned loudly instead of spun on — a projection failing that
+    /// persistently is a fault for an operator, not backpressure to absorb.
+    fn requeue_failed_catch_up(
+        &self,
+        tenant_id: &TenantId,
+        tenant_work: &Arc<TenantProjectionWork>,
+        unprojected: Vec<TableName>,
+    ) {
+        if unprojected.is_empty() {
+            tenant_work
+                .catch_up_attempt_count
+                .store(0, Ordering::Release);
+            return;
+        }
+        let attempts = tenant_work
+            .catch_up_attempt_count
+            .fetch_add(1, Ordering::AcqRel)
+            + 1;
+        if attempts >= MAX_CATCH_UP_ATTEMPTS {
+            tenant_work
+                .catch_up_attempt_count
+                .store(0, Ordering::Release);
+            tenant_work
+                .catch_up_abandoned_scope_count
+                .fetch_add(unprojected.len() as u64, Ordering::Relaxed);
+            tracing::error!(
+                tenant_id = %tenant_id,
+                catch_up_attempts = attempts,
+                abandoned_scopes = unprojected.len(),
+                "system table projection catch-up failed repeatedly; abandoning these scopes, which stay stale in _nimbus until their tables are written again"
+            );
+            return;
+        }
+        tenant_work.mark_tables_dirty(&unprojected, &self.dirty_tenants);
     }
 
     /// Defers one catch-up drain onto the runtime after a drop marked a scope.
@@ -680,7 +813,7 @@ impl ProjectionWork {
                 .catch_up_projection_count
                 .fetch_add(1, Ordering::Relaxed);
             tables.sort_by(|left, right| left.as_str().cmp(right.as_str()));
-            self.spawn_registered_projection(&engine, &handle, tenant_id, projection_work, tables);
+            self.spawn_catch_up_projection(&engine, &handle, tenant_id, projection_work, tables);
         }
     }
 
@@ -733,6 +866,9 @@ impl ProjectionWork {
                 .map_or(0, |work| work.dirty_table_count.load(Ordering::Acquire)),
             catch_up_projection_count: tenant_work.as_ref().map_or(0, |work| {
                 work.catch_up_projection_count.load(Ordering::Relaxed)
+            }),
+            catch_up_abandoned_scope_count: tenant_work.as_ref().map_or(0, |work| {
+                work.catch_up_abandoned_scope_count.load(Ordering::Relaxed)
             }),
             // Projection overload is recoverable backpressure, so this observer
             // never reports poison; a fatal dispatcher poison is the engine's.
@@ -1298,6 +1434,180 @@ mod tests {
             "catching up must not erase the drops that already happened"
         );
         assert!(!recovered.poisoned);
+    }
+
+    /// Builds a tenant whose `tasks` projection is owed a catch-up: a seeded
+    /// row is projected, then the work cap is saturated so five further
+    /// commits drop and coalesce into one dirty scope. Returns the guards
+    /// holding the cap; dropping them releases capacity and starts the drain.
+    async fn saturate_until_catch_up_is_owed(
+        engine: &Arc<Engine>,
+        projection_work: &Arc<ProjectionWork>,
+        tenant_id: &TenantId,
+        tasks: &TableName,
+    ) -> Vec<ProjectionWorkGuard> {
+        let filler = TableName::new("filler").expect("table name should build");
+        engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks.clone(),
+                serde_json::Map::from_iter([("index".to_string(), json!(0))]),
+            )
+            .await
+            .expect("seed row should commit");
+        engine
+            .flush_committed_mutation_observers_for_testing(tenant_id)
+            .await
+            .expect("seed projection should drain");
+        assert_eq!(
+            projected_table_row_count(engine, tenant_id, tasks).await,
+            Some(1)
+        );
+
+        let saturating = (0..2)
+            .map(|_| {
+                projection_work
+                    .register(
+                        tenant_id,
+                        engine
+                            .committed_mutation_observer_runtime_identity(tenant_id)
+                            .expect("tenant runtime identity should load"),
+                        std::slice::from_ref(&filler),
+                    )
+                    .expect("saturating work should register up to the cap")
+            })
+            .collect::<Vec<_>>();
+        for index in 1..6 {
+            engine
+                .insert_document_async(
+                    tenant_id.clone(),
+                    tasks.clone(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+                )
+                .await
+                .expect("projection saturation must not block durable mutation responses");
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if projection_work.stats(tenant_id).dropped_event_count == 5 {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("every commit past the cap should drop");
+        assert_eq!(
+            projection_work
+                .stats(tenant_id)
+                .dirty_projection_scope_count,
+            1
+        );
+        saturating
+    }
+
+    /// A catch-up that fails must keep its dirty marker so a later drain
+    /// retries it. Clearing the marker on the claim alone would let the tenant
+    /// report idle while the dropped commits never reached `_nimbus`, and with
+    /// no further mutation on that table nothing would ever mark it again.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_failed_catch_up_keeps_its_marker_and_a_later_drain_lands_it() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let engine = fixture.engine();
+        let tenant_id = fixture.create_tenant("projection-catch-up-retry", Engine::create_tenant);
+        let tasks = TableName::new("tasks").expect("table name should build");
+        let (observer, projection_work) = test_observer(&engine, 2, 1);
+        engine.install_committed_mutation_observer("projection-catch-up-retry-test", observer);
+
+        let saturating =
+            saturate_until_catch_up_is_owed(&engine, &projection_work, &tenant_id, &tasks).await;
+
+        // Fail the first catch-up attempt only. Recovery must come from the
+        // retry, not from any further mutation on `tasks`.
+        projection_work.fail_next_catch_up_projections(1);
+        drop(saturating);
+        engine
+            .flush_committed_mutation_observers_for_testing(&tenant_id)
+            .await
+            .expect("the retried catch-up projection should drain");
+
+        assert_eq!(
+            projected_table_row_count(&engine, &tenant_id, &tasks).await,
+            Some(6),
+            "a catch-up that failed once must still land without a further mutation"
+        );
+        let recovered = projection_work.stats(&tenant_id);
+        assert_eq!(recovered.depth, 0);
+        assert_eq!(
+            recovered.dirty_projection_scope_count, 0,
+            "the marker must clear once the catch-up actually succeeds"
+        );
+        assert_eq!(
+            recovered.catch_up_projection_count, 2,
+            "the failed attempt must be retried exactly once more"
+        );
+        assert_eq!(
+            recovered.catch_up_abandoned_scope_count, 0,
+            "a scope that recovered must not be reported as abandoned"
+        );
+        // At least the five commits the cap dropped. A drain reservation that
+        // loses the race for a marker and finds the cap full counts a drop of
+        // its own, so the exact total is not pinned here.
+        assert!(
+            recovered.dropped_event_count >= 5,
+            "catching up must not erase the drops that already happened, saw {}",
+            recovered.dropped_event_count
+        );
+        assert!(!recovered.poisoned);
+    }
+
+    /// Requeueing is retried by the guard release that restored the marker, so
+    /// the retry has to be bounded: a projection that always fails must stop
+    /// after a fixed number of attempts instead of respawning itself forever.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn catch_up_retries_are_bounded_when_the_projection_always_fails() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let engine = fixture.engine();
+        let tenant_id = fixture.create_tenant("projection-catch-up-bounded", Engine::create_tenant);
+        let tasks = TableName::new("tasks").expect("table name should build");
+        let (observer, projection_work) = test_observer(&engine, 2, 1);
+        engine.install_committed_mutation_observer("projection-catch-up-bounded-test", observer);
+
+        let saturating =
+            saturate_until_catch_up_is_owed(&engine, &projection_work, &tenant_id, &tasks).await;
+
+        // Far more injected failures than the retry budget, so the bound --
+        // not the supply of failures -- is what stops the retries.
+        projection_work.fail_next_catch_up_projections(MAX_CATCH_UP_ATTEMPTS * 4);
+        drop(saturating);
+        // A returning flush is itself the assertion that the retry terminated.
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            engine.flush_committed_mutation_observers_for_testing(&tenant_id),
+        )
+        .await
+        .expect("bounded catch-up retries must not spin forever")
+        .expect("the flush should complete once the retries give up");
+
+        let abandoned = projection_work.stats(&tenant_id);
+        assert_eq!(
+            abandoned.catch_up_projection_count,
+            u64::from(MAX_CATCH_UP_ATTEMPTS),
+            "a permanently failing catch-up must stop at its attempt budget"
+        );
+        assert_eq!(
+            abandoned.catch_up_abandoned_scope_count, 1,
+            "the abandoned scope must be reported, not dropped silently"
+        );
+        assert_eq!(
+            abandoned.dirty_projection_scope_count, 0,
+            "an abandoned scope must not leave a marker that blocks flush forever"
+        );
+        assert_eq!(
+            projected_table_row_count(&engine, &tenant_id, &tasks).await,
+            Some(1),
+            "the abandoned catch-up leaves the stale projection behind, as reported"
+        );
     }
 
     /// A claimed catch-up must hold the tenant busy for the whole interval
