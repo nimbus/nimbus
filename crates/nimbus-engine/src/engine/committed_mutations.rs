@@ -583,8 +583,7 @@ async fn run_provider_catch_up_observers(
     mut ownership: CatchUpOwnership,
 ) -> nimbus_core::Result<()> {
     panic_provider_catch_up_for_testing(runtime.tenant_id());
-    let capacity = runtime.committed_mutation_observer_capacity().max(1);
-    let chunk_size = (capacity / 2).max(1);
+    let chunk_size = runtime.committed_mutation_observer_catch_up_chunk_size();
     let mut delivered_through = None::<SequenceNumber>;
     loop {
         let Some((requested_first, requested_through)) = ownership.take_request() else {

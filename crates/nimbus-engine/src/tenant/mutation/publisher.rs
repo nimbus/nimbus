@@ -57,9 +57,10 @@ fn clamp_observer_limits(
     requested_high_watermark: usize,
     publisher_max_dispatch_size: usize,
     journal_max_dispatch_size: usize,
-) -> (usize, usize) {
+) -> (usize, usize, usize) {
     let max_dispatch_size = publisher_max_dispatch_size.max(journal_max_dispatch_size);
-    let capacity = requested_capacity.max(1).max(max_dispatch_size.max(1));
+    let minimum_capacity = max_dispatch_size.max(1).saturating_add(1);
+    let capacity = requested_capacity.max(1).max(minimum_capacity);
     if capacity != requested_capacity {
         tracing::warn!(
             tenant = %tenant_id,
@@ -67,11 +68,11 @@ fn clamp_observer_limits(
             max_publisher_observer_dispatch_size = publisher_max_dispatch_size,
             max_serial_observer_dispatch_size = journal_max_dispatch_size,
             observer_queue_capacity = capacity,
-            "clamped committed mutation observer capacity to the maximum single dispatch"
+            "clamped committed mutation observer capacity to the maximum live dispatch plus catch-up headroom"
         );
     }
     let high_watermark = requested_high_watermark.max(1).min(capacity);
-    (capacity, high_watermark)
+    (capacity, high_watermark, max_dispatch_size)
 }
 
 #[cfg(test)]
@@ -150,6 +151,7 @@ pub(crate) struct ObserverHandoff {
     queue_depth: AtomicUsize,
     queue_capacity: usize,
     queue_high_watermark: usize,
+    max_live_dispatch: usize,
     high_water_warning_active: AtomicBool,
     high_water_warning_count: AtomicU64,
     cap_breach_count: AtomicU64,
@@ -180,7 +182,7 @@ impl ObserverHandoff {
             take_observer_limits_for_testing(tenant_id).unwrap_or_else(observer_limits_from_env);
         #[cfg(not(test))]
         let requested_limits = observer_limits_from_env();
-        let (queue_capacity, queue_high_watermark) = clamp_observer_limits(
+        let (queue_capacity, queue_high_watermark, max_live_dispatch) = clamp_observer_limits(
             tenant_id,
             requested_limits.0,
             requested_limits.1,
@@ -197,6 +199,7 @@ impl ObserverHandoff {
             queue_depth: AtomicUsize::new(0),
             queue_capacity,
             queue_high_watermark,
+            max_live_dispatch,
             high_water_warning_active: AtomicBool::new(false),
             high_water_warning_count: AtomicU64::new(0),
             cap_breach_count: AtomicU64::new(0),
@@ -256,10 +259,11 @@ impl ObserverHandoff {
         runtime: std::sync::Weak<super::super::TenantRuntime>,
     ) -> Result<()> {
         let event_count = dispatch.event_count();
-        if event_count > self.queue_capacity {
+        let catch_up_capacity = self.queue_capacity.saturating_sub(self.max_live_dispatch);
+        if event_count > catch_up_capacity {
             return Err(Error::Internal(format!(
-                "committed mutation observer dispatch contains {event_count} events, exceeding tenant {} capacity {}",
-                self.tenant_id, self.queue_capacity
+                "committed mutation observer catch-up dispatch contains {event_count} events, exceeding tenant {} catch-up allowance {catch_up_capacity}",
+                self.tenant_id
             )));
         }
         loop {
@@ -280,7 +284,9 @@ impl ObserverHandoff {
                     return Err(self.poisoned_error());
                 }
                 let depth = self.queue_depth.load(Ordering::Acquire);
-                if event_count <= self.queue_capacity.saturating_sub(depth) {
+                if event_count.saturating_add(self.max_live_dispatch)
+                    <= self.queue_capacity.saturating_sub(depth)
+                {
                     return self.send_locked(dispatch, runtime, &mut sender, depth);
                 }
             }
@@ -460,6 +466,14 @@ impl ObserverHandoff {
                 .load(Ordering::Relaxed),
             poisoned: self.poisoned.load(Ordering::Acquire),
         }
+    }
+
+    pub(crate) fn catch_up_chunk_size(&self) -> usize {
+        let catch_up_capacity = self
+            .queue_capacity
+            .saturating_sub(self.max_live_dispatch)
+            .max(1);
+        (self.queue_capacity / 2).max(1).min(catch_up_capacity)
     }
 
     pub(crate) fn request_catch_up(

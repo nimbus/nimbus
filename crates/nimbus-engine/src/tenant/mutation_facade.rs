@@ -81,8 +81,8 @@ impl TenantRuntime {
             .await
     }
 
-    pub(crate) fn committed_mutation_observer_capacity(&self) -> usize {
-        self.observer_dispatch.stats().capacity
+    pub(crate) fn committed_mutation_observer_catch_up_chunk_size(&self) -> usize {
+        self.observer_dispatch.catch_up_chunk_size()
     }
 
     pub(crate) fn request_committed_mutation_observer_catch_up(
