@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
-use nimbus_core::{Result, Schema, TableId, TableName, TenantId, Timestamp};
+use nimbus_core::{Error, Result, Schema, TableId, TableName, TenantId, Timestamp};
 use nimbus_storage::LibsqlReplicaFreshnessStats;
 use serde::Serialize;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -477,6 +477,13 @@ impl TenantRuntime {
 
     pub(crate) fn mark_deleting_for_eviction(&self) {
         self.lifecycle.begin_eviction();
+        self.mutation_journal.fail_applied_waiters(Error::storage(
+            nimbus_core::StorageErrorKind::Unavailable,
+            format!(
+                "tenant {} runtime was evicted before the required sequence became applied",
+                self.tenant_id
+            ),
+        ));
     }
 
     pub(crate) async fn wait_for_operation_drain_for_eviction(&self) {

@@ -532,7 +532,7 @@ fn query_plan_metric_kind_label(kind: QueryPlanMetricKind) -> &'static str {
 fn load_query_runtime(engine: &Engine, tenant_id: &TenantId) -> Result<LoadedQueryRuntime> {
     let runtime = engine.get_existing_tenant(tenant_id)?;
     let visibility_started = Instant::now();
-    let required_sequence = wait_for_latest_applied_visibility_blocking(&runtime);
+    let required_sequence = wait_for_latest_applied_visibility_blocking(&runtime)?;
     Ok(LoadedQueryRuntime {
         runtime,
         required_sequence,
@@ -560,7 +560,13 @@ where
                 required_sequence,
                 cancel_wait.clone(),
             ) => {
-                result?;
+                if let Err(error) = result {
+                    if runtime.eviction_started() {
+                        runtime.wait_for_eviction_complete().await;
+                        continue;
+                    }
+                    return Err(error);
+                }
                 let wait_visibility = visibility_timer.finish();
                 return Ok(LoadedQueryRuntime {
                     runtime,

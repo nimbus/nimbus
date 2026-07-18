@@ -78,6 +78,27 @@ impl Engine {
         runtime.enter_operation(tenant_id)
     }
 
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn park_applied_sequence_waiters_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        required_sequence: nimbus_core::SequenceNumber,
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        runtime.mark_durable_head(required_sequence);
+        Ok(())
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn fail_applied_sequence_waiters_for_testing(&self, tenant_id: &TenantId) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        runtime.fail_applied_waiters_for_testing(nimbus_core::Error::storage(
+            nimbus_core::StorageErrorKind::Unavailable,
+            format!("tenant {tenant_id} runtime evicted during test"),
+        ));
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) fn write_log_assignment_for_testing(
         &self,
@@ -658,7 +679,8 @@ impl Engine {
             .map(TenantEventRecord::as_commit_entry)
             .collect::<Vec<_>>();
         let commit_identity = document_bearing_commit_identity(records);
-        self.process_applied_commit_batch(runtime, &applied, commit_identity, false);
+        self.process_applied_commit_batch_fanout(runtime.clone(), &applied, commit_identity, false);
+        self.enqueue_applied_commit_batch_observers(runtime, &applied);
         Ok(())
     }
 

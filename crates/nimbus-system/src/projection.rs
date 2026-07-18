@@ -678,4 +678,47 @@ mod tests {
             "dead runtime generations must not accumulate in projection state"
         );
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn applied_wait_eviction_error_releases_tenant_projection_lock() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let engine = fixture.engine();
+        let tenant_id = fixture.create_tenant("projection-eviction-wait", Engine::create_tenant);
+        let (observer, projection_work) = test_observer(&engine, 16, 12);
+        let tenant_work = tenant_work(&engine, &projection_work, &tenant_id);
+        engine
+            .park_applied_sequence_waiters_for_testing(&tenant_id, nimbus_core::SequenceNumber(1))
+            .expect("test should expose a durable-but-unapplied target");
+
+        observer.project_tables(
+            tenant_id.clone(),
+            vec![TableName::new("tasks").expect("table name should build")],
+        );
+        projection_work.wait_until_registered(&tenant_id).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if tenant_work.projection_lock.try_lock().is_err() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("projection task should acquire its tenant lock");
+
+        engine
+            .fail_applied_sequence_waiters_for_testing(&tenant_id)
+            .expect("test eviction should wake applied waiters");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            projection_work.wait_for_idle(&tenant_id),
+        )
+        .await
+        .expect("eviction error must let the projection task release its work guard");
+        assert_eq!(projection_work.stats(&tenant_id).depth, 0);
+        assert!(
+            tenant_work.projection_lock.try_lock().is_ok(),
+            "the tenant projection lock must be released after the typed wait error"
+        );
+    }
 }

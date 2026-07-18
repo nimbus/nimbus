@@ -171,22 +171,6 @@ impl Engine {
         self.dispatch_or_enqueue_trigger_candidates(runtime.clone(), vec![commit.clone()]);
     }
 
-    pub(in crate::engine) fn process_applied_commit_batch(
-        &self,
-        runtime: Arc<TenantRuntime>,
-        applied: &[CommitEntry],
-        commit_identity: Option<CommitEntry>,
-        emit_trigger_candidates: bool,
-    ) {
-        self.process_applied_commit_batch_fanout(
-            runtime.clone(),
-            applied,
-            commit_identity,
-            emit_trigger_candidates,
-        );
-        self.enqueue_applied_commit_batch_observers(runtime, applied);
-    }
-
     pub(in crate::engine) fn process_applied_commit_batch_fanout(
         &self,
         runtime: Arc<TenantRuntime>,

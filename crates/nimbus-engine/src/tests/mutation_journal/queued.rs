@@ -3192,6 +3192,85 @@ async fn ambiguous_publisher_eviction_drains_then_reopens_a_distinct_runtime() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn applied_sequence_waiter_returns_retryable_error_when_runtime_is_evicted() {
+    let data_dir = tempdir().expect("applied-wait eviction tempdir should build");
+    let faults = BlockingAmbiguousApplyFaultInjector::new();
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_925))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(46_925)),
+        )
+        .expect("applied-wait eviction engine should create"),
+    );
+    let tenant_id = TenantId::new("applied-wait-eviction").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+
+    let writer = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state("durable append should pause before ambiguous apply", {
+        let faults = faults.clone();
+        move |timeout| faults.wait_until_blocked(timeout)
+    })
+    .await;
+
+    let mut waiter = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .count_table_documents_async(tenant_id, tasks_table())
+                .await
+        }
+    });
+    assert_future_stays_pending(
+        &mut waiter,
+        "table-count waiter should park behind the durable-but-unapplied sequence",
+    )
+    .await;
+
+    faults.release_failure();
+    expect_catch_up_future_within(writer, "ambiguous writer should enter eviction")
+        .await
+        .expect("writer task should join")
+        .expect_err("ambiguous writer should fail for crash-and-replay");
+    let wait_error = tokio::time::timeout(
+        Duration::from_secs(5),
+        expect_catch_up_future_within(waiter, "applied waiter should wake on eviction"),
+    )
+    .await
+    .expect("eviction must wake the applied waiter within the bound")
+    .expect("waiter task should join")
+    .expect_err("the dead runtime cannot satisfy its applied target");
+    assert_eq!(
+        wait_error.storage_kind(),
+        Some(nimbus_core::StorageErrorKind::Unavailable)
+    );
+    assert_eq!(
+        wait_error.retryability(),
+        nimbus_core::Retryability::RetryableAfterBackoff
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ambiguous_eviction_and_explicit_delete_complete_without_lock_inversion() {
     let data_dir = tempdir().expect("delete race tempdir should build");
     let faults = BlockingAmbiguousApplyFaultInjector::new();

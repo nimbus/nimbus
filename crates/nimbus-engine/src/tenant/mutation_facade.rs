@@ -436,6 +436,11 @@ impl TenantRuntime {
         self.mutation_journal.mark_applied_head(sequence);
     }
 
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn fail_applied_waiters_for_testing(&self, error: Error) {
+        self.mutation_journal.fail_applied_waiters(error);
+    }
+
     pub(crate) fn stage_pending_write_log_commits(
         &self,
         commits: impl IntoIterator<Item = CommitEntry>,
@@ -512,9 +517,12 @@ impl TenantRuntime {
             .await
     }
 
-    pub(crate) fn wait_for_applied_sequence_blocking(&self, sequence: SequenceNumber) {
+    pub(crate) fn wait_for_applied_sequence_blocking(
+        &self,
+        sequence: SequenceNumber,
+    ) -> Result<()> {
         self.mutation_journal
-            .wait_for_applied_sequence_blocking(sequence);
+            .wait_for_applied_sequence_blocking(sequence)
     }
 
     pub(crate) fn sync_mutation_journal_progress(self: &Arc<Self>, progress: JournalProgress) {

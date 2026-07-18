@@ -119,7 +119,7 @@ impl Engine {
                             return Err(error.with_conflict_attempts(attempt));
                         }
                         if let Some(sequence) = error.conflicting_sequence() {
-                            runtime.wait_for_applied_sequence_blocking(sequence);
+                            runtime.wait_for_applied_sequence_blocking(sequence)?;
                         }
                         runtime
                             .commit_phase_metrics()

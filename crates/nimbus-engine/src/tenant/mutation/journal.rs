@@ -24,7 +24,7 @@ pub(in crate::tenant) struct MutationJournalState {
     queue_rejection_count: AtomicU64,
     worker_failure_count: AtomicU64,
     pending_response_count: AtomicU64,
-    applied_wait_lock: Mutex<()>,
+    applied_wait_lock: Mutex<Option<Error>>,
     applied_wait: Condvar,
     durable_head: AtomicU64,
     applied_head: AtomicU64,
@@ -48,7 +48,7 @@ impl MutationJournalState {
             queue_rejection_count: AtomicU64::new(0),
             worker_failure_count: AtomicU64::new(0),
             pending_response_count: AtomicU64::new(0),
-            applied_wait_lock: Mutex::new(()),
+            applied_wait_lock: Mutex::new(None),
             applied_wait: Condvar::new(),
             durable_head: AtomicU64::new(progress.durable_head.0),
             applied_head: AtomicU64::new(progress.applied_head.0),
@@ -168,6 +168,25 @@ impl MutationJournalState {
         }
     }
 
+    pub(in crate::tenant) fn fail_applied_waiters(&self, error: Error) {
+        let mut failure = self
+            .applied_wait_lock
+            .lock()
+            .expect("mutation journal applied wait lock should not be poisoned");
+        if failure.is_none() {
+            *failure = Some(error);
+        }
+        self.applied_wait.notify_all();
+        self.applied_notify.notify_waiters();
+    }
+
+    fn applied_wait_failure(&self) -> Option<Error> {
+        self.applied_wait_lock
+            .lock()
+            .expect("mutation journal applied wait lock should not be poisoned")
+            .clone()
+    }
+
     pub(in crate::tenant) async fn wait_for_applied_sequence_cancellable<Fut>(
         &self,
         required: SequenceNumber,
@@ -193,6 +212,10 @@ impl MutationJournalState {
                 self.record_read_wait(started);
                 return Ok(());
             }
+            if let Some(error) = self.applied_wait_failure() {
+                self.record_read_wait(started);
+                return Err(error);
+            }
             tokio::select! {
                 _ = &mut cancel_wait => {
                     self.record_read_wait(started);
@@ -203,9 +226,12 @@ impl MutationJournalState {
         }
     }
 
-    pub(in crate::tenant) fn wait_for_applied_sequence_blocking(&self, required: SequenceNumber) {
+    pub(in crate::tenant) fn wait_for_applied_sequence_blocking(
+        &self,
+        required: SequenceNumber,
+    ) -> Result<()> {
         if self.applied_head().0 >= required.0 {
-            return;
+            return Ok(());
         }
 
         let started = Instant::now();
@@ -214,6 +240,10 @@ impl MutationJournalState {
             .lock()
             .expect("mutation journal applied wait lock should not be poisoned");
         while self.applied_head().0 < required.0 {
+            if let Some(error) = guard.as_ref() {
+                self.record_read_wait(started);
+                return Err(error.clone());
+            }
             guard = self
                 .applied_wait
                 .wait(guard)
@@ -221,6 +251,7 @@ impl MutationJournalState {
         }
         drop(guard);
         self.record_read_wait(started);
+        Ok(())
     }
 
     fn record_read_wait(&self, started: Instant) {

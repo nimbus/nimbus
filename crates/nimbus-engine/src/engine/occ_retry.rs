@@ -33,8 +33,7 @@ impl Engine {
     ) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        runtime.wait_for_applied_sequence_blocking(sequence);
-        Ok(())
+        runtime.wait_for_applied_sequence_blocking(sequence)
     }
 
     pub fn record_mutation_conflict_retry(&self, tenant_id: &TenantId) -> Result<()> {

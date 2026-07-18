@@ -193,7 +193,7 @@ impl Engine {
         principal: &PrincipalContext,
     ) -> Result<Document> {
         let runtime = self.get_existing_tenant(tenant_id)?;
-        let required_sequence = wait_for_latest_applied_visibility_blocking(&runtime);
+        let required_sequence = wait_for_latest_applied_visibility_blocking(&runtime)?;
         let _operation = runtime.enter_operation(tenant_id)?;
         let schema = runtime.schema();
         let authorization = ReadAuthorization::for_table(schema.get_table(table), principal)?;
