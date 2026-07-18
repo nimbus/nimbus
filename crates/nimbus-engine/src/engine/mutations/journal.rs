@@ -193,6 +193,11 @@ impl Engine {
         // This is both the kill-switch fallback and the provider arm. Provider
         // persistence stays here until slice C adds ordered network pipelining
         // and lease fencing.
+        let assignment_baseline = runtime.durable_head();
+        let assignment_responses = batch
+            .iter()
+            .map(|request| request.response.clone())
+            .collect::<Vec<_>>();
         let runtime_for_task = runtime.clone();
         let engine = self.clone();
         let commit_faults = self.commit_faults.clone();
@@ -227,27 +232,27 @@ impl Engine {
             Ok(Err(error)) => {
                 runtime.record_mutation_worker_failure();
                 warn!(error = %error, "mutation journal batch failed");
-                if let Ok(progress) = runtime
-                    .read_storage
-                    .execute(|store| store.recover_durable_journal())
-                    .await
-                {
-                    // Already on the tenant's committer task: sending a
-                    // JournalProgressSync message here would wait on our own
-                    // inbox forever.
-                    runtime.publish_mutation_journal_progress_in_actor(progress);
-                }
+                recover_failed_serial_batch(
+                    runtime.clone(),
+                    assignment_baseline,
+                    "serial mutation batch failed",
+                )
+                .await;
+                fail_mutation_responses(&assignment_responses, &error);
             }
-            Err(error) => {
+            Err(join_error) => {
+                let error = Error::Internal(format!(
+                    "serial committer queued batch panicked: {join_error}"
+                ));
                 runtime.record_mutation_worker_failure();
                 warn!(error = %error, "committer queued batch panicked");
-                if let Ok(progress) = runtime
-                    .read_storage
-                    .execute(|store| store.recover_durable_journal())
-                    .await
-                {
-                    runtime.publish_mutation_journal_progress_in_actor(progress);
-                }
+                recover_failed_serial_batch(
+                    runtime.clone(),
+                    assignment_baseline,
+                    "serial mutation batch panicked",
+                )
+                .await;
+                fail_mutation_responses(&assignment_responses, &error);
             }
         }
     }
@@ -589,6 +594,45 @@ async fn recover_failed_assignment(
     }
 }
 
+async fn recover_failed_serial_batch(
+    runtime: Arc<TenantRuntime>,
+    assignment_baseline: SequenceNumber,
+    context: &'static str,
+) {
+    match runtime
+        .read_storage
+        .execute(|store| store.recover_durable_journal())
+        .await
+    {
+        Ok(progress) => {
+            // A serial worker can panic on either side of durable append. Only
+            // discard its staged suffix when recovery proves storage never
+            // advanced; otherwise retain the full images so recovered durable
+            // records can publish through the live write log.
+            if progress.durable_head == assignment_baseline {
+                discard_failed_assignment_suffix(runtime.as_ref(), assignment_baseline);
+            }
+            // Already on the tenant's committer task: sending a
+            // JournalProgressSync message here would wait on our own inbox.
+            runtime.publish_mutation_journal_progress_in_actor(progress);
+        }
+        Err(error) => {
+            if runtime
+                .store
+                .journal_progress()
+                .is_ok_and(|progress| progress.durable_head == assignment_baseline)
+            {
+                discard_failed_assignment_suffix(runtime.as_ref(), assignment_baseline);
+            }
+            warn!(
+                tenant = %runtime.tenant_id(),
+                error = %error,
+                "{context}; durable journal recovery failed"
+            );
+        }
+    }
+}
+
 fn process_serial_queued_mutation_batch(
     runtime: Arc<TenantRuntime>,
     batch: Vec<QueuedMutationRequest>,
@@ -634,10 +678,18 @@ fn process_serial_queued_mutation_batch(
 
     let durable_append_started = Instant::now();
     let append_baseline = runtime.durable_head();
-    crate::tenant::validate_append_sequences(
+    if let Err(error) = crate::tenant::validate_append_sequences(
         append_baseline,
         records.iter().map(|record| record.sequence),
-    )?;
+    ) {
+        if let Some(first) = first_staged_sequence {
+            runtime.discard_unpersisted_write_log_suffix(first);
+        }
+        for active_request in active.drain(..) {
+            let _ = active_request.response.send(Err(error.clone()));
+        }
+        return Err(error);
+    }
     let write_log_guard = runtime.arm_write_log_append();
     if let Err(error) = runtime.store.append_durable_records_batch(&records) {
         let mapped_error = map_durable_journal_append_error(&error);

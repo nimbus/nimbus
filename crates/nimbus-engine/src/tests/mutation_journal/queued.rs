@@ -2189,6 +2189,88 @@ async fn assignment_worker_panic_discards_staged_suffix_and_keeps_tenant_live() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn serial_assignment_worker_panic_discards_staged_suffix_and_keeps_tenant_live() {
+    let data_dir = tempdir().expect("serial assignment panic tempdir should build");
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_650))),
+            Arc::new(NoopFaultInjector),
+            Arc::new(nimbus_core::SeededIdSource::new(46_650)),
+        )
+        .expect("serial assignment panic engine should create"),
+    );
+    let tenant_id = TenantId::new("serial-assignment-panic").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let runtime_before = engine
+        .tenant_runtime_identity_for_testing(&tenant_id)
+        .expect("runtime identity should load");
+    engine
+        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
+        .expect("test should request the serial kill-switch arm");
+    engine
+        .commit_fault_handle_for_testing()
+        .inject_panic_on_nth_hit(
+            crate::engine::commit_fault_labels::JOURNAL_ASSIGN_AFTER_STAGE,
+            1,
+        );
+
+    let error = engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+        )
+        .await
+        .expect_err("the injected serial assignment panic should fail its caller");
+    assert!(
+        matches!(error, Error::Internal(message) if message.contains("serial committer queued batch panicked")),
+        "the serial join error should reach the caller"
+    );
+    assert!(
+        engine
+            .read_durable_journal(&tenant_id, SequenceNumber(0))
+            .expect("serial journal should remain readable")
+            .is_empty(),
+        "the staged record from a panicked serial worker must not become durable"
+    );
+    let (assigned_through, pending) = engine
+        .write_log_assignment_for_testing(&tenant_id)
+        .expect("serial write-log assignment state should load");
+    assert_eq!(assigned_through, SequenceNumber(0));
+    assert!(
+        pending.is_empty(),
+        "serial panic must discard staged suffix"
+    );
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+        )
+        .await
+        .expect("a follow-up serial batch should commit after panic recovery");
+    assert_eq!(
+        engine
+            .tenant_runtime_identity_for_testing(&tenant_id)
+            .expect("runtime should remain loaded"),
+        runtime_before
+    );
+    let journal = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("serial journal should read after recovery");
+    assert_eq!(journal.len(), 1);
+    assert_eq!(journal[0].sequence, SequenceNumber(1));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn definitive_publisher_append_error_is_batch_scoped_and_tenant_stays_loaded() {
     let data_dir = tempdir().expect("definitive publisher tempdir should build");
     let faults = Arc::new(nimbus_storage::ScriptedFaultInjector::new([
