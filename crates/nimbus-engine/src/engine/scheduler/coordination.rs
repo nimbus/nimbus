@@ -184,7 +184,9 @@ impl Engine {
             .persistence
             .recover_durable_journal_async(&opened.executor)
             .await?;
-        runtime.sync_mutation_journal_progress_async(progress).await;
+        runtime
+            .sync_mutation_journal_progress_async(progress)
+            .await?;
         if !self.provider_background_ready() {
             self.catch_up_loaded_provider_tenant_async(
                 runtime.clone(),

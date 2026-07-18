@@ -558,10 +558,8 @@ impl TenantRuntime {
     pub(crate) async fn sync_mutation_journal_progress_async(
         self: &Arc<Self>,
         progress: JournalProgress,
-    ) {
-        self.submit_journal_progress_committer(progress)
-            .await
-            .expect("tenant committer should synchronize journal progress");
+    ) -> Result<()> {
+        self.submit_journal_progress_committer(progress).await
     }
 
     /// Observes storage-side heads from within the committer task. Callers
