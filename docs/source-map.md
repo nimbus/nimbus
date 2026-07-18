@@ -261,7 +261,7 @@ sources exist.
 | `reference/configuration.md` | License resolution: flag > env > XDG path > built-in community license | `crates/nimbus-cli/src/start/boot.rs`, `crates/nimbus-license/src/loading.rs`, `crates/nimbus-cli/src/dirs.rs` |
 | `reference/configuration.md` | `NIMBUS_DEPLOY_TOKEN` env-only enablement of the deploy admin API | `crates/nimbus-server/src/router.rs`, `crates/nimbus-operator/src/access_policy.rs` |
 | `reference/configuration.md` | `NIMBUS_TENANT_MUTATION_ISOLATE_CEILING` env-only per-tenant mutation-isolate admission cap; default 16 | `crates/nimbus-engine/src/tenant/mutation/isolate_admission.rs` |
-| `reference/configuration.md` | `_nimbus` table-projection per-tenant capacity/high-water defaults (1024/768) and process aggregate capacity/high-water defaults (8192/6144); cap breaches are non-blocking and scoped to the offending runtime enqueue | `crates/nimbus-system/src/projection.rs` |
+| `reference/configuration.md` | `_nimbus` table-projection per-tenant capacity/high-water defaults (1024/768) and process aggregate capacity/high-water defaults (8192/6144); cap breaches are non-blocking, scoped to the offending runtime enqueue, and caught up per table once capacity returns | `crates/nimbus-system/src/projection.rs` |
 
 ## Reference — JavaScript SDK
 

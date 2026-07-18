@@ -254,9 +254,9 @@ runs with the built-in community license.
 | --- | --- |
 | `NIMBUS_DEPLOY_TOKEN` | Enables the [deploy admin API](/reference/deploy-admin-api/) and sets the expected deploy bearer token. Unset, every deploy request returns `401`. |
 | `NIMBUS_TENANT_MUTATION_ISOLATE_CEILING` | Maximum concurrently executing top-level mutation isolates per tenant. Additional mutations wait in bounded admission; the default is `16`. |
-| `NIMBUS_SYSTEM_PROJECTION_WORK_CAPACITY` | Maximum queued `_nimbus` table-projection tasks for one loaded tenant runtime. A breach rejects the event and poisons that runtime's projection observer instead of blocking the commit path. Default: `1024`. |
+| `NIMBUS_SYSTEM_PROJECTION_WORK_CAPACITY` | Maximum queued `_nimbus` table-projection tasks for one loaded tenant runtime. A breach drops the event and warns once per crossing instead of blocking the commit path, and marks the affected table for catch-up. The runtime keeps projecting: once its in-flight work drains, capacity returns and each marked table is re-projected once, so a dropped event still reaches `_nimbus`. Breach and drop counts stay in the tenant's projection diagnostics. Default: `1024`. |
 | `NIMBUS_SYSTEM_PROJECTION_WORK_HIGH_WATERMARK` | Per-tenant projection backlog level that emits a warning. It is clamped to the per-tenant capacity. Default: `768`. |
-| `NIMBUS_SYSTEM_PROJECTION_AGGREGATE_WORK_CAPACITY` | Maximum `_nimbus` table-projection tasks across all loaded tenants in the process. A breach rejects the offending enqueue and poisons only that tenant runtime's projection observer without blocking commits. Default: `8192`. |
+| `NIMBUS_SYSTEM_PROJECTION_AGGREGATE_WORK_CAPACITY` | Maximum `_nimbus` table-projection tasks across all loaded tenants in the process. A breach drops the offending enqueue and warns once per crossing without blocking commits, and marks that tenant's table for catch-up. Only the tenant that lost the enqueue is affected, and it keeps projecting: once process-wide work drains, the marked table is re-projected once. Default: `8192`. |
 | `NIMBUS_SYSTEM_PROJECTION_AGGREGATE_WORK_HIGH_WATERMARK` | Process-wide projection backlog level that emits a warning. It is clamped to the aggregate capacity. Default: `6144`. |
 | `LISTEN_FDS`, `LISTEN_PID` | Set by systemd for `--systemd-socket-activation`; not set manually. |
 
