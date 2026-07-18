@@ -9,7 +9,7 @@ use nimbus_engine::{
     CommittedMutationEvent, CommittedMutationObserver, CommittedMutationObserverWorkStats, Engine,
     TableSchemaChangeEvent, TableSchemaChangeObserver, TenantRuntimeObserverIdentity,
 };
-use tracing::{error, warn};
+use tracing::warn;
 
 use super::{is_reserved_tenant_id, record_table_state_for_generation_async};
 
@@ -25,12 +25,15 @@ struct TableProjectionObserver {
     projection_work: Arc<ProjectionWork>,
 }
 
-/// Slice-A overload contract: projection spawning is bounded and loud. The
-/// per-tenant cap poisons that runtime generation and exposes breach/drop
-/// diagnostics with an error; the aggregate cap drops with warning diagnostics
-/// until capacity returns. Blocking either path can deadlock nested observer
-/// writes, while unbounded spawning can exhaust process memory. Lossless
-/// projection catch-up belongs to PPSC5-B durable-journal replay.
+/// Slice-A overload contract: projection spawning is bounded and loud. Both the
+/// per-tenant and the aggregate cap drop the breaching event, warn once per
+/// crossing, and expose breach/drop diagnostics until in-flight work drains and
+/// capacity returns. A cap breach is backpressure, not a fault, so neither cap
+/// may turn into permanent state: in-flight work drains on its own and the
+/// tenant resumes projecting without replacing its runtime. Blocking either
+/// path can deadlock nested observer writes, while unbounded spawning can
+/// exhaust process memory. Lossless projection catch-up belongs to PPSC5-B
+/// durable-journal replay.
 struct ProjectionWork {
     epoch: Arc<str>,
     capacity: usize,
@@ -63,9 +66,9 @@ struct TenantProjectionWork {
     projection_lock: Arc<tokio::sync::Mutex<()>>,
     high_water_warning_active: AtomicBool,
     high_water_warning_count: AtomicU64,
+    cap_warning_active: AtomicBool,
     cap_breach_count: AtomicU64,
     dropped_event_count: AtomicU64,
-    poisoned: AtomicBool,
     idle: tokio::sync::Notify,
     #[cfg(test)]
     flush_waiting: AtomicBool,
@@ -179,9 +182,9 @@ impl ProjectionWork {
             work.high_water_warning_active
                 .store(false, Ordering::Release);
             work.high_water_warning_count.store(0, Ordering::Relaxed);
+            work.cap_warning_active.store(false, Ordering::Release);
             work.cap_breach_count.store(0, Ordering::Relaxed);
             work.dropped_event_count.store(0, Ordering::Relaxed);
-            work.poisoned.store(false, Ordering::Release);
             return work.clone();
         }
         let generation = self.next_generation.fetch_add(1, Ordering::AcqRel) + 1;
@@ -192,9 +195,9 @@ impl ProjectionWork {
             projection_lock: Arc::new(tokio::sync::Mutex::new(())),
             high_water_warning_active: AtomicBool::new(false),
             high_water_warning_count: AtomicU64::new(0),
+            cap_warning_active: AtomicBool::new(false),
             cap_breach_count: AtomicU64::new(0),
             dropped_event_count: AtomicU64::new(0),
-            poisoned: AtomicBool::new(false),
             idle: tokio::sync::Notify::new(),
             #[cfg(test)]
             flush_waiting: AtomicBool::new(false),
@@ -247,12 +250,6 @@ impl ProjectionWork {
             .expect("projection tenant-work lock should not be poisoned");
         self.maybe_sweep_dead_tenants_locked(&mut registry);
         let tenant_work = self.tenant_work_locked(&mut registry, tenant_id, runtime_identity);
-        if tenant_work.poisoned.load(Ordering::Acquire) {
-            tenant_work
-                .dropped_event_count
-                .fetch_add(1, Ordering::Relaxed);
-            return None;
-        }
         let previous = match tenant_work.in_flight.fetch_update(
             Ordering::AcqRel,
             Ordering::Acquire,
@@ -260,16 +257,19 @@ impl ProjectionWork {
         ) {
             Ok(previous) => previous,
             Err(depth) => {
-                tenant_work
+                let dropped = tenant_work
                     .dropped_event_count
-                    .fetch_add(1, Ordering::Relaxed);
-                tenant_work.cap_breach_count.fetch_add(1, Ordering::Relaxed);
-                if !tenant_work.poisoned.swap(true, Ordering::AcqRel) {
-                    error!(
+                    .fetch_add(1, Ordering::Relaxed)
+                    + 1;
+                let breaches = tenant_work.cap_breach_count.fetch_add(1, Ordering::Relaxed) + 1;
+                if !tenant_work.cap_warning_active.swap(true, Ordering::AcqRel) {
+                    warn!(
                         projection_work_depth = depth,
                         projection_work_capacity = self.capacity,
+                        projection_work_cap_breach_count = breaches,
+                        projection_work_dropped_event_count = dropped,
                         tenant = %tenant_id,
-                        "system table projection per-tenant work cap breached; tenant projection observer poisoned and no new projection tasks will be spawned for this runtime"
+                        "system table projection per-tenant work cap breached; committed events dropped until this tenant's projection work drains"
                     );
                 }
                 return None;
@@ -390,9 +390,9 @@ impl ProjectionWork {
             dropped_event_count: tenant_work
                 .as_ref()
                 .map_or(0, |work| work.dropped_event_count.load(Ordering::Relaxed)),
-            poisoned: tenant_work
-                .as_ref()
-                .is_some_and(|work| work.poisoned.load(Ordering::Acquire)),
+            // Projection overload is recoverable backpressure, so this observer
+            // never reports poison; a fatal dispatcher poison is the engine's.
+            poisoned: false,
         }
     }
 
@@ -454,6 +454,11 @@ impl Drop for ProjectionWorkGuard {
         if tenant_previous.saturating_sub(1) < self.work.high_watermark {
             self.tenant_work
                 .high_water_warning_active
+                .store(false, Ordering::Release);
+        }
+        if tenant_previous.saturating_sub(1) < self.work.capacity {
+            self.tenant_work
+                .cap_warning_active
                 .store(false, Ordering::Release);
         }
         let aggregate_previous = self.work.aggregate_in_flight.fetch_sub(1, Ordering::AcqRel);
@@ -702,7 +707,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn projection_poison_is_tenant_scoped_counts_drops_and_reload_rearms() {
+    async fn projection_cap_drops_are_tenant_scoped_and_reset_on_runtime_reload() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let engine = fixture.engine();
         let tenant_a = fixture.create_tenant("projection-work-cap-a", Engine::create_tenant);
@@ -744,9 +749,9 @@ mod tests {
         assert_eq!(stats.observer_spawned_work_capacity, 2);
         assert_eq!(stats.observer_spawned_work_high_watermark, 1);
         assert_eq!(stats.observer_spawned_work_high_water_warning_count, 1);
-        assert_eq!(stats.observer_spawned_work_cap_breach_count, 1);
+        assert_eq!(stats.observer_spawned_work_cap_breach_count, 2);
         assert_eq!(stats.observer_spawned_work_dropped_event_count, 2);
-        assert!(stats.observer_spawned_work_poisoned);
+        assert!(!stats.observer_spawned_work_poisoned);
 
         let tasks = TableName::new("tasks").expect("table name should build");
         engine
@@ -764,7 +769,7 @@ mod tests {
         assert_eq!(
             projected_table_row_count(&engine, &tenant_b, &tasks).await,
             Some(1),
-            "tenant B must continue projecting while tenant A is poisoned"
+            "tenant B must continue projecting while tenant A is saturated"
         );
         let tenant_b_stats = engine
             .tenant_engine_diagnostics(&tenant_b)
@@ -779,13 +784,13 @@ mod tests {
         engine
             .flush_committed_mutation_observers_for_testing(&tenant_a)
             .await
-            .expect("accepted projection work should drain after poison");
+            .expect("accepted projection work should drain after the cap breach");
         assert_eq!(projection_work.stats(&tenant_a).depth, 0);
 
         engine
             .delete_tenant_async(tenant_a.clone())
             .await
-            .expect("poisoned tenant should delete");
+            .expect("saturated tenant should delete");
         engine
             .create_tenant_async(tenant_a.clone())
             .await
@@ -806,7 +811,87 @@ mod tests {
         assert_eq!(reloaded.depth, 0);
         assert_eq!(reloaded.cap_breach_count, 0);
         assert_eq!(reloaded.dropped_event_count, 0);
-        assert!(!reloaded.poisoned, "a fresh runtime must re-arm projection");
+        assert!(!reloaded.poisoned);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn projection_cap_breach_resumes_projecting_after_in_flight_work_drains() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let engine = fixture.engine();
+        let tenant_id = fixture.create_tenant("projection-cap-recovery", Engine::create_tenant);
+        let tasks = TableName::new("tasks").expect("table name should build");
+        let (observer, projection_work) = test_observer(&engine, 2, 1);
+        let held_projection = tenant_work(&engine, &projection_work, &tenant_id)
+            .projection_lock
+            .clone()
+            .lock_owned()
+            .await;
+        engine.install_committed_mutation_observer("projection-cap-recovery-test", observer);
+
+        for index in 0..4 {
+            engine
+                .insert_document_async(
+                    tenant_id.clone(),
+                    tasks.clone(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+                )
+                .await
+                .expect("projection saturation must not block durable mutation responses");
+        }
+        let breached = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let stats = projection_work.stats(&tenant_id);
+                if stats.dropped_event_count == 2 {
+                    break stats;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the per-tenant cap should drop both events past its capacity");
+        assert_eq!(breached.depth, 2);
+        assert_eq!(breached.cap_breach_count, 2);
+        assert!(
+            !breached.poisoned,
+            "a per-tenant cap breach is backpressure and must not become permanent state"
+        );
+
+        drop(held_projection);
+        engine
+            .flush_committed_mutation_observers_for_testing(&tenant_id)
+            .await
+            .expect("accepted projection work should drain after the cap breach");
+        assert_eq!(projection_work.stats(&tenant_id).depth, 0);
+
+        engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks.clone(),
+                serde_json::Map::from_iter([("index".to_string(), json!(4))]),
+            )
+            .await
+            .expect("post-drain mutation should commit");
+        engine
+            .flush_committed_mutation_observers_for_testing(&tenant_id)
+            .await
+            .expect("post-drain projection should drain");
+        assert_eq!(
+            projected_table_row_count(&engine, &tenant_id, &tasks).await,
+            Some(5),
+            "a drained cap breach must resume projecting without replacing the tenant runtime"
+        );
+
+        let resumed = projection_work.stats(&tenant_id);
+        assert_eq!(resumed.depth, 0);
+        assert_eq!(
+            resumed.cap_breach_count, 2,
+            "recovery must not erase the breaches that already happened"
+        );
+        assert_eq!(
+            resumed.dropped_event_count, 2,
+            "the dropped events must stay observable after the tenant recovers"
+        );
+        assert!(!resumed.poisoned);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
