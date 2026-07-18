@@ -113,7 +113,7 @@ impl TenantRuntime {
             .abandon_catch_up(first_sequence, requested_through);
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(crate) async fn wait_for_committed_mutation_observer_catch_up_idle(&self) {
         self.observer_dispatch.wait_for_catch_up_idle().await;
     }

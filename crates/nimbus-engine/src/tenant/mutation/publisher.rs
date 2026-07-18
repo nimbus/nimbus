@@ -513,7 +513,7 @@ impl ObserverHandoff {
         self.catch_up_state_changed.notify_waiters();
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(crate) async fn wait_for_catch_up_idle(&self) {
         loop {
             let changed = self.catch_up_state_changed.notified();
