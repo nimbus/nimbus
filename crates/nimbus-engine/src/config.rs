@@ -1,5 +1,12 @@
 use std::time::Duration;
 
+pub(crate) const COMMITTER_PUBLISHER_BATCH_BASE: usize = 32;
+pub(crate) const COMMITTER_PUBLISHER_BATCH_MAX_DEFAULT: usize = 256;
+pub(crate) const COMMITTER_PUBLISHER_BATCH_MAX_ENV: &str = "NIMBUS_COMMITTER_PUBLISHER_BATCH_MAX";
+pub(crate) const COMMITTER_PUBLISHER_COALESCE_DEFAULT_MICROS: u64 = 750;
+pub(crate) const COMMITTER_PUBLISHER_COALESCE_ENV: &str =
+    "NIMBUS_COMMITTER_PUBLISHER_COALESCE_MICROS";
+
 pub(crate) fn env_positive_usize(key: &str, default: usize) -> usize {
     std::env::var_os(key)
         .and_then(|value| value.into_string().ok())
@@ -44,4 +51,18 @@ impl BatchPolicy {
             env_nonnegative_u64(coalesce_key, default_coalesce_micros),
         )
     }
+}
+
+pub(crate) fn committer_publisher_batch_policy() -> BatchPolicy {
+    BatchPolicy::from_env(
+        COMMITTER_PUBLISHER_BATCH_BASE,
+        COMMITTER_PUBLISHER_BATCH_MAX_ENV,
+        COMMITTER_PUBLISHER_BATCH_MAX_DEFAULT,
+        COMMITTER_PUBLISHER_COALESCE_ENV,
+        COMMITTER_PUBLISHER_COALESCE_DEFAULT_MICROS,
+    )
+}
+
+pub(crate) fn committer_publisher_batch_max() -> usize {
+    committer_publisher_batch_policy().max
 }

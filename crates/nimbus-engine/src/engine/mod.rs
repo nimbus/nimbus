@@ -46,7 +46,9 @@ use background_executor::BackgroundExecutor;
 use tenant_load_gate::{TenantLoadGate, TenantLoadGateGuard};
 use transactions::TransactionSessionRegistry;
 
-pub use committed_mutations::{CommittedMutationEvent, CommittedMutationObserver};
+pub use committed_mutations::{
+    CommittedMutationEvent, CommittedMutationObserver, CommittedMutationObserverWorkStats,
+};
 pub use committed_mutations::{TableSchemaChangeEvent, TableSchemaChangeObserver};
 pub use encryption::{EncryptionStatus, InitializedKeyProvider};
 pub use execution_units::MutationExecutionUnit;

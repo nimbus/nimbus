@@ -12,24 +12,24 @@ use crate::tenant::{AssignedPublisherBatch, PublisherMessage, TenantRuntime};
 const DEFAULT_PUBLISHER_RETRY_LIMIT: usize = 4;
 const DEFAULT_PUBLISHER_RETRY_INITIAL_MS: u64 = 1;
 const DEFAULT_PUBLISHER_RETRY_MAX_MS: u64 = 100;
-const PUBLISHER_BATCH_BASE: usize = 32;
-const DEFAULT_PUBLISHER_BATCH_MAX: usize = 256;
-const PUBLISHER_BATCH_MAX_ENV: &str = "NIMBUS_COMMITTER_PUBLISHER_BATCH_MAX";
-const PUBLISHER_COALESCE_ENV: &str = "NIMBUS_COMMITTER_PUBLISHER_COALESCE_MICROS";
+#[cfg(test)]
+const PUBLISHER_BATCH_BASE: usize = crate::config::COMMITTER_PUBLISHER_BATCH_BASE;
+#[cfg(test)]
+const DEFAULT_PUBLISHER_BATCH_MAX: usize = crate::config::COMMITTER_PUBLISHER_BATCH_MAX_DEFAULT;
+#[cfg(test)]
+const PUBLISHER_BATCH_MAX_ENV: &str = crate::config::COMMITTER_PUBLISHER_BATCH_MAX_ENV;
+#[cfg(test)]
+const PUBLISHER_COALESCE_ENV: &str = crate::config::COMMITTER_PUBLISHER_COALESCE_ENV;
 // Once assignment has produced a base-sized burst, leave a short scheduling
 // window for the next assigned suffix to arrive. Low-volume batches publish
 // immediately, so this preserves singleton latency while recovering the
 // adaptive actor's burst fsync amortization at the publisher boundary.
-const DEFAULT_PUBLISHER_COALESCE_MICROS: u64 = 750;
+#[cfg(test)]
+const DEFAULT_PUBLISHER_COALESCE_MICROS: u64 =
+    crate::config::COMMITTER_PUBLISHER_COALESCE_DEFAULT_MICROS;
 
 fn publisher_batch_policy() -> crate::config::BatchPolicy {
-    crate::config::BatchPolicy::from_env(
-        PUBLISHER_BATCH_BASE,
-        PUBLISHER_BATCH_MAX_ENV,
-        DEFAULT_PUBLISHER_BATCH_MAX,
-        PUBLISHER_COALESCE_ENV,
-        DEFAULT_PUBLISHER_COALESCE_MICROS,
-    )
+    crate::config::committer_publisher_batch_policy()
 }
 
 fn has_assignment_pressure(

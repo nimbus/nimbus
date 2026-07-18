@@ -54,7 +54,10 @@ impl Engine {
         &self,
         tenant_id: &TenantId,
     ) -> Result<crate::tenant::MutationJournalStats> {
-        self.with_runtime_for_testing(tenant_id, |runtime| runtime.mutation_journal_stats())
+        let mut stats =
+            self.with_runtime_for_testing(tenant_id, |runtime| runtime.mutation_journal_stats())?;
+        self.apply_committed_mutation_observer_work_stats(tenant_id, &mut stats);
+        Ok(stats)
     }
 
     #[cfg(test)]

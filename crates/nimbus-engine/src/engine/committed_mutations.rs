@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::future::Future;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -21,15 +22,36 @@ pub struct CommittedMutationEvent {
 pub trait CommittedMutationObserver: Send + Sync {
     fn committed_mutation_applied(&self, event: CommittedMutationEvent);
 
+    /// Returns work spawned after this observer accepted callbacks.
+    ///
+    /// The default describes an observer that finishes before returning.
+    #[doc(hidden)]
+    fn spawned_work_stats(&self, _tenant_id: &TenantId) -> CommittedMutationObserverWorkStats {
+        CommittedMutationObserverWorkStats::default()
+    }
+
     /// Waits for work that the callback spawned after accepting an event.
     ///
     /// The default is appropriate for callbacks that finish their work before
     /// returning. This hidden hook only extends the test flush seam; production
     /// dispatch never waits on it.
     #[doc(hidden)]
-    fn flush_spawned_work_for_testing(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+    fn flush_spawned_work_for_testing(
+        &self,
+        _tenant_id: &TenantId,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(async {})
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CommittedMutationObserverWorkStats {
+    pub depth: usize,
+    pub capacity: usize,
+    pub high_watermark: usize,
+    pub high_water_warning_count: u64,
+    pub cap_breach_count: u64,
+    pub poisoned: bool,
 }
 
 /// A table schema or collection metadata change applied to a tenant.
@@ -52,6 +74,7 @@ pub(super) type TableSchemaChangeObserverRegistry =
 pub(crate) struct CommittedMutationObserverDispatch {
     observers: Vec<Arc<dyn CommittedMutationObserver>>,
     events: Vec<CommittedMutationEvent>,
+    completion: Option<DispatchCompletion>,
 }
 
 pub(crate) enum CommittedMutationObserverMessage {
@@ -73,6 +96,17 @@ impl CommittedMutationObserverDispatch {
             }
         }
     }
+
+    pub(crate) fn arm_completion(&mut self, runtime: std::sync::Weak<TenantRuntime>) {
+        debug_assert!(
+            self.completion.is_none(),
+            "observer dispatch completion must be armed exactly once"
+        );
+        self.completion = Some(DispatchCompletion {
+            runtime,
+            event_count: self.event_count(),
+        });
+    }
 }
 
 struct DispatchCompletion {
@@ -88,15 +122,8 @@ impl Drop for DispatchCompletion {
     }
 }
 
-fn run_dispatch(
-    dispatch: CommittedMutationObserverDispatch,
-    runtime: &std::sync::Weak<TenantRuntime>,
-) {
-    let _completion = DispatchCompletion {
-        runtime: runtime.clone(),
-        event_count: dispatch.event_count(),
-    };
-    dispatch.run();
+fn run_dispatch(dispatch: CommittedMutationObserverDispatch) -> bool {
+    catch_unwind(AssertUnwindSafe(|| dispatch.run())).is_ok()
 }
 
 pub(crate) async fn run_committed_mutation_observer_dispatcher(
@@ -106,7 +133,18 @@ pub(crate) async fn run_committed_mutation_observer_dispatcher(
     while let Some(message) = receiver.recv().await {
         match message {
             CommittedMutationObserverMessage::Dispatch(dispatch) => {
-                run_dispatch(dispatch, &runtime)
+                if !run_dispatch(dispatch) {
+                    if let Some(runtime) = runtime.upgrade() {
+                        runtime.poison_committed_mutation_observers(
+                            "committed mutation observer callback panicked",
+                        );
+                    }
+                    receiver.close();
+                    while let Some(message) = receiver.recv().await {
+                        drop(message);
+                    }
+                    break;
+                }
             }
             #[cfg(any(test, feature = "test-hooks"))]
             CommittedMutationObserverMessage::Fence(completed) => {
@@ -117,7 +155,18 @@ pub(crate) async fn run_committed_mutation_observer_dispatcher(
                 while let Some(message) = receiver.recv().await {
                     match message {
                         CommittedMutationObserverMessage::Dispatch(dispatch) => {
-                            run_dispatch(dispatch, &runtime)
+                            if !run_dispatch(dispatch) {
+                                if let Some(runtime) = runtime.upgrade() {
+                                    runtime.poison_committed_mutation_observers(
+                                        "committed mutation observer callback panicked while draining",
+                                    );
+                                }
+                                receiver.close();
+                                while let Some(message) = receiver.recv().await {
+                                    drop(message);
+                                }
+                                break;
+                            }
                         }
                         #[cfg(any(test, feature = "test-hooks"))]
                         CommittedMutationObserverMessage::Fence(completed) => {
@@ -188,7 +237,7 @@ impl Engine {
             .cloned()
             .collect::<Vec<_>>();
         for observer in observers {
-            observer.flush_spawned_work_for_testing().await;
+            observer.flush_spawned_work_for_testing(tenant_id).await;
         }
         Ok(())
     }
@@ -221,7 +270,11 @@ impl Engine {
             return;
         }
         if let Err(error) = runtime.enqueue_committed_mutation_observer_dispatch(
-            CommittedMutationObserverDispatch { observers, events },
+            CommittedMutationObserverDispatch {
+                observers,
+                events,
+                completion: None,
+            },
         ) {
             tracing::error!(
                 tenant = %runtime.tenant_id(),
@@ -229,6 +282,43 @@ impl Engine {
                 "committed mutation observer dispatch was refused"
             );
         }
+    }
+
+    pub(crate) fn apply_committed_mutation_observer_work_stats(
+        &self,
+        tenant_id: &TenantId,
+        stats: &mut crate::tenant::MutationJournalStats,
+    ) {
+        let aggregate = self
+            .committed_mutation_observers
+            .read()
+            .expect("committed mutation observer registry lock should not be poisoned")
+            .values()
+            .map(|observer| observer.spawned_work_stats(tenant_id))
+            .fold(
+                CommittedMutationObserverWorkStats::default(),
+                |mut aggregate, observer| {
+                    aggregate.depth = aggregate.depth.saturating_add(observer.depth);
+                    aggregate.capacity = aggregate.capacity.saturating_add(observer.capacity);
+                    aggregate.high_watermark = aggregate
+                        .high_watermark
+                        .saturating_add(observer.high_watermark);
+                    aggregate.high_water_warning_count = aggregate
+                        .high_water_warning_count
+                        .saturating_add(observer.high_water_warning_count);
+                    aggregate.cap_breach_count = aggregate
+                        .cap_breach_count
+                        .saturating_add(observer.cap_breach_count);
+                    aggregate.poisoned |= observer.poisoned;
+                    aggregate
+                },
+            );
+        stats.observer_spawned_work_depth = aggregate.depth;
+        stats.observer_spawned_work_capacity = aggregate.capacity;
+        stats.observer_spawned_work_high_watermark = aggregate.high_watermark;
+        stats.observer_spawned_work_high_water_warning_count = aggregate.high_water_warning_count;
+        stats.observer_spawned_work_cap_breach_count = aggregate.cap_breach_count;
+        stats.observer_spawned_work_poisoned = aggregate.poisoned;
     }
 
     /// Installs a named table-schema observer.

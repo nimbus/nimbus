@@ -66,10 +66,10 @@ impl TenantRuntime {
     }
 
     pub(crate) fn enqueue_committed_mutation_observer_dispatch(
-        &self,
+        self: &Arc<Self>,
         dispatch: crate::engine::committed_mutations::CommittedMutationObserverDispatch,
     ) -> Result<()> {
-        self.observer_dispatch.send(dispatch)
+        self.observer_dispatch.send(dispatch, Arc::downgrade(self))
     }
 
     pub(crate) fn close_committed_mutation_observers(&self) {
@@ -82,6 +82,10 @@ impl TenantRuntime {
 
     pub(crate) fn complete_committed_mutation_observer_dispatch(&self, event_count: usize) {
         self.observer_dispatch.complete_dispatch(event_count);
+    }
+
+    pub(crate) fn poison_committed_mutation_observers(&self, reason: &str) {
+        self.observer_dispatch.poison(reason);
     }
 
     pub(crate) async fn wait_for_committed_mutation_observers_drained(&self) {

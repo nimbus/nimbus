@@ -34,16 +34,39 @@ fn publisher_limits_from_env() -> (usize, Duration) {
     )
 }
 
-fn observer_limits_from_env() -> (usize, usize) {
-    let capacity = crate::config::env_positive_usize(
+fn observer_limits_from_env() -> (usize, usize, usize) {
+    let requested_capacity = crate::config::env_positive_usize(
         "NIMBUS_COMMITTED_OBSERVER_QUEUE_CAPACITY",
         DEFAULT_OBSERVER_QUEUE_CAPACITY,
     );
-    let high_watermark = crate::config::env_positive_usize(
+    let requested_high_watermark = crate::config::env_positive_usize(
         "NIMBUS_COMMITTED_OBSERVER_QUEUE_HIGH_WATERMARK",
         DEFAULT_OBSERVER_QUEUE_HIGH_WATERMARK,
+    );
+    (
+        requested_capacity,
+        requested_high_watermark,
+        crate::config::committer_publisher_batch_max(),
     )
-    .min(capacity);
+}
+
+fn clamp_observer_limits(
+    tenant_id: &TenantId,
+    requested_capacity: usize,
+    requested_high_watermark: usize,
+    max_dispatch_size: usize,
+) -> (usize, usize) {
+    let capacity = requested_capacity.max(1).max(max_dispatch_size.max(1));
+    if capacity != requested_capacity {
+        tracing::warn!(
+            tenant = %tenant_id,
+            requested_observer_queue_capacity = requested_capacity,
+            max_committed_observer_dispatch_size = max_dispatch_size,
+            observer_queue_capacity = capacity,
+            "clamped committed mutation observer capacity to the maximum single dispatch"
+        );
+    }
+    let high_watermark = requested_high_watermark.max(1).min(capacity);
     (capacity, high_watermark)
 }
 
@@ -76,7 +99,7 @@ fn take_publisher_limits_for_testing(tenant_id: &TenantId) -> Option<(usize, Dur
 
 #[cfg(test)]
 static OBSERVER_LIMITS_FOR_TESTING: std::sync::OnceLock<
-    Mutex<std::collections::HashMap<TenantId, (usize, usize)>>,
+    Mutex<std::collections::HashMap<TenantId, (usize, usize, usize)>>,
 > = std::sync::OnceLock::new();
 
 #[cfg(test)]
@@ -84,17 +107,24 @@ pub(crate) fn configure_observer_limits_for_testing(
     tenant_id: TenantId,
     capacity: usize,
     high_watermark: usize,
+    max_dispatch_size: usize,
 ) {
-    let capacity = capacity.max(1);
     OBSERVER_LIMITS_FOR_TESTING
         .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
         .lock()
         .expect("observer test-limit lock should not be poisoned")
-        .insert(tenant_id, (capacity, high_watermark.max(1).min(capacity)));
+        .insert(
+            tenant_id,
+            (
+                capacity.max(1),
+                high_watermark.max(1),
+                max_dispatch_size.max(1),
+            ),
+        );
 }
 
 #[cfg(test)]
-fn take_observer_limits_for_testing(tenant_id: &TenantId) -> Option<(usize, usize)> {
+fn take_observer_limits_for_testing(tenant_id: &TenantId) -> Option<(usize, usize, usize)> {
     OBSERVER_LIMITS_FOR_TESTING
         .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
         .lock()
@@ -127,10 +157,16 @@ impl ObserverHandoff {
     pub(crate) fn new(tenant_id: &TenantId) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         #[cfg(test)]
-        let (queue_capacity, queue_high_watermark) =
+        let requested_limits =
             take_observer_limits_for_testing(tenant_id).unwrap_or_else(observer_limits_from_env);
         #[cfg(not(test))]
-        let (queue_capacity, queue_high_watermark) = observer_limits_from_env();
+        let requested_limits = observer_limits_from_env();
+        let (queue_capacity, queue_high_watermark) = clamp_observer_limits(
+            tenant_id,
+            requested_limits.0,
+            requested_limits.1,
+            requested_limits.2,
+        );
         Self {
             tenant_id: tenant_id.clone(),
             sender: Mutex::new(ObserverSender {
@@ -151,7 +187,11 @@ impl ObserverHandoff {
         }
     }
 
-    pub(crate) fn send(&self, dispatch: CommittedMutationObserverDispatch) -> Result<()> {
+    pub(crate) fn send(
+        &self,
+        mut dispatch: CommittedMutationObserverDispatch,
+        runtime: std::sync::Weak<super::super::TenantRuntime>,
+    ) -> Result<()> {
         let event_count = dispatch.event_count();
         let mut sender = self
             .sender
@@ -181,6 +221,7 @@ impl ObserverHandoff {
 
         let next_depth = depth + event_count;
         self.queue_depth.store(next_depth, Ordering::Release);
+        dispatch.arm_completion(runtime);
         if next_depth >= self.queue_high_watermark
             && !self.high_water_warning_active.swap(true, Ordering::AcqRel)
         {
@@ -194,16 +235,18 @@ impl ObserverHandoff {
                 "committed mutation observer queue crossed its high-water mark"
             );
         }
-        if sender
+        if let Err(rejected) = sender
             .sender
             .send(CommittedMutationObserverMessage::Dispatch(dispatch))
-            .is_err()
         {
-            self.complete_dispatch_locked(event_count);
             self.poison_locked(
                 &mut sender,
                 "committed mutation observer dispatcher stopped while accepting a dispatch",
             );
+            drop(sender);
+            // The dispatch owns its depth completion. Drop it only after the
+            // sender lock is released so completion can update the handoff.
+            drop(rejected);
             return Err(self.poisoned_error());
         }
         Ok(())
@@ -227,6 +270,14 @@ impl ObserverHandoff {
         {
             self.mark_drained();
         }
+    }
+
+    pub(crate) fn poison(&self, reason: &str) {
+        let mut sender = self
+            .sender
+            .lock()
+            .expect("observer sender lock should not be poisoned");
+        self.poison_locked(&mut sender, reason);
     }
 
     fn poisoned_error(&self) -> Error {

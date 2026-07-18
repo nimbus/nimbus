@@ -277,6 +277,12 @@ impl MutationJournalState {
             observer_queue_high_water_warning_count: 0,
             observer_queue_cap_breach_count: 0,
             observer_dispatch_poisoned: false,
+            observer_spawned_work_depth: 0,
+            observer_spawned_work_capacity: 0,
+            observer_spawned_work_high_watermark: 0,
+            observer_spawned_work_high_water_warning_count: 0,
+            observer_spawned_work_cap_breach_count: 0,
+            observer_spawned_work_poisoned: false,
         }
     }
 

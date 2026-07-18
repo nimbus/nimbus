@@ -72,4 +72,10 @@ pub struct MutationJournalStats {
     pub observer_queue_high_water_warning_count: u64,
     pub observer_queue_cap_breach_count: u64,
     pub observer_dispatch_poisoned: bool,
+    pub observer_spawned_work_depth: usize,
+    pub observer_spawned_work_capacity: usize,
+    pub observer_spawned_work_high_watermark: usize,
+    pub observer_spawned_work_high_water_warning_count: u64,
+    pub observer_spawned_work_cap_breach_count: u64,
+    pub observer_spawned_work_poisoned: bool,
 }

@@ -2643,7 +2643,7 @@ async fn observer_queue_cap_breach_poison_is_nonblocking_and_visible() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = TenantId::new("observer-cap-poison").expect("tenant id should build");
-    crate::tenant::configure_observer_limits_for_testing(tenant_id.clone(), 1, 1);
+    crate::tenant::configure_observer_limits_for_testing(tenant_id.clone(), 1, 1, 1);
     let created = fixture.create_tenant("observer-cap-poison", Engine::create_tenant);
     assert_eq!(created, tenant_id);
     engine
@@ -2701,6 +2701,73 @@ async fn observer_queue_cap_breach_poison_is_nonblocking_and_visible() {
         vec![SequenceNumber(1)],
         "the poison policy must drain accepted work without accepting events beyond the cap"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn observer_queue_capacity_clamps_to_max_single_dispatch() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = TenantId::new("observer-cap-clamp").expect("tenant id should build");
+    crate::tenant::configure_observer_limits_for_testing(tenant_id.clone(), 1, 1, 4);
+    let created = fixture.create_tenant("observer-cap-clamp", Engine::create_tenant);
+    assert_eq!(created, tenant_id);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let observer = Arc::new(OrderedBlockingObserver::default());
+    engine.install_committed_mutation_observer("cap-clamp-test", observer.clone());
+
+    run_paused_insert_burst(&engine, &tenant_id, 4).await;
+    expect_blocking_wait_reaches_state("full-batch observer dispatch should block", {
+        let observer = observer.clone();
+        move |timeout| observer.wait_for_first(timeout)
+    })
+    .await;
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("clamped observer diagnostics should load");
+    assert_eq!(stats.observer_queue_depth, 4);
+    assert_eq!(stats.observer_queue_capacity, 4);
+    assert_eq!(stats.observer_queue_cap_breach_count, 0);
+    assert!(!stats.observer_dispatch_poisoned);
+
+    observer.release_first();
+    engine
+        .flush_committed_mutation_observers_for_testing(&tenant_id)
+        .await
+        .expect("full single dispatch should drain without poison");
+}
+
+struct PanickingObserver;
+
+impl crate::CommittedMutationObserver for PanickingObserver {
+    fn committed_mutation_applied(&self, _event: crate::CommittedMutationEvent) {
+        panic!("injected committed observer panic");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn panicking_observer_poison_drops_queued_depth_without_phantom_backlog() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("observer-panic", Engine::create_tenant);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    engine.install_committed_mutation_observer("panic-test", Arc::new(PanickingObserver));
+
+    run_paused_insert_burst(&engine, &tenant_id, 3).await;
+    let stats = wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "panicking observer should poison with an accurate drained depth",
+        |stats| stats.observer_dispatch_poisoned && stats.observer_queue_depth == 0,
+    )
+    .await;
+    assert_eq!(stats.observer_queue_cap_breach_count, 0);
+    tokio::time::timeout(Duration::from_secs(5), engine.quiesce())
+        .await
+        .expect("observer panic must not strand engine quiesce");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
