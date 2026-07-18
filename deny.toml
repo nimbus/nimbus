@@ -132,7 +132,7 @@ skip-tree = [
     { crate = "bson@3.1.0", reason = "The MongoDB adapter stack currently carries its own BSON/rand support lane." },
     { crate = "bollard@0.20.2", reason = "The container/buildkit stack carries tonic 0.14 and related transport crates independently from server gRPC." },
     { crate = "testcontainers@0.27.2", reason = "The dev-only external-provider harness carries additional legacy utility crates." },
-    { crate = "deno_core@0.407.0", reason = "The embedded V8 runtime stack carries its own support-ecosystem crates." },
+    { crate = "deno_core@0.408.0", reason = "The embedded V8 runtime stack carries its own support-ecosystem crates." },
 ]
 
 [sources]
