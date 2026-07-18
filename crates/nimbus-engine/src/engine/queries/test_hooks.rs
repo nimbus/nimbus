@@ -61,6 +61,17 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn provider_catch_up_failure_count_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<u64> {
+        Ok(self
+            .get_existing_tenant(tenant_id)?
+            .mutation_journal_stats()
+            .provider_catch_up_failure_count)
+    }
+
+    #[cfg(test)]
     pub(crate) fn tenant_runtime_identity_for_testing(
         &self,
         tenant_id: &TenantId,

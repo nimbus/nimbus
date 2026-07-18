@@ -458,6 +458,10 @@ impl TenantRuntime {
         self.mutation_journal.record_worker_failure();
     }
 
+    pub(crate) fn record_provider_catch_up_failure(&self) {
+        self.mutation_journal.record_provider_catch_up_failure();
+    }
+
     pub(crate) fn begin_pending_mutation_response(&self) {
         self.mutation_journal.begin_pending_response();
     }

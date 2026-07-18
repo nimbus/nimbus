@@ -23,6 +23,7 @@ pub(in crate::tenant) struct MutationJournalState {
     worker_start_count: AtomicU64,
     queue_rejection_count: AtomicU64,
     worker_failure_count: AtomicU64,
+    provider_catch_up_failure_count: AtomicU64,
     pending_response_count: AtomicU64,
     applied_wait_lock: Mutex<Option<Error>>,
     applied_wait: Condvar,
@@ -47,6 +48,7 @@ impl MutationJournalState {
             worker_start_count: AtomicU64::new(0),
             queue_rejection_count: AtomicU64::new(0),
             worker_failure_count: AtomicU64::new(0),
+            provider_catch_up_failure_count: AtomicU64::new(0),
             pending_response_count: AtomicU64::new(0),
             applied_wait_lock: Mutex::new(None),
             applied_wait: Condvar::new(),
@@ -134,6 +136,11 @@ impl MutationJournalState {
 
     pub(in crate::tenant) fn record_worker_failure(&self) {
         self.worker_failure_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(in crate::tenant) fn record_provider_catch_up_failure(&self) {
+        self.provider_catch_up_failure_count
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub(in crate::tenant) fn begin_pending_response(&self) {
@@ -308,6 +315,9 @@ impl MutationJournalState {
             observer_queue_high_water_warning_count: 0,
             observer_queue_cap_breach_count: 0,
             observer_catch_up_enqueue_failure_count: 0,
+            provider_catch_up_failure_count: self
+                .provider_catch_up_failure_count
+                .load(Ordering::Relaxed),
             observer_dispatch_poisoned: false,
             observer_spawned_work_depth: 0,
             observer_spawned_work_capacity: 0,

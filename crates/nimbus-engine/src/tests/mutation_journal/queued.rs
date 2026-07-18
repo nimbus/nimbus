@@ -3520,6 +3520,103 @@ async fn poisoned_provider_catch_up_tenant_does_not_block_fresh_tenant() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn provider_attach_contains_mid_eviction_tenant_and_loads_remaining_work() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_a = fixture.create_tenant("provider-evicting-a", Engine::create_tenant);
+    let tenant_b = fixture.create_tenant("provider-refresh-b", Engine::create_tenant);
+    let scheduled_tenant =
+        fixture.create_tenant("provider-refresh-scheduled", Engine::create_tenant);
+    for tenant_id in [&tenant_a, &tenant_b] {
+        engine
+            .shutdown_trigger_candidates_for_testing(tenant_id)
+            .expect("trigger cursor should not add unrelated records");
+    }
+
+    let document_id = engine
+        .insert_document_async(
+            tenant_b.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(0))]),
+        )
+        .await
+        .expect("tenant B seed should commit");
+    engine
+        .schedule_mutation_async(
+            scheduled_tenant.clone(),
+            ScheduleRequest {
+                run_after_ms: 60_000,
+                mutation: nimbus_core::Mutation::Insert {
+                    table: tasks_table(),
+                    id: None,
+                    fields: serde_json::Map::from_iter([("index".to_string(), json!(99))]),
+                },
+            },
+        )
+        .await
+        .expect("scheduled fixture work should persist");
+    engine
+        .evict_runtime_without_deleting_for_testing(&scheduled_tenant)
+        .await
+        .expect("scheduled tenant should unload without deleting durable work");
+
+    let observer = Arc::new(TenantSelectiveBlockingObserver::default());
+    engine.install_committed_mutation_observer(
+        "provider-whole-body-isolation-test",
+        observer.clone(),
+    );
+    let pending_b = engine
+        .stage_assigned_pending_update_for_testing(
+            &tenant_b,
+            &tasks_table(),
+            &document_id,
+            "index",
+            json!(1),
+        )
+        .expect("tenant B provider-style update should stage");
+    engine
+        .apply_assigned_pending_record_without_publish_for_testing(&tenant_b, &pending_b)
+        .expect("tenant B durable state should advance without its runtime watermark");
+    let evicting_runtime = engine
+        .begin_runtime_eviction_for_testing(&tenant_a)
+        .expect("tenant A should enter the mid-eviction state");
+
+    engine
+        .catch_up_provider_after_listener_attach_for_testing()
+        .await
+        .expect("tenant A failure must not abort the remaining attach catch-up");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if observer.sequences(&tenant_b) == vec![pending_b.sequence] {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("tenant B observer catch-up should reach its durable tail");
+    assert!(
+        engine
+            .provider_catch_up_failure_count_for_testing(&tenant_a)
+            .expect("tenant A failure count should remain inspectable during eviction")
+            >= 1,
+        "the contained tenant failure must be visible in per-tenant diagnostics"
+    );
+    assert!(
+        engine.loaded_tenant_ids().contains(&scheduled_tenant),
+        "tenant A must not prevent a later scheduled-work tenant from loading"
+    );
+    assert_eq!(
+        engine
+            .list_scheduled_jobs(&scheduled_tenant)
+            .expect("reloaded scheduled work should remain queryable")
+            .len(),
+        1
+    );
+    drop(evicting_runtime);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn busy_provider_catch_up_tenant_does_not_head_of_line_block_other_tenant() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();

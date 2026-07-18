@@ -245,8 +245,26 @@ impl Engine {
             // startup can race the first listener becoming live, and later
             // reconnects can miss schema notifications just as easily as
             // journal notifications while the LISTEN connection is down.
-            self.catch_up_loaded_provider_tenant_async(runtime, &tenant_id, true, true, true)
-                .await?;
+            if let Err(error) = self
+                .catch_up_loaded_provider_tenant_async(
+                    runtime.clone(),
+                    &tenant_id,
+                    true,
+                    true,
+                    true,
+                )
+                .await
+            {
+                if self.background_shutdown_started() {
+                    return Err(error);
+                }
+                runtime.record_provider_catch_up_failure();
+                warn!(
+                    tenant = %tenant_id,
+                    error = %error,
+                    "failed to catch up loaded provider tenant after listener attach; continuing with other tenants"
+                );
+            }
         }
 
         self.load_tenants_with_scheduled_work_async().await?;
@@ -296,26 +314,41 @@ impl Engine {
             .collect::<Vec<_>>();
 
         for (tenant_id, runtime) in &loaded {
-            let refresh_plan = runtime
-                .store
-                .plan_loaded_runtime_refresh_async(
-                    &runtime.read_storage,
-                    runtime.schema().as_ref(),
-                    runtime.durable_head(),
-                    runtime.applied_head(),
-                )
-                .await?;
-            let refresh_schema = refresh_plan.refresh_schema;
-            let refresh_journal = refresh_plan.refresh_journal;
-            if refresh_schema || refresh_journal {
-                self.catch_up_loaded_provider_tenant_async(
-                    runtime.clone(),
-                    tenant_id,
-                    refresh_schema,
-                    refresh_journal,
-                    true,
-                )
-                .await?;
+            let refresh = async {
+                let refresh_plan = runtime
+                    .store
+                    .plan_loaded_runtime_refresh_async(
+                        &runtime.read_storage,
+                        runtime.schema().as_ref(),
+                        runtime.durable_head(),
+                        runtime.applied_head(),
+                    )
+                    .await?;
+                let refresh_schema = refresh_plan.refresh_schema;
+                let refresh_journal = refresh_plan.refresh_journal;
+                if refresh_schema || refresh_journal {
+                    self.catch_up_loaded_provider_tenant_async(
+                        runtime.clone(),
+                        tenant_id,
+                        refresh_schema,
+                        refresh_journal,
+                        true,
+                    )
+                    .await?;
+                }
+                Ok(())
+            }
+            .await;
+            if let Err(error) = refresh {
+                if self.background_shutdown_started() {
+                    return Err(error);
+                }
+                runtime.record_provider_catch_up_failure();
+                warn!(
+                    tenant = %tenant_id,
+                    error = %error,
+                    "failed to refresh loaded provider tenant; continuing provider poll"
+                );
             }
         }
 
@@ -328,9 +361,25 @@ impl Engine {
             if loaded_tenant_ids.contains(&tenant_id) {
                 continue;
             }
-            loaded_unloaded_tenant |= self
-                .load_tenant_with_scheduled_work_if_present(tenant_id)
-                .await?;
+            match self
+                .load_tenant_with_scheduled_work_if_present(tenant_id.clone())
+                .await
+            {
+                Ok(loaded) => loaded_unloaded_tenant |= loaded,
+                Err(error) => {
+                    if self.background_shutdown_started() {
+                        return Err(error);
+                    }
+                    if let Some(runtime) = self.loaded_runtime(&tenant_id) {
+                        runtime.record_provider_catch_up_failure();
+                    }
+                    warn!(
+                        tenant = %tenant_id,
+                        error = %error,
+                        "failed to load provider tenant with scheduled work; continuing provider poll"
+                    );
+                }
+            }
         }
 
         let next_due = self.next_loaded_scheduled_work_at_async().await?;

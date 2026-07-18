@@ -296,6 +296,10 @@ impl Engine {
             .load(std::sync::atomic::Ordering::Acquire)
     }
 
+    pub(crate) fn background_shutdown_started(&self) -> bool {
+        self.engine_executor.shutdown_token().is_cancelled()
+    }
+
     pub(crate) fn spawn_background<F>(&self, name: &'static str, future: F) -> JoinHandle<()>
     where
         F: Future<Output = ()> + Send + 'static,
