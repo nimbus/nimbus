@@ -34,6 +34,7 @@ struct ProjectionWork {
     aggregate_in_flight: AtomicUsize,
     aggregate_high_water_warning_active: AtomicBool,
     aggregate_high_water_warning_count: AtomicU64,
+    aggregate_cap_warning_active: AtomicBool,
     aggregate_cap_breach_count: AtomicU64,
     next_generation: AtomicU64,
     tenants: Mutex<ProjectionTenantRegistry>,
@@ -127,6 +128,7 @@ impl ProjectionWork {
             aggregate_in_flight: AtomicUsize::new(0),
             aggregate_high_water_warning_active: AtomicBool::new(false),
             aggregate_high_water_warning_count: AtomicU64::new(0),
+            aggregate_cap_warning_active: AtomicBool::new(false),
             aggregate_cap_breach_count: AtomicU64::new(0),
             next_generation: AtomicU64::new(0),
             tenants: Mutex::new(ProjectionTenantRegistry::default()),
@@ -288,12 +290,15 @@ impl ProjectionWork {
                 tenant_work.cap_breach_count.fetch_add(1, Ordering::Relaxed);
                 self.aggregate_cap_breach_count
                     .fetch_add(1, Ordering::Relaxed);
-                if !tenant_work.poisoned.swap(true, Ordering::AcqRel) {
-                    error!(
+                if !self
+                    .aggregate_cap_warning_active
+                    .swap(true, Ordering::AcqRel)
+                {
+                    warn!(
                         projection_aggregate_work_depth = depth,
                         projection_aggregate_work_capacity = self.aggregate_capacity,
                         tenant = %tenant_id,
-                        "system table projection aggregate work cap breached; offending tenant projection observer poisoned and the committed event was dropped"
+                        "system table projection aggregate work cap breached; committed event dropped until aggregate work drains"
                     );
                 }
                 return None;
@@ -453,6 +458,11 @@ impl Drop for ProjectionWorkGuard {
         if aggregate_previous.saturating_sub(1) < self.work.aggregate_high_watermark {
             self.work
                 .aggregate_high_water_warning_active
+                .store(false, Ordering::Release);
+        }
+        if aggregate_previous.saturating_sub(1) < self.work.aggregate_capacity {
+            self.work
+                .aggregate_cap_warning_active
                 .store(false, Ordering::Release);
         }
     }
@@ -889,7 +899,7 @@ mod tests {
     }
 
     #[test]
-    fn projection_aggregate_cap_rejects_only_the_offending_tenant() {
+    fn projection_aggregate_cap_drops_then_resumes_victim_after_drain() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let engine = fixture.engine();
         let tenant_a = fixture.create_tenant("projection-aggregate-a", Engine::create_tenant);
@@ -916,7 +926,10 @@ mod tests {
         assert_eq!(rejected.depth, 0);
         assert_eq!(rejected.cap_breach_count, 1);
         assert_eq!(rejected.dropped_event_count, 1);
-        assert!(rejected.poisoned);
+        assert!(
+            !rejected.poisoned,
+            "an aggregate-cap race must not permanently poison the tenant that lost it"
+        );
         assert!(!projection_work.stats(&tenant_a).poisoned);
         assert!(!projection_work.stats(&tenant_b).poisoned);
         assert_eq!(
@@ -928,6 +941,15 @@ mod tests {
 
         drop(guard_a);
         drop(guard_b);
+        let resumed = register(&tenant_c)
+            .expect("the aggregate-cap victim must resume after the hog work drains");
+        let resumed_stats = projection_work.stats(&tenant_c);
+        assert_eq!(resumed_stats.depth, 1);
+        assert_eq!(resumed_stats.cap_breach_count, 1);
+        assert_eq!(resumed_stats.dropped_event_count, 1);
+        assert!(!resumed_stats.poisoned);
+        drop(resumed);
+
         let quiet_guard = register(&tenant_d)
             .expect("a quiet process must admit a tenant below its per-tenant cap");
         assert_eq!(projection_work.stats(&tenant_d).depth, 1);
