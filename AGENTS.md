@@ -122,14 +122,18 @@ closed not-planned):
   delegating agent holds its Codex job **in the foreground of one turn**
   (repeated short status calls for long jobs) — never fire-and-idle on a
   notification, even though the harness prompt discourages polling.
-- Sequential delegation needs no intermediary: the orchestrator drives
-  `codex-companion.mjs` directly (its own background tasks re-invoke the
-  main session) and reviews the result itself.
-- Parallel lanes use liaison subagents (sonnet-tier; the implementer is
-  Codex) with an explicit non-role: launch, hold, heartbeat with an
-  effort-scaled timeout, return structured results verbatim — no
-  implementing, no reviewing, no committing. The liaison's value is
-  context isolation, not reliability.
+- Sequential delegation: the orchestrator launches via
+  `codex-companion.mjs` and reviews the result itself, but only holds
+  short jobs (<~15 min) directly. For longer jobs, hand the hold to a
+  liaison — every main-loop poll notification replays the full session
+  context, and in a long session that cost compounds fast (owner
+  directive 2026-07-17).
+- Liaison subagents (sonnet-tier; the implementer is Codex) have an
+  explicit non-role: launch or hold, heartbeat with an effort-scaled
+  timeout, return structured results verbatim — no implementing, no
+  reviewing, no committing. Stall = ~1h of tree quiet → report, never
+  kill. The liaison's value is context and cost isolation, not
+  reliability. Use them for parallel lanes AND long sequential holds.
 - Judgment lives at the orchestrator's gate: independent verification
   before push/PR; progress judged by job-log/tree timestamps, never
   message-arrival cadence; takeover after ~1h of tree quiet measured
